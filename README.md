@@ -16,6 +16,12 @@ Since I'm not an expert in operations research, I've done some research on suita
 
 Google OR-Tools is chosen due to the support of Python, which is the language I'm most familiar with this kind of project.
 
+### Choice of Input Format
+
+We prioritize human readability and ease of editing by hand over machine parsing simplicity.
+
+To allow quick prototyping without defining data type classes, we choose to keep the YAML input intact in memory. This requires extracting data explicitly using utility functions.
+
 ## References
 
 - [Nurse rostering - Timefold](https://timefold.ai/docs/timefold-solver/latest/use-cases-and-examples/nurse-rostering/nurse-rostering.html)
