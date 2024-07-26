@@ -20,7 +20,7 @@ def all_people_work_at_most_one_shift_per_day(ctx, args):
         maximum_n_shifts = 1
         ctx.model.Add(actual_n_shifts <= maximum_n_shifts)
 
-OBJECTIVE_TYPES_TO_FUNC = {
+PREFERENCE_TYPES_TO_FUNC = {
     "all requirements fulfilled": all_requirements_fulfilled,
     "all people work at most one shift per day": all_people_work_at_most_one_shift_per_day,
 }

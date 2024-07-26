@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from ortools.sat.python import cp_model
 
-from . import export, objective_types
+from . import export, preference_types
 from .context import Context
 from .dataloader import load_data
 
@@ -20,7 +20,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
     enddate = scenario.enddate
     requirements = scenario.requirements
     people = scenario.people
-    objectives = scenario.objectives
+    preferences = scenario.preferences
     del scenario
     n_days = (enddate - startdate).days + 1
     n_requirements = len(requirements)
@@ -68,12 +68,12 @@ def schedule(filepath: str, validate=True, deterministic=False):
     for k in vars(ctx):
         setattr(ctx, k, locals()[k])
 
-    logging.info("Adding objectives (i.e., preferences and constraints)...")
-    # TODO: Check no duplicated objectives
-    # TODO: Check no overlapping objectives
-    # TODO: Check all required objectives are present
-    for objective in objectives:
-        objective_types.OBJECTIVE_TYPES_TO_FUNC[objective.type](ctx, objective.args)
+    logging.info("Adding preferences (including constraints)...")
+    # TODO: Check no duplicated preferences
+    # TODO: Check no overlapping preferences
+    # TODO: Check all required preferences are present
+    for preference in preferences:
+        preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference.args)
 
     logging.info("Initializing solver...")
     solver = cp_model.CpSolver()

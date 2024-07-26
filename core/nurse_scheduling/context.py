@@ -4,7 +4,7 @@ class Context:
         self.enddate = None
         self.requirements = None
         self.people = None
-        self.objectives = None
+        self.preferences = None
         self.dates = None
         self.n_days = None
         self.n_requirements = None

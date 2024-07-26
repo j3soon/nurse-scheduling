@@ -21,6 +21,6 @@ requirements:
   - id: N
     description: Night shift requirement
     required_people: 1
-objectives:
+preferences:
   - type: all requirements fulfilled
   - type: all people work at most one shift per day
