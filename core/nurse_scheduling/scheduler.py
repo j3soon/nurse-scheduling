@@ -4,7 +4,8 @@ from datetime import timedelta
 
 from ortools.sat.python import cp_model
 
-from . import export, utils
+from . import export, objective_types
+from .context import Context
 from .dataloader import load_data
 
 
@@ -13,14 +14,17 @@ def schedule(filepath: str, validate=True, deterministic=False):
     scenario = load_data(filepath, validate)
 
     logging.info("Extracting scenario data...")
+    if scenario.apiVersion != "alpha":
+        raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
     startdate = scenario.startdate
     enddate = scenario.enddate
     requirements = scenario.requirements
     people = scenario.people
+    objectives = scenario.objectives
     del scenario
     n_days = (enddate - startdate).days + 1
-    n_people = len(people)
     n_requirements = len(requirements)
+    n_people = len(people)
     dates = [startdate + timedelta(days=d) for d in range(n_days)]
 
     logging.info("Initializing solver model...")
@@ -33,7 +37,9 @@ def schedule(filepath: str, validate=True, deterministic=False):
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
     for d in range(n_days):
         for r in range(n_requirements):
+            # TODO(Optimize): Skip if no people is required in that day
             for p in range(n_people):
+                # TODO(Optimize): Skip if the person does not qualify for the requirement
                 shifts[(d, r, p)] = model.NewBoolVar(f"shift_d{d}_r{r}_p{p}")
 
     logging.info("Creating maps for faster lookup...")
@@ -58,24 +64,16 @@ def schedule(filepath: str, validate=True, deterministic=False):
         for p in range(n_people)
     }
 
-    logging.info("Adding preferences and constraints...")
-    # Hard constraint
-    # For all shifts, the requirements (# of people) must be fulfilled.
-    # Note that a shift is represented as (d, r)
-    # i.e., sum_{p}(shifts[(d, r, p)]) == required_n_people, for all (d, r)
-    for (d, r), ps in map_dr_p.items():
-        actual_n_people = sum(shifts[(d, r, p)] for p in ps)
-        required_n_people = utils.required_n_people(requirements[r])
-        model.Add(actual_n_people == required_n_people)
+    ctx = Context()
+    for k in vars(ctx):
+        setattr(ctx, k, locals()[k])
 
-    # Hard constraint
-    # For all people, for all days, only work at most one shift.
-    # Note that a shift in day `d` can be represented as `r` instead of (d, r).
-    # i.e., sum_{r}(shifts[(d, r, p)]) <= 1, for all (d, p)
-    for (d, p), rs in map_dp_r.items():
-        actual_n_shifts = sum(shifts[(d, r, p)] for r in rs)
-        maximum_n_shifts = 1
-        model.Add(actual_n_shifts <= maximum_n_shifts)
+    logging.info("Adding objectives (i.e., preferences and constraints)...")
+    # TODO: Check no duplicated objectives
+    # TODO: Check no overlapping objectives
+    # TODO: Check all required objectives are present
+    for objective in objectives:
+        objective_types.OBJECTIVE_TYPES_TO_FUNC[objective.type](ctx, objective.args)
 
     logging.info("Initializing solver...")
     solver = cp_model.CpSolver()

@@ -1,3 +1,4 @@
+apiVersion: alpha
 description: Simple Example 1
 startdate: 2023-08-18
 enddate: 2023-08-20
@@ -20,3 +21,6 @@ requirements:
   - id: N
     description: Night shift requirement
     required_people: 1
+objectives:
+  - type: all requirements fulfilled
+  - type: all people work at most one shift per day
