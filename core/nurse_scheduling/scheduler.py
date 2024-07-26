@@ -16,64 +16,69 @@ def schedule(filepath: str, validate=True, deterministic=False):
     logging.info("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
-    startdate = scenario.startdate
-    enddate = scenario.enddate
-    requirements = scenario.requirements
-    people = scenario.people
-    preferences = scenario.preferences
+    ctx = Context()
+    ctx.startdate = scenario.startdate
+    ctx.enddate = scenario.enddate
+    ctx.requirements = scenario.requirements
+    ctx.people = scenario.people
+    ctx.preferences = scenario.preferences
     del scenario
-    n_days = (enddate - startdate).days + 1
-    n_requirements = len(requirements)
-    n_people = len(people)
-    dates = [startdate + timedelta(days=d) for d in range(n_days)]
+    ctx.n_days = (ctx.enddate - ctx.startdate).days + 1
+    ctx.n_requirements = len(ctx.requirements)
+    ctx.n_people = len(ctx.people)
+    ctx.dates = [ctx.startdate + timedelta(days=d) for d in range(ctx.n_days)]
 
     logging.info("Initializing solver model...")
-    model = cp_model.CpModel()
-    shifts = {}
+    ctx.model = cp_model.CpModel()
+    ctx.model_vars = {}
+    ctx.shifts = {}
     """A set of indicator variables that are 1 if and only if
     a person (p) is assigned to a shift (d, r)."""
 
     logging.info("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
-    for d in range(n_days):
-        for r in range(n_requirements):
+    for d in range(ctx.n_days):
+        for r in range(ctx.n_requirements):
             # TODO(Optimize): Skip if no people is required in that day
-            for p in range(n_people):
+            for p in range(ctx.n_people):
                 # TODO(Optimize): Skip if the person does not qualify for the requirement
-                shifts[(d, r, p)] = model.NewBoolVar(f"shift_d{d}_r{r}_p{p}")
+                var_name = f"shift_d{d}_r{r}_p{p}"
+                ctx.model_vars[var_name] = ctx.shifts[(d, r, p)] = ctx.model.NewBoolVar(var_name)
 
     logging.info("Creating maps for faster lookup...")
-    map_dr_p = {
-        (d, r): {p for p in range(n_people) if (d, r, p) in shifts}
-        for (d, r) in itertools.product(range(n_days), range(n_requirements))
+    ctx.map_dr_p = {
+        (d, r): {p for p in range(ctx.n_people) if (d, r, p) in ctx.shifts}
+        for (d, r) in itertools.product(range(ctx.n_days), range(ctx.n_requirements))
     }
-    map_dp_r = {
-        (d, p): {r for r in range(n_requirements) if (d, r, p) in shifts}
-        for (d, p) in itertools.product(range(n_days), range(n_people))
+    ctx.map_dp_r = {
+        (d, p): {r for r in range(ctx.n_requirements) if (d, r, p) in ctx.shifts}
+        for (d, p) in itertools.product(range(ctx.n_days), range(ctx.n_people))
     }
-    map_d_rp = {
-        d: {(r, p) for (r, p) in itertools.product(range(n_requirements), range(n_people)) if (d, r, p) in shifts}
-        for d in range(n_days)
+    ctx.map_d_rp = {
+        d: {(r, p) for (r, p) in itertools.product(range(ctx.n_requirements), range(ctx.n_people)) if (d, r, p) in ctx.shifts}
+        for d in range(ctx.n_days)
     }
-    map_r_dp = {
-        r: {(d, p) for (d, p) in itertools.product(range(n_days), range(n_people)) if (d, r, p) in shifts}
-        for r in range(n_requirements)
+    ctx.map_r_dp = {
+        r: {(d, p) for (d, p) in itertools.product(range(ctx.n_days), range(ctx.n_people)) if (d, r, p) in ctx.shifts}
+        for r in range(ctx.n_requirements)
     }
-    map_p_dr = {
-        p: {(d, r) for (d, r) in itertools.product(range(n_days), range(n_requirements)) if (d, r, p) in shifts}
-        for p in range(n_people)
+    ctx.map_p_dr = {
+        p: {(d, r) for (d, r) in itertools.product(range(ctx.n_days), range(ctx.n_requirements)) if (d, r, p) in ctx.shifts}
+        for p in range(ctx.n_people)
     }
 
-    ctx = Context()
-    for k in vars(ctx):
-        setattr(ctx, k, locals()[k])
+    ctx.objective = 0
 
     logging.info("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
     # TODO: Check all required preferences are present
-    for preference in preferences:
-        preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference.args)
+    for i, preference in enumerate(ctx.preferences):
+        preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference.args, i)
+
+    # Define objective (i.e., soft constraints)
+    print(ctx.objective)
+    ctx.model.Maximize(ctx.objective)
 
     logging.info("Initializing solver...")
     solver = cp_model.CpSolver()
@@ -95,7 +100,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
     solution_printer = PartialSolutionPrinter()
 
     logging.info("Solving and showing partial results...")
-    status = solver.Solve(model, solution_printer)
+    status = solver.Solve(ctx.model, solution_printer)
 
     logging.info(f"Status: {solver.StatusName(status)}")
 
@@ -110,7 +115,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
     elif status == cp_model.MODEL_INVALID:
         logging.info("Model invalid!")
         logging.info("Validation Info:")
-        logging.info(model.Validate())
+        logging.info(ctx.model.Validate())
     else:
         logging.info("No solution found!")
 
@@ -119,13 +124,17 @@ def schedule(filepath: str, validate=True, deterministic=False):
     logging.info(f"  - branches : {solver.NumBranches()}")
     logging.info(f"  - wall time: {solver.WallTime()}s")
 
+    logging.info("Variables:")
+    for k, v in ctx.model_vars.items():
+        logging.info(f"  - {k}: {solver.Value(v)}")
+
     logging.info(f"Done.")
 
     if not found:
         return None
 
     df = export.get_people_versus_date_dataframe(
-        dates, people, requirements,
-        shifts, solver,
+        ctx.dates, ctx.people, ctx.requirements,
+        ctx.shifts, solver,
     )
     return df
