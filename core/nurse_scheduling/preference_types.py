@@ -1,5 +1,7 @@
 from . import utils
 from .context import Context
+from .report import Report
+
 
 def all_requirements_fulfilled(ctx: Context, preference, preference_idx):
     # Hard constraint
@@ -34,16 +36,17 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
 
         # Construct: L2 = actual_n_shifts - target_n_shifts) ** 2
         MAX = max(ctx.n_days - target_n_shifts, target_n_shifts)
-        diff_var_name = f"{unique_var_prefix}_diff"
+        diff_var_name = f"{unique_var_prefix}diff"
         ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name)
         ctx.model.add_abs_equality(diff, actual_n_shifts - target_n_shifts)
-        L2_var_name = f"{unique_var_prefix}_L2"
+        L2_var_name = f"{unique_var_prefix}L2"
         ctx.model_vars[L2_var_name] = L2 = ctx.model.NewIntVar(0, MAX**2, L2_var_name)
         ctx.model.AddMultiplicationEquality(L2, diff, diff)
 
         # Add the objective
         weight = -1000000
         ctx.objective += weight * L2
+        ctx.reports.append(Report(f"assign_shifts_evenly_L2_p_{p}", L2, lambda x: x == 0))
 
 def shift_request(ctx: Context, preference, preference_idx):
     # Soft constraint
@@ -60,6 +63,7 @@ def shift_request(ctx: Context, preference, preference_idx):
         # Add the objective
         weight = 1
         ctx.objective += weight * ctx.shifts[(d, r, p)]
+        ctx.reports.append(Report(f"shift_request_p_{p}_d_{d}_r_{r}", ctx.shifts[(d, r, p)], lambda x: x == 1))
 
 PREFERENCE_TYPES_TO_FUNC = {
     "all requirements fulfilled": all_requirements_fulfilled,

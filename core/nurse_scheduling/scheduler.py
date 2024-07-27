@@ -1,12 +1,14 @@
 import itertools
 import logging
 from datetime import timedelta
+from typing import List
 
 from ortools.sat.python import cp_model
 
 from . import export, preference_types
 from .context import Context
 from .dataloader import load_data
+from .report import Report
 
 
 def schedule(filepath: str, validate=True, deterministic=False):
@@ -31,6 +33,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
     logging.info("Initializing solver model...")
     ctx.model = cp_model.CpModel()
     ctx.model_vars = {}
+    ctx.reports: List[Report] = []
     ctx.shifts = {}
     """A set of indicator variables that are 1 if and only if
     a person (p) is assigned to a shift (d, r)."""
@@ -125,10 +128,15 @@ def schedule(filepath: str, validate=True, deterministic=False):
     logging.info(f"  - conflicts: {solver.NumConflicts()}")
     logging.info(f"  - branches : {solver.NumBranches()}")
     logging.info(f"  - wall time: {solver.WallTime()}s")
-
     logging.info("Variables:")
     for k, v in ctx.model_vars.items():
         logging.info(f"  - {k}: {solver.Value(v)}")
+    logging.info("Reports:")
+    for report in ctx.reports:
+        val = solver.Value(report.variable)
+        if report.skip_condition(val):
+            continue
+        logging.info(f"  - {report.description}: {val}")
 
     logging.info(f"Done.")
 
