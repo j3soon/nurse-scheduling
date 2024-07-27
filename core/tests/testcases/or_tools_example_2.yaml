@@ -1,0 +1,86 @@
+apiVersion: alpha
+description: OR-Tools Example 2 with shift requests. From <https://developers.google.com/optimization/scheduling/employee_scheduling>.
+startdate: 2023-09-01
+enddate: 2023-09-07
+people:
+  - id: 0
+    description: Nurse 0
+  - id: 1
+    description: Nurse 1
+  - id: 2
+    description: Nurse 2
+  - id: 3
+    description: Nurse 3
+  - id: 4
+    description: Nurse 4
+requirements:
+  - id: D
+    description: Day shift requirement
+    required_people: 1
+  - id: E
+    description: Evening shift requirement
+    required_people: 1
+  - id: N
+    description: Night shift requirement
+    required_people: 1
+preferences:
+  - type: all requirements fulfilled
+  - type: all people work at most one shift per day
+  - type: assign shifts evenly
+  # Person 0
+  - type: shift request
+    person: 0
+    day: [1, 5, 7]
+    shift: N
+  - type: shift request
+    person: 0
+    day: [6]
+    shift: E
+  # Person 1
+  - type: shift request
+    person: 1
+    day: [5]
+    shift: D
+  - type: shift request
+    person: 1
+    day: [3, 4]
+    shift: E
+  - type: shift request
+    person: 1
+    day: [7]
+    shift: N
+  # Person 2
+  - type: shift request
+    person: 2
+    day: [4]
+    shift: D
+  - type: shift request
+    person: 2
+    day: [1, 2, 6]
+    shift: E
+  # Person 3
+  - type: shift request
+    person: 3
+    day: [3, 6]
+    shift: D
+  - type: shift request
+    person: 3
+    day: [4]
+    shift: E
+  - type: shift request
+    person: 3
+    day: [1]
+    shift: N
+  # Person 4
+  - type: shift request
+    person: 4
+    day: [5]
+    shift: D
+  - type: shift request
+    person: 4
+    day: [3, 6]
+    shift: E
+  - type: shift request
+    person: 4
+    day: [2]
+    shift: N

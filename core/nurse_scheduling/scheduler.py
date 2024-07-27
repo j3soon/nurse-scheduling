@@ -74,15 +74,16 @@ def schedule(filepath: str, validate=True, deterministic=False):
     # TODO: Check no overlapping preferences
     # TODO: Check all required preferences are present
     for i, preference in enumerate(ctx.preferences):
-        preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference.args, i)
+        preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference, i)
 
     # Define objective (i.e., soft constraints)
-    print(ctx.objective)
     ctx.model.Maximize(ctx.objective)
 
     logging.info("Initializing solver...")
     solver = cp_model.CpSolver()
     if deterministic:
+        logging.info("Configuring deterministic solver...")
+        solver.parameters.random_seed = 0
         solver.parameters.num_workers = 1
         # Potentially related parameters are:
         # `random_seed`, `num_workers`, and `num_search_workers`
@@ -96,7 +97,8 @@ def schedule(filepath: str, validate=True, deterministic=False):
 
         def on_solution_callback(self):
             self.solution_count += 1
-            print("# of solutions found:", self.solution_count)
+            logging.info(f"# of solutions found: {self.solution_count}")
+            logging.info(f"current score: {self.Value(ctx.objective)}")
     solution_printer = PartialSolutionPrinter()
 
     logging.info("Solving and showing partial results...")
