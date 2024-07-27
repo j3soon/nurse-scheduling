@@ -5,7 +5,7 @@ from typing import List
 
 from ortools.sat.python import cp_model
 
-from . import export, preference_types
+from . import exporter, preference_types
 from .context import Context
 from .dataloader import load_data
 from .report import Report
@@ -143,7 +143,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
     if not found:
         return None
 
-    df = export.get_people_versus_date_dataframe(
+    df = exporter.get_people_versus_date_dataframe(
         ctx.dates, ctx.people, ctx.requirements,
         ctx.shifts, solver,
     )
