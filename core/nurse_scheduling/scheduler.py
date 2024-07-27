@@ -143,8 +143,5 @@ def schedule(filepath: str, validate=True, deterministic=False):
     if not found:
         return None
 
-    df = exporter.get_people_versus_date_dataframe(
-        ctx.dates, ctx.people, ctx.requirements,
-        ctx.shifts, solver,
-    )
+    df = exporter.get_people_versus_date_dataframe(ctx, solver)
     return df
