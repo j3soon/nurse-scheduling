@@ -55,12 +55,10 @@ def shift_request(ctx: Context, preference, preference_idx):
     # Note that a shift is represented as (d, r)
     # i.e., max(weight * shifts[(d, r, p)]), for all satisfying (d, r)
     p = preference.person
-    for (d, r) in ctx.map_p_dr[p]:
+    for _d in preference.day:
         # TODO: parse dates
-        if (d + 1) not in preference.day:
-            continue
-        if ctx.requirements[r].id != preference.shift:
-            continue
+        d = _d - 1
+        r = ctx.map_rid_r[preference.shift]
         # Add the objective
         weight = 1
         ctx.objective += weight * ctx.shifts[(d, r, p)]
