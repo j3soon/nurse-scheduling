@@ -29,6 +29,11 @@ def schedule(filepath: str, validate=True, deterministic=False):
     ctx.n_requirements = len(ctx.requirements)
     ctx.n_people = len(ctx.people)
     ctx.dates = [ctx.startdate + timedelta(days=d) for d in range(ctx.n_days)]
+    ctx.map_rid_r = {}
+    for r in range(ctx.n_requirements):
+        if ctx.requirements[r].id in ctx.map_rid_r:
+            raise ValueError(f"Duplicated requirement ID: {r.id}")
+        ctx.map_rid_r[ctx.requirements[r].id] = r
 
     logging.info("Initializing solver model...")
     ctx.model = cp_model.CpModel()
@@ -40,6 +45,9 @@ def schedule(filepath: str, validate=True, deterministic=False):
 
     logging.info("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
+    # In the following code, we always use the convention of (d, r, p)
+    # to represent the index of (day, requirement, person).
+    # The object will not be abbreviated as (d, r, p) to avoid confusion.
     for d in range(ctx.n_days):
         for r in range(ctx.n_requirements):
             # TODO(Optimize): Skip if no people is required in that day

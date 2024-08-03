@@ -2,6 +2,7 @@ from . import utils
 from .context import Context
 from .report import Report
 
+# Leave most parsing to the caller, keep the function here simple.
 
 def all_requirements_fulfilled(ctx: Context, preference, preference_idx):
     # Hard constraint
@@ -34,7 +35,7 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
         target_n_shifts = round(ctx.n_days * sum(requirement.required_people for requirement in ctx.requirements) / ctx.n_people)
         unique_var_prefix = f"pref_{preference_idx}_p_{p}_"
 
-        # Construct: L2 = actual_n_shifts - target_n_shifts) ** 2
+        # Construct: L2 = (actual_n_shifts - target_n_shifts) ** 2
         MAX = max(ctx.n_days - target_n_shifts, target_n_shifts)
         diff_var_name = f"{unique_var_prefix}diff"
         ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name)
@@ -65,9 +66,41 @@ def shift_request(ctx: Context, preference, preference_idx):
         ctx.objective += weight * ctx.shifts[(d, r, p)]
         ctx.reports.append(Report(f"shift_request_p_{p}_d_{d}_r_{r}", ctx.shifts[(d, r, p)], lambda x: x == 1))
 
+def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
+    # Soft constraint
+    # For all people, for all start date, try to avoid unwanted shift type successions.
+    # Note that a shift is represented as (d, r)
+    # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
+    # where actual_n_matched = sum_{(d, r)}(shifts[(d, r, p)]), for all satisfying (d, r)
+    p = preference.person
+    pattern = preference.pattern
+    # TODO: Consider history
+    for d_begin in range(ctx.n_days - len(pattern) + 1):
+        actual_n_matched = 0
+        target_n_matched = len(pattern)
+        for i in range(len(pattern)):
+            d = d_begin + i
+            r = ctx.map_rid_r[pattern[i]]
+            actual_n_matched += ctx.shifts[(d, r, p)]
+
+        # Construct: is_match = (actual_n_matched == target_n_matched)
+        unique_var_prefix = f"pref_{preference_idx}_p_{p}_"
+        is_match_var_name = f"{unique_var_prefix}is_match"
+        ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
+            ctx.model, is_match_var_name,
+            actual_n_matched == target_n_matched,
+            actual_n_matched != target_n_matched
+        )
+
+        # Add the objective
+        weight = -100
+        ctx.objective += weight * is_match
+        ctx.reports.append(Report(f"unwanted_shift_type_successions_p_{p}", is_match, lambda x: x != target_n_matched))
+
 PREFERENCE_TYPES_TO_FUNC = {
     "all requirements fulfilled": all_requirements_fulfilled,
     "all people work at most one shift per day": all_people_work_at_most_one_shift_per_day,
     "assign shifts evenly": assign_shifts_evenly,
     "shift request": shift_request,
+    "unwanted shift type successions": unwanted_shift_type_successions,
 }
