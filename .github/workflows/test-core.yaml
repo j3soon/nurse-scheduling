@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements.txt
       - name: Test with pytest
-        run: cd core && pytest --log-cli-level=INFO
+        run: cd core && pytest --log-cli-level=DEBUG
       # TODO: Only prepare code coverage data if on the master branch
       - name: Prepare code coverage data
         run: pytest --cov core

@@ -12,10 +12,10 @@ from .report import Report
 
 
 def schedule(filepath: str, validate=True, deterministic=False):
-    logging.info(f"Loading scenario from '{filepath}'...")
+    logging.debug(f"Loading scenario from '{filepath}'...")
     scenario = load_data(filepath, validate)
 
-    logging.info("Extracting scenario data...")
+    logging.debug("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
     ctx = Context()
@@ -35,7 +35,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
             raise ValueError(f"Duplicated requirement ID: {r.id}")
         ctx.map_rid_r[ctx.requirements[r].id] = r
 
-    logging.info("Initializing solver model...")
+    logging.debug("Initializing solver model...")
     ctx.model = cp_model.CpModel()
     ctx.model_vars = {}
     ctx.reports: List[Report] = []
@@ -43,7 +43,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
     """A set of indicator variables that are 1 if and only if
     a person (p) is assigned to a shift (d, r)."""
 
-    logging.info("Creating shift variables...")
+    logging.debug("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
     # In the following code, we always use the convention of (d, r, p)
     # to represent the index of (day, requirement, person).
@@ -56,7 +56,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
                 var_name = f"shift_d{d}_r{r}_p{p}"
                 ctx.model_vars[var_name] = ctx.shifts[(d, r, p)] = ctx.model.NewBoolVar(var_name)
 
-    logging.info("Creating maps for faster lookup...")
+    logging.debug("Creating maps for faster lookup...")
     ctx.map_dr_p = {
         (d, r): {p for p in range(ctx.n_people) if (d, r, p) in ctx.shifts}
         for (d, r) in itertools.product(range(ctx.n_days), range(ctx.n_requirements))
@@ -80,7 +80,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
 
     ctx.objective = 0
 
-    logging.info("Adding preferences (including constraints)...")
+    logging.debug("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
     # TODO: Check all required preferences are present
@@ -90,10 +90,10 @@ def schedule(filepath: str, validate=True, deterministic=False):
     # Define objective (i.e., soft constraints)
     ctx.model.Maximize(ctx.objective)
 
-    logging.info("Initializing solver...")
+    logging.debug("Initializing solver...")
     solver = cp_model.CpSolver()
     if deterministic:
-        logging.info("Configuring deterministic solver...")
+        logging.debug("Configuring deterministic solver...")
         solver.parameters.random_seed = 0
         solver.parameters.num_workers = 1
         # Potentially related parameters are:
@@ -108,45 +108,45 @@ def schedule(filepath: str, validate=True, deterministic=False):
 
         def on_solution_callback(self):
             self.solution_count += 1
-            logging.info(f"# of solutions found: {self.solution_count}")
-            logging.info(f"current score: {self.Value(ctx.objective)}")
+            logging.debug(f"# of solutions found: {self.solution_count}")
+            logging.debug(f"current score: {self.Value(ctx.objective)}")
     solution_printer = PartialSolutionPrinter()
 
-    logging.info("Solving and showing partial results...")
+    logging.debug("Solving and showing partial results...")
     status = solver.Solve(ctx.model, solution_printer)
 
-    logging.info(f"Status: {solver.StatusName(status)}")
+    logging.debug(f"Status: {solver.StatusName(status)}")
 
     found = status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
     # Ref: https://developers.google.com/optimization/cp/cp_solver
     if status == cp_model.OPTIMAL:
-        logging.info("Optimal solution found!")
+        logging.debug("Optimal solution found!")
     elif status == cp_model.FEASIBLE:
-        logging.info("Feasible solution found!")
+        logging.debug("Feasible solution found!")
     elif status == cp_model.INFEASIBLE:
-        logging.info("Proven infeasible!")
+        logging.debug("Proven infeasible!")
     elif status == cp_model.MODEL_INVALID:
-        logging.info("Model invalid!")
-        logging.info("Validation Info:")
-        logging.info(ctx.model.Validate())
+        logging.debug("Model invalid!")
+        logging.debug("Validation Info:")
+        logging.debug(ctx.model.Validate())
     else:
-        logging.info("No solution found!")
+        logging.debug("No solution found!")
 
-    logging.info("Statistics:")
-    logging.info(f"  - conflicts: {solver.NumConflicts()}")
-    logging.info(f"  - branches : {solver.NumBranches()}")
-    logging.info(f"  - wall time: {solver.WallTime()}s")
-    logging.info("Variables:")
+    logging.debug("Statistics:")
+    logging.debug(f"  - conflicts: {solver.NumConflicts()}")
+    logging.debug(f"  - branches : {solver.NumBranches()}")
+    logging.debug(f"  - wall time: {solver.WallTime()}s")
+    logging.debug("Variables:")
     for k, v in ctx.model_vars.items():
-        logging.info(f"  - {k}: {solver.Value(v)}")
-    logging.info("Reports:")
+        logging.debug(f"  - {k}: {solver.Value(v)}")
+    logging.debug("Reports:")
     for report in ctx.reports:
         val = solver.Value(report.variable)
         if report.skip_condition(val):
             continue
-        logging.info(f"  - {report.description}: {val}")
+        logging.debug(f"  - {report.description}: {val}")
 
-    logging.info(f"Done.")
+    logging.debug(f"Done.")
 
     if not found:
         return None

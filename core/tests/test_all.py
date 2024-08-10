@@ -28,7 +28,7 @@ def test_all():
         df = nurse_scheduling.schedule(filepath, validate=False, deterministic=True)
         actual_csv = df.to_csv(index=False, header=False)
         if actual_csv != expected_csv:
-            logging.info(f"Actual CSV:\n{actual_csv}")
-            logging.info(f"Actual output:\n{df}")
-            logging.info(f"Expected output:\n{pandas.read_csv( io.StringIO(expected_csv), header=None, keep_default_na=False)}")
+            logging.debug(f"Actual CSV:\n{actual_csv}")
+            logging.debug(f"Actual output:\n{df}")
+            logging.debug(f"Expected output:\n{pandas.read_csv( io.StringIO(expected_csv), header=None, keep_default_na=False)}")
             pytest.fail(f"Output mismatch for '{base_filepath}'")
