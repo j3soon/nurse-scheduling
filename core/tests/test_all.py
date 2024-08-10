@@ -8,12 +8,14 @@ import pandas
 import pytest
 
 
+current_dir = os.path.dirname(os.path.realpath(__file__))
+
 def test_all():
-    for filepath in glob.glob("tests/testcases/*.yaml"):
-        base_filepath = os.path.splitext(filepath)[0]
+    for filepath in glob.glob(f"{current_dir}/testcases/*.yaml"):
+        base_filepath = os.path.splitext(os.path.basename(filepath))[0]
         logging.info(f"Testing '{base_filepath}' ...")
         df = nurse_scheduling.schedule(filepath, validate=False, deterministic=True)
-        with open(f"{base_filepath}.csv", 'r') as f:
+        with open(f"{current_dir}/testcases/{base_filepath}.csv", 'r') as f:
             expected_csv = f.read()
         actual_csv = df.to_csv(index=False, header=False)
         if actual_csv != expected_csv:
