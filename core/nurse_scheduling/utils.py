@@ -2,6 +2,12 @@ import datetime
 import re
 
 
+def one_or_value(val):
+    return 1 if val is None else val
+
+def neg_one_or_value(val):
+    return -1 if val is None else val
+
 def ensure_list(val):
     if val is None:
         return []
