@@ -73,8 +73,9 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
     # where actual_n_matched = sum_{(d, r)}(shifts[(d, r, p)]), for all satisfying (d, r)
     people = utils.ensure_list(preference.person)
-    # TODO: Check pattern is list
     pattern = preference.pattern
+    if not isinstance(pattern, list):
+        raise ValueError(f"Pattern must be a list, but got {type(pattern)}")
     for p in people:
         # TODO: Consider history
         for d_begin in range(ctx.n_days - len(pattern) + 1):

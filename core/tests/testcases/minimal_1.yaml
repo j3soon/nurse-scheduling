@@ -1,0 +1,12 @@
+apiVersion: alpha
+description: Minimal Example 1
+startdate: 2023-08-18
+enddate: 2023-08-18
+people:
+  - description: n0
+requirements:
+  - id: D
+    required_people: 1
+preferences:
+  - type: all requirements fulfilled
+  - type: all people work at most one shift per day
