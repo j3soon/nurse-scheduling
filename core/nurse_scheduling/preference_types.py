@@ -55,7 +55,7 @@ def shift_request(ctx: Context, preference, preference_idx):
     # Note that a shift is represented as (d, r)
     # i.e., max(weight * shifts[(d, r, p)]), for all satisfying (d, r)
     p = preference.person
-    preference_days = utils.parse_dates(preference.day, ctx.startdate, ctx.enddate)
+    preference_days = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
     for date in preference_days:
         d = (date - ctx.startdate).days
         r = ctx.map_rid_r[preference.shift]

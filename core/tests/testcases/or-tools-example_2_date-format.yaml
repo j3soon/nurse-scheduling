@@ -25,57 +25,57 @@ preferences:
   # Person 0
   - type: shift request
     person: 0
-    day: [2023-09-02, 2023-09-06, 2023-09-08]
+    date: [2023-09-02, 2023-09-06, 2023-09-08]
     shift: N
   - type: shift request
     person: 0
-    day: 2023-09-07
+    date: 2023-09-07
     shift: E
   # Person 1
   - type: shift request
     person: 1
-    day: 2023-09-06
+    date: 2023-09-06
     shift: D
   - type: shift request
     person: 1
-    day: [2023-09-04, 2023-09-05]
+    date: [2023-09-04, 2023-09-05]
     shift: E
   - type: shift request
     person: 1
-    day: 2023-09-08
+    date: 2023-09-08
     shift: N
   # Person 2
   - type: shift request
     person: 2
-    day: 09-05
+    date: 09-05
     shift: D
   - type: shift request
     person: 2
-    day: [09-02, 09-03, 09-07]
+    date: [09-02, 09-03, 09-07]
     shift: E
   # Person 3
   - type: shift request
     person: 3
-    day: [09-04, 09-07]
+    date: [09-04, 09-07]
     shift: D
   - type: shift request
     person: 3
-    day: 09-05
+    date: 09-05
     shift: E
   - type: shift request
     person: 3
-    day: 09-02
+    date: 09-02
     shift: N
   # Person 4
   - type: shift request
     person: 4
-    day: 6
+    date: 6
     shift: D
   - type: shift request
     person: 4
-    day: [4, 7]
+    date: [4, 7]
     shift: E
   - type: shift request
     person: 4
-    day: 3
+    date: 3
     shift: N
