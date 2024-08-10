@@ -12,7 +12,7 @@ from .report import Report
 
 
 def schedule(filepath: str, validate=True, deterministic=False):
-    logging.info("Loading scenario from '{filepath}'...")
+    logging.info(f"Loading scenario from '{filepath}'...")
     scenario = load_data(filepath, validate)
 
     logging.info("Extracting scenario data...")

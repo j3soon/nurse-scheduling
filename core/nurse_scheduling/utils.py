@@ -1,3 +1,8 @@
+def ensure_list(val):
+    if val is None:
+        return []
+    return [val] if not isinstance(val, list) else val
+
 def required_n_people(requirement):
     if not isinstance(requirement.required_people, int):
         raise NotImplementedError("required_people with type other than int is not supported yet")

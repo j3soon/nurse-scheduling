@@ -29,12 +29,12 @@ preferences:
     shift: N
   - type: shift request
     person: 0
-    day: [6]
+    day: 6
     shift: E
   # Person 1
   - type: shift request
     person: 1
-    day: [5]
+    day: 5
     shift: D
   - type: shift request
     person: 1
@@ -42,12 +42,12 @@ preferences:
     shift: E
   - type: shift request
     person: 1
-    day: [7]
+    day: 7
     shift: N
   # Person 2
   - type: shift request
     person: 2
-    day: [4]
+    day: 4
     shift: D
   - type: shift request
     person: 2
@@ -60,16 +60,16 @@ preferences:
     shift: D
   - type: shift request
     person: 3
-    day: [4]
+    day: 4
     shift: E
   - type: shift request
     person: 3
-    day: [1]
+    day: 1
     shift: N
   # Person 4
   - type: shift request
     person: 4
-    day: [5]
+    day: 5
     shift: D
   - type: shift request
     person: 4
@@ -77,5 +77,5 @@ preferences:
     shift: E
   - type: shift request
     person: 4
-    day: [2]
+    day: 2
     shift: N
