@@ -1,4 +1,4 @@
-# Nurse Scheduling System (護理排班系統)
+# Nurse Scheduling System
 
 [![tests](https://img.shields.io/github/actions/workflow/status/j3soon/nurse-scheduling/test-core.yaml?label=tests)](https://github.com/j3soon/nurse-scheduling/actions/workflows/test-core.yaml)
 [![codecov](https://codecov.io/github/j3soon/nurse-scheduling/graph/badge.svg?token=DPOvtAW1k2)](https://codecov.io/github/j3soon/nurse-scheduling)
@@ -7,7 +7,7 @@ The nurse scheduling (or employee scheduling) problem is a well-known problem in
 
 However, the constraints vary significantly across hospitals or wards. Therefore, in practice, the problem is often solved by hand or with the help of Excel, which is really time-consuming. The entire process requires several hours or even more than ten hours, depending on the problem complexity (e.g., multiple wards).
 
-This project aims to develop a user-friendly web app to automate the nurse scheduling task.
+This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims to develop a user-friendly web app to automate the nurse scheduling task.
 
 > This project is currently a **Work in Progress**, so it may not function as intended. A preliminary version (or a POC) of a command-line interface is implemented and verified by domain experts under a multi-ward scenario at 2023/08/20. We are currently refactoring the codebase along with test cases to make it more maintainable.
 
