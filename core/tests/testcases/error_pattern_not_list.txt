@@ -1,1 +1,1 @@
-Pattern must be a list
+Input should be a valid list

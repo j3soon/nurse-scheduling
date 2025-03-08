@@ -6,6 +6,7 @@ import os
 import nurse_scheduling
 import pandas
 import pytest
+from pydantic import ValidationError
 
 
 current_dir = os.path.dirname(os.path.realpath(__file__))
@@ -19,13 +20,21 @@ def test_all():
         if os.path.isfile(f"{testcases_dir}/{base_filepath}.txt"):
             with open(f"{testcases_dir}/{base_filepath}.txt", 'r') as f:
                 expected_err = f.read()
-            with pytest.raises(ValueError, match=expected_err.strip()):
-                df = nurse_scheduling.schedule(filepath, validate=False, deterministic=True)
+            # Use pytest.raises without the match parameter to catch the error first
+            with pytest.raises(ValidationError) as exc_info:
+                df = nurse_scheduling.schedule(filepath, deterministic=True)
+            # Then verify the error message contains the expected text
+            assert expected_err.strip() in str(exc_info.value), \
+                f"Expected error '{expected_err.strip()}' not found in actual error: {str(exc_info.value)}"
             continue
         # If test should pass
         with open(f"{testcases_dir}/{base_filepath}.csv", 'r') as f:
             expected_csv = f.read()
-        df = nurse_scheduling.schedule(filepath, validate=False, deterministic=True)
+        try:
+            df = nurse_scheduling.schedule(filepath, deterministic=True)
+        except ValidationError as e:
+            logging.debug(f"Validation error for '{base_filepath}': {e}")
+            pytest.fail(f"Validation error for '{base_filepath}'")
         actual_csv = df.to_csv(index=False, header=False)
         if actual_csv != expected_csv:
             logging.debug(f"Actual CSV:\n{actual_csv}")

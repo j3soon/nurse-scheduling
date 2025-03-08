@@ -1,7 +1,7 @@
 ortools==9.10.4067
 pandas
 ruamel.yaml
-munch
+pydantic
 # For CI
 pytest
 pytest-cov

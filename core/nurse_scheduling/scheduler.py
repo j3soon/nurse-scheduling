@@ -11,9 +11,9 @@ from .dataloader import load_data
 from .report import Report
 
 
-def schedule(filepath: str, validate=True, deterministic=False):
+def schedule(filepath: str, deterministic=False):
     logging.debug(f"Loading scenario from '{filepath}'...")
-    scenario = load_data(filepath, validate)
+    scenario = load_data(filepath)
 
     logging.debug("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
@@ -34,20 +34,14 @@ def schedule(filepath: str, validate=True, deterministic=False):
     # Map requirement ID to requirement index
     ctx.map_rid_r = {}
     for r in range(ctx.n_requirements):
-        if ctx.requirements[r].id in ctx.map_rid_r:
-            raise ValueError(f"Duplicated requirement ID: {r.id}")
         ctx.map_rid_r[ctx.requirements[r].id] = r
     # Map person ID to person index
     ctx.map_pid_ps = {}
     for p in range(ctx.n_people):
-        if ctx.people[p].id in ctx.map_pid_ps:
-            raise ValueError(f"Duplicated person ID: {ctx.people[p].id}")
         ctx.map_pid_ps[ctx.people[p].id] = [p]
     # Map people group ID to list of person indices
     for g in range(len(ctx.people_groups)):
         group = ctx.people_groups[g]
-        if group.id in ctx.map_pid_ps:
-            raise ValueError(f"Duplicated people group (or person) ID: {group.id}")
         # Flatten and deduplicate person indices for the group
         ctx.map_pid_ps[group.id] = list(set().union(*[ctx.map_pid_ps[pid] for pid in group.people]))
 
@@ -99,7 +93,6 @@ def schedule(filepath: str, validate=True, deterministic=False):
     logging.debug("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
-    # TODO: Check all required preferences are present
     for i, preference in enumerate(ctx.preferences):
         preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference, i)
 

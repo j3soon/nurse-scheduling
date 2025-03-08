@@ -25,3 +25,4 @@ preferences:
   - type: all requirements fulfilled
   - type: all people work at most one shift per day
   - type: assign shifts evenly
+    weight: -1000000

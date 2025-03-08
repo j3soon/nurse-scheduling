@@ -45,8 +45,7 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
         ctx.model.AddMultiplicationEquality(L2, diff, diff)
 
         # Add the objective
-        # TODO: Support custom weight
-        weight = -1000000
+        weight = preference.weight
         ctx.objective += weight * L2
         ctx.reports.append(Report(f"assign_shifts_evenly_L2_p_{p}", L2, lambda x: x == 0))
 
@@ -62,7 +61,7 @@ def shift_request(ctx: Context, preference, preference_idx):
             d = (date - ctx.startdate).days
             r = ctx.map_rid_r[preference.shift]
             # Add the objective
-            weight = utils.one_or_value(preference.weight)
+            weight = preference.weight
             ctx.objective += weight * ctx.shifts[(d, r, p)]
             ctx.reports.append(Report(f"shift_request_p_{p}_d_{d}_r_{r}", ctx.shifts[(d, r, p)], lambda x: x == 1))
 
@@ -96,7 +95,7 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
             )
 
             # Add the objective
-            weight = utils.neg_one_or_value(preference.weight)
+            weight = preference.weight
             ctx.objective += weight * is_match
             ctx.reports.append(Report(f"unwanted_shift_type_successions_p_{p}", is_match, lambda x: x != target_n_matched))
 
