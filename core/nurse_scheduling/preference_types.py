@@ -57,7 +57,8 @@ def shift_request(ctx: Context, preference, preference_idx):
     # i.e., max(weight * shifts[(d, r, p)]), for all satisfying (d, r)
     people = utils.ensure_list(preference.person)
     dates = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
-    for p in people:
+    for pid in people:
+        p = ctx.map_pid_p[pid]
         for date in dates:
             d = (date - ctx.startdate).days
             r = ctx.map_rid_r[preference.shift]
@@ -76,7 +77,8 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     pattern = preference.pattern
     if not isinstance(pattern, list):
         raise ValueError(f"Pattern must be a list, but got {type(pattern)}")
-    for p in people:
+    for pid in people:
+        p = ctx.map_pid_p[pid]
         # TODO: Consider history
         for d_begin in range(ctx.n_days - len(pattern) + 1):
             actual_n_matched = 0

@@ -29,11 +29,19 @@ def schedule(filepath: str, validate=True, deterministic=False):
     ctx.n_requirements = len(ctx.requirements)
     ctx.n_people = len(ctx.people)
     ctx.dates = [ctx.startdate + timedelta(days=d) for d in range(ctx.n_days)]
+
+    # Map requirement ID to requirement index
     ctx.map_rid_r = {}
     for r in range(ctx.n_requirements):
         if ctx.requirements[r].id in ctx.map_rid_r:
             raise ValueError(f"Duplicated requirement ID: {r.id}")
         ctx.map_rid_r[ctx.requirements[r].id] = r
+    # Map person ID to person index
+    ctx.map_pid_p = {}
+    for p in range(ctx.n_people):
+        if ctx.people[p].id in ctx.map_pid_p:
+            raise ValueError(f"Duplicated person ID: {ctx.people[p].id}")
+        ctx.map_pid_p[ctx.people[p].id] = p
 
     logging.debug("Initializing solver model...")
     ctx.model = cp_model.CpModel()

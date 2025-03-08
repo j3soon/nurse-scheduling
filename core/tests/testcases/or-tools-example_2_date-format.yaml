@@ -3,11 +3,16 @@ description: OR-Tools Example 2 with shift requests with various date format. Fr
 startdate: 2023-09-02
 enddate: 2023-09-08
 people:
-  - description: Nurse 0
-  - description: Nurse 1
-  - description: Nurse 2
-  - description: Nurse 3
-  - description: Nurse 4
+  - id: 0
+    description: Nurse 0
+  - id: 1
+    description: Nurse 1
+  - id: 2
+    description: Nurse 2
+  - id: 3
+    description: Nurse 3
+  - id: 4
+    description: Nurse 4
 requirements:
   - id: D
     description: Day shift requirement

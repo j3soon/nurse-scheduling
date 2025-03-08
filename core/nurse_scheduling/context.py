@@ -13,6 +13,7 @@ class Context:
         self.n_requirements = None
         self.n_people = None
         self.map_rid_r = None
+        self.map_pid_p = None
         self.model: cp_model.CpModel = None
         self.model_vars = None
         self.shifts = None

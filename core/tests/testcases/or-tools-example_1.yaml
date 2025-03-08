@@ -3,10 +3,14 @@ description: OR-Tools Example 1 with even shifts. From <https://developers.googl
 startdate: 2023-08-18
 enddate: 2023-08-20
 people:
-  - description: Nurse 0
-  - description: Nurse 1
-  - description: Nurse 2
-  - description: Nurse 3
+  - id: 0
+    description: Nurse 0
+  - id: 1
+    description: Nurse 1
+  - id: 2
+    description: Nurse 2
+  - id: 3
+    description: Nurse 3
 requirements:
   - id: D
     description: Day shift requirement

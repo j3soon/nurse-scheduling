@@ -3,7 +3,8 @@ description: Minimal Example 1
 startdate: 2023-08-18
 enddate: 2023-08-18
 people:
-  - description: n0
+  - id: 0
+    description: n0
 requirements:
   - id: D
     required_people: 1
