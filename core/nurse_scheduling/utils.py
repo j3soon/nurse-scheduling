@@ -84,3 +84,14 @@ def parse_dates(dates, startdate: datetime.date, enddate: datetime.date):
         else:
             parsed_dates.append(_parse_single_date(date_str, startdate, enddate))
     return parsed_dates
+
+def parse_pids(pids, map_pid_ps):
+    if isinstance(pids, list):
+        # Recursively parse each pid and combine results
+        parsed_lists = [parse_pids(pid, map_pid_ps) for pid in pids]
+        # Flatten and deduplicate
+        ps = list(set().union(*parsed_lists))
+        return ps
+    else:
+        # Single pid look up
+        return map_pid_ps[pids]

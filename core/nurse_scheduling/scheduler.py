@@ -23,6 +23,7 @@ def schedule(filepath: str, validate=True, deterministic=False):
     ctx.enddate = scenario.enddate
     ctx.requirements = scenario.requirements
     ctx.people = scenario.people
+    ctx.people_groups = scenario.people_groups if scenario.people_groups else []
     ctx.preferences = scenario.preferences
     del scenario
     ctx.n_days = (ctx.enddate - ctx.startdate).days + 1
@@ -37,11 +38,18 @@ def schedule(filepath: str, validate=True, deterministic=False):
             raise ValueError(f"Duplicated requirement ID: {r.id}")
         ctx.map_rid_r[ctx.requirements[r].id] = r
     # Map person ID to person index
-    ctx.map_pid_p = {}
+    ctx.map_pid_ps = {}
     for p in range(ctx.n_people):
-        if ctx.people[p].id in ctx.map_pid_p:
+        if ctx.people[p].id in ctx.map_pid_ps:
             raise ValueError(f"Duplicated person ID: {ctx.people[p].id}")
-        ctx.map_pid_p[ctx.people[p].id] = p
+        ctx.map_pid_ps[ctx.people[p].id] = [p]
+    # Map people group ID to list of person indices
+    for g in range(len(ctx.people_groups)):
+        group = ctx.people_groups[g]
+        if group.id in ctx.map_pid_ps:
+            raise ValueError(f"Duplicated people group (or person) ID: {group.id}")
+        # Flatten and deduplicate person indices for the group
+        ctx.map_pid_ps[group.id] = list(set().union(*[ctx.map_pid_ps[pid] for pid in group.people]))
 
     logging.debug("Initializing solver model...")
     ctx.model = cp_model.CpModel()

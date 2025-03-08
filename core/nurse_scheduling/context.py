@@ -7,13 +7,14 @@ class Context:
         self.enddate = None
         self.requirements = None
         self.people = None
+        self.people_groups = None
         self.preferences = None
         self.dates = None
         self.n_days = None
         self.n_requirements = None
         self.n_people = None
         self.map_rid_r = None
-        self.map_pid_p = None
+        self.map_pid_ps = None
         self.model: cp_model.CpModel = None
         self.model_vars = None
         self.shifts = None
