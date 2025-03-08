@@ -8,11 +8,11 @@ def all_requirements_fulfilled(ctx: Context, preference, preference_idx):
     # Hard constraint
     # For all shifts, the requirements (# of people) must be fulfilled.
     # Note that a shift is represented as (d, r)
-    # i.e., sum_{p}(shifts[(d, r, p)]) == required_n_people, for all (d, r)
+    # i.e., sum_{p}(shifts[(d, r, p)]) == required_num_people, for all (d, r)
     for (d, r), ps in ctx.map_dr_p.items():
         actual_n_people = sum(ctx.shifts[(d, r, p)] for p in ps)
-        required_n_people = utils.required_n_people(ctx.requirements[r])
-        ctx.model.Add(actual_n_people == required_n_people)
+        required_num_people = ctx.requirements[r].required_num_people
+        ctx.model.Add(actual_n_people == required_num_people)
 
 def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preference_idx):
     # Hard constraint
@@ -32,7 +32,7 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
     # where actual_n_shifts = sum_{(d, r)}(shifts[(d, r, p)])
     for p in range(ctx.n_people):
         actual_n_shifts = sum(ctx.shifts[(d, r, p)] for d, r in ctx.map_p_dr[p])
-        target_n_shifts = round(ctx.n_days * sum(requirement.required_people for requirement in ctx.requirements) / ctx.n_people)
+        target_n_shifts = round(ctx.n_days * sum(requirement.required_num_people for requirement in ctx.requirements) / ctx.n_people)
         unique_var_prefix = f"pref_{preference_idx}_p_{p}_"
 
         # Construct: L2 = (actual_n_shifts - target_n_shifts) ** 2

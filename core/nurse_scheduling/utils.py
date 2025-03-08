@@ -12,12 +12,6 @@ MAP_WEEKDAY_STR = [
     'sunday',
 ]
 
-def one_or_value(val):
-    return 1 if val is None else val
-
-def neg_one_or_value(val):
-    return -1 if val is None else val
-
 def ensure_list(val):
     if val is None:
         return []
@@ -25,11 +19,6 @@ def ensure_list(val):
 
 def is_workday(date: datetime.date) -> bool:
     raise NotImplementedError("is_workday is not implemented yet")
-
-def required_n_people(requirement):
-    if not isinstance(requirement.required_people, int):
-        raise NotImplementedError("required_people with type other than int is not supported yet")
-    return requirement.required_people
 
 def ortools_expression_to_bool_var(
         model, varname, true_expression, false_expression

@@ -16,13 +16,13 @@ people:
 requirements:
   - id: D
     description: Day shift requirement
-    required_people: 1
+    required_num_people: 1
   - id: E
     description: Evening shift requirement
-    required_people: 1
+    required_num_people: 1
   - id: N
     description: Night shift requirement
-    required_people: 1
+    required_num_people: 1
 preferences:
   - type: all requirements fulfilled
   - type: all people work at most one shift per day

@@ -2,8 +2,7 @@ import os
 from datetime import date
 from typing import Any, Dict, List
 
-from pydantic import Field, model_validator, ConfigDict
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, Field, model_validator
 from typing_extensions import Annotated, Self
 
 from ruamel.yaml import YAML
@@ -11,64 +10,46 @@ from ruamel.yaml import YAML
 yaml = YAML(typ='safe')
 
 # Base models
-@dataclass(kw_only=True)
-class Person:
-    model_config = ConfigDict(strict=True)
+class Person(BaseModel):
     id: int | str
     description: str | None = None
 
-@dataclass(kw_only=True)
-class PeopleGroup:
-    model_config = ConfigDict(strict=True)
+class PeopleGroup(BaseModel):
     id: int | str
     description: str | None = None
     people: List[int | str]  # Can reference person IDs or other group IDs
 
-@dataclass(kw_only=True)
-class Requirement:
-    model_config = ConfigDict(strict=True)
+class Requirement(BaseModel):
     id: int | str
     description: str | None = None
-    required_people: int
+    required_num_people: int
 
-@dataclass(kw_only=True)
-class BasePreference:
-    model_config = ConfigDict(strict=True)
+class BasePreference(BaseModel):
     type: str
 
-@dataclass(kw_only=True)
 class ShiftRequestPreference(BasePreference):
-    model_config = ConfigDict(strict=True)
     type: Annotated[str, Field(pattern="^shift request$")] = "shift request"
     person: (int | str) | List[int | str]  # Single person/group ID or list
     date: (int | str | date) | List[int | str | date]  # Single date or list of dates
     shift: str  # Can reference single requirement ID
     weight: int = Field(default=1)
 
-@dataclass(kw_only=True)
 class UnwantedPatternPreference(BasePreference):
-    model_config = ConfigDict(strict=True)
     type: Annotated[str, Field(pattern="^unwanted shift type successions$")] = "unwanted shift type successions"
     person: (int | str) | List[int | str]  # Single person/group ID or list
     pattern: List[str]  # List of requirement IDs
     weight: int = Field(default=-1)
 
-@dataclass(kw_only=True)
 class EvenShiftDistributionPreference(BasePreference):
-    model_config = ConfigDict(strict=True)
     type: Annotated[str, Field(pattern="^assign shifts evenly$")] = "assign shifts evenly"
     weight: int = Field(default=-1)
 
-@dataclass(kw_only=True)
 class GeneralPreference(BasePreference):
-    model_config = ConfigDict(strict=True)
     type: Annotated[str, Field(
         pattern="^(all requirements fulfilled|all people work at most one shift per day)$"
     )]
 
-@dataclass(kw_only=True)
-class NurseSchedulingData:
-    model_config = ConfigDict(strict=True)
+class NurseSchedulingData(BaseModel):
     apiVersion: str
     description: str | None = None
     startdate: date

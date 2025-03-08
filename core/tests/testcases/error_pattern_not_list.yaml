@@ -7,7 +7,7 @@ people:
     description: n0
 requirements:
   - id: D
-    required_people: 1
+    required_num_people: 1
 preferences:
   - type: all requirements fulfilled
   - type: all people work at most one shift per day

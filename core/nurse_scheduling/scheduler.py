@@ -1,14 +1,12 @@
 import itertools
 import logging
 from datetime import timedelta
-from typing import List
 
 from ortools.sat.python import cp_model
 
 from . import exporter, preference_types
 from .context import Context
 from .dataloader import load_data
-from .report import Report
 
 
 def schedule(filepath: str, deterministic=False):
@@ -18,13 +16,7 @@ def schedule(filepath: str, deterministic=False):
     logging.debug("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
-    ctx = Context()
-    ctx.startdate = scenario.startdate
-    ctx.enddate = scenario.enddate
-    ctx.requirements = scenario.requirements
-    ctx.people = scenario.people
-    ctx.people_groups = scenario.people_groups if scenario.people_groups else []
-    ctx.preferences = scenario.preferences
+    ctx = Context(**dict(scenario))
     del scenario
     ctx.n_days = (ctx.enddate - ctx.startdate).days + 1
     ctx.n_requirements = len(ctx.requirements)
@@ -32,11 +24,9 @@ def schedule(filepath: str, deterministic=False):
     ctx.dates = [ctx.startdate + timedelta(days=d) for d in range(ctx.n_days)]
 
     # Map requirement ID to requirement index
-    ctx.map_rid_r = {}
     for r in range(ctx.n_requirements):
         ctx.map_rid_r[ctx.requirements[r].id] = r
     # Map person ID to person index
-    ctx.map_pid_ps = {}
     for p in range(ctx.n_people):
         ctx.map_pid_ps[ctx.people[p].id] = [p]
     # Map people group ID to list of person indices
@@ -46,12 +36,6 @@ def schedule(filepath: str, deterministic=False):
         ctx.map_pid_ps[group.id] = list(set().union(*[ctx.map_pid_ps[pid] for pid in group.people]))
 
     logging.debug("Initializing solver model...")
-    ctx.model = cp_model.CpModel()
-    ctx.model_vars = {}
-    ctx.reports: List[Report] = []
-    ctx.shifts = {}
-    """A set of indicator variables that are 1 if and only if
-    a person (p) is assigned to a shift (d, r)."""
 
     logging.debug("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
@@ -87,8 +71,6 @@ def schedule(filepath: str, deterministic=False):
         p: {(d, r) for (d, r) in itertools.product(range(ctx.n_days), range(ctx.n_requirements)) if (d, r, p) in ctx.shifts}
         for p in range(ctx.n_people)
     }
-
-    ctx.objective = 0
 
     logging.debug("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences

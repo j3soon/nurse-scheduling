@@ -1,26 +1,40 @@
 from ortools.sat.python import cp_model
+from typing import Dict, List
+from datetime import date
+from pydantic import ConfigDict, Field
 
+from .dataloader import (
+    NurseSchedulingData,
+)
+from .report import Report
 
-class Context:
-    def __init__(self) -> None:
-        self.startdate = None
-        self.enddate = None
-        self.requirements = None
-        self.people = None
-        self.people_groups = None
-        self.preferences = None
-        self.dates = None
-        self.n_days = None
-        self.n_requirements = None
-        self.n_people = None
-        self.map_rid_r = None
-        self.map_pid_ps = None
-        self.model: cp_model.CpModel = None
-        self.model_vars = None
-        self.shifts = None
-        self.map_dr_p = None
-        self.map_dp_r = None
-        self.map_d_rp = None
-        self.map_r_dp = None
-        self.map_p_dr = None
-        self.objective = None
+class Context(NurseSchedulingData):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    # Computed fields
+    dates: List[date] = Field(default_factory=list)
+    n_days: int = None
+    n_requirements: int = None
+    n_people: int = None
+    
+    # Mapping fields
+    map_rid_r: Dict[str | int, int] = Field(default_factory=dict)
+    map_pid_ps: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps person/group ID to list of person indices
+    
+    # Solver-related fields
+    model: cp_model.CpModel = Field(default_factory=cp_model.CpModel)
+    model_vars: Dict[str, cp_model.IntVar] = Field(default_factory=dict)
+    shifts: Dict[tuple[int, int, int], cp_model.IntVar] = Field(default_factory=dict)
+    """A set of indicator variables that are 1 if and only if
+    a person (p) is assigned to a shift (d, r)."""
+    reports: List[Report] = Field(default_factory=list)
+    
+    # Lookup maps
+    map_dr_p: Dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, requirement) to set of people
+    map_dp_r: Dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, person) to set of requirements
+    map_d_rp: Dict[int, set[tuple[int, int]]] = Field(default_factory=dict)  # Maps day to set of (requirement, person) pairs
+    map_r_dp: Dict[int, set[tuple[int, int]]] = Field(default_factory=dict)  # Maps requirement to set of (day, person) pairs
+    map_p_dr: Dict[int, set[tuple[int, int]]] = Field(default_factory=dict)  # Maps person to set of (day, requirement) pairs
+    
+    # Optimization objective
+    objective: cp_model.LinearExpr = 0

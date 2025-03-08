@@ -1,7 +1,8 @@
 from dataclasses import dataclass
+from typing import Any, Callable
 
 @dataclass
 class Report:
     description: str
-    variable: 'typing.Any'
-    skip_condition: 'typing.Any' = lambda x: False
+    variable: Any
+    skip_condition: Callable[[Any], bool] = lambda x: False
