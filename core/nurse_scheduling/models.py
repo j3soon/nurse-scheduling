@@ -12,7 +12,7 @@ class Person(BaseModel):
 class PeopleGroup(BaseModel):
     id: int | str
     description: str | None = None
-    people: List[int | str]  # Can reference person IDs or other group IDs
+    members: List[int | str]  # Can reference person IDs or other group IDs
 
 class Requirement(BaseModel):
     id: int | str
@@ -22,7 +22,7 @@ class Requirement(BaseModel):
 class RequirementGroup(BaseModel):
     id: int | str
     description: str | None = None
-    requirements: List[int | str]  # Can reference requirement IDs or other group IDs
+    members: List[int | str]  # Can reference requirement IDs or other group IDs
 
 class BasePreference(BaseModel):
     type: str

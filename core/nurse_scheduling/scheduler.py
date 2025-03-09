@@ -30,7 +30,7 @@ def schedule(filepath: str, deterministic=False):
     for g in range(len(ctx.requirement_groups)):
         group = ctx.requirement_groups[g]
         # Flatten and deduplicate requirement indices for the group
-        ctx.map_rid_r[group.id] = list(set().union(*[ctx.map_rid_r[rid] for rid in group.requirements]))
+        ctx.map_rid_r[group.id] = list(set().union(*[ctx.map_rid_r[rid] for rid in group.members]))
     # Map person ID to person index
     for p in range(ctx.n_people):
         ctx.map_pid_p[ctx.people[p].id] = [p]
@@ -38,7 +38,7 @@ def schedule(filepath: str, deterministic=False):
     for g in range(len(ctx.people_groups)):
         group = ctx.people_groups[g]
         # Flatten and deduplicate person indices for the group
-        ctx.map_pid_p[group.id] = list(set().union(*[ctx.map_pid_p[pid] for pid in group.people]))
+        ctx.map_pid_p[group.id] = list(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
 
     logging.debug("Initializing solver model...")
 

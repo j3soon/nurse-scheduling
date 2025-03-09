@@ -24,7 +24,7 @@ requirements:
 requirement_groups:
   - id: late_shifts
     description: Evening and Night shifts
-    requirements: [E, N]
+    members: [E, N]
 preferences:
   - type: all requirements fulfilled
   - type: all people work at most one shift per day

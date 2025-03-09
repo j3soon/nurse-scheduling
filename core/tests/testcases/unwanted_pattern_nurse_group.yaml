@@ -14,7 +14,7 @@ people:
 people_groups:
   - id: n01
     description: Nurse 0 and 1
-    people: [0, 1]
+    members: [0, 1]
 requirements:
   - id: D
     description: Day shift requirement

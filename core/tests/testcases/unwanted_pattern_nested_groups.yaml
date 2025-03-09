@@ -14,13 +14,13 @@ people:
 people_groups:
   - id: n0
     description: Nurse 0
-    people: [0]
+    members: [0]
   - id: n1
     description: Nurse 1
-    people: [1]
+    members: [1]
   - id: n01
     description: Nurse 0 and 1
-    people: [n0, n1]
+    members: [n0, n1]
 requirements:
   - id: D
     description: Day shift requirement

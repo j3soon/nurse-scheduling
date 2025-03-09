@@ -24,13 +24,13 @@ requirements:
 requirement_groups:
   - id: evening_shifts
     description: Evening shifts
-    requirements: [E]
+    members: [E]
   - id: night_shifts
     description: Night shifts
-    requirements: [N]
+    members: [N]
   - id: late_shifts
     description: Evening and Night shifts
-    requirements: [evening_shifts, night_shifts]
+    members: [evening_shifts, night_shifts]
 preferences:
   - type: all requirements fulfilled
   - type: all people work at most one shift per day
