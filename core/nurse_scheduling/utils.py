@@ -74,13 +74,23 @@ def parse_dates(dates, startdate: datetime.date, enddate: datetime.date):
             parsed_dates.append(_parse_single_date(date_str, startdate, enddate))
     return parsed_dates
 
-def parse_pids(pids, map_pid_ps):
+def parse_pids(pids, map_pid_p):
     if isinstance(pids, list):
         # Recursively parse each pid and combine results
-        parsed_lists = [parse_pids(pid, map_pid_ps) for pid in pids]
+        parsed_lists = [parse_pids(pid, map_pid_p) for pid in pids]
         # Flatten and deduplicate
         ps = list(set().union(*parsed_lists))
         return ps
     else:
         # Single pid look up
-        return map_pid_ps[pids]
+        return map_pid_p[pids]
+
+def parse_rids(rids, map_rid_r):
+    if isinstance(rids, list):
+        # Recursively parse each rid and combine results
+        parsed_lists = [parse_rids(rid, map_rid_r) for rid in rids]
+        # Flatten and deduplicate
+        rs = list(set().union(*parsed_lists))
+        return rs
+    else:
+        return map_rid_r[rids]

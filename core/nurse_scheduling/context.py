@@ -18,8 +18,8 @@ class Context(NurseSchedulingData):
     n_people: int = None
     
     # Mapping fields
-    map_rid_r: Dict[str | int, int] = Field(default_factory=dict)
-    map_pid_ps: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps person/group ID to list of person indices
+    map_rid_r: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps requirement ID to list of requirement indices
+    map_pid_p: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps person/group ID to list of person indices
     
     # Solver-related fields
     model: cp_model.CpModel = Field(default_factory=cp_model.CpModel)

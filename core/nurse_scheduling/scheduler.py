@@ -25,15 +25,15 @@ def schedule(filepath: str, deterministic=False):
 
     # Map requirement ID to requirement index
     for r in range(ctx.n_requirements):
-        ctx.map_rid_r[ctx.requirements[r].id] = r
+        ctx.map_rid_r[ctx.requirements[r].id] = [r]
     # Map person ID to person index
     for p in range(ctx.n_people):
-        ctx.map_pid_ps[ctx.people[p].id] = [p]
+        ctx.map_pid_p[ctx.people[p].id] = [p]
     # Map people group ID to list of person indices
     for g in range(len(ctx.people_groups)):
         group = ctx.people_groups[g]
         # Flatten and deduplicate person indices for the group
-        ctx.map_pid_ps[group.id] = list(set().union(*[ctx.map_pid_ps[pid] for pid in group.people]))
+        ctx.map_pid_p[group.id] = list(set().union(*[ctx.map_pid_p[pid] for pid in group.people]))
 
     logging.debug("Initializing solver model...")
 

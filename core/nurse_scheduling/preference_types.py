@@ -1,3 +1,4 @@
+import itertools
 from . import utils
 from .context import Context
 from .report import Report
@@ -54,16 +55,17 @@ def shift_request(ctx: Context, preference, preference_idx):
     # For all people, try to fulfill the shift requests.
     # Note that a shift is represented as (d, r)
     # i.e., max(weight * shifts[(d, r, p)]), for all satisfying (d, r)
-    ps = utils.parse_pids(preference.person, ctx.map_pid_ps)
     dates = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
-    for p in ps:
-        for date in dates:
-            d = (date - ctx.startdate).days
-            r = ctx.map_rid_r[preference.shift]
-            # Add the objective
-            weight = preference.weight
-            ctx.objective += weight * ctx.shifts[(d, r, p)]
-            ctx.reports.append(Report(f"shift_request_p_{p}_d_{d}_r_{r}", ctx.shifts[(d, r, p)], lambda x: x == 1))
+    rs = utils.parse_rids(preference.shift, ctx.map_rid_r)
+    ps = utils.parse_pids(preference.person, ctx.map_pid_p)
+    for date in dates:
+        d = (date - ctx.startdate).days
+        for r in rs:
+            for p in ps:
+                # Add the objective
+                weight = preference.weight
+                ctx.objective += weight * ctx.shifts[(d, r, p)]
+                ctx.reports.append(Report(f"shift_request_d_{d}_r_{r}_p_{p}", ctx.shifts[(d, r, p)], lambda x: x == 1))
 
 def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # Soft constraint
@@ -71,33 +73,36 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # Note that a shift is represented as (d, r)
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
     # where actual_n_matched = sum_{(d, r)}(shifts[(d, r, p)]), for all satisfying (d, r)
-    ps = utils.parse_pids(preference.person, ctx.map_pid_ps)
+    ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     pattern = preference.pattern
     if not isinstance(pattern, list):
         raise ValueError(f"Pattern must be a list, but got {type(pattern)}")
     for p in ps:
         # TODO: Consider history
         for d_begin in range(ctx.n_days - len(pattern) + 1):
-            actual_n_matched = 0
+            # For each day and pattern, collect all matched shifts
+            match_shifts_in_day = [
+                [ctx.shifts[(d_begin+i, r, p)] for r in ctx.map_dp_r[(d_begin+i, p)]
+                if ctx.requirements[r].id == pattern[i]]
+                for i in range(len(pattern))
+            ]
             target_n_matched = len(pattern)
-            for i in range(len(pattern)):
-                d = d_begin + i
-                r = ctx.map_rid_r[pattern[i]]
-                actual_n_matched += ctx.shifts[(d, r, p)]
+            for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
+                assert len(seq) == len(pattern)
+                # Construct: is_match = (actual_n_matched == target_n_matched)
+                unique_var_prefix = f"unwanted_shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
+                is_match_var_name = f"{unique_var_prefix}_is_match"
+                actual_n_matched = sum(seq)
+                ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
+                    ctx.model, is_match_var_name,
+                    actual_n_matched == target_n_matched,
+                    actual_n_matched != target_n_matched
+                )
 
-            # Construct: is_match = (actual_n_matched == target_n_matched)
-            unique_var_prefix = f"pref_{preference_idx}_p_{p}_"
-            is_match_var_name = f"{unique_var_prefix}is_match"
-            ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
-                ctx.model, is_match_var_name,
-                actual_n_matched == target_n_matched,
-                actual_n_matched != target_n_matched
-            )
-
-            # Add the objective
-            weight = preference.weight
-            ctx.objective += weight * is_match
-            ctx.reports.append(Report(f"unwanted_shift_type_successions_p_{p}", is_match, lambda x: x != target_n_matched))
+                # Add the objective
+                weight = preference.weight
+                ctx.objective += weight * is_match
+                ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
 
 PREFERENCE_TYPES_TO_FUNC = {
     "all requirements fulfilled": all_requirements_fulfilled,

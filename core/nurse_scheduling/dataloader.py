@@ -31,7 +31,7 @@ class ShiftRequestPreference(BasePreference):
     type: Annotated[str, Field(pattern="^shift request$")] = "shift request"
     person: (int | str) | List[int | str]  # Single person/group ID or list
     date: (int | str | date) | List[int | str | date]  # Single date or list of dates
-    shift: str  # Can reference single requirement ID
+    shift: (str | List[str])  # Single requirement ID or list
     weight: int = Field(default=1)
 
 class UnwantedPatternPreference(BasePreference):
