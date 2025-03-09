@@ -5,12 +5,18 @@ enddate: 2023-08-18
 people:
   - id: 0
     description: n0
-requirements:
+shift_types:
   - id: D
-    required_num_people: 1
+    description: Day shift type
+  - id: E
+    description: Evening shift type
+  - id: N
+    description: Night shift type
 preferences:
-  - type: all requirements fulfilled
   - type: all people work at most one shift per day
+  - type: shift type requirement
+    shift_type: [D, E, N]
+    required_num_people: 1
   - type: unwanted shift type successions
     person: 0
     pattern: D

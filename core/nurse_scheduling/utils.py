@@ -79,26 +79,23 @@ def parse_dates(dates, startdate: datetime.date, enddate: datetime.date):
             parsed_dates.append(_parse_single_date(date_str, startdate, enddate))
     return parsed_dates
 
-def parse_pids(pids, map_pid_p):
-    if isinstance(pids, list):
-        # Recursively parse each pid and combine results
-        parsed_lists = [parse_pids(pid, map_pid_p) for pid in pids]
-        # Flatten and deduplicate
-        ps = list(set().union(*parsed_lists))
-        return ps
-    else:
-        # Single pid look up
-        return map_pid_p[pids]
+def parse_sids(sids, map_sid_s):
+    sids = ensure_list(sids)
+    result = []
+    for sid in sids:
+        if sid not in map_sid_s:
+            raise ValueError(f"Unknown shift type ID: {sid}")
+        result.extend(map_sid_s[sid])
+    return result
 
-def parse_rids(rids, map_rid_r):
-    if isinstance(rids, list):
-        # Recursively parse each rid and combine results
-        parsed_lists = [parse_rids(rid, map_rid_r) for rid in rids]
-        # Flatten and deduplicate
-        rs = list(set().union(*parsed_lists))
-        return rs
-    else:
-        return map_rid_r[rids]
+def parse_pids(pids, map_pid_p):
+    pids = ensure_list(pids)
+    result = []
+    for pid in pids:
+        if pid not in map_pid_p:
+            raise ValueError(f"Unknown person ID: {pid}")
+        result.extend(map_pid_p[pid])
+    return result
 
 def _load_yaml(filepath: str) -> Dict[str, Any]:
     if not os.path.isfile(filepath):

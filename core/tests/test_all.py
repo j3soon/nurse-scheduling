@@ -12,9 +12,14 @@ from pydantic import ValidationError
 current_dir = os.path.dirname(os.path.realpath(__file__))
 testcases_dir = f"{current_dir}/testcases"
 
+IGNORE_TESTS = []
+
 def test_all():
-    for filepath in glob.glob(f"{testcases_dir}/*.yaml"):
+    tests = glob.glob(f"{testcases_dir}/*.yaml")
+    for test_no, filepath in enumerate(tests):
         base_filepath = os.path.splitext(os.path.basename(filepath))[0]
+        if base_filepath in IGNORE_TESTS:
+            continue
         logging.info(f"Testing '{base_filepath}' ...")
         # If test should fail
         if os.path.isfile(f"{testcases_dir}/{base_filepath}.txt"):
@@ -40,4 +45,4 @@ def test_all():
             logging.debug(f"Actual CSV:\n{actual_csv}")
             logging.debug(f"Actual output:\n{df}")
             logging.debug(f"Expected output:\n{pandas.read_csv( io.StringIO(expected_csv), header=None, keep_default_na=False)}")
-            pytest.fail(f"Output mismatch for '{base_filepath}'")
+            pytest.fail(f"Output mismatch for '{base_filepath}' ({test_no}/{len(tests)})")

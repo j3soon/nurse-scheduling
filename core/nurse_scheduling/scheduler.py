@@ -19,18 +19,18 @@ def schedule(filepath: str, deterministic=False):
     ctx = Context(**dict(scenario))
     del scenario
     ctx.n_days = (ctx.enddate - ctx.startdate).days + 1
-    ctx.n_requirements = len(ctx.requirements)
+    ctx.n_shift_types = len(ctx.shift_types)
     ctx.n_people = len(ctx.people)
     ctx.dates = [ctx.startdate + timedelta(days=d) for d in range(ctx.n_days)]
 
-    # Map requirement ID to requirement index
-    for r in range(ctx.n_requirements):
-        ctx.map_rid_r[ctx.requirements[r].id] = [r]
-    # Map requirement group ID to list of requirement indices
-    for g in range(len(ctx.requirement_groups)):
-        group = ctx.requirement_groups[g]
-        # Flatten and deduplicate requirement indices for the group
-        ctx.map_rid_r[group.id] = list(set().union(*[ctx.map_rid_r[rid] for rid in group.members]))
+    # Map shift type ID to shift type index
+    for s in range(ctx.n_shift_types):
+        ctx.map_sid_s[ctx.shift_types[s].id] = [s]
+    # Map shift type group ID to list of shift type indices
+    for g in range(len(ctx.shift_type_groups)):
+        group = ctx.shift_type_groups[g]
+        # Flatten and deduplicate shift type indices for the group
+        ctx.map_sid_s[group.id] = list(set().union(*[ctx.map_sid_s[sid] for sid in group.members]))
     # Map person ID to person index
     for p in range(ctx.n_people):
         ctx.map_pid_p[ctx.people[p].id] = [p]
@@ -44,36 +44,36 @@ def schedule(filepath: str, deterministic=False):
 
     logging.debug("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
-    # In the following code, we always use the convention of (d, r, p)
-    # to represent the index of (day, requirement, person).
-    # The object will not be abbreviated as (d, r, p) to avoid confusion.
+    # In the following code, we always use the convention of (d, s, p)
+    # to represent the index of (day, shift_type, person).
+    # The object will not be abbreviated as (d, s, p) to avoid confusion.
     for d in range(ctx.n_days):
-        for r in range(ctx.n_requirements):
+        for s in range(ctx.n_shift_types):
             # TODO(Optimize): Skip if no people is required in that day
             for p in range(ctx.n_people):
-                # TODO(Optimize): Skip if the person does not qualify for the requirement
-                var_name = f"shift_d{d}_r{r}_p{p}"
-                ctx.model_vars[var_name] = ctx.shifts[(d, r, p)] = ctx.model.NewBoolVar(var_name)
+                # TODO(Optimize): Skip if the person does not qualify for the shift type
+                var_name = f"shift_d{d}_s{s}_p{p}"
+                ctx.model_vars[var_name] = ctx.shifts[(d, s, p)] = ctx.model.NewBoolVar(var_name)
 
     logging.debug("Creating maps for faster lookup...")
-    ctx.map_dr_p = {
-        (d, r): {p for p in range(ctx.n_people) if (d, r, p) in ctx.shifts}
-        for (d, r) in itertools.product(range(ctx.n_days), range(ctx.n_requirements))
+    ctx.map_ds_p = {
+        (d, s): {p for p in range(ctx.n_people) if (d, s, p) in ctx.shifts}
+        for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types))
     }
-    ctx.map_dp_r = {
-        (d, p): {r for r in range(ctx.n_requirements) if (d, r, p) in ctx.shifts}
+    ctx.map_dp_s = {
+        (d, p): {s for s in range(ctx.n_shift_types) if (d, s, p) in ctx.shifts}
         for (d, p) in itertools.product(range(ctx.n_days), range(ctx.n_people))
     }
-    ctx.map_d_rp = {
-        d: {(r, p) for (r, p) in itertools.product(range(ctx.n_requirements), range(ctx.n_people)) if (d, r, p) in ctx.shifts}
+    ctx.map_d_sp = {
+        d: {(s, p) for (s, p) in itertools.product(range(ctx.n_shift_types), range(ctx.n_people)) if (d, s, p) in ctx.shifts}
         for d in range(ctx.n_days)
     }
-    ctx.map_r_dp = {
-        r: {(d, p) for (d, p) in itertools.product(range(ctx.n_days), range(ctx.n_people)) if (d, r, p) in ctx.shifts}
-        for r in range(ctx.n_requirements)
+    ctx.map_s_dp = {
+        s: {(d, p) for (d, p) in itertools.product(range(ctx.n_days), range(ctx.n_people)) if (d, s, p) in ctx.shifts}
+        for s in range(ctx.n_shift_types)
     }
-    ctx.map_p_dr = {
-        p: {(d, r) for (d, r) in itertools.product(range(ctx.n_days), range(ctx.n_requirements)) if (d, r, p) in ctx.shifts}
+    ctx.map_p_ds = {
+        p: {(d, s) for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types)) if (d, s, p) in ctx.shifts}
         for p in range(ctx.n_people)
     }
 

@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Test unwanted pattern with multiple people and weights
+description: Tests unwanted shift patterns with weights
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:
@@ -11,19 +11,18 @@ people:
     description: Nurse 2
   - id: 3
     description: Nurse 3
-requirements:
+shift_types:
   - id: D
-    description: Day shift requirement
-    required_num_people: 1
+    description: Day shift type
   - id: E
-    description: Evening shift requirement
-    required_num_people: 1
+    description: Evening shift type
   - id: N
-    description: Night shift requirement
-    required_num_people: 1
+    description: Night shift type
 preferences:
-  - type: all requirements fulfilled
   - type: all people work at most one shift per day
+  - type: shift type requirement
+    shift_type: [D, E, N]
+    required_num_people: 1
   - type: unwanted shift type successions
     person: [0, 1]
     pattern: [N]

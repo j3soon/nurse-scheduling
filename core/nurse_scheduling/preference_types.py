@@ -5,35 +5,43 @@ from .report import Report
 
 # Leave most parsing to the caller, keep the function here simple.
 
-def all_requirements_fulfilled(ctx: Context, preference, preference_idx):
+def shift_type_requirements(ctx: Context, preference, preference_idx):
     # Hard constraint
-    # For all shifts, the requirements (# of people) must be fulfilled.
-    # Note that a shift is represented as (d, r)
-    # i.e., sum_{p}(shifts[(d, r, p)]) == required_num_people, for all (d, r)
-    for (d, r), ps in ctx.map_dr_p.items():
-        actual_n_people = sum(ctx.shifts[(d, r, p)] for p in ps)
-        required_num_people = ctx.requirements[r].required_num_people
-        ctx.model.Add(actual_n_people == required_num_people)
+    # For all shift types, the requirements (# of people) must be fulfilled.
+    # Note that a shift is represented as (d, s)
+    # i.e., sum_{p}(shifts[(d, s, p)]) == required_num_people, for all (d, s)
+    
+    ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
+    for d in range(ctx.n_days):
+        for s in ss:
+            ps = ctx.map_ds_p[(d, s)]
+            ctx.model.Add(sum(ctx.shifts[(d, s, p)] for p in ps) == preference.required_num_people)
 
 def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preference_idx):
     # Hard constraint
     # For all people, for all days, only work at most one shift.
-    # Note that a shift in day `d` can be represented as `r` instead of (d, r).
-    # i.e., sum_{r}(shifts[(d, r, p)]) <= 1, for all (d, p)
-    for (d, p), rs in ctx.map_dp_r.items():
-        actual_n_shifts = sum(ctx.shifts[(d, r, p)] for r in rs)
+    # Note that a shift in day `d` can be represented as `s` instead of (d, s).
+    # i.e., sum_{s}(shifts[(d, s, p)]) <= 1, for all (d, p)
+    for (d, p), ss in ctx.map_dp_s.items():
+        actual_n_shifts = sum(ctx.shifts[(d, s, p)] for s in ss)
         maximum_n_shifts = 1
         ctx.model.Add(actual_n_shifts <= maximum_n_shifts)
 
 def assign_shifts_evenly(ctx: Context, preference, preference_idx):
     # Soft constraint
     # For all people, try to spread the shifts evenly.
-    # Note that a shift is represented as (d, r)
+    # Note that a shift is represented as (d, s)
     # i.e., max(weight * (actual_n_shifts - target_n_shifts) ** 2), for all p,
-    # where actual_n_shifts = sum_{(d, r)}(shifts[(d, r, p)])
+    # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
+    total_shifts = 0
+    for pref in ctx.preferences:
+        if pref.type == "shift type requirement":
+            shift_types = utils.parse_sids(pref.shift_type, ctx.map_sid_s)
+            total_shifts += pref.required_num_people * len(shift_types) * ctx.n_days
+    
     for p in range(ctx.n_people):
-        actual_n_shifts = sum(ctx.shifts[(d, r, p)] for d, r in ctx.map_p_dr[p])
-        target_n_shifts = round(ctx.n_days * sum(requirement.required_num_people for requirement in ctx.requirements) / ctx.n_people)
+        actual_n_shifts = sum(ctx.shifts[(d, s, p)] for d, s in ctx.map_p_ds[p])
+        target_n_shifts = round(total_shifts / ctx.n_people)
         unique_var_prefix = f"pref_{preference_idx}_p_{p}_"
 
         # Construct: L2 = (actual_n_shifts - target_n_shifts) ** 2
@@ -53,26 +61,26 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
 def shift_request(ctx: Context, preference, preference_idx):
     # Soft constraint
     # For all people, try to fulfill the shift requests.
-    # Note that a shift is represented as (d, r)
-    # i.e., max(weight * shifts[(d, r, p)]), for all satisfying (d, r)
+    # Note that a shift is represented as (d, s)
+    # i.e., max(weight * shifts[(d, s, p)]), for all satisfying (d, s)
     dates = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
-    rs = utils.parse_rids(preference.shift, ctx.map_rid_r)
+    ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     for date in dates:
         d = (date - ctx.startdate).days
-        for r in rs:
+        for s in ss:
             for p in ps:
                 # Add the objective
                 weight = preference.weight
-                ctx.objective += weight * ctx.shifts[(d, r, p)]
-                ctx.reports.append(Report(f"shift_request_d_{d}_r_{r}_p_{p}", ctx.shifts[(d, r, p)], lambda x: x == 1))
+                ctx.objective += weight * ctx.shifts[(d, s, p)]
+                ctx.reports.append(Report(f"shift_request_d_{d}_s_{s}_p_{p}", ctx.shifts[(d, s, p)], lambda x: x == 1))
 
 def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # Soft constraint
     # For all people, for all start date, try to avoid unwanted shift type successions.
-    # Note that a shift is represented as (d, r)
+    # Note that a shift is represented as (d, s)
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
-    # where actual_n_matched = sum_{(d, r)}(shifts[(d, r, p)]), for all satisfying (d, r)
+    # where actual_n_matched = sum_{(d, s)}(shifts[(d, s, p)]), for all satisfying (d, s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     pattern = preference.pattern
     if not isinstance(pattern, list):
@@ -82,8 +90,8 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
         for d_begin in range(ctx.n_days - len(pattern) + 1):
             # For each day and pattern, collect all matched shifts
             match_shifts_in_day = [
-                [ctx.shifts[(d_begin+i, r, p)] for r in ctx.map_dp_r[(d_begin+i, p)]
-                if ctx.requirements[r].id == pattern[i]]
+                [ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)]
+                if ctx.shift_types[s].id == pattern[i]]
                 for i in range(len(pattern))
             ]
             target_n_matched = len(pattern)
@@ -105,7 +113,7 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
                 ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
 
 PREFERENCE_TYPES_TO_FUNC = {
-    "all requirements fulfilled": all_requirements_fulfilled,
+    "shift type requirement": shift_type_requirements,
     "all people work at most one shift per day": all_people_work_at_most_one_shift_per_day,
     "assign shifts evenly": assign_shifts_evenly,
     "shift request": shift_request,

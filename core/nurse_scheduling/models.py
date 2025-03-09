@@ -14,15 +14,14 @@ class PeopleGroup(BaseModel):
     description: str | None = None
     members: List[int | str]  # Can reference person IDs or other group IDs
 
-class Requirement(BaseModel):
+class ShiftType(BaseModel):
     id: int | str
     description: str | None = None
-    required_num_people: int
 
-class RequirementGroup(BaseModel):
+class ShiftTypeGroup(BaseModel):
     id: int | str
     description: str | None = None
-    members: List[int | str]  # Can reference requirement IDs or other group IDs
+    members: List[int | str]  # Can reference shift type IDs or other group IDs
 
 class BasePreference(BaseModel):
     type: str
@@ -31,23 +30,26 @@ class ShiftRequestPreference(BasePreference):
     type: Annotated[str, Field(pattern="^shift request$")] = "shift request"
     person: (int | str) | List[int | str]  # Single person/group ID or list
     date: (int | str | date) | List[int | str | date]  # Single date or list of dates
-    shift: (str | List[str])  # Single requirement ID or list
+    shift_type: (str | List[str])  # Single shift type ID or list
     weight: int = Field(default=1)
 
 class UnwantedPatternPreference(BasePreference):
     type: Annotated[str, Field(pattern="^unwanted shift type successions$")] = "unwanted shift type successions"
     person: (int | str) | List[int | str]  # Single person/group ID or list
-    pattern: List[str]  # List of requirement IDs
+    pattern: List[str]  # List of shift type IDs
     weight: int = Field(default=-1)
 
 class EvenShiftDistributionPreference(BasePreference):
     type: Annotated[str, Field(pattern="^assign shifts evenly$")] = "assign shifts evenly"
     weight: int = Field(default=-1)
 
-class GeneralPreference(BasePreference):
-    type: Annotated[str, Field(
-        pattern="^(all requirements fulfilled|all people work at most one shift per day)$"
-    )]
+class MaxOneShiftPerDayPreference(BasePreference):
+    type: Annotated[str, Field(pattern="^all people work at most one shift per day$")] = "all people work at most one shift per day"
+
+class ShiftTypeRequirementsPreference(BasePreference):
+    type: Annotated[str, Field(pattern="^shift type requirement$")] = "shift type requirement"
+    shift_type: (str | List[str])  # Single shift type ID or list of shift type IDs
+    required_num_people: int
 
 class NurseSchedulingData(BaseModel):
     apiVersion: str
@@ -55,15 +57,15 @@ class NurseSchedulingData(BaseModel):
     startdate: date
     enddate: date
     people: List[Person]
-    requirements: List[Requirement]
-    preferences: List[GeneralPreference | ShiftRequestPreference | UnwantedPatternPreference | EvenShiftDistributionPreference]
+    shift_types: List[ShiftType]
+    preferences: List[MaxOneShiftPerDayPreference | ShiftRequestPreference | UnwantedPatternPreference | EvenShiftDistributionPreference | ShiftTypeRequirementsPreference]
     people_groups: List[PeopleGroup] = Field(default_factory=list)
-    requirement_groups: List[RequirementGroup] = Field(default_factory=list)
+    shift_type_groups: List[ShiftTypeGroup] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_model(self) -> Self:
         # Validate preferences
-        required_prefs = {"all requirements fulfilled", "all people work at most one shift per day"}
+        required_prefs = {"all people work at most one shift per day"}
         found_prefs = {pref.type for pref in self.preferences}
         missing = required_prefs - found_prefs
         if missing:
@@ -74,16 +76,16 @@ class NurseSchedulingData(BaseModel):
             raise ValueError('enddate must be after or equal to startdate')
             
         # Validate duplicate IDs
-        requirement_and_group_ids = set()
-        for req in self.requirements:
-            if req.id in requirement_and_group_ids:
-                raise ValueError(f"Duplicated requirement ID: {req.id}")
-            requirement_and_group_ids.add(req.id)
+        shift_type_and_group_ids = set()
+        for shift_type in self.shift_types:
+            if shift_type.id in shift_type_and_group_ids:
+                raise ValueError(f"Duplicated shift type ID: {shift_type.id}")
+            shift_type_and_group_ids.add(shift_type.id)
 
-        for group in self.requirement_groups:
-            if group.id in requirement_and_group_ids:
-                raise ValueError(f"Duplicated requirement group (or requirement) ID: {group.id}")
-            requirement_and_group_ids.add(group.id)
+        for group in self.shift_type_groups:
+            if group.id in shift_type_and_group_ids:
+                raise ValueError(f"Duplicated shift type group (or shift type) ID: {group.id}")
+            shift_type_and_group_ids.add(group.id)
 
         person_and_group_ids = set()
         for person in self.people:

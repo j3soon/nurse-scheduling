@@ -13,74 +13,73 @@ people:
     description: Nurse 3
   - id: 4
     description: Nurse 4
-requirements:
+shift_types:
   - id: D
-    description: Day shift requirement
-    required_num_people: 1
+    description: Day shift type
   - id: E
-    description: Evening shift requirement
-    required_num_people: 1
+    description: Evening shift type
   - id: N
-    description: Night shift requirement
-    required_num_people: 1
+    description: Night shift type
 preferences:
-  - type: all requirements fulfilled
   - type: all people work at most one shift per day
+  - type: shift type requirement
+    shift_type: [D, E, N]
+    required_num_people: 1
   - type: assign shifts evenly
   # Person 0
   - type: shift request
     person: 0
     date: [2, 6, 8]
-    shift: N
+    shift_type: N
   - type: shift request
     person: 0
     date: 7
-    shift: E
+    shift_type: E
   # Person 1
   - type: shift request
     person: 1
     date: 6
-    shift: D
+    shift_type: D
   - type: shift request
     person: 1
     date: [4, 5]
-    shift: E
+    shift_type: E
   - type: shift request
     person: 1
     date: 8
-    shift: N
+    shift_type: N
   # Person 2
   - type: shift request
     person: 2
     date: 5
-    shift: D
+    shift_type: D
   - type: shift request
     person: 2
     date: [2, 3, 7]
-    shift: E
+    shift_type: E
   # Person 3
   - type: shift request
     person: 3
     date: [4, 7]
-    shift: D
+    shift_type: D
   - type: shift request
     person: 3
     date: 5
-    shift: E
+    shift_type: E
   - type: shift request
     person: 3
     date: 2
-    shift: N
+    shift_type: N
   # Person 4
   - type: shift request
     person: 4
     date: 6
-    shift: D
+    shift_type: D
   - type: shift request
     person: 4
     date: [4, 7]
-    shift: E
+    shift_type: E
   - type: shift request
     person: 4
     date: 3
-    shift: N
+    shift_type: N

@@ -26,10 +26,10 @@ def get_people_versus_date_dataframe(ctx: Context, solver):
         df.iloc[n_leading_rows+p, 0] = person.description
 
     # Set cell values based on solver results
-    for (d, r, p) in ctx.shifts.keys():
-        if solver.Value(ctx.shifts[(d, r, p)]) == 1:
+    for (d, s, p) in ctx.shifts.keys():
+        if solver.Value(ctx.shifts[(d, s, p)]) == 1:
             assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
-            df.iloc[n_leading_rows+p, n_leading_cols+d] = ctx.requirements[r].id
+            df.iloc[n_leading_rows+p, n_leading_cols+d] = ctx.shift_types[s].id
 
     # Fill objective value
     df.iloc[n_leading_rows + len(ctx.people), 0] = "Score"
