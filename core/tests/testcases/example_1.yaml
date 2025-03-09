@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Simple Example 1
+description: Basic nurse scheduling test with 4 nurses and 3 shift types (Day, Evening, Night)
 startdate: 2023-08-18
 enddate: 2023-08-20
 people:

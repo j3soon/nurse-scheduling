@@ -1,4 +1,5 @@
 apiVersion: alpha
+description: Tests minimal valid configuration with single nurse and one day shift requirement for one day
 startdate: 2023-08-18
 enddate: 2023-08-18
 people:

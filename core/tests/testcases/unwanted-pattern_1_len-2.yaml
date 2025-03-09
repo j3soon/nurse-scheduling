@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Test unwanted pattern with length 2 constraints
+description: Tests restrictions on two consecutive night shifts for a single nurse using unwanted pattern succession
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:

@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: OR-Tools Example 2 with shift requests. From <https://developers.google.com/optimization/scheduling/employee_scheduling>.
+description: Tests scheduling with 5 nurses and multiple shift requests per nurse based on OR-Tools example 2 from <https://developers.google.com/optimization/scheduling/employee_scheduling>.
 startdate: 2023-09-01
 enddate: 2023-09-07
 people:

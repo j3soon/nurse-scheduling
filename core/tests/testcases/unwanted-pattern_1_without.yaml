@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Test unwanted pattern without constraints
+description: Tests baseline scheduling without any unwanted pattern constraints to verify basic functionality
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:

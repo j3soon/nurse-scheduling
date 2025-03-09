@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Test unwanted pattern with length 1 constraints
+description: Tests single shift pattern restrictions for avoiding specific shift types (Night shift)
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:

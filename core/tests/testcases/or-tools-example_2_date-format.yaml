@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: OR-Tools Example 2 with shift requests with various date format. From <https://developers.google.com/optimization/scheduling/employee_scheduling>.
+description: Tests scheduling with various date format inputs (YYYY-MM-DD, MM-DD, and D) based on OR-Tools example 2 with shift requests with various date format from <https://developers.google.com/optimization/scheduling/employee_scheduling>.
 startdate: 2023-09-02
 enddate: 2023-09-08
 people:

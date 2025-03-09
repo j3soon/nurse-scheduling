@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: OR-Tools Example 1 with even shifts. From <https://developers.google.com/optimization/scheduling/employee_scheduling>.
+description: Tests even shift distribution optimization with high negative weight based on OR-Tools example 1 from <https://developers.google.com/optimization/scheduling/employee_scheduling>.
 startdate: 2023-08-18
 enddate: 2023-08-20
 people:
