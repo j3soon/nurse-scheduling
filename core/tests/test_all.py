@@ -13,6 +13,7 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 testcases_dir = f"{current_dir}/testcases"
 
 IGNORE_TESTS = []
+WRITE_TO_CSV = False
 
 def test_all():
     tests = glob.glob(f"{testcases_dir}/*.yaml")
@@ -41,6 +42,10 @@ def test_all():
             logging.debug(f"Validation error for '{base_filepath}': {e}")
             pytest.fail(f"Validation error for '{base_filepath}'")
         actual_csv = df.to_csv(index=False, header=False)
+        if WRITE_TO_CSV:
+            with open(f"{testcases_dir}/{base_filepath}.csv", 'w') as f:
+                f.write(actual_csv)
+            expected_csv = actual_csv
         if actual_csv != expected_csv:
             logging.debug(f"Actual CSV:\n{actual_csv}")
             logging.debug(f"Actual output:\n{df}")

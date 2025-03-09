@@ -100,12 +100,17 @@ def schedule(filepath: str, deterministic=False):
         """Print intermediate solutions."""
         def __init__(self):
             cp_model.CpSolverSolutionCallback.__init__(self)
-            self.solution_count = 0
+            self.n_solutions = 0
+            self.best_score = float("-inf")
 
         def on_solution_callback(self):
-            self.solution_count += 1
-            logging.debug(f"# of solutions found: {self.solution_count}")
-            logging.debug(f"current score: {self.Value(ctx.objective)}")
+            current_score = self.Value(ctx.objective)
+            self.n_solutions += 1
+            if current_score > self.best_score:
+                self.best_score = current_score
+                self.n_solutions = 1
+            logging.debug(f"# of (best) solutions found: {self.n_solutions}")
+            logging.debug(f"current score: {current_score}")
     solution_printer = PartialSolutionPrinter()
 
     logging.debug("Solving and showing partial results...")
@@ -127,6 +132,7 @@ def schedule(filepath: str, deterministic=False):
         logging.debug(ctx.model.Validate())
     else:
         logging.debug("No solution found!")
+    ctx.solver_status = solver.StatusName(status)
 
     logging.debug("Statistics:")
     logging.debug(f"  - conflicts: {solver.NumConflicts()}")

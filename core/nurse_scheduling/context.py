@@ -21,13 +21,16 @@ class Context(NurseSchedulingData):
     map_sid_s: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps shift type ID to list of shift type indices
     map_pid_p: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps person/group ID to list of person indices
     
-    # Solver-related fields
+    # Fields used by the CP-SAT solver
     model: cp_model.CpModel = Field(default_factory=cp_model.CpModel)
     model_vars: Dict[str, cp_model.IntVar] = Field(default_factory=dict)
     shifts: Dict[tuple[int, int, int], cp_model.IntVar] = Field(default_factory=dict)
     """A set of indicator variables that are 1 if and only if
     a person (p) is assigned to a shift type (s) on day (d)."""
+
+    # Results and reporting
     reports: List[Report] = Field(default_factory=list)
+    solver_status: str | None = None
     
     # Lookup maps
     map_ds_p: Dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, shift_type) to set of people

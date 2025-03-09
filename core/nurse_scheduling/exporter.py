@@ -1,12 +1,13 @@
 import pandas as pd
+from ortools.sat.python import cp_model
 
 from .context import Context
 
 
-def get_people_versus_date_dataframe(ctx: Context, solver):
+def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
     # Initialize dataframe with size including leading rows and columns
     n_leading_rows, n_leading_cols = 2, 1
-    n_trailing_rows, n_trailing_cols = 1, 0
+    n_trailing_rows, n_trailing_cols = 2, 0
     df = pd.DataFrame(
         "",
         index=range(n_leading_rows + len(ctx.people) + n_trailing_rows),
@@ -33,6 +34,9 @@ def get_people_versus_date_dataframe(ctx: Context, solver):
 
     # Fill objective value
     df.iloc[n_leading_rows + len(ctx.people), 0] = "Score"
-    df.iloc[n_leading_rows + len(ctx.people), 1] = solver.Value(ctx.objective)
+    df.iloc[n_leading_rows + len(ctx.people), 1] = solver.Value(ctx.objective) # or solver.ObjectiveValue()
+    # Fill solver status
+    df.iloc[n_leading_rows + len(ctx.people) + 1, 0] = "Status"
+    df.iloc[n_leading_rows + len(ctx.people) + 1, 1] = ctx.solver_status
 
     return df
