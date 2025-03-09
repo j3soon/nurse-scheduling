@@ -1,13 +1,8 @@
-import os
 from datetime import date
 from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field, model_validator
 from typing_extensions import Annotated, Self
-
-from ruamel.yaml import YAML
-
-yaml = YAML(typ='safe')
 
 # Base models
 class Person(BaseModel):
@@ -90,25 +85,4 @@ class NurseSchedulingData(BaseModel):
                 raise ValueError(f"Duplicated people group (or person) ID: {group.id}")
             person_and_group_ids.add(group.id)
             
-        return self
-
-def _load_yaml(filepath: str) -> Dict[str, Any]:
-    if not os.path.isfile(filepath):
-        raise FileNotFoundError(f"File {filepath} should exist")
-    with open(filepath, "r") as r:
-        # Use ruamel.yaml instead of PyYAML to support YAML 1.2
-        # This avoids the auto-conversion of special strings such as
-        # `Off` into boolean value `False`.
-        return yaml.load(r)
-
-def load_data(filepath: str) -> NurseSchedulingData:
-    """Load nurse scheduling data from a YAML file.
-    
-    Args:
-        filepath: Path to the YAML file
-    
-    Returns:
-        NurseSchedulingData: The validated scheduling data
-    """
-    data = _load_yaml(filepath)
-    return NurseSchedulingData(**data)
+        return self 

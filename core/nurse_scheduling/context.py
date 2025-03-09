@@ -3,7 +3,7 @@ from typing import Dict, List
 from datetime import date
 from pydantic import ConfigDict, Field
 
-from .dataloader import (
+from .models import (
     NurseSchedulingData,
 )
 from .report import Report

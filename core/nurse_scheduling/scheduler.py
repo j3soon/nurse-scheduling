@@ -6,7 +6,7 @@ from ortools.sat.python import cp_model
 
 from . import exporter, preference_types
 from .context import Context
-from .dataloader import load_data
+from .utils import load_data
 
 
 def schedule(filepath: str, deterministic=False):
