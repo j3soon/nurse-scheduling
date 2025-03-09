@@ -26,6 +26,11 @@ def schedule(filepath: str, deterministic=False):
     # Map requirement ID to requirement index
     for r in range(ctx.n_requirements):
         ctx.map_rid_r[ctx.requirements[r].id] = [r]
+    # Map requirement group ID to list of requirement indices
+    for g in range(len(ctx.requirement_groups)):
+        group = ctx.requirement_groups[g]
+        # Flatten and deduplicate requirement indices for the group
+        ctx.map_rid_r[group.id] = list(set().union(*[ctx.map_rid_r[rid] for rid in group.requirements]))
     # Map person ID to person index
     for p in range(ctx.n_people):
         ctx.map_pid_p[ctx.people[p].id] = [p]

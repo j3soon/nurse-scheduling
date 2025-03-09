@@ -19,6 +19,11 @@ class Requirement(BaseModel):
     description: str | None = None
     required_num_people: int
 
+class RequirementGroup(BaseModel):
+    id: int | str
+    description: str | None = None
+    requirements: List[int | str]  # Can reference requirement IDs or other group IDs
+
 class BasePreference(BaseModel):
     type: str
 
@@ -53,6 +58,7 @@ class NurseSchedulingData(BaseModel):
     requirements: List[Requirement]
     preferences: List[GeneralPreference | ShiftRequestPreference | UnwantedPatternPreference | EvenShiftDistributionPreference]
     people_groups: List[PeopleGroup] = Field(default_factory=list)
+    requirement_groups: List[RequirementGroup] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_model(self) -> Self:
@@ -68,11 +74,16 @@ class NurseSchedulingData(BaseModel):
             raise ValueError('enddate must be after or equal to startdate')
             
         # Validate duplicate IDs
-        requirement_ids = set()
+        requirement_and_group_ids = set()
         for req in self.requirements:
-            if req.id in requirement_ids:
+            if req.id in requirement_and_group_ids:
                 raise ValueError(f"Duplicated requirement ID: {req.id}")
-            requirement_ids.add(req.id)
+            requirement_and_group_ids.add(req.id)
+
+        for group in self.requirement_groups:
+            if group.id in requirement_and_group_ids:
+                raise ValueError(f"Duplicated requirement group (or requirement) ID: {group.id}")
+            requirement_and_group_ids.add(group.id)
 
         person_and_group_ids = set()
         for person in self.people:
