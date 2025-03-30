@@ -15,16 +15,31 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
     for d in range(ctx.n_days):
         for s in ss:
             # Get the set of people who can work this shift
+            qualified_ps = ctx.map_ds_p[(d, s)]
             if preference.qualified_people is not None:
                 # If qualified_people is specified, only allow those people to work the shift
                 qualified_ps = utils.parse_pids(preference.qualified_people, ctx.map_pid_p)
-                ps = {p for p in ctx.map_ds_p[(d, s)] if p in qualified_ps}
-            else:
-                # Otherwise, allow all people who can work this shift
-                ps = ctx.map_ds_p[(d, s)]
+            ps = {p for p in ctx.map_ds_p[(d, s)] if p in qualified_ps}
             
             # Add constraint that exactly required_num_people must be assigned from the qualified people
-            ctx.model.Add(sum(ctx.shifts[(d, s, p)] for p in ps) == preference.required_num_people)
+            actual_n_people = sum(ctx.shifts[(d, s, p)] for p in ps)
+            if preference.preferred_num_people is not None:
+                ctx.model.Add(actual_n_people >= preference.preferred_num_people)
+            else:
+                ctx.model.Add(actual_n_people == preference.required_num_people)
+
+            # Add soft constraint for preferred number of people if specified
+            if preference.preferred_num_people is not None:
+                ctx.model.Add(actual_n_people <= preference.preferred_num_people)
+                # Create a variable to track the difference between actual and preferred number of people
+                diff_var_name = f"pref_{preference_idx}_d_{d}_s_{s}_diff"
+                ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, preference.preferred_num_people, diff_var_name)
+                ctx.model.add_abs_equality(diff, preference.preferred_num_people - actual_n_people)
+                
+                # Add the objective
+                weight = preference.weight
+                ctx.objective += weight * diff
+                ctx.reports.append(Report(f"shift_type_requirements_diff_d_{d}_s_{s}", diff, lambda x: x == 0))
 
 def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preference_idx):
     # Hard constraint

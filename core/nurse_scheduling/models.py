@@ -51,6 +51,8 @@ class ShiftTypeRequirementsPreference(BasePreference):
     shift_type: (str | List[str])  # Single shift type ID or list of shift type IDs
     required_num_people: int
     qualified_people: List[int | str] | None = None  # List of person IDs who are qualified for these shift types
+    preferred_num_people: int | None = None  # Preferred number of people for each shift type
+    weight: int = Field(default=-1)
 
 class NurseSchedulingData(BaseModel):
     apiVersion: str
