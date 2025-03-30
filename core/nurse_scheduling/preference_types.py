@@ -11,8 +11,11 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
     # Note that a shift is represented as (d, s)
     # i.e., sum_{p}(shifts[(d, s, p)]) == required_num_people, for all (d, s)
     
+    ds = range(ctx.n_days)
+    if preference.date is not None:
+        ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
     ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
-    for d in range(ctx.n_days):
+    for d in ds:
         for s in ss:
             # Get the set of people who can work this shift
             qualified_ps = ctx.map_ds_p[(d, s)]
@@ -39,7 +42,7 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
                 # Add the objective
                 weight = preference.weight
                 ctx.objective += weight * diff
-                ctx.reports.append(Report(f"shift_type_requirements_diff_d_{d}_s_{s}", diff, lambda x: x == 0))
+                ctx.reports.append(Report(f"shift_type_requirements_{diff_var_name}", diff, lambda x: x == 0))
 
 def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preference_idx):
     # Hard constraint
@@ -80,24 +83,23 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
         # Add the objective
         weight = preference.weight
         ctx.objective += weight * L2
-        ctx.reports.append(Report(f"assign_shifts_evenly_L2_p_{p}", L2, lambda x: x == 0))
+        ctx.reports.append(Report(f"assign_shifts_evenly_{L2_var_name}", L2, lambda x: x == 0))
 
 def shift_request(ctx: Context, preference, preference_idx):
     # Soft constraint
     # For all people, try to fulfill the shift requests.
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * shifts[(d, s, p)]), for all satisfying (d, s)
-    dates = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
+    ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
     ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    for date in dates:
-        d = (date - ctx.startdate).days
+    for d in ds:
         for s in ss:
             for p in ps:
                 # Add the objective
                 weight = preference.weight
                 ctx.objective += weight * ctx.shifts[(d, s, p)]
-                ctx.reports.append(Report(f"shift_request_d_{d}_s_{s}_p_{p}", ctx.shifts[(d, s, p)], lambda x: x == 1))
+                ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}", ctx.shifts[(d, s, p)], lambda x: x == 1))
 
 def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # Soft constraint

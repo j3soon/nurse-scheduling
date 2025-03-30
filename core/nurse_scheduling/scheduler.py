@@ -140,7 +140,10 @@ def schedule(filepath: str, deterministic=False):
     logging.debug(f"  - wall time: {solver.WallTime()}s")
     logging.debug("Variables:")
     for k, v in ctx.model_vars.items():
-        logging.debug(f"  - {k}: {solver.Value(v)}")
+        try:
+            logging.debug(f"  - {k}: {solver.Value(v)}")
+        except Exception as e:
+            logging.debug(f"  - {k}: [Error: {e}]")
     logging.debug("Reports:")
     for report in ctx.reports:
         val = solver.Value(report.variable)
@@ -151,6 +154,9 @@ def schedule(filepath: str, deterministic=False):
     logging.debug(f"Done.")
 
     if not found:
+        return None
+
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return None
 
     df = exporter.get_people_versus_date_dataframe(ctx, solver)

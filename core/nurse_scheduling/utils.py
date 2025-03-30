@@ -77,7 +77,14 @@ def parse_dates(dates, startdate: datetime.date, enddate: datetime.date):
             ]
         else:
             parsed_dates.append(_parse_single_date(date_str, startdate, enddate))
-    return parsed_dates
+
+    result = []
+    for date in parsed_dates:
+        if date < startdate or date > enddate:
+            raise ValueError(f"Date '{date}' is out of the range of start date and end date.")
+        result.append((date - startdate).days)
+
+    return result
 
 def parse_sids(sids, map_sid_s):
     sids = ensure_list(sids)

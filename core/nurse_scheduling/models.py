@@ -1,4 +1,4 @@
-from datetime import date
+import datetime
 from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field, model_validator
@@ -29,7 +29,7 @@ class BasePreference(BaseModel):
 class ShiftRequestPreference(BasePreference):
     type: Annotated[str, Field(pattern="^shift request$")] = "shift request"
     person: (int | str) | List[int | str]  # Single person/group ID or list
-    date: (int | str | date) | List[int | str | date]  # Single date or list of dates
+    date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     shift_type: (str | List[str])  # Single shift type ID or list
     weight: int = Field(default=1)
 
@@ -52,13 +52,14 @@ class ShiftTypeRequirementsPreference(BasePreference):
     required_num_people: int
     qualified_people: List[int | str] | None = None  # List of person IDs who are qualified for these shift types
     preferred_num_people: int | None = None  # Preferred number of people for each shift type
+    date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
     weight: int = Field(default=-1)
 
 class NurseSchedulingData(BaseModel):
     apiVersion: str
     description: str | None = None
-    startdate: date
-    enddate: date
+    startdate: datetime.date
+    enddate: datetime.date
     people: List[Person]
     shift_types: List[ShiftType]
     preferences: List[MaxOneShiftPerDayPreference | ShiftRequestPreference | UnwantedPatternPreference | EvenShiftDistributionPreference | ShiftTypeRequirementsPreference]
