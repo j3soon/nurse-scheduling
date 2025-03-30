@@ -14,7 +14,16 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
     ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
     for d in range(ctx.n_days):
         for s in ss:
-            ps = ctx.map_ds_p[(d, s)]
+            # Get the set of people who can work this shift
+            if preference.qualified_people is not None:
+                # If qualified_people is specified, only allow those people to work the shift
+                qualified_ps = utils.parse_pids(preference.qualified_people, ctx.map_pid_p)
+                ps = {p for p in ctx.map_ds_p[(d, s)] if p in qualified_ps}
+            else:
+                # Otherwise, allow all people who can work this shift
+                ps = ctx.map_ds_p[(d, s)]
+            
+            # Add constraint that exactly required_num_people must be assigned from the qualified people
             ctx.model.Add(sum(ctx.shifts[(d, s, p)] for p in ps) == preference.required_num_people)
 
 def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preference_idx):

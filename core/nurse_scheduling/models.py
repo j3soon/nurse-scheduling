@@ -50,6 +50,7 @@ class ShiftTypeRequirementsPreference(BasePreference):
     type: Annotated[str, Field(pattern="^shift type requirement$")] = "shift type requirement"
     shift_type: (str | List[str])  # Single shift type ID or list of shift type IDs
     required_num_people: int
+    qualified_people: List[int | str] | None = None  # List of person IDs who are qualified for these shift types
 
 class NurseSchedulingData(BaseModel):
     apiVersion: str
