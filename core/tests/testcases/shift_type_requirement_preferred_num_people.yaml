@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Tests shift requests using date range notation (18~24) for multiple nurses with negative weight preferences
+description: Tests shift type requirements with both required (1) and preferred (2) number of people for all shift types (Day, Evening, Night)
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:

@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Tests shift requests using date range notation (18~24) for multiple nurses with negative weight preferences
+description: Tests shift type requirements with specific date ranges, requiring one charting shift (A) from Aug 18-23 and no charting shifts on Aug 24
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:
@@ -28,8 +28,8 @@ preferences:
   - type: shift type requirement
     shift_type: A
     required_num_people: 1
-    date: weekday
+    date: 18~23
   - type: shift type requirement
     shift_type: A
     required_num_people: 0
-    date: weekend
+    date: 24

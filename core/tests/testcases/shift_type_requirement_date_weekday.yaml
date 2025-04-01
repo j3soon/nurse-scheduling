@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Tests shift type requirements with specific qualified people (nurses 1, 2, and 3) for all shift types (Day, Evening, Night)
+description: Tests shift type requirements based on weekday/weekend patterns, requiring one charting shift (A) on weekdays and no charting shifts on weekends
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:
@@ -12,6 +12,8 @@ people:
   - id: 3
     description: Nurse 3
 shift_types:
+  - id: A
+    description: Charting shift type
   - id: D
     description: Day shift type
   - id: E
@@ -23,4 +25,11 @@ preferences:
   - type: shift type requirement
     shift_type: [D, E, N]
     required_num_people: 1
-    qualified_people: [1, 2, 3]
+  - type: shift type requirement
+    shift_type: A
+    required_num_people: 1
+    date: weekday
+  - type: shift type requirement
+    shift_type: A
+    required_num_people: 0
+    date: weekend
