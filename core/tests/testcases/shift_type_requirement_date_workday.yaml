@@ -1,0 +1,21 @@
+apiVersion: alpha
+description: Tests shift type requirements based on workday patterns, requiring one charting shift (A) on workdays and no charting shifts on freedays
+startdate: 2025-01-01
+enddate: 2025-12-31
+country: TW
+people:
+  - id: 0
+    description: Nurse 0
+shift_types:
+  - id: A
+    description: Charting shift type
+preferences:
+  - type: all people work at most one shift per day
+  - type: shift type requirement
+    shift_type: A
+    required_num_people: 1
+    date: workday
+  - type: shift type requirement
+    shift_type: A
+    required_num_people: 0
+    date: freeday

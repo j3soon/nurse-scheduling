@@ -18,7 +18,12 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
     # - row 0 contains day number
     # - row 1 contains weekday
     for d, date in enumerate(ctx.dates):
-        df.iloc[0, n_leading_cols + d] = date.day
+        if ctx.dates[0].year != ctx.dates[-1].year:
+            df.iloc[0, n_leading_cols + d] = date.strftime('%Y/%-m/%-d')
+        elif ctx.dates[0].month != ctx.dates[-1].month:
+            df.iloc[0, n_leading_cols + d] = date.strftime('%-m/%-d')
+        else:
+            df.iloc[0, n_leading_cols + d] = date.day
         df.iloc[1, n_leading_cols + d] = date.strftime('%a')
 
     # Fill person descriptions

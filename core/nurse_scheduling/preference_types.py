@@ -13,7 +13,7 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
     
     ds = range(ctx.n_days)
     if preference.date is not None:
-        ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
+        ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate, ctx.country)
     ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
     for d in ds:
         for s in ss:
@@ -90,7 +90,7 @@ def shift_request(ctx: Context, preference, preference_idx):
     # For all people, try to fulfill the shift requests.
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * shifts[(d, s, p)]), for all satisfying (d, s)
-    ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate)
+    ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate, ctx.country)
     ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     for d in ds:

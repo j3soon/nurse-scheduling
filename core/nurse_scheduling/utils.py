@@ -4,6 +4,7 @@ import os
 from ruamel.yaml import YAML
 from typing import Dict, Any
 from .models import NurseSchedulingData
+from .workdays.taiwan import is_freeday as is_freeday_TW
 
 yaml = YAML(typ='safe')
 
@@ -21,9 +22,6 @@ def ensure_list(val):
     if val is None:
         return []
     return [val] if not isinstance(val, list) else val
-
-def is_workday(date: datetime.date) -> bool:
-    raise NotImplementedError("is_workday is not implemented yet")
 
 def ortools_expression_to_bool_var(
         model, varname, true_expression, false_expression
@@ -48,14 +46,17 @@ def _parse_single_date(date: str, startdate: datetime.date, enddate: datetime.da
         return datetime.date(*map(int, match.groups()))
     raise ValueError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
 
-def parse_dates(dates, startdate: datetime.date, enddate: datetime.date):
+def parse_dates(dates, startdate: datetime.date, enddate: datetime.date, country: str):
     MAP_KEYWORD_FILTER = {
         'everyday': lambda date: True,
         'weekday': lambda date: date.weekday() < 5,
         'weekend': lambda date: date.weekday() >= 5,
-        'workday': is_workday,
-        'freeday': lambda date: not is_workday(date)
+        'workday': lambda date: not is_freeday_TW(date),
+        'freeday': is_freeday_TW
     }
+
+    if country is not None and country != 'TW':
+        raise ValueError(f"Country {country} is not supported yet")
 
     dates = map(str, ensure_list(dates))
     n_days = (enddate - startdate).days + 1

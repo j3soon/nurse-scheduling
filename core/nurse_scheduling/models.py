@@ -60,6 +60,7 @@ class NurseSchedulingData(BaseModel):
     description: str | None = None
     startdate: datetime.date
     enddate: datetime.date
+    country: str | None = None
     people: List[Person]
     shift_types: List[ShiftType]
     preferences: List[MaxOneShiftPerDayPreference | ShiftRequestPreference | UnwantedPatternPreference | EvenShiftDistributionPreference | ShiftTypeRequirementsPreference]
