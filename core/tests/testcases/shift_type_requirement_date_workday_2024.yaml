@@ -1,7 +1,7 @@
 apiVersion: alpha
-description: Tests shift type requirements based on workday patterns, requiring one charting shift (A) on workdays and no charting shifts on freedays
-startdate: 2025-01-01
-enddate: 2025-12-31
+description: Tests shift type requirements based on workday patterns, requiring one charting shift (A) on workdays and no charting shifts on freedays in 2024
+startdate: 2024-01-01
+enddate: 2024-12-31
 country: TW
 people:
   - id: 0
