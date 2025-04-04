@@ -52,7 +52,9 @@ def parse_dates(dates, startdate: datetime.date, enddate: datetime.date, country
         'weekday': lambda date: date.weekday() < 5,
         'weekend': lambda date: date.weekday() >= 5,
         'workday': lambda date: not is_freeday_TW(date),
-        'freeday': is_freeday_TW
+        'freeday': is_freeday_TW,
+        'workday(labor)': lambda date: not is_freeday_TW(date, True),
+        'freeday(labor)': lambda date: is_freeday_TW(date, True),
     }
 
     if country is not None and country != 'TW':

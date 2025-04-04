@@ -23,7 +23,7 @@ special_date_info = [
     ('2025-10-10', '國慶日', True),
 ]
 
-def is_freeday(date: datetime.date) -> bool:
+def is_freeday(date: datetime.date, is_labor: bool = False) -> bool:
     # Check if date is in valid range
     if not (valid_date_range[0] <= date <= valid_date_range[1]):
         raise ValueError(f"Date {date} is outside valid range {valid_date_range}")
@@ -32,6 +32,10 @@ def is_freeday(date: datetime.date) -> bool:
     for date_str, reason, is_freeday in special_date_info:
         if date_str == date.strftime('%Y-%m-%d'):
             return is_freeday
+
+    # Deal with labor day
+    if is_labor and date == datetime.date(2025, 5, 1):
+            return True
 
     # Default to weekday check
     return date.weekday() >= 5
