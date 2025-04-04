@@ -26,6 +26,8 @@ def schedule(filepath: str, deterministic=False):
     # Map shift type ID to shift type index
     for s in range(ctx.n_shift_types):
         ctx.map_sid_s[ctx.shift_types[s].id] = [s]
+    # Add ALL shift type
+    ctx.map_sid_s["ALL"] = list(range(ctx.n_shift_types))
     # Map shift type group ID to list of shift type indices
     for g in range(len(ctx.shift_type_groups)):
         group = ctx.shift_type_groups[g]
