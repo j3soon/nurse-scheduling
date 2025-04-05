@@ -30,6 +30,8 @@ def test_all():
             with pytest.raises(ValidationError) as exc_info:
                 df = nurse_scheduling.schedule(filepath, deterministic=True)
             # Then verify the error message contains the expected text
+            logging.info(f"Expected error: {expected_err.strip()}")
+            logging.info(f"Actual error: {str(exc_info.value)}")
             assert expected_err.strip() in str(exc_info.value), \
                 f"Expected error '{expected_err.strip()}' not found in actual error: {str(exc_info.value)}"
             continue

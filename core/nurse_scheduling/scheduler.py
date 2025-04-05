@@ -36,6 +36,8 @@ def schedule(filepath: str, deterministic=False):
     # Map person ID to person index
     for p in range(ctx.n_people):
         ctx.map_pid_p[ctx.people[p].id] = [p]
+    # Add ALL people
+    ctx.map_pid_p["ALL"] = list(range(ctx.n_people))
     # Map people group ID to list of person indices
     for g in range(len(ctx.people_groups)):
         group = ctx.people_groups[g]
