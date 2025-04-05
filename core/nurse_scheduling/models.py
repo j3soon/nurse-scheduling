@@ -43,7 +43,7 @@ class UnwantedPatternPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern="^unwanted shift type successions$")] = "unwanted shift type successions"
     person: (int | str) | List[int | str]  # Single person/group ID or list
-    pattern: List[str]  # List of shift type IDs
+    pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
     weight: int = Field(default=-1)
 
 class EvenShiftDistributionPreference(BasePreference):
