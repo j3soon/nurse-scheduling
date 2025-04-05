@@ -107,46 +107,37 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
     # where actual_n_matched = sum_{(d, s)}(shifts[(d, s, p)]), for all satisfying (d, s)
+    pattern = preference.pattern
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    if not isinstance(preference.pattern, list):
-        raise ValueError(f"Pattern must be a list, but got {type(preference.pattern)}")
-    # Enumerate the nested patterns by flattening any nested lists
-    patterns = [[]]
-    for elements in preference.pattern:
-        if isinstance(elements, list):
-            # For nested lists, create new patterns with each element
-            patterns = [pat + [element] for pat in patterns for element in elements]
-        else:
-            # For single element, append directly to each pattern
-            patterns = [pat + [elements] for pat in patterns]
-    # Process each pattern
-    for pattern in patterns:
-        for p in ps:
-            # TODO: Consider history
-            for d_begin in range(ctx.n_days - len(pattern) + 1):
-                # For each day and pattern, collect all matched shifts
-                match_shifts_in_day = [
-                    [ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)]
-                    if ctx.shift_types[s].id == pattern[i]]
-                    for i in range(len(pattern))
-                ]
-                target_n_matched = len(pattern)
-                for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
-                    assert len(seq) == len(pattern)
-                    # Construct: is_match = (actual_n_matched == target_n_matched)
-                    unique_var_prefix = f"unwanted_shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
-                    is_match_var_name = f"{unique_var_prefix}_is_match"
-                    actual_n_matched = sum(seq)
-                    ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
-                        ctx.model, is_match_var_name,
-                        actual_n_matched == target_n_matched,
-                        actual_n_matched != target_n_matched
-                    )
+    if not isinstance(pattern, list):
+        raise ValueError(f"Pattern must be a list, but got {type(pattern)}")
+    # Force nesting of patterns
+    pattern = [[element] if not isinstance(element, list) else element for element in pattern]
+    for p in ps:
+        for d_begin in range(ctx.n_days - len(pattern) + 1):
+            # For each day and pattern, collect all matched shifts
+            match_shifts_in_day = [
+                [ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)]
+                if ctx.shift_types[s].id in pattern[i]]
+                for i in range(len(pattern))
+            ]
+            target_n_matched = len(pattern)
+            for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
+                assert len(seq) == len(pattern)
+                # Construct: is_match = (actual_n_matched == target_n_matched)
+                unique_var_prefix = f"unwanted_shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
+                is_match_var_name = f"{unique_var_prefix}_is_match"
+                actual_n_matched = sum(seq)
+                ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
+                    ctx.model, is_match_var_name,
+                    actual_n_matched == target_n_matched,
+                    actual_n_matched != target_n_matched
+                )
 
-                    # Add the objective
-                    weight = preference.weight
-                    ctx.objective += weight * is_match
-                    ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
+                # Add the objective
+                weight = preference.weight
+                ctx.objective += weight * is_match
+                ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
 
 PREFERENCE_TYPES_TO_FUNC = {
     "shift type requirement": shift_type_requirements,
