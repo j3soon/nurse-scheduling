@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Tests unwanted shift patterns with nested patterns
+description: Tests unwanted shift patterns with nested real patterns
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:

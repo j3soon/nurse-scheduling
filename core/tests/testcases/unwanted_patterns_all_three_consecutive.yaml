@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Baseline test without any unwanted shift patterns
+description: Tests unwanted shift patterns with three consecutive shifts of any type
 startdate: 2023-08-18
 enddate: 2023-08-24
 people:
