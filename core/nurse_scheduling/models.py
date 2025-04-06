@@ -9,6 +9,7 @@ class Person(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: int | str
     description: str | None = None
+    history: List[str] | None = None
 
 class PeopleGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")

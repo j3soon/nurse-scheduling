@@ -107,37 +107,62 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
     # where actual_n_matched = sum_{(d, s)}(shifts[(d, s, p)]), for all satisfying (d, s)
-    pattern = preference.pattern
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    if not isinstance(pattern, list):
-        raise ValueError(f"Pattern must be a list, but got {type(pattern)}")
-    # Force nesting of patterns
-    pattern = [[element] if not isinstance(element, list) else element for element in pattern]
+    if not isinstance(preference.pattern, list):
+        raise ValueError(f"Pattern must be a list, but got {type(preference.pattern)}")
+    # Convert each pattern element to a list and parse shift IDs
+    base_pattern = [
+        list(itertools.chain.from_iterable(
+            utils.parse_sids(sid, ctx.map_sid_s)
+            for sid in (element if isinstance(element, list) else [element])
+        ))
+        for element in preference.pattern
+    ]
     for p in ps:
-        for d_begin in range(ctx.n_days - len(pattern) + 1):
-            # For each day and pattern, collect all matched shifts
-            match_shifts_in_day = [
-                [ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)]
-                if ctx.shift_types[s].id in pattern[i]]
-                for i in range(len(pattern))
-            ]
-            target_n_matched = len(pattern)
-            for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
-                assert len(seq) == len(pattern)
-                # Construct: is_match = (actual_n_matched == target_n_matched)
-                unique_var_prefix = f"unwanted_shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
-                is_match_var_name = f"{unique_var_prefix}_is_match"
-                actual_n_matched = sum(seq)
-                ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
-                    ctx.model, is_match_var_name,
-                    actual_n_matched == target_n_matched,
-                    actual_n_matched != target_n_matched
-                )
+        for d_begin in range(ctx.n_days - len(base_pattern) + 1):
+            # Match all patterns that start at day d_begin
+            patterns = [base_pattern]
+            # Consider history data to check for patterns that start at day 0
+            # We only need to check day 0 since any pattern that matches history must include it
+            if d_begin == 0 and ctx.people[p].history is not None:
+                history = [utils.parse_sids(sid, ctx.map_sid_s) for sid in ctx.people[p].history]
+                for i in range(len(history)):
+                    if len(history[i]) != 1:
+                        raise ValueError(f"History must not include nested ID, but got {history[i]}")
+                    history[i] = history[i][0]
+                # For each pattern, check if its prefix matches the end of shift history
+                # If so, add the remaining suffix as a new pattern to check
+                for history_suffix_len in range(1, min(len(base_pattern), len(history)) + 1):
+                    history_suffix = history[-history_suffix_len:]
+                    pattern_prefix = base_pattern[:history_suffix_len]
+                    if all(history_suffix[i] in pattern_prefix[i] for i in range(history_suffix_len)):
+                        # If history suffix matches pattern prefix, add remaining pattern suffix as new pattern
+                        # This is equivalent to checking patterns that span across history and future days
+                        patterns.append(base_pattern[history_suffix_len:])
+            for pattern in patterns:
+                # For each day and pattern, collect all matched shifts
+                match_shifts_in_day = [
+                    [ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)]
+                    if s in pattern[i]]
+                    for i in range(len(pattern))
+                ]
+                target_n_matched = len(pattern)
+                for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
+                    assert len(seq) == len(pattern)
+                    # Construct: is_match = (actual_n_matched == target_n_matched)
+                    unique_var_prefix = f"unwanted_shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
+                    is_match_var_name = f"{unique_var_prefix}_is_match"
+                    actual_n_matched = sum(seq)
+                    ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
+                        ctx.model, is_match_var_name,
+                        actual_n_matched == target_n_matched,
+                        actual_n_matched != target_n_matched
+                    )
 
-                # Add the objective
-                weight = preference.weight
-                ctx.objective += weight * is_match
-                ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
+                    # Add the objective
+                    weight = preference.weight
+                    ctx.objective += weight * is_match
+                    ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
 
 PREFERENCE_TYPES_TO_FUNC = {
     "shift type requirement": shift_type_requirements,
