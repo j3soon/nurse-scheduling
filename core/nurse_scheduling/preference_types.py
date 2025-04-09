@@ -32,7 +32,7 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
             # Add constraint that exactly required_num_people must be assigned from the qualified people
             actual_n_people = sum(ctx.shifts[(d, s, p)] for p in qualified_ps)
             if preference.preferred_num_people is not None:
-                ctx.model.Add(actual_n_people >= preference.preferred_num_people)
+                ctx.model.Add(actual_n_people >= preference.required_num_people)
             else:
                 ctx.model.Add(actual_n_people == preference.required_num_people)
 
@@ -42,7 +42,7 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
                 # Create a variable to track the difference between actual and preferred number of people
                 diff_var_name = f"pref_{preference_idx}_d_{d}_s_{s}_diff"
                 ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, preference.preferred_num_people, diff_var_name)
-                ctx.model.add_abs_equality(diff, preference.preferred_num_people - actual_n_people)
+                ctx.model.Add(diff == preference.preferred_num_people - actual_n_people)
                 
                 # Add the objective
                 weight = preference.weight
