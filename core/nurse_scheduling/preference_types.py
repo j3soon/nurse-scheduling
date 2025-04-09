@@ -10,11 +10,15 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
     # For all shift types, the requirements (# of people) must be fulfilled.
     # Note that a shift is represented as (d, s)
     # i.e., sum_{p}(shifts[(d, s, p)]) == required_num_people, for all (d, s)
+
+    # TODO: Check if each (d, s) is specified by only one shift type requirement
     
     ds = range(ctx.n_days)
     if preference.date is not None:
         ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate, ctx.country)
     ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
+    if len(ss) == 0:
+        raise ValueError(f"Non-empty shift types are required, but got {preference.shift_type}")
     for d in ds:
         for s in ss:
             # Get the set of people who can work this shift
@@ -22,10 +26,11 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
             if preference.qualified_people is not None:
                 # If qualified_people is specified, only allow those people to work the shift
                 qualified_ps = utils.parse_pids(preference.qualified_people, ctx.map_pid_p)
-            ps = {p for p in ctx.map_ds_p[(d, s)] if p in qualified_ps}
+                unqualified_n_people = sum(ctx.shifts[(d, s, p)] for p in range(ctx.n_people) if p not in qualified_ps)
+                ctx.model.Add(unqualified_n_people == 0)
             
             # Add constraint that exactly required_num_people must be assigned from the qualified people
-            actual_n_people = sum(ctx.shifts[(d, s, p)] for p in ps)
+            actual_n_people = sum(ctx.shifts[(d, s, p)] for p in qualified_ps)
             if preference.preferred_num_people is not None:
                 ctx.model.Add(actual_n_people >= preference.preferred_num_people)
             else:
@@ -99,7 +104,7 @@ def shift_request(ctx: Context, preference, preference_idx):
                 # Add the objective
                 weight = preference.weight
                 ctx.objective += weight * ctx.shifts[(d, s, p)]
-                ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}", ctx.shifts[(d, s, p)], lambda x: x == 1))
+                ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}_shifts", ctx.shifts[(d, s, p)], lambda x: x == 1))
 
 def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # Soft constraint
