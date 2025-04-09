@@ -1,12 +1,6 @@
 import datetime
 import re
-import os
-from ruamel.yaml import YAML
-from typing import Dict, Any
-from .models import NurseSchedulingData
 from .workdays.taiwan import is_freeday as is_freeday_TW
-
-yaml = YAML(typ='safe')
 
 MAP_WEEKDAY_STR = [
     'monday',
@@ -17,6 +11,9 @@ MAP_WEEKDAY_STR = [
     'saturday',
     'sunday',
 ]
+
+ALL = 'ALL' # For dates, shift types, and people
+OFF = 'OFF' # For shift types
 
 def ensure_list(val):
     if val is None:
@@ -48,7 +45,7 @@ def _parse_single_date(date: str, startdate: datetime.date, enddate: datetime.da
 
 def parse_dates(dates, startdate: datetime.date, enddate: datetime.date, country: str):
     MAP_KEYWORD_FILTER = {
-        'ALL': lambda date: True,
+        ALL: lambda date: True,
         'weekday': lambda date: date.weekday() < 5,
         'weekend': lambda date: date.weekday() >= 5,
         'workday': lambda date: not is_freeday_TW(date),
@@ -107,23 +104,8 @@ def parse_pids(pids, map_pid_p):
         result.extend(map_pid_p[pid])
     return result
 
-def _load_yaml(filepath: str) -> Dict[str, Any]:
-    if not os.path.isfile(filepath):
-        raise FileNotFoundError(f"File {filepath} should exist")
-    with open(filepath, "r") as r:
-        # Use ruamel.yaml instead of PyYAML to support YAML 1.2
-        # This avoids the auto-conversion of special strings such as
-        # `Off` into boolean value `False`.
-        return yaml.load(r)
+def is_ss_equivalent_to_all(ss, n_shift_types):
+    return set(ss) == set(range(n_shift_types))
 
-def load_data(filepath: str) -> NurseSchedulingData:
-    """Load nurse scheduling data from a YAML file.
-    
-    Args:
-        filepath: Path to the YAML file
-    
-    Returns:
-        NurseSchedulingData: The validated scheduling data
-    """
-    data = _load_yaml(filepath)
-    return NurseSchedulingData(**data)
+def is_ss_equivalent_to_off(ss):
+    return len(ss) == 0

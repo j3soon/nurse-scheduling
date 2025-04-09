@@ -25,8 +25,11 @@ class Context(NurseSchedulingData):
     model: cp_model.CpModel = Field(default_factory=cp_model.CpModel)
     model_vars: Dict[str, cp_model.IntVar] = Field(default_factory=dict)
     shifts: Dict[tuple[int, int, int], cp_model.IntVar] = Field(default_factory=dict)
-    """A set of indicator variables that are 1 if and only if
-    a person (p) is assigned to a shift type (s) on day (d)."""
+    """A set of indicator variables (shifts[(d, s, p)]) that are 1 if
+    and only if a person (p) is assigned to a shift type (s) on day (d)."""
+    offs: Dict[tuple[int, int], cp_model.IntVar] = Field(default_factory=dict)
+    """A set of indicator variables (offs[(d, p)]) that are 1 if and
+    only if a person (p) is off on day (d)."""
 
     # Results and reporting
     reports: List[Report] = Field(default_factory=list)

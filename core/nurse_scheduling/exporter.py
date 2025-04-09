@@ -44,4 +44,11 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
     df.iloc[n_leading_rows + len(ctx.people) + 1, 0] = "Status"
     df.iloc[n_leading_rows + len(ctx.people) + 1, 1] = ctx.solver_status
 
+    # Sanity check with offs variables
+    for (d, p) in ctx.offs.keys():
+        if solver.Value(ctx.offs[(d, p)]) == 1:
+            assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
+        else:
+            assert df.iloc[n_leading_rows+p, n_leading_cols+d] != ""
+
     return df

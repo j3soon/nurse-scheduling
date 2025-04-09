@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import Annotated, Self
+from .utils import ALL, OFF
 
 # Base models
 class Person(BaseModel):
@@ -93,7 +94,7 @@ class NurseSchedulingData(BaseModel):
             raise ValueError('enddate must be after or equal to startdate')
             
         # Validate duplicate IDs and reserved IDs
-        reserved_ids = {"ALL"}
+        reserved_ids = {ALL, OFF}
         shift_type_and_group_ids = set()
         person_and_group_ids = set()
         
