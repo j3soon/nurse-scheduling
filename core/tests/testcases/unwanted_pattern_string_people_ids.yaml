@@ -24,5 +24,20 @@ preferences:
     shift_type: [D, E, N]
     required_num_people: 1
   - type: unwanted shift type successions
-    person: [n0, n1]
+    person: [n0, n2]
     pattern: [N]
+    weight: -100
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
+    person: n0
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: n1
+    date: ALL
+    shift_type: E
+  - type: shift request
+    person: n2
+    date: ALL
+    shift_type: N

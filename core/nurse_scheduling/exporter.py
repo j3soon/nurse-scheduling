@@ -32,7 +32,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
         df.iloc[n_leading_rows+p, 0] = person.description
 
     # Set cell values based on solver results
-    for (d, s, p) in ctx.shifts.keys():
+    for (d, s, p) in ctx.shifts:
         if solver.Value(ctx.shifts[(d, s, p)]) == 1:
             assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
             df.iloc[n_leading_rows+p, n_leading_cols+d] = ctx.shift_types[s].id

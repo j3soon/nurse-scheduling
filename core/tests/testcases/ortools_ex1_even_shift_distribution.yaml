@@ -25,3 +25,33 @@ preferences:
     required_num_people: 1
   - type: assign shifts evenly
     weight: -1000000
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
+    person: 0
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: 1
+    date: ALL
+    shift_type: E
+  - type: shift request
+    person: 2
+    date: ALL
+    shift_type: N
+  - type: shift request
+    person: 3
+    date: 18
+    shift_type: [E, N]
+    weight: -10
+  - type: shift request
+    person: 3
+    date: 19
+    shift_type: [D, N]
+    weight: -10
+  - type: shift request
+    person: 3
+    date: 20
+    shift_type: ALL
+    weight: -10
+

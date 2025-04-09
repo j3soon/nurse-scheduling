@@ -1,8 +1,8 @@
-,18,19,20,21,22,23,24
-,Fri,Sat,Sun,Mon,Tue,Wed,Thu
-Nurse 0,D,,E,D,E,,E
-Nurse 1,N,N,N,,D,E,
-Nurse 2,,D,D,E,,D,D
-Nurse 3,E,E,,N,N,N,N
-Score,-5,,,,,,
-Status,OPTIMAL,,,,,,
+,18,19,20
+,Fri,Sat,Sun
+Nurse 0,,D,D
+Nurse 1,E,,E
+Nurse 2,N,N,N
+Nurse 3,D,E,
+Score,-93,,
+Status,OPTIMAL,,

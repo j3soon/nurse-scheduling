@@ -33,3 +33,21 @@ preferences:
     shift_type: A
     required_num_people: 0
     date: weekend
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
+    person: 0
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: 1
+    date: ALL
+    shift_type: E
+  - type: shift request
+    person: 2
+    date: ALL
+    shift_type: N
+  - type: shift request
+    person: 3
+    date: ALL
+    shift_type: A

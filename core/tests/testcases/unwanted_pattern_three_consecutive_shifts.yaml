@@ -1,7 +1,7 @@
 apiVersion: alpha
 description: Tests unwanted shift patterns with three consecutive shifts
 startdate: 2023-08-18
-enddate: 2023-08-24
+enddate: 2023-08-22
 people:
   - id: 0
     description: Nurse 0
@@ -24,5 +24,19 @@ preferences:
     shift_type: [D, E, N]
     required_num_people: 1
   - type: unwanted shift type successions
-    person: 0
+    person: 2
     pattern: [N, N, N]
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
+    person: 0
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: 1
+    date: ALL
+    shift_type: E
+  - type: shift request
+    person: 2
+    date: ALL
+    shift_type: N

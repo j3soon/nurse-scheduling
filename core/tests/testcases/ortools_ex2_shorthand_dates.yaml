@@ -31,55 +31,93 @@ preferences:
     person: 0
     date: [2, 6, 8]
     shift_type: N
+    weight: 100
   - type: shift request
     person: 0
     date: 7
     shift_type: E
+    weight: 100
   # Person 1
   - type: shift request
     person: 1
     date: 6
     shift_type: D
+    weight: 100
   - type: shift request
     person: 1
     date: [4, 5]
     shift_type: E
+    weight: 100
   - type: shift request
     person: 1
     date: 8
     shift_type: N
+    weight: 100
   # Person 2
   - type: shift request
     person: 2
     date: 5
     shift_type: D
+    weight: 100
   - type: shift request
     person: 2
     date: [2, 3, 7]
     shift_type: E
+    weight: 100
   # Person 3
   - type: shift request
     person: 3
     date: [4, 7]
     shift_type: D
+    weight: 100
   - type: shift request
     person: 3
     date: 5
     shift_type: E
+    weight: 100
   - type: shift request
     person: 3
     date: 2
     shift_type: N
+    weight: 100
   # Person 4
   - type: shift request
     person: 4
     date: 6
     shift_type: D
+    weight: 100
   - type: shift request
     person: 4
     date: [4, 7]
     shift_type: E
+    weight: 100
   - type: shift request
     person: 4
     date: 3
     shift_type: N
+    weight: 100
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
+    person: 0
+    date: ALL
+    shift_type: D
+    weight: 2
+  - type: shift request
+    person: 1
+    date: ALL
+    shift_type: E
+    weight: 2
+  - type: shift request
+    person: 2
+    date: ALL
+    shift_type: N
+    weight: 2
+  - type: shift request
+    person: 3
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: 4
+    date: ALL
+    shift_type: [E, N]

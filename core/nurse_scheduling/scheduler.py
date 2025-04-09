@@ -9,7 +9,7 @@ from .context import Context
 from .utils import ortools_expression_to_bool_var, ALL, OFF
 from .loader import load_data
 
-def schedule(filepath: str, deterministic=False):
+def schedule(filepath: str, deterministic=False, avoid_solution=None):
     logging.debug(f"Loading scenario from '{filepath}'...")
     scenario = load_data(filepath)
 
@@ -54,11 +54,22 @@ def schedule(filepath: str, deterministic=False):
     # The object will not be abbreviated as (d, s, p) to avoid confusion.
     for d in range(ctx.n_days):
         for s in range(ctx.n_shift_types):
-            # TODO(Optimize): Skip if no people is required in that day
             for p in range(ctx.n_people):
-                # TODO(Optimize): Skip if the person does not qualify for the shift type
                 var_name = f"shift_d{d}_s{s}_p{p}"
                 ctx.model_vars[var_name] = ctx.shifts[(d, s, p)] = ctx.model.NewBoolVar(var_name)
+
+    if avoid_solution is not None:
+        avoid_solution_vars = []
+        logging.debug("Avoiding solution...")
+        for (d, s, p) in ctx.shifts:
+            if avoid_solution[(d, s, p)] == 0:
+                avoid_solution_vars.append(ctx.shifts[(d, s, p)])
+            elif avoid_solution[(d, s, p)] == 1:
+                avoid_solution_vars.append(ctx.shifts[(d, s, p)].Not())
+            else:
+                raise ValueError(f"Invalid value: {avoid_solution[(d, s, p)]}")
+        # Add constraint that at least one variable must be different from the solution to avoid
+        ctx.model.AddBoolOr(avoid_solution_vars)
 
     logging.debug("Creating maps for faster lookup...")
     ctx.map_ds_p = {
@@ -110,6 +121,7 @@ def schedule(filepath: str, deterministic=False):
         # Potentially related parameters are:
         # `random_seed`, `num_workers`, and `num_search_workers`
         # Ref: https://github.com/google/or-tools/blob/stable/ortools/sat/sat_parameters.proto
+        # ctx.model.add_decision_strategy(list(ctx.shifts.values()), cp_model.CHOOSE_FIRST, cp_model.SELECT_MIN_VALUE)
 
     class PartialSolutionPrinter(cp_model.CpSolverSolutionCallback):
         """Print intermediate solutions."""
@@ -147,6 +159,7 @@ def schedule(filepath: str, deterministic=False):
         logging.debug(ctx.model.Validate())
     else:
         logging.debug("No solution found!")
+        raise ValueError(f"No solution found! Status: {solver.StatusName(status)}")
     ctx.solver_status = solver.StatusName(status)
 
     logging.debug("Statistics:")
@@ -169,10 +182,11 @@ def schedule(filepath: str, deterministic=False):
     logging.debug(f"Done.")
 
     if not found:
-        return None
-
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return None
+        return None, None, None, ctx.solver_status
 
     df = exporter.get_people_versus_date_dataframe(ctx, solver)
-    return df
+    solution = {}
+    for (d, s, p) in ctx.shifts:
+        solution[(d, s, p)] = solver.Value(ctx.shifts[(d, s, p)])
+    # TODO: Better way to return?
+    return df, solution, solver.Value(ctx.objective), ctx.solver_status

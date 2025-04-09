@@ -27,6 +27,20 @@ preferences:
     person: [0, 1]
     pattern: [N]
   - type: unwanted shift type successions
+    person: 3
+    pattern: [N]
+    weight: 2
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
     person: 0
-    pattern: [D]
-    weight: 1
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: 1
+    date: ALL
+    shift_type: E
+  - type: shift request
+    person: 2
+    date: ALL
+    shift_type: N

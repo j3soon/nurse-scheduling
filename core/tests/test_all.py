@@ -28,7 +28,7 @@ def test_all():
                 expected_err = f.read()
             # Use pytest.raises without the match parameter to catch the error first
             with pytest.raises(ValidationError) as exc_info:
-                df = nurse_scheduling.schedule(filepath, deterministic=True)
+                df, solution, score, status = nurse_scheduling.schedule(filepath)
             # Then verify the error message contains the expected text
             logging.info(f"Expected error: {expected_err.strip()}")
             logging.info(f"Actual error: {str(exc_info.value)}")
@@ -39,7 +39,8 @@ def test_all():
         with open(f"{testcases_dir}/{base_filepath}.csv", 'r') as f:
             expected_csv = f.read()
         try:
-            df = nurse_scheduling.schedule(filepath, deterministic=True)
+            df, solution, score, status = nurse_scheduling.schedule(filepath)
+            df2, solution2, score2, status2 = nurse_scheduling.schedule(filepath, avoid_solution=solution)
         except ValidationError as e:
             logging.debug(f"Validation error for '{base_filepath}': {e}")
             pytest.fail(f"Validation error for '{base_filepath}'")
@@ -48,8 +49,15 @@ def test_all():
             with open(f"{testcases_dir}/{base_filepath}.csv", 'w') as f:
                 f.write(actual_csv)
             expected_csv = actual_csv
+        not_unique_optimal = (df2 is not None and score == score2)
+        if not_unique_optimal:
+            logging.warning(f"The optimal solution is not unique")
         if actual_csv != expected_csv:
             logging.debug(f"Actual CSV:\n{actual_csv}")
             logging.debug(f"Actual output:\n{df}")
             logging.debug(f"Expected output:\n{pandas.read_csv( io.StringIO(expected_csv), header=None, keep_default_na=False)}")
-            pytest.fail(f"Output mismatch for '{base_filepath}' ({test_no}/{len(tests)})")
+            pytest.fail(f"Output mismatch for '{testcases_dir}/{base_filepath}.yaml' ({test_no}/{len(tests)})")
+        if not_unique_optimal:
+            logging.debug(f"Optimal Solution 1:\n{df}")
+            logging.debug(f"Optimal Solution 2:\n{df2}")
+            pytest.fail(f"The optimal solution should be unique, but it is not for '{testcases_dir}/{base_filepath}.yaml' ({test_no}/{len(tests)})")

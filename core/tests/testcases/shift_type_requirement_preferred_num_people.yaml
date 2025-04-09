@@ -28,3 +28,17 @@ preferences:
     shift_type: [D, E, N]
     required_num_people: 1
     preferred_num_people: 2
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
+    person: [0, 3]
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: [1, 4]
+    date: ALL
+    shift_type: E
+  - type: shift request
+    person: [2, 5]
+    date: ALL
+    shift_type: N
