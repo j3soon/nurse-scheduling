@@ -80,7 +80,7 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
         MAX = max(ctx.n_days - target_n_shifts, target_n_shifts)
         diff_var_name = f"{unique_var_prefix}diff"
         ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name)
-        ctx.model.add_abs_equality(diff, actual_n_shifts - target_n_shifts)
+        ctx.model.AddAbsEquality(diff, actual_n_shifts - target_n_shifts)
         L2_var_name = f"{unique_var_prefix}L2"
         ctx.model_vars[L2_var_name] = L2 = ctx.model.NewIntVar(0, MAX**2, L2_var_name)
         ctx.model.AddMultiplicationEquality(L2, diff, diff)
@@ -99,12 +99,28 @@ def shift_request(ctx: Context, preference, preference_idx):
     ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     for d in ds:
-        for s in ss:
-            for p in ps:
+        # Note that the order of p and s is inverted deliberately
+        for p in ps:
+            weight = preference.weight
+            # TODO: Handle and test ALL and OFF shift types
+            if preference.shift_type == utils.ALL:
+                assert utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types)
                 # Add the objective
-                weight = preference.weight
-                ctx.objective += weight * ctx.shifts[(d, s, p)]
-                ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}_shifts", ctx.shifts[(d, s, p)], lambda x: x == 1))
+                ctx.objective += weight * ctx.offs[(d, p)].Not()
+                ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0))
+            elif preference.shift_type == utils.OFF:
+                # Add the objective
+                ctx.objective += weight * ctx.offs[(d, p)]
+                ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 1))
+            else:
+                if utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types):
+                    raise ValueError(f"Shift type should be 'ALL', but got {preference.shift_type} instead")
+                if utils.is_ss_equivalent_to_off(ss):
+                    raise ValueError(f"Shift type should be 'OFF', but got {preference.shift_type} instead")
+                for s in ss:
+                    # Add the objective
+                    ctx.objective += weight * ctx.shifts[(d, s, p)]
+                    ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}_shifts", ctx.shifts[(d, s, p)], lambda x: x == 1))
 
 def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     # Soft constraint
@@ -116,41 +132,64 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
     if not isinstance(preference.pattern, list):
         raise ValueError(f"Pattern must be a list, but got {type(preference.pattern)}")
     # Convert each pattern element to a list and parse shift IDs
-    base_pattern = [
-        list(itertools.chain.from_iterable(
+    flattened_pattern = [
+        sorted(set(itertools.chain.from_iterable(
             utils.parse_sids(sid, ctx.map_sid_s)
             for sid in (element if isinstance(element, list) else [element])
-        ))
+        )))
         for element in preference.pattern
     ]
+    parsed_pattern = []
+    for i in range(len(flattened_pattern)):
+        if preference.pattern[i] == utils.OFF:
+            parsed_pattern.append(utils.OFF)
+        elif preference.pattern[i] == utils.ALL:
+            parsed_pattern.append(utils.ALL)
+        elif utils.is_ss_equivalent_to_off(flattened_pattern[i]):
+            raise ValueError(f"Pattern must not include 'OFF', but got {flattened_pattern[i]}")
+        elif utils.is_ss_equivalent_to_all(flattened_pattern[i], ctx.n_shift_types):
+            raise ValueError(f"Pattern must not include 'ALL', but got {flattened_pattern[i]}")
+        else:
+            parsed_pattern.append(flattened_pattern[i])
+    assert len(parsed_pattern) == len(flattened_pattern)
+
     for p in ps:
-        for d_begin in range(ctx.n_days - len(base_pattern) + 1):
+        for d_begin in range(ctx.n_days - len(flattened_pattern) + 1):
             # Match all patterns that start at day d_begin
-            patterns = [base_pattern]
+            patterns = [parsed_pattern]
             # Consider history data to check for patterns that start at day 0
             # We only need to check day 0 since any pattern that matches history must include it
             if d_begin == 0 and ctx.people[p].history is not None:
                 history = [utils.parse_sids(sid, ctx.map_sid_s) for sid in ctx.people[p].history]
                 for i in range(len(history)):
-                    if len(history[i]) != 1:
-                        raise ValueError(f"History must not include nested ID, but got {history[i]}")
-                    history[i] = history[i][0]
+                    if len(history[i]) != 1 and ctx.people[p].history[i] != utils.OFF:
+                        raise ValueError(f"History must not include nested ID, but got {ctx.people[p].history[i]}")
+                    if ctx.people[p].history[i] == utils.ALL:
+                        raise ValueError(f"History must not include 'ALL', but got {ctx.people[p].history[i]}")
+                    if ctx.people[p].history[i] != utils.OFF:
+                        history[i] = history[i][0]
+                    else:
+                        history[i] = utils.OFF
                 # For each pattern, check if its prefix matches the end of shift history
                 # If so, add the remaining suffix as a new pattern to check
-                for history_suffix_len in range(1, min(len(base_pattern), len(history)) + 1):
+                for history_suffix_len in range(1, min(len(flattened_pattern), len(history)) + 1):
                     history_suffix = history[-history_suffix_len:]
-                    pattern_prefix = base_pattern[:history_suffix_len]
-                    if all(history_suffix[i] in pattern_prefix[i] for i in range(history_suffix_len)):
+                    pattern_prefix = flattened_pattern[:history_suffix_len]
+                    if all((history_suffix[i] in pattern_prefix[i] or history_suffix[i] == utils.OFF and len(pattern_prefix[i]) == 0) for i in range(history_suffix_len)):
                         # If history suffix matches pattern prefix, add remaining pattern suffix as new pattern
                         # This is equivalent to checking patterns that span across history and future days
-                        patterns.append(base_pattern[history_suffix_len:])
+                        patterns.append(parsed_pattern[history_suffix_len:])
             for pattern in patterns:
                 # For each day and pattern, collect all matched shifts
-                match_shifts_in_day = [
-                    [ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)]
-                    if s in pattern[i]]
-                    for i in range(len(pattern))
-                ]
+                match_shifts_in_day = []
+                for i in range(len(pattern)):
+                    if pattern[i] == utils.OFF:
+                        match_shifts_in_day.append([ctx.offs[(d_begin+i, p)]])
+                    elif pattern[i] == utils.ALL:
+                        # TODO: Optimize with offs variables
+                        match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)]])
+                    else:
+                        match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)] if s in pattern[i]])
                 target_n_matched = len(pattern)
                 for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
                     assert len(seq) == len(pattern)

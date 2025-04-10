@@ -80,7 +80,8 @@ def is_freeday(date: datetime.date, is_labor: bool = False) -> bool:
 
     # Deal with labor day
     if is_labor and date == datetime.date(2025, 5, 1):
-            return True
+        # TODO: What if labor day is on a weekend?
+        return True
 
     # Default to weekday check
     return date.weekday() >= 5

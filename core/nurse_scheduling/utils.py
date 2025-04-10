@@ -84,7 +84,7 @@ def parse_dates(dates, startdate: datetime.date, enddate: datetime.date, country
             raise ValueError(f"Date '{date}' is out of the range of start date and end date.")
         result.append((date - startdate).days)
 
-    return result
+    return sorted(set(result))
 
 def parse_sids(sids, map_sid_s):
     sids = ensure_list(sids)
@@ -93,7 +93,7 @@ def parse_sids(sids, map_sid_s):
         if sid not in map_sid_s:
             raise ValueError(f"Unknown shift type ID: {sid}")
         result.extend(map_sid_s[sid])
-    return result
+    return sorted(set(result))
 
 def parse_pids(pids, map_pid_p):
     pids = ensure_list(pids)
@@ -102,7 +102,7 @@ def parse_pids(pids, map_pid_p):
         if pid not in map_pid_p:
             raise ValueError(f"Unknown person ID: {pid}")
         result.extend(map_pid_p[pid])
-    return result
+    return sorted(set(result))
 
 def is_ss_equivalent_to_all(ss, n_shift_types):
     return set(ss) == set(range(n_shift_types))
