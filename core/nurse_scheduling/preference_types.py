@@ -186,8 +186,7 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
                     if pattern[i] == utils.OFF:
                         match_shifts_in_day.append([ctx.offs[(d_begin+i, p)]])
                     elif pattern[i] == utils.ALL:
-                        # TODO: Optimize with offs variables
-                        match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)]])
+                        match_shifts_in_day.append([ctx.offs[(d_begin+i, p)].Not()])
                     else:
                         match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)] if s in pattern[i]])
                 target_n_matched = len(pattern)
