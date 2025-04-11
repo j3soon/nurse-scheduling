@@ -14,6 +14,8 @@ MAP_WEEKDAY_STR = [
 
 ALL = 'ALL' # For dates, shift types, and people
 OFF = 'OFF' # For shift types
+INF = 'INF' # For weights
+NINF = '-INF' # For weights
 
 def ensure_list(val):
     if val is None:
@@ -24,10 +26,19 @@ def ortools_expression_to_bool_var(
         model, varname, true_expression, false_expression
     ):
     # Ref: https://stackoverflow.com/a/70571397
+    # Ref: https://github.com/google/or-tools/blob/master/ortools/sat/docs/channeling.md
     var = model.NewBoolVar(varname)
     model.Add(true_expression).OnlyEnforceIf(var)
     model.Add(false_expression).OnlyEnforceIf(var.Not())
     return var
+
+def add_objective(ctx, weight, expression):
+    if weight == INF:
+        ctx.model.Add(expression == 1)
+    elif weight == NINF:
+        ctx.model.Add(expression == 0)
+    else:
+        ctx.objective += weight * expression
 
 def _parse_single_date(date: str, startdate: datetime.date, enddate: datetime.date):
     error_details = f'- Start date: {startdate}\n- End date: {enddate}\n'

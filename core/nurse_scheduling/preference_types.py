@@ -46,7 +46,9 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
                 
                 # Add the objective
                 weight = preference.weight
-                ctx.objective += weight * diff
+                if weight in [utils.INF, utils.NINF]:
+                    raise ValueError("'INF' and '-INF' weights are not allowed for shift type requirements with 'preferred_num_people'. Use 'required_num_people' instead to enforce hard constraints.")
+                utils.add_objective(ctx, weight, diff)
                 ctx.reports.append(Report(f"shift_type_requirements_{diff_var_name}", diff, lambda x: x == 0))
 
 def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preference_idx):
@@ -87,7 +89,9 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
 
         # Add the objective
         weight = preference.weight
-        ctx.objective += weight * L2
+        if weight in [utils.INF, utils.NINF]:
+            raise ValueError("'INF' and '-INF' weights are not allowed for 'assign shifts evenly'.")
+        utils.add_objective(ctx, weight, L2)
         ctx.reports.append(Report(f"assign_shifts_evenly_{L2_var_name}", L2, lambda x: x == 0))
 
 def shift_request(ctx: Context, preference, preference_idx):
@@ -106,11 +110,11 @@ def shift_request(ctx: Context, preference, preference_idx):
             if preference.shift_type == utils.ALL:
                 assert utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types)
                 # Add the objective
-                ctx.objective += weight * ctx.offs[(d, p)].Not()
+                utils.add_objective(ctx, weight, ctx.offs[(d, p)].Not())
                 ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0))
             elif preference.shift_type == utils.OFF:
                 # Add the objective
-                ctx.objective += weight * ctx.offs[(d, p)]
+                utils.add_objective(ctx, weight, ctx.offs[(d, p)])
                 ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 1))
             else:
                 if utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types):
@@ -119,7 +123,7 @@ def shift_request(ctx: Context, preference, preference_idx):
                     raise ValueError(f"Shift type should be 'OFF', but got {preference.shift_type} instead")
                 for s in ss:
                     # Add the objective
-                    ctx.objective += weight * ctx.shifts[(d, s, p)]
+                    utils.add_objective(ctx, weight, ctx.shifts[(d, s, p)])
                     ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}_shifts", ctx.shifts[(d, s, p)], lambda x: x == 1))
 
 def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
@@ -204,7 +208,7 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
 
                     # Add the objective
                     weight = preference.weight
-                    ctx.objective += weight * is_match
+                    utils.add_objective(ctx, weight, is_match)
                     ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
 
 PREFERENCE_TYPES_TO_FUNC = {

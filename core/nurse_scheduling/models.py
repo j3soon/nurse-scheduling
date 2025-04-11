@@ -39,19 +39,19 @@ class ShiftRequestPreference(BasePreference):
     person: (int | str) | List[int | str]  # Single person/group ID or list
     date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     shift_type: (str | List[str])  # Single shift type ID or list
-    weight: int = Field(default=1)
+    weight: (int | str) = Field(default=1)
 
 class UnwantedPatternPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern="^unwanted shift type successions$")] = "unwanted shift type successions"
     person: (int | str) | List[int | str]  # Single person/group ID or list
     pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
-    weight: int = Field(default=-1)
+    weight: (int | str) = Field(default=-1)
 
 class EvenShiftDistributionPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern="^assign shifts evenly$")] = "assign shifts evenly"
-    weight: int = Field(default=-1)
+    weight: (int | str) = Field(default=-1)
 
 class MaxOneShiftPerDayPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
@@ -65,7 +65,7 @@ class ShiftTypeRequirementsPreference(BasePreference):
     qualified_people: (int | str) | List[int | str] | None = None   # Single person/group ID or list or None
     preferred_num_people: int | None = None  # Preferred number of people for each shift type
     date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
-    weight: int = Field(default=-1)
+    weight: (int | str) = Field(default=-1)
 
 class NurseSchedulingData(BaseModel):
     model_config = ConfigDict(extra="forbid")
