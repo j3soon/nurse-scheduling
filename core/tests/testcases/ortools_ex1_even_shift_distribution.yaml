@@ -23,7 +23,12 @@ preferences:
   - type: shift type requirement
     shift_type: [D, E, N]
     required_num_people: 1
-  - type: assign shifts evenly
+  - type: shift count
+    person: ALL
+    count_dates: everyday
+    count_shift_types: ALL
+    expression: '|x - T|^2'
+    target: AVG_SHIFTS_PER_PERSON
     weight: -1000000
   # below are minimal preferences to ensure unique solution,
   # which are not required in real-world cases

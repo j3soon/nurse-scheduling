@@ -62,41 +62,6 @@ def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preferen
         maximum_n_shifts = 1
         ctx.model.Add(actual_n_shifts <= maximum_n_shifts)
 
-def assign_shifts_evenly(ctx: Context, preference, preference_idx):
-    # Soft constraint
-    # For all people, try to spread the shifts evenly.
-    # Note that a shift is represented as (d, s)
-    # i.e., max(weight * (actual_n_shifts - target_n_shifts) ** 2), for all p,
-    # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
-    total_shifts = 0
-    for pref in ctx.preferences:
-        if pref.type == models.SHIFT_TYPE_REQUIREMENT:
-            shift_types = utils.parse_sids(pref.shift_type, ctx.map_sid_s)
-            total_shifts += pref.required_num_people * len(shift_types) * ctx.n_days
-    
-    for p in range(ctx.n_people):
-        actual_n_shifts = sum(ctx.shifts[(d, s, p)] for d, s in ctx.map_p_ds[p])
-        # Keep in mind the rounding behavior of Python
-        # Ref: https://stackoverflow.com/q/10825926
-        target_n_shifts = round(total_shifts / ctx.n_people)
-        unique_var_prefix = f"pref_{preference_idx}_p_{p}_"
-
-        # Construct: L2 = (actual_n_shifts - target_n_shifts) ** 2
-        MAX = max(ctx.n_days - target_n_shifts, target_n_shifts)
-        diff_var_name = f"{unique_var_prefix}diff"
-        ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name)
-        ctx.model.AddAbsEquality(diff, actual_n_shifts - target_n_shifts)
-        L2_var_name = f"{unique_var_prefix}L2"
-        ctx.model_vars[L2_var_name] = L2 = ctx.model.NewIntVar(0, MAX**2, L2_var_name)
-        ctx.model.AddMultiplicationEquality(L2, diff, diff)
-
-        # Add the objective
-        weight = preference.weight
-        if weight in [utils.INF, utils.NINF]:
-            raise ValueError("'INF' and '-INF' weights are not allowed for 'assign shifts evenly'.")
-        utils.add_objective(ctx, weight, L2)
-        ctx.reports.append(Report(f"assign_shifts_evenly_{L2_var_name}", L2, lambda x: x == 0))
-
 def shift_request(ctx: Context, preference, preference_idx):
     # Soft constraint
     # For all people, try to fulfill the shift requests.
@@ -214,10 +179,71 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
                     utils.add_objective(ctx, weight, is_match)
                     ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
 
+def shift_count(ctx: Context, preference, preference_idx):
+    # Soft constraint
+    # TODO: For specified people, dates, and shift types, penalize deviations from target count
+    # The expression is evaluated as a mathematical formula where x is the actual evaluated value
+    # and T is the target value (can be a constant or special constant names)
+    ps = utils.parse_pids(preference.person, ctx.map_pid_p)
+    c_ds = utils.parse_dates(preference.count_dates, ctx.startdate, ctx.enddate, ctx.country)
+    c_ss = utils.parse_sids(preference.count_shift_types, ctx.map_sid_s)
+
+    if isinstance(preference.target, int):
+        T = preference.target
+        if T < 0:
+            raise ValueError(f"Target must be non-negative, but got {T}")
+    elif preference.target == 'AVG_SHIFTS_PER_PERSON':
+        # Calculate total required shifts across all shift type requirements
+        total_shifts = 0
+        for pref in ctx.preferences:
+            if pref.type == models.SHIFT_TYPE_REQUIREMENT:
+                shift_types = utils.parse_sids(pref.shift_type, ctx.map_sid_s)
+                total_shifts += pref.required_num_people * len(shift_types) * ctx.n_days
+        # Keep in mind the rounding behavior of Python
+        # Ref: https://stackoverflow.com/q/10825926
+        T = round(total_shifts / ctx.n_people)
+    else:
+        raise ValueError(f"Unsupported target: {preference.T}")
+    assert isinstance(T, int)
+
+    for p in ps:
+        # Calculate actual number of shifts for this person
+        actual_n_shifts = sum(
+            ctx.shifts[(d, s, p)] for d, s in ctx.map_p_ds[p]
+            if d in c_ds and s in c_ss
+            # TODO: Handle OFF shift type
+        )
+        
+        # Evaluate the expression
+        expr_value = None
+        if preference.expression == '|x - T|^2':
+            # Note that a shift is represented as (d, s)
+            # i.e., min(weight * (actual_n_shifts - T) ** 2), for all p,
+            # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
+            # Create a variable to represent the deviation from target
+            MAX = max(total_shifts - T, T)
+            unique_var_prefix = f"pref_{preference_idx}_p_{p}"
+            diff_var_name = f"{unique_var_prefix}_diff"
+            ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name) # Min is 0, since diff is assigned through AddAbsEquality
+            ctx.model.AddAbsEquality(diff, actual_n_shifts - T)
+            # Square the difference
+            squared_var_name = f"{unique_var_prefix}_squared"
+            ctx.model_vars[squared_var_name] = squared = ctx.model.NewIntVar(0, MAX**2, squared_var_name)
+            ctx.model.AddMultiplicationEquality(squared, diff, diff)
+            expr_value = squared
+            # Add the objective
+            weight = preference.weight
+            if weight in [utils.INF, utils.NINF]:
+                raise ValueError(f"'INF' and '-INF' weights are not allowed for shift count with '{preference.expression}'.")
+            utils.add_objective(ctx, weight, expr_value)
+            ctx.reports.append(Report(f"shift_count_{squared_var_name}", squared, lambda x: x == 0))
+        else:
+            raise ValueError(f"Unsupported expression: {preference.expression}")
+
 PREFERENCE_TYPES_TO_FUNC = {
     models.SHIFT_TYPE_REQUIREMENT: shift_type_requirements,
     models.AT_MOST_ONE_SHIFT_PER_DAY: all_people_work_at_most_one_shift_per_day,
-    models.ASSIGN_SHIFTS_EVENLY: assign_shifts_evenly,
     models.SHIFT_REQUEST: shift_request,
     models.UNWANTED_SHIFT_TYPE_SUCCESSIONS: unwanted_shift_type_successions,
+    models.SHIFT_COUNT: shift_count,
 }

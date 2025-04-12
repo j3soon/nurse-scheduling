@@ -9,7 +9,6 @@ AT_MOST_ONE_SHIFT_PER_DAY = 'at most one shift per day'
 SHIFT_TYPE_REQUIREMENT = 'shift type requirement'
 SHIFT_REQUEST = 'shift request'
 UNWANTED_SHIFT_TYPE_SUCCESSIONS = 'unwanted shift type successions'
-ASSIGN_SHIFTS_EVENLY = 'assign shifts evenly'
 SHIFT_COUNT = 'shift count'
 
 # Base models
@@ -55,11 +54,6 @@ class UnwantedPatternPreference(BasePreference):
     pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
     weight: (int | str) = Field(default=-1)
 
-class EvenShiftDistributionPreference(BasePreference):
-    model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern=f"^{ASSIGN_SHIFTS_EVENLY}$")] = ASSIGN_SHIFTS_EVENLY
-    weight: (int | str) = Field(default=-1)
-
 class MaxOneShiftPerDayPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{AT_MOST_ONE_SHIFT_PER_DAY}$")] = AT_MOST_ONE_SHIFT_PER_DAY
@@ -72,6 +66,16 @@ class ShiftTypeRequirementsPreference(BasePreference):
     qualified_people: (int | str) | List[int | str] | None = None   # Single person/group ID or list or None
     preferred_num_people: int | None = None  # Preferred number of people for each shift type
     date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
+    weight: (int | str) = Field(default=-1)
+
+class ShiftCountPreference(BasePreference):
+    model_config = ConfigDict(extra="forbid")
+    type: Annotated[str, Field(pattern=f"^{SHIFT_COUNT}$")] = SHIFT_COUNT
+    person: (int | str) | List[int | str]  # Single person/group ID or list
+    count_dates: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
+    count_shift_types: (str | List[str])  # Single shift type ID or list
+    expression: str  # Mathematical expression to evaluate
+    target: (int | str)  # Target integer value or special constant names
     weight: (int | str) = Field(default=-1)
 
 class NurseSchedulingData(BaseModel):
@@ -87,8 +91,8 @@ class NurseSchedulingData(BaseModel):
         MaxOneShiftPerDayPreference |
         ShiftRequestPreference |
         UnwantedPatternPreference |
-        EvenShiftDistributionPreference |
-        ShiftTypeRequirementsPreference
+        ShiftTypeRequirementsPreference |
+        ShiftCountPreference
     ]
     people_groups: List[PeopleGroup] = Field(default_factory=list)
     shift_type_groups: List[ShiftTypeGroup] = Field(default_factory=list)

@@ -57,6 +57,7 @@ def _parse_single_date(date: str, startdate: datetime.date, enddate: datetime.da
 def parse_dates(dates, startdate: datetime.date, enddate: datetime.date, country: str):
     MAP_KEYWORD_FILTER = {
         ALL: lambda date: True,
+        'everyday': lambda date: True,
         'weekday': lambda date: date.weekday() < 5,
         'weekend': lambda date: date.weekday() >= 5,
         'workday': lambda date: not is_freeday_TW(date),
