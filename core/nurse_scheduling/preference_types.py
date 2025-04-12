@@ -2,6 +2,7 @@ import itertools
 from . import utils
 from .context import Context
 from .report import Report
+from . import models
 
 # Leave most parsing to the caller, keep the function here simple.
 
@@ -47,7 +48,7 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
                 # Add the objective
                 weight = preference.weight
                 if weight in [utils.INF, utils.NINF]:
-                    raise ValueError("'INF' and '-INF' weights are not allowed for shift type requirements with 'preferred_num_people'. Use 'required_num_people' instead to enforce hard constraints.")
+                    raise ValueError(f"'INF' and '-INF' weights are not allowed for {models.SHIFT_TYPE_REQUIREMENT} with 'preferred_num_people'. Use 'required_num_people' instead to enforce hard constraints.")
                 utils.add_objective(ctx, weight, diff)
                 ctx.reports.append(Report(f"shift_type_requirements_{diff_var_name}", diff, lambda x: x == 0))
 
@@ -69,12 +70,14 @@ def assign_shifts_evenly(ctx: Context, preference, preference_idx):
     # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
     total_shifts = 0
     for pref in ctx.preferences:
-        if pref.type == "shift type requirement":
+        if pref.type == models.SHIFT_TYPE_REQUIREMENT:
             shift_types = utils.parse_sids(pref.shift_type, ctx.map_sid_s)
             total_shifts += pref.required_num_people * len(shift_types) * ctx.n_days
     
     for p in range(ctx.n_people):
         actual_n_shifts = sum(ctx.shifts[(d, s, p)] for d, s in ctx.map_p_ds[p])
+        # Keep in mind the rounding behavior of Python
+        # Ref: https://stackoverflow.com/q/10825926
         target_n_shifts = round(total_shifts / ctx.n_people)
         unique_var_prefix = f"pref_{preference_idx}_p_{p}_"
 
@@ -212,9 +215,9 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
                     ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
 
 PREFERENCE_TYPES_TO_FUNC = {
-    "shift type requirement": shift_type_requirements,
-    "all people work at most one shift per day": all_people_work_at_most_one_shift_per_day,
-    "assign shifts evenly": assign_shifts_evenly,
-    "shift request": shift_request,
-    "unwanted shift type successions": unwanted_shift_type_successions,
+    models.SHIFT_TYPE_REQUIREMENT: shift_type_requirements,
+    models.AT_MOST_ONE_SHIFT_PER_DAY: all_people_work_at_most_one_shift_per_day,
+    models.ASSIGN_SHIFTS_EVENLY: assign_shifts_evenly,
+    models.SHIFT_REQUEST: shift_request,
+    models.UNWANTED_SHIFT_TYPE_SUCCESSIONS: unwanted_shift_type_successions,
 }

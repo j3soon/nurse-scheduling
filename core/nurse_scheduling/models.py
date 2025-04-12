@@ -5,6 +5,13 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import Annotated, Self
 from .utils import ALL, OFF
 
+AT_MOST_ONE_SHIFT_PER_DAY = 'at most one shift per day'
+SHIFT_TYPE_REQUIREMENT = 'shift type requirement'
+SHIFT_REQUEST = 'shift request'
+UNWANTED_SHIFT_TYPE_SUCCESSIONS = 'unwanted shift type successions'
+ASSIGN_SHIFTS_EVENLY = 'assign shifts evenly'
+SHIFT_COUNT = 'shift count'
+
 # Base models
 class Person(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -35,7 +42,7 @@ class BasePreference(BaseModel):
 
 class ShiftRequestPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern="^shift request$")] = "shift request"
+    type: Annotated[str, Field(pattern=f"^{SHIFT_REQUEST}$")] = SHIFT_REQUEST
     person: (int | str) | List[int | str]  # Single person/group ID or list
     date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     shift_type: (str | List[str])  # Single shift type ID or list
@@ -43,23 +50,23 @@ class ShiftRequestPreference(BasePreference):
 
 class UnwantedPatternPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern="^unwanted shift type successions$")] = "unwanted shift type successions"
+    type: Annotated[str, Field(pattern=f"^{UNWANTED_SHIFT_TYPE_SUCCESSIONS}$")] = UNWANTED_SHIFT_TYPE_SUCCESSIONS
     person: (int | str) | List[int | str]  # Single person/group ID or list
     pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
     weight: (int | str) = Field(default=-1)
 
 class EvenShiftDistributionPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern="^assign shifts evenly$")] = "assign shifts evenly"
+    type: Annotated[str, Field(pattern=f"^{ASSIGN_SHIFTS_EVENLY}$")] = ASSIGN_SHIFTS_EVENLY
     weight: (int | str) = Field(default=-1)
 
 class MaxOneShiftPerDayPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern="^all people work at most one shift per day$")] = "all people work at most one shift per day"
+    type: Annotated[str, Field(pattern=f"^{AT_MOST_ONE_SHIFT_PER_DAY}$")] = AT_MOST_ONE_SHIFT_PER_DAY
 
 class ShiftTypeRequirementsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern="^shift type requirement$")] = "shift type requirement"
+    type: Annotated[str, Field(pattern=f"^{SHIFT_TYPE_REQUIREMENT}$")] = SHIFT_TYPE_REQUIREMENT
     shift_type: (str | List[str])  # Single shift type ID or list of shift type IDs
     required_num_people: int
     qualified_people: (int | str) | List[int | str] | None = None   # Single person/group ID or list or None
@@ -76,14 +83,20 @@ class NurseSchedulingData(BaseModel):
     country: str | None = None
     people: List[Person]
     shift_types: List[ShiftType]
-    preferences: List[MaxOneShiftPerDayPreference | ShiftRequestPreference | UnwantedPatternPreference | EvenShiftDistributionPreference | ShiftTypeRequirementsPreference]
+    preferences: List[
+        MaxOneShiftPerDayPreference |
+        ShiftRequestPreference |
+        UnwantedPatternPreference |
+        EvenShiftDistributionPreference |
+        ShiftTypeRequirementsPreference
+    ]
     people_groups: List[PeopleGroup] = Field(default_factory=list)
     shift_type_groups: List[ShiftTypeGroup] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_model(self) -> Self:
         # Validate preferences
-        required_prefs = {"all people work at most one shift per day"}
+        required_prefs = {AT_MOST_ONE_SHIFT_PER_DAY}
         found_prefs = {pref.type for pref in self.preferences}
         missing = required_prefs - found_prefs
         if missing:

@@ -10,7 +10,7 @@ shift_types:
   - id: A
     description: Charting shift type
 preferences:
-  - type: all people work at most one shift per day
+  - type: at most one shift per day
   - type: shift type requirement
     shift_type: A
     required_num_people: 1

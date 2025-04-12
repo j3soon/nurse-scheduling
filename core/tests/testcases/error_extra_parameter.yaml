@@ -13,7 +13,7 @@ shift_types:
   - id: N
     description: Night shift type
 preferences:
-  - type: all people work at most one shift per day
+  - type: at most one shift per day
   - type: shift type requirement
     shift_type: [D, E, N]
     required_num_people: 1

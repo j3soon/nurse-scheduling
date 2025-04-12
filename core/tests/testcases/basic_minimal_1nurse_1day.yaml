@@ -7,7 +7,7 @@ people:
 shift_types:
   - id: D
 preferences:
-  - type: all people work at most one shift per day
+  - type: at most one shift per day
   - type: shift type requirement
     shift_type: D
     required_num_people: 1

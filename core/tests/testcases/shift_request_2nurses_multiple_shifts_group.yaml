@@ -23,7 +23,7 @@ shift_type_groups:
     description: Evening and Night shifts
     members: [E, N]
 preferences:
-  - type: all people work at most one shift per day
+  - type: at most one shift per day
   - type: shift type requirement
     shift_type: [D, E, N]
     required_num_people: 1
