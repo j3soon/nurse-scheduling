@@ -102,6 +102,8 @@ def parse_sids(sids, map_sid_s):
     sids = ensure_list(sids)
     result = []
     for sid in sids:
+        if sid == OFF and len(sids) > 1:
+            raise ValueError(f"OFF shift type must be used alone: {sids}")
         if sid not in map_sid_s:
             raise ValueError(f"Unknown shift type ID: {sid}")
         result.extend(map_sid_s[sid])

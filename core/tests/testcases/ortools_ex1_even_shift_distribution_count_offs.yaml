@@ -1,0 +1,61 @@
+apiVersion: alpha
+description: Tests even shift distribution based on OR-Tools example 1 from <https://developers.google.com/optimization/scheduling/employee_scheduling>.
+startdate: 2023-08-18
+enddate: 2023-08-20
+people:
+  - id: 0
+    description: Nurse 0
+  - id: 1
+    description: Nurse 1
+  - id: 2
+    description: Nurse 2
+  - id: 3
+    description: Nurse 3
+shift_types:
+  - id: D
+    description: Day shift type
+  - id: E
+    description: Evening shift type
+  - id: N
+    description: Night shift type
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shift_type: [D, E, N]
+    required_num_people: 1
+  - type: shift count
+    person: ALL
+    count_dates: everyday
+    count_shift_types: OFF
+    expression: ['x <= T', 1]
+    weight: INF
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
+    person: 0
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: 1
+    date: ALL
+    shift_type: E
+  - type: shift request
+    person: 2
+    date: ALL
+    shift_type: N
+  - type: shift request
+    person: 3
+    date: 18
+    shift_type: [E, N]
+    weight: -10
+  - type: shift request
+    person: 3
+    date: 19
+    shift_type: [D, N]
+    weight: -10
+  - type: shift request
+    person: 3
+    date: 20
+    shift_type: ALL
+    weight: -10
+

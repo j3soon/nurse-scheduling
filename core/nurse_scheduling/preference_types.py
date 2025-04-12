@@ -77,13 +77,13 @@ def shift_request(ctx: Context, preference, preference_idx):
         # Note that the order of p and s is inverted deliberately
         for p in ps:
             weight = preference.weight
-            # TODO: Handle and test ALL and OFF shift types
             if preference.shift_type == utils.ALL:
                 assert utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types)
                 # Add the objective
                 utils.add_objective(ctx, weight, ctx.offs[(d, p)].Not())
                 ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0))
             elif preference.shift_type == utils.OFF:
+                assert utils.is_ss_equivalent_to_off(ss)
                 # Add the objective
                 utils.add_objective(ctx, weight, ctx.offs[(d, p)])
                 ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 1))
@@ -184,20 +184,19 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
 
 def shift_count(ctx: Context, preference, preference_idx):
     # Soft constraint
-    # TODO: For specified people, dates, and shift types, penalize deviations from target count
+    # For specified people, dates, and shift types, penalize violations of the expression
     # The expression is evaluated as a mathematical formula where x is the actual evaluated value
     # and T is the target value (can be a constant or special constant names)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     c_ds = utils.parse_dates(preference.count_dates, ctx.startdate, ctx.enddate, ctx.country)
     c_ss = utils.parse_sids(preference.count_shift_types, ctx.map_sid_s)
 
-    # Calculate total required shifts across all shift type requirements
+    # Calculate total preferred shifts across all shift type requirements
     total_shifts = 0
     for pref in ctx.preferences:
         if pref.type == models.SHIFT_TYPE_REQUIREMENT:
             shift_types = utils.parse_sids(pref.shift_type, ctx.map_sid_s)
-            # TODO: Consider preferred_num_people?
-            total_shifts += pref.required_num_people * len(shift_types) * ctx.n_days
+            total_shifts += (pref.preferred_num_people or pref.required_num_people) * len(shift_types) * ctx.n_days
 
     if len(preference.expression) == 0:
         raise ValueError(f"Expression must not be empty")
@@ -232,20 +231,30 @@ def shift_count(ctx: Context, preference, preference_idx):
         for p in ps:
             unique_var_prefix = f"pref_{preference_idx}_p_{p}"
             # Calculate actual number of shifts for this person
-            x = sum(
-                ctx.shifts[(d, s, p)] for d, s in ctx.map_p_ds[p]
-                if d in c_ds and s in c_ss
-                # TODO: Handle OFF shift type
-            )
+            if preference.count_shift_types == utils.ALL:
+                assert utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types)
+                x = sum(ctx.shifts[(d, s, p)] for d in c_ds for s in c_ss)
+            elif preference.count_shift_types == utils.OFF:
+                assert utils.is_ss_equivalent_to_off(c_ss)
+                x = sum(ctx.offs[(d, p)] for d in c_ds)
+            else:
+                if utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types):
+                    raise ValueError(f"Shift type should be 'ALL', but got {preference.count_shift_types} instead")
+                if utils.is_ss_equivalent_to_off(c_ss):
+                    raise ValueError(f"Shift type should be 'OFF', but got {preference.count_shift_types} instead")
+                x = sum(ctx.shifts[(d, s, p)] for d in c_ds for s in c_ss)
 
             # TODO: Also Report value of `x`
             
+            SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T']
             # Evaluate the expression
             if expression == '|x - T|^2':
                 # Note that a shift is represented as (d, s)
                 # i.e., min(weight * (actual_n_shifts - T) ** 2), for all p,
                 # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
                 # Create a variable to represent the deviation from target
+                if weight > 0:
+                    raise ValueError(f"Weight must be non-positive for shift count with '{expression}'.")
                 MAX = max(total_shifts - T, T)
                 diff_var_name = f"{unique_var_prefix}_diff"
                 ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name) # Min is 0, since diff is assigned through AddAbsEquality
@@ -259,7 +268,7 @@ def shift_count(ctx: Context, preference, preference_idx):
                     raise ValueError(f"'INF' and '-INF' weights are not allowed for shift count with '{expression}'.")
                 utils.add_objective(ctx, weight, squared)
                 ctx.reports.append(Report(f"shift_count_{squared_var_name}", squared, lambda x: x == 0))
-            elif expression in ['x >= T', 'x <= T', 'x > T', 'x < T']:
+            elif expression in SUPPORTED_EXPRESSIONS:
                 expr_var_name = f"{unique_var_prefix}_expr"
                 # str -> (expr, expr.Not())
                 equations = {
@@ -278,7 +287,7 @@ def shift_count(ctx: Context, preference, preference_idx):
                 # TODO: Be aware of signs of `weight`?
                 ctx.reports.append(Report(f"shift_count_{unique_var_prefix}_expr", expr, lambda x: x))
             else:
-                raise ValueError(f"Unsupported expression: {expression}")
+                raise ValueError(f"Unsupported expression: {expression}. Supported expressions are: {SUPPORTED_EXPRESSIONS}")
 
 PREFERENCE_TYPES_TO_FUNC = {
     models.SHIFT_TYPE_REQUIREMENT: shift_type_requirements,
