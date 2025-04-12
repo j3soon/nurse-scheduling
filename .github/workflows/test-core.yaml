@@ -1,6 +1,8 @@
 name: Test Core
 
-on: [push]
+on:
+  - push
+  - pull_request
 
 jobs:
   test-core:
@@ -19,10 +21,11 @@ jobs:
         run: cd core && python -m pip install -r requirements.txt
       - name: Test with pytest
         run: cd core && pytest --log-cli-level=DEBUG
-      # TODO: Only prepare code coverage data if on the master branch
       - name: Prepare code coverage data
-        run: pytest --cov core
+        if: github.ref == 'refs/heads/main'
+        run: cd core && pytest --cov .
       - name: Upload coverage to Codecov
+        if: github.ref == 'refs/heads/main'
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
