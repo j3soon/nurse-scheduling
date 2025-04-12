@@ -1,4 +1,5 @@
 import itertools
+import math
 from . import utils
 from .context import Context
 from .report import Report
@@ -11,6 +12,8 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
     # For all shift types, the requirements (# of people) must be fulfilled.
     # Note that a shift is represented as (d, s)
     # i.e., sum_{p}(shifts[(d, s, p)]) == required_num_people, for all (d, s)
+    # Also note that this requirement is used in other preference types,
+    # so this could not be implemented as a special case of shift_count.
 
     # TODO: Check if each (d, s) is specified by only one shift type requirement
     
@@ -188,55 +191,79 @@ def shift_count(ctx: Context, preference, preference_idx):
     c_ds = utils.parse_dates(preference.count_dates, ctx.startdate, ctx.enddate, ctx.country)
     c_ss = utils.parse_sids(preference.count_shift_types, ctx.map_sid_s)
 
+    # Calculate total required shifts across all shift type requirements
+    total_shifts = 0
+    for pref in ctx.preferences:
+        if pref.type == models.SHIFT_TYPE_REQUIREMENT:
+            shift_types = utils.parse_sids(pref.shift_type, ctx.map_sid_s)
+            # TODO: Consider preferred_num_people?
+            total_shifts += pref.required_num_people * len(shift_types) * ctx.n_days
+
     if isinstance(preference.target, int):
         T = preference.target
         if T < 0:
             raise ValueError(f"Target must be non-negative, but got {T}")
-    elif preference.target == 'AVG_SHIFTS_PER_PERSON':
-        # Calculate total required shifts across all shift type requirements
-        total_shifts = 0
-        for pref in ctx.preferences:
-            if pref.type == models.SHIFT_TYPE_REQUIREMENT:
-                shift_types = utils.parse_sids(pref.shift_type, ctx.map_sid_s)
-                total_shifts += pref.required_num_people * len(shift_types) * ctx.n_days
+    elif preference.target == 'floor(AVG_SHIFTS_PER_PERSON)':
+        T = math.floor(total_shifts / ctx.n_people)
+    elif preference.target == 'ceil(AVG_SHIFTS_PER_PERSON)':
+        T = math.ceil(total_shifts / ctx.n_people)
+    elif preference.target == 'round(AVG_SHIFTS_PER_PERSON)':
         # Keep in mind the rounding behavior of Python
         # Ref: https://stackoverflow.com/q/10825926
         T = round(total_shifts / ctx.n_people)
     else:
-        raise ValueError(f"Unsupported target: {preference.T}")
+        raise ValueError(f"Unsupported target: {preference.target}")
     assert isinstance(T, int)
 
     for p in ps:
+        unique_var_prefix = f"pref_{preference_idx}_p_{p}"
         # Calculate actual number of shifts for this person
-        actual_n_shifts = sum(
+        x = sum(
             ctx.shifts[(d, s, p)] for d, s in ctx.map_p_ds[p]
             if d in c_ds and s in c_ss
             # TODO: Handle OFF shift type
         )
+
+        # TODO: Also Report value of `x`
         
         # Evaluate the expression
-        expr_value = None
+        weight = preference.weight
         if preference.expression == '|x - T|^2':
             # Note that a shift is represented as (d, s)
             # i.e., min(weight * (actual_n_shifts - T) ** 2), for all p,
             # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
             # Create a variable to represent the deviation from target
             MAX = max(total_shifts - T, T)
-            unique_var_prefix = f"pref_{preference_idx}_p_{p}"
             diff_var_name = f"{unique_var_prefix}_diff"
             ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name) # Min is 0, since diff is assigned through AddAbsEquality
-            ctx.model.AddAbsEquality(diff, actual_n_shifts - T)
+            ctx.model.AddAbsEquality(diff, x - T)
             # Square the difference
             squared_var_name = f"{unique_var_prefix}_squared"
             ctx.model_vars[squared_var_name] = squared = ctx.model.NewIntVar(0, MAX**2, squared_var_name)
             ctx.model.AddMultiplicationEquality(squared, diff, diff)
-            expr_value = squared
             # Add the objective
-            weight = preference.weight
             if weight in [utils.INF, utils.NINF]:
                 raise ValueError(f"'INF' and '-INF' weights are not allowed for shift count with '{preference.expression}'.")
-            utils.add_objective(ctx, weight, expr_value)
+            utils.add_objective(ctx, weight, squared)
             ctx.reports.append(Report(f"shift_count_{squared_var_name}", squared, lambda x: x == 0))
+        elif preference.expression in ['x >= T', 'x <= T', 'x > T', 'x < T']:
+            expr_var_name = f"{unique_var_prefix}_expr"
+            # str -> (expr, expr.Not())
+            expression = {
+                'x >= T': (x >= T, x < T),
+                'x <= T': (x <= T, x > T),
+                'x > T': (x > T, x <= T),
+                'x < T': (x < T, x >= T),
+            }[preference.expression]
+            # Add the objective
+            ctx.model_vars[expr_var_name] = expr = utils.ortools_expression_to_bool_var(
+                ctx.model, expr_var_name,
+                expression[0],
+                expression[1]
+            )
+            utils.add_objective(ctx, weight, expr)
+            # TODO: Be aware of signs of `weight`?
+            ctx.reports.append(Report(f"shift_count_{unique_var_prefix}_expr", expr, lambda x: x))
         else:
             raise ValueError(f"Unsupported expression: {preference.expression}")
 

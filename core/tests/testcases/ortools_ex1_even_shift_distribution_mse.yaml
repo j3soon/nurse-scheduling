@@ -27,16 +27,9 @@ preferences:
     person: ALL
     count_dates: everyday
     count_shift_types: ALL
-    expression: 'x >= T'
-    target: floor(AVG_SHIFTS_PER_PERSON)
-    weight: INF
-  - type: shift count
-    person: ALL
-    count_dates: everyday
-    count_shift_types: ALL
-    expression: 'x <= T'
-    target: ceil(AVG_SHIFTS_PER_PERSON)
-    weight: INF
+    expression: '|x - T|^2'
+    target: round(AVG_SHIFTS_PER_PERSON)
+    weight: -1000000
   # below are minimal preferences to ensure unique solution,
   # which are not required in real-world cases
   - type: shift request
