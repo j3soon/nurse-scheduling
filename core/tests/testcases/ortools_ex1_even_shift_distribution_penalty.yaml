@@ -27,15 +27,10 @@ preferences:
     person: ALL
     count_dates: everyday
     count_shift_types: ALL
-    expression: 'x < T'
-    target: floor(AVG_SHIFTS_PER_PERSON)
-    weight: -1000000
-  - type: shift count
-    person: ALL
-    count_dates: everyday
-    count_shift_types: ALL
-    expression: 'x > T'
-    target: ceil(AVG_SHIFTS_PER_PERSON)
+    expression: [
+      ['x < T', floor(AVG_SHIFTS_PER_PERSON)],
+      ['x > T', ceil(AVG_SHIFTS_PER_PERSON)]
+    ]
     weight: -1000000
   # below are minimal preferences to ensure unique solution,
   # which are not required in real-world cases

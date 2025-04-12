@@ -1,5 +1,5 @@
 import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import Annotated, Self
@@ -74,8 +74,7 @@ class ShiftCountPreference(BasePreference):
     person: (int | str) | List[int | str]  # Single person/group ID or list
     count_dates: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     count_shift_types: (str | List[str])  # Single shift type ID or list
-    expression: str  # Mathematical expression to evaluate
-    target: (int | str)  # Target integer value or special constant names
+    expression: (Tuple[str, (int | str)] | List[Tuple[str, (int | str)]])  # Single pair of mathematical expression and target value (int or special constant names) to evaluate or list
     weight: (int | str) = Field(default=-1)
 
 class NurseSchedulingData(BaseModel):
