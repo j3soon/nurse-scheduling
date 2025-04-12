@@ -11,6 +11,17 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 > This project is currently a **Work in Progress**, so it may not function as intended. A preliminary version (or a POC) of a command-line interface is implemented and verified by domain experts under a multi-ward scenario at 2023/08/20. We are currently refactoring the codebase along with test cases to make it more maintainable.
 
+## How to run
+
+```sh
+cd core
+pip install -r requirements.txt
+# Run CLI
+python -m nurse_scheduling.cli <input_file_path>
+# Run all tests
+pytest --log-cli-level=INFO
+```
+
 ## Design Philosophy
 
 ### Choice of Solver
@@ -24,6 +35,8 @@ Google OR-Tools is chosen due to the support of Python, which is the language I'
 We prioritize human readability and ease of editing by hand over machine parsing simplicity.
 
 To allow quick prototyping without defining data type classes, we choose to keep the YAML input intact in memory. This requires extracting data explicitly using utility functions.
+
+<!-- TODO: Compare with INRC format and describe the differences and rationale) -->
 
 ## References
 
