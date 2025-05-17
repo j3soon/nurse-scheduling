@@ -201,10 +201,16 @@ def shift_count(ctx: Context, preference, preference_idx):
     if len(preference.expression) == 0:
         raise ValueError(f"Expression must not be empty")
     if isinstance(preference.expression, list) and isinstance(preference.expression[0], tuple):
+        # Check each expression has length 2
+        for expr in preference.expression:
+            if len(expr) != 2:
+                raise ValueError(f"Each expression must be a tuple of length 2, but got {expr}")
         # Is nested expression
         expressions, targets = zip(*preference.expression)
     elif isinstance(preference.expression, tuple):
         # Is single expression
+        if len(preference.expression) != 2:
+            raise ValueError(f"Expression must be a single tuple, but got {preference.expression}")
         expressions = [preference.expression[0]]
         targets = [preference.expression[1]]
     else:

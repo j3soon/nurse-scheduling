@@ -81,6 +81,9 @@ def is_freeday(date: datetime.date, is_labor: bool = False) -> bool:
     # Deal with labor day
     if is_labor and date == datetime.date(2025, 5, 1):
         # TODO: What if labor day is on a weekend?
+        # It seems the employer must grant a day off to compensate
+        # for the holiday, but the date can be negotiated between the
+        # employer and employee.
         return True
 
     # Default to weekday check
