@@ -97,9 +97,9 @@ def shift_request(ctx: Context, preference, preference_idx):
                     utils.add_objective(ctx, weight, ctx.shifts[(d, s, p)])
                     ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}_shifts", ctx.shifts[(d, s, p)], lambda x: x == 1))
 
-def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
+def shift_type_successions(ctx: Context, preference, preference_idx):
     # Soft constraint
-    # For all people, for all start date, try to avoid unwanted shift type successions.
+    # For all people, for all start date, try to match the shift type successions.
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
     # where actual_n_matched = sum_{(d, s)}(shifts[(d, s, p)]), for all satisfying (d, s)
@@ -168,7 +168,7 @@ def unwanted_shift_type_successions(ctx: Context, preference, preference_idx):
                 for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
                     assert len(seq) == len(pattern)
                     # Construct: is_match = (actual_n_matched == target_n_matched)
-                    unique_var_prefix = f"unwanted_shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
+                    unique_var_prefix = f"shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
                     is_match_var_name = f"{unique_var_prefix}_is_match"
                     actual_n_matched = sum(seq)
                     ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
@@ -299,6 +299,6 @@ PREFERENCE_TYPES_TO_FUNC = {
     models.SHIFT_TYPE_REQUIREMENT: shift_type_requirements,
     models.AT_MOST_ONE_SHIFT_PER_DAY: all_people_work_at_most_one_shift_per_day,
     models.SHIFT_REQUEST: shift_request,
-    models.UNWANTED_SHIFT_TYPE_SUCCESSIONS: unwanted_shift_type_successions,
+    models.SHIFT_TYPE_SUCCESSIONS: shift_type_successions,
     models.SHIFT_COUNT: shift_count,
 }

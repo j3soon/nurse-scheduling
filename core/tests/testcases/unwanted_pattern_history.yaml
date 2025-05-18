@@ -24,9 +24,11 @@ preferences:
   - type: shift type requirement
     shift_type: [D, E, N]
     required_num_people: 1
-  - type: unwanted shift type successions
+  - type: shift type successions
     person: ALL
     pattern: [[D, E], N]
-  - type: unwanted shift type successions
+    weight: -1
+  - type: shift type successions
     person: ALL
     pattern: [E, D]
+    weight: -1

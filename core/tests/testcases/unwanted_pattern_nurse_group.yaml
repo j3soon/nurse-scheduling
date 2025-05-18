@@ -24,7 +24,7 @@ shift_types:
     description: Night shift type
 preferences:
   - type: at most one shift per day
-  - type: unwanted shift type successions
+  - type: shift type successions
     person: n12
     pattern: [N]
     weight: -100

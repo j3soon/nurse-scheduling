@@ -8,7 +8,7 @@ from .utils import ALL, OFF
 AT_MOST_ONE_SHIFT_PER_DAY = 'at most one shift per day'
 SHIFT_TYPE_REQUIREMENT = 'shift type requirement'
 SHIFT_REQUEST = 'shift request'
-UNWANTED_SHIFT_TYPE_SUCCESSIONS = 'unwanted shift type successions'
+SHIFT_TYPE_SUCCESSIONS = 'shift type successions'
 SHIFT_COUNT = 'shift count'
 
 # Base models
@@ -42,25 +42,29 @@ class BasePreference(BaseModel):
 class ShiftRequestPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_REQUEST}$")] = SHIFT_REQUEST
+    description: str | None = None
     person: (int | str) | List[int | str]  # Single person/group ID or list
     date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     shift_type: (str | List[str])  # Single shift type ID or list
     weight: (int | str) = Field(default=1)
 
-class UnwantedPatternPreference(BasePreference):
+class ShiftTypeSuccessionsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern=f"^{UNWANTED_SHIFT_TYPE_SUCCESSIONS}$")] = UNWANTED_SHIFT_TYPE_SUCCESSIONS
+    type: Annotated[str, Field(pattern=f"^{SHIFT_TYPE_SUCCESSIONS}$")] = SHIFT_TYPE_SUCCESSIONS
+    description: str | None = None
     person: (int | str) | List[int | str]  # Single person/group ID or list
     pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
-    weight: (int | str) = Field(default=-1)
+    weight: (int | str) = Field(default=1)
 
 class MaxOneShiftPerDayPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{AT_MOST_ONE_SHIFT_PER_DAY}$")] = AT_MOST_ONE_SHIFT_PER_DAY
+    description: str | None = None
 
 class ShiftTypeRequirementsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_TYPE_REQUIREMENT}$")] = SHIFT_TYPE_REQUIREMENT
+    description: str | None = None
     shift_type: (str | List[str])  # Single shift type ID or list of shift type IDs
     required_num_people: int
     qualified_people: (int | str) | List[int | str] | None = None   # Single person/group ID or list or None
@@ -71,6 +75,7 @@ class ShiftTypeRequirementsPreference(BasePreference):
 class ShiftCountPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_COUNT}$")] = SHIFT_COUNT
+    description: str | None = None
     person: (int | str) | List[int | str]  # Single person/group ID or list
     count_dates: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     count_shift_types: (str | List[str])  # Single shift type ID or list
@@ -89,7 +94,7 @@ class NurseSchedulingData(BaseModel):
     preferences: List[
         MaxOneShiftPerDayPreference |
         ShiftRequestPreference |
-        UnwantedPatternPreference |
+        ShiftTypeSuccessionsPreference |
         ShiftTypeRequirementsPreference |
         ShiftCountPreference
     ]
