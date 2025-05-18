@@ -82,11 +82,11 @@ def parse_dates(dates, startdate: datetime.date, enddate: datetime.date, country
             weekday_index = MAP_WEEKDAY_STR.index(date_str)
             parsed_dates += [date for date in dates_in_timespan if date.weekday() == weekday_index]
         elif match := re.match(r'^([\d-]+)~([\d-]+)$', date_str):
-            startdate = _parse_single_date(match.group(1), startdate, enddate)
-            enddate = _parse_single_date(match.group(2), startdate, enddate)
+            range_start = _parse_single_date(match.group(1), startdate, enddate)
+            range_end = _parse_single_date(match.group(2), startdate, enddate)
             parsed_dates += [
-                startdate + datetime.timedelta(days=i)
-                for i in range((enddate - startdate).days + 1)
+                range_start + datetime.timedelta(days=i)
+                for i in range((range_end - range_start).days + 1)
             ]
         else:
             parsed_dates.append(_parse_single_date(date_str, startdate, enddate))

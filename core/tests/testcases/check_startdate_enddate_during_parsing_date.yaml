@@ -1,0 +1,54 @@
+apiVersion: alpha
+description: Check startdate and enddate during parsing date
+startdate: 2023-08-01
+enddate: 2023-08-09
+people:
+  - id: 0
+    description: Nurse 0
+  - id: 1
+    description: Nurse 1
+  - id: 2
+    description: Nurse 2
+  - id: 3
+    description: Nurse 3
+shift_types:
+  - id: D
+    description: Day shift type
+  - id: E
+    description: Evening shift type
+  - id: N
+    description: Night shift type
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shift_type: [D, E, N]
+    required_num_people: 1
+  # below are minimal preferences to ensure unique solution,
+  # which are not required in real-world cases
+  - type: shift request
+    person: 0
+    date: ALL
+    shift_type: D
+  - type: shift request
+    person: 1
+    date: ALL
+    shift_type: E
+  - type: shift request
+    person: 2
+    date: ALL
+    shift_type: N
+  - type: shift request
+    person: 3
+    date: 2~3
+    shift_type: D
+    weight: INF
+  - type: shift request
+    person: 3
+    date: 08-04~08-04
+    shift_type: E
+    weight: INF
+  - type: shift request
+    person: 3
+    date: [2023-08-06~2023-08-07, 8~8]
+    shift_type: N
+    weight: INF
