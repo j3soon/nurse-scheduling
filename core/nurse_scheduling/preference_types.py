@@ -82,20 +82,17 @@ def shift_request(ctx: Context, preference, preference_idx):
                 # Add the objective
                 utils.add_objective(ctx, weight, ctx.offs[(d, p)].Not())
                 ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0))
-            elif preference.shift_type == utils.OFF:
-                assert utils.is_ss_equivalent_to_off(ss)
-                # Add the objective
-                utils.add_objective(ctx, weight, ctx.offs[(d, p)])
-                ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 1))
             else:
                 if utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types):
                     raise ValueError(f"Shift type should be 'ALL', but got {preference.shift_type} instead")
-                if utils.is_ss_equivalent_to_off(ss):
-                    raise ValueError(f"Shift type should be 'OFF', but got {preference.shift_type} instead")
                 for s in ss:
                     # Add the objective
-                    utils.add_objective(ctx, weight, ctx.shifts[(d, s, p)])
-                    ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}_shifts", ctx.shifts[(d, s, p)], lambda x: x == 1))
+                    if s == utils.OFF_sid:
+                        utils.add_objective(ctx, weight, ctx.offs[(d, p)])
+                        ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 1))
+                    else:
+                        utils.add_objective(ctx, weight, ctx.shifts[(d, s, p)])
+                        ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}_shifts", ctx.shifts[(d, s, p)], lambda x: x == 1))
 
 def shift_type_successions(ctx: Context, preference, preference_idx):
     # Soft constraint
@@ -116,12 +113,8 @@ def shift_type_successions(ctx: Context, preference, preference_idx):
     ]
     parsed_pattern = []
     for i in range(len(flattened_pattern)):
-        if preference.pattern[i] == utils.OFF:
-            parsed_pattern.append(utils.OFF)
-        elif preference.pattern[i] == utils.ALL:
+        if preference.pattern[i] == utils.ALL:
             parsed_pattern.append(utils.ALL)
-        elif utils.is_ss_equivalent_to_off(flattened_pattern[i]):
-            raise ValueError(f"Pattern must not include 'OFF', but got {flattened_pattern[i]}")
         elif utils.is_ss_equivalent_to_all(flattened_pattern[i], ctx.n_shift_types):
             raise ValueError(f"Pattern must not include 'ALL', but got {flattened_pattern[i]}")
         else:
@@ -141,16 +134,14 @@ def shift_type_successions(ctx: Context, preference, preference_idx):
                         raise ValueError(f"History must not include nested ID, but got {ctx.people[p].history[i]}")
                     if ctx.people[p].history[i] == utils.ALL:
                         raise ValueError(f"History must not include 'ALL', but got {ctx.people[p].history[i]}")
-                    if ctx.people[p].history[i] != utils.OFF:
-                        history[i] = history[i][0]
                     else:
-                        history[i] = utils.OFF
+                        history[i] = history[i][0]
                 # For each pattern, check if its prefix matches the end of shift history
                 # If so, add the remaining suffix as a new pattern to check
                 for history_suffix_len in range(1, min(len(flattened_pattern), len(history)) + 1):
                     history_suffix = history[-history_suffix_len:]
                     pattern_prefix = flattened_pattern[:history_suffix_len]
-                    if all((history_suffix[i] in pattern_prefix[i] or history_suffix[i] == utils.OFF and len(pattern_prefix[i]) == 0) for i in range(history_suffix_len)):
+                    if all(history_suffix[i] in pattern_prefix[i] for i in range(history_suffix_len)):
                         # If history suffix matches pattern prefix, add remaining pattern suffix as new pattern
                         # This is equivalent to checking patterns that span across history and future days
                         patterns.append(parsed_pattern[history_suffix_len:])
@@ -158,12 +149,10 @@ def shift_type_successions(ctx: Context, preference, preference_idx):
                 # For each day and pattern, collect all matched shifts
                 match_shifts_in_day = []
                 for i in range(len(pattern)):
-                    if pattern[i] == utils.OFF:
-                        match_shifts_in_day.append([ctx.offs[(d_begin+i, p)]])
-                    elif pattern[i] == utils.ALL:
+                    if pattern[i] == utils.ALL:
                         match_shifts_in_day.append([ctx.offs[(d_begin+i, p)].Not()])
                     else:
-                        match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] for s in ctx.map_dp_s[(d_begin+i, p)] if s in pattern[i]])
+                        match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] if s != utils.OFF_sid else ctx.offs[(d_begin+i, p)] for s in pattern[i]])
                 target_n_matched = len(pattern)
                 for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
                     assert len(seq) == len(pattern)
@@ -240,15 +229,10 @@ def shift_count(ctx: Context, preference, preference_idx):
             if preference.count_shift_types == utils.ALL:
                 assert utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types)
                 x = sum(ctx.shifts[(d, s, p)] for d in c_ds for s in c_ss)
-            elif preference.count_shift_types == utils.OFF:
-                assert utils.is_ss_equivalent_to_off(c_ss)
-                x = sum(ctx.offs[(d, p)] for d in c_ds)
             else:
                 if utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types):
                     raise ValueError(f"Shift type should be 'ALL', but got {preference.count_shift_types} instead")
-                if utils.is_ss_equivalent_to_off(c_ss):
-                    raise ValueError(f"Shift type should be 'OFF', but got {preference.count_shift_types} instead")
-                x = sum(ctx.shifts[(d, s, p)] for d in c_ds for s in c_ss)
+                x = sum(ctx.shifts[(d, s, p)] if s != utils.OFF_sid else ctx.offs[(d, p)] for d in c_ds for s in c_ss)
 
             # TODO: Also Report value of `x`
             
@@ -259,8 +243,6 @@ def shift_count(ctx: Context, preference, preference_idx):
                 # i.e., min(weight * (actual_n_shifts - T) ** 2), for all p,
                 # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
                 # Create a variable to represent the deviation from target
-                if weight > 0:
-                    raise ValueError(f"Weight must be non-positive for shift count with '{expression}'.")
                 MAX = max(total_shifts - T, T)
                 diff_var_name = f"{unique_var_prefix}_diff"
                 ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name) # Min is 0, since diff is assigned through AddAbsEquality
@@ -270,8 +252,11 @@ def shift_count(ctx: Context, preference, preference_idx):
                 ctx.model_vars[squared_var_name] = squared = ctx.model.NewIntVar(0, MAX**2, squared_var_name)
                 ctx.model.AddMultiplicationEquality(squared, diff, diff)
                 # Add the objective
-                if weight in [utils.INF, utils.NINF]:
-                    raise ValueError(f"'INF' and '-INF' weights are not allowed for shift count with '{expression}'.")
+                if weight == utils.INF:
+                    raise ValueError(f"'INF' weights are not allowed for shift count with '{expression}'.")
+                elif weight != utils.NINF and weight > 0:
+                    # -INF means x == T, which is okay
+                    raise ValueError(f"Weight must be non-positive for shift count with '{expression}'.")
                 utils.add_objective(ctx, weight, squared)
                 ctx.reports.append(Report(f"shift_count_{squared_var_name}", squared, lambda x: x == 0))
             elif expression in SUPPORTED_EXPRESSIONS:

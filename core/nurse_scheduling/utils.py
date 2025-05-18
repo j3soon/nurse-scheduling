@@ -14,6 +14,7 @@ MAP_WEEKDAY_STR = [
 
 ALL = 'ALL' # For dates, shift types, and people
 OFF = 'OFF' # For shift types
+OFF_sid = -1 # For shift types
 INF = 'INF' # For weights
 NINF = '-INF' # For weights
 
@@ -102,8 +103,6 @@ def parse_sids(sids, map_sid_s):
     sids = ensure_list(sids)
     result = []
     for sid in sids:
-        if sid == OFF and len(sids) > 1:
-            raise ValueError(f"OFF shift type must be used alone: {sids}")
         if sid not in map_sid_s:
             raise ValueError(f"Unknown shift type ID: {sid}")
         result.extend(map_sid_s[sid])
@@ -120,6 +119,3 @@ def parse_pids(pids, map_pid_p):
 
 def is_ss_equivalent_to_all(ss, n_shift_types):
     return set(ss) == set(range(n_shift_types))
-
-def is_ss_equivalent_to_off(ss):
-    return len(ss) == 0

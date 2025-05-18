@@ -6,7 +6,7 @@ from ortools.sat.python import cp_model
 
 from . import exporter, preference_types
 from .context import Context
-from .utils import ortools_expression_to_bool_var, ALL, OFF
+from .utils import ortools_expression_to_bool_var, ALL, OFF, OFF_sid
 from .loader import load_data
 
 def schedule(filepath: str, deterministic=False, avoid_solution=None):
@@ -28,7 +28,7 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
         ctx.map_sid_s[ctx.shift_types[s].id] = [s]
     # Add shift type ALL and OFF keywords
     ctx.map_sid_s[ALL] = list(range(ctx.n_shift_types))
-    ctx.map_sid_s[OFF] = []
+    ctx.map_sid_s[OFF] = [OFF_sid]
     # Map shift type group ID to list of shift type indices
     for g in range(len(ctx.shift_type_groups)):
         group = ctx.shift_type_groups[g]
@@ -71,6 +71,17 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
         # Add constraint that at least one variable must be different from the solution to avoid
         ctx.model.AddBoolOr(avoid_solution_vars)
 
+    logging.debug("Creating off variables...")
+    for d in range(ctx.n_days):
+        for p in range(ctx.n_people):
+            dp_shifts_sum = sum(ctx.shifts[(d, s, p)] for s in range(ctx.n_shift_types))
+            var_name = f"off_d{d}_p{p}"
+            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ortools_expression_to_bool_var(
+                ctx.model, var_name,
+                dp_shifts_sum == 0,
+                dp_shifts_sum != 0,
+            )
+
     logging.debug("Creating maps for faster lookup...")
     ctx.map_ds_p = {
         (d, s): {p for p in range(ctx.n_people) if (d, s, p) in ctx.shifts}
@@ -92,16 +103,6 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
         p: {(d, s) for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types)) if (d, s, p) in ctx.shifts}
         for p in range(ctx.n_people)
     }
-
-    logging.debug("Creating off variables...")
-    for (d, p), ss in ctx.map_dp_s.items():
-        dp_shifts_sum = sum(ctx.shifts[(d, s, p)] for s in ss)
-        var_name = f"off_d{d}_p{p}"
-        ctx.model_vars[var_name] = ctx.offs[(d, p)] = ortools_expression_to_bool_var(
-            ctx.model, var_name,
-            dp_shifts_sum == 0,
-            dp_shifts_sum != 0,
-        )
 
     logging.debug("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences

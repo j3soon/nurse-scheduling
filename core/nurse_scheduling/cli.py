@@ -11,7 +11,7 @@ def main():
     
     filepath = sys.argv[1]
     df, solution, score, status = scheduler.schedule(filepath)
-    print(df)
+    print(df, solution, score, status)
 
 if __name__ == "__main__":
     main()
