@@ -6,6 +6,9 @@ import { FormInput } from '@/components/FormInput';
 import { TableRowActions } from '@/components/TableRowActions';
 import { DataTable } from '@/components/DataTable';
 import { useIdValidation } from '@/hooks/useIdValidation';
+import { usePeople } from '@/contexts/PeopleContext';
+
+const ERROR_SHOULD_NOT_HAPPEN = 'This indicates a bug in the code logic. Please report this issue so it can be addressed.';
 
 interface Person {
   id: string;
@@ -23,21 +26,19 @@ enum Mode {
   INLINE_EDITING = 'INLINE_EDITING'
 }
 
-const ERROR_SHOULD_NOT_HAPPEN = 'This indicates a bug in the code logic. Please report this issue so it can be addressed.';
-
 export default function PeoplePage() {
-  const [people, setPeople] = useState<Person[]>(
-    Array.from({ length: 10 }, (_, index) => ({
-      id: `Person ${index + 1}`
-    }))
-  );
-  const [groups, setGroups] = useState<PeopleGroup[]>([
-    { id: 'Group 1', members: ['Person 1', 'Person 2'] },
-    { id: 'Group 2', members: ['Person 2', 'Person 3', 'Person 4'] },
-    { id: 'Group 3', members: ['Person 3', 'Person 4', 'Person 5', 'Person 6'] },
-    { id: 'Group 4', members: ['Person 4', 'Person 5', 'Person 6', 'Person 7', 'Person 8'] },
-    { id: 'Group 5', members: ['Person 5', 'Person 6', 'Person 7', 'Person 8', 'Person 9', 'Person 10'] },
-  ]);
+  const {
+    people,
+    groups,
+    addPerson,
+    addGroup,
+    updatePerson,
+    updateGroup,
+    deletePerson,
+    deleteGroup,
+    removePersonFromGroup,
+  } = usePeople();
+
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
   const [draft, setDraft] = useState<{
     id: string;
@@ -68,55 +69,20 @@ export default function PeoplePage() {
     }
 
     if (draft.isPerson) {
-      // Update people array
-      let updatedPeople = people;
       if (draft.editingId) {
-        // Update existing person
-        updatedPeople = people.map(p => 
-          p.id === draft.editingId ? { id: trimmedId } : p
-        );
+        // Update existing person with their groups
+        updatePerson(draft.editingId, trimmedId, draft.groups);
       } else {
-        // Add new person
-        updatedPeople = [...people, { id: trimmedId }];
+        // Add new person with their groups
+        addPerson(trimmedId, draft.groups);
       }
-      setPeople(updatedPeople);
-
-      // Update group memberships
-      const updatedGroups = groups.map(group => {
-        // Get current members excluding the edited person (if any)
-        const otherMembers = group.members.filter(id => id !== draft.editingId);
-        
-        // Add the person if they should be in this group
-        const allMembers = draft.groups.includes(group.id)
-          ? [...otherMembers, trimmedId]
-          : otherMembers;
-
-        // Sort members based on people order
-        // Note that we cannot use `people` here because calling the set function in React does not change state in the running code.
-        const sortedMembers = updatedPeople
-          .filter(person => allMembers.includes(person.id))
-          .map(person => person.id);
-
-        return {
-          ...group,
-          members: sortedMembers
-        };
-      });
-      setGroups(updatedGroups);
     } else {
-      // Sort members based on people order
-      const sortedMembers = people
-        .filter(person => draft.members.includes(person.id))
-        .map(person => person.id);
-
       if (draft.editingId) {
         // Update existing group
-        setGroups(groups.map(g => 
-          g.id === draft.editingId ? { id: trimmedId, members: sortedMembers } : g
-        ));
+        updateGroup(draft.editingId, trimmedId, draft.members);
       } else {
         // Add new group
-        setGroups([...groups, { id: trimmedId, members: sortedMembers }]);
+        addGroup(trimmedId, draft.members);
       }
     }
 
@@ -153,15 +119,9 @@ export default function PeoplePage() {
   const handleDelete = (id: string) => {
     const isPerson = people.some(p => p.id === id);
     if (isPerson) {
-      setPeople(people.filter(p => p.id !== id));
-      // Remove person from all groups while preserving the original member order
-      setGroups(groups.map(group => ({
-        ...group,
-        members: group.members.filter(memberId => memberId !== id)
-      })));
+      deletePerson(id);
     } else {
-      // Remove group while preserving the original member order
-      setGroups(groups.filter(g => g.id !== id));
+      deleteGroup(id);
     }
   };
 
@@ -228,20 +188,9 @@ export default function PeoplePage() {
     }
 
     if (draft.isPerson) {
-      setPeople(people.map(p => 
-        p.id === draft.editingId ? { id: trimmedId } : p
-      ));
-      // Update group memberships
-      setGroups(groups.map(group => ({
-        ...group,
-        members: group.members.map(memberId => 
-          memberId === draft.editingId ? trimmedId : memberId
-        )
-      })));
+      updatePerson(draft.editingId!, trimmedId);
     } else {
-      setGroups(groups.map(g => 
-        g.id === draft.editingId ? { ...g, id: trimmedId } : g
-      ));
+      updateGroup(draft.editingId!, trimmedId);
     }
 
     setMode(Mode.NORMAL);
@@ -263,22 +212,6 @@ export default function PeoplePage() {
       e.preventDefault();
       handleInlineCancel();
     }
-  };
-
-  const handleRemoveMember = (groupId: string, memberId: string) => {
-    setGroups(groups.map(group => 
-      group.id === groupId 
-        ? { ...group, members: group.members.filter(id => id !== memberId) }
-        : group
-    ));
-  };
-
-  const handleRemoveGroup = (personId: string, groupId: string) => {
-    setGroups(groups.map(group => 
-      group.id === groupId 
-        ? { ...group, members: group.members.filter(id => id !== personId) }
-        : group
-    ));
   };
 
   const renderForm = () => {
@@ -391,7 +324,7 @@ export default function PeoplePage() {
                   {getPeopleGroups(person.id).map(group => (
                     <span key={group.id} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
                       <button
-                        onClick={() => handleRemoveGroup(person.id, group.id)}
+                        onClick={() => removePersonFromGroup(person.id, group.id)}
                         className="mr-1 text-blue-600 hover:text-blue-900"
                       >
                         ×
@@ -449,9 +382,9 @@ export default function PeoplePage() {
                   {group.members.map(memberId => {
                     const person = people.find(p => p.id === memberId);
                     return person ? (
-                      <span key={memberId} className="inline-flex items-center bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded">
+                      <span key={person.id} className="inline-flex items-center bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded">
                         <button
-                          onClick={() => handleRemoveMember(group.id, memberId)}
+                          onClick={() => removePersonFromGroup(person.id, group.id)}
                           className="mr-1 text-gray-600 hover:text-gray-900"
                         >
                           ×
