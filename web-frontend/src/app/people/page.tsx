@@ -18,23 +18,25 @@ interface PeopleGroup {
 
 enum Mode {
   NORMAL = 'NORMAL',
-  ADDING_PEOPLE = 'ADDING_PEOPLE',
-  EDITING_PEOPLE = 'EDITING_PEOPLE',
-  ADDING_GROUP = 'ADDING_GROUP',
-  EDITING_GROUP = 'EDITING_GROUP'
+  ADDING = 'ADDING',
+  EDITING = 'EDITING',
+  INLINE_EDITING = 'INLINE_EDITING'
 }
 
 const ERROR_SHOULD_NOT_HAPPEN = 'This indicates a bug in the code logic. Please report this issue so it can be addressed.';
 
 export default function PeoplePage() {
-  const [people, setPeople] = useState<Person[]>([
-    { id: 'Person 1' },
-    { id: 'Person 2' },
-  ]);
+  const [people, setPeople] = useState<Person[]>(
+    Array.from({ length: 10 }, (_, index) => ({
+      id: `Person ${index + 1}`
+    }))
+  );
   const [groups, setGroups] = useState<PeopleGroup[]>([
     { id: 'Group 1', members: ['Person 1', 'Person 2'] },
-    { id: 'Group 2', members: ['Person 1'] },
-    { id: 'Group 3', members: ['Person 2'] },
+    { id: 'Group 2', members: ['Person 2', 'Person 3', 'Person 4'] },
+    { id: 'Group 3', members: ['Person 3', 'Person 4', 'Person 5', 'Person 6'] },
+    { id: 'Group 4', members: ['Person 4', 'Person 5', 'Person 6', 'Person 7', 'Person 8'] },
+    { id: 'Group 5', members: ['Person 5', 'Person 6', 'Person 7', 'Person 8', 'Person 9', 'Person 10'] },
   ]);
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
   const [draft, setDraft] = useState<{
@@ -42,22 +44,21 @@ export default function PeoplePage() {
     groups: string[];
     members: string[];
     editingId?: string;
+    isPerson: boolean;
   }>({ 
     id: '',
     groups: [],
-    members: []
+    members: [],
+    isPerson: true,
   });
   const [error, setError] = useState<string>('');
 
   const { isDuplicateId } = useIdValidation(people, groups);
 
-  const isPersonMode = mode === Mode.ADDING_PEOPLE || mode === Mode.EDITING_PEOPLE;
-  const isGroupMode = mode === Mode.ADDING_GROUP || mode === Mode.EDITING_GROUP;
-
   const handleSave = () => {
     const trimmedId = draft.id.trim();
     if (!trimmedId) {
-      setError(`${isPersonMode ? 'Person' : 'Group'} ID cannot be empty`);
+      setError(`${draft.isPerson ? 'Person' : 'Group'} ID cannot be empty`);
       return;
     }
     
@@ -66,7 +67,7 @@ export default function PeoplePage() {
       return;
     }
 
-    if (isPersonMode) {
+    if (draft.isPerson) {
       // Update people array
       let updatedPeople = people;
       if (draft.editingId) {
@@ -102,7 +103,7 @@ export default function PeoplePage() {
         };
       });
       setGroups(updatedGroups);
-    } else if (isGroupMode) {
+    } else {
       // Sort members based on people order
       const sortedMembers = people
         .filter(person => draft.members.includes(person.id))
@@ -117,18 +118,16 @@ export default function PeoplePage() {
         // Add new group
         setGroups([...groups, { id: trimmedId, members: sortedMembers }]);
       }
-    } else {
-      console.error(`Invalid mode: ${mode}. ${ERROR_SHOULD_NOT_HAPPEN}`);
     }
 
-    setDraft({ id: '', groups: [], members: [] });
+    setDraft({ id: '', groups: [], members: [], isPerson: true });
     setMode(Mode.NORMAL);
     setError('');
   };
 
   const handleEdit = (id: string) => {
     const isPerson = people.some(p => p.id === id);
-    setMode(isPerson ? Mode.EDITING_PEOPLE : Mode.EDITING_GROUP);
+    setMode(Mode.EDITING);
     
     if (isPerson) {
       const person = people.find(p => p.id === id);
@@ -136,19 +135,17 @@ export default function PeoplePage() {
         const peopleGroups = groups
           .filter(g => g.members.includes(person.id))
           .map(g => g.id);
-        setDraft({ id: person.id, groups: peopleGroups, members: [], editingId: id });
+        setDraft({ id: person.id, groups: peopleGroups, members: [], editingId: id, isPerson: true });
       } else {
         console.error(`Person with ID ${id} not found during edit. ${ERROR_SHOULD_NOT_HAPPEN}`);
       }
-    } else if (isGroupMode) {
+    } else {
       const group = groups.find(g => g.id === id);
       if (group) {
-        setDraft({ id: group.id, groups: [], members: group.members, editingId: id });
+        setDraft({ id: group.id, groups: [], members: group.members, editingId: id, isPerson: false });
       } else {
         console.error(`Group with ID ${id} not found during edit. ${ERROR_SHOULD_NOT_HAPPEN}`);
       }
-    } else {
-      console.error(`Invalid mode: ${mode}. ${ERROR_SHOULD_NOT_HAPPEN}`);
     }
     setError('');
   };
@@ -162,17 +159,15 @@ export default function PeoplePage() {
         ...group,
         members: group.members.filter(memberId => memberId !== id)
       })));
-    } else if (isGroupMode) {
+    } else {
       // Remove group while preserving the original member order
       setGroups(groups.filter(g => g.id !== id));
-    } else {
-      console.error(`Invalid mode: ${mode}. ${ERROR_SHOULD_NOT_HAPPEN}`);
     }
   };
 
   const handleCancel = () => {
     setMode(Mode.NORMAL);
-    setDraft({ id: '', groups: [], members: [] });
+    setDraft({ id: '', groups: [], members: [], isPerson: true });
     setError('');
   };
 
@@ -192,23 +187,20 @@ export default function PeoplePage() {
   };
 
   const handleMemberToggle = (id: string) => {
-    // The list may not be sorted, so we need to sort it upon saving.
-    if (isPersonMode) {
+    if (draft.isPerson) {
       setDraft(prev => ({
         ...prev,
         groups: prev.groups.includes(id)
           ? prev.groups.filter(groupId => groupId !== id)
           : [...prev.groups, id]
       }));
-    } else if (isGroupMode) {
+    } else {
       setDraft(prev => ({
         ...prev,
         members: prev.members.includes(id)
           ? prev.members.filter(memberId => memberId !== id)
           : [...prev.members, id]
       }));
-    } else {
-      console.error(`Invalid mode: ${mode}. ${ERROR_SHOULD_NOT_HAPPEN}`);
     }
   };
 
@@ -217,9 +209,81 @@ export default function PeoplePage() {
     return groups.filter(group => group.members.includes(personId));
   };
 
+  const handleInlineEdit = (id: string, isPerson: boolean) => {
+    setMode(Mode.INLINE_EDITING);
+    setDraft({ id, groups: [], members: [], editingId: id, isPerson });
+    setError('');
+  };
+
+  const handleInlineSave = () => {
+    const trimmedId = draft.id.trim();
+    if (!trimmedId) {
+      setError(`${draft.isPerson ? 'Person' : 'Group'} ID cannot be empty`);
+      return;
+    }
+    
+    if (isDuplicateId(trimmedId, draft.editingId)) {
+      setError(`This ID is already used by another person or group`);
+      return;
+    }
+
+    if (draft.isPerson) {
+      setPeople(people.map(p => 
+        p.id === draft.editingId ? { id: trimmedId } : p
+      ));
+      // Update group memberships
+      setGroups(groups.map(group => ({
+        ...group,
+        members: group.members.map(memberId => 
+          memberId === draft.editingId ? trimmedId : memberId
+        )
+      })));
+    } else {
+      setGroups(groups.map(g => 
+        g.id === draft.editingId ? { ...g, id: trimmedId } : g
+      ));
+    }
+
+    setMode(Mode.NORMAL);
+    setDraft({ id: '', groups: [], members: [], isPerson: true });
+    setError('');
+  };
+
+  const handleInlineCancel = () => {
+    setMode(Mode.NORMAL);
+    setDraft({ id: '', groups: [], members: [], isPerson: true });
+    setError('');
+  };
+
+  const handleInlineKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleInlineSave();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleInlineCancel();
+    }
+  };
+
+  const handleRemoveMember = (groupId: string, memberId: string) => {
+    setGroups(groups.map(group => 
+      group.id === groupId 
+        ? { ...group, members: group.members.filter(id => id !== memberId) }
+        : group
+    ));
+  };
+
+  const handleRemoveGroup = (personId: string, groupId: string) => {
+    setGroups(groups.map(group => 
+      group.id === groupId 
+        ? { ...group, members: group.members.filter(id => id !== personId) }
+        : group
+    ));
+  };
+
   const renderForm = () => {
-    const isPerson = isPersonMode;
-    const title = `${mode === Mode.ADDING_PEOPLE || mode === Mode.ADDING_GROUP ? 'Add New' : 'Edit'} ${isPerson ? 'Person' : 'Group'}`;
+    const isPerson = draft.isPerson;
+    const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isPerson ? 'Person' : 'Group'}`;
     const placeholder = `Enter ${isPerson ? 'person' : 'group'} ID`;
 
     return (
@@ -234,7 +298,7 @@ export default function PeoplePage() {
             placeholder={placeholder}
             onPrimary={handleSave}
             onCancel={handleCancel}
-            primaryText={mode === Mode.ADDING_PEOPLE || mode === Mode.ADDING_GROUP ? 'Add' : 'Update'}
+            primaryText={mode === Mode.ADDING ? 'Add' : 'Update'}
           >
             <div className="space-y-2">
               <h3 className="text-sm font-medium text-gray-700">
@@ -269,14 +333,20 @@ export default function PeoplePage() {
         <h1 className="text-3xl font-bold text-gray-800">People Management</h1>
         <div className="flex gap-4">
           <button
-            onClick={() => setMode(Mode.ADDING_PEOPLE)}
+            onClick={() => {
+              setMode(Mode.ADDING);
+              setDraft({ id: '', groups: [], members: [], isPerson: true });
+            }}
             className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
           >
             <FiPlus className="h-4 w-4" />
             Add Person
           </button>
           <button
-            onClick={() => setMode(Mode.ADDING_GROUP)}
+            onClick={() => {
+              setMode(Mode.ADDING);
+              setDraft({ id: '', groups: [], members: [], isPerson: false });
+            }}
             className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
           >
             <FiPlus className="h-4 w-4" />
@@ -285,20 +355,47 @@ export default function PeoplePage() {
         </div>
       </div>
 
-      {(mode === Mode.ADDING_PEOPLE || mode === Mode.EDITING_PEOPLE || 
-        mode === Mode.ADDING_GROUP || mode === Mode.EDITING_GROUP) && renderForm()}
+      {(mode === Mode.ADDING || mode === Mode.EDITING) && renderForm()}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <DataTable
           title="People"
           columns={[
-            { header: 'ID', accessor: 'id' },
+            { 
+              header: 'ID', 
+              accessor: (person: Person) => (
+                mode === Mode.INLINE_EDITING && draft.editingId === person.id ? (
+                  <input
+                    type="text"
+                    value={draft.id}
+                    onChange={handleDraftIdChange}
+                    onKeyDown={handleInlineKeyDown}
+                    onBlur={handleInlineSave}
+                    className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''}`}
+                    autoFocus
+                  />
+                ) : (
+                  <div 
+                    onDoubleClick={() => handleInlineEdit(person.id, true)}
+                    className="cursor-pointer"
+                  >
+                    {person.id}
+                  </div>
+                )
+              )
+            },
             { 
               header: 'Groups', 
               accessor: (person: Person) => (
-                <div>
+                <div className="flex flex-wrap gap-1">
                   {getPeopleGroups(person.id).map(group => (
-                    <span key={group.id} className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded mr-2 mb-1">
+                    <span key={group.id} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                      <button
+                        onClick={() => handleRemoveGroup(person.id, group.id)}
+                        className="mr-1 text-blue-600 hover:text-blue-900"
+                      >
+                        ×
+                      </button>
                       {group.id}
                     </span>
                   ))}
@@ -322,15 +419,43 @@ export default function PeoplePage() {
         <DataTable
           title="Groups"
           columns={[
-            { header: 'ID', accessor: 'id' },
+            { 
+              header: 'ID', 
+              accessor: (group: PeopleGroup) => (
+                mode === Mode.INLINE_EDITING && draft.editingId === group.id ? (
+                  <input
+                    type="text"
+                    value={draft.id}
+                    onChange={handleDraftIdChange}
+                    onKeyDown={handleInlineKeyDown}
+                    onBlur={handleInlineSave}
+                    className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''}`}
+                    autoFocus
+                  />
+                ) : (
+                  <div 
+                    onDoubleClick={() => handleInlineEdit(group.id, false)}
+                    className="cursor-pointer"
+                  >
+                    {group.id}
+                  </div>
+                )
+              )
+            },
             {
               header: 'Members',
               accessor: (group: PeopleGroup) => (
-                <div>
+                <div className="flex flex-wrap gap-1">
                   {group.members.map(memberId => {
                     const person = people.find(p => p.id === memberId);
                     return person ? (
-                      <span key={memberId} className="inline-block bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded mr-2 mb-1">
+                      <span key={memberId} className="inline-flex items-center bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded">
+                        <button
+                          onClick={() => handleRemoveMember(group.id, memberId)}
+                          className="mr-1 text-gray-600 hover:text-gray-900"
+                        >
+                          ×
+                        </button>
                         {person.id}
                       </span>
                     ) : null;
