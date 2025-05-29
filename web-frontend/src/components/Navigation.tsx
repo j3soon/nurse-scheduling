@@ -9,6 +9,7 @@ export default function Navigation() {
   const tabs = [
     { name: '0. Home', path: '/' },
     { name: '1. People', path: '/people' },
+    { name: '2. Shift Type', path: '/shift-type' },
   ];
 
   return (

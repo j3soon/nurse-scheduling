@@ -1,10 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { usePeople } from '@/contexts/PeopleContext';
+import { useScheduling } from '@/contexts/SchedulingContexts';
 
 export default function Home() {
-  const { createNewState } = usePeople();
+  const { createNewState } = useScheduling();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   const handleStartNew = () => {

@@ -3,24 +3,24 @@
 import { useScheduling } from '@/contexts/SchedulingContexts';
 import ManagementPage from '@/components/ManagementPage';
 
-export default function PeoplePage() {
+export default function ShiftTypePage() {
   const {
-    people: items,
-    peopleGroups: groups,
-    addPerson: addItem,
-    addPeopleGroup: addGroup,
-    updatePerson: updateItem,
-    updatePeopleGroup: updateGroup,
-    deletePerson: deleteItem,
-    deletePeopleGroup: deleteGroup,
-    removePersonFromGroup: removeItemFromGroup,
-    updatePeople: updateItems,
-    updatePeopleGroups: updateGroups,
+    shiftTypes: items,
+    shiftTypeGroups: groups,
+    addShiftType: addItem,
+    addShiftTypeGroup: addGroup,
+    updateShiftType: updateItem,
+    updateShiftTypeGroup: updateGroup,
+    deleteShiftType: deleteItem,
+    deleteShiftTypeGroup: deleteGroup,
+    removeShiftTypeFromGroup: removeItemFromGroup,
+    updateShiftTypes: updateItems,
+    updateShiftTypeGroups: updateGroups,
   } = useScheduling();
 
   return (
     <ManagementPage
-      title="People Management"
+      title="Shift Type Management"
       items={items}
       groups={groups}
       addItem={addItem}
@@ -32,7 +32,7 @@ export default function PeoplePage() {
       removeItemFromGroup={removeItemFromGroup}
       updateItems={updateItems}
       updateGroups={updateGroups}
-      itemLabel="Person"
+      itemLabel="Shift Type"
       groupLabel="Group"
     />
   );
