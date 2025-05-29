@@ -28,7 +28,7 @@ interface ManagementPageProps<T extends Item, G extends Group> {
   deleteItem: (id: string) => void;
   deleteGroup: (id: string) => void;
   removeItemFromGroup: (itemId: string, groupId: string) => void;
-  updateItems: (items: T[]) => void;
+  reorderItems: (items: T[]) => void;
   updateGroups: (groups: G[]) => void;
   itemLabel: string;
   groupLabel: string;
@@ -52,7 +52,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
   deleteItem,
   deleteGroup,
   removeItemFromGroup,
-  updateItems,
+  reorderItems,
   updateGroups,
   itemLabel,
   groupLabel,
@@ -428,7 +428,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
             }
           ]}
           data={items}
-          onReorder={updateItems}
+          onReorder={reorderItems}
         />
 
         <DataTable

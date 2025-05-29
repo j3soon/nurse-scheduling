@@ -76,7 +76,7 @@ interface SchedulingContextType {
   // People management
   people: Person[];
   peopleGroups: PeopleGroup[];
-  updatePeople: (people: Person[]) => void;
+  reorderPeople: (people: Person[]) => void;
   updatePeopleGroups: (groups: PeopleGroup[]) => void;
   addPerson: (id: string, groupIds: string[]) => void;
   addPeopleGroup: (id: string, memberIds: string[]) => void;
@@ -89,7 +89,7 @@ interface SchedulingContextType {
   // Shift type management
   shiftTypes: ShiftType[];
   shiftTypeGroups: ShiftTypeGroup[];
-  updateShiftTypes: (shiftTypes: ShiftType[]) => void;
+  reorderShiftTypes: (shiftTypes: ShiftType[]) => void;
   updateShiftTypeGroups: (groups: ShiftTypeGroup[]) => void;
   addShiftType: (id: string, groupIds: string[]) => void;
   addShiftTypeGroup: (id: string, memberIds: string[]) => void;
@@ -127,7 +127,7 @@ function SchedulingInnerProvider({ children }: { children: ReactNode }) {
     // People management - delegate to people context
     people: peopleContext.items,
     peopleGroups: peopleContext.groups,
-    updatePeople: peopleContext.updateItems,
+    reorderPeople: peopleContext.reorderItems,
     updatePeopleGroups: peopleContext.updateGroups,
     addPerson: peopleContext.addItem,
     addPeopleGroup: peopleContext.addGroup,
@@ -140,7 +140,7 @@ function SchedulingInnerProvider({ children }: { children: ReactNode }) {
     // Shift type management - delegate to shift type context
     shiftTypes: shiftTypeContext.items,
     shiftTypeGroups: shiftTypeContext.groups,
-    updateShiftTypes: shiftTypeContext.updateItems,
+    reorderShiftTypes: shiftTypeContext.reorderItems,
     updateShiftTypeGroups: shiftTypeContext.updateGroups,
     addShiftType: shiftTypeContext.addItem,
     addShiftTypeGroup: shiftTypeContext.addGroup,

@@ -14,7 +14,7 @@ export default function ShiftTypePage() {
     deleteShiftType: deleteItem,
     deleteShiftTypeGroup: deleteGroup,
     removeShiftTypeFromGroup: removeItemFromGroup,
-    updateShiftTypes: updateItems,
+    reorderShiftTypes: reorderItems,
     updateShiftTypeGroups: updateGroups,
   } = useScheduling();
 
@@ -30,7 +30,7 @@ export default function ShiftTypePage() {
       deleteItem={deleteItem}
       deleteGroup={deleteGroup}
       removeItemFromGroup={removeItemFromGroup}
-      updateItems={updateItems}
+      reorderItems={reorderItems}
       updateGroups={updateGroups}
       itemLabel="Shift Type"
       groupLabel="Group"

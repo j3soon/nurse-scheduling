@@ -24,6 +24,7 @@ interface ManagementContextType<T extends Item, G extends Group> {
   deleteItem: (id: string) => void;
   deleteGroup: (id: string) => void;
   removeItemFromGroup: (itemId: string, groupId: string) => void;
+  reorderItems: (reorderedItems: T[]) => void;
   createNewState: () => void;
 }
 
@@ -199,6 +200,21 @@ export function createManagementContext<T extends Item, G extends Group>(
       updateGroups(newGroups);
     };
 
+    const reorderItems = (reorderedItems: T[]) => {
+      // Update the items
+      updateItems(reorderedItems);
+
+      // Sort group members based on items order
+      const updatedGroups = groups.map(group => ({
+        ...group,
+        members: reorderedItems
+          .filter(item => group.members.includes(item.id))
+          .map(item => item.id)
+      }));
+
+      updateGroups(updatedGroups);
+    };
+
     const value = {
       items,
       groups,
@@ -211,6 +227,7 @@ export function createManagementContext<T extends Item, G extends Group>(
       deleteItem,
       deleteGroup,
       removeItemFromGroup,
+      reorderItems,
       createNewState,
     };
 

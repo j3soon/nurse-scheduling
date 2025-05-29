@@ -14,7 +14,7 @@ export default function PeoplePage() {
     deletePerson: deleteItem,
     deletePeopleGroup: deleteGroup,
     removePersonFromGroup: removeItemFromGroup,
-    updatePeople: updateItems,
+    reorderPeople: reorderItems,
     updatePeopleGroups: updateGroups,
   } = useScheduling();
 
@@ -30,7 +30,7 @@ export default function PeoplePage() {
       deleteItem={deleteItem}
       deleteGroup={deleteGroup}
       removeItemFromGroup={removeItemFromGroup}
-      updateItems={updateItems}
+      reorderItems={reorderItems}
       updateGroups={updateGroups}
       itemLabel="Person"
       groupLabel="Group"
