@@ -15,4 +15,4 @@ export function useIdValidation(people: Person[], groups: PeopleGroup[]) {
   };
 
   return { isDuplicateId };
-} 
+}

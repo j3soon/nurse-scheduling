@@ -36,7 +36,7 @@ export function DataTable<T extends Record<string, any>>({ title, columns, data,
   const handleDrop = (e: React.DragEvent<HTMLTableRowElement>, dropIndex: number) => {
     e.preventDefault();
     e.currentTarget.classList.remove('border-y-2', 'border-blue-500');
-    
+
     const dragIndex = parseInt(e.dataTransfer.getData('text/plain'));
     if (!onReorder) {
       console.error(`onReorder is not defined. ${ERROR_SHOULD_NOT_HAPPEN}`);
@@ -72,7 +72,7 @@ export function DataTable<T extends Record<string, any>>({ title, columns, data,
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
           {data.map((item, rowIndex) => (
-            <tr 
+            <tr
               key={rowIndex}
               draggable={!!onReorder}
               onDragStart={(e) => handleDragStart(e, rowIndex)}

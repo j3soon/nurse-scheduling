@@ -12,16 +12,16 @@ interface FormInputProps {
   children?: React.ReactNode;
 }
 
-export function FormInput({ 
-  value, 
-  onChange, 
-  onKeyDown, 
-  error, 
+export function FormInput({
+  value,
+  onChange,
+  onKeyDown,
+  error,
   placeholder,
   onPrimary,
   onCancel,
   primaryText,
-  children 
+  children
 }: FormInputProps) {
   return (
     <div className="space-y-4">
@@ -34,8 +34,8 @@ export function FormInput({
           autoFocus
           placeholder={placeholder}
           className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out
-            ${error 
-              ? 'border-red-300 focus:border-red-500 focus:ring-red-200' 
+            ${error
+              ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
               : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
             }
             placeholder-gray-400
@@ -68,4 +68,4 @@ export function FormInput({
       </div>
     </div>
   );
-} 
+}

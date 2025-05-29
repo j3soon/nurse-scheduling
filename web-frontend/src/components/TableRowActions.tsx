@@ -24,4 +24,4 @@ export function TableRowActions({ onEdit, onDelete }: TableRowActionsProps) {
       </button>
     </div>
   );
-} 
+}

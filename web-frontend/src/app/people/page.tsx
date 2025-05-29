@@ -47,7 +47,7 @@ export default function PeoplePage() {
     members: string[];
     editingId?: string;
     isPerson: boolean;
-  }>({ 
+  }>({
     id: '',
     groups: [],
     members: [],
@@ -66,7 +66,7 @@ export default function PeoplePage() {
       setError(`${draft.isPerson ? 'Person' : 'Group'} ID cannot be empty`);
       return;
     }
-    
+
     if (isDuplicateId(trimmedId, draft.editingId)) {
       setError(`This ID is already used by another person or group`);
       return;
@@ -98,7 +98,7 @@ export default function PeoplePage() {
   const handleEdit = (id: string) => {
     const isPerson = people.some(p => p.id === id);
     setMode(Mode.EDITING);
-    
+
     if (isPerson) {
       const person = people.find(p => p.id === id);
       if (person) {
@@ -238,7 +238,7 @@ export default function PeoplePage() {
       setError(`${draft.isPerson ? 'Person' : 'Group'} ID cannot be empty`);
       return;
     }
-    
+
     if (isDuplicateId(trimmedId, draft.editingId)) {
       setError(`This ID is already used by another person or group`);
       return;
@@ -296,8 +296,8 @@ export default function PeoplePage() {
               </h3>
               <div className="flex flex-wrap gap-2">
                 {(isPerson ? groups : people).map(item => (
-                  <label 
-                    key={item.id} 
+                  <label
+                    key={item.id}
                     className="inline-flex items-center"
                     onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
                     onMouseDown={() => handleCheckboxMouseDown(item.id)}
@@ -306,7 +306,7 @@ export default function PeoplePage() {
                   >
                     <input
                       type="checkbox"
-                      checked={isPerson 
+                      checked={isPerson
                         ? draft.groups.includes(item.id)
                         : draft.members.includes(item.id)
                       }
@@ -358,8 +358,8 @@ export default function PeoplePage() {
         <DataTable
           title="People"
           columns={[
-            { 
-              header: 'ID', 
+            {
+              header: 'ID',
               accessor: (person: Person) => (
                 mode === Mode.INLINE_EDITING && draft.editingId === person.id ? (
                   <input
@@ -372,7 +372,7 @@ export default function PeoplePage() {
                     autoFocus
                   />
                 ) : (
-                  <div 
+                  <div
                     onDoubleClick={() => handleInlineEdit(person.id, true)}
                     className="cursor-pointer"
                   >
@@ -381,8 +381,8 @@ export default function PeoplePage() {
                 )
               )
             },
-            { 
-              header: 'Groups', 
+            {
+              header: 'Groups',
               accessor: (person: Person) => (
                 <div className="flex flex-wrap gap-1">
                   {getPeopleGroups(person.id).map(group => (
@@ -417,8 +417,8 @@ export default function PeoplePage() {
         <DataTable
           title="Groups"
           columns={[
-            { 
-              header: 'ID', 
+            {
+              header: 'ID',
               accessor: (group: PeopleGroup) => (
                 mode === Mode.INLINE_EDITING && draft.editingId === group.id ? (
                   <input
@@ -431,7 +431,7 @@ export default function PeoplePage() {
                     autoFocus
                   />
                 ) : (
-                  <div 
+                  <div
                     onDoubleClick={() => handleInlineEdit(group.id, false)}
                     className="cursor-pointer"
                   >

@@ -140,9 +140,9 @@ export function PeopleProvider({ children }: { children: ReactNode }) {
     const updatedGroups = groups.map(group => {
       // Get current members excluding the edited person
       const otherMembers = group.members.filter(id => id !== oldId);
-      
+
       // Add the person if they should be in this group
-      const allMembers = groupIds 
+      const allMembers = groupIds
         ? (groupIds.includes(group.id) ? [...otherMembers, newId] : otherMembers)
         : (group.members.includes(oldId) ? [...otherMembers, newId] : otherMembers);
 
@@ -168,7 +168,7 @@ export function PeopleProvider({ children }: { children: ReactNode }) {
     }
 
     // Sort members based on people order
-    const sortedMembers = members 
+    const sortedMembers = members
       ? people
           .filter(person => members.includes(person.id))
           .map(person => person.id)
@@ -194,8 +194,8 @@ export function PeopleProvider({ children }: { children: ReactNode }) {
   };
 
   const removePersonFromGroup = (personId: string, groupId: string) => {
-    const newGroups = groups.map(group => 
-      group.id === groupId 
+    const newGroups = groups.map(group =>
+      group.id === groupId
         ? { ...group, members: group.members.filter(id => id !== personId) }
         : group
     );
