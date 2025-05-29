@@ -7,8 +7,7 @@ import { TableRowActions } from '@/components/TableRowActions';
 import { DataTable } from '@/components/DataTable';
 import { useIdValidation } from '@/hooks/useIdValidation';
 import { usePeople } from '@/contexts/PeopleContext';
-
-const ERROR_SHOULD_NOT_HAPPEN = 'This indicates a bug in the code logic. Please report this issue so it can be addressed.';
+import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
 interface Person {
   id: string;
@@ -37,6 +36,8 @@ export default function PeoplePage() {
     deletePerson,
     deleteGroup,
     removePersonFromGroup,
+    updatePeople,
+    updateGroups,
   } = usePeople();
 
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
@@ -385,7 +386,7 @@ export default function PeoplePage() {
               accessor: (person: Person) => (
                 <div className="flex flex-wrap gap-1">
                   {getPeopleGroups(person.id).map(group => (
-                    <span key={group.id} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                    <span key={group.id} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded cursor-default">
                       <button
                         onClick={() => removePersonFromGroup(person.id, group.id)}
                         className="mr-1 text-blue-600 hover:text-blue-900"
@@ -410,6 +411,7 @@ export default function PeoplePage() {
             }
           ]}
           data={people}
+          onReorder={updatePeople}
         />
 
         <DataTable
@@ -445,7 +447,7 @@ export default function PeoplePage() {
                   {group.members.map(memberId => {
                     const person = people.find(p => p.id === memberId);
                     return person ? (
-                      <span key={person.id} className="inline-flex items-center bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded">
+                      <span key={person.id} className="inline-flex items-center bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded cursor-default">
                         <button
                           onClick={() => removePersonFromGroup(person.id, group.id)}
                           className="mr-1 text-gray-600 hover:text-gray-900"
@@ -471,8 +473,9 @@ export default function PeoplePage() {
             }
           ]}
           data={groups}
+          onReorder={updateGroups}
         />
       </div>
     </div>
   );
-} 
+}

@@ -1,8 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-
-const ERROR_SHOULD_NOT_HAPPEN = 'This indicates a bug in the code logic. Please report this issue so it can be addressed.';
+import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 
 interface Person {
   id: string;
@@ -231,4 +230,4 @@ export function usePeople() {
     throw new Error('usePeople must be used within a PeopleProvider');
   }
   return context;
-} 
+}
