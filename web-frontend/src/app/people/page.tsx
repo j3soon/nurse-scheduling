@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FiPlus } from 'react-icons/fi';
 import { FormInput } from '@/components/FormInput';
 import { TableRowActions } from '@/components/TableRowActions';
@@ -53,6 +53,9 @@ export default function PeoplePage() {
     isPerson: true,
   });
   const [error, setError] = useState<string>('');
+  const mouseDownCheckboxIdRef = useRef('');
+  const mouseEnteredCheckboxIdRef = useRef('');
+  const isMultiSelectDragRef = useRef(false);
 
   const { isDuplicateId } = useIdValidation(people, groups);
 
@@ -164,6 +167,59 @@ export default function PeoplePage() {
     }
   };
 
+  const handleCheckboxMouseEnter = (id: string) => {
+    mouseEnteredCheckboxIdRef.current = id;
+    if (isMultiSelectDragRef.current) {
+      handleMemberToggle(id);
+    }
+  };
+
+  const handleCheckboxMouseDown = (id: string) => {
+    if (id === mouseEnteredCheckboxIdRef.current && !isMultiSelectDragRef.current) {
+      mouseDownCheckboxIdRef.current = id;
+      document.body.style.userSelect = 'none';
+    }
+  };
+
+  const handleCheckboxMouseLeave = (id: string) => {
+    if (mouseDownCheckboxIdRef.current && mouseEnteredCheckboxIdRef.current === mouseDownCheckboxIdRef.current) {
+      // Start multi-select drag
+      isMultiSelectDragRef.current = true;
+      // Toggle the initial checkbox when leaving it
+      handleMemberToggle(mouseDownCheckboxIdRef.current);
+      mouseDownCheckboxIdRef.current = '';
+    }
+    mouseEnteredCheckboxIdRef.current = '';
+  };
+
+  const handleCheckboxMouseUp = (id: string) => {
+    if (!isMultiSelectDragRef.current) {
+      // Normal checkbox click behavior
+      handleMemberToggle(id);
+    }
+    // End multi-select drag
+    isMultiSelectDragRef.current = false;
+    mouseDownCheckboxIdRef.current = '';
+    document.body.style.userSelect = '';
+  };
+
+  // Add event listener for mouse up outside the component
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      // End multi-select drag
+      isMultiSelectDragRef.current = false;
+      mouseDownCheckboxIdRef.current = '';
+      document.body.style.userSelect = '';
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    // Cleanup event listener
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      document.body.style.userSelect = '';
+    };
+  }, []);
+
   // Helper function to get groups for a person
   const getPeopleGroups = (personId: string) => {
     return groups.filter(group => group.members.includes(personId));
@@ -239,14 +295,21 @@ export default function PeoplePage() {
               </h3>
               <div className="flex flex-wrap gap-2">
                 {(isPerson ? groups : people).map(item => (
-                  <label key={item.id} className="inline-flex items-center">
+                  <label 
+                    key={item.id} 
+                    className="inline-flex items-center"
+                    onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
+                    onMouseDown={() => handleCheckboxMouseDown(item.id)}
+                    onMouseLeave={() => handleCheckboxMouseLeave(item.id)}
+                    onMouseUp={() => handleCheckboxMouseUp(item.id)}
+                  >
                     <input
                       type="checkbox"
                       checked={isPerson 
                         ? draft.groups.includes(item.id)
                         : draft.members.includes(item.id)
                       }
-                      onChange={() => handleMemberToggle(item.id)}
+                      onChange={() => {}} // Prevent default onChange to handle it in mouseUp
                       className="form-checkbox h-4 w-4 text-blue-600"
                     />
                     <span className="ml-2 text-sm text-gray-700">{item.id}</span>
