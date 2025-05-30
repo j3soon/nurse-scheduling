@@ -1,26 +1,13 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { FiPlus } from 'react-icons/fi';
-import { FormInput } from '@/components/FormInput';
-import { TableRowActions } from '@/components/TableRowActions';
 import { DataTable } from '@/components/DataTable';
-import { InlineEdit } from '@/components/InlineEdit';
-import { CheckboxSelector } from '@/components/CheckboxSelector';
-import { RemovableTag } from '@/components/RemovableTag';
-import { useIdValidation } from '@/hooks/useIdValidation';
+import { AddEditForm } from '@/components/AddEditForm';
+import { useItemTableColumns, useGroupTableColumns } from '@/components/TableColumns';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
-
-interface Item {
-  id: string;
-  description: string;
-}
-
-interface Group {
-  id: string;
-  members: string[]; // Array of item IDs
-  description: string;
-}
+import { Mode } from '@/constants/modes';
+import { Item, Group } from '@/types/management';
 
 interface ManagementPageProps<T extends Item, G extends Group> {
   title: string;
@@ -37,13 +24,6 @@ interface ManagementPageProps<T extends Item, G extends Group> {
   updateGroups: (groups: G[]) => void;
   itemLabel: string;
   groupLabel: string;
-}
-
-enum Mode {
-  NORMAL = 'NORMAL',
-  ADDING = 'ADDING',
-  EDITING = 'EDITING',
-  INLINE_EDITING = 'INLINE_EDITING'
 }
 
 export default function ManagementPage<T extends Item, G extends Group>({
@@ -81,7 +61,10 @@ export default function ManagementPage<T extends Item, G extends Group>({
   const [inlineEditingId, setInlineEditingId] = useState<string>('');
   const [inlineEditingField, setInlineEditingField] = useState<'id' | 'description'>('id');
 
-  const { isDuplicateId } = useIdValidation(items, groups);
+  const isDuplicateId = (id: string, currentId?: string) => {
+    return items.some(item => item.id === id && item.id !== currentId) ||
+           groups.some(group => group.id === id && group.id !== currentId);
+  };
 
   const handleSave = () => {
     const trimmedId = draft.id.trim();
@@ -98,18 +81,14 @@ export default function ManagementPage<T extends Item, G extends Group>({
 
     if (draft.isItem) {
       if (draft.editingId) {
-        // Update existing item with their groups
         updateItem(draft.editingId, trimmedId, draft.groups, trimmedDescription);
       } else {
-        // Add new item with their groups
         addItem(trimmedId, draft.groups, trimmedDescription);
       }
     } else {
       if (draft.editingId) {
-        // Update existing group
         updateGroup(draft.editingId, trimmedId, draft.members, trimmedDescription);
       } else {
-        // Add new group
         addGroup(trimmedId, draft.members, trimmedDescription);
       }
     }
@@ -199,11 +178,6 @@ export default function ManagementPage<T extends Item, G extends Group>({
     }
   };
 
-  // Helper function to get groups for an item
-  const getItemGroups = (itemId: string) => {
-    return groups.filter(group => group.members.includes(itemId));
-  };
-
   const handleInlineEdit = (id: string, isItem: boolean, field: 'id' | 'description' = 'id') => {
     setMode(Mode.INLINE_EDITING);
     setInlineEditingId(id);
@@ -247,39 +221,41 @@ export default function ManagementPage<T extends Item, G extends Group>({
     setError('');
   };
 
-  const renderForm = () => {
-    const isItem = draft.isItem;
-    const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : groupLabel}`;
-    const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()} ID`;
-
-    return (
-      <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
-        <div className="px-6 py-4">
-          <h2 className="text-lg font-semibold mb-4 text-gray-800">{title}</h2>
-          <FormInput
-            itemValue={draft.id}
-            itemPlaceholder={placeholder}
-            onItemChange={handleDraftIdChange}
-            descriptionValue={draft.description}
-            descriptionPlaceholder={`Enter ${isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()} description (optional)`}
-            onDescriptionChange={handleDraftDescriptionChange}
-            onKeyDown={handleKeyDown}
-            error={error}
-            onAction={handleSave}
-            onCancel={handleCancel}
-            actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
-          >
-            <CheckboxSelector
-              items={draft.isItem ? groups : items}
-              selectedIds={draft.isItem ? draft.groups : draft.members}
-              onToggle={handleMemberToggle}
-              label={draft.isItem ? groupLabel + 's' : 'Members'}
-            />
-          </FormInput>
-        </div>
-      </div>
-    );
+  const handleStartAdding = (isItem: boolean) => {
+    setMode(Mode.ADDING);
+    setDraft({ id: '', description: '', groups: [], members: [], isItem });
+    setError('');
   };
+
+  // Table columns using the separate functions
+  const itemColumns = useItemTableColumns({
+    mode,
+    inlineEditingId,
+    inlineEditingField,
+    error,
+    groups,
+    groupLabel,
+    onInlineSave: handleInlineSave,
+    onInlineCancel: handleInlineCancel,
+    onInlineEdit: handleInlineEdit,
+    onEdit: handleEdit,
+    onDelete: handleDelete,
+    removeItemFromGroup,
+  });
+
+  const groupColumns = useGroupTableColumns({
+    mode,
+    inlineEditingId,
+    inlineEditingField,
+    error,
+    items,
+    onInlineSave: handleInlineSave,
+    onInlineCancel: handleInlineCancel,
+    onInlineEdit: handleInlineEdit,
+    onEdit: handleEdit,
+    onDelete: handleDelete,
+    removeItemFromGroup,
+  });
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -287,22 +263,14 @@ export default function ManagementPage<T extends Item, G extends Group>({
         <h1 className="text-3xl font-bold text-gray-800">{title}</h1>
         <div className="flex gap-4">
           <button
-            onClick={() => {
-              setMode(Mode.ADDING);
-              setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
-              setError('');
-            }}
+            onClick={() => handleStartAdding(true)}
             className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
           >
             <FiPlus className="h-4 w-4" />
             Add {itemLabel}
           </button>
           <button
-            onClick={() => {
-              setMode(Mode.ADDING);
-              setDraft({ id: '', description: '', groups: [], members: [], isItem: false });
-              setError('');
-            }}
+            onClick={() => handleStartAdding(false)}
             className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
           >
             <FiPlus className="h-4 w-4" />
@@ -311,126 +279,35 @@ export default function ManagementPage<T extends Item, G extends Group>({
         </div>
       </div>
 
-      {(mode === Mode.ADDING || mode === Mode.EDITING) && renderForm()}
+      {(mode === Mode.ADDING || mode === Mode.EDITING) && (
+        <AddEditForm
+          mode={mode}
+          draft={draft}
+          items={items}
+          groups={groups}
+          itemLabel={itemLabel}
+          groupLabel={groupLabel}
+          error={error}
+          onIdChange={handleDraftIdChange}
+          onDescriptionChange={handleDraftDescriptionChange}
+          onKeyDown={handleKeyDown}
+          onMemberToggle={handleMemberToggle}
+          onSave={handleSave}
+          onCancel={handleCancel}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <DataTable
           title={itemLabel + 's'}
-          columns={[
-            {
-              header: 'ID',
-              accessor: (item: T) => (
-                <div>
-                  <InlineEdit
-                    value={item.id}
-                    isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === item.id && inlineEditingField === 'id'}
-                    onSave={(value) => handleInlineSave(item.id, 'id', true, value)}
-                    onCancel={handleInlineCancel}
-                    onDoubleClick={() => handleInlineEdit(item.id, true, 'id')}
-                    error={error}
-                  />
-                  <InlineEdit
-                    value={item.description}
-                    isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === item.id && inlineEditingField === 'description'}
-                    onSave={(value) => handleInlineSave(item.id, 'description', true, value)}
-                    onCancel={handleInlineCancel}
-                    onDoubleClick={() => handleInlineEdit(item.id, true, 'description')}
-                    className="text-xs text-gray-400 mt-1"
-                    editClassName="text-xs mt-1 w-full"
-                    emptyText="Add description..."
-                    placeholder="Enter description..."
-                  />
-                </div>
-              )
-            },
-            {
-              header: groupLabel + 's',
-              accessor: (item: T) => (
-                <div className="flex flex-wrap gap-1">
-                  {getItemGroups(item.id).map(group => (
-                    <RemovableTag
-                      key={group.id}
-                      id={group.id}
-                      onRemove={() => removeItemFromGroup(item.id, group.id)}
-                      variant="blue"
-                    />
-                  ))}
-                </div>
-              )
-            },
-            {
-              header: 'Actions',
-              accessor: (item: T) => (
-                <TableRowActions
-                  onEdit={() => handleEdit(item.id)}
-                  onDelete={() => handleDelete(item.id)}
-                />
-              ),
-              align: 'right'
-            }
-          ]}
+          columns={itemColumns}
           data={items}
           onReorder={mode === Mode.INLINE_EDITING ? undefined : reorderItems}
         />
 
         <DataTable
           title={groupLabel + 's'}
-          columns={[
-            {
-              header: 'ID',
-              accessor: (group: G) => (
-                <div>
-                  <InlineEdit
-                    value={group.id}
-                    isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === group.id && inlineEditingField === 'id'}
-                    onSave={(value) => handleInlineSave(group.id, 'id', false, value)}
-                    onCancel={handleInlineCancel}
-                    onDoubleClick={() => handleInlineEdit(group.id, false, 'id')}
-                    error={error}
-                  />
-                  <InlineEdit
-                    value={group.description}
-                    isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === group.id && inlineEditingField === 'description'}
-                    onSave={(value) => handleInlineSave(group.id, 'description', false, value)}
-                    onCancel={handleInlineCancel}
-                    onDoubleClick={() => handleInlineEdit(group.id, false, 'description')}
-                    className="text-xs text-gray-400 mt-1"
-                    editClassName="text-xs mt-1 w-full"
-                    emptyText="Add description..."
-                    placeholder="Enter description..."
-                  />
-                </div>
-              )
-            },
-            {
-              header: 'Members',
-              accessor: (group: G) => (
-                <div className="flex flex-wrap gap-1">
-                  {group.members.map(memberId => {
-                    const item = items.find(i => i.id === memberId);
-                    return item ? (
-                      <RemovableTag
-                        key={item.id}
-                        id={item.id}
-                        onRemove={() => removeItemFromGroup(item.id, group.id)}
-                        variant="gray"
-                      />
-                    ) : null;
-                  })}
-                </div>
-              )
-            },
-            {
-              header: 'Actions',
-              accessor: (group: G) => (
-                <TableRowActions
-                  onEdit={() => handleEdit(group.id)}
-                  onDelete={() => handleDelete(group.id)}
-                />
-              ),
-              align: 'right'
-            }
-          ]}
+          columns={groupColumns}
           data={groups}
           onReorder={mode === Mode.INLINE_EDITING ? undefined : updateGroups}
         />

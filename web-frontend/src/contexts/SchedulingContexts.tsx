@@ -2,30 +2,17 @@
 
 import { createContext, useContext, ReactNode } from 'react';
 import { createManagementContext } from './ManagementContext';
+import { Item, Group } from '@/types/management';
 
-// People interfaces
-export interface Person {
-  id: string;
-  description: string;
-}
+// People interfaces extending base types
+export interface Person extends Item {}
 
-export interface PeopleGroup {
-  id: string;
-  members: string[]; // Array of person IDs
-  description: string;
-}
+export interface PeopleGroup extends Group {}
 
-// ShiftType interfaces
-export interface ShiftType {
-  id: string;
-  description: string;
-}
+// ShiftType interfaces extending base types  
+export interface ShiftType extends Item {}
 
-export interface ShiftTypeGroup {
-  id: string;
-  members: string[]; // Array of shift type IDs
-  description: string;
-}
+export interface ShiftTypeGroup extends Group {}
 
 // Create individual management contexts
 const { 

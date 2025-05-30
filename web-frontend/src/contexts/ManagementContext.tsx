@@ -2,17 +2,7 @@
 
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
-
-interface Item {
-  id: string;
-  description: string;
-}
-
-interface Group {
-  id: string;
-  members: string[]; // Array of item IDs
-  description: string;
-}
+import { Item, Group } from '@/types/management';
 
 interface ManagementContextType<T extends Item, G extends Group> {
   items: T[];
