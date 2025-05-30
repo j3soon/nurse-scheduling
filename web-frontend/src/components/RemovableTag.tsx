@@ -5,15 +5,15 @@ interface RemovableTagProps {
   className?: string;
 }
 
-export function RemovableTag({ 
-  id, 
-  onRemove, 
+export function RemovableTag({
+  id,
+  onRemove,
   variant = 'blue',
-  className = '' 
+  className = ''
 }: RemovableTagProps) {
   const baseClasses = "inline-flex items-center text-xs px-2 py-1 rounded cursor-default";
-  const variantClasses = variant === 'blue' 
-    ? "bg-blue-100 text-blue-800" 
+  const variantClasses = variant === 'blue'
+    ? "bg-blue-100 text-blue-800"
     : "bg-gray-100 text-gray-800";
   const buttonClasses = variant === 'blue'
     ? "mr-1 text-blue-600 hover:text-blue-900"
@@ -31,4 +31,4 @@ export function RemovableTag({
       {id}
     </span>
   );
-} 
+}

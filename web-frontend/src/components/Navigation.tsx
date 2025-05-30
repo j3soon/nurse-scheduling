@@ -56,7 +56,7 @@ export default function Navigation() {
           }
           break;
         }
-        
+
         case 'a':
         case 'A':
         case 'h':
@@ -67,7 +67,7 @@ export default function Navigation() {
           break;
 
         case 'd':
-        case 'D': 
+        case 'D':
         case 'l':
         case 'L':
         case 'ArrowRight':
@@ -126,7 +126,7 @@ export default function Navigation() {
           </div>
         </div>
       </nav>
-      
+
       {/* Left Arrow */}
       {currentTabIndex > 0 && (
         <button
@@ -139,7 +139,7 @@ export default function Navigation() {
           </svg>
         </button>
       )}
-      
+
       {/* Right Arrow */}
       {currentTabIndex < tabs.length - 1 && (
         <button

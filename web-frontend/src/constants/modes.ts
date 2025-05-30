@@ -3,4 +3,4 @@ export enum Mode {
   ADDING = 'ADDING',
   EDITING = 'EDITING',
   INLINE_EDITING = 'INLINE_EDITING'
-} 
+}

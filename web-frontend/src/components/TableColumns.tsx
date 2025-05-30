@@ -186,4 +186,4 @@ export function useGroupTableColumns<T extends Item, G extends Group>({
       align: 'right' as const
     }
   ];
-} 
+}

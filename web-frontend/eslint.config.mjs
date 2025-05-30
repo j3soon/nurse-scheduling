@@ -11,6 +11,14 @@ const compat = new FlatCompat({
 
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
+  {
+    rules: {
+      // Require files to end with a newline
+      "eol-last": ["error", "always"],
+      // Disallow trailing whitespace at the end of lines
+      "no-trailing-spaces": "error",
+    },
+  },
 ];
 
 export default eslintConfig;

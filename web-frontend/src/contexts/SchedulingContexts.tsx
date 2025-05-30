@@ -9,15 +9,15 @@ export interface Person extends Item {}
 
 export interface PeopleGroup extends Group {}
 
-// ShiftType interfaces extending base types  
+// ShiftType interfaces extending base types
 export interface ShiftType extends Item {}
 
 export interface ShiftTypeGroup extends Group {}
 
 // Create individual management contexts
-const { 
-  ManagementProvider: PeopleManagementProvider, 
-  useManagement: usePeopleManagement 
+const {
+  ManagementProvider: PeopleManagementProvider,
+  useManagement: usePeopleManagement
 } = createManagementContext<Person, PeopleGroup>({
   storageKey: 'nurse-scheduling-people',
   createDefaultState: () => {
@@ -36,16 +36,16 @@ const {
   }
 });
 
-const { 
-  ManagementProvider: ShiftTypeManagementProvider, 
-  useManagement: useShiftTypeManagement 
+const {
+  ManagementProvider: ShiftTypeManagementProvider,
+  useManagement: useShiftTypeManagement
 } = createManagementContext<ShiftType, ShiftTypeGroup>({
   storageKey: 'nurse-scheduling-shift-types',
   createDefaultState: () => {
     const items = [
       { id: 'Day (All Levels)', description: 'Day shift for all skill levels' },
       { id: 'Day (Senior Only)', description: 'Day shift requiring senior staff expertise' },
-      { id: 'Evening (All Levels)', description: 'Evening shift for all skill levels' }, 
+      { id: 'Evening (All Levels)', description: 'Evening shift for all skill levels' },
       { id: 'Evening (Senior Only)', description: 'Evening shift requiring senior staff expertise' },
       { id: 'Night (All Levels)', description: 'Night shift for all skill levels' },
       { id: 'Night (Senior Only)', description: 'Night shift requiring senior staff expertise' },
@@ -77,7 +77,7 @@ interface SchedulingContextType {
   deletePerson: (id: string) => void;
   deletePeopleGroup: (id: string) => void;
   removePersonFromGroup: (personId: string, groupId: string) => void;
-  
+
   // Shift type management
   shiftTypes: ShiftType[];
   shiftTypeGroups: ShiftTypeGroup[];
@@ -90,7 +90,7 @@ interface SchedulingContextType {
   deleteShiftType: (id: string) => void;
   deleteShiftTypeGroup: (id: string) => void;
   removeShiftTypeFromGroup: (shiftTypeId: string, groupId: string) => void;
-  
+
   // Global operations
   createNewState: () => void;
   createNewPeopleState: () => void;
@@ -128,7 +128,7 @@ function SchedulingInnerProvider({ children }: { children: ReactNode }) {
     deletePerson: peopleContext.deleteItem,
     deletePeopleGroup: peopleContext.deleteGroup,
     removePersonFromGroup: peopleContext.removeItemFromGroup,
-    
+
     // Shift type management - delegate to shift type context
     shiftTypes: shiftTypeContext.items,
     shiftTypeGroups: shiftTypeContext.groups,
@@ -141,7 +141,7 @@ function SchedulingInnerProvider({ children }: { children: ReactNode }) {
     deleteShiftType: shiftTypeContext.deleteItem,
     deleteShiftTypeGroup: shiftTypeContext.deleteGroup,
     removeShiftTypeFromGroup: shiftTypeContext.removeItemFromGroup,
-    
+
     // Global operations
     createNewState: () => {
       peopleContext.createNewState();

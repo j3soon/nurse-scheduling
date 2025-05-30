@@ -89,4 +89,4 @@ export function InlineEdit({
       {hasValue ? valueToDisplay : (emptyText || 'Add...')}
     </div>
   );
-} 
+}

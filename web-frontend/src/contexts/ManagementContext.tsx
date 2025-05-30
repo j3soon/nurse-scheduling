@@ -126,8 +126,8 @@ export function createManagementContext<T extends Item, G extends Group>(
 
     const updateItem = (oldId: string, newId: string, groupIds?: string[], description?: string) => {
       // First update the item's ID and description
-      const updatedItems = items.map(item => 
-        item.id === oldId 
+      const updatedItems = items.map(item =>
+        item.id === oldId
           ? { ...item, id: newId, description: description !== undefined ? description : item.description }
           : item
       );
@@ -170,8 +170,8 @@ export function createManagementContext<T extends Item, G extends Group>(
             .map(item => item.id)
         : group.members;
 
-      const newGroups = groups.map(g => 
-        g.id === oldId 
+      const newGroups = groups.map(g =>
+        g.id === oldId
           ? { ...g, id: newId, members: sortedMembers, description: description !== undefined ? description : g.description }
           : g
       );
