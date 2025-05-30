@@ -1,32 +1,32 @@
 import { FiAlertCircle, FiPlus, FiX } from 'react-icons/fi';
 
 interface FormInputProps {
-  value: string;
-  placeholder?: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  itemValue: string;
+  itemPlaceholder?: string;
+  onItemChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   descriptionValue: string;
   descriptionPlaceholder?: string;
   onDescriptionChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   error?: string;
-  onPrimary: () => void;
+  onAction: () => void;
   onCancel: () => void;
-  primaryText: string;
+  actionText: string;
   children?: React.ReactNode;
 }
 
 export function FormInput({
-  value,
-  placeholder,
-  onChange,
+  itemValue,
+  itemPlaceholder,
+  onItemChange,
   descriptionValue,
   descriptionPlaceholder,
   onDescriptionChange,
   onKeyDown,
   error,
-  onPrimary,
+  onAction,
   onCancel,
-  primaryText,
+  actionText,
   children
 }: FormInputProps) {
   return (
@@ -34,11 +34,11 @@ export function FormInput({
       <div>
         <input
           type="text"
-          value={value}
-          onChange={onChange}
+          value={itemValue}
+          onChange={onItemChange}
           onKeyDown={onKeyDown}
           autoFocus
-          placeholder={placeholder}
+          placeholder={itemPlaceholder}
           className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out
             ${error
               ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
@@ -68,11 +68,11 @@ export function FormInput({
       {children}
       <div className="flex space-x-2">
         <button
-          onClick={onPrimary}
+          onClick={onAction}
           className="text-sm text-blue-600 hover:text-blue-900 flex items-center gap-1"
         >
           <FiPlus className="h-4 w-4" />
-          {primaryText}
+          {actionText}
         </button>
         <button
           onClick={onCancel}

@@ -327,17 +327,17 @@ export default function ManagementPage<T extends Item, G extends Group>({
         <div className="px-6 py-4">
           <h2 className="text-lg font-semibold mb-4 text-gray-800">{title}</h2>
           <FormInput
-            value={draft.id}
-            placeholder={placeholder}
-            onChange={handleDraftIdChange}
+            itemValue={draft.id}
+            itemPlaceholder={placeholder}
+            onItemChange={handleDraftIdChange}
             descriptionValue={draft.description}
             descriptionPlaceholder={`Enter ${isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()} description (optional)`}
             onDescriptionChange={handleDraftDescriptionChange}
             onKeyDown={handleKeyDown}
             error={error}
-            onPrimary={handleSave}
+            onAction={handleSave}
             onCancel={handleCancel}
-            primaryText={mode === Mode.ADDING ? 'Add' : 'Update'}
+            actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
           >
             <div className="space-y-2">
               <h3 className="text-sm font-medium text-gray-700">
