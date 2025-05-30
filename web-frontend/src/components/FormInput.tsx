@@ -2,10 +2,13 @@ import { FiAlertCircle, FiPlus, FiX } from 'react-icons/fi';
 
 interface FormInputProps {
   value: string;
+  placeholder?: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  descriptionValue: string;
+  descriptionPlaceholder?: string;
+  onDescriptionChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   error?: string;
-  placeholder?: string;
   onPrimary: () => void;
   onCancel: () => void;
   primaryText: string;
@@ -14,10 +17,13 @@ interface FormInputProps {
 
 export function FormInput({
   value,
+  placeholder,
   onChange,
+  descriptionValue,
+  descriptionPlaceholder,
+  onDescriptionChange,
   onKeyDown,
   error,
-  placeholder,
   onPrimary,
   onCancel,
   primaryText,
@@ -48,6 +54,16 @@ export function FormInput({
             {error}
           </p>
         )}
+      </div>
+      <div>
+        <input
+          type="text"
+          value={descriptionValue}
+          placeholder={descriptionPlaceholder}
+          onChange={onDescriptionChange}
+          className="block w-full px-4 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out
+            focus:border-blue-500 focus:ring-blue-200 placeholder-gray-400 focus:outline-none focus:ring-2 hover:border-gray-400"
+        />
       </div>
       {children}
       <div className="flex space-x-2">

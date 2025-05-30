@@ -5,11 +5,13 @@ import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 
 interface Item {
   id: string;
+  description: string;
 }
 
 interface Group {
   id: string;
   members: string[]; // Array of item IDs
+  description: string;
 }
 
 interface ManagementContextType<T extends Item, G extends Group> {
@@ -17,10 +19,10 @@ interface ManagementContextType<T extends Item, G extends Group> {
   groups: G[];
   updateItems: (items: T[]) => void;
   updateGroups: (groups: G[]) => void;
-  addItem: (id: string, groupIds: string[]) => void;
-  addGroup: (id: string, memberIds: string[]) => void;
-  updateItem: (oldId: string, newId: string, groupIds?: string[]) => void;
-  updateGroup: (oldId: string, newId: string, members?: string[]) => void;
+  addItem: (id: string, groupIds: string[], description?: string) => void;
+  addGroup: (id: string, memberIds: string[], description?: string) => void;
+  updateItem: (oldId: string, newId: string, groupIds?: string[], description?: string) => void;
+  updateGroup: (oldId: string, newId: string, members?: string[], description?: string) => void;
   deleteItem: (id: string) => void;
   deleteGroup: (id: string) => void;
   removeItemFromGroup: (itemId: string, groupId: string) => void;
@@ -97,9 +99,10 @@ export function createManagementContext<T extends Item, G extends Group>(
       setGroups(newGroups);
     };
 
-    const addItem = (id: string, groupIds: string[]) => {
+    const addItem = (id: string, groupIds: string[], description?: string) => {
       // Add the item
-      const newItems = [...items, { id } as T];
+      const newItem = { id, description: description || '' } as T;
+      const newItems = [...items, newItem];
 
       // If groupIds is provided, add the item to those groups
       const updatedGroups = groups.map(group => {
@@ -120,19 +123,24 @@ export function createManagementContext<T extends Item, G extends Group>(
       updateGroups(updatedGroups);
     };
 
-    const addGroup = (id: string, memberIds: string[]) => {
+    const addGroup = (id: string, memberIds: string[], description?: string) => {
       // Sort members based on items order
       const sortedMembers = items
         .filter(item => memberIds.includes(item.id))
         .map(item => item.id);
 
-      const newGroups = [...groups, { id, members: sortedMembers } as G];
+      const newGroup = { id, members: sortedMembers, description: description || '' } as G;
+      const newGroups = [...groups, newGroup];
       updateGroups(newGroups);
     };
 
-    const updateItem = (oldId: string, newId: string, groupIds?: string[]) => {
-      // First update the item's ID
-      const updatedItems = items.map(item => item.id === oldId ? { ...item, id: newId } : item);
+    const updateItem = (oldId: string, newId: string, groupIds?: string[], description?: string) => {
+      // First update the item's ID and description
+      const updatedItems = items.map(item => 
+        item.id === oldId 
+          ? { ...item, id: newId, description: description !== undefined ? description : item.description }
+          : item
+      );
 
       // Always update group memberships to reflect the new ID
       const updatedGroups = groups.map(group => {
@@ -158,7 +166,7 @@ export function createManagementContext<T extends Item, G extends Group>(
       updateGroups(updatedGroups);
     };
 
-    const updateGroup = (oldId: string, newId: string, members?: string[]) => {
+    const updateGroup = (oldId: string, newId: string, members?: string[], description?: string) => {
       const group = groups.find(g => g.id === oldId);
       if (!group) {
         console.error(`Group with ID ${oldId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
@@ -172,7 +180,11 @@ export function createManagementContext<T extends Item, G extends Group>(
             .map(item => item.id)
         : group.members;
 
-      const newGroups = groups.map(g => g.id === oldId ? { ...g, id: newId, members: sortedMembers } : g);
+      const newGroups = groups.map(g => 
+        g.id === oldId 
+          ? { ...g, id: newId, members: sortedMembers, description: description !== undefined ? description : g.description }
+          : g
+      );
       updateGroups(newGroups);
     };
 

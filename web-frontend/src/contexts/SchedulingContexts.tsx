@@ -6,21 +6,25 @@ import { createManagementContext } from './ManagementContext';
 // People interfaces
 export interface Person {
   id: string;
+  description: string;
 }
 
 export interface PeopleGroup {
   id: string;
   members: string[]; // Array of person IDs
+  description: string;
 }
 
 // ShiftType interfaces
 export interface ShiftType {
   id: string;
+  description: string;
 }
 
 export interface ShiftTypeGroup {
   id: string;
   members: string[]; // Array of shift type IDs
+  description: string;
 }
 
 // Create individual management contexts
@@ -31,14 +35,15 @@ const {
   storageKey: 'nurse-scheduling-people',
   createDefaultState: () => {
     const items = Array.from({ length: 10 }, (_, index) => ({
-      id: `Person ${index + 1}`
+      id: `Person ${index + 1}`,
+      description: `Staff member #${index + 1}`
     }));
     const groups = [
-      { id: 'Group 1', members: ['Person 1', 'Person 2'] },
-      { id: 'Group 2', members: ['Person 2', 'Person 3', 'Person 4'] },
-      { id: 'Group 3', members: ['Person 3', 'Person 4', 'Person 5', 'Person 6'] },
-      { id: 'Group 4', members: ['Person 4', 'Person 5', 'Person 6', 'Person 7', 'Person 8'] },
-      { id: 'Group 5', members: ['Person 5', 'Person 6', 'Person 7', 'Person 8', 'Person 9', 'Person 10'] },
+      { id: 'Group 1', members: ['Person 1', 'Person 2'], description: '' },
+      { id: 'Group 2', members: ['Person 2', 'Person 3', 'Person 4'], description: '' },
+      { id: 'Group 3', members: ['Person 3', 'Person 4', 'Person 5', 'Person 6'], description: '' },
+      { id: 'Group 4', members: ['Person 4', 'Person 5', 'Person 6', 'Person 7', 'Person 8'], description: '' },
+      { id: 'Group 5', members: ['Person 5', 'Person 6', 'Person 7', 'Person 8', 'Person 9', 'Person 10'], description: '' },
     ];
     return { items, groups };
   }
@@ -51,21 +56,21 @@ const {
   storageKey: 'nurse-scheduling-shift-types',
   createDefaultState: () => {
     const items = [
-      { id: 'Day - All Levels' },
-      { id: 'Day - Senior Only' },
-      { id: 'Evening - All Levels' }, 
-      { id: 'Evening - Senior Only' },
-      { id: 'Night - All Levels' },
-      { id: 'Night - Senior Only' },
-      { id: 'Admin - All Levels' },
-      { id: 'Admin - Senior Only' },
-      { id: 'Admin - Assistant Only' },
+      { id: 'Day (All Levels)', description: 'Day shift for all skill levels' },
+      { id: 'Day (Senior Only)', description: 'Day shift requiring senior staff expertise' },
+      { id: 'Evening (All Levels)', description: 'Evening shift for all skill levels' }, 
+      { id: 'Evening (Senior Only)', description: 'Evening shift requiring senior staff expertise' },
+      { id: 'Night (All Levels)', description: 'Night shift for all skill levels' },
+      { id: 'Night (Senior Only)', description: 'Night shift requiring senior staff expertise' },
+      { id: 'Admin (All Levels)', description: 'Administrative tasks for all levels' },
+      { id: 'Admin (Senior Only)', description: 'Administrative tasks requiring senior expertise' },
+      { id: 'Admin (Assistant Only)', description: 'Administrative tasks suitable for assistants' },
     ];
     const groups = [
-      { id: 'Day', members: ['Day - All Levels', 'Day - Senior Only'] },
-      { id: 'Evening', members: ['Evening - All Levels', 'Evening - Senior Only'] },
-      { id: 'Night', members: ['Night - All Levels', 'Night - Senior Only'] },
-      { id: 'Administrative', members: ['Admin - All Levels', 'Admin - Senior Only', 'Admin - Assistant Only'] },
+      { id: 'Day', members: ['Day (All Levels)', 'Day (Senior Only)'], description: 'All day shift types' },
+      { id: 'Evening', members: ['Evening (All Levels)', 'Evening (Senior Only)'], description: 'All evening shift types' },
+      { id: 'Night', members: ['Night (All Levels)', 'Night (Senior Only)'], description: 'All night shift types' },
+      { id: 'Administrative', members: ['Admin (All Levels)', 'Admin (Senior Only)', 'Admin (Assistant Only)'], description: 'All administrative shift types' },
     ];
     return { items, groups };
   }
@@ -78,10 +83,10 @@ interface SchedulingContextType {
   peopleGroups: PeopleGroup[];
   reorderPeople: (people: Person[]) => void;
   updatePeopleGroups: (groups: PeopleGroup[]) => void;
-  addPerson: (id: string, groupIds: string[]) => void;
-  addPeopleGroup: (id: string, memberIds: string[]) => void;
-  updatePerson: (oldId: string, newId: string, groupIds?: string[]) => void;
-  updatePeopleGroup: (oldId: string, newId: string, members?: string[]) => void;
+  addPerson: (id: string, groupIds: string[], description?: string) => void;
+  addPeopleGroup: (id: string, memberIds: string[], description?: string) => void;
+  updatePerson: (oldId: string, newId: string, groupIds?: string[], description?: string) => void;
+  updatePeopleGroup: (oldId: string, newId: string, members?: string[], description?: string) => void;
   deletePerson: (id: string) => void;
   deletePeopleGroup: (id: string) => void;
   removePersonFromGroup: (personId: string, groupId: string) => void;
@@ -91,10 +96,10 @@ interface SchedulingContextType {
   shiftTypeGroups: ShiftTypeGroup[];
   reorderShiftTypes: (shiftTypes: ShiftType[]) => void;
   updateShiftTypeGroups: (groups: ShiftTypeGroup[]) => void;
-  addShiftType: (id: string, groupIds: string[]) => void;
-  addShiftTypeGroup: (id: string, memberIds: string[]) => void;
-  updateShiftType: (oldId: string, newId: string, groupIds?: string[]) => void;
-  updateShiftTypeGroup: (oldId: string, newId: string, members?: string[]) => void;
+  addShiftType: (id: string, groupIds: string[], description?: string) => void;
+  addShiftTypeGroup: (id: string, memberIds: string[], description?: string) => void;
+  updateShiftType: (oldId: string, newId: string, groupIds?: string[], description?: string) => void;
+  updateShiftTypeGroup: (oldId: string, newId: string, members?: string[], description?: string) => void;
   deleteShiftType: (id: string) => void;
   deleteShiftTypeGroup: (id: string) => void;
   removeShiftTypeFromGroup: (shiftTypeId: string, groupId: string) => void;

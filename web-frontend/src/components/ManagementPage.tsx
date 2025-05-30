@@ -10,21 +10,23 @@ import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
 interface Item {
   id: string;
+  description: string;
 }
 
 interface Group {
   id: string;
   members: string[]; // Array of item IDs
+  description: string;
 }
 
 interface ManagementPageProps<T extends Item, G extends Group> {
   title: string;
   items: T[];
   groups: G[];
-  addItem: (id: string, groupIds: string[]) => void;
-  addGroup: (id: string, memberIds: string[]) => void;
-  updateItem: (oldId: string, newId: string, groupIds?: string[]) => void;
-  updateGroup: (oldId: string, newId: string, members?: string[]) => void;
+  addItem: (id: string, groupIds: string[], description?: string) => void;
+  addGroup: (id: string, memberIds: string[], description?: string) => void;
+  updateItem: (oldId: string, newId: string, groupIds?: string[], description?: string) => void;
+  updateGroup: (oldId: string, newId: string, members?: string[], description?: string) => void;
   deleteItem: (id: string) => void;
   deleteGroup: (id: string) => void;
   removeItemFromGroup: (itemId: string, groupId: string) => void;
@@ -60,12 +62,15 @@ export default function ManagementPage<T extends Item, G extends Group>({
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
   const [draft, setDraft] = useState<{
     id: string;
+    description: string;
     groups: string[];
     members: string[];
     editingId?: string;
+    inlineEditingField?: 'id' | 'description';
     isItem: boolean;
   }>({
     id: '',
+    description: '',
     groups: [],
     members: [],
     isItem: true,
@@ -79,6 +84,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
 
   const handleSave = () => {
     const trimmedId = draft.id.trim();
+    const trimmedDescription = draft.description.trim();
     if (!trimmedId) {
       setError(`${draft.isItem ? itemLabel : groupLabel} ID cannot be empty`);
       return;
@@ -92,22 +98,22 @@ export default function ManagementPage<T extends Item, G extends Group>({
     if (draft.isItem) {
       if (draft.editingId) {
         // Update existing item with their groups
-        updateItem(draft.editingId, trimmedId, draft.groups);
+        updateItem(draft.editingId, trimmedId, draft.groups, trimmedDescription);
       } else {
         // Add new item with their groups
-        addItem(trimmedId, draft.groups);
+        addItem(trimmedId, draft.groups, trimmedDescription);
       }
     } else {
       if (draft.editingId) {
         // Update existing group
-        updateGroup(draft.editingId, trimmedId, draft.members);
+        updateGroup(draft.editingId, trimmedId, draft.members, trimmedDescription);
       } else {
         // Add new group
-        addGroup(trimmedId, draft.members);
+        addGroup(trimmedId, draft.members, trimmedDescription);
       }
     }
 
-    setDraft({ id: '', groups: [], members: [], isItem: true });
+    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
     setMode(Mode.NORMAL);
     setError('');
   };
@@ -122,14 +128,14 @@ export default function ManagementPage<T extends Item, G extends Group>({
         const itemGroups = groups
           .filter(g => g.members.includes(item.id))
           .map(g => g.id);
-        setDraft({ id: item.id, groups: itemGroups, members: [], editingId: id, isItem: true });
+        setDraft({ id: item.id, description: item.description, groups: itemGroups, members: [], editingId: id, isItem: true });
       } else {
         console.error(`${itemLabel} with ID ${id} not found during edit. ${ERROR_SHOULD_NOT_HAPPEN}`);
       }
     } else {
       const group = groups.find(g => g.id === id);
       if (group) {
-        setDraft({ id: group.id, groups: [], members: group.members, editingId: id, isItem: false });
+        setDraft({ id: group.id, description: group.description, groups: [], members: group.members, editingId: id, isItem: false });
       } else {
         console.error(`${groupLabel} with ID ${id} not found during edit. ${ERROR_SHOULD_NOT_HAPPEN}`);
       }
@@ -148,13 +154,17 @@ export default function ManagementPage<T extends Item, G extends Group>({
 
   const handleCancel = () => {
     setMode(Mode.NORMAL);
-    setDraft({ id: '', groups: [], members: [], isItem: true });
+    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
     setError('');
   };
 
   const handleDraftIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setDraft(prev => ({ ...prev, id: e.target.value }));
     setError('');
+  };
+
+  const handleDraftDescriptionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDraft(prev => ({ ...prev, description: e.target.value }));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -243,38 +253,57 @@ export default function ManagementPage<T extends Item, G extends Group>({
     return groups.filter(group => group.members.includes(itemId));
   };
 
-  const handleInlineEdit = (id: string, isItem: boolean) => {
+  const handleInlineEdit = (id: string, isItem: boolean, field: 'id' | 'description' = 'id') => {
     setMode(Mode.INLINE_EDITING);
-    setDraft({ id, groups: [], members: [], editingId: id, isItem });
+    const currentItem = isItem ? items.find(i => i.id === id) : groups.find(g => g.id === id);
+    const initialValue = field === 'id' ? id : currentItem!.description;
+    setDraft({ 
+      id: field === 'id' ? id : initialValue, 
+      description: field === 'description' ? initialValue : '', 
+      groups: [], 
+      members: [], 
+      editingId: id, 
+      inlineEditingField: field,
+      isItem 
+    });
     setError('');
   };
 
   const handleInlineSave = () => {
-    const trimmedId = draft.id.trim();
-    if (!trimmedId) {
-      setError(`${draft.isItem ? itemLabel : groupLabel} ID cannot be empty`);
-      return;
-    }
+    if (draft.inlineEditingField === 'id') {
+      const trimmedId = draft.id.trim();
+      if (!trimmedId) {
+        setError(`${draft.isItem ? itemLabel : groupLabel} ID cannot be empty`);
+        return;
+      }
 
-    if (isDuplicateId(trimmedId, draft.editingId)) {
-      setError(`This ID is already used by another ${draft.isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()}`);
-      return;
-    }
+      if (isDuplicateId(trimmedId, draft.editingId)) {
+        setError(`This ID is already used by another ${draft.isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()}`);
+        return;
+      }
 
-    if (draft.isItem) {
-      updateItem(draft.editingId!, trimmedId);
-    } else {
-      updateGroup(draft.editingId!, trimmedId);
+      if (draft.isItem) {
+        updateItem(draft.editingId!, trimmedId);
+      } else {
+        updateGroup(draft.editingId!, trimmedId);
+      }
+    } else if (draft.inlineEditingField === 'description') {
+      const trimmedDescription = draft.description.trim();
+      if (draft.isItem) {
+        updateItem(draft.editingId!, draft.editingId!, undefined, trimmedDescription);
+      } else {
+        updateGroup(draft.editingId!, draft.editingId!, undefined, trimmedDescription);
+      }
     }
 
     setMode(Mode.NORMAL);
-    setDraft({ id: '', groups: [], members: [], isItem: true });
+    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
     setError('');
   };
 
   const handleInlineCancel = () => {
     setMode(Mode.NORMAL);
-    setDraft({ id: '', groups: [], members: [], isItem: true });
+    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
     setError('');
   };
 
@@ -299,10 +328,13 @@ export default function ManagementPage<T extends Item, G extends Group>({
           <h2 className="text-lg font-semibold mb-4 text-gray-800">{title}</h2>
           <FormInput
             value={draft.id}
+            placeholder={placeholder}
             onChange={handleDraftIdChange}
+            descriptionValue={draft.description}
+            descriptionPlaceholder={`Enter ${isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()} description (optional)`}
+            onDescriptionChange={handleDraftDescriptionChange}
             onKeyDown={handleKeyDown}
             error={error}
-            placeholder={placeholder}
             onPrimary={handleSave}
             onCancel={handleCancel}
             primaryText={mode === Mode.ADDING ? 'Add' : 'Update'}
@@ -349,7 +381,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
           <button
             onClick={() => {
               setMode(Mode.ADDING);
-              setDraft({ id: '', groups: [], members: [], isItem: true });
+              setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
             }}
             className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
           >
@@ -359,7 +391,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
           <button
             onClick={() => {
               setMode(Mode.ADDING);
-              setDraft({ id: '', groups: [], members: [], isItem: false });
+              setDraft({ id: '', description: '', groups: [], members: [], isItem: false });
             }}
             className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
           >
@@ -378,24 +410,57 @@ export default function ManagementPage<T extends Item, G extends Group>({
             {
               header: 'ID',
               accessor: (item: T) => (
-                mode === Mode.INLINE_EDITING && draft.editingId === item.id ? (
-                  <input
-                    type="text"
-                    value={draft.id}
-                    onChange={handleDraftIdChange}
-                    onKeyDown={handleInlineKeyDown}
-                    onBlur={handleInlineSave}
-                    className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''}`}
-                    autoFocus
-                  />
-                ) : (
-                  <div
-                    onDoubleClick={() => handleInlineEdit(item.id, true)}
-                    className="cursor-pointer"
-                  >
-                    {item.id}
-                  </div>
-                )
+                <div>
+                  {mode === Mode.INLINE_EDITING && draft.editingId === item.id && draft.inlineEditingField === 'id' ? (
+                    <input
+                      type="text"
+                      value={draft.id}
+                      onChange={handleDraftIdChange}
+                      onKeyDown={handleInlineKeyDown}
+                      onBlur={handleInlineSave}
+                      className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''}`}
+                      autoFocus
+                    />
+                  ) : (
+                    <div
+                      onDoubleClick={() => handleInlineEdit(item.id, true, 'id')}
+                      className="cursor-pointer"
+                    >
+                      {item.id}
+                    </div>
+                  )}
+                  
+                  {mode === Mode.INLINE_EDITING && draft.editingId === item.id && draft.inlineEditingField === 'description' ? (
+                    <input
+                      type="text"
+                      value={draft.description}
+                      onChange={handleDraftDescriptionChange}
+                      onKeyDown={handleInlineKeyDown}
+                      onBlur={handleInlineSave}
+                      className="text-xs text-gray-400 mt-1 px-1 py-0.5 border rounded w-full"
+                      autoFocus
+                      placeholder="Enter description..."
+                    />
+                  ) : (
+                    item.description ? (
+                      <div 
+                        className="text-xs text-gray-400 mt-1 cursor-pointer" 
+                        onDoubleClick={() => handleInlineEdit(item.id, true, 'description')}
+                      >
+                        {item.description}
+                      </div>
+                    ) : (
+                      mode !== Mode.INLINE_EDITING && (
+                        <div 
+                          className="text-xs text-gray-300 mt-1 cursor-pointer italic" 
+                          onDoubleClick={() => handleInlineEdit(item.id, true, 'description')}
+                        >
+                          Add description...
+                        </div>
+                      )
+                    )
+                  )}
+                </div>
               )
             },
             {
@@ -428,7 +493,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
             }
           ]}
           data={items}
-          onReorder={reorderItems}
+          onReorder={mode === Mode.INLINE_EDITING ? undefined : reorderItems}
         />
 
         <DataTable
@@ -437,24 +502,57 @@ export default function ManagementPage<T extends Item, G extends Group>({
             {
               header: 'ID',
               accessor: (group: G) => (
-                mode === Mode.INLINE_EDITING && draft.editingId === group.id ? (
-                  <input
-                    type="text"
-                    value={draft.id}
-                    onChange={handleDraftIdChange}
-                    onKeyDown={handleInlineKeyDown}
-                    onBlur={handleInlineSave}
-                    className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''}`}
-                    autoFocus
-                  />
-                ) : (
-                  <div
-                    onDoubleClick={() => handleInlineEdit(group.id, false)}
-                    className="cursor-pointer"
-                  >
-                    {group.id}
-                  </div>
-                )
+                <div>
+                  {mode === Mode.INLINE_EDITING && draft.editingId === group.id && draft.inlineEditingField === 'id' ? (
+                    <input
+                      type="text"
+                      value={draft.id}
+                      onChange={handleDraftIdChange}
+                      onKeyDown={handleInlineKeyDown}
+                      onBlur={handleInlineSave}
+                      className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''}`}
+                      autoFocus
+                    />
+                  ) : (
+                    <div
+                      onDoubleClick={() => handleInlineEdit(group.id, false, 'id')}
+                      className="cursor-pointer"
+                    >
+                      {group.id}
+                    </div>
+                  )}
+                  
+                  {mode === Mode.INLINE_EDITING && draft.editingId === group.id && draft.inlineEditingField === 'description' ? (
+                    <input
+                      type="text"
+                      value={draft.description}
+                      onChange={handleDraftDescriptionChange}
+                      onKeyDown={handleInlineKeyDown}
+                      onBlur={handleInlineSave}
+                      className="text-xs text-gray-400 mt-1 px-1 py-0.5 border rounded w-full"
+                      autoFocus
+                      placeholder="Enter description..."
+                    />
+                  ) : (
+                    group.description ? (
+                      <div 
+                        className="text-xs text-gray-400 mt-1 cursor-pointer" 
+                        onDoubleClick={() => handleInlineEdit(group.id, false, 'description')}
+                      >
+                        {group.description}
+                      </div>
+                    ) : (
+                      mode !== Mode.INLINE_EDITING && (
+                        <div 
+                          className="text-xs text-gray-300 mt-1 cursor-pointer italic" 
+                          onDoubleClick={() => handleInlineEdit(group.id, false, 'description')}
+                        >
+                          Add description...
+                        </div>
+                      )
+                    )
+                  )}
+                </div>
               )
             },
             {
@@ -490,7 +588,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
             }
           ]}
           data={groups}
-          onReorder={updateGroups}
+          onReorder={mode === Mode.INLINE_EDITING ? undefined : updateGroups}
         />
       </div>
     </div>
