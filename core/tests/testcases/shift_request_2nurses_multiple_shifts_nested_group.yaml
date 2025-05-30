@@ -18,7 +18,7 @@ shift_types:
     description: Evening shift type
   - id: N
     description: Night shift type
-shift_type_groups:
+shift_types_groups:
   - id: evening_shifts
     description: Evening shifts
     members: [E]

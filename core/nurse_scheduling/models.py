@@ -99,7 +99,7 @@ class NurseSchedulingData(BaseModel):
         ShiftCountPreference
     ]
     people_groups: List[PeopleGroup] = Field(default_factory=list)
-    shift_type_groups: List[ShiftTypeGroup] = Field(default_factory=list)
+    shift_types_groups: List[ShiftTypeGroup] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_model(self) -> Self:
@@ -126,7 +126,7 @@ class NurseSchedulingData(BaseModel):
                 raise ValueError(f"Shift type ID cannot be one of the reserved values: {reserved_ids}")
             shift_type_and_group_ids.add(shift_type.id)
 
-        for group in self.shift_type_groups:
+        for group in self.shift_types_groups:
             if group.id in shift_type_and_group_ids:
                 raise ValueError(f"Duplicated shift type group (or shift type) ID: {group.id}")
             if str(group.id).upper() in reserved_ids:

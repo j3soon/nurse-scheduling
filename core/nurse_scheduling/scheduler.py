@@ -30,8 +30,8 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
     ctx.map_sid_s[ALL] = list(range(ctx.n_shift_types))
     ctx.map_sid_s[OFF] = [OFF_sid]
     # Map shift type group ID to list of shift type indices
-    for g in range(len(ctx.shift_type_groups)):
-        group = ctx.shift_type_groups[g]
+    for g in range(len(ctx.shift_types_groups)):
+        group = ctx.shift_types_groups[g]
         # Flatten and deduplicate shift type indices for the group
         ctx.map_sid_s[group.id] = list(set().union(*[ctx.map_sid_s[sid] for sid in group.members]))
     # Map person ID to person index
