@@ -4,21 +4,11 @@ import { createContext, useContext, ReactNode } from 'react';
 import { createManagementContext } from './ManagementContext';
 import { Item, Group } from '@/types/management';
 
-// People interfaces extending base types
-export interface Person extends Item {}
-
-export interface PeopleGroup extends Group {}
-
-// ShiftType interfaces extending base types
-export interface ShiftType extends Item {}
-
-export interface ShiftTypeGroup extends Group {}
-
 // Create individual management contexts
 const {
   ManagementProvider: PeopleManagementProvider,
   useManagement: usePeopleManagement
-} = createManagementContext<Person, PeopleGroup>({
+} = createManagementContext<Item, Group>({
   storageKey: 'nurse-scheduling-people',
   createDefaultState: () => {
     const items = Array.from({ length: 10 }, (_, index) => ({
@@ -39,7 +29,7 @@ const {
 const {
   ManagementProvider: ShiftTypeManagementProvider,
   useManagement: useShiftTypeManagement
-} = createManagementContext<ShiftType, ShiftTypeGroup>({
+} = createManagementContext<Item, Group>({
   storageKey: 'nurse-scheduling-shift-types',
   createDefaultState: () => {
     const items = [
@@ -66,10 +56,10 @@ const {
 // Combined context type
 interface SchedulingContextType {
   // People management
-  people: Person[];
-  peopleGroups: PeopleGroup[];
-  reorderPeople: (people: Person[]) => void;
-  updatePeopleGroups: (groups: PeopleGroup[]) => void;
+  people: Item[];
+  peopleGroups: Group[];
+  reorderPeople: (people: Item[]) => void;
+  updatePeopleGroups: (groups: Group[]) => void;
   addPerson: (id: string, groupIds: string[], description?: string) => void;
   addPeopleGroup: (id: string, memberIds: string[], description?: string) => void;
   updatePerson: (oldId: string, newId: string, groupIds?: string[], description?: string) => void;
@@ -79,10 +69,10 @@ interface SchedulingContextType {
   removePersonFromGroup: (personId: string, groupId: string) => void;
 
   // Shift type management
-  shiftTypes: ShiftType[];
-  shiftTypeGroups: ShiftTypeGroup[];
-  reorderShiftTypes: (shiftTypes: ShiftType[]) => void;
-  updateShiftTypeGroups: (groups: ShiftTypeGroup[]) => void;
+  shiftTypes: Item[];
+  shiftTypeGroups: Group[];
+  reorderShiftTypes: (shiftTypes: Item[]) => void;
+  updateShiftTypeGroups: (groups: Group[]) => void;
   addShiftType: (id: string, groupIds: string[], description?: string) => void;
   addShiftTypeGroup: (id: string, memberIds: string[], description?: string) => void;
   updateShiftType: (oldId: string, newId: string, groupIds?: string[], description?: string) => void;
