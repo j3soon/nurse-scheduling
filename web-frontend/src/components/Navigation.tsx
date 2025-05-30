@@ -26,6 +26,24 @@ export default function Navigation() {
   const navigateNext = () => navigateToTab(currentTabIndex + 1);
 
   useEffect(() => {
+    // Add padding to main content to make space for arrows
+    const mainElement = document.querySelector('main');
+    if (mainElement) {
+      mainElement.style.paddingLeft = '2.5rem';
+      mainElement.style.paddingRight = '2.5rem';
+    }
+    
+    // Cleanup on unmount
+    return () => {
+      const mainElement = document.querySelector('main');
+      if (mainElement) {
+        mainElement.style.paddingLeft = '';
+        mainElement.style.paddingRight = '';
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Only handle keyboard shortcuts when no input/textarea/select is focused
       const activeElement = document.activeElement;
@@ -131,7 +149,7 @@ export default function Navigation() {
       {currentTabIndex > 0 && (
         <button
           onClick={navigatePrevious}
-          className="fixed left-4 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
+          className="fixed left-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
           title="Previous tab (A, H, ←)"
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -144,7 +162,7 @@ export default function Navigation() {
       {currentTabIndex < tabs.length - 1 && (
         <button
           onClick={navigateNext}
-          className="fixed right-4 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
+          className="fixed right-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
           title="Next tab (D, L, →)"
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">

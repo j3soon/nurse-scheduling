@@ -264,7 +264,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <h1 className="text-3xl font-bold text-gray-800">{title}</h1>
         <div className="flex gap-4">
           <button
