@@ -6,6 +6,8 @@ import { FormInput } from '@/components/FormInput';
 import { TableRowActions } from '@/components/TableRowActions';
 import { DataTable } from '@/components/DataTable';
 import { InlineEdit } from '@/components/InlineEdit';
+import { CheckboxSelector } from '@/components/CheckboxSelector';
+import { RemovableTag } from '@/components/RemovableTag';
 import { useIdValidation } from '@/hooks/useIdValidation';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
@@ -78,9 +80,6 @@ export default function ManagementPage<T extends Item, G extends Group>({
   const [error, setError] = useState<string>('');
   const [inlineEditingId, setInlineEditingId] = useState<string>('');
   const [inlineEditingField, setInlineEditingField] = useState<'id' | 'description'>('id');
-  const mouseDownCheckboxIdRef = useRef('');
-  const mouseEnteredCheckboxIdRef = useRef('');
-  const isMultiSelectDragRef = useRef(false);
 
   const { isDuplicateId } = useIdValidation(items, groups);
 
@@ -180,6 +179,9 @@ export default function ManagementPage<T extends Item, G extends Group>({
   };
 
   const handleMemberToggle = (id: string) => {
+    // Using a state updater function that takes the previous state as an argument is required for handling quick multi-select drag.
+    // Since React state updates are asynchronous, directly setting the new state based on the previous state
+    // could miss intermediate updates. The updater function ensures we always work with the latest state.
     if (draft.isItem) {
       setDraft(prev => ({
         ...prev,
@@ -196,59 +198,6 @@ export default function ManagementPage<T extends Item, G extends Group>({
       }));
     }
   };
-
-  const handleCheckboxMouseEnter = (id: string) => {
-    mouseEnteredCheckboxIdRef.current = id;
-    if (isMultiSelectDragRef.current) {
-      handleMemberToggle(id);
-    }
-  };
-
-  const handleCheckboxMouseDown = (id: string) => {
-    if (id === mouseEnteredCheckboxIdRef.current && !isMultiSelectDragRef.current) {
-      mouseDownCheckboxIdRef.current = id;
-      document.body.style.userSelect = 'none';
-    }
-  };
-
-  const handleCheckboxMouseLeave = (id: string) => {
-    if (mouseDownCheckboxIdRef.current && mouseEnteredCheckboxIdRef.current === mouseDownCheckboxIdRef.current) {
-      // Start multi-select drag
-      isMultiSelectDragRef.current = true;
-      // Toggle the initial checkbox when leaving it
-      handleMemberToggle(mouseDownCheckboxIdRef.current);
-      mouseDownCheckboxIdRef.current = '';
-    }
-    mouseEnteredCheckboxIdRef.current = '';
-  };
-
-  const handleCheckboxMouseUp = (id: string) => {
-    if (!isMultiSelectDragRef.current) {
-      // Normal checkbox click behavior
-      handleMemberToggle(id);
-    }
-    // End multi-select drag
-    isMultiSelectDragRef.current = false;
-    mouseDownCheckboxIdRef.current = '';
-    document.body.style.userSelect = '';
-  };
-
-  // Add event listener for mouse up outside the component
-  useEffect(() => {
-    const handleGlobalMouseUp = () => {
-      // End multi-select drag
-      isMultiSelectDragRef.current = false;
-      mouseDownCheckboxIdRef.current = '';
-      document.body.style.userSelect = '';
-    };
-
-    window.addEventListener('mouseup', handleGlobalMouseUp);
-    // Cleanup event listener
-    return () => {
-      window.removeEventListener('mouseup', handleGlobalMouseUp);
-      document.body.style.userSelect = '';
-    };
-  }, []);
 
   // Helper function to get groups for an item
   const getItemGroups = (itemId: string) => {
@@ -320,34 +269,12 @@ export default function ManagementPage<T extends Item, G extends Group>({
             onCancel={handleCancel}
             actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
           >
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-gray-700">
-                {isItem ? groupLabel + 's' : 'Members'}
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {(isItem ? groups : items).map(item => (
-                  <label
-                    key={item.id}
-                    className="inline-flex items-center"
-                    onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
-                    onMouseDown={() => handleCheckboxMouseDown(item.id)}
-                    onMouseLeave={() => handleCheckboxMouseLeave(item.id)}
-                    onMouseUp={() => handleCheckboxMouseUp(item.id)}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isItem
-                        ? draft.groups.includes(item.id)
-                        : draft.members.includes(item.id)
-                      }
-                      onChange={() => {}} // Prevent default onChange to handle it in mouseUp
-                      className="form-checkbox h-4 w-4 text-blue-600"
-                    />
-                    <span className="ml-2 text-sm text-gray-700">{item.id}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
+            <CheckboxSelector
+              items={draft.isItem ? groups : items}
+              selectedIds={draft.isItem ? draft.groups : draft.members}
+              onToggle={handleMemberToggle}
+              label={draft.isItem ? groupLabel + 's' : 'Members'}
+            />
           </FormInput>
         </div>
       </div>
@@ -421,15 +348,12 @@ export default function ManagementPage<T extends Item, G extends Group>({
               accessor: (item: T) => (
                 <div className="flex flex-wrap gap-1">
                   {getItemGroups(item.id).map(group => (
-                    <span key={group.id} className="inline-flex items-center bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded cursor-default">
-                      <button
-                        onClick={() => removeItemFromGroup(item.id, group.id)}
-                        className="mr-1 text-blue-600 hover:text-blue-900"
-                      >
-                        ×
-                      </button>
-                      {group.id}
-                    </span>
+                    <RemovableTag
+                      key={group.id}
+                      id={group.id}
+                      onRemove={() => removeItemFromGroup(item.id, group.id)}
+                      variant="blue"
+                    />
                   ))}
                 </div>
               )
@@ -485,15 +409,12 @@ export default function ManagementPage<T extends Item, G extends Group>({
                   {group.members.map(memberId => {
                     const item = items.find(i => i.id === memberId);
                     return item ? (
-                      <span key={item.id} className="inline-flex items-center bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded cursor-default">
-                        <button
-                          onClick={() => removeItemFromGroup(item.id, group.id)}
-                          className="mr-1 text-gray-600 hover:text-gray-900"
-                        >
-                          ×
-                        </button>
-                        {item.id}
-                      </span>
+                      <RemovableTag
+                        key={item.id}
+                        id={item.id}
+                        onRemove={() => removeItemFromGroup(item.id, group.id)}
+                        variant="gray"
+                      />
                     ) : null;
                   })}
                 </div>
