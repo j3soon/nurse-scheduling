@@ -17,7 +17,9 @@ interface AddEditFormProps<T extends Item, G extends Group> {
   items: T[];
   groups: G[];
   itemLabel: string;
+  itemLabelPlural: string;
   groupLabel: string;
+  groupLabelPlural: string;
   error: string;
   onIdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDescriptionChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -33,7 +35,9 @@ export function AddEditForm<T extends Item, G extends Group>({
   items,
   groups,
   itemLabel,
+  itemLabelPlural,
   groupLabel,
+  groupLabelPlural,
   error,
   onIdChange,
   onDescriptionChange,
@@ -67,7 +71,7 @@ export function AddEditForm<T extends Item, G extends Group>({
             items={draft.isItem ? groups : items}
             selectedIds={draft.isItem ? draft.groups : draft.members}
             onToggle={onMemberToggle}
-            label={draft.isItem ? groupLabel + 's' : 'Members'}
+            label={draft.isItem ? groupLabelPlural : 'Members'}
           />
         </FormInput>
       </div>

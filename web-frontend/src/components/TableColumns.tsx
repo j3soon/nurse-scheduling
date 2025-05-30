@@ -79,7 +79,8 @@ export function useItemTableColumns<T extends Item, G extends Group>({
   removeItemFromGroup,
   groups,
   groupLabel,
-}: TableColumnsProps<T, G> & { groups: G[]; groupLabel: string }) {
+  groupLabelPlural,
+}: TableColumnsProps<T, G> & { groups: G[]; groupLabel: string; groupLabelPlural: string }) {
   return [
     {
       header: 'ID',
@@ -98,7 +99,7 @@ export function useItemTableColumns<T extends Item, G extends Group>({
       )
     },
     {
-      header: groupLabel + 's',
+      header: groupLabelPlural,
       accessor: (item: T) => (
         <div className="flex flex-wrap gap-1">
           {groups

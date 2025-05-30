@@ -23,7 +23,9 @@ interface ManagementPageProps<T extends Item, G extends Group> {
   reorderItems: (items: T[]) => void;
   updateGroups: (groups: G[]) => void;
   itemLabel: string;
+  itemLabelPlural: string;
   groupLabel: string;
+  groupLabelPlural: string;
 }
 
 export default function ManagementPage<T extends Item, G extends Group>({
@@ -40,7 +42,9 @@ export default function ManagementPage<T extends Item, G extends Group>({
   reorderItems,
   updateGroups,
   itemLabel,
+  itemLabelPlural,
   groupLabel,
+  groupLabelPlural,
 }: ManagementPageProps<T, G>) {
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
   const [draft, setDraft] = useState<{
@@ -235,6 +239,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
     error,
     groups,
     groupLabel,
+    groupLabelPlural,
     onInlineSave: handleInlineSave,
     onInlineCancel: handleInlineCancel,
     onInlineEdit: handleInlineEdit,
@@ -286,7 +291,9 @@ export default function ManagementPage<T extends Item, G extends Group>({
           items={items}
           groups={groups}
           itemLabel={itemLabel}
+          itemLabelPlural={itemLabelPlural}
           groupLabel={groupLabel}
+          groupLabelPlural={groupLabelPlural}
           error={error}
           onIdChange={handleDraftIdChange}
           onDescriptionChange={handleDraftDescriptionChange}
@@ -299,14 +306,14 @@ export default function ManagementPage<T extends Item, G extends Group>({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <DataTable
-          title={itemLabel + 's'}
+          title={itemLabelPlural}
           columns={itemColumns}
           data={items}
           onReorder={mode === Mode.INLINE_EDITING ? undefined : reorderItems}
         />
 
         <DataTable
-          title={groupLabel + 's'}
+          title={itemLabelPlural + ' ' + groupLabelPlural}
           columns={groupColumns}
           data={groups}
           onReorder={mode === Mode.INLINE_EDITING ? undefined : updateGroups}

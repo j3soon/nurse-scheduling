@@ -33,7 +33,9 @@ export default function PeoplePage() {
       reorderItems={reorderItems}
       updateGroups={updateGroups}
       itemLabel="Person"
-      groupLabel="People Group"
+      itemLabelPlural="People"
+      groupLabel="Group"
+      groupLabelPlural="Groups"
     />
   );
 }
