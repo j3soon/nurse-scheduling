@@ -363,6 +363,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
             onClick={() => {
               setMode(Mode.ADDING);
               setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
+              setError('');
             }}
             className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
           >
@@ -373,6 +374,7 @@ export default function ManagementPage<T extends Item, G extends Group>({
             onClick={() => {
               setMode(Mode.ADDING);
               setDraft({ id: '', description: '', groups: [], members: [], isItem: false });
+              setError('');
             }}
             className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
           >

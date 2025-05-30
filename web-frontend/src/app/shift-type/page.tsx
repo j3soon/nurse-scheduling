@@ -33,7 +33,7 @@ export default function ShiftTypePage() {
       reorderItems={reorderItems}
       updateGroups={updateGroups}
       itemLabel="Shift Type"
-      groupLabel="Group"
+      groupLabel="Shift Types Group"
     />
   );
 }
