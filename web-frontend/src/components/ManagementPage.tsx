@@ -5,6 +5,7 @@ import { FiPlus } from 'react-icons/fi';
 import { FormInput } from '@/components/FormInput';
 import { TableRowActions } from '@/components/TableRowActions';
 import { DataTable } from '@/components/DataTable';
+import { InlineEdit } from '@/components/InlineEdit';
 import { useIdValidation } from '@/hooks/useIdValidation';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
@@ -66,7 +67,6 @@ export default function ManagementPage<T extends Item, G extends Group>({
     groups: string[];
     members: string[];
     editingId?: string;
-    inlineEditingField?: 'id' | 'description';
     isItem: boolean;
   }>({
     id: '',
@@ -76,6 +76,8 @@ export default function ManagementPage<T extends Item, G extends Group>({
     isItem: true,
   });
   const [error, setError] = useState<string>('');
+  const [inlineEditingId, setInlineEditingId] = useState<string>('');
+  const [inlineEditingField, setInlineEditingField] = useState<'id' | 'description'>('id');
   const mouseDownCheckboxIdRef = useRef('');
   const mouseEnteredCheckboxIdRef = useRef('');
   const isMultiSelectDragRef = useRef(false);
@@ -255,66 +257,45 @@ export default function ManagementPage<T extends Item, G extends Group>({
 
   const handleInlineEdit = (id: string, isItem: boolean, field: 'id' | 'description' = 'id') => {
     setMode(Mode.INLINE_EDITING);
-    const currentItem = isItem ? items.find(i => i.id === id) : groups.find(g => g.id === id);
-    const initialValue = field === 'id' ? id : currentItem!.description;
-    setDraft({ 
-      id: field === 'id' ? id : initialValue, 
-      description: field === 'description' ? initialValue : '', 
-      groups: [], 
-      members: [], 
-      editingId: id, 
-      inlineEditingField: field,
-      isItem 
-    });
+    setInlineEditingId(id);
+    setInlineEditingField(field);
     setError('');
   };
 
-  const handleInlineSave = () => {
-    if (draft.inlineEditingField === 'id') {
-      const trimmedId = draft.id.trim();
-      if (!trimmedId) {
-        setError(`${draft.isItem ? itemLabel : groupLabel} ID cannot be empty`);
+  const handleInlineSave = (id: string, field: 'id' | 'description', isItem: boolean, value: string) => {
+    if (field === 'id') {
+      if (!value) {
+        setError(`${isItem ? itemLabel : groupLabel} ID cannot be empty`);
         return;
       }
 
-      if (isDuplicateId(trimmedId, draft.editingId)) {
-        setError(`This ID is already used by another ${draft.isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()}`);
+      if (isDuplicateId(value, id)) {
+        setError(`This ID is already used by another ${isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()}`);
         return;
       }
 
-      if (draft.isItem) {
-        updateItem(draft.editingId!, trimmedId);
+      if (isItem) {
+        updateItem(id, value);
       } else {
-        updateGroup(draft.editingId!, trimmedId);
+        updateGroup(id, value);
       }
-    } else if (draft.inlineEditingField === 'description') {
-      const trimmedDescription = draft.description.trim();
-      if (draft.isItem) {
-        updateItem(draft.editingId!, draft.editingId!, undefined, trimmedDescription);
+    } else if (field === 'description') {
+      if (isItem) {
+        updateItem(id, id, undefined, value);
       } else {
-        updateGroup(draft.editingId!, draft.editingId!, undefined, trimmedDescription);
+        updateGroup(id, id, undefined, value);
       }
     }
 
     setMode(Mode.NORMAL);
-    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
+    setInlineEditingId('');
     setError('');
   };
 
   const handleInlineCancel = () => {
     setMode(Mode.NORMAL);
-    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
+    setInlineEditingId('');
     setError('');
-  };
-
-  const handleInlineKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleInlineSave();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleInlineCancel();
-    }
   };
 
   const renderForm = () => {
@@ -411,55 +392,25 @@ export default function ManagementPage<T extends Item, G extends Group>({
               header: 'ID',
               accessor: (item: T) => (
                 <div>
-                  {mode === Mode.INLINE_EDITING && draft.editingId === item.id && draft.inlineEditingField === 'id' ? (
-                    <input
-                      type="text"
-                      value={draft.id}
-                      onChange={handleDraftIdChange}
-                      onKeyDown={handleInlineKeyDown}
-                      onBlur={handleInlineSave}
-                      className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''}`}
-                      autoFocus
-                    />
-                  ) : (
-                    <div
-                      onDoubleClick={() => handleInlineEdit(item.id, true, 'id')}
-                      className="cursor-pointer"
-                    >
-                      {item.id}
-                    </div>
-                  )}
-                  
-                  {mode === Mode.INLINE_EDITING && draft.editingId === item.id && draft.inlineEditingField === 'description' ? (
-                    <input
-                      type="text"
-                      value={draft.description}
-                      onChange={handleDraftDescriptionChange}
-                      onKeyDown={handleInlineKeyDown}
-                      onBlur={handleInlineSave}
-                      className="text-xs text-gray-400 mt-1 px-1 py-0.5 border rounded w-full"
-                      autoFocus
-                      placeholder="Enter description..."
-                    />
-                  ) : (
-                    item.description ? (
-                      <div 
-                        className="text-xs text-gray-400 mt-1 cursor-pointer" 
-                        onDoubleClick={() => handleInlineEdit(item.id, true, 'description')}
-                      >
-                        {item.description}
-                      </div>
-                    ) : (
-                      mode !== Mode.INLINE_EDITING && (
-                        <div 
-                          className="text-xs text-gray-300 mt-1 cursor-pointer italic" 
-                          onDoubleClick={() => handleInlineEdit(item.id, true, 'description')}
-                        >
-                          Add description...
-                        </div>
-                      )
-                    )
-                  )}
+                  <InlineEdit
+                    value={item.id}
+                    isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === item.id && inlineEditingField === 'id'}
+                    onSave={(value) => handleInlineSave(item.id, 'id', true, value)}
+                    onCancel={handleInlineCancel}
+                    onDoubleClick={() => handleInlineEdit(item.id, true, 'id')}
+                    error={error}
+                  />
+                  <InlineEdit
+                    value={item.description}
+                    isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === item.id && inlineEditingField === 'description'}
+                    onSave={(value) => handleInlineSave(item.id, 'description', true, value)}
+                    onCancel={handleInlineCancel}
+                    onDoubleClick={() => handleInlineEdit(item.id, true, 'description')}
+                    className="text-xs text-gray-400 mt-1"
+                    editClassName="text-xs mt-1 w-full"
+                    emptyText="Add description..."
+                    placeholder="Enter description..."
+                  />
                 </div>
               )
             },
@@ -503,55 +454,25 @@ export default function ManagementPage<T extends Item, G extends Group>({
               header: 'ID',
               accessor: (group: G) => (
                 <div>
-                  {mode === Mode.INLINE_EDITING && draft.editingId === group.id && draft.inlineEditingField === 'id' ? (
-                    <input
-                      type="text"
-                      value={draft.id}
-                      onChange={handleDraftIdChange}
-                      onKeyDown={handleInlineKeyDown}
-                      onBlur={handleInlineSave}
-                      className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''}`}
-                      autoFocus
-                    />
-                  ) : (
-                    <div
-                      onDoubleClick={() => handleInlineEdit(group.id, false, 'id')}
-                      className="cursor-pointer"
-                    >
-                      {group.id}
-                    </div>
-                  )}
-                  
-                  {mode === Mode.INLINE_EDITING && draft.editingId === group.id && draft.inlineEditingField === 'description' ? (
-                    <input
-                      type="text"
-                      value={draft.description}
-                      onChange={handleDraftDescriptionChange}
-                      onKeyDown={handleInlineKeyDown}
-                      onBlur={handleInlineSave}
-                      className="text-xs text-gray-400 mt-1 px-1 py-0.5 border rounded w-full"
-                      autoFocus
-                      placeholder="Enter description..."
-                    />
-                  ) : (
-                    group.description ? (
-                      <div 
-                        className="text-xs text-gray-400 mt-1 cursor-pointer" 
-                        onDoubleClick={() => handleInlineEdit(group.id, false, 'description')}
-                      >
-                        {group.description}
-                      </div>
-                    ) : (
-                      mode !== Mode.INLINE_EDITING && (
-                        <div 
-                          className="text-xs text-gray-300 mt-1 cursor-pointer italic" 
-                          onDoubleClick={() => handleInlineEdit(group.id, false, 'description')}
-                        >
-                          Add description...
-                        </div>
-                      )
-                    )
-                  )}
+                  <InlineEdit
+                    value={group.id}
+                    isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === group.id && inlineEditingField === 'id'}
+                    onSave={(value) => handleInlineSave(group.id, 'id', false, value)}
+                    onCancel={handleInlineCancel}
+                    onDoubleClick={() => handleInlineEdit(group.id, false, 'id')}
+                    error={error}
+                  />
+                  <InlineEdit
+                    value={group.description}
+                    isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === group.id && inlineEditingField === 'description'}
+                    onSave={(value) => handleInlineSave(group.id, 'description', false, value)}
+                    onCancel={handleInlineCancel}
+                    onDoubleClick={() => handleInlineEdit(group.id, false, 'description')}
+                    className="text-xs text-gray-400 mt-1"
+                    editClassName="text-xs mt-1 w-full"
+                    emptyText="Add description..."
+                    placeholder="Enter description..."
+                  />
                 </div>
               )
             },
