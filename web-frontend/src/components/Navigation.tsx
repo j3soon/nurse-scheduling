@@ -1,3 +1,4 @@
+// A component for the navigation top bar, side buttons, and keyboard shortcuts
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
@@ -9,8 +10,9 @@ export default function Navigation() {
 
   const tabs = [
     { name: '0. Home', path: '/' },
-    { name: '1. People', path: '/people' },
-    { name: '2. Shift Type', path: '/shift-type' },
+    { name: '1. Dates', path: '/dates' },
+    { name: '2. People', path: '/people' },
+    { name: '3. Shift Types', path: '/shift-types' },
   ];
 
   const currentTabIndex = tabs.findIndex(tab => tab.path === pathname);
@@ -24,24 +26,6 @@ export default function Navigation() {
 
   const navigatePrevious = () => navigateToTab(currentTabIndex - 1);
   const navigateNext = () => navigateToTab(currentTabIndex + 1);
-
-  useEffect(() => {
-    // Add padding to main content to make space for arrows
-    const mainElement = document.querySelector('main');
-    if (mainElement) {
-      mainElement.style.paddingLeft = '2.5rem';
-      mainElement.style.paddingRight = '2.5rem';
-    }
-    
-    // Cleanup on unmount
-    return () => {
-      const mainElement = document.querySelector('main');
-      if (mainElement) {
-        mainElement.style.paddingLeft = '';
-        mainElement.style.paddingRight = '';
-      }
-    };
-  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

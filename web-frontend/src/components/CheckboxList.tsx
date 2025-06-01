@@ -1,23 +1,24 @@
-import { useState, useEffect, useRef } from 'react';
+// A checkbox list that allows quick multi-selection by dragging the mouse.
+import { useEffect, useRef } from 'react';
 
 interface CheckboxItem {
   id: string;
   description?: string;
 }
 
-interface CheckboxSelectorProps {
+interface CheckboxListProps {
   items: CheckboxItem[];
   selectedIds: string[];
   onToggle: (id: string) => void;
   label: string;
 }
 
-export function CheckboxSelector({
+export function CheckboxList({
   items,
   selectedIds,
   onToggle,
   label,
-}: CheckboxSelectorProps) {
+}: CheckboxListProps) {
   const mouseDownCheckboxIdRef = useRef('');
   const mouseEnteredCheckboxIdRef = useRef('');
   const isMultiSelectDragRef = useRef(false);
@@ -82,11 +83,12 @@ export function CheckboxSelector({
   return (
     <div className="space-y-2">
       <h3 className="text-sm font-medium text-gray-700">{label}</h3>
-      <div className="flex flex-wrap gap-2">
+      {/* Horizontal padding is used instead of margin to avoid gaps between checkboxes that could cause text selection when dragging */}
+      <div className="flex flex-wrap">
         {items.map(item => (
           <label
             key={item.id}
-            className="inline-flex items-center"
+            className="inline-flex items-center px-1"
             onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
             onMouseDown={() => handleCheckboxMouseDown(item.id)}
             onMouseLeave={() => handleCheckboxMouseLeave(item.id)}

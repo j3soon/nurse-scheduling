@@ -1,3 +1,4 @@
+// A table component that allows reordering of rows by dragging the mouse.
 import { ReactNode } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 

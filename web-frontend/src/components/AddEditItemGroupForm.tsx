@@ -1,11 +1,12 @@
+// A form component for adding and editing a single item or group and managing its relationships.
 'use client';
 
 import { FormInput } from '@/components/FormInput';
-import { CheckboxSelector } from '@/components/CheckboxSelector';
-import { Item, Group } from '@/types/management';
+import { CheckboxList } from '@/components/CheckboxList';
+import { Item, Group } from '@/types/scheduling';
 import { Mode } from '@/constants/modes';
 
-interface AddEditFormProps<T extends Item, G extends Group> {
+interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
   mode: Mode.ADDING | Mode.EDITING;
   draft: {
     id: string;
@@ -18,8 +19,6 @@ interface AddEditFormProps<T extends Item, G extends Group> {
   groups: G[];
   itemLabel: string;
   itemLabelPlural: string;
-  groupLabel: string;
-  groupLabelPlural: string;
   error: string;
   onIdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDescriptionChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -29,15 +28,13 @@ interface AddEditFormProps<T extends Item, G extends Group> {
   onCancel: () => void;
 }
 
-export function AddEditForm<T extends Item, G extends Group>({
+export function AddEditItemGroupForm<T extends Item, G extends Group>({
   mode,
   draft,
   items,
   groups,
   itemLabel,
   itemLabelPlural,
-  groupLabel,
-  groupLabelPlural,
   error,
   onIdChange,
   onDescriptionChange,
@@ -45,10 +42,10 @@ export function AddEditForm<T extends Item, G extends Group>({
   onMemberToggle,
   onSave,
   onCancel,
-}: AddEditFormProps<T, G>) {
+}: AddEditItemGroupFormProps<T, G>) {
   const isItem = draft.isItem;
-  const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : groupLabel}`;
-  const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()} ID`;
+  const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : "Group"}`;
+  const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : "group"} ID`;
 
   return (
     <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
@@ -59,7 +56,7 @@ export function AddEditForm<T extends Item, G extends Group>({
           itemPlaceholder={placeholder}
           onItemChange={onIdChange}
           descriptionValue={draft.description}
-          descriptionPlaceholder={`Enter ${isItem ? itemLabel.toLowerCase() : groupLabel.toLowerCase()} description (optional)`}
+          descriptionPlaceholder={`Enter ${isItem ? itemLabel.toLowerCase() : "group"} description (optional)`}
           onDescriptionChange={onDescriptionChange}
           onKeyDown={onKeyDown}
           error={error}
@@ -67,11 +64,11 @@ export function AddEditForm<T extends Item, G extends Group>({
           onCancel={onCancel}
           actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
         >
-          <CheckboxSelector
+          <CheckboxList
             items={draft.isItem ? groups : items}
             selectedIds={draft.isItem ? draft.groups : draft.members}
             onToggle={onMemberToggle}
-            label={draft.isItem ? groupLabelPlural : 'Members'}
+            label={draft.isItem ? "Groups" : 'Members'}
           />
         </FormInput>
       </div>

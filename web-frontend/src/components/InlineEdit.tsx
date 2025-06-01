@@ -1,3 +1,4 @@
+// A component for inline editing of a item value.
 import { useState, useEffect, useRef } from 'react';
 
 interface InlineEditProps {
@@ -5,7 +6,7 @@ interface InlineEditProps {
   isEditing: boolean;
   onSave: (value: string) => void;
   onCancel: () => void;
-  onDoubleClick: () => void;
+  onDoubleClick?: () => void;
   placeholder?: string;
   className?: string;
   editClassName?: string;
@@ -80,11 +81,12 @@ export function InlineEdit({
 
   const valueToDisplay = displayValue || value;
   const hasValue = valueToDisplay.trim().length > 0;
+  const isReadOnly = !onDoubleClick;
 
   return (
     <div
       onDoubleClick={onDoubleClick}
-      className={`cursor-pointer ${className} ${!hasValue ? emptyClassName : ''}`}
+      className={`${isReadOnly ? '' : 'cursor-pointer'} ${className} ${!hasValue ? emptyClassName : ''}`}
     >
       {hasValue ? valueToDisplay : (emptyText || 'Add...')}
     </div>

@@ -1,9 +1,10 @@
+// A component for the columns of the table that displays the items and groups that can be edited inline.
 'use client';
 
 import { InlineEdit } from '@/components/InlineEdit';
 import { RemovableTag } from '@/components/RemovableTag';
 import { TableRowActions } from '@/components/TableRowActions';
-import { Item, Group } from '@/types/management';
+import { Item, Group } from '@/types/scheduling';
 import { Mode } from '@/constants/modes';
 
 interface TableColumnsProps<T extends Item, G extends Group> {
@@ -17,6 +18,15 @@ interface TableColumnsProps<T extends Item, G extends Group> {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   removeItemFromGroup: (itemId: string, groupId: string) => void;
+  itemsReadOnly?: boolean;
+}
+
+interface BaseTableConfig<T extends Item, G extends Group> {
+  isItemTable: boolean;
+  items?: T[];
+  groups?: G[];
+  secondColumnHeader: string;
+  readOnly?: boolean;
 }
 
 // Common ID column component
@@ -30,6 +40,7 @@ function IdColumn<T extends Item>({
   onInlineCancel,
   onInlineEdit,
   error,
+  itemsReadOnly = false,
 }: {
   item: T;
   isItem: boolean;
@@ -40,7 +51,10 @@ function IdColumn<T extends Item>({
   onInlineCancel: () => void;
   onInlineEdit: (id: string, isItem: boolean, field?: 'id' | 'description') => void;
   error: string;
+  itemsReadOnly?: boolean;
 }) {
+  const canEdit = !(isItem && itemsReadOnly);
+  
   return (
     <div>
       <InlineEdit
@@ -48,7 +62,7 @@ function IdColumn<T extends Item>({
         isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === item.id && inlineEditingField === 'id'}
         onSave={(value) => onInlineSave(item.id, 'id', isItem, value)}
         onCancel={onInlineCancel}
-        onDoubleClick={() => onInlineEdit(item.id, isItem, 'id')}
+        onDoubleClick={canEdit ? () => onInlineEdit(item.id, isItem, 'id') : undefined}
         error={error}
       />
       <InlineEdit
@@ -56,7 +70,7 @@ function IdColumn<T extends Item>({
         isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === item.id && inlineEditingField === 'description'}
         onSave={(value) => onInlineSave(item.id, 'description', isItem, value)}
         onCancel={onInlineCancel}
-        onDoubleClick={() => onInlineEdit(item.id, isItem, 'description')}
+        onDoubleClick={canEdit ? () => onInlineEdit(item.id, isItem, 'description') : undefined}
         className="text-xs text-gray-400 mt-1"
         editClassName="text-xs mt-1 w-full"
         emptyText="Add description..."
@@ -66,28 +80,43 @@ function IdColumn<T extends Item>({
   );
 }
 
-export function useItemTableColumns<T extends Item, G extends Group>({
-  mode,
-  inlineEditingId,
-  inlineEditingField,
-  error,
-  onInlineSave,
-  onInlineCancel,
-  onInlineEdit,
-  onEdit,
-  onDelete,
-  removeItemFromGroup,
-  groups,
-  groupLabel,
-  groupLabelPlural,
-}: TableColumnsProps<T, G> & { groups: G[]; groupLabel: string; groupLabelPlural: string }) {
-  return [
+// Base table columns function
+function useBaseTableColumns<T extends Item, G extends Group>(
+  props: TableColumnsProps<T, G>,
+  config: BaseTableConfig<T, G>
+) {
+  const {
+    mode,
+    inlineEditingId,
+    inlineEditingField,
+    error,
+    onInlineSave,
+    onInlineCancel,
+    onInlineEdit,
+    onEdit,
+    onDelete,
+    removeItemFromGroup,
+  } = props;
+
+  const {
+    isItemTable,
+    items = [],
+    groups = [],
+    secondColumnHeader,
+    readOnly = false,
+  } = config;
+
+  const columns: Array<{
+    header: string;
+    accessor: (entity: T | G) => React.ReactElement;
+    align?: 'left' | 'center' | 'right';
+  }> = [
     {
       header: 'ID',
-      accessor: (item: T) => (
+      accessor: (entity: T | G) => (
         <IdColumn
-          item={item}
-          isItem={true}
+          item={entity}
+          isItem={isItemTable}
           mode={mode}
           inlineEditingId={inlineEditingId}
           inlineEditingField={inlineEditingField}
@@ -95,96 +124,92 @@ export function useItemTableColumns<T extends Item, G extends Group>({
           onInlineCancel={onInlineCancel}
           onInlineEdit={onInlineEdit}
           error={error}
+          itemsReadOnly={readOnly}
         />
       )
     },
     {
-      header: groupLabelPlural,
-      accessor: (item: T) => (
-        <div className="flex flex-wrap gap-1">
-          {groups
-            .filter(group => group.members.includes(item.id))
-            .map(group => (
-              <RemovableTag
-                key={group.id}
-                id={group.id}
-                onRemove={() => removeItemFromGroup(item.id, group.id)}
-                variant="blue"
-              />
-            ))}
-        </div>
-      )
-    },
-    {
+      header: secondColumnHeader,
+      accessor: (entity: T | G) => {
+        if (isItemTable) {
+          // For items: show groups that contain this item
+          const item = entity as T;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {groups
+                .filter(group => group.members.includes(item.id))
+                .map(group => (
+                  <RemovableTag
+                    key={group.id}
+                    id={group.id}
+                    onRemove={() => removeItemFromGroup(item.id, group.id)}
+                    variant="blue"
+                  />
+                ))}
+            </div>
+          );
+        } else {
+          // For groups: show members of this group
+          const group = entity as G;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {group.members
+                .map(memberId => items.find(i => i.id === memberId))
+                .filter(Boolean)
+                .map(item => (
+                  <RemovableTag
+                    key={item!.id}
+                    id={item!.id}
+                    onRemove={() => removeItemFromGroup(item!.id, group.id)}
+                    variant="gray"
+                  />
+                ))}
+            </div>
+          );
+        }
+      }
+    }
+  ];
+
+  // Only add Actions column if not in read-only mode
+  if (!readOnly) {
+    columns.push({
       header: 'Actions',
-      accessor: (item: T) => (
+      accessor: (entity: T | G) => (
         <TableRowActions
-          onEdit={() => onEdit(item.id)}
-          onDelete={() => onDelete(item.id)}
+          onEdit={() => onEdit(entity.id)}
+          onDelete={() => onDelete(entity.id)}
         />
       ),
       align: 'right' as const
-    }
-  ];
+    });
+  }
+
+  return columns;
+}
+
+export function useItemTableColumns<T extends Item, G extends Group>({
+  groups,
+  itemsReadOnly = false,
+  ...props
+}: TableColumnsProps<T, G> & { groups: G[]; }) {
+  return useBaseTableColumns(props, {
+    isItemTable: true,
+    groups,
+    secondColumnHeader: "Groups",
+    readOnly: itemsReadOnly,
+  });
 }
 
 export function useGroupTableColumns<T extends Item, G extends Group>({
-  mode,
-  inlineEditingId,
-  inlineEditingField,
-  error,
-  onInlineSave,
-  onInlineCancel,
-  onInlineEdit,
-  onEdit,
-  onDelete,
-  removeItemFromGroup,
   items,
-}: TableColumnsProps<T, G> & { items: T[] }) {
-  return [
-    {
-      header: 'ID',
-      accessor: (group: G) => (
-        <IdColumn
-          item={group}
-          isItem={false}
-          mode={mode}
-          inlineEditingId={inlineEditingId}
-          inlineEditingField={inlineEditingField}
-          onInlineSave={onInlineSave}
-          onInlineCancel={onInlineCancel}
-          onInlineEdit={onInlineEdit}
-          error={error}
-        />
-      )
-    },
-    {
-      header: 'Members',
-      accessor: (group: G) => (
-        <div className="flex flex-wrap gap-1">
-          {group.members
-            .map(memberId => items.find(i => i.id === memberId))
-            .filter(Boolean)
-            .map(item => (
-              <RemovableTag
-                key={item!.id}
-                id={item!.id}
-                onRemove={() => removeItemFromGroup(item!.id, group.id)}
-                variant="gray"
-              />
-            ))}
-        </div>
-      )
-    },
-    {
-      header: 'Actions',
-      accessor: (group: G) => (
-        <TableRowActions
-          onEdit={() => onEdit(group.id)}
-          onDelete={() => onDelete(group.id)}
-        />
-      ),
-      align: 'right' as const
-    }
-  ];
+  groupsReadOnly = false,
+  ...props
+}: TableColumnsProps<T, G> & { items: T[]; groupsReadOnly?: boolean }) {
+  return useBaseTableColumns(props, {
+    isItemTable: false,
+    items,
+    secondColumnHeader: 'Members',
+    readOnly: groupsReadOnly,
+  });
 }

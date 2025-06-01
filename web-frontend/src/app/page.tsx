@@ -1,10 +1,11 @@
+// The home page for Tab "0. Home"
 'use client';
 
 import { useState } from 'react';
-import { useScheduling } from '@/contexts/SchedulingContexts';
+import { useSchedulingData } from '@/hooks/useSchedulingData';
 
 export default function Home() {
-  const { createNewState } = useScheduling();
+  const { createNewState } = useSchedulingData();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   const handleStartNew = () => {
@@ -34,7 +35,7 @@ export default function Home() {
           </button>
           <button
             onClick={() => window.location.href = '/people'}
-            className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
             Continue
           </button>

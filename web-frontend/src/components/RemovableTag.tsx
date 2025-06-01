@@ -1,3 +1,4 @@
+// A tag component that can be removed by clicking a button.
 interface RemovableTagProps {
   id: string;
   onRemove: () => void;

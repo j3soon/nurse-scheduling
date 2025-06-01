@@ -1,8 +1,8 @@
+// The layout for the entire app
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Navigation from "@/components/Navigation";
 import "./globals.css";
-import { SchedulingProvider } from '@/contexts/SchedulingContexts';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,12 +30,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <SchedulingProvider>
-          <Navigation />
-          <main>
-            {children}
-          </main>
-        </SchedulingProvider>
+        <Navigation />
+        <main style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}>
+          {children}
+        </main>
       </body>
     </html>
   );
