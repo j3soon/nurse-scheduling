@@ -19,20 +19,20 @@ function generateDateItems(startDate: string, endDate: string): Item[] {
   const dates: Item[] = [];
   const start = new Date(startDate);
   const end = new Date(endDate);
-  
+
   // Determine ID format based on date range scope
   const sameYear = start.getFullYear() === end.getFullYear();
   const sameMonth = sameYear && start.getMonth() === end.getMonth();
-  
+
   for (let date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
     const dateStr = date.toISOString().split('T')[0];
     const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-    const formattedDate = date.toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric' 
+    const formattedDate = date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
     });
-    
+
     // Generate ID based on date range scope
     let id: string;
     if (sameMonth) {
@@ -42,13 +42,13 @@ function generateDateItems(startDate: string, endDate: string): Item[] {
     } else {
       id = dateStr; // YYYY-MM-DD
     }
-    
+
     dates.push({
       id,
       description: `${dayName}, ${formattedDate}`
     });
   }
-  
+
   return dates;
 }
 
@@ -101,18 +101,18 @@ function createDefaultState(): SchedulingState {
 
 function loadStateFromStorage(): SchedulingState {
   if (typeof window === 'undefined') return createDefaultState();
-  
+
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return createDefaultState();
-    
+
     const parsedState = JSON.parse(stored);
-    
+
     // Recompute date items if date range exists
     const dateItems = (parsedState.dateRange?.startDate && parsedState.dateRange?.endDate)
       ? generateDateItems(parsedState.dateRange.startDate, parsedState.dateRange.endDate)
       : [];
-    
+
     return {
       ...parsedState,
       dates: {
@@ -128,7 +128,7 @@ function loadStateFromStorage(): SchedulingState {
 
 function saveStateToStorage(state: SchedulingState): void {
   if (typeof window === 'undefined') return;
-  
+
   try {
     // Only store what's necessary (exclude computed date items)
     const stateToStore = {
@@ -165,7 +165,7 @@ export function useSchedulingData() {
       const dateItems = (dateRange.startDate && dateRange.endDate)
         ? generateDateItems(dateRange.startDate, dateRange.endDate)
         : [];
-      
+
       return {
         ...prevState,
         dateRange,
@@ -219,4 +219,4 @@ export function useSchedulingData() {
     updateShiftTypeData,
     createNewState,
   };
-} 
+}

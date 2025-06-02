@@ -1,13 +1,9 @@
 // A checkbox list that allows quick multi-selection by dragging the mouse.
 import { useEffect, useRef } from 'react';
-
-interface CheckboxItem {
-  id: string;
-  description?: string;
-}
+import { Item } from '../types/scheduling';
 
 interface CheckboxListProps {
-  items: CheckboxItem[];
+  items: Item[];
   selectedIds: string[];
   onToggle: (id: string) => void;
   label: string;
@@ -41,7 +37,7 @@ export function CheckboxList({
     }
   };
 
-  const handleCheckboxMouseLeave = (id: string) => {
+  const handleCheckboxMouseLeave = () => {
     if (mouseDownCheckboxIdRef.current && mouseEnteredCheckboxIdRef.current === mouseDownCheckboxIdRef.current) {
       // Start multi-select drag
       isMultiSelectDragRef.current = true;
@@ -91,7 +87,7 @@ export function CheckboxList({
             className="inline-flex items-center px-1"
             onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
             onMouseDown={() => handleCheckboxMouseDown(item.id)}
-            onMouseLeave={() => handleCheckboxMouseLeave(item.id)}
+            onMouseLeave={() => handleCheckboxMouseLeave()}
             onMouseUp={() => handleCheckboxMouseUp(item.id)}
           >
             <input

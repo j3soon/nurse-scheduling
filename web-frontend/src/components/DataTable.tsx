@@ -8,14 +8,14 @@ interface Column<T> {
   align?: 'left' | 'center' | 'right';
 }
 
-interface DataTableProps<T extends Record<string, any>> {
+interface DataTableProps<T> {
   title: string;
   columns: Column<T>[];
   data: T[];
   onReorder?: (newData: T[]) => void;
 }
 
-export function DataTable<T extends Record<string, any>>({ title, columns, data, onReorder }: DataTableProps<T>) {
+export function DataTable<T>({ title, columns, data, onReorder }: DataTableProps<T>) {
   const handleDragStart = (e: React.DragEvent<HTMLTableRowElement>, index: number) => {
     e.dataTransfer.setData('text/plain', index.toString());
     e.currentTarget.classList.add('opacity-50');

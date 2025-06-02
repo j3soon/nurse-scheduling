@@ -11,9 +11,9 @@ export default function ShiftTypePage() {
     shiftTypeData,
     updateShiftTypeData,
   } = useSchedulingData();
-  
+
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
-  
+
   // Instructions for the help component
   const instructions = [
     "Add different types of shifts (e.g., \"Day (All Levels)\", \"Day (Senior Only)\")",

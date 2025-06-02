@@ -17,9 +17,9 @@ export interface ItemGroupEditorPageData {
 }
 
 function addItem(
-  data: ItemGroupEditorPageData, 
-  id: string, 
-  groupIds: string[], 
+  data: ItemGroupEditorPageData,
+  id: string,
+  groupIds: string[],
   description?: string
 ): ItemGroupEditorPageData {
   // Add the item
@@ -50,16 +50,16 @@ function addItem(
 }
 
 function addGroup(
-  data: ItemGroupEditorPageData, 
-  id: string, 
-  memberIds: string[], 
+  data: ItemGroupEditorPageData,
+  id: string,
+  memberIds: string[],
   description?: string
 ): ItemGroupEditorPageData {
   // Sort members based on items order
   const sortedMembers = data.items
     .filter(item => memberIds.includes(item.id))
     .map(item => item.id);
-  
+
   if (memberIds.length !== sortedMembers.length) {
     console.error(`Member IDs length ${memberIds.length} does not match sorted members length ${sortedMembers.length}. ${ERROR_SHOULD_NOT_HAPPEN}`);
     return data;
@@ -67,15 +67,15 @@ function addGroup(
 
   const newGroup = { id, members: sortedMembers, description: description || '' };
   const newGroups = [...data.groups, newGroup];
-  
+
   return { ...data, groups: newGroups };
 }
 
 function updateItem(
-  data: ItemGroupEditorPageData, 
-  oldId: string, 
-  newId: string, 
-  groupIds?: string[], 
+  data: ItemGroupEditorPageData,
+  oldId: string,
+  newId: string,
+  groupIds?: string[],
   description?: string
 ): ItemGroupEditorPageData {
   // First update the item's ID and description
@@ -99,7 +99,7 @@ function updateItem(
     const sortedMembers = updatedItems
       .filter(item => allMembers.includes(item.id))
       .map(item => item.id);
-    
+
     if (allMembers.length !== sortedMembers.length) {
       console.error(`All members length ${allMembers.length} does not match sorted members length ${sortedMembers.length}. ${ERROR_SHOULD_NOT_HAPPEN}`);
       return group;
@@ -115,10 +115,10 @@ function updateItem(
 }
 
 function updateGroup(
-  data: ItemGroupEditorPageData, 
-  oldId: string, 
-  newId: string, 
-  members?: string[], 
+  data: ItemGroupEditorPageData,
+  oldId: string,
+  newId: string,
+  members?: string[],
   description?: string
 ): ItemGroupEditorPageData {
   const group = data.groups.find(g => g.id === oldId);
@@ -133,7 +133,7 @@ function updateGroup(
         .filter(item => members.includes(item.id))
         .map(item => item.id)
     : group.members;
-  
+
   if (members && members.length !== sortedMembers.length) {
     console.error(`Members length ${members.length} does not match sorted members length ${sortedMembers.length}. ${ERROR_SHOULD_NOT_HAPPEN}`);
     return data;
@@ -185,15 +185,11 @@ function reorderItems(data: ItemGroupEditorPageData, reorderedItems: Item[]): It
   return { items: reorderedItems, groups: updatedGroups };
 }
 
-function updateItems(data: ItemGroupEditorPageData, newItems: Item[]): ItemGroupEditorPageData {
-  return { ...data, items: newItems };
-}
-
 function updateGroups(data: ItemGroupEditorPageData, newGroups: Group[]): ItemGroupEditorPageData {
   return { ...data, groups: newGroups };
 }
 
-interface ItemGroupEditorPageProps<T extends Item, G extends Group> {
+interface ItemGroupEditorPageProps {
   title: string | React.ReactNode;
   instructions: string[];
   data: ItemGroupEditorPageData;
@@ -221,7 +217,7 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
   groupsReadOnly = false,
   children,
   extraButtons,
-}: ItemGroupEditorPageProps<T, G>) {
+}: ItemGroupEditorPageProps) {
   const [draft, setDraft] = useState<{
     id: string;
     description: string;
@@ -447,7 +443,7 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
       console.error(`Cannot add group - groups are read-only. ${ERROR_SHOULD_NOT_HAPPEN}`);
       return;
     }
-    
+
     // Toggle form visibility: if already adding the same type, cancel; otherwise start adding
     if (mode === Mode.ADDING && draft.isItem === isItem) {
       handleCancel();

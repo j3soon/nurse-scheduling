@@ -1,5 +1,5 @@
 // A form input component for adding and editing item values and descriptions.
-import { FiAlertCircle, FiPlus, FiX } from 'react-icons/fi';
+import { FiAlertCircle } from 'react-icons/fi';
 
 interface FormInputProps {
   itemValue: string;

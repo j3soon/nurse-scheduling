@@ -9,13 +9,13 @@ import { Mode } from '@/constants/modes';
 import { DateRange } from '@/types/scheduling';
 
 export default function DatePage() {
-  const { 
-    dateRange, 
+  const {
+    dateRange,
     updateDateRange,
     dateData,
     updateDateData
   } = useSchedulingData();
-  
+
   // Mode state for date range and item group editing
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
   const [draft, setDraft] = useState<DateRange>({
@@ -105,22 +105,22 @@ export default function DatePage() {
             <div>
               <span className="text-sm font-medium text-gray-700">Start Date:</span>
               <div className="text-lg font-semibold text-gray-900">
-                {dateRange && dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString('en-US', { 
-                  weekday: 'long', 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric' 
+                {dateRange && dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
                 }) : '-'}
               </div>
             </div>
             <div>
               <span className="text-sm font-medium text-gray-700">End Date:</span>
               <div className="text-lg font-semibold text-gray-900">
-                {dateRange && dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString('en-US', { 
-                  weekday: 'long', 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric' 
+                {dateRange && dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
                 }) : '-'}
               </div>
             </div>
@@ -223,4 +223,4 @@ export default function DatePage() {
       {editDateRangeForm}
     </ItemGroupEditorPage>
   );
-} 
+}

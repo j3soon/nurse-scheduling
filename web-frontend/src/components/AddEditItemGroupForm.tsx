@@ -18,7 +18,6 @@ interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
   items: T[];
   groups: G[];
   itemLabel: string;
-  itemLabelPlural: string;
   error: string;
   onIdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDescriptionChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -34,7 +33,6 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   items,
   groups,
   itemLabel,
-  itemLabelPlural,
   error,
   onIdChange,
   onDescriptionChange,

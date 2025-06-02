@@ -6,10 +6,10 @@ interface ToggleButtonProps {
   onToggle: () => void;
 }
 
-export default function ToggleButton({ 
-  label, 
-  isToggled, 
-  onToggle: onClick, 
+export default function ToggleButton({
+  label,
+  isToggled,
+  onToggle: onClick,
 }: ToggleButtonProps) {
   return (
     <button
@@ -24,4 +24,4 @@ export default function ToggleButton({
       {label}
     </button>
   );
-} 
+}

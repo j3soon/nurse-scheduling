@@ -7,7 +7,7 @@ import { TableRowActions } from '@/components/TableRowActions';
 import { Item, Group } from '@/types/scheduling';
 import { Mode } from '@/constants/modes';
 
-interface TableColumnsProps<T extends Item, G extends Group> {
+interface TableColumnsProps {
   mode: Mode;
   inlineEditingId: string;
   inlineEditingField: 'id' | 'description';
@@ -21,16 +21,16 @@ interface TableColumnsProps<T extends Item, G extends Group> {
   itemsReadOnly?: boolean;
 }
 
-interface BaseTableConfig<T extends Item, G extends Group> {
+interface BaseTableConfig {
   isItemTable: boolean;
-  items?: T[];
-  groups?: G[];
+  items?: Item[];
+  groups?: Group[];
   secondColumnHeader: string;
   readOnly?: boolean;
 }
 
 // Common ID column component
-function IdColumn<T extends Item>({
+function IdColumn({
   item,
   isItem,
   mode,
@@ -42,7 +42,7 @@ function IdColumn<T extends Item>({
   error,
   itemsReadOnly = false,
 }: {
-  item: T;
+  item: Item;
   isItem: boolean;
   mode: Mode;
   inlineEditingId: string;
@@ -54,7 +54,7 @@ function IdColumn<T extends Item>({
   itemsReadOnly?: boolean;
 }) {
   const canEdit = !(isItem && itemsReadOnly);
-  
+
   return (
     <div>
       <InlineEdit
@@ -81,9 +81,9 @@ function IdColumn<T extends Item>({
 }
 
 // Base table columns function
-function useBaseTableColumns<T extends Item, G extends Group>(
-  props: TableColumnsProps<T, G>,
-  config: BaseTableConfig<T, G>
+function useBaseTableColumns(
+  props: TableColumnsProps,
+  config: BaseTableConfig
 ) {
   const {
     mode,
@@ -108,12 +108,12 @@ function useBaseTableColumns<T extends Item, G extends Group>(
 
   const columns: Array<{
     header: string;
-    accessor: (entity: T | G) => React.ReactElement;
+    accessor: (entity: Item | Group) => React.ReactElement;
     align?: 'left' | 'center' | 'right';
   }> = [
     {
       header: 'ID',
-      accessor: (entity: T | G) => (
+      accessor: (entity: Item | Group) => (
         <IdColumn
           item={entity}
           isItem={isItemTable}
@@ -130,10 +130,10 @@ function useBaseTableColumns<T extends Item, G extends Group>(
     },
     {
       header: secondColumnHeader,
-      accessor: (entity: T | G) => {
+      accessor: (entity: Item | Group) => {
         if (isItemTable) {
           // For items: show groups that contain this item
-          const item = entity as T;
+          const item = entity as Item;
           return (
             <div className="flex flex-wrap gap-1">
               {groups
@@ -150,7 +150,7 @@ function useBaseTableColumns<T extends Item, G extends Group>(
           );
         } else {
           // For groups: show members of this group
-          const group = entity as G;
+          const group = entity as Group;
           return (
             <div className="flex flex-wrap gap-1">
               {group.members
@@ -175,7 +175,7 @@ function useBaseTableColumns<T extends Item, G extends Group>(
   if (!readOnly) {
     columns.push({
       header: 'Actions',
-      accessor: (entity: T | G) => (
+      accessor: (entity: Item | Group) => (
         <TableRowActions
           onEdit={() => onEdit(entity.id)}
           onDelete={() => onDelete(entity.id)}
@@ -188,11 +188,11 @@ function useBaseTableColumns<T extends Item, G extends Group>(
   return columns;
 }
 
-export function useItemTableColumns<T extends Item, G extends Group>({
+export function useItemTableColumns({
   groups,
   itemsReadOnly = false,
   ...props
-}: TableColumnsProps<T, G> & { groups: G[]; }) {
+}: TableColumnsProps & { groups: Group[]; }) {
   return useBaseTableColumns(props, {
     isItemTable: true,
     groups,
@@ -201,11 +201,11 @@ export function useItemTableColumns<T extends Item, G extends Group>({
   });
 }
 
-export function useGroupTableColumns<T extends Item, G extends Group>({
+export function useGroupTableColumns({
   items,
   groupsReadOnly = false,
   ...props
-}: TableColumnsProps<T, G> & { items: T[]; groupsReadOnly?: boolean }) {
+}: TableColumnsProps & { items: Item[]; groupsReadOnly?: boolean }) {
   return useBaseTableColumns(props, {
     isItemTable: false,
     items,

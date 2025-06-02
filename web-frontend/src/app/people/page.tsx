@@ -11,9 +11,9 @@ export default function PeoplePage() {
     peopleData,
     updatePeopleData,
   } = useSchedulingData();
-  
+
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
-  
+
   // Instructions for the help component
   const instructions = [
     "Add people who will be scheduled for work (e.g., \"Alice\", \"Bob\", \"Charlie\")",
