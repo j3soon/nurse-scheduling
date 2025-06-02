@@ -56,7 +56,7 @@ function createDefaultPeople() {
   return {
     items: Array.from({ length: 10 }, (_, index) => ({
       id: `Person ${index + 1}`,
-      description: `Staff member #${index + 1}`
+      description: ''
     })),
     groups: [
       { id: 'Group 1', members: ['Person 1', 'Person 2'], description: '' },
@@ -71,21 +71,21 @@ function createDefaultPeople() {
 function createDefaultShiftTypes() {
   return {
     items: [
-      { id: 'Day (All Levels)', description: 'Day shift for all skill levels' },
-      { id: 'Day (Senior Only)', description: 'Day shift requiring senior staff expertise' },
-      { id: 'Evening (All Levels)', description: 'Evening shift for all skill levels' },
-      { id: 'Evening (Senior Only)', description: 'Evening shift requiring senior staff expertise' },
-      { id: 'Night (All Levels)', description: 'Night shift for all skill levels' },
-      { id: 'Night (Senior Only)', description: 'Night shift requiring senior staff expertise' },
-      { id: 'Admin (All Levels)', description: 'Administrative tasks for all levels' },
-      { id: 'Admin (Senior Only)', description: 'Administrative tasks requiring senior expertise' },
-      { id: 'Admin (Assistant Only)', description: 'Administrative tasks suitable for assistants' },
+      { id: 'D', description: 'Day (All Levels)' },
+      { id: 'D+', description: 'Day (Senior Only)' },
+      { id: 'E', description: 'Evening (All Levels)' },
+      { id: 'E+', description: 'Evening (Senior Only)' },
+      { id: 'N', description: 'Night (All Levels)' },
+      { id: 'N+', description: 'Night (Senior Only)' },
+      { id: 'A', description: 'Admin (All Levels)' },
+      { id: 'A+', description: 'Admin (Senior Only)' },
+      { id: 'A-', description: 'Admin (Assistant Only)' },
     ],
     groups: [
-      { id: 'Day', members: ['Day (All Levels)', 'Day (Senior Only)'], description: 'All day shift types' },
-      { id: 'Evening', members: ['Evening (All Levels)', 'Evening (Senior Only)'], description: 'All evening shift types' },
-      { id: 'Night', members: ['Night (All Levels)', 'Night (Senior Only)'], description: 'All night shift types' },
-      { id: 'Administrative', members: ['Admin (All Levels)', 'Admin (Senior Only)', 'Admin (Assistant Only)'], description: 'All administrative shift types' },
+      { id: 'Day', members: ['D', 'D+'], description: 'All day shift types' },
+      { id: 'Evening', members: ['E', 'E+'], description: 'All evening shift types' },
+      { id: 'Night', members: ['N', 'N+'], description: 'All night shift types' },
+      { id: 'Administrative', members: ['A', 'A+', 'A-'], description: 'All administrative shift types' },
     ]
   };
 }
