@@ -23,7 +23,7 @@ export function RemovableTag({
     : "mr-1 text-gray-600 hover:text-gray-900";
 
   return (
-    <span 
+    <span
       className={`${baseClasses} ${variantClasses} ${className}`}
       title={description}
     >

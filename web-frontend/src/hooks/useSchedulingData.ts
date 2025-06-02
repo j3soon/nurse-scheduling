@@ -12,7 +12,14 @@ export interface SchedulingState {
   shiftTypes: { items: Item[]; groups: Group[] };
 }
 
-const STORAGE_KEY = 'nurse-scheduling-state';
+interface HistoryState {
+  state: SchedulingState;
+  history: SchedulingState[];
+  currentHistoryIndex: number;
+}
+
+const STORAGE_KEY = 'nurse-scheduling-data';
+const MAX_HISTORY_SIZE = 50;
 
 // Helper function to generate date items from a date range
 function generateDateItems(startDate: string, endDate: string): Item[] {
@@ -99,65 +106,189 @@ function createDefaultState(): SchedulingState {
   };
 }
 
-function loadStateFromStorage(): SchedulingState {
-  if (typeof window === 'undefined') return createDefaultState();
+function createDefaultHistoryState(): HistoryState {
+  const defaultState = createDefaultState();
+  return {
+    state: defaultState,
+    history: [defaultState],
+    currentHistoryIndex: 0
+  };
+}
+
+function loadStateFromStorage(): HistoryState {
+  if (typeof window === 'undefined') return createDefaultHistoryState();
 
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return createDefaultState();
 
-    const parsedState = JSON.parse(stored);
+    if (!stored) return createDefaultHistoryState();
 
-    // Recompute date items if date range exists
-    const dateItems = (parsedState.dateRange?.startDate && parsedState.dateRange?.endDate)
-      ? generateDateItems(parsedState.dateRange.startDate, parsedState.dateRange.endDate)
+    const parsedHistoryState = JSON.parse(stored) as HistoryState;
+
+    // Recompute date items for current state if date range exists
+    const dateItems = (parsedHistoryState.state.dateRange?.startDate && parsedHistoryState.state.dateRange?.endDate)
+      ? generateDateItems(parsedHistoryState.state.dateRange.startDate, parsedHistoryState.state.dateRange.endDate)
       : [];
 
-    return {
-      ...parsedState,
+    const currentState = {
+      ...parsedHistoryState.state,
       dates: {
         items: dateItems,
-        groups: parsedState.dates?.groups || []
+        groups: parsedHistoryState.state.dates?.groups || []
       }
+    };
+
+    return {
+      state: currentState,
+      history: parsedHistoryState.history,
+      currentHistoryIndex: Math.min(parsedHistoryState.currentHistoryIndex || 0, parsedHistoryState.history.length - 1)
     };
   } catch (error) {
     console.error('Failed to load data from localStorage:', error);
-    return createDefaultState();
+    return createDefaultHistoryState();
   }
 }
 
-function saveStateToStorage(state: SchedulingState): void {
+function saveStateToStorage(historyState: HistoryState): void {
   if (typeof window === 'undefined') return;
 
   try {
-    // Only store what's necessary (exclude computed date items)
-    const stateToStore = {
-      ...state,
-      dates: { groups: state.dates.groups } // Don't store computed items
+    // Store the complete history state, but exclude computed date items
+    const historyStateToStore = {
+      state: {
+        ...historyState.state,
+        dates: { groups: historyState.state.dates.groups } // Don't store computed items
+      },
+      history: historyState.history.map(state => ({
+        ...state,
+        dates: { groups: state.dates.groups } // Don't store computed items in history
+      })),
+      currentHistoryIndex: historyState.currentHistoryIndex
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToStore));
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(historyStateToStore));
   } catch (error) {
     console.error('Failed to save data to localStorage:', error);
   }
 }
 
+function addToHistory(currentHistoryState: HistoryState, newState: SchedulingState): HistoryState {
+  // Remove any future history if we're not at the end
+  const trimmedHistory = currentHistoryState.history.slice(0, currentHistoryState.currentHistoryIndex + 1);
+
+  // Add new state
+  const newHistory = [...trimmedHistory, newState];
+
+  // Limit history size
+  const limitedHistory = newHistory.length > MAX_HISTORY_SIZE
+    ? newHistory.slice(-MAX_HISTORY_SIZE)
+    : newHistory;
+
+  const newIndex = limitedHistory.length - 1;
+
+  return {
+    state: newState,
+    history: limitedHistory,
+    currentHistoryIndex: newIndex
+  };
+}
+
 // Main hook for external use
 export function useSchedulingData() {
-  const [state, setState] = useState<SchedulingState>(createDefaultState);
+  const [historyState, setHistoryState] = useState<HistoryState>(createDefaultHistoryState);
 
   // Load from localStorage on mount
   useEffect(() => {
-    const storedState = loadStateFromStorage();
-    setState(storedState);
+    const storedHistoryState = loadStateFromStorage();
+    setHistoryState(storedHistoryState);
   }, []);
+
+  // Global keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Check if Ctrl (or Cmd on Mac) is pressed
+      const isCtrlOrCmd = event.ctrlKey || event.metaKey;
+
+      if (!isCtrlOrCmd || event.altKey || event.shiftKey) return;
+
+      // Undo: Ctrl+Z
+      if (event.key === 'z') {
+        event.preventDefault();
+        undo();
+        return;
+      }
+
+      // Redo: Ctrl+Y
+      if (event.key === 'y') {
+        event.preventDefault();
+        redo();
+        return;
+      }
+    };
+
+    // Add event listener to document
+    document.addEventListener('keydown', handleKeyDown);
+
+    // Cleanup function to remove event listener
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []); // Empty dependency array since undo/redo functions are stable
 
   // Generic update function that handles both state update and storage
   const updateState = (updater: (prevState: SchedulingState) => SchedulingState) => {
-    setState(prevState => {
-      const newState = updater(prevState);
-      saveStateToStorage(newState);
-      return newState;
+    setHistoryState(prevHistoryState => {
+      const newState = updater(prevHistoryState.state);
+      const newHistoryState = addToHistory(prevHistoryState, newState);
+      saveStateToStorage(newHistoryState);
+      return newHistoryState;
     });
+  };
+
+  // Base function to navigate to a specific history index
+  const moveHistoryIndex = (delta: number) => {
+    setHistoryState(prevHistoryState => {
+      const targetIndex = prevHistoryState.currentHistoryIndex + delta;
+
+      // Validate target index bounds
+      if (targetIndex < 0 || targetIndex >= prevHistoryState.history.length || targetIndex === prevHistoryState.currentHistoryIndex) {
+        return prevHistoryState;
+      }
+
+      const targetState = prevHistoryState.history[targetIndex];
+
+      // Recompute date items for the target state
+      const dateItems = (targetState.dateRange?.startDate && targetState.dateRange?.endDate)
+        ? generateDateItems(targetState.dateRange.startDate, targetState.dateRange.endDate)
+        : [];
+
+      const restoredState = {
+        ...targetState,
+        dates: {
+          ...targetState.dates,
+          items: dateItems
+        }
+      };
+
+      const newHistoryState = {
+        ...prevHistoryState,
+        state: restoredState,
+        currentHistoryIndex: targetIndex
+      };
+
+      saveStateToStorage(newHistoryState);
+      return newHistoryState;
+    });
+  };
+
+  // Undo function
+  const undo = () => {
+    moveHistoryIndex(-1);
+  };
+
+  // Redo function
+  const redo = () => {
+    moveHistoryIndex(1);
   };
 
   const updateDateRange = (dateRange: DateRange) => {
@@ -204,19 +335,26 @@ export function useSchedulingData() {
   // Reset to defaults
   const createNewState = () => {
     const newState = createDefaultState();
-    setState(newState);
-    saveStateToStorage(newState);
+    const newHistoryState = {
+      state: newState,
+      history: [newState],
+      currentHistoryIndex: 0
+    };
+    setHistoryState(newHistoryState);
+    saveStateToStorage(newHistoryState);
   };
 
   return {
-    dateRange: state.dateRange,
+    dateRange: historyState.state.dateRange,
     updateDateRange,
-    dateData: state.dates,
+    dateData: historyState.state.dates,
     updateDateData,
-    peopleData: state.people,
+    peopleData: historyState.state.people,
     updatePeopleData,
-    shiftTypeData: state.shiftTypes,
+    shiftTypeData: historyState.state.shiftTypes,
     updateShiftTypeData,
     createNewState,
+    undo,
+    redo,
   };
 }
