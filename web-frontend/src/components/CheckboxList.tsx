@@ -85,6 +85,7 @@ export function CheckboxList({
           <label
             key={item.id}
             className="inline-flex items-center px-1"
+            title={item.description}
             onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
             onMouseDown={() => handleCheckboxMouseDown(item.id)}
             onMouseLeave={() => handleCheckboxMouseLeave()}

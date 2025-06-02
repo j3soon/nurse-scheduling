@@ -1,6 +1,7 @@
 // A tag component that can be removed by clicking a button.
 interface RemovableTagProps {
   id: string;
+  description?: string;
   onRemove: () => void;
   variant?: 'blue' | 'gray';
   className?: string;
@@ -8,6 +9,7 @@ interface RemovableTagProps {
 
 export function RemovableTag({
   id,
+  description,
   onRemove,
   variant = 'blue',
   className = ''
@@ -21,11 +23,14 @@ export function RemovableTag({
     : "mr-1 text-gray-600 hover:text-gray-900";
 
   return (
-    <span className={`${baseClasses} ${variantClasses} ${className}`}>
+    <span 
+      className={`${baseClasses} ${variantClasses} ${className}`}
+      title={description}
+    >
       <button
         onClick={onRemove}
         className={buttonClasses}
-        title={`Remove ${id}`}
+        title={`Remove "${id}"`}
       >
         ×
       </button>

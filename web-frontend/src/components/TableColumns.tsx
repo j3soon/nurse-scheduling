@@ -142,6 +142,7 @@ function useBaseTableColumns(
                   <RemovableTag
                     key={group.id}
                     id={group.id}
+                    description={group.description}
                     onRemove={() => removeItemFromGroup(item.id, group.id)}
                     variant="blue"
                   />
@@ -160,6 +161,7 @@ function useBaseTableColumns(
                   <RemovableTag
                     key={item!.id}
                     id={item!.id}
+                    description={item!.description}
                     onRemove={() => removeItemFromGroup(item!.id, group.id)}
                     variant="gray"
                   />
