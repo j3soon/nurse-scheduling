@@ -13,6 +13,7 @@ export default function Navigation() {
     { name: '1. Dates', path: '/dates' },
     { name: '2. People', path: '/people' },
     { name: '3. Shift Types', path: '/shift-types' },
+    { name: '4. Shift Type Requirements', path: '/shift-type-requirements' },
   ];
 
   const currentTabIndex = tabs.findIndex(tab => tab.path === pathname);

@@ -14,3 +14,21 @@ export interface DateRange {
   startDate?: string;
   endDate?: string;
 }
+
+export const SHIFT_TYPE_REQUIREMENT = 'shift_type_requirement';
+
+export interface BasePreference {
+  type: string;
+  description?: string;
+}
+
+export interface ShiftTypeRequirementsPreference extends BasePreference {
+  type: typeof SHIFT_TYPE_REQUIREMENT;
+  description?: string;
+  shift_type: string[];
+  required_num_people: number;
+  qualified_people: string[];
+  preferred_num_people?: number;
+  date: string[];
+  weight: number;
+}

@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Item, Group, DateRange } from '@/types/scheduling';
+import { Item, Group, DateRange, ShiftTypeRequirementsPreference } from '@/types/scheduling';
 import { ItemGroupEditorPageData } from '@/components/ItemGroupEditorPage';
 
 export interface SchedulingState {
@@ -10,6 +10,7 @@ export interface SchedulingState {
   dates: { items: Item[]; groups: Group[] };
   people: { items: Item[]; groups: Group[] };
   shiftTypes: { items: Item[]; groups: Group[] };
+  shiftTypeRequirements: ShiftTypeRequirementsPreference[];
 }
 
 interface HistoryState {
@@ -102,7 +103,8 @@ function createDefaultState(): SchedulingState {
     dateRange: { startDate: undefined, endDate: undefined },
     dates: { items: [], groups: [] },
     people: createDefaultPeople(),
-    shiftTypes: createDefaultShiftTypes()
+    shiftTypes: createDefaultShiftTypes(),
+    shiftTypeRequirements: []
   };
 }
 
@@ -332,6 +334,13 @@ export function useSchedulingData() {
     }));
   };
 
+  const updateShiftTypeRequirements = (shiftTypeRequirements: ShiftTypeRequirementsPreference[]) => {
+    updateState(prevState => ({
+      ...prevState,
+      shiftTypeRequirements
+    }));
+  };
+
   // Reset to defaults
   const createNewState = () => {
     const newState = createDefaultState();
@@ -353,6 +362,8 @@ export function useSchedulingData() {
     updatePeopleData,
     shiftTypeData: historyState.state.shiftTypes,
     updateShiftTypeData,
+    shiftTypeRequirements: historyState.state.shiftTypeRequirements,
+    updateShiftTypeRequirements,
     createNewState,
     undo,
     redo,
