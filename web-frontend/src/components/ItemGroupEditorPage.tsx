@@ -10,183 +10,21 @@ import { useItemTableColumns, useGroupTableColumns } from '@/components/TableCol
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { Mode } from '@/constants/modes';
 import { Item, Group } from '@/types/scheduling';
+import { 
+  addItem, 
+  addGroup, 
+  updateItem, 
+  updateGroup, 
+  deleteItem, 
+  deleteGroup, 
+  removeItemFromGroup, 
+  reorderItems, 
+  updateGroups 
+} from '@/hooks/useSchedulingData';
 
 export interface ItemGroupEditorPageData {
   items: Item[];
   groups: Group[];
-}
-
-function addItem(
-  data: ItemGroupEditorPageData,
-  id: string,
-  groupIds: string[],
-  description?: string
-): ItemGroupEditorPageData {
-  // Add the item
-  const newItem = { id, description: description || '' };
-  const newItems = [...data.items, newItem];
-
-  // If groupIds is provided, add the item to those groups
-  const updatedGroups = data.groups.map(group => {
-    if (!groupIds.includes(group.id)) {
-      return group;
-    }
-    const allMembers = [...group.members, id];
-    // Sort members based on updated items order
-    const sortedMembers = newItems
-      .filter(item => allMembers.includes(item.id))
-      .map(item => item.id);
-    if (allMembers.length !== sortedMembers.length) {
-      console.error(`All members length ${allMembers.length} does not match sorted members length ${sortedMembers.length}. ${ERROR_SHOULD_NOT_HAPPEN}`);
-      return group;
-    }
-    return {
-      ...group,
-      members: sortedMembers
-    };
-  });
-
-  return { items: newItems, groups: updatedGroups };
-}
-
-function addGroup(
-  data: ItemGroupEditorPageData,
-  id: string,
-  memberIds: string[],
-  description?: string
-): ItemGroupEditorPageData {
-  // Sort members based on items order
-  const sortedMembers = data.items
-    .filter(item => memberIds.includes(item.id))
-    .map(item => item.id);
-
-  if (memberIds.length !== sortedMembers.length) {
-    console.error(`Member IDs length ${memberIds.length} does not match sorted members length ${sortedMembers.length}. ${ERROR_SHOULD_NOT_HAPPEN}`);
-    return data;
-  }
-
-  const newGroup = { id, members: sortedMembers, description: description || '' };
-  const newGroups = [...data.groups, newGroup];
-
-  return { ...data, groups: newGroups };
-}
-
-function updateItem(
-  data: ItemGroupEditorPageData,
-  oldId: string,
-  newId: string,
-  groupIds?: string[],
-  description?: string
-): ItemGroupEditorPageData {
-  // First update the item's ID and description
-  const updatedItems = data.items.map(item =>
-    item.id === oldId
-      ? { ...item, id: newId, description: description !== undefined ? description : item.description }
-      : item
-  );
-
-  // Always update group memberships to reflect the new ID
-  const updatedGroups = data.groups.map(group => {
-    // Get current members excluding the edited item
-    const otherMembers = group.members.filter(id => id !== oldId);
-
-    // Add the item if they should be in this group
-    const allMembers = groupIds
-      ? (groupIds.includes(group.id) ? [...otherMembers, newId] : otherMembers)
-      : (group.members.includes(oldId) ? [...otherMembers, newId] : otherMembers);
-
-    // Sort members based on updated items order
-    const sortedMembers = updatedItems
-      .filter(item => allMembers.includes(item.id))
-      .map(item => item.id);
-
-    if (allMembers.length !== sortedMembers.length) {
-      console.error(`All members length ${allMembers.length} does not match sorted members length ${sortedMembers.length}. ${ERROR_SHOULD_NOT_HAPPEN}`);
-      return group;
-    }
-
-    return {
-      ...group,
-      members: sortedMembers
-    };
-  });
-
-  return { items: updatedItems, groups: updatedGroups };
-}
-
-function updateGroup(
-  data: ItemGroupEditorPageData,
-  oldId: string,
-  newId: string,
-  members?: string[],
-  description?: string
-): ItemGroupEditorPageData {
-  const group = data.groups.find(g => g.id === oldId);
-  if (!group) {
-    console.error(`Group with ID ${oldId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
-    return data;
-  }
-
-  // Sort members based on items order
-  const sortedMembers = members
-    ? data.items
-        .filter(item => members.includes(item.id))
-        .map(item => item.id)
-    : group.members;
-
-  if (members && members.length !== sortedMembers.length) {
-    console.error(`Members length ${members.length} does not match sorted members length ${sortedMembers.length}. ${ERROR_SHOULD_NOT_HAPPEN}`);
-    return data;
-  }
-
-  const newGroups = data.groups.map(g =>
-    g.id === oldId
-      ? { ...g, id: newId, members: sortedMembers, description: description !== undefined ? description : g.description }
-      : g
-  );
-
-  return { ...data, groups: newGroups };
-}
-
-function deleteItem(data: ItemGroupEditorPageData, id: string): ItemGroupEditorPageData {
-  const newItems = data.items.filter(item => item.id !== id);
-  const newGroups = data.groups.map(group => ({
-    ...group,
-    members: group.members.filter(memberId => memberId !== id)
-  }));
-
-  return { items: newItems, groups: newGroups };
-}
-
-function deleteGroup(data: ItemGroupEditorPageData, id: string): ItemGroupEditorPageData {
-  const newGroups = data.groups.filter(g => g.id !== id);
-  return { ...data, groups: newGroups };
-}
-
-function removeItemFromGroup(data: ItemGroupEditorPageData, itemId: string, groupId: string): ItemGroupEditorPageData {
-  const newGroups = data.groups.map(group =>
-    group.id === groupId
-      ? { ...group, members: group.members.filter(id => id !== itemId) }
-      : group
-  );
-
-  return { ...data, groups: newGroups };
-}
-
-function reorderItems(data: ItemGroupEditorPageData, reorderedItems: Item[]): ItemGroupEditorPageData {
-  // Sort group members based on items order
-  const updatedGroups = data.groups.map(group => ({
-    ...group,
-    members: reorderedItems
-      .filter(item => group.members.includes(item.id))
-      .map(item => item.id)
-  }));
-
-  return { items: reorderedItems, groups: updatedGroups };
-}
-
-function updateGroups(data: ItemGroupEditorPageData, newGroups: Group[]): ItemGroupEditorPageData {
-  return { ...data, groups: newGroups };
 }
 
 interface ItemGroupEditorPageProps {
@@ -539,7 +377,6 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
           items={items}
           groups={groups}
           itemLabel={itemLabel}
-          itemLabelPlural={itemLabelPlural}
           error={error}
           onIdChange={handleDraftIdChange}
           onDescriptionChange={handleDraftDescriptionChange}
