@@ -1,7 +1,7 @@
 // A component for managing a list of items and groups, and the relationships between them.
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { FiHelpCircle } from 'react-icons/fi';
 import { DataTable } from '@/components/DataTable';
 import { AddEditItemGroupForm } from '@/components/AddEditItemGroupForm';
@@ -10,28 +10,20 @@ import { useItemTableColumns, useGroupTableColumns } from '@/components/TableCol
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { Mode } from '@/constants/modes';
 import { Item, Group } from '@/types/scheduling';
-import { 
-  addItem, 
-  addGroup, 
-  updateItem, 
-  updateGroup, 
-  deleteItem, 
-  deleteGroup, 
-  removeItemFromGroup, 
-  reorderItems, 
-  updateGroups 
-} from '@/hooks/useSchedulingData';
+
 
 export interface ItemGroupEditorPageData {
   items: Item[];
   groups: Group[];
 }
 
+export type DataType = 'dates' | 'people' | 'shiftTypes';
+
 interface ItemGroupEditorPageProps {
   title: string | React.ReactNode;
   instructions: string[];
   data: ItemGroupEditorPageData;
-  updateData: (newData: ItemGroupEditorPageData) => void;
+  dataType: DataType;
   itemLabel: string;
   itemLabelPlural: string;
   mode: Mode;
@@ -40,13 +32,22 @@ interface ItemGroupEditorPageProps {
   groupsReadOnly?: boolean;
   children?: React.ReactNode;
   extraButtons?: React.ReactNode;
+  addItem: (dataType: DataType, data: ItemGroupEditorPageData, id: string, groupIds: string[], description?: string) => void;
+  addGroup: (dataType: DataType, data: ItemGroupEditorPageData, id: string, memberIds: string[], description?: string) => void;
+  updateItem: (dataType: DataType, data: ItemGroupEditorPageData, oldId: string, newId: string, groupIds?: string[], description?: string) => void;
+  updateGroup: (dataType: DataType, data: ItemGroupEditorPageData, oldId: string, newId: string, members?: string[], description?: string) => void;
+  deleteItem: (dataType: DataType, data: ItemGroupEditorPageData, id: string) => void;
+  deleteGroup: (dataType: DataType, data: ItemGroupEditorPageData, id: string) => void;
+  removeItemFromGroup: (dataType: DataType, data: ItemGroupEditorPageData, itemId: string, groupId: string) => void;
+  reorderItems: (dataType: DataType, data: ItemGroupEditorPageData, reorderedItems: Item[]) => void;
+  updateGroups: (dataType: DataType, data: ItemGroupEditorPageData, newGroups: Group[]) => void;
 }
 
 export default function ItemGroupEditorPage<T extends Item, G extends Group>({
   title,
   instructions,
   data,
-  updateData,
+  dataType,
   itemLabel,
   itemLabelPlural,
   mode,
@@ -55,7 +56,17 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
   groupsReadOnly = false,
   children,
   extraButtons,
+  addItem,
+  addGroup,
+  updateItem,
+  updateGroup,
+  deleteItem,
+  deleteGroup,
+  removeItemFromGroup,
+  reorderItems,
+  updateGroups,
 }: ItemGroupEditorPageProps) {
+
   const [draft, setDraft] = useState<{
     id: string;
     description: string;
@@ -99,15 +110,15 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
 
     if (draft.isItem) {
       if (draft.editingId) {
-        updateData(updateItem(data, draft.editingId, trimmedId, draft.groups, trimmedDescription));
+        updateItem(dataType, data, draft.editingId, trimmedId, draft.groups, trimmedDescription);
       } else {
-        updateData(addItem(data, trimmedId, draft.groups, trimmedDescription));
+        addItem(dataType, data, trimmedId, draft.groups, trimmedDescription);
       }
     } else {
       if (draft.editingId) {
-        updateData(updateGroup(data, draft.editingId, trimmedId, draft.members, trimmedDescription));
+        updateGroup(dataType, data, draft.editingId, trimmedId, draft.members, trimmedDescription);
       } else {
-        updateData(addGroup(data, trimmedId, draft.members, trimmedDescription));
+        addGroup(dataType, data, trimmedId, draft.members, trimmedDescription);
       }
     }
 
@@ -156,13 +167,13 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
         console.error(`Cannot delete ${itemLabel.toLowerCase()} ${id} - items are read-only. ${ERROR_SHOULD_NOT_HAPPEN}`);
         return;
       }
-      updateData(deleteItem(data, id));
+      deleteItem(dataType, data, id);
     } else {
       if (groupsReadOnly) {
         console.error(`Cannot delete group ${id} - groups are read-only. ${ERROR_SHOULD_NOT_HAPPEN}`);
         return;
       }
-      updateData(deleteGroup(data, id));
+      deleteGroup(dataType, data, id);
     }
   };
 
@@ -249,15 +260,15 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
       }
 
       if (isItem) {
-        updateData(updateItem(data, id, value, undefined, undefined));
+        updateItem(dataType, data, id, value, undefined, undefined);
       } else {
-        updateData(updateGroup(data, id, value, undefined, undefined));
+        updateGroup(dataType, data, id, value, undefined, undefined);
       }
     } else if (field === 'description') {
       if (isItem) {
-        updateData(updateItem(data, id, id, undefined, value));
+        updateItem(dataType, data, id, id, undefined, value);
       } else {
-        updateData(updateGroup(data, id, id, undefined, value));
+        updateGroup(dataType, data, id, id, undefined, value);
       }
     }
 
@@ -304,7 +315,7 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
     onInlineEdit: handleStartInlineEditing,
     onEdit: handleStartEditing,
     onDelete: handleDelete,
-    removeItemFromGroup: (itemId: string, groupId: string) => updateData(removeItemFromGroup(data, itemId, groupId)),
+    removeItemFromGroup: (itemId: string, groupId: string) => removeItemFromGroup(dataType, data, itemId, groupId),
     itemsReadOnly,
   });
 
@@ -319,7 +330,7 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
     onInlineEdit: handleStartInlineEditing,
     onEdit: handleStartEditing,
     onDelete: handleDelete,
-    removeItemFromGroup: (itemId: string, groupId: string) => updateData(removeItemFromGroup(data, itemId, groupId)),
+    removeItemFromGroup: (itemId: string, groupId: string) => removeItemFromGroup(dataType, data, itemId, groupId),
     groupsReadOnly,
   });
 
@@ -392,14 +403,14 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
           title={itemLabelPlural}
           columns={itemColumns}
           data={items}
-          onReorder={mode === Mode.INLINE_EDITING || itemsReadOnly ? undefined : (items: Item[]) => updateData(reorderItems(data, items as T[]))}
+          onReorder={mode === Mode.INLINE_EDITING || itemsReadOnly ? undefined : (items: Item[]) => reorderItems(dataType, data, items as T[])}
         />
 
         <DataTable
           title={itemLabelPlural + ' Groups'}
           columns={groupColumns}
           data={groups}
-          onReorder={mode === Mode.INLINE_EDITING || groupsReadOnly ? undefined : (groups: Group[]) => updateData(updateGroups(data, groups as G[]))}
+          onReorder={mode === Mode.INLINE_EDITING || groupsReadOnly ? undefined : (groups: Group[]) => updateGroups(dataType, data, groups as G[])}
         />
       </div>
     </div>

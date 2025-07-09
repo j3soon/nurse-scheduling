@@ -13,7 +13,16 @@ export default function DatePage() {
     dateRange,
     updateDateRange,
     dateData,
-    updateDateData
+    // Get functions to pass as props
+    addItem,
+    addGroup,
+    updateItem,
+    updateGroup,
+    deleteItem,
+    deleteGroup,
+    removeItemFromGroup,
+    reorderItems,
+    updateGroups,
   } = useSchedulingData();
 
   // Mode state for date range and item group editing
@@ -205,12 +214,21 @@ export default function DatePage() {
       title="Date Management"
       instructions={instructions}
       data={dateData}
-      updateData={updateDateData}
+      dataType="dates"
       itemLabel="Date"
       itemLabelPlural="Dates"
       itemsReadOnly={true}
       mode={mode}
       setMode={setMode}
+      addItem={addItem}
+      addGroup={addGroup}
+      updateItem={updateItem}
+      updateGroup={updateGroup}
+      deleteItem={deleteItem}
+      deleteGroup={deleteGroup}
+      removeItemFromGroup={removeItemFromGroup}
+      reorderItems={reorderItems}
+      updateGroups={updateGroups}
       extraButtons={
         <ToggleButton
           label="Set Date Range"

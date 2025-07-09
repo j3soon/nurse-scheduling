@@ -9,7 +9,16 @@ import { Mode } from '@/constants/modes';
 export default function ShiftTypePage() {
   const {
     shiftTypeData,
-    updateShiftTypeData,
+    // Get functions to pass as props
+    addItem,
+    addGroup,
+    updateItem,
+    updateGroup,
+    deleteItem,
+    deleteGroup,
+    removeItemFromGroup,
+    reorderItems,
+    updateGroups,
   } = useSchedulingData();
 
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
@@ -29,11 +38,20 @@ export default function ShiftTypePage() {
       title="Shift Type Management"
       instructions={instructions}
       data={shiftTypeData}
-      updateData={updateShiftTypeData}
+      dataType="shiftTypes"
       itemLabel="Shift Type"
       itemLabelPlural="Shift Types"
       mode={mode}
       setMode={setMode}
+      addItem={addItem}
+      addGroup={addGroup}
+      updateItem={updateItem}
+      updateGroup={updateGroup}
+      deleteItem={deleteItem}
+      deleteGroup={deleteGroup}
+      removeItemFromGroup={removeItemFromGroup}
+      reorderItems={reorderItems}
+      updateGroups={updateGroups}
     />
   );
 }
