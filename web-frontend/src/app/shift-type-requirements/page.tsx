@@ -2,6 +2,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { FiHelpCircle, FiEdit2, FiTrash2, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
@@ -233,7 +234,11 @@ export default function ShiftTypeRequirementsPage() {
                 </label>
                 {shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                    No shift types available. Please set up shift types in the &quot;Shift Types&quot; tab first.
+                    No shift types available. Please set up shift types in the{' '}
+                    <Link href="/shift-types" className="text-blue-600 hover:text-blue-800 underline">
+                      Shift Types
+                    </Link>{' '}
+                    tab first.
                   </div>
                 ) : (
                   <CheckboxList
@@ -323,7 +328,11 @@ export default function ShiftTypeRequirementsPage() {
                 </label>
                 {peopleData.items.length === 0 && peopleData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                    No people available. Please set up people in the &quot;People&quot; tab first.
+                    No people available. Please set up people in the{' '}
+                    <Link href="/people" className="text-blue-600 hover:text-blue-800 underline">
+                      People
+                    </Link>{' '}
+                    tab first.
                   </div>
                 ) : (
                   <CheckboxList
@@ -352,7 +361,11 @@ export default function ShiftTypeRequirementsPage() {
                 <div className="max-h-32 overflow-y-auto">
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
                     <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                      No dates available. Please set up dates in the &quot;Dates&quot; tab first.
+                      No dates available. Please set up dates in the{' '}
+                      <Link href="/dates" className="text-blue-600 hover:text-blue-800 underline">
+                        Dates
+                      </Link>{' '}
+                      tab first.
                     </div>
                   ) : (
                     <CheckboxList
@@ -430,13 +443,13 @@ export default function ShiftTypeRequirementsPage() {
         ) : (
           <div className="divide-y divide-gray-200">
             {shiftTypeRequirements.map((requirement, index) => (
-              <div key={index} className="px-6 py-4">
+              <div key={index} className="px-6 py-5">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     {requirement.description && (
-                      <h4 className="font-medium text-gray-900 mb-2">{requirement.description}</h4>
+                      <h4 className="font-medium text-gray-900 mb-3">{requirement.description}</h4>
                     )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm text-gray-600">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
                       <div>
                         <span className="font-medium">Shift Types:</span>{' '}
                         {requirement.shift_type.join(', ')}
@@ -464,20 +477,20 @@ export default function ShiftTypeRequirementsPage() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 ml-4">
+                  <div className="flex justify-end space-x-2 ml-4">
                     <button
                       onClick={() => handleStartEdit(index)}
-                      className="p-2 text-gray-600 hover:text-blue-600 transition-colors"
-                      title="Edit requirement"
+                      className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
                     >
                       <FiEdit2 className="h-4 w-4" />
+                      Edit
                     </button>
                     <button
                       onClick={() => handleDelete(index)}
-                      className="p-2 text-gray-600 hover:text-red-600 transition-colors"
-                      title="Delete requirement"
+                      className="text-red-600 hover:text-red-900 flex items-center gap-1 text-sm"
                     >
                       <FiTrash2 className="h-4 w-4" />
+                      Delete
                     </button>
                   </div>
                 </div>

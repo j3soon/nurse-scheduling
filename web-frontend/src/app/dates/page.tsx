@@ -2,6 +2,7 @@
 'use client';
 
 import { useState } from 'react';
+import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import ToggleButton from '@/components/ToggleButton';
@@ -167,7 +168,10 @@ export default function DatePage() {
               }`}
             />
             {errors.startDate && (
-              <p className="mt-1 text-sm text-red-600">{errors.startDate}</p>
+              <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                <FiAlertCircle className="h-4 w-4" />
+                {errors.startDate}
+              </p>
             )}
           </div>
 
@@ -185,7 +189,10 @@ export default function DatePage() {
               }`}
             />
             {errors.endDate && (
-              <p className="mt-1 text-sm text-red-600">{errors.endDate}</p>
+              <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                <FiAlertCircle className="h-4 w-4" />
+                {errors.endDate}
+              </p>
             )}
           </div>
         </div>
