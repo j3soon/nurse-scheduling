@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import { Mode } from '@/constants/modes';
+import { DataType } from '@/types/scheduling';
 
 export default function PeoplePage() {
   const {
@@ -38,9 +39,7 @@ export default function PeoplePage() {
       title="People Management"
       instructions={instructions}
       data={peopleData}
-      dataType="people"
-      itemLabel="Person"
-      itemLabelPlural="People"
+      dataType={DataType.PEOPLE}
       mode={mode}
       setMode={setMode}
       addItem={addItem}

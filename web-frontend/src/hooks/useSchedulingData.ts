@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Item, Group, DateRange, ShiftTypeRequirementsPreference } from '@/types/scheduling';
+import { Item, Group, DateRange, ShiftTypeRequirementsPreference, DataType } from '@/types/scheduling';
 import { ItemGroupEditorPageData } from '@/components/ItemGroupEditorPage';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
@@ -344,17 +344,17 @@ export function useSchedulingData() {
 
   // Private helper function to update data based on dataType
   const updateData = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     newData: ItemGroupEditorPageData
   ): void => {
     switch (dataType) {
-      case 'dates':
+      case DataType.DATES:
         updateDateData(newData);
         break;
-      case 'people':
+      case DataType.PEOPLE:
         updatePeopleData(newData);
         break;
-      case 'shiftTypes':
+      case DataType.SHIFT_TYPES:
         updateShiftTypeData(newData);
         break;
     }
@@ -373,7 +373,7 @@ export function useSchedulingData() {
   };
 
   const addItem = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     id: string,
     groupIds: string[],
@@ -409,7 +409,7 @@ export function useSchedulingData() {
   };
 
   const addGroup = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     id: string,
     memberIds: string[],
@@ -434,14 +434,14 @@ export function useSchedulingData() {
   };
 
   const updateShiftTypeRequirementsForIdChange = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     oldId: string,
     newId: string
   ) => {
     const fieldMap = {
-      'dates': 'date',
-      'people': 'qualified_people',
-      'shiftTypes': 'shift_type'
+      [DataType.DATES]: 'date',
+      [DataType.PEOPLE]: 'qualified_people',
+      [DataType.SHIFT_TYPES]: 'shift_type'
     };
 
     const fieldName = fieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
@@ -456,13 +456,13 @@ export function useSchedulingData() {
   };
 
   const updateShiftTypeRequirementsForIdDeletion = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     deletedId: string
   ) => {
     const fieldMap = {
-      'dates': 'date',
-      'people': 'qualified_people',
-      'shiftTypes': 'shift_type'
+      [DataType.DATES]: 'date',
+      [DataType.PEOPLE]: 'qualified_people',
+      [DataType.SHIFT_TYPES]: 'shift_type'
     };
 
     const fieldName = fieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
@@ -483,7 +483,7 @@ export function useSchedulingData() {
   };
 
   const updateItem = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     oldId: string,
     newId: string,
@@ -530,7 +530,7 @@ export function useSchedulingData() {
   };
 
   const updateGroup = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     oldId: string,
     newId: string,
@@ -568,7 +568,7 @@ export function useSchedulingData() {
   };
 
   const deleteItem = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     id: string
   ): void => {
@@ -585,7 +585,7 @@ export function useSchedulingData() {
   };
 
   const deleteGroup = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     id: string
   ): void => {
@@ -597,7 +597,7 @@ export function useSchedulingData() {
   };
 
   const removeItemFromGroup = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     itemId: string,
     groupId: string
@@ -614,7 +614,7 @@ export function useSchedulingData() {
   };
 
   const reorderItems = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     reorderedItems: Item[]
   ): void => {
@@ -632,7 +632,7 @@ export function useSchedulingData() {
   };
 
   const reorderGroups = (
-    dataType: 'dates' | 'people' | 'shiftTypes',
+    dataType: DataType,
     data: ItemGroupEditorPageData,
     newGroups: Group[]
   ): void => {

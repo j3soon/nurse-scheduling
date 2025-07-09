@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import { Mode } from '@/constants/modes';
+import { DataType } from '@/types/scheduling';
 
 export default function ShiftTypePage() {
   const {
@@ -38,9 +39,7 @@ export default function ShiftTypePage() {
       title="Shift Type Management"
       instructions={instructions}
       data={shiftTypeData}
-      dataType="shiftTypes"
-      itemLabel="Shift Type"
-      itemLabelPlural="Shift Types"
+      dataType={DataType.SHIFT_TYPES}
       mode={mode}
       setMode={setMode}
       addItem={addItem}

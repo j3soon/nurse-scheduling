@@ -6,7 +6,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import ToggleButton from '@/components/ToggleButton';
 import { Mode } from '@/constants/modes';
-import { DateRange } from '@/types/scheduling';
+import { DateRange, DataType } from '@/types/scheduling';
 
 export default function DatePage() {
   const {
@@ -214,9 +214,7 @@ export default function DatePage() {
       title="Date Management"
       instructions={instructions}
       data={dateData}
-      dataType="dates"
-      itemLabel="Date"
-      itemLabelPlural="Dates"
+      dataType={DataType.DATES}
       itemsReadOnly={true}
       mode={mode}
       setMode={setMode}

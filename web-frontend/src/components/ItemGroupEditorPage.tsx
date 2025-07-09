@@ -9,23 +9,31 @@ import ToggleButton from '@/components/ToggleButton';
 import { useItemTableColumns, useGroupTableColumns } from '@/components/TableColumns';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { Mode } from '@/constants/modes';
-import { Item, Group } from '@/types/scheduling';
+import { Item, Group, DataType } from '@/types/scheduling';
 
+const getLabels = (dataType: DataType) => {
+  switch (dataType) {
+    case DataType.DATES:
+      return { itemLabel: 'Date', itemLabelPlural: 'Dates' };
+    case DataType.PEOPLE:
+      return { itemLabel: 'Person', itemLabelPlural: 'People' };
+    case DataType.SHIFT_TYPES:
+      return { itemLabel: 'Shift Type', itemLabelPlural: 'Shift Types' };
+    default:
+      return { itemLabel: 'Item', itemLabelPlural: 'Items' };
+  }
+};
 
 export interface ItemGroupEditorPageData {
   items: Item[];
   groups: Group[];
 }
 
-export type DataType = 'dates' | 'people' | 'shiftTypes';
-
 interface ItemGroupEditorPageProps {
   title: string | React.ReactNode;
   instructions: string[];
   data: ItemGroupEditorPageData;
   dataType: DataType;
-  itemLabel: string;
-  itemLabelPlural: string;
   mode: Mode;
   setMode: (mode: Mode) => void;
   itemsReadOnly?: boolean;
@@ -48,8 +56,6 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
   instructions,
   data,
   dataType,
-  itemLabel,
-  itemLabelPlural,
   mode,
   setMode,
   itemsReadOnly = false,
@@ -66,6 +72,8 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
   reorderItems,
   reorderGroups,
 }: ItemGroupEditorPageProps) {
+
+  const { itemLabel, itemLabelPlural } = getLabels(dataType);
 
   const [draft, setDraft] = useState<{
     id: string;

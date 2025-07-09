@@ -15,6 +15,12 @@ export interface DateRange {
   endDate?: string;
 }
 
+export enum DataType {
+  DATES = 'dates',
+  PEOPLE = 'people',
+  SHIFT_TYPES = 'shiftTypes'
+}
+
 export const SHIFT_TYPE_REQUIREMENT = 'shift_type_requirement';
 
 export interface BasePreference {
