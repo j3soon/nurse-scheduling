@@ -372,7 +372,6 @@ export function useSchedulingData() {
     saveStateToStorage(newHistoryState);
   };
 
-  // Helper functions for ItemGroupEditorPage data manipulation
   const addItem = (
     dataType: 'dates' | 'people' | 'shiftTypes',
     data: ItemGroupEditorPageData,
@@ -434,6 +433,55 @@ export function useSchedulingData() {
     updateData(dataType, newData);
   };
 
+  const updateShiftTypeRequirementsForIdChange = (
+    dataType: 'dates' | 'people' | 'shiftTypes',
+    oldId: string,
+    newId: string
+  ) => {
+    const fieldMap = {
+      'dates': 'date',
+      'people': 'qualified_people',
+      'shiftTypes': 'shift_type'
+    };
+
+    const fieldName = fieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
+
+    updateState(prevState => ({
+      ...prevState,
+      shiftTypeRequirements: prevState.shiftTypeRequirements.map(requirement => ({
+        ...requirement,
+        [fieldName]: (requirement[fieldName] as string[]).map(id => id === oldId ? newId : id)
+      }))
+    }));
+  };
+
+  const updateShiftTypeRequirementsForIdDeletion = (
+    dataType: 'dates' | 'people' | 'shiftTypes',
+    deletedId: string
+  ) => {
+    const fieldMap = {
+      'dates': 'date',
+      'people': 'qualified_people',
+      'shiftTypes': 'shift_type'
+    };
+
+    const fieldName = fieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
+
+    updateState(prevState => ({
+      ...prevState,
+      shiftTypeRequirements: prevState.shiftTypeRequirements.map(requirement => ({
+        ...requirement,
+        [fieldName]: (requirement[fieldName] as string[]).filter(id => id !== deletedId)
+      }))
+    }));
+
+    // If the `shift_type` field is empty, remove the requirement.
+    updateState(prevState => ({
+      ...prevState,
+      shiftTypeRequirements: prevState.shiftTypeRequirements.filter(requirement => requirement.shift_type.length > 0)
+    }));
+  };
+
   const updateItem = (
     dataType: 'dates' | 'people' | 'shiftTypes',
     data: ItemGroupEditorPageData,
@@ -478,6 +526,7 @@ export function useSchedulingData() {
     const newData = { items: updatedItems, groups: updatedGroups };
 
     updateData(dataType, newData);
+    updateShiftTypeRequirementsForIdChange(dataType, oldId, newId);
   };
 
   const updateGroup = (
@@ -515,6 +564,7 @@ export function useSchedulingData() {
     const newData = { ...data, groups: newGroups };
 
     updateData(dataType, newData);
+    updateShiftTypeRequirementsForIdChange(dataType, oldId, newId);
   };
 
   const deleteItem = (
@@ -531,6 +581,7 @@ export function useSchedulingData() {
     const newData = { items: newItems, groups: newGroups };
 
     updateData(dataType, newData);
+    updateShiftTypeRequirementsForIdDeletion(dataType, id);
   };
 
   const deleteGroup = (
@@ -542,6 +593,7 @@ export function useSchedulingData() {
     const newData = { ...data, groups: newGroups };
 
     updateData(dataType, newData);
+    updateShiftTypeRequirementsForIdDeletion(dataType, id);
   };
 
   const removeItemFromGroup = (
