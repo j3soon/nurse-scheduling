@@ -40,7 +40,7 @@ interface ItemGroupEditorPageProps {
   deleteGroup: (dataType: DataType, data: ItemGroupEditorPageData, id: string) => void;
   removeItemFromGroup: (dataType: DataType, data: ItemGroupEditorPageData, itemId: string, groupId: string) => void;
   reorderItems: (dataType: DataType, data: ItemGroupEditorPageData, reorderedItems: Item[]) => void;
-  updateGroups: (dataType: DataType, data: ItemGroupEditorPageData, newGroups: Group[]) => void;
+  reorderGroups: (dataType: DataType, data: ItemGroupEditorPageData, newGroups: Group[]) => void;
 }
 
 export default function ItemGroupEditorPage<T extends Item, G extends Group>({
@@ -64,7 +64,7 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
   deleteGroup,
   removeItemFromGroup,
   reorderItems,
-  updateGroups,
+  reorderGroups,
 }: ItemGroupEditorPageProps) {
 
   const [draft, setDraft] = useState<{
@@ -410,7 +410,7 @@ export default function ItemGroupEditorPage<T extends Item, G extends Group>({
           title={itemLabelPlural + ' Groups'}
           columns={groupColumns}
           data={groups}
-          onReorder={mode === Mode.INLINE_EDITING || groupsReadOnly ? undefined : (groups: Group[]) => updateGroups(dataType, data, groups as G[])}
+          onReorder={mode === Mode.INLINE_EDITING || groupsReadOnly ? undefined : (groups: Group[]) => reorderGroups(dataType, data, groups as G[])}
         />
       </div>
     </div>

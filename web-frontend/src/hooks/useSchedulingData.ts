@@ -579,7 +579,7 @@ export function useSchedulingData() {
     updateData(dataType, newData);
   };
 
-  const updateGroups = (
+  const reorderGroups = (
     dataType: 'dates' | 'people' | 'shiftTypes',
     data: ItemGroupEditorPageData,
     newGroups: Group[]
@@ -609,6 +609,6 @@ export function useSchedulingData() {
     deleteGroup,
     removeItemFromGroup,
     reorderItems,
-    updateGroups,
+    reorderGroups,
   };
 }

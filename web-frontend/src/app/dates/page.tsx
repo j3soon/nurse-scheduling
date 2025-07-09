@@ -22,7 +22,7 @@ export default function DatePage() {
     deleteGroup,
     removeItemFromGroup,
     reorderItems,
-    updateGroups,
+    reorderGroups,
   } = useSchedulingData();
 
   // Mode state for date range and item group editing
@@ -228,7 +228,7 @@ export default function DatePage() {
       deleteGroup={deleteGroup}
       removeItemFromGroup={removeItemFromGroup}
       reorderItems={reorderItems}
-      updateGroups={updateGroups}
+      reorderGroups={reorderGroups}
       extraButtons={
         <ToggleButton
           label="Set Date Range"

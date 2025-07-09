@@ -18,7 +18,7 @@ export default function ShiftTypePage() {
     deleteGroup,
     removeItemFromGroup,
     reorderItems,
-    updateGroups,
+    reorderGroups,
   } = useSchedulingData();
 
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
@@ -51,7 +51,7 @@ export default function ShiftTypePage() {
       deleteGroup={deleteGroup}
       removeItemFromGroup={removeItemFromGroup}
       reorderItems={reorderItems}
-      updateGroups={updateGroups}
+      reorderGroups={reorderGroups}
     />
   );
 }
