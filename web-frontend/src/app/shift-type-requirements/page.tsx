@@ -8,6 +8,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
+import { parseWeightValue, isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 
 interface ShiftTypeRequirementForm {
   description: string;
@@ -16,7 +17,7 @@ interface ShiftTypeRequirementForm {
   qualified_people: string[];
   preferred_num_people?: number;
   date: string[];
-  weight: number;
+  weight: number | string;
 }
 
 export default function ShiftTypeRequirementsPage() {
@@ -100,20 +101,28 @@ export default function ShiftTypeRequirementsPage() {
       newErrors.shift_type = 'At least one shift type must be selected';
     }
 
-    if (formData.required_num_people < 0) {
+    if (!isValidNumberValue(formData.required_num_people)) {
+      newErrors.required_num_people = 'Required number of people must be a valid number';
+    } else if (typeof formData.required_num_people === 'number' && formData.required_num_people < 0) {
       newErrors.required_num_people = 'Required number of people must be at least 0';
     }
 
     if (formData.preferred_num_people !== undefined) {
-      if (formData.preferred_num_people < 1) {
-        newErrors.preferred_num_people = 'Preferred number of people must be at least 1';
-      } else if (formData.preferred_num_people <= formData.required_num_people) {
-        newErrors.preferred_num_people = 'Preferred number of people must be greater than required number of people';
+      if (!isValidNumberValue(formData.preferred_num_people)) {
+        newErrors.preferred_num_people = 'Preferred number of people must be a valid number';
+      } else if (typeof formData.preferred_num_people === 'number') {
+        if (formData.preferred_num_people < 1) {
+          newErrors.preferred_num_people = 'Preferred number of people must be at least 1';
+        } else if (typeof formData.required_num_people === 'number' && formData.preferred_num_people < formData.required_num_people) {
+          newErrors.preferred_num_people = 'Preferred number of people must be greater than required number of people';
+        }
       }
     }
 
-    if (formData.weight > -1) {
-      newErrors.weight = 'Weight must be -1 or less';
+    if (!isValidWeightValue(formData.weight)) {
+      newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+    } else if (typeof formData.weight === 'number' && formData.weight > -1) {
+      newErrors.weight = 'Weight must be -1 or less (including -Infinity)';
     }
 
     setErrors(newErrors);
@@ -131,7 +140,7 @@ export default function ShiftTypeRequirementsPage() {
       qualified_people: formData.qualified_people,
       preferred_num_people: formData.preferred_num_people,
       date: formData.date,
-      weight: formData.weight
+      weight: formData.weight as number
     };
 
     let newRequirements;
@@ -300,10 +309,14 @@ export default function ShiftTypeRequirementsPage() {
                   <input
                     type="number"
                     min="1"
-                    value={formData.preferred_num_people ?? ''}
+                    value={formData.preferred_num_people ?? formData.required_num_people}
                     onChange={(e) => setFormData(prev => ({
                       ...prev,
-                      preferred_num_people: isNaN(parseInt(e.target.value)) ? prev.preferred_num_people : parseInt(e.target.value)
+                      preferred_num_people: isNaN(parseInt(e.target.value))
+                        ? prev.preferred_num_people
+                        : (parseInt(e.target.value) === prev.required_num_people
+                            ? undefined
+                            : parseInt(e.target.value))
                     }))}
                     className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
                       errors.preferred_num_people
@@ -393,14 +406,18 @@ export default function ShiftTypeRequirementsPage() {
                   Weight (priority)
                 </label>
                 <input
-                  type="number"
-                  max="-1"
+                  type="text"
                   value={formData.weight}
                   onChange={(e) => setFormData(prev => ({
                     ...prev,
-                    weight: isNaN(parseInt(e.target.value)) ? prev.weight : parseInt(e.target.value)
+                    weight: parseWeightValue(e.target.value)
                   }))}
-                  className="block w-full px-4 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:border-blue-500 focus:ring-blue-200 placeholder-gray-400 focus:outline-none focus:ring-2 hover:border-gray-400"
+                  className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
+                    errors.weight
+                      ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
+                      : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
+                  }`}
+                  placeholder="e.g., -1, -10, ∞"
                 />
                 {errors.weight && (
                   <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
@@ -461,7 +478,7 @@ export default function ShiftTypeRequirementsPage() {
                         )}
                       </div>
                       <div>
-                        <span className="font-medium">Weight:</span> {requirement.weight}
+                        <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
                       </div>
                       {requirement.qualified_people && (
                         <div className="md:col-span-2 lg:col-span-3">

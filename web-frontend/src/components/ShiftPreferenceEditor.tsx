@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { FiX, FiAlertCircle, FiInfo } from 'react-icons/fi';
 import { Item } from '@/types/scheduling';
+import { parseWeightValue, getWeightDisplayLabel, getWeightColor, isValidWeightValue } from '@/utils/numberParsing';
 
 interface ShiftPreferenceEditorProps {
   isOpen: boolean;
@@ -33,21 +34,7 @@ export default function ShiftPreferenceEditor({
   }, [initialPreferences, isOpen]);
 
   const handleWeightChange = (shiftTypeId: string, inputValue: string) => {
-    let weight: number | string;
-
-    // Handle special string values
-    const inputValueLower = inputValue.toLowerCase();
-    if (inputValueLower === 'infinity' || inputValueLower === 'inf' || inputValueLower === '∞') {
-      weight = Infinity;
-    } else if (inputValueLower === '-infinity' || inputValueLower === '-inf' || inputValueLower === '-∞') {
-      weight = -Infinity;
-    } else {
-      weight = parseInt(inputValue);
-      if (isNaN(weight)) {
-        // Invalid values are left as strings
-        weight = inputValue;
-      }
-    }
+    const weight = parseWeightValue(inputValue);
 
     setPreferences(prev => {
       const existing = prev.find(p => p.shiftTypeId === shiftTypeId);
@@ -74,33 +61,12 @@ export default function ShiftPreferenceEditor({
     return preference ? preference.weight : 0;
   };
 
-  const getWeightColor = (weight: number | string): string => {
-    const numWeight = typeof weight === 'string' ? 0 : weight;
-    if (numWeight > 0) return 'text-green-600 bg-green-50';
-    if (numWeight < 0) return 'text-red-600 bg-red-50';
-    return 'text-gray-500 bg-gray-50';
-  };
-
-  const getWeightLabel = (weight: number | string): string => {
-    if (weight === Infinity) return '∞';
-    if (weight === -Infinity) return '-∞';
-    if (typeof weight === 'string') return "Error";
-    if (typeof weight === 'number' && weight > 0) return `+${weight}`;
-    return weight.toString();
-  };
-
   const validateForm = (): boolean => {
     const newErrors: {[key: string]: string} = {};
 
     // Check for invalid weights
     for (const preference of preferences) {
-      if (typeof preference.weight === 'string') {
-        // String values are invalid (parsing failed)
-        newErrors[preference.shiftTypeId] = 'Weight must be a valid number, Infinity, or -Infinity';
-      } else if (typeof preference.weight === 'number' &&
-                 !isFinite(preference.weight) &&
-                 preference.weight !== Infinity &&
-                 preference.weight !== -Infinity) {
+      if (!isValidWeightValue(preference.weight)) {
         newErrors[preference.shiftTypeId] = 'Weight must be a valid number, Infinity, or -Infinity';
       }
     }
@@ -240,7 +206,7 @@ export default function ShiftPreferenceEditor({
                             <FiAlertCircle className="h-5 w-5 text-red-500" />
                           ) : (
                             <div className={`px-1 sm:px-2 py-1 rounded-full text-xs font-medium ${getWeightColor(weight)}`}>
-                              {weight === 0 ? '—' : getWeightLabel(weight)}
+                              {weight === 0 ? '—' : getWeightDisplayLabel(weight)}
                             </div>
                           )}
                         </div>
@@ -278,7 +244,7 @@ export default function ShiftPreferenceEditor({
                         <span className={`text-sm font-bold ${
                           (pref.weight as number) > 0 ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          {getWeightLabel(pref.weight)}
+                          {getWeightDisplayLabel(pref.weight)}
                         </span>
                       </div>
                     ))}

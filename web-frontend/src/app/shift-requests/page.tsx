@@ -7,6 +7,7 @@ import { FiHelpCircle, FiEdit2 } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST_PREFERENCE } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
+import { getWeightDisplayLabel } from '@/utils/numberParsing';
 
 export default function ShiftRequestsPage() {
   const {
@@ -266,17 +267,9 @@ export default function ShiftRequestsPage() {
                                 return (
                                   <>
                                     {visiblePreferences.map((pref, index) => {
-                                      let weightLabel;
-                                      if (pref.weight === Infinity) {
-                                        weightLabel = 'Inf';
-                                      } else if (pref.weight === -Infinity) {
-                                        weightLabel = '-Inf';
-                                      } else {
-                                        weightLabel = `${pref.weight > 0 ? '+' : ''}${pref.weight}`;
-                                      }
                                       return (
                                         <div key={index} className="text-xs font-semibold leading-tight px-0.5 whitespace-nowrap">
-                                          {pref.shift_type} ({weightLabel})
+                                          {pref.shift_type} ({getWeightDisplayLabel(pref.weight)})
                                         </div>
                                       );
                                     })}

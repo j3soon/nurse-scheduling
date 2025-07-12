@@ -24,6 +24,58 @@ interface HistoryState {
 const STORAGE_KEY = 'nurse-scheduling-data';
 const MAX_HISTORY_SIZE = 50;
 
+// Constants for infinity value handling in localStorage
+// JSON.stringify converts Infinity to null and JSON.parse doesn't handle infinity properly
+// These placeholders allow us to safely store and retrieve infinity values
+const INFINITY_PLACEHOLDER = '__INFINITY__';
+const NEGATIVE_INFINITY_PLACEHOLDER = '__NEGATIVE_INFINITY__';
+
+// Helper function to convert infinity/-infinity values to safe string representations
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function replaceInfinityValues(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    if (obj === Infinity) return INFINITY_PLACEHOLDER;
+    if (obj === -Infinity) return NEGATIVE_INFINITY_PLACEHOLDER;
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(replaceInfinityValues);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result: any = {};
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      result[key] = replaceInfinityValues(obj[key]);
+    }
+  }
+  return result;
+}
+
+// Helper function to restore infinity/-infinity values from safe string representations
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function restoreInfinityValues(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    if (obj === INFINITY_PLACEHOLDER) return Infinity;
+    if (obj === NEGATIVE_INFINITY_PLACEHOLDER) return -Infinity;
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(restoreInfinityValues);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result: any = {};
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      result[key] = restoreInfinityValues(obj[key]);
+    }
+  }
+  return result;
+}
+
 // Helper function to generate date items from a date range
 function generateDateItems(startDate: string, endDate: string): Item[] {
   const dates: Item[] = [];
@@ -128,7 +180,7 @@ function loadStateFromStorage(): HistoryState {
 
     if (!stored) return createDefaultHistoryState();
 
-    const parsedHistoryState = JSON.parse(stored) as HistoryState;
+    const parsedHistoryState = restoreInfinityValues(JSON.parse(stored)) as HistoryState;
 
     // Recompute date items for current state if date range exists
     const dateItems = (parsedHistoryState.state.dateRange?.startDate && parsedHistoryState.state.dateRange?.endDate)
@@ -171,7 +223,9 @@ function saveStateToStorage(historyState: HistoryState): void {
       currentHistoryIndex: historyState.currentHistoryIndex
     };
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(historyStateToStore));
+    // Replace infinity values with safe placeholders before JSON.stringify
+    const safeHistoryState = replaceInfinityValues(historyStateToStore);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeHistoryState));
   } catch (error) {
     console.error('Failed to save data to localStorage:', error);
   }
