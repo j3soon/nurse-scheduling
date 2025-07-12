@@ -29,6 +29,11 @@ export default function ShiftRequestsPage() {
     dateId: '',
   });
 
+  // Helper function to get all shift types (items and groups combined)
+  const getAllShiftTypes = () => {
+    return [...shiftTypeData.items, ...shiftTypeData.groups];
+  };
+
   // Helper function to get shift preferences for a person-date combination
   const getShiftPreferences = (personId: string, dateId: string): ShiftRequestPreference[] => {
     return shiftRequestPreferences.filter(
@@ -76,8 +81,8 @@ export default function ShiftRequestsPage() {
         return b.weight - a.weight;
       }
       // Compare shift_type indices in shiftTypeData.items
-      const indexA = shiftTypeData.items.findIndex(st => st.id === a.shift_type);
-      const indexB = shiftTypeData.items.findIndex(st => st.id === b.shift_type);
+      const indexA = getAllShiftTypes().findIndex(st => st.id === a.shift_type);
+      const indexB = getAllShiftTypes().findIndex(st => st.id === b.shift_type);
       if (indexA < indexB) return -1;
       if (indexA > indexB) return 1;
       return 0;
@@ -133,7 +138,7 @@ export default function ShiftRequestsPage() {
   ];
 
   // Check if we have the required data
-  const hasRequiredData = (dateRange?.startDate && dateRange?.endDate && dateData.items.length > 0 && peopleData.items.length > 0 && shiftTypeData.items.length > 0);
+  const hasRequiredData = (dateRange?.startDate && dateRange?.endDate && dateData.items.length > 0 && peopleData.items.length > 0 && (shiftTypeData.items.length > 0 || shiftTypeData.groups.length > 0));
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -246,7 +251,7 @@ export default function ShiftRequestsPage() {
                             onClick={() => openEditor(person.id, date.id)}
                           >
                             <div
-                              className={`w-16 h-12 mx-auto rounded-lg border-2 transition-all duration-200 flex flex-col items-center justify-center gap-0 shadow-sm hover:shadow-md ${
+                              className={`min-w-16 w-auto h-12 mx-auto rounded-lg border-2 transition-all duration-200 flex flex-col items-center justify-center gap-0 shadow-sm hover:shadow-md ${
                                 display
                                   ? `${display.color} ${display.textColor} hover:scale-105`
                                   : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
@@ -261,7 +266,7 @@ export default function ShiftRequestsPage() {
                                 return (
                                   <>
                                     {visiblePreferences.map((pref, index) => (
-                                      <div key={index} className="text-xs font-semibold leading-tight px-0.5">
+                                      <div key={index} className="text-xs font-semibold leading-tight px-0.5 whitespace-nowrap">
                                         {pref.shift_type} ({pref.weight > 0 ? '+' : ''}{pref.weight})
                                       </div>
                                     ))}
@@ -300,7 +305,7 @@ export default function ShiftRequestsPage() {
                   // Get person and date descriptions for display
                   const person = peopleData.items.find(p => p.id === preference.person);
                   const date = dateData.items.find(d => d.id === preference.date);
-                  const shiftType = shiftTypeData.items.find(st => st.id === preference.shift_type);
+                  const shiftType = getAllShiftTypes().find(st => st.id === preference.shift_type);
 
                   return (
                     <div key={index} className="px-6 py-5">
@@ -365,7 +370,7 @@ export default function ShiftRequestsPage() {
         onSave={handleSavePreferences}
         personId={editorState.personId}
         dateId={editorState.dateId}
-        shiftTypes={shiftTypeData.items}
+        shiftTypes={getAllShiftTypes()}
         initialPreferences={getShiftPreferences(editorState.personId, editorState.dateId).map(p => ({ shiftTypeId: p.shift_type, weight: p.weight }))}
       />
     </div>
