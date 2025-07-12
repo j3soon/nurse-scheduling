@@ -5,10 +5,6 @@ import { useState, useEffect } from 'react';
 import { FiX, FiAlertCircle, FiInfo } from 'react-icons/fi';
 import { Item } from '@/types/scheduling';
 
-// Weight constraints
-const MIN_WEIGHT = -999;
-const MAX_WEIGHT = 999;
-
 interface ShiftPreferenceEditorProps {
   isOpen: boolean;
   onClose: () => void;
@@ -28,7 +24,7 @@ export default function ShiftPreferenceEditor({
   shiftTypes,
   initialPreferences
 }: ShiftPreferenceEditorProps) {
-  const [preferences, setPreferences] = useState<{ shiftTypeId: string; weight: number }[]>(initialPreferences);
+  const [preferences, setPreferences] = useState<{ shiftTypeId: string; weight: number | string }[]>(initialPreferences);
   const [errors, setErrors] = useState<{[key: string]: string}>({});
 
   useEffect(() => {
@@ -36,7 +32,23 @@ export default function ShiftPreferenceEditor({
     setErrors({});
   }, [initialPreferences, isOpen]);
 
-  const handleWeightChange = (shiftTypeId: string, weight: number) => {
+  const handleWeightChange = (shiftTypeId: string, inputValue: string) => {
+    let weight: number | string;
+
+    // Handle special string values
+    const inputValueLower = inputValue.toLowerCase();
+    if (inputValueLower === 'infinity' || inputValueLower === 'inf' || inputValueLower === '∞') {
+      weight = Infinity;
+    } else if (inputValueLower === '-infinity' || inputValueLower === '-inf' || inputValueLower === '-∞') {
+      weight = -Infinity;
+    } else {
+      weight = parseInt(inputValue);
+      if (isNaN(weight)) {
+        // Invalid values are left as strings
+        weight = inputValue;
+      }
+    }
+
     setPreferences(prev => {
       const existing = prev.find(p => p.shiftTypeId === shiftTypeId);
       if (existing) {
@@ -57,19 +69,23 @@ export default function ShiftPreferenceEditor({
     });
   };
 
-  const getWeight = (shiftTypeId: string): number => {
+  const getWeight = (shiftTypeId: string): number | string => {
     const preference = preferences.find(p => p.shiftTypeId === shiftTypeId);
     return preference ? preference.weight : 0;
   };
 
-  const getWeightColor = (weight: number): string => {
-    if (weight > 0) return 'text-green-600 bg-green-50';
-    if (weight < 0) return 'text-red-600 bg-red-50';
+  const getWeightColor = (weight: number | string): string => {
+    const numWeight = typeof weight === 'string' ? 0 : weight;
+    if (numWeight > 0) return 'text-green-600 bg-green-50';
+    if (numWeight < 0) return 'text-red-600 bg-red-50';
     return 'text-gray-500 bg-gray-50';
   };
 
-  const getWeightLabel = (weight: number): string => {
-    if (weight > 0) return `+${weight}`;
+  const getWeightLabel = (weight: number | string): string => {
+    if (weight === Infinity) return '∞';
+    if (weight === -Infinity) return '-∞';
+    if (typeof weight === 'string') return "Error";
+    if (typeof weight === 'number' && weight > 0) return `+${weight}`;
     return weight.toString();
   };
 
@@ -78,8 +94,14 @@ export default function ShiftPreferenceEditor({
 
     // Check for invalid weights
     for (const preference of preferences) {
-      if (preference.weight < MIN_WEIGHT || preference.weight > MAX_WEIGHT) {
-        newErrors[preference.shiftTypeId] = `Weight must be between ${MIN_WEIGHT} and ${MAX_WEIGHT}`;
+      if (typeof preference.weight === 'string') {
+        // String values are invalid (parsing failed)
+        newErrors[preference.shiftTypeId] = 'Weight must be a valid number, Infinity, or -Infinity';
+      } else if (typeof preference.weight === 'number' &&
+                 !isFinite(preference.weight) &&
+                 preference.weight !== Infinity &&
+                 preference.weight !== -Infinity) {
+        newErrors[preference.shiftTypeId] = 'Weight must be a valid number, Infinity, or -Infinity';
       }
     }
 
@@ -89,7 +111,8 @@ export default function ShiftPreferenceEditor({
 
   const handleSave = () => {
     if (!validateForm()) return;
-    onSave(preferences);
+    // Convert all weights to numbers
+    onSave(preferences.map(p => ({ shiftTypeId: p.shiftTypeId, weight: p.weight as number })));
     onClose();
   };
 
@@ -138,8 +161,8 @@ export default function ShiftPreferenceEditor({
                 <div>
                   <h4 className="text-sm font-medium text-blue-800 mb-1">Weight Scale Guide</h4>
                   <div className="text-xs text-blue-700 space-y-1">
-                    <div><span className="font-medium text-green-600">Positive (+1 to +{MAX_WEIGHT}):</span> Prefer this shift type</div>
-                    <div><span className="font-medium text-red-600">Negative (-1 to {MIN_WEIGHT}):</span> Avoid this shift type</div>
+                    <div><span className="font-medium text-green-600">Positive (+1 to Infinity):</span> Prefer this shift type</div>
+                    <div><span className="font-medium text-red-600">Negative (-1 to -Infinity):</span> Avoid this shift type</div>
                     <div><span className="font-medium text-gray-600">Zero (0):</span> No preference</div>
                   </div>
                 </div>
@@ -200,11 +223,9 @@ export default function ShiftPreferenceEditor({
                         {/* Weight Input */}
                         <div className="col-span-4 sm:col-span-2 flex justify-center">
                           <input
-                            type="number"
-                            min={MIN_WEIGHT}
-                            max={MAX_WEIGHT}
+                            type="text"
                             value={weight}
-                            onChange={(e) => handleWeightChange(shiftType.id, parseInt(e.target.value) || 0)}
+                            onChange={(e) => handleWeightChange(shiftType.id, e.target.value)}
                             className={`w-18 sm:w-20 px-2 sm:px-3 py-2 text-sm text-center border rounded-md transition-all ${
                               hasError
                                 ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
@@ -249,12 +270,13 @@ export default function ShiftPreferenceEditor({
                 </h4>
                 <div className="grid grid-cols-2 gap-3">
                   {preferences
-                    .sort((a, b) => b.weight - a.weight)
+                    .filter(p => typeof p.weight === 'number')
+                    .sort((a, b) => (b.weight as number) - (a.weight as number))
                     .map((pref) => (
                       <div key={pref.shiftTypeId} className="flex items-center justify-between bg-white px-3 py-2 rounded-md shadow-sm">
                         <span className="text-sm font-medium text-gray-700">{pref.shiftTypeId}</span>
                         <span className={`text-sm font-bold ${
-                          pref.weight > 0 ? 'text-green-600' : 'text-red-600'
+                          (pref.weight as number) > 0 ? 'text-green-600' : 'text-red-600'
                         }`}>
                           {getWeightLabel(pref.weight)}
                         </span>

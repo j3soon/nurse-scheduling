@@ -265,11 +265,21 @@ export default function ShiftRequestsPage() {
 
                                 return (
                                   <>
-                                    {visiblePreferences.map((pref, index) => (
-                                      <div key={index} className="text-xs font-semibold leading-tight px-0.5 whitespace-nowrap">
-                                        {pref.shift_type} ({pref.weight > 0 ? '+' : ''}{pref.weight})
-                                      </div>
-                                    ))}
+                                    {visiblePreferences.map((pref, index) => {
+                                      let weightLabel;
+                                      if (pref.weight === Infinity) {
+                                        weightLabel = 'Inf';
+                                      } else if (pref.weight === -Infinity) {
+                                        weightLabel = '-Inf';
+                                      } else {
+                                        weightLabel = `${pref.weight > 0 ? '+' : ''}${pref.weight}`;
+                                      }
+                                      return (
+                                        <div key={index} className="text-xs font-semibold leading-tight px-0.5 whitespace-nowrap">
+                                          {pref.shift_type} ({weightLabel})
+                                        </div>
+                                      );
+                                    })}
                                     {remainingCount > 0 && (
                                       <div className="text-[10px] font-medium opacity-75 px-0.5">
                                         +{remainingCount} more
