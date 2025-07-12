@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Item, Group, DateRange, ShiftTypeRequirementsPreference, DataType } from '@/types/scheduling';
+import { Item, Group, DateRange, ShiftTypeRequirementsPreference, ShiftRequestPreference, DataType } from '@/types/scheduling';
 import { ItemGroupEditorPageData } from '@/components/ItemGroupEditorPage';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
@@ -12,6 +12,7 @@ export interface SchedulingState {
   people: { items: Item[]; groups: Group[] };
   shiftTypes: { items: Item[]; groups: Group[] };
   shiftTypeRequirements: ShiftTypeRequirementsPreference[];
+  shiftRequestPreferences: ShiftRequestPreference[];
 }
 
 interface HistoryState {
@@ -105,7 +106,8 @@ function createDefaultState(): SchedulingState {
     dates: { items: [], groups: [] },
     people: createDefaultPeople(),
     shiftTypes: createDefaultShiftTypes(),
-    shiftTypeRequirements: []
+    shiftTypeRequirements: [],
+    shiftRequestPreferences: []
   };
 }
 
@@ -342,6 +344,13 @@ export function useSchedulingData() {
     }));
   };
 
+  const updateShiftRequestPreferences = (shiftRequestPreferences: ShiftRequestPreference[]) => {
+    updateState(prevState => ({
+      ...prevState,
+      shiftRequestPreferences
+    }));
+  };
+
   // Private helper function to update data based on dataType
   const updateData = (
     dataType: DataType,
@@ -482,6 +491,46 @@ export function useSchedulingData() {
     }));
   };
 
+  const updateShiftRequestPreferencesForIdChange = (
+    dataType: DataType,
+    oldId: string,
+    newId: string
+  ) => {
+    const fieldMap = {
+      [DataType.DATES]: 'date',
+      [DataType.PEOPLE]: 'person',
+      [DataType.SHIFT_TYPES]: 'shift_type'
+    };
+
+    const fieldName = fieldMap[dataType] as keyof ShiftRequestPreference;
+
+    updateState(prevState => ({
+      ...prevState,
+      shiftRequestPreferences: prevState.shiftRequestPreferences.map(preference => ({
+        ...preference,
+        [fieldName]: preference[fieldName] === oldId ? newId : preference[fieldName]
+      }))
+    }));
+  };
+
+  const updateShiftRequestPreferencesForIdDeletion = (
+    dataType: DataType,
+    deletedId: string
+  ) => {
+    const fieldMap = {
+      [DataType.DATES]: 'date',
+      [DataType.PEOPLE]: 'person',
+      [DataType.SHIFT_TYPES]: 'shift_type'
+    };
+
+    const fieldName = fieldMap[dataType] as keyof ShiftRequestPreference;
+
+    updateState(prevState => ({
+      ...prevState,
+      shiftRequestPreferences: prevState.shiftRequestPreferences.filter(preference => preference[fieldName] !== deletedId)
+    }));
+  };
+
   const updateItem = (
     dataType: DataType,
     data: ItemGroupEditorPageData,
@@ -527,6 +576,7 @@ export function useSchedulingData() {
 
     updateData(dataType, newData);
     updateShiftTypeRequirementsForIdChange(dataType, oldId, newId);
+    updateShiftRequestPreferencesForIdChange(dataType, oldId, newId);
   };
 
   const updateGroup = (
@@ -565,6 +615,7 @@ export function useSchedulingData() {
 
     updateData(dataType, newData);
     updateShiftTypeRequirementsForIdChange(dataType, oldId, newId);
+    updateShiftRequestPreferencesForIdChange(dataType, oldId, newId);
   };
 
   const deleteItem = (
@@ -582,6 +633,7 @@ export function useSchedulingData() {
 
     updateData(dataType, newData);
     updateShiftTypeRequirementsForIdDeletion(dataType, id);
+    updateShiftRequestPreferencesForIdDeletion(dataType, id);
   };
 
   const deleteGroup = (
@@ -594,6 +646,7 @@ export function useSchedulingData() {
 
     updateData(dataType, newData);
     updateShiftTypeRequirementsForIdDeletion(dataType, id);
+    updateShiftRequestPreferencesForIdDeletion(dataType, id);
   };
 
   const removeItemFromGroup = (
@@ -649,6 +702,8 @@ export function useSchedulingData() {
     shiftTypeData: historyState.state.shiftTypes,
     shiftTypeRequirements: historyState.state.shiftTypeRequirements,
     updateShiftTypeRequirements,
+    shiftRequestPreferences: historyState.state.shiftRequestPreferences,
+    updateShiftRequestPreferences,
     createNewState,
     undo,
     redo,

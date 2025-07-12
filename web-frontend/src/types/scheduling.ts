@@ -22,6 +22,7 @@ export enum DataType {
 }
 
 export const SHIFT_TYPE_REQUIREMENT = 'shift_type_requirement';
+export const SHIFT_REQUEST_PREFERENCE = 'shift_request_preference';
 
 export interface BasePreference {
   type: string;
@@ -36,5 +37,14 @@ export interface ShiftTypeRequirementsPreference extends BasePreference {
   qualified_people: string[];
   preferred_num_people?: number;
   date: string[];
+  weight: number;
+}
+
+export interface ShiftRequestPreference extends BasePreference {
+  type: typeof SHIFT_REQUEST_PREFERENCE;
+  description?: string;
+  person: string;
+  date: string;
+  shift_type: string;
   weight: number;
 }
