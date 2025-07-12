@@ -305,7 +305,6 @@ export default function ShiftPreferenceEditor({
             </button>
             <button
               onClick={handleSave}
-              disabled={Object.keys(errors).length > 0}
               className="px-4 sm:px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium text-sm sm:text-base"
             >
               Save Preferences
