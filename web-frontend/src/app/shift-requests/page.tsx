@@ -8,6 +8,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST_PREFERENCE } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import { getWeightDisplayLabel } from '@/utils/numberParsing';
+import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
 export default function ShiftRequestsPage() {
   const {
@@ -17,6 +18,8 @@ export default function ShiftRequestsPage() {
     dateRange,
     shiftRequestPreferences,
     updateShiftRequestPreferences,
+    addPersonHistory,
+    updatePersonHistory,
   } = useSchedulingData();
 
   const [showInstructions, setShowInstructions] = useState(false);
@@ -29,6 +32,22 @@ export default function ShiftRequestsPage() {
     personId: '',
     dateId: '',
   });
+
+  const [historyEditState, setHistoryEditState] = useState<{
+    isOpen: boolean;
+    personId: string;
+    historyIndex: number;
+  }>({
+    isOpen: false,
+    personId: '',
+    historyIndex: -1,
+  });
+
+  // Compute the history columns count (max history length + 1)
+  const historyColumnsCount = Math.max(
+    0,
+    ...peopleData.items.map(person => person.history?.length || 0)
+  ) + 1;
 
   // Helper function to get all shift types (items and groups combined)
   const getAllShiftTypes = () => {
@@ -132,10 +151,60 @@ export default function ShiftRequestsPage() {
     updateShiftPreferences(editorState.personId, editorState.dateId, preferences);
   };
 
+  const getHistoryValue = (history: string[], columnIndex: number): string => {
+    const offset = historyColumnsCount - history.length;  // Note that we always have one extra column for the history
+    if (columnIndex < offset) return '';
+    return history[columnIndex - offset];
+  };
+
+  const openHistoryEditor = (personId: string, historyIndex: number) => {
+    setHistoryEditState({
+      isOpen: true,
+      personId,
+      historyIndex,
+    });
+  };
+
+  const closeHistoryEditor = () => {
+    setHistoryEditState({
+      isOpen: false,
+      personId: '',
+      historyIndex: -1,
+    });
+  };
+
+  const handleSaveHistory = (shiftTypeId: string) => {
+    const person = peopleData.items.find(p => p.id === historyEditState.personId);
+    if (!person) {
+      console.error(`Person ${historyEditState.personId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
+      return;
+    }
+
+    const currentHistory = person.history!;
+    const offset = historyColumnsCount - currentHistory.length;
+
+    // If targeting a position before the actual history (empty history cells on the left)
+    if (historyEditState.historyIndex < offset) {
+      if (shiftTypeId !== '') {
+        addPersonHistory(historyEditState.personId, shiftTypeId);
+      } // else do nothing
+    } else {
+      const position = historyEditState.historyIndex - offset;
+      if (shiftTypeId !== '') {
+        updatePersonHistory(historyEditState.personId, position, shiftTypeId);
+      } else {
+        updatePersonHistory(historyEditState.personId, position);
+      }
+    }
+    closeHistoryEditor();
+  };
+
   // Instructions for the help component
   const instructions = [
     "This table shows shift preferences for each person on each date",
-    "Each row represents a person, each column represents a date",
+    "History columns (H-1, H-2, etc.) show previous shift types assigned to each person",
+    "Click on any history cell to set or edit shift types for that time period",
+    "Each row represents a person, followed by their history, then date columns",
     "The 'All Days' column allows you to set preferences that apply to all days for each person",
     "Click on any cell to set shift preferences with weights for different shift types",
     "Green cells indicate positive preferences (wants this shift type)",
@@ -144,6 +213,8 @@ export default function ShiftRequestsPage() {
     "The displayed shift type prioritizes the one with the strongest preference or avoidance",
     "Use the navigation tabs or keyboard shortcuts to move between pages"
   ];
+
+
 
   // Check if we have the required data
   const hasRequiredData = (dateRange?.startDate && dateRange?.endDate && dateData.items.length > 0 && peopleData.items.length > 0 && (shiftTypeData.items.length > 0 || shiftTypeData.groups.length > 0));
@@ -226,6 +297,15 @@ export default function ShiftRequestsPage() {
                     <th className="sticky left-0 z-10 bg-gray-50 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 shadow-sm">
                       People
                     </th>
+                    {/* History columns */}
+                    {Array.from({ length: historyColumnsCount }, (_, index) => (
+                      <th
+                        key={`history-${index}`}
+                        className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 bg-amber-50"
+                      >
+                        <div className="whitespace-nowrap">H-{historyColumnsCount - index}</div>
+                      </th>
+                    ))}
                     {getCombinedDateEntries().map((dateEntry) => (
                       <th
                         key={dateEntry.id || 'all-days'}
@@ -253,6 +333,31 @@ export default function ShiftRequestsPage() {
                           )}
                         </div>
                       </td>
+                      {/* History columns */}
+                      {Array.from({ length: historyColumnsCount }, (_, index) => {
+                        const historyValue = getHistoryValue(person.history!, index);
+                        const offset = historyColumnsCount - person.history!.length;
+
+                        // Only show one extra clickable cell, others are empty non-clickable
+                        const isClickable = index >= offset - 1;
+
+                        return (
+                          <td
+                            key={`${person.id}-history-${index}`}
+                            className={`px-2 py-2 text-center border-r border-gray-200 ${
+                              isClickable
+                                ? 'bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors duration-150'
+                                : 'bg-gray-50'
+                            }`}
+                            onClick={() => isClickable && openHistoryEditor(person.id, index)}
+                            title={isClickable ? 'Click to edit history' : ''}
+                          >
+                            <div className={`text-sm font-medium ${isClickable ? 'text-gray-900' : 'text-gray-300'}`}>
+                              {!isClickable ? '' : (historyValue || '—')}
+                            </div>
+                          </td>
+                        );
+                      })}
                       {getCombinedDateEntries().map((dateEntry) => {
                         const display = getPreferenceDisplay(person.id, dateEntry.id);
 
@@ -395,6 +500,57 @@ export default function ShiftRequestsPage() {
         shiftTypes={getAllShiftTypes()}
         initialPreferences={getShiftPreferences(editorState.personId, editorState.dateId).map(p => ({ shiftTypeId: p.shift_type, weight: p.weight }))}
       />
+
+      {/* History Editor Modal */}
+      {historyEditState.isOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-sm w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800">
+                Edit History - {historyEditState.personId}
+              </h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Position H-{historyColumnsCount - historyEditState.historyIndex}
+              </p>
+            </div>
+
+            <div className="px-6 py-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Shift Type:
+              </label>
+              <select
+                value={(() => {
+                  const person = peopleData.items.find(p => p.id === historyEditState.personId);
+                  if (!person) {
+                    console.error(`Person ${historyEditState.personId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
+                    return '';
+                  }
+                  return getHistoryValue(person.history!, historyEditState.historyIndex);
+                })()}
+                onChange={(e) => handleSaveHistory(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                autoFocus
+              >
+                <option value="">-- Clear --</option>
+                {shiftTypeData.items.map((shiftType) => (
+                  <option key={shiftType.id} value={shiftType.id}>
+                    {shiftType.id} - {shiftType.description}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={closeHistoryEditor}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

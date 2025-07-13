@@ -2,6 +2,7 @@
 export interface Item {
   id: string;
   description: string;
+  history?: string[];  // Array of shift type IDs representing historical assignments for people
 }
 
 export interface Group {

@@ -118,7 +118,8 @@ function createDefaultPeople() {
   return {
     items: Array.from({ length: 10 }, (_, index) => ({
       id: `Person ${index + 1}`,
-      description: ''
+      description: '',
+      history: [] // Start with empty history
     })),
     groups: [
       { id: 'Group 1', members: ['Person 1', 'Person 2'], description: '' },
@@ -443,7 +444,9 @@ export function useSchedulingData() {
     description?: string
   ): void => {
     // Add the item
-    const newItem = { id, description: description || '' };
+    const newItem = dataType === DataType.PEOPLE
+      ? { id, description: description || '', history: [] }
+      : { id, description: description || '' };
     const newItems = [...data.items, newItem];
 
     // If groupIds is provided, add the item to those groups
@@ -748,6 +751,50 @@ export function useSchedulingData() {
     updateData(dataType, newData);
   };
 
+  const addPersonHistory = (personId: string, shiftTypeId: string) => {
+    updateState(prevState => {
+      const updatedPeople = {
+        ...prevState.people,
+        items: prevState.people.items.map(person => {
+          if (person.id === personId) {
+            const newHistory = [shiftTypeId, ...person.history!];
+            return { ...person, history: newHistory };
+          }
+          return person;
+        })
+      };
+      return { ...prevState, people: updatedPeople };
+    });
+  };
+
+  const updatePersonHistory = (personId: string, position: number, shiftTypeId?: string) => {
+    updateState(prevState => {
+      const updatedPeople = {
+        ...prevState.people,
+        items: prevState.people.items.map(person => {
+          if (person.id === personId) {
+            if (shiftTypeId !== undefined) {
+              // Update the specific position
+              const newHistory = [...person.history!];
+              if (position >= newHistory.length) {
+                console.error(`Position ${position} is out of bounds for person ${personId}. ${ERROR_SHOULD_NOT_HAPPEN}`);
+                return person;
+              }
+              newHistory[position] = shiftTypeId;
+              return { ...person, history: newHistory };
+            } else {
+              // Clear all history entries before the specified position
+              const newHistory = person.history!.slice(position + 1);
+              return { ...person, history: newHistory };
+            }
+          }
+          return person;
+        })
+      };
+      return { ...prevState, people: updatedPeople };
+    });
+  };
+
   return {
     dateRange: historyState.state.dateRange,
     updateDateRange,
@@ -758,6 +805,8 @@ export function useSchedulingData() {
     updateShiftTypeRequirements,
     shiftRequestPreferences: historyState.state.shiftRequestPreferences,
     updateShiftRequestPreferences,
+    addPersonHistory,
+    updatePersonHistory,
     createNewState,
     undo,
     redo,
