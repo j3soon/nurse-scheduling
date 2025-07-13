@@ -35,6 +35,12 @@ export default function ShiftRequestsPage() {
     return [...shiftTypeData.items, ...shiftTypeData.groups];
   };
 
+  // Helper function to create combined date entries (All Days + regular dates)
+  const getCombinedDateEntries = () => {
+    const allDaysEntry = { id: '', description: 'All Days' };
+    return [allDaysEntry, ...dateData.items];
+  };
+
   // Helper function to get shift preferences for a person-date combination
   const getShiftPreferences = (personId: string, dateId: string): ShiftRequestPreference[] => {
     return shiftRequestPreferences.filter(
@@ -130,7 +136,8 @@ export default function ShiftRequestsPage() {
   const instructions = [
     "This table shows shift preferences for each person on each date",
     "Each row represents a person, each column represents a date",
-    "Click on a cell to set shift preferences with weights for different shift types",
+    "The 'All Days' column allows you to set preferences that apply to all days for each person",
+    "Click on any cell to set shift preferences with weights for different shift types",
     "Green cells indicate positive preferences (wants this shift type)",
     "Red cells indicate negative preferences (wants to avoid this shift type)",
     "Yellow cells indicate a mix of positive and negative preferences",
@@ -219,12 +226,16 @@ export default function ShiftRequestsPage() {
                     <th className="sticky left-0 z-10 bg-gray-50 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 shadow-sm">
                       People
                     </th>
-                    {dateData.items.map((date) => (
+                    {getCombinedDateEntries().map((dateEntry) => (
                       <th
-                        key={date.id}
-                        className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
+                        key={dateEntry.id || 'all-days'}
+                        className={`px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider ${
+                          dateEntry.id === ''
+                            ? 'border-r border-gray-200 bg-blue-50'
+                            : ''
+                        }`}
                       >
-                        <div className="whitespace-nowrap">{date.id}</div>
+                        <div className="whitespace-nowrap">{dateEntry.id === '' ? 'All Days' : dateEntry.id}</div>
                       </th>
                     ))}
                   </tr>
@@ -242,14 +253,16 @@ export default function ShiftRequestsPage() {
                           )}
                         </div>
                       </td>
-                      {dateData.items.map((date) => {
-                        const display = getPreferenceDisplay(person.id, date.id);
+                      {getCombinedDateEntries().map((dateEntry) => {
+                        const display = getPreferenceDisplay(person.id, dateEntry.id);
 
                         return (
                           <td
-                            key={`${person.id}-${date.id}`}
-                            className="px-1 py-1 text-center cursor-pointer hover:bg-gray-50 transition-colors duration-150"
-                            onClick={() => openEditor(person.id, date.id)}
+                            key={`${person.id}-${dateEntry.id || 'all-days'}`}
+                            className={`px-1 py-1 text-center cursor-pointer hover:bg-gray-50 transition-colors duration-150 ${
+                              dateEntry.id === '' ? 'border-r border-gray-200 bg-blue-50' : ''
+                            }`}
+                            onClick={() => openEditor(person.id, dateEntry.id)}
                           >
                             <div
                               className={`min-w-16 w-auto h-12 mx-auto rounded-lg border-2 transition-all duration-200 flex flex-col items-center justify-center gap-0 shadow-sm hover:shadow-md ${
@@ -257,7 +270,7 @@ export default function ShiftRequestsPage() {
                                   ? `${display.color} ${display.textColor} hover:scale-105`
                                   : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
                               }`}
-                              title={`Click to edit preferences for ${person.id} on ${date.id}`}
+                              title={dateEntry.id === '' ? `Click to edit all-days preferences for ${person.id}` : `Click to edit preferences for ${person.id} on date ${dateEntry.id}`}
                             >
                               {display && (() => {
                                 const maxVisible = display.preferences.length <= 3 ? 3 : 2; // Show all if 3 or fewer, otherwise show 2
@@ -324,9 +337,15 @@ export default function ShiftRequestsPage() {
                             </div>
                             <div>
                               <span className="font-medium">Date:</span>{' '}
-                              <span className="text-gray-900">{preference.date}</span>
-                              {date?.description && (
-                                <div className="text-xs text-gray-500 mt-1">{date.description}</div>
+                              <span className="text-gray-900">
+                                {preference.date === '' ? 'All Days' : preference.date}
+                              </span>
+                              {preference.date === '' ? (
+                                <div className="text-xs text-gray-500 mt-1">Applies to all days</div>
+                              ) : (
+                                date?.description && (
+                                  <div className="text-xs text-gray-500 mt-1">{date.description}</div>
+                                )
                               )}
                             </div>
                             <div>
