@@ -302,6 +302,7 @@ export default function ShiftRequestsPage() {
                       <th
                         key={`history-${index}`}
                         className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200"
+                        title={`History position H-${historyColumnsCount - index}`}
                       >
                         <div className="whitespace-nowrap">H-{historyColumnsCount - index}</div>
                       </th>
@@ -314,6 +315,7 @@ export default function ShiftRequestsPage() {
                             ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200'
                             : ''
                         }`}
+                        title={dateEntry.id === '' ? 'Set preferences that apply to all days' : dateEntry.description || dateEntry.id}
                       >
                         <div className="whitespace-nowrap">{dateEntry.id === '' ? 'All Days' : dateEntry.id}</div>
                       </th>
@@ -350,7 +352,7 @@ export default function ShiftRequestsPage() {
                                 : 'bg-gray-50'
                             }`}
                             onClick={() => isClickable && openHistoryEditor(person.id, index)}
-                            title={isClickable ? 'Click to edit history' : ''}
+                            title={isClickable ? `Click to edit history position H-${historyColumnsCount - index}` : ''}
                           >
                             <div className={`text-sm font-medium ${isClickable ? 'text-gray-900' : 'text-gray-300'}`}>
                               {!isClickable ? '' : (historyValue || '—')}
