@@ -301,7 +301,7 @@ export default function ShiftRequestsPage() {
                     {Array.from({ length: historyColumnsCount }, (_, index) => (
                       <th
                         key={`history-${index}`}
-                        className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 bg-amber-50"
+                        className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200"
                       >
                         <div className="whitespace-nowrap">H-{historyColumnsCount - index}</div>
                       </th>
@@ -311,7 +311,7 @@ export default function ShiftRequestsPage() {
                         key={dateEntry.id || 'all-days'}
                         className={`px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider ${
                           dateEntry.id === ''
-                            ? 'border-r border-gray-200 bg-blue-50'
+                            ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200'
                             : ''
                         }`}
                       >
@@ -365,7 +365,7 @@ export default function ShiftRequestsPage() {
                           <td
                             key={`${person.id}-${dateEntry.id || 'all-days'}`}
                             className={`px-1 py-1 text-center cursor-pointer hover:bg-gray-50 transition-colors duration-150 ${
-                              dateEntry.id === '' ? 'border-r border-gray-200 bg-blue-50' : ''
+                              dateEntry.id === '' ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200' : ''
                             }`}
                             onClick={() => openEditor(person.id, dateEntry.id)}
                           >
@@ -504,7 +504,7 @@ export default function ShiftRequestsPage() {
               <div className="divide-y divide-blue-200">
                 {peopleData.items.map((person) => {
                   if (!person.history || person.history.length === 0) return null;
-                  
+
                   return (
                     <div key={person.id} className="px-6 py-5 bg-blue-50">
                       <div className="flex items-start justify-between">
@@ -521,7 +521,7 @@ export default function ShiftRequestsPage() {
                             {person.history.map((shiftTypeId, index) => {
                               const shiftType = getAllShiftTypes().find(st => st.id === shiftTypeId);
                               const historyPosition = person.history!.length - index;
-                              
+
                               return (
                                 <div key={index} className="text-sm text-blue-600">
                                   <span className="font-medium">H-{historyPosition}:</span>{' '}
