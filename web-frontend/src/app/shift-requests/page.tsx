@@ -411,17 +411,18 @@ export default function ShiftRequestsPage() {
           </div>
 
           {/* Current Shift Requests */}
-          <div className="mt-6 bg-white shadow-md rounded-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-800">Current Shift Requests</h3>
+          <div className="mt-6 bg-blue-50 shadow-md rounded-lg overflow-hidden border border-blue-200">
+            <div className="px-6 py-4 border-b border-blue-200 bg-blue-100">
+              <h3 className="text-lg font-semibold text-blue-800">Current Shift Requests</h3>
+              <p className="text-sm text-blue-600 mt-1">Auto-computed from the preference matrix above</p>
             </div>
 
             {shiftRequestPreferences.length === 0 ? (
-              <div className="px-6 py-8 text-center text-gray-500">
+              <div className="px-6 py-8 text-center text-blue-500">
                 No shift requests defined yet. Click on any cell in the matrix above to add preferences.
               </div>
             ) : (
-              <div className="divide-y divide-gray-200">
+              <div className="divide-y divide-blue-200">
                 {shiftRequestPreferences.map((preference, index) => {
                   // Get person and date descriptions for display
                   const person = peopleData.items.find(p => p.id === preference.person);
@@ -429,43 +430,43 @@ export default function ShiftRequestsPage() {
                   const shiftType = getAllShiftTypes().find(st => st.id === preference.shift_type);
 
                   return (
-                    <div key={index} className="px-6 py-5">
+                    <div key={index} className="px-6 py-5 bg-blue-50">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 text-sm text-gray-600">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 text-sm text-blue-600">
                             <div>
                               <span className="font-medium">Person:</span>{' '}
-                              <span className="text-gray-900">{preference.person}</span>
+                              <span className="text-blue-900">{preference.person}</span>
                               {person?.description && (
-                                <div className="text-xs text-gray-500 mt-1">{person.description}</div>
+                                <div className="text-xs text-blue-500 mt-1">{person.description}</div>
                               )}
                             </div>
                             <div>
                               <span className="font-medium">Date:</span>{' '}
-                              <span className="text-gray-900">
+                              <span className="text-blue-900">
                                 {preference.date === '' ? 'All Days' : preference.date}
                               </span>
                               {preference.date === '' ? (
-                                <div className="text-xs text-gray-500 mt-1">Applies to all days</div>
+                                <div className="text-xs text-blue-500 mt-1">Applies to all days</div>
                               ) : (
                                 date?.description && (
-                                  <div className="text-xs text-gray-500 mt-1">{date.description}</div>
+                                  <div className="text-xs text-blue-500 mt-1">{date.description}</div>
                                 )
                               )}
                             </div>
                             <div>
                               <span className="font-medium">Shift Type:</span>{' '}
-                              <span className="text-gray-900">{preference.shift_type}</span>
+                              <span className="text-blue-900">{preference.shift_type}</span>
                               {shiftType?.description && (
-                                <div className="text-xs text-gray-500 mt-1">{shiftType.description}</div>
+                                <div className="text-xs text-blue-500 mt-1">{shiftType.description}</div>
                               )}
                             </div>
                             <div>
                               <span className="font-medium">Weight:</span>{' '}
-                              <span className={`font-medium ${preference.weight > 0 ? 'text-green-600' : preference.weight < 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                              <span className={`font-medium ${preference.weight > 0 ? 'text-green-600' : preference.weight < 0 ? 'text-red-600' : 'text-blue-900'}`}>
                                 {preference.weight > 0 ? '+' : ''}{preference.weight}
                               </span>
-                              <div className="text-xs text-gray-500 mt-1">
+                              <div className="text-xs text-blue-500 mt-1">
                                 {preference.weight > 0 ? 'Wants this shift' : preference.weight < 0 ? 'Wants to avoid' : 'Neutral'}
                               </div>
                             </div>
@@ -474,6 +475,68 @@ export default function ShiftRequestsPage() {
                         <div className="flex justify-end space-x-2 ml-4">
                           <button
                             onClick={() => openEditor(preference.person, preference.date)}
+                            className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
+                          >
+                            <FiEdit2 className="h-4 w-4" />
+                            Edit
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Current People History */}
+          <div className="mt-6 bg-blue-50 shadow-md rounded-lg overflow-hidden border border-blue-200">
+            <div className="px-6 py-4 border-b border-blue-200 bg-blue-100">
+              <h3 className="text-lg font-semibold text-blue-800">Current People History</h3>
+              <p className="text-sm text-blue-600 mt-1">Auto-computed from the history matrix above</p>
+            </div>
+
+            {peopleData.items.every(person => person.history!.length === 0) ? (
+              <div className="px-6 py-8 text-center text-blue-500">
+                No history entries defined yet. Click on any history cell in the matrix above to add entries.
+              </div>
+            ) : (
+              <div className="divide-y divide-blue-200">
+                {peopleData.items.map((person) => {
+                  if (!person.history || person.history.length === 0) return null;
+                  
+                  return (
+                    <div key={person.id} className="px-6 py-5 bg-blue-50">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="mb-3">
+                            <div className="text-sm font-medium text-blue-800">
+                              Person: <span className="text-blue-900">{person.id}</span>
+                            </div>
+                            {person.description && (
+                              <div className="text-xs text-blue-500 mt-1">{person.description}</div>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-x-6 gap-y-3">
+                            {person.history.map((shiftTypeId, index) => {
+                              const shiftType = getAllShiftTypes().find(st => st.id === shiftTypeId);
+                              const historyPosition = person.history!.length - index;
+                              
+                              return (
+                                <div key={index} className="text-sm text-blue-600">
+                                  <span className="font-medium">H-{historyPosition}:</span>{' '}
+                                  <span className="text-blue-900">{shiftTypeId}</span>
+                                  {shiftType?.description && (
+                                    <div className="text-xs text-blue-500 mt-1">{shiftType.description}</div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="flex justify-end space-x-2 ml-4">
+                          <button
+                            onClick={() => openHistoryEditor(person.id, historyColumnsCount - person.history!.length)}
                             className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
                           >
                             <FiEdit2 className="h-4 w-4" />
