@@ -5,6 +5,7 @@ interface RemovableTagProps {
   onRemove: () => void;
   variant?: 'blue' | 'gray';
   className?: string;
+  readOnly?: boolean;
 }
 
 export function RemovableTag({
@@ -12,7 +13,8 @@ export function RemovableTag({
   description,
   onRemove,
   variant = 'blue',
-  className = ''
+  className = '',
+  readOnly = false
 }: RemovableTagProps) {
   const baseClasses = "inline-flex items-center text-xs px-2 py-1 rounded cursor-default";
   const variantClasses = variant === 'blue'
@@ -27,13 +29,15 @@ export function RemovableTag({
       className={`${baseClasses} ${variantClasses} ${className}`}
       title={description}
     >
-      <button
-        onClick={onRemove}
-        className={buttonClasses}
-        title={`Remove "${id}"`}
-      >
-        ×
-      </button>
+      {!readOnly && (
+        <button
+          onClick={onRemove}
+          className={buttonClasses}
+          title={`Remove "${id}"`}
+        >
+          ×
+        </button>
+      )}
       {id}
     </span>
   );

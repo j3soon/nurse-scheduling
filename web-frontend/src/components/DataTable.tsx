@@ -13,9 +13,10 @@ interface DataTableProps<T> {
   columns: Column<T>[];
   data: T[];
   onReorder?: (newData: T[]) => void;
+  getRowClassName?: (item: T, index: number) => string;
 }
 
-export function DataTable<T>({ title, columns, data, onReorder }: DataTableProps<T>) {
+export function DataTable<T>({ title, columns, data, onReorder, getRowClassName }: DataTableProps<T>) {
   const handleDragStart = (e: React.DragEvent<HTMLTableRowElement>, index: number) => {
     e.dataTransfer.setData('text/plain', index.toString());
     e.currentTarget.classList.add('opacity-50');
@@ -72,17 +73,20 @@ export function DataTable<T>({ title, columns, data, onReorder }: DataTableProps
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {data.map((item, rowIndex) => (
-            <tr
-              key={rowIndex}
-              draggable={!!onReorder}
-              onDragStart={(e) => handleDragStart(e, rowIndex)}
-              onDragEnd={handleDragEnd}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={(e) => handleDrop(e, rowIndex)}
-              className={`${onReorder ? 'cursor-move hover:bg-gray-50' : ''}`}
-            >
+          {data.map((item, rowIndex) => {
+            const customClassName = getRowClassName ? getRowClassName(item, rowIndex) : '';
+            const isDraggable = !!onReorder && !customClassName.includes('non-draggable');
+            return (
+              <tr
+                key={rowIndex}
+                draggable={isDraggable}
+                onDragStart={isDraggable ? (e) => handleDragStart(e, rowIndex) : undefined}
+                onDragEnd={isDraggable ? handleDragEnd : undefined}
+                onDragOver={isDraggable ? handleDragOver : undefined}
+                onDragLeave={isDraggable ? handleDragLeave : undefined}
+                onDrop={isDraggable ? (e) => handleDrop(e, rowIndex) : undefined}
+                className={`${isDraggable ? 'cursor-move hover:bg-gray-50' : ''} ${customClassName}`}
+              >
               {columns.map((column, colIndex) => (
                 <td
                   key={colIndex}
@@ -95,9 +99,10 @@ export function DataTable<T>({ title, columns, data, onReorder }: DataTableProps
                     : String(item[column.accessor])}
                 </td>
               ))}
-            </tr>
-          ))}
-        </tbody>
+                </tr>
+              );
+            })}
+          </tbody>
       </table>
     </div>
   );
