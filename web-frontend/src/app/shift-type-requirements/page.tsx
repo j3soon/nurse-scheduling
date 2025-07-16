@@ -137,9 +137,9 @@ export default function ShiftTypeRequirementsPage() {
       description: formData.description,
       shift_type: formData.shift_type,
       required_num_people: formData.required_num_people,
-      qualified_people: formData.qualified_people,
+      qualified_people: formData.qualified_people.length > 0 ? formData.qualified_people : ['All'],
       preferred_num_people: formData.preferred_num_people,
-      date: formData.date,
+      date: formData.date.length > 0 ? formData.date : ['All'],
       weight: formData.weight as number
     };
 
