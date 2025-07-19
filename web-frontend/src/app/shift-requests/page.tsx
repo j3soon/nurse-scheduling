@@ -7,7 +7,8 @@ import { FiHelpCircle, FiEdit2 } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST_PREFERENCE } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
-import { getWeightDisplayLabel } from '@/utils/numberParsing';
+import ToggleButton from '@/components/ToggleButton';
+import { getWeightDisplayLabel, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
 export default function ShiftRequestsPage() {
@@ -23,6 +24,14 @@ export default function ShiftRequestsPage() {
   } = useSchedulingData();
 
   const [showInstructions, setShowInstructions] = useState(false);
+  const [isAddMode, setIsAddMode] = useState(false);
+  const [addFormData, setAddFormData] = useState<{
+    shiftType: string;
+    weight: number;
+  }>({
+    shiftType: '',
+    weight: 0,
+  });
   const [editorState, setEditorState] = useState<{
     isOpen: boolean;
     personId: string;
@@ -42,6 +51,23 @@ export default function ShiftRequestsPage() {
     personId: '',
     historyIndex: -1,
   });
+
+  const resetForm = () => {
+    setAddFormData({
+      shiftType: '',
+      weight: 0,
+    });
+  };
+
+  const handleStartAdd = () => {
+    resetForm();
+    setIsAddMode(true);
+  };
+
+  const handleCancel = () => {
+    setIsAddMode(false);
+    resetForm();
+  };
 
   // Compute the history columns count (max history length + 1)
   const historyColumnsCount = Math.max(
@@ -151,6 +177,52 @@ export default function ShiftRequestsPage() {
     updateShiftPreferences(editorState.personId, editorState.dateId, preferences);
   };
 
+  const handleCellClick = (personId: string, dateId: string) => {
+    if (isAddMode) {
+      // In add mode, update the preferences with the form data
+      // If no shift type is selected, clear all preferences for this person-date combination
+      if (!addFormData.shiftType) {
+        updateShiftPreferences(personId, dateId, []);
+        return;
+      }
+
+      // Get current preferences for this person-date combination
+      const currentPreferences = getShiftPreferences(personId, dateId);
+
+      // Convert to the format expected by updateShiftPreferences
+      const updatedPreferences = currentPreferences.map(pref => ({
+        shiftTypeId: pref.shift_type,
+        weight: pref.weight
+      }));
+
+      // Check if there's already a preference for this shift type
+      const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === addFormData.shiftType);
+
+      if (existingIndex >= 0) {
+        // Update existing preference
+        if (addFormData.weight === 0) {
+          // Remove preference if weight is 0
+          updatedPreferences.splice(existingIndex, 1);
+        } else {
+          updatedPreferences[existingIndex].weight = addFormData.weight;
+        }
+      } else {
+        // Add new preference (only if weight is not 0)
+        if (addFormData.weight !== 0) {
+          updatedPreferences.push({
+            shiftTypeId: addFormData.shiftType,
+            weight: addFormData.weight
+          });
+        }
+      }
+      // Apply the changes
+      updateShiftPreferences(personId, dateId, updatedPreferences);
+    } else {
+      // Normal mode, open the editor
+      openEditor(personId, dateId);
+    }
+  };
+
   const getHistoryValue = (history: string[], columnIndex: number): string => {
     const offset = historyColumnsCount - history.length;  // Note that we always have one extra column for the history
     if (columnIndex < offset) return '';
@@ -199,6 +271,46 @@ export default function ShiftRequestsPage() {
     closeHistoryEditor();
   };
 
+  const handleHistoryCellClick = (personId: string, historyIndex: number) => {
+    if (isAddMode) {
+      // In add mode, directly update the history cell
+      const person = peopleData.items.find(p => p.id === personId);
+      if (!person) {
+        console.error(`Person ${personId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
+        return;
+      }
+
+      const currentHistory = person.history!;
+      const offset = historyColumnsCount - currentHistory.length;
+
+      // If no shift type is selected (Clear mode), clear the history position
+      if (!addFormData.shiftType) {
+        // If targeting a position after the actual history (empty history cells on the left)
+        if (historyIndex >= offset) {
+          const position = historyIndex - offset;
+          updatePersonHistory(personId, position);
+        }
+      } else {
+        if (!shiftTypeData.items.find(st => st.id === addFormData.shiftType)) {
+          // Cannot set history to a shift type group.
+          console.warn(`Cannot set history to a shift type group.`);
+          return;
+        }
+        if (historyIndex < offset) {
+          // If targeting a position before the actual history, add a new history entry
+          addPersonHistory(personId, addFormData.shiftType);
+        } else {
+          // If targeting a position after the actual history, update the history entry
+          const position = historyIndex - offset;
+          updatePersonHistory(personId, position, addFormData.shiftType);
+        }
+      }
+    } else {
+      // Normal mode, open the editor
+      openHistoryEditor(personId, historyIndex);
+    }
+  };
+
   // Instructions for the help component
   const instructions = [
     "This table shows shift preferences for each person on each date",
@@ -207,6 +319,7 @@ export default function ShiftRequestsPage() {
     "Each row represents a person, followed by their history, then date columns",
     "The 'All Days' column allows you to set preferences that apply to all days for each person",
     "Click on any cell to set shift preferences with weights for different shift types",
+    "When 'Add Preference' mode is active, clicking cells will update the preference with the form data",
     "Green cells indicate positive preferences (wants this shift type)",
     "Red cells indicate negative preferences (wants to avoid this shift type)",
     "Yellow cells indicate a mix of positive and negative preferences",
@@ -233,6 +346,19 @@ export default function ShiftRequestsPage() {
               <FiHelpCircle className="h-6 w-6" />
             </button>
           )}
+        </div>
+        <div className="flex gap-4">
+          <ToggleButton
+            label="Add Preference"
+            isToggled={isAddMode}
+            onToggle={() => {
+              if (isAddMode) {
+                handleCancel();
+              } else {
+                handleStartAdd();
+              }
+            }}
+          />
         </div>
       </div>
 
@@ -276,6 +402,79 @@ export default function ShiftRequestsPage() {
                 tab.
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {hasRequiredData && isAddMode && (
+        <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
+          <div className="px-6 py-4">
+            <h2 className="text-lg font-semibold mb-4 text-gray-800">
+              Add Shift Preference
+            </h2>
+
+            <div className="space-y-6">
+              {/* Shift Type Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Shift Type
+                </label>
+                <div className="flex flex-wrap">
+                  {/* Clear selection option */}
+                  <label
+                    className="inline-flex items-center px-1 py-1"
+                    title="Clear selection - clicking cells will clear all preferences"
+                  >
+                    <input
+                      type="radio"
+                      name="shiftType"
+                      value=""
+                      checked={addFormData.shiftType === ''}
+                      onChange={(e) => setAddFormData(prev => ({ ...prev, shiftType: e.target.value }))}
+                      className="form-checkbox h-4 w-4 text-blue-600"
+                    />
+                    <span className="ml-2 text-sm text-gray-700 italic">
+                      Clear
+                    </span>
+                  </label>
+                  {getAllShiftTypes().map((shiftType) => (
+                    <label
+                      key={shiftType.id}
+                      className="inline-flex items-center px-1 py-1"
+                      title={shiftType.description}
+                    >
+                      <input
+                        type="radio"
+                        name="shiftType"
+                        value={shiftType.id}
+                        checked={addFormData.shiftType === shiftType.id}
+                        onChange={(e) => setAddFormData(prev => ({ ...prev, shiftType: e.target.value }))}
+                        className="form-checkbox h-4 w-4 text-blue-600"
+                      />
+                      <span className="ml-2 text-sm text-gray-700">
+                        {shiftType.id}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Weight Input */}
+              <div>
+                <label htmlFor="weight" className="block text-sm font-medium text-gray-700 mb-2">
+                  Weight (priority)
+                </label>
+                <input
+                  type="number"
+                  id="weight"
+                  value={addFormData.weight}
+                  // Note that the isNaN check is necessary, since a simple parseInt(e.target.value) will return 0 if the value is exactly 0.
+                  onChange={(e) => setAddFormData(prev => ({ ...prev, weight: isNaN(parseInt(e.target.value)) ? addFormData.weight : parseInt(e.target.value) }))}
+                  className="block w-full px-4 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:border-blue-500 focus:ring-blue-200 placeholder-gray-400 focus:outline-none focus:ring-2 hover:border-gray-400"
+                  placeholder="Enter weight (positive for preference, negative for avoidance)"
+                />
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -351,8 +550,10 @@ export default function ShiftRequestsPage() {
                                 ? 'bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors duration-150'
                                 : 'bg-gray-50'
                             }`}
-                            onClick={() => isClickable && openHistoryEditor(person.id, index)}
-                            title={isClickable ? `Click to edit history position H-${historyColumnsCount - index}` : ''}
+                            onClick={() => isClickable && handleHistoryCellClick(person.id, index)}
+                            title={isClickable ? (isAddMode
+                              ? `Click to set history position H-${historyColumnsCount - index} to ${addFormData.shiftType || 'clear'}`
+                              : `Click to edit history position H-${historyColumnsCount - index}`) : ''}
                           >
                             <div className={`text-sm font-medium ${isClickable ? 'text-gray-900' : 'text-gray-300'}`}>
                               {!isClickable ? '' : (historyValue || '—')}
@@ -369,7 +570,7 @@ export default function ShiftRequestsPage() {
                             className={`px-1 py-1 text-center cursor-pointer hover:bg-gray-50 transition-colors duration-150 ${
                               dateEntry.id === '' ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200' : ''
                             }`}
-                            onClick={() => openEditor(person.id, dateEntry.id)}
+                            onClick={() => handleCellClick(person.id, dateEntry.id)}
                           >
                             <div
                               className={`min-w-16 w-auto h-12 mx-auto rounded-lg border-2 transition-all duration-200 flex flex-col items-center justify-center gap-0 shadow-sm hover:shadow-md ${
@@ -377,7 +578,7 @@ export default function ShiftRequestsPage() {
                                   ? `${display.color} ${display.textColor} hover:scale-105`
                                   : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
                               }`}
-                              title={dateEntry.id === '' ? `Click to edit all-days preferences for ${person.id}` : `Click to edit preferences for ${person.id} on date ${dateEntry.id}`}
+                              title={dateEntry.id === '' ? `Click to update all-days preferences for ${person.id}` : `Click to update preferences for ${person.id} on date ${dateEntry.id}`}
                             >
                               {display && (() => {
                                 const maxVisible = display.preferences.length <= 3 ? 3 : 2; // Show all if 3 or fewer, otherwise show 2
