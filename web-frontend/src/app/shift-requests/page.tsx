@@ -1,7 +1,7 @@
 // The shift requests management page for Tab "5. Shift Requests"
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiEdit2 } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
@@ -51,6 +51,29 @@ export default function ShiftRequestsPage() {
     personId: '',
     historyIndex: -1,
   });
+
+  enum SelectedCellType {
+    PREFERENCE,
+    HISTORY,
+  }
+
+  const isMultiSelectDragRef = useRef(false);
+
+  // Add event listener for mouse up outside the component to end drag selection
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      // End multi-select drag
+      isMultiSelectDragRef.current = false;
+      document.body.style.userSelect = '';
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    // Cleanup event listener
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      document.body.style.userSelect = '';
+    };
+  }, []);
 
   const resetForm = () => {
     setAddFormData({
@@ -177,7 +200,35 @@ export default function ShiftRequestsPage() {
     updateShiftPreferences(editorState.personId, editorState.dateId, preferences);
   };
 
-  const handleCellClick = (personId: string, dateId: string) => {
+  const handleCellMouseEnter = (selectedCellType: SelectedCellType, personId: string, identifier: string | number) => {
+    if (isAddMode && isMultiSelectDragRef.current) {
+      if (selectedCellType === SelectedCellType.PREFERENCE) {
+        _handleCellSet(personId, identifier as string);
+      } else if (selectedCellType === SelectedCellType.HISTORY) {
+        handleHistoryCellClickInternal(personId, identifier as number);
+      }
+    }
+  };
+
+  const handleCellMouseDown = (selectedCellType: SelectedCellType, personId: string, identifier: string | number) => {
+    isMultiSelectDragRef.current = true;
+    if (isAddMode) {
+      if (selectedCellType === SelectedCellType.PREFERENCE) {
+        _handleCellSet(personId, identifier as string);
+      } else if (selectedCellType === SelectedCellType.HISTORY) {
+        handleHistoryCellClickInternal(personId, identifier as number);
+      }
+    }
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleCellMouseUp = () => {
+    // End multi-select drag
+    isMultiSelectDragRef.current = false;
+    document.body.style.userSelect = '';
+  };
+
+  const _handleCellSet = (personId: string, dateId: string) => {
     if (isAddMode) {
       // In add mode, update the preferences with the form data
       // If no shift type is selected, clear all preferences for this person-date combination
@@ -217,9 +268,51 @@ export default function ShiftRequestsPage() {
       }
       // Apply the changes
       updateShiftPreferences(personId, dateId, updatedPreferences);
+    }
+  };
+
+  const handleCellClick = (personId: string, dateId: string) => {
+    if (isAddMode) {
+      _handleCellSet(personId, dateId);
     } else {
-      // Normal mode, open the editor
       openEditor(personId, dateId);
+    }
+  };
+
+  const handleHistoryCellClickInternal = (personId: string, historyIndex: number) => {
+    if (isAddMode) {
+      // In add mode, directly update the history cell
+      const person = peopleData.items.find(p => p.id === personId);
+      if (!person) {
+        console.error(`Person ${personId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
+        return;
+      }
+
+      const currentHistory = person.history!;
+      const offset = historyColumnsCount - currentHistory.length;
+
+      // If no shift type is selected (Clear mode), clear the history position
+      if (!addFormData.shiftType) {
+        // If targeting a position after the actual history (empty history cells on the left)
+        if (historyIndex >= offset) {
+          const position = historyIndex - offset;
+          updatePersonHistory(personId, position);
+        }
+      } else {
+        if (!shiftTypeData.items.find(st => st.id === addFormData.shiftType)) {
+          // Cannot set history to a shift type group.
+          console.warn(`Cannot set history to a shift type group.`);
+          return;
+        }
+        if (historyIndex < offset) {
+          // If targeting a position before the actual history, add a new history entry
+          addPersonHistory(personId, addFormData.shiftType);
+        } else {
+          // If targeting a position after the actual history, update the history entry
+          const position = historyIndex - offset;
+          updatePersonHistory(personId, position, addFormData.shiftType);
+        }
+      }
     }
   };
 
@@ -273,40 +366,8 @@ export default function ShiftRequestsPage() {
 
   const handleHistoryCellClick = (personId: string, historyIndex: number) => {
     if (isAddMode) {
-      // In add mode, directly update the history cell
-      const person = peopleData.items.find(p => p.id === personId);
-      if (!person) {
-        console.error(`Person ${personId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
-        return;
-      }
-
-      const currentHistory = person.history!;
-      const offset = historyColumnsCount - currentHistory.length;
-
-      // If no shift type is selected (Clear mode), clear the history position
-      if (!addFormData.shiftType) {
-        // If targeting a position after the actual history (empty history cells on the left)
-        if (historyIndex >= offset) {
-          const position = historyIndex - offset;
-          updatePersonHistory(personId, position);
-        }
-      } else {
-        if (!shiftTypeData.items.find(st => st.id === addFormData.shiftType)) {
-          // Cannot set history to a shift type group.
-          console.warn(`Cannot set history to a shift type group.`);
-          return;
-        }
-        if (historyIndex < offset) {
-          // If targeting a position before the actual history, add a new history entry
-          addPersonHistory(personId, addFormData.shiftType);
-        } else {
-          // If targeting a position after the actual history, update the history entry
-          const position = historyIndex - offset;
-          updatePersonHistory(personId, position, addFormData.shiftType);
-        }
-      }
+      handleHistoryCellClickInternal(personId, historyIndex);
     } else {
-      // Normal mode, open the editor
       openHistoryEditor(personId, historyIndex);
     }
   };
@@ -319,7 +380,7 @@ export default function ShiftRequestsPage() {
     "Each row represents a person, followed by their history, then date columns",
     "The 'All Days' column allows you to set preferences that apply to all days for each person",
     "Click on any cell to set shift preferences with weights for different shift types",
-    "When 'Add Preference' mode is active, clicking cells will update the preference with the form data",
+    "In 'Quick Add Preference' mode, you can drag across multiple cells to quickly apply the same preference",
     "Green cells indicate positive preferences (wants this shift type)",
     "Red cells indicate negative preferences (wants to avoid this shift type)",
     "Yellow cells indicate a mix of positive and negative preferences",
@@ -349,7 +410,7 @@ export default function ShiftRequestsPage() {
         </div>
         <div className="flex gap-4">
           <ToggleButton
-            label="Add Preference"
+            label="Quick Add Preference"
             isToggled={isAddMode}
             onToggle={() => {
               if (isAddMode) {
@@ -550,9 +611,12 @@ export default function ShiftRequestsPage() {
                                 ? 'bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors duration-150'
                                 : 'bg-gray-50'
                             }`}
-                            onClick={() => isClickable && handleHistoryCellClick(person.id, index)}
+                            onClick={() => isClickable && !isAddMode && handleHistoryCellClick(person.id, index)}
+                            onMouseEnter={() => isClickable && handleCellMouseEnter(SelectedCellType.HISTORY, person.id, index)}
+                            onMouseDown={() => isClickable && handleCellMouseDown(SelectedCellType.HISTORY, person.id, index)}
+                            onMouseUp={() => isClickable && handleCellMouseUp()}
                             title={isClickable ? (isAddMode
-                              ? `Click to set history position H-${historyColumnsCount - index} to ${addFormData.shiftType || 'clear'}`
+                              ? `Click or drag to set history position H-${historyColumnsCount - index} to ${addFormData.shiftType || 'clear'}`
                               : `Click to edit history position H-${historyColumnsCount - index}`) : ''}
                           >
                             <div className={`text-sm font-medium ${isClickable ? 'text-gray-900' : 'text-gray-300'}`}>
@@ -570,7 +634,10 @@ export default function ShiftRequestsPage() {
                             className={`px-1 py-1 text-center cursor-pointer hover:bg-gray-50 transition-colors duration-150 ${
                               dateEntry.id === '' ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200' : ''
                             }`}
-                            onClick={() => handleCellClick(person.id, dateEntry.id)}
+                            onClick={() => !isAddMode && handleCellClick(person.id, dateEntry.id)}
+                            onMouseEnter={() => handleCellMouseEnter(SelectedCellType.PREFERENCE, person.id, dateEntry.id)}
+                            onMouseDown={() => handleCellMouseDown(SelectedCellType.PREFERENCE, person.id, dateEntry.id)}
+                            onMouseUp={() => handleCellMouseUp()}
                           >
                             <div
                               className={`min-w-16 w-auto h-12 mx-auto rounded-lg border-2 transition-all duration-200 flex flex-col items-center justify-center gap-0 shadow-sm hover:shadow-md ${
@@ -578,7 +645,13 @@ export default function ShiftRequestsPage() {
                                   ? `${display.color} ${display.textColor} hover:scale-105`
                                   : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
                               }`}
-                              title={dateEntry.id === '' ? `Click to update all-days preferences for ${person.id}` : `Click to update preferences for ${person.id} on date ${dateEntry.id}`}
+                              title={dateEntry.id === ''
+                                ? (isAddMode
+                                  ? `Click or drag to update all-days preferences for ${person.id}`
+                                  : `Click to update all-days preferences for ${person.id}`)
+                                : (isAddMode
+                                  ? `Click or drag to update preferences for ${person.id} on date ${dateEntry.id}`
+                                  : `Click to update preferences for ${person.id} on date ${dateEntry.id}`)}
                             >
                               {display && (() => {
                                 const maxVisible = display.preferences.length <= 3 ? 3 : 2; // Show all if 3 or fewer, otherwise show 2
