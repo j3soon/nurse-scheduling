@@ -37,6 +37,7 @@ export enum DataType {
 
 export const SHIFT_TYPE_REQUIREMENT = 'shift_type_requirement';
 export const SHIFT_REQUEST_PREFERENCE = 'shift_request_preference';
+export const SHIFT_TYPE_SUCCESSIONS_PREFERENCE = 'shift_type_successions_preference';
 
 export interface BasePreference {
   type: string;
@@ -60,5 +61,13 @@ export interface ShiftRequestPreference extends BasePreference {
   person: string;
   date: string;
   shift_type: string;
+  weight: number;
+}
+
+export interface ShiftTypeSuccessionsPreference extends BasePreference {
+  type: typeof SHIFT_TYPE_SUCCESSIONS_PREFERENCE;
+  description?: string;
+  person: string[];
+  pattern: string[];  // List of shift type IDs that are in succession
   weight: number;
 }
