@@ -38,6 +38,10 @@ export enum DataType {
 export const SHIFT_TYPE_REQUIREMENT = 'shift_type_requirement';
 export const SHIFT_REQUEST_PREFERENCE = 'shift_request_preference';
 export const SHIFT_TYPE_SUCCESSIONS_PREFERENCE = 'shift_type_successions_preference';
+export const SHIFT_COUNT_PREFERENCE = 'shift_count_preference';
+
+export const SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T'] as const;
+export const SUPPORTED_SPECIAL_TARGETS = ['floor(AVG_SHIFTS_PER_PERSON)', 'ceil(AVG_SHIFTS_PER_PERSON)', 'round(AVG_SHIFTS_PER_PERSON)'] as const;
 
 export interface BasePreference {
   type: string;
@@ -69,5 +73,16 @@ export interface ShiftTypeSuccessionsPreference extends BasePreference {
   description?: string;
   person: string[];
   pattern: string[];  // List of shift type IDs that are in succession
+  weight: number;
+}
+
+export interface ShiftCountPreference extends BasePreference {
+  type: typeof SHIFT_COUNT_PREFERENCE;
+  description?: string;
+  person: string[];
+  count_dates: string[];
+  count_shift_types: string[];
+  expression: typeof SUPPORTED_EXPRESSIONS[number];
+  target: number | typeof SUPPORTED_SPECIAL_TARGETS[number];
   weight: number;
 }
