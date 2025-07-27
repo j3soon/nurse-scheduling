@@ -38,7 +38,7 @@ export function getWeightWithPositivePrefix(weight: number | string): string {
 }
 
 export function getWeightDisplayLabel(weight: number | string): string {
-  if (weight === Infinity) return '∞';
+  if (weight === Infinity) return '+∞';
   if (weight === -Infinity) return '-∞';
   return getWeightWithPositivePrefix(weight);
 }

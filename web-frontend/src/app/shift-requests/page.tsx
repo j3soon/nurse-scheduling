@@ -3,12 +3,12 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiEdit2 } from 'react-icons/fi';
+import { FiHelpCircle, FiEdit2, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST_PREFERENCE } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
-import { getWeightDisplayLabel, getWeightWithPositivePrefix } from '@/utils/numberParsing';
+import { getWeightDisplayLabel, parseWeightValue, isValidWeightValue } from '@/utils/numberParsing';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 
 export default function ShiftRequestsPage() {
@@ -27,11 +27,12 @@ export default function ShiftRequestsPage() {
   const [isAddMode, setIsAddMode] = useState(false);
   const [addFormData, setAddFormData] = useState<{
     shiftType: string;
-    weight: number;
+    weight: number | string;
   }>({
     shiftType: '',
     weight: 0,
   });
+  const [errors, setErrors] = useState<{[key: string]: string}>({});
   const [editorState, setEditorState] = useState<{
     isOpen: boolean;
     personId: string;
@@ -80,6 +81,7 @@ export default function ShiftRequestsPage() {
       shiftType: '',
       weight: 0,
     });
+    setErrors({});
   };
 
   const handleStartAdd = () => {
@@ -90,6 +92,17 @@ export default function ShiftRequestsPage() {
   const handleCancel = () => {
     setIsAddMode(false);
     resetForm();
+  };
+
+  const validateWeight = (): boolean => {
+    const newErrors: {[key: string]: string} = {};
+
+    if (!isValidWeightValue(addFormData.weight)) {
+      newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
   };
 
   // Compute the history columns count (max history length + 1)
@@ -237,6 +250,11 @@ export default function ShiftRequestsPage() {
         return;
       }
 
+      // Validate weight before proceeding
+      if (!validateWeight()) {
+        return;
+      }
+
       // Get current preferences for this person-date combination
       const currentPreferences = getShiftPreferences(personId, dateId);
 
@@ -249,20 +267,23 @@ export default function ShiftRequestsPage() {
       // Check if there's already a preference for this shift type
       const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === addFormData.shiftType);
 
+      // Use the parseWeightValue helper to consistently parse the weight
+      const weightValue = addFormData.weight as number; // We know it's valid from validateWeight()
+
       if (existingIndex >= 0) {
         // Update existing preference
-        if (addFormData.weight === 0) {
+        if (weightValue === 0) {
           // Remove preference if weight is 0
           updatedPreferences.splice(existingIndex, 1);
         } else {
-          updatedPreferences[existingIndex].weight = addFormData.weight;
+          updatedPreferences[existingIndex].weight = weightValue;
         }
       } else {
         // Add new preference (only if weight is not 0)
-        if (addFormData.weight !== 0) {
+        if (weightValue !== 0) {
           updatedPreferences.push({
             shiftTypeId: addFormData.shiftType,
-            weight: addFormData.weight
+            weight: weightValue
           });
         }
       }
@@ -526,14 +547,32 @@ export default function ShiftRequestsPage() {
                   Weight (priority)
                 </label>
                 <input
-                  type="number"
+                  type="text"
                   id="weight"
                   value={addFormData.weight}
-                  // Note that the isNaN check is necessary, since a simple parseInt(e.target.value) will return 0 if the value is exactly 0.
-                  onChange={(e) => setAddFormData(prev => ({ ...prev, weight: isNaN(parseInt(e.target.value)) ? addFormData.weight : parseInt(e.target.value) }))}
-                  className="block w-full px-4 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:border-blue-500 focus:ring-blue-200 placeholder-gray-400 focus:outline-none focus:ring-2 hover:border-gray-400"
-                  placeholder="Enter weight (positive for preference, negative for avoidance)"
+                  onChange={(e) => {
+                    setAddFormData(prev => ({
+                      ...prev,
+                      weight: parseWeightValue(e.target.value)
+                    }));
+                    // Clear error when user starts typing
+                    if (errors.weight) {
+                      setErrors(prev => ({ ...prev, weight: '' }));
+                    }
+                  }}
+                  className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 placeholder-gray-400 hover:border-gray-400 ${
+                    errors.weight
+                      ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
+                      : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
+                  }`}
+                  placeholder="Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)"
                 />
+                {errors.weight && (
+                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {errors.weight}
+                  </p>
+                )}
               </div>
             </div>
           </div>
