@@ -10,9 +10,9 @@ interface RemovableTagProps {
   draggable?: boolean;
   index?: number;
   onDragStart?: (index: number) => void;
-  onDragOver?: (index: number) => void;
+  onDragOver?: (index: number, e?: React.DragEvent) => void;
   onDragLeave?: () => void;
-  onDrop?: (index: number) => void;
+  onDrop?: (index: number, e?: React.DragEvent) => void;
   onDragEnd?: () => void;
   isDragging?: boolean;
   isDragOver?: boolean;
@@ -61,14 +61,14 @@ export function RemovableTag({
     if (onDragOver) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      onDragOver(index);
+      onDragOver(index, e);
     }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     if (onDrop) {
       e.preventDefault();
-      onDrop(index);
+      onDrop(index, e);
     }
   };
 
@@ -86,7 +86,7 @@ export function RemovableTag({
       {!readOnly && (
         <button
           onClick={onRemove}
-          className="flex items-center justify-center w-5 h-full text-blue-600 hover:text-red-600 hover:bg-red-100 rounded-l transition-colors"
+          className="flex items-center justify-center w-5 py-1 text-blue-600 hover:text-red-600 hover:bg-red-100 rounded-l transition-colors"
           title={`Remove "${id}"`}
         >
           ×

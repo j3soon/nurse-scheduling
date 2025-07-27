@@ -37,7 +37,7 @@ export default function ShiftTypeSuccessionsPage() {
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [dragOverGap, setDragOverGap] = useState<number | null>(null);
 
   const instructions = [
     "Define shift type succession preferences (e.g., \"Forbid Evening -> Day succession\")",
@@ -168,25 +168,58 @@ export default function ShiftTypeSuccessionsPage() {
     setDraggedIndex(index);
   };
 
-  const handleDragOver = (index: number) => {
-    setDragOverIndex(index);
+  const handleDragOverGap = (gapIndex: number) => {
+    setDragOverGap(gapIndex);
+  };
+
+  const handleDragOverElement = (index: number, e: React.DragEvent) => {
+    // Determine which gap to highlight based on mouse position within the element
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX;
+    const elementCenter = rect.left + rect.width / 2;
+
+    // If mouse is in left half, highlight gap before element (index)
+    // If mouse is in right half, highlight gap after element (index + 1)
+    const gapIndex = mouseX < elementCenter ? index : index + 1;
+    setDragOverGap(gapIndex);
   };
 
   const handleDragLeave = () => {
-    setDragOverIndex(null);
+    setDragOverGap(null);
   };
 
-  const handleDrop = (dropIndex: number) => {
-    if (draggedIndex !== null && draggedIndex !== dropIndex) {
-      movePatternItem(draggedIndex, dropIndex);
+  const handleDropOnGap = (gapIndex: number) => {
+    if (draggedIndex !== null) {
+      // Convert gap index to target position
+      // Gap 0 = insert at position 0, Gap 1 = insert at position 1, etc.
+      let targetIndex = gapIndex;
+
+      // If we're moving an item from before the target gap, we need to adjust
+      if (draggedIndex < gapIndex) {
+        targetIndex = gapIndex - 1;
+      }
+
+      if (draggedIndex !== targetIndex) {
+        movePatternItem(draggedIndex, targetIndex);
+      }
     }
     setDraggedIndex(null);
-    setDragOverIndex(null);
+    setDragOverGap(null);
+  };
+
+  const handleDropOnElement = (index: number, e: React.DragEvent) => {
+    // Determine which gap to drop into based on mouse position
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX;
+    const elementCenter = rect.left + rect.width / 2;
+
+    const gapIndex = mouseX < elementCenter ? index : index + 1;
+    handleDropOnGap(gapIndex);
   };
 
   const handleDragEnd = () => {
     setDraggedIndex(null);
-    setDragOverIndex(null);
+    setDragOverGap(null);
   };
 
   return (
@@ -329,26 +362,63 @@ export default function ShiftTypeSuccessionsPage() {
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Pattern Order: (drag to reorder)
                         </label>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap items-center">
+                          {/* Gap before first element */}
+                          <div
+                            className="w-3 h-8 flex justify-center items-center"
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              handleDragOverGap(0);
+                            }}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              handleDropOnGap(0);
+                            }}
+                          >
+                            {dragOverGap === 0 && (
+                              <div className="w-0.5 h-6 bg-blue-600"></div>
+                            )}
+                          </div>
+
                           {formData.pattern.map((shiftTypeId, index) => {
                             const shiftType = [...shiftTypeData.items, ...shiftTypeData.groups]
                               .find(item => item.id === shiftTypeId);
                             return (
-                              <RemovableTag
-                                key={`${shiftTypeId}-${index}`}
-                                id={shiftTypeId}
-                                description={shiftType?.description}
-                                onRemove={() => removeFromPattern(index)}
-                                draggable={true}
-                                index={index}
-                                onDragStart={handleDragStart}
-                                onDragOver={handleDragOver}
-                                onDragLeave={handleDragLeave}
-                                onDrop={handleDrop}
-                                onDragEnd={handleDragEnd}
-                                isDragging={draggedIndex === index}
-                                isDragOver={dragOverIndex === index}
-                              />
+                              <div key={`${shiftTypeId}-${index}`} className="flex items-center">
+                                <RemovableTag
+                                  id={shiftTypeId}
+                                  description={shiftType?.description}
+                                  onRemove={() => removeFromPattern(index)}
+                                  draggable={true}
+                                  index={index}
+                                  onDragStart={handleDragStart}
+                                  onDragOver={(elementIndex, e) => e && handleDragOverElement(elementIndex, e)}
+                                  onDragLeave={handleDragLeave}
+                                  onDrop={(elementIndex, e) => e && handleDropOnElement(elementIndex, e)}
+                                  onDragEnd={handleDragEnd}
+                                  isDragging={draggedIndex === index}
+                                  isDragOver={false} // Never highlight the element itself
+                                />
+
+                                {/* Gap after each element */}
+                                <div
+                                  className="w-3 h-8 flex justify-center items-center"
+                                  onDragOver={(e) => {
+                                    e.preventDefault();
+                                    handleDragOverGap(index + 1);
+                                  }}
+                                  onDragLeave={handleDragLeave}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    handleDropOnGap(index + 1);
+                                  }}
+                                >
+                                  {dragOverGap === index + 1 && (
+                                    <div className="w-0.5 h-6 bg-blue-600"></div>
+                                  )}
+                                </div>
+                              </div>
                             );
                           })}
                         </div>
