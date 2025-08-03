@@ -1,0 +1,225 @@
+// The Export and Import page for Tab "8. Export and Import"
+'use client';
+
+import { useState, useRef } from 'react';
+import { FiHelpCircle, FiDownload, FiSave, FiX, FiCopy, FiCheck, FiAlertCircle } from 'react-icons/fi';
+import yaml from 'js-yaml';
+import { useSchedulingData } from '@/hooks/useSchedulingData';
+import ToggleButton from '@/components/ToggleButton';
+
+export default function ExportAndImportPage() {
+  const {
+    dateRange,
+    dateData,
+    peopleData,
+    shiftTypeData,
+    shiftTypeRequirements,
+    shiftRequestPreferences,
+    shiftTypeSuccessions,
+    shiftCounts
+  } = useSchedulingData();
+
+  const [showInstructions, setShowInstructions] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedYaml, setEditedYaml] = useState('');
+  const [yamlError, setYamlError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const instructions = [
+    "View the complete current state of your scheduling setup in YAML format",
+    "Click 'Download' to save the YAML file to your device",
+    "Click 'Copy' to copy the YAML content",
+    "Click 'Edit' to modify the YAML directly and apply changes",
+    "Use this to backup your work or share your scheduling configuration",
+    "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
+  ];
+
+  // Create the current state object for YAML export
+  const currentState = {
+    dateRange,
+    dates: dateData,
+    people: peopleData,
+    shiftTypes: shiftTypeData,
+    shiftTypeRequirements,
+    shiftRequestPreferences,
+    shiftTypeSuccessions,
+    shiftCounts
+  };
+
+  // Convert current state to YAML
+  const currentYaml = yaml.dump(currentState, {
+    indent: 2,
+    lineWidth: 120,
+    noRefs: true
+  });
+
+  const handleDownload = () => {
+    const blob = new Blob([currentYaml], { type: 'application/x-yaml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nurse-scheduling-${new Date().toISOString().split('T')[0]}.yaml`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(currentYaml);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err);
+    }
+  };
+
+  const handleStartEdit = () => {
+    setEditedYaml(currentYaml);
+    setIsEditing(true);
+    setYamlError(null);
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditedYaml('');
+    setYamlError(null);
+  };
+
+  const handleSaveEdit = () => {
+    try {
+      // Validate YAML by parsing it
+      const parsedData = yaml.load(editedYaml);
+
+      // TODO: Validate the parsed data, and update the current state through the useSchedulingData hook
+      console.log('Parsed YAML data:', parsedData);
+      setYamlError('Editing is not implemented yet');
+
+      // Close the editor
+      // setIsEditing(false);
+      // setEditedYaml('');
+      // setYamlError(null);
+    } catch (error) {
+      setYamlError(error instanceof Error ? error.message : 'Invalid YAML format');
+    }
+  };
+
+  return (
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold text-gray-800">Export and Import</h1>
+          {instructions.length > 0 && (
+            <button
+              onClick={() => setShowInstructions(!showInstructions)}
+              className="text-gray-500 hover:text-gray-700 transition-colors"
+              title="Toggle instructions"
+            >
+              <FiHelpCircle className="h-6 w-6" />
+            </button>
+          )}
+        </div>
+        <div className="flex gap-4">
+          <button
+            onClick={handleDownload}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+          >
+            <FiDownload className="h-4 w-4" />
+            Download
+          </button>
+          <button
+            onClick={handleCopyToClipboard}
+            className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
+              copied
+                ? 'bg-green-600 text-white'
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+          >
+            {copied ? <FiCheck className="h-4 w-4" /> : <FiCopy className="h-4 w-4" />}
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+          <ToggleButton
+            label="Edit YAML"
+            isToggled={isEditing}
+            onToggle={() => {
+              if (isEditing) {
+                handleCancelEdit();
+              } else {
+                handleStartEdit();
+              }
+            }}
+          />
+        </div>
+      </div>
+
+      {showInstructions && instructions.length > 0 && (
+        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
+          <ul className="space-y-2 text-sm text-blue-700">
+            {instructions.map((instruction, index) => (
+              <li key={index}>• {instruction}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* YAML Display/Editor */}
+      <div className="bg-white shadow-md rounded-lg overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+          <h3 className="text-lg font-semibold text-gray-800">
+            {isEditing ? 'Edit YAML Configuration' : 'Current State YAML'}
+          </h3>
+          {isEditing && (
+            <div className="flex gap-2">
+              <button
+                onClick={handleCancelEdit}
+                className="px-3 py-1 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1 text-sm"
+              >
+                <FiX className="h-4 w-4" />
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center gap-1 text-sm"
+              >
+                <FiSave className="h-4 w-4" />
+                Save
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="relative">
+          {isEditing ? (
+            <div>
+              <textarea
+                ref={textareaRef}
+                value={editedYaml}
+                onChange={(e) => {
+                  setEditedYaml(e.target.value);
+                  setYamlError(null);
+                }}
+                className="w-full h-96 p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0"
+                placeholder="Enter YAML configuration..."
+              />
+              {yamlError && (
+                <div className="px-4 py-2 bg-red-50 border-t border-red-200 text-red-700 text-sm">
+                  <p className="text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {yamlError}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <pre className="w-full h-96 p-4 font-mono text-sm overflow-auto bg-gray-50 whitespace-pre-wrap">
+              {currentYaml}
+            </pre>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

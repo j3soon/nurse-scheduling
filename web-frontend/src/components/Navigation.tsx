@@ -17,6 +17,7 @@ export default function Navigation() {
     { name: '5. Shift Requests', path: '/shift-requests' },
     { name: '6. Shift Type Successions', path: '/shift-type-successions' },
     { name: '7. Shift Counts', path: '/shift-counts' },
+    { name: '8. Export and Import', path: '/export-and-import' },
   ];
 
   const currentTabIndex = tabs.findIndex(tab => tab.path === pathname);
