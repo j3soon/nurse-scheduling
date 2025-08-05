@@ -20,29 +20,29 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
     ctx = Context(**dict(scenario))
     del scenario
     ctx.n_days = (ctx.dateRange.endDate - ctx.dateRange.startDate).days + 1
-    ctx.n_shift_types = len(ctx.shiftTypes)
-    ctx.n_people = len(ctx.people)
+    ctx.n_shift_types = len(ctx.shiftTypes.items)
+    ctx.n_people = len(ctx.people.items)
     ctx.dates = [ctx.dateRange.startDate + timedelta(days=d) for d in range(ctx.n_days)]
 
     # Map shift type ID to shift type index
     for s in range(ctx.n_shift_types):
-        ctx.map_sid_s[ctx.shiftTypes[s].id] = [s]
+        ctx.map_sid_s[ctx.shiftTypes.items[s].id] = [s]
     # Add shift type ALL and OFF keywords
     ctx.map_sid_s[ALL] = list(range(ctx.n_shift_types))
     ctx.map_sid_s[OFF] = [OFF_sid]
     # Map shift type group ID to list of shift type indices
-    for g in range(len(ctx.shiftTypesGroups)):
-        group = ctx.shiftTypesGroups[g]
+    for g in range(len(ctx.shiftTypes.groups)):
+        group = ctx.shiftTypes.groups[g]
         # Flatten and deduplicate shift type indices for the group
         ctx.map_sid_s[group.id] = list(set().union(*[ctx.map_sid_s[sid] for sid in group.members]))
     # Map person ID to person index
     for p in range(ctx.n_people):
-        ctx.map_pid_p[ctx.people[p].id] = [p]
+        ctx.map_pid_p[ctx.people.items[p].id] = [p]
     # Add people ALL keyword
     ctx.map_pid_p[ALL] = list(range(ctx.n_people))
     # Map people group ID to list of person indices
-    for g in range(len(ctx.peopleGroups)):
-        group = ctx.peopleGroups[g]
+    for g in range(len(ctx.people.groups)):
+        group = ctx.people.groups[g]
         # Flatten and deduplicate person indices for the group
         ctx.map_pid_p[group.id] = list(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
 

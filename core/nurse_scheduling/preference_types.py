@@ -127,13 +127,13 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
             patterns = [parsed_pattern]
             # Consider history data to check for patterns that start at day 0
             # We only need to check day 0 since any pattern that matches history must include it
-            if d_begin == 0 and ctx.people[p].history is not None:
-                history = [utils.parse_sids(sid, ctx.map_sid_s) for sid in ctx.people[p].history]
+            if d_begin == 0 and ctx.people.items[p].history is not None:
+                history = [utils.parse_sids(sid, ctx.map_sid_s) for sid in ctx.people.items[p].history]
                 for i in range(len(history)):
-                    if len(history[i]) != 1 and ctx.people[p].history[i] != utils.OFF:
-                        raise ValueError(f"History must not include nested ID, but got {ctx.people[p].history[i]}")
-                    if ctx.people[p].history[i] == utils.ALL:
-                        raise ValueError(f"History must not include 'ALL', but got {ctx.people[p].history[i]}")
+                    if len(history[i]) != 1 and ctx.people.items[p].history[i] != utils.OFF:
+                        raise ValueError(f"History must not include nested ID, but got {ctx.people.items[p].history[i]}")
+                    if ctx.people.items[p].history[i] == utils.ALL:
+                        raise ValueError(f"History must not include 'ALL', but got {ctx.people.items[p].history[i]}")
                     else:
                         history[i] = history[i][0]
                 # For each pattern, check if its prefix matches the end of shift history

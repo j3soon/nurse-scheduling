@@ -4,23 +4,25 @@ dateRange:
   startDate: 2023-09-02
   endDate: 2023-09-08
 people:
-  - id: 0
-    description: Nurse 0
-  - id: 1
-    description: Nurse 1
-  - id: 2
-    description: Nurse 2
-  - id: 3
-    description: Nurse 3
-  - id: 4
-    description: Nurse 4
+  items:
+    - id: 0
+      description: Nurse 0
+    - id: 1
+      description: Nurse 1
+    - id: 2
+      description: Nurse 2
+    - id: 3
+      description: Nurse 3
+    - id: 4
+      description: Nurse 4
 shiftTypes:
-  - id: D
-    description: Day shift type
-  - id: E
-    description: Evening shift type
-  - id: N
-    description: Night shift type
+  items:
+    - id: D
+      description: Day shift type
+    - id: E
+      description: Evening shift type
+    - id: N
+      description: Night shift type
 preferences:
   - type: at most one shift per day
   - type: shift type requirement

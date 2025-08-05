@@ -5,11 +5,13 @@ dateRange:
   endDate: 2024-12-31
 country: TW
 people:
-  - id: 0
-    description: Nurse 0
+  items:
+    - id: 0
+      description: Nurse 0
 shiftTypes:
-  - id: A
-    description: Charting shift type
+  items:
+    - id: A
+      description: Charting shift type
 preferences:
   - type: at most one shift per day
   - type: shift type requirement

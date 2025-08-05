@@ -4,9 +4,11 @@ dateRange:
   startDate: 2023-08-18
   endDate: 2023-08-18
 people:
-  - id: 0
+  items:
+    - id: 0
 shiftTypes:
-  - id: D
+  items:
+    - id: D
 preferences:
   - type: at most one shift per day
   - type: shift type requirement

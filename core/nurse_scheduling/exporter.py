@@ -10,7 +10,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
     n_trailing_rows, n_trailing_cols = 2, 0
     df = pd.DataFrame(
         "",
-        index=range(n_leading_rows + len(ctx.people) + n_trailing_rows),
+        index=range(n_leading_rows + len(ctx.people.items) + n_trailing_rows),
         columns=range(n_leading_cols + len(ctx.dates) + n_trailing_cols)
     )
 
@@ -28,21 +28,21 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
 
     # Fill person descriptions
     # - column 0 contains person description
-    for p, person in enumerate(ctx.people):
+    for p, person in enumerate(ctx.people.items):
         df.iloc[n_leading_rows+p, 0] = person.description
 
     # Set cell values based on solver results
     for (d, s, p) in ctx.shifts:
         if solver.Value(ctx.shifts[(d, s, p)]) == 1:
             assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
-            df.iloc[n_leading_rows+p, n_leading_cols+d] = ctx.shiftTypes[s].id
+            df.iloc[n_leading_rows+p, n_leading_cols+d] = ctx.shiftTypes.items[s].id
 
     # Fill objective value
-    df.iloc[n_leading_rows + len(ctx.people), 0] = "Score"
-    df.iloc[n_leading_rows + len(ctx.people), 1] = solver.Value(ctx.objective) # or solver.ObjectiveValue()
+    df.iloc[n_leading_rows + len(ctx.people.items), 0] = "Score"
+    df.iloc[n_leading_rows + len(ctx.people.items), 1] = solver.Value(ctx.objective) # or solver.ObjectiveValue()
     # Fill solver status
-    df.iloc[n_leading_rows + len(ctx.people) + 1, 0] = "Status"
-    df.iloc[n_leading_rows + len(ctx.people) + 1, 1] = ctx.solver_status
+    df.iloc[n_leading_rows + len(ctx.people.items) + 1, 0] = "Status"
+    df.iloc[n_leading_rows + len(ctx.people.items) + 1, 1] = ctx.solver_status
 
     # Sanity check with offs variables
     for (d, p) in ctx.offs.keys():

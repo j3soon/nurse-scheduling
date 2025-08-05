@@ -40,6 +40,16 @@ class ShiftTypeGroup(BaseModel):
     description: str | None = None
     members: List[int | str]  # Can reference shift type IDs or other group IDs
 
+class PeopleContainer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: List[Person]
+    groups: List[PeopleGroup] = Field(default_factory=list)
+
+class ShiftTypesContainer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: List[ShiftType]
+    groups: List[ShiftTypeGroup] = Field(default_factory=list)
+
 class BasePreference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: str
@@ -94,8 +104,8 @@ class NurseSchedulingData(BaseModel):
     description: str | None = None
     dateRange: DateRange
     country: str | None = None
-    people: List[Person]
-    shiftTypes: List[ShiftType]
+    people: PeopleContainer
+    shiftTypes: ShiftTypesContainer
     preferences: List[
         MaxOneShiftPerDayPreference |
         ShiftRequestPreference |
@@ -103,8 +113,6 @@ class NurseSchedulingData(BaseModel):
         ShiftTypeRequirementsPreference |
         ShiftCountPreference
     ]
-    peopleGroups: List[PeopleGroup] = Field(default_factory=list)
-    shiftTypesGroups: List[ShiftTypeGroup] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_model(self) -> Self:
@@ -124,28 +132,28 @@ class NurseSchedulingData(BaseModel):
         shift_type_and_group_ids = set()
         person_and_group_ids = set()
         
-        for shift_type in self.shiftTypes:
+        for shift_type in self.shiftTypes.items:
             if shift_type.id in shift_type_and_group_ids:
                 raise ValueError(f"Duplicated shift type ID: {shift_type.id}")
             if str(shift_type.id).upper() in reserved_ids:
                 raise ValueError(f"Shift type ID cannot be one of the reserved values: {reserved_ids}")
             shift_type_and_group_ids.add(shift_type.id)
 
-        for group in self.shiftTypesGroups:
+        for group in self.shiftTypes.groups:
             if group.id in shift_type_and_group_ids:
                 raise ValueError(f"Duplicated shift type group (or shift type) ID: {group.id}")
             if str(group.id).upper() in reserved_ids:
                 raise ValueError(f"Shift type group ID cannot be one of the reserved values: {reserved_ids}")
             shift_type_and_group_ids.add(group.id)
 
-        for person in self.people:
+        for person in self.people.items:
             if person.id in person_and_group_ids:
                 raise ValueError(f"Duplicated person ID: {person.id}")
             if str(person.id).upper() in reserved_ids:
                 raise ValueError(f"Person ID cannot be one of the reserved values: {reserved_ids}")
             person_and_group_ids.add(person.id)
 
-        for group in self.peopleGroups:
+        for group in self.people.groups:
             if group.id in person_and_group_ids:
                 raise ValueError(f"Duplicated people group (or person) ID: {group.id}")
             person_and_group_ids.add(group.id)
