@@ -84,7 +84,8 @@ class ShiftCountPreference(BasePreference):
     person: (int | str) | List[int | str]  # Single person/group ID or list
     countDates: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     countShiftTypes: (str | List[str])  # Single shift type ID or list
-    expression: (Tuple[str, (int | str)] | List[Tuple[str, (int | str)]])  # Single pair of mathematical expression and target value (int or special constant names) to evaluate or list
+    expression: str | List[str]  # Single mathematical expression or list of mathematical expressions
+    target: (int | str) | List[int | str]  # Single target value (int or special constant names) or list of target values
     weight: (int | str) = Field(default=-1)
 
 class NurseSchedulingData(BaseModel):

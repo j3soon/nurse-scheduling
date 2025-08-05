@@ -28,7 +28,8 @@ preferences:
     person: ALL
     countDates: everyday
     countShiftTypes: ALL
-    expression: ['|x - T|^2', round(AVG_SHIFTS_PER_PERSON)]
+    expression: '|x - T|^2'
+    target: round(AVG_SHIFTS_PER_PERSON)
     weight: -1000000
   - type: shift request
     person: 0

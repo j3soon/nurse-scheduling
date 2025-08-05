@@ -187,23 +187,12 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
             shift_types = utils.parse_sids(pref.shiftType, ctx.map_sid_s)
             total_shifts += (pref.preferredNumPeople or pref.requiredNumPeople) * len(shift_types) * ctx.n_days
 
-    if len(preference.expression) == 0:
+    expressions = utils.ensure_list(preference.expression)
+    targets = utils.ensure_list(preference.target)
+    if len(expressions) != len(targets):
+        raise ValueError(f"Number of expressions ({len(expressions)}) must match number of targets ({len(targets)})")
+    if len(expressions) == 0:
         raise ValueError(f"Expression must not be empty")
-    if isinstance(preference.expression, list) and isinstance(preference.expression[0], tuple):
-        # Check each expression has length 2
-        for expr in preference.expression:
-            if len(expr) != 2:
-                raise ValueError(f"Each expression must be a tuple of length 2, but got {expr}")
-        # Is nested expression
-        expressions, targets = zip(*preference.expression)
-    elif isinstance(preference.expression, tuple):
-        # Is single expression
-        if len(preference.expression) != 2:
-            raise ValueError(f"Expression must be a single tuple, but got {preference.expression}")
-        expressions = [preference.expression[0]]
-        targets = [preference.expression[1]]
-    else:
-        raise ValueError(f"Expression must be a list of tuples or a single tuple, but got {type(preference.expression)}")
     weight = preference.weight
     for i in range(len(expressions)):
         expression, target = expressions[i], targets[i]

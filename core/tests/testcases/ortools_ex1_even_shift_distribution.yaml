@@ -28,7 +28,8 @@ preferences:
     person: ALL
     countDates: everyday
     countShiftTypes: ALL
-    expression: [['x >= T', floor(AVG_SHIFTS_PER_PERSON)], ['x <= T', ceil(AVG_SHIFTS_PER_PERSON)]]
+    expression: 'x >= T'
+    target: floor(AVG_SHIFTS_PER_PERSON)
     weight: INF
   - type: shift request
     person: 0

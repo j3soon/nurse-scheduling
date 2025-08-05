@@ -28,7 +28,8 @@ preferences:
     person: ALL
     countDates: everyday
     countShiftTypes: OFF
-    expression: ['x <= T', 1]
+    expression: 'x <= T'
+    target: 1
     weight: INF
   - type: shift request
     person: 0

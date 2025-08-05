@@ -45,5 +45,6 @@ preferences:
     person: 3
     countDates: everyday
     countShiftTypes: [OFF, E, N]
-    expression: ['|x - T|^2', 0]
+    expression: '|x - T|^2'
+    target: 0
     weight: -INF
