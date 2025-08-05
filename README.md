@@ -15,10 +15,17 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 ```sh
 cd core
-pip install -r requirements.txt
-# Run CLI
+# install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# create virtual environment
+uv venv --python 3.12
+# activate virtual environment
+source .venv/bin/activate
+# install dependencies
+uv pip install -r requirements.txt
+# run CLI
 python -m nurse_scheduling.cli <input_file_path>
-# Run all tests
+# run all tests
 pytest --log-cli-level=INFO
 ```
 
