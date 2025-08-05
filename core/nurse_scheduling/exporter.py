@@ -35,7 +35,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
     for (d, s, p) in ctx.shifts:
         if solver.Value(ctx.shifts[(d, s, p)]) == 1:
             assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
-            df.iloc[n_leading_rows+p, n_leading_cols+d] = ctx.shift_types[s].id
+            df.iloc[n_leading_rows+p, n_leading_cols+d] = ctx.shiftTypes[s].id
 
     # Fill objective value
     df.iloc[n_leading_rows + len(ctx.people), 0] = "Score"

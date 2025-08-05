@@ -1,7 +1,8 @@
 apiVersion: alpha
 description: Tests scheduling to verify short-hand date notation based on OR-Tools example 2 from <https://developers.google.com/optimization/scheduling/employee_scheduling>.
-startdate: 2023-09-02
-enddate: 2023-09-08
+dateRange:
+  startDate: 2023-09-02
+  endDate: 2023-09-08
 people:
   - id: 0
     description: Nurse 0
@@ -13,7 +14,7 @@ people:
     description: Nurse 3
   - id: 4
     description: Nurse 4
-shift_types:
+shiftTypes:
   - id: D
     description: Day shift type
   - id: E
@@ -23,106 +24,99 @@ shift_types:
 preferences:
   - type: at most one shift per day
   - type: shift type requirement
-    shift_type: [D, E, N]
-    required_num_people: 1
+    shiftType: [D, E, N]
+    requiredNumPeople: 1
   - type: shift count
     person: ALL
-    count_dates: everyday
-    count_shift_types: ALL
+    countDates: everyday
+    countShiftTypes: ALL
     expression: ['|x - T|^2', round(AVG_SHIFTS_PER_PERSON)]
     weight: -1000000
-  # Person 0
   - type: shift request
     person: 0
     date: [2, 6, 8]
-    shift_type: N
+    shiftType: N
     weight: 100
   - type: shift request
     person: 0
     date: 7
-    shift_type: E
+    shiftType: E
     weight: 100
-  # Person 1
   - type: shift request
     person: 1
     date: 6
-    shift_type: D
+    shiftType: D
     weight: 100
   - type: shift request
     person: 1
     date: [4, 5]
-    shift_type: E
+    shiftType: E
     weight: 100
   - type: shift request
     person: 1
     date: 8
-    shift_type: N
+    shiftType: N
     weight: 100
-  # Person 2
   - type: shift request
     person: 2
     date: 5
-    shift_type: D
+    shiftType: D
     weight: 100
   - type: shift request
     person: 2
     date: [2, 3, 7]
-    shift_type: E
+    shiftType: E
     weight: 100
-  # Person 3
   - type: shift request
     person: 3
     date: [4, 7]
-    shift_type: D
+    shiftType: D
     weight: 100
   - type: shift request
     person: 3
     date: 5
-    shift_type: E
+    shiftType: E
     weight: 100
   - type: shift request
     person: 3
     date: 2
-    shift_type: N
+    shiftType: N
     weight: 100
-  # Person 4
   - type: shift request
     person: 4
     date: 6
-    shift_type: D
+    shiftType: D
     weight: 100
   - type: shift request
     person: 4
     date: [4, 7]
-    shift_type: E
+    shiftType: E
     weight: 100
   - type: shift request
     person: 4
     date: 3
-    shift_type: N
+    shiftType: N
     weight: 100
-  # below are minimal preferences to ensure unique solution,
-  # which are not required in real-world cases
   - type: shift request
     person: 0
     date: ALL
-    shift_type: D
+    shiftType: D
     weight: 2
   - type: shift request
     person: 1
     date: ALL
-    shift_type: E
+    shiftType: E
     weight: 2
   - type: shift request
     person: 2
     date: ALL
-    shift_type: N
+    shiftType: N
     weight: 2
   - type: shift request
     person: 3
     date: ALL
-    shift_type: D
+    shiftType: D
   - type: shift request
     person: 4
     date: ALL
-    shift_type: [E, N]
+    shiftType: [E, N]

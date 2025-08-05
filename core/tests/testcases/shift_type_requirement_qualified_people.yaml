@@ -1,7 +1,8 @@
 apiVersion: alpha
 description: Tests shift type requirements with specific qualified people (nurses 1, 2, and 3) for all shift types (Day, Evening, Night)
-startdate: 2023-08-18
-enddate: 2023-08-24
+dateRange:
+  startDate: 2023-08-18
+  endDate: 2023-08-24
 people:
   - id: 0
     description: Nurse 0
@@ -11,7 +12,7 @@ people:
     description: Nurse 2
   - id: 3
     description: Nurse 3
-shift_types:
+shiftTypes:
   - id: D
     description: Day shift type
   - id: E
@@ -21,20 +22,18 @@ shift_types:
 preferences:
   - type: at most one shift per day
   - type: shift type requirement
-    shift_type: [D, E, N]
-    required_num_people: 1
-    qualified_people: [1, 2, 3]
-  # below are minimal preferences to ensure unique solution,
-  # which are not required in real-world cases
+    shiftType: [D, E, N]
+    requiredNumPeople: 1
+    qualifiedPeople: [1, 2, 3]
   - type: shift request
     person: 0
     date: ALL
-    shift_type: D
+    shiftType: D
   - type: shift request
     person: 1
     date: ALL
-    shift_type: E
+    shiftType: E
   - type: shift request
     person: 2
     date: ALL
-    shift_type: N
+    shiftType: N

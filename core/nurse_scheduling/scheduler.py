@@ -6,7 +6,8 @@ from ortools.sat.python import cp_model
 
 from . import exporter, preference_types
 from .context import Context
-from .utils import ortools_expression_to_bool_var, ALL, OFF, OFF_sid
+from .utils import ortools_expression_to_bool_var
+from .constants import ALL, OFF, OFF_sid
 from .loader import load_data
 
 def schedule(filepath: str, deterministic=False, avoid_solution=None):
@@ -18,20 +19,20 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
     ctx = Context(**dict(scenario))
     del scenario
-    ctx.n_days = (ctx.enddate - ctx.startdate).days + 1
-    ctx.n_shift_types = len(ctx.shift_types)
+    ctx.n_days = (ctx.dateRange.endDate - ctx.dateRange.startDate).days + 1
+    ctx.n_shift_types = len(ctx.shiftTypes)
     ctx.n_people = len(ctx.people)
-    ctx.dates = [ctx.startdate + timedelta(days=d) for d in range(ctx.n_days)]
+    ctx.dates = [ctx.dateRange.startDate + timedelta(days=d) for d in range(ctx.n_days)]
 
     # Map shift type ID to shift type index
     for s in range(ctx.n_shift_types):
-        ctx.map_sid_s[ctx.shift_types[s].id] = [s]
+        ctx.map_sid_s[ctx.shiftTypes[s].id] = [s]
     # Add shift type ALL and OFF keywords
     ctx.map_sid_s[ALL] = list(range(ctx.n_shift_types))
     ctx.map_sid_s[OFF] = [OFF_sid]
     # Map shift type group ID to list of shift type indices
-    for g in range(len(ctx.shift_types_groups)):
-        group = ctx.shift_types_groups[g]
+    for g in range(len(ctx.shiftTypesGroups)):
+        group = ctx.shiftTypesGroups[g]
         # Flatten and deduplicate shift type indices for the group
         ctx.map_sid_s[group.id] = list(set().union(*[ctx.map_sid_s[sid] for sid in group.members]))
     # Map person ID to person index
@@ -40,8 +41,8 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
     # Add people ALL keyword
     ctx.map_pid_p[ALL] = list(range(ctx.n_people))
     # Map people group ID to list of person indices
-    for g in range(len(ctx.people_groups)):
-        group = ctx.people_groups[g]
+    for g in range(len(ctx.peopleGroups)):
+        group = ctx.peopleGroups[g]
         # Flatten and deduplicate person indices for the group
         ctx.map_pid_p[group.id] = list(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
 

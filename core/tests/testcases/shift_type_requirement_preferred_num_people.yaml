@@ -1,7 +1,8 @@
 apiVersion: alpha
 description: Tests shift type requirements with both required (1) and preferred (2) number of people for all shift types (Day, Evening, Night)
-startdate: 2023-08-18
-enddate: 2023-08-24
+dateRange:
+  startDate: 2023-08-18
+  endDate: 2023-08-24
 people:
   - id: 0
     description: Nurse 0
@@ -15,7 +16,7 @@ people:
     description: Nurse 4
   - id: 5
     description: Nurse 5
-shift_types:
+shiftTypes:
   - id: D
     description: Day shift type
   - id: E
@@ -25,20 +26,18 @@ shift_types:
 preferences:
   - type: at most one shift per day
   - type: shift type requirement
-    shift_type: [D, E, N]
-    required_num_people: 1
-    preferred_num_people: 2
-  # below are minimal preferences to ensure unique solution,
-  # which are not required in real-world cases
+    shiftType: [D, E, N]
+    requiredNumPeople: 1
+    preferredNumPeople: 2
   - type: shift request
     person: [0, 3]
     date: ALL
-    shift_type: D
+    shiftType: D
   - type: shift request
     person: [1, 4]
     date: ALL
-    shift_type: E
+    shiftType: E
   - type: shift request
     person: [2, 5]
     date: ALL
-    shift_type: N
+    shiftType: N

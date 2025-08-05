@@ -7,7 +7,7 @@ from . import models
 
 # Leave most parsing to the caller, keep the function here simple.
 
-def shift_type_requirements(ctx: Context, preference, preference_idx):
+def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequirementsPreference, preference_idx):
     # Hard constraint
     # For all shift types, the requirements (# of people) must be fulfilled.
     # Note that a shift is represented as (d, s)
@@ -19,39 +19,39 @@ def shift_type_requirements(ctx: Context, preference, preference_idx):
     
     ds = range(ctx.n_days)
     if preference.date is not None:
-        ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate, ctx.country)
-    ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
+        ds = utils.parse_dates(preference.date, ctx.dateRange, ctx.country)
+    ss = utils.parse_sids(preference.shiftType, ctx.map_sid_s)
     if len(ss) == 0:
-        raise ValueError(f"Non-empty shift types are required, but got {preference.shift_type}")
+        raise ValueError(f"Non-empty shift types are required, but got {preference.shiftType}")
     for d in ds:
         for s in ss:
             # Get the set of people who can work this shift
             qualified_ps = ctx.map_ds_p[(d, s)]
-            if preference.qualified_people is not None:
+            if preference.qualifiedPeople is not None:
                 # If qualified_people is specified, only allow those people to work the shift
-                qualified_ps = utils.parse_pids(preference.qualified_people, ctx.map_pid_p)
+                qualified_ps = utils.parse_pids(preference.qualifiedPeople, ctx.map_pid_p)
                 unqualified_n_people = sum(ctx.shifts[(d, s, p)] for p in range(ctx.n_people) if p not in qualified_ps)
                 ctx.model.Add(unqualified_n_people == 0)
             
             # Add constraint that exactly required_num_people must be assigned from the qualified people
             actual_n_people = sum(ctx.shifts[(d, s, p)] for p in qualified_ps)
-            if preference.preferred_num_people is not None:
-                ctx.model.Add(actual_n_people >= preference.required_num_people)
+            if preference.preferredNumPeople is not None:
+                ctx.model.Add(actual_n_people >= preference.requiredNumPeople)
             else:
-                ctx.model.Add(actual_n_people == preference.required_num_people)
+                ctx.model.Add(actual_n_people == preference.requiredNumPeople)
 
             # Add soft constraint for preferred number of people if specified
-            if preference.preferred_num_people is not None:
-                ctx.model.Add(actual_n_people <= preference.preferred_num_people)
+            if preference.preferredNumPeople is not None:
+                ctx.model.Add(actual_n_people <= preference.preferredNumPeople)
                 # Create a variable to track the difference between actual and preferred number of people
                 diff_var_name = f"pref_{preference_idx}_d_{d}_s_{s}_diff"
-                ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, preference.preferred_num_people, diff_var_name)
-                ctx.model.Add(diff == preference.preferred_num_people - actual_n_people)
+                ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, preference.preferredNumPeople, diff_var_name)
+                ctx.model.Add(diff == preference.preferredNumPeople - actual_n_people)
                 
                 # Add the objective
                 weight = preference.weight
                 if weight in [utils.INF, utils.NINF]:
-                    raise ValueError(f"'INF' and '-INF' weights are not allowed for {models.SHIFT_TYPE_REQUIREMENT} with 'preferred_num_people'. Use 'required_num_people' instead to enforce hard constraints.")
+                    raise ValueError(f"'INF' and '-INF' weights are not allowed for {models.SHIFT_TYPE_REQUIREMENT} with 'preferredNumPeople'. Use 'requiredNumPeople' instead to enforce hard constraints.")
                 utils.add_objective(ctx, weight, diff)
                 ctx.reports.append(Report(f"shift_type_requirements_{diff_var_name}", diff, lambda x: x == 0))
 
@@ -65,26 +65,26 @@ def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preferen
         maximum_n_shifts = 1
         ctx.model.Add(actual_n_shifts <= maximum_n_shifts)
 
-def shift_request(ctx: Context, preference, preference_idx):
+def shift_request(ctx: Context, preference: models.ShiftRequestPreference, preference_idx):
     # Soft constraint
     # For all people, try to fulfill the shift requests.
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * shifts[(d, s, p)]), for all satisfying (d, s)
-    ds = utils.parse_dates(preference.date, ctx.startdate, ctx.enddate, ctx.country)
-    ss = utils.parse_sids(preference.shift_type, ctx.map_sid_s)
+    ds = utils.parse_dates(preference.date, ctx.dateRange, ctx.country)
+    ss = utils.parse_sids(preference.shiftType, ctx.map_sid_s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     for d in ds:
         # Note that the order of p and s is inverted deliberately
         for p in ps:
             weight = preference.weight
-            if preference.shift_type == utils.ALL:
+            if preference.shiftType == utils.ALL:
                 assert utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types)
                 # Add the objective
                 utils.add_objective(ctx, weight, ctx.offs[(d, p)].Not())
                 ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0))
             else:
                 if utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types):
-                    raise ValueError(f"Shift type should be 'ALL', but got {preference.shift_type} instead")
+                    raise ValueError(f"Shift type should be 'ALL', but got {preference.shiftType} instead")
                 for s in ss:
                     # Add the objective
                     if s == utils.OFF_sid:
@@ -94,7 +94,7 @@ def shift_request(ctx: Context, preference, preference_idx):
                         utils.add_objective(ctx, weight, ctx.shifts[(d, s, p)])
                         ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_s_{s}_p_{p}_shifts", ctx.shifts[(d, s, p)], lambda x: x == 1))
 
-def shift_type_successions(ctx: Context, preference, preference_idx):
+def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessionsPreference, preference_idx):
     # Soft constraint
     # For all people, for all start date, try to match the shift type successions.
     # Note that a shift is represented as (d, s)
@@ -171,21 +171,21 @@ def shift_type_successions(ctx: Context, preference, preference_idx):
                     utils.add_objective(ctx, weight, is_match)
                     ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x != target_n_matched))
 
-def shift_count(ctx: Context, preference, preference_idx):
+def shift_count(ctx: Context, preference: models.ShiftCountPreference, preference_idx):
     # Soft constraint
     # For specified people, dates, and shift types, penalize violations of the expression
     # The expression is evaluated as a mathematical formula where x is the actual evaluated value
     # and T is the target value (can be a constant or special constant names)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    c_ds = utils.parse_dates(preference.count_dates, ctx.startdate, ctx.enddate, ctx.country)
-    c_ss = utils.parse_sids(preference.count_shift_types, ctx.map_sid_s)
+    c_ds = utils.parse_dates(preference.countDates, ctx.dateRange, ctx.country)
+    c_ss = utils.parse_sids(preference.countShiftTypes, ctx.map_sid_s)
 
     # Calculate total preferred shifts across all shift type requirements
     total_shifts = 0
     for pref in ctx.preferences:
         if pref.type == models.SHIFT_TYPE_REQUIREMENT:
-            shift_types = utils.parse_sids(pref.shift_type, ctx.map_sid_s)
-            total_shifts += (pref.preferred_num_people or pref.required_num_people) * len(shift_types) * ctx.n_days
+            shift_types = utils.parse_sids(pref.shiftType, ctx.map_sid_s)
+            total_shifts += (pref.preferredNumPeople or pref.requiredNumPeople) * len(shift_types) * ctx.n_days
 
     if len(preference.expression) == 0:
         raise ValueError(f"Expression must not be empty")
@@ -226,7 +226,7 @@ def shift_count(ctx: Context, preference, preference_idx):
         for p in ps:
             unique_var_prefix = f"pref_{preference_idx}_p_{p}"
             # Calculate actual number of shifts for this person
-            if preference.count_shift_types == utils.ALL:
+            if preference.countShiftTypes == utils.ALL:
                 assert utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types)
                 x = sum(ctx.shifts[(d, s, p)] for d in c_ds for s in c_ss)
             else:

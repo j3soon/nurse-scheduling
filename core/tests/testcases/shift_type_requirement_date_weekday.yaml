@@ -1,7 +1,8 @@
 apiVersion: alpha
 description: Tests shift type requirements based on weekday/weekend patterns, requiring one charting shift (A) on weekdays and no charting shifts on weekends
-startdate: 2023-08-18
-enddate: 2023-08-24
+dateRange:
+  startDate: 2023-08-18
+  endDate: 2023-08-24
 people:
   - id: 0
     description: Nurse 0
@@ -11,7 +12,7 @@ people:
     description: Nurse 2
   - id: 3
     description: Nurse 3
-shift_types:
+shiftTypes:
   - id: A
     description: Charting shift type
   - id: D
@@ -23,31 +24,29 @@ shift_types:
 preferences:
   - type: at most one shift per day
   - type: shift type requirement
-    shift_type: [D, E, N]
-    required_num_people: 1
+    shiftType: [D, E, N]
+    requiredNumPeople: 1
   - type: shift type requirement
-    shift_type: A
-    required_num_people: 1
+    shiftType: A
+    requiredNumPeople: 1
     date: weekday
   - type: shift type requirement
-    shift_type: A
-    required_num_people: 0
+    shiftType: A
+    requiredNumPeople: 0
     date: weekend
-  # below are minimal preferences to ensure unique solution,
-  # which are not required in real-world cases
   - type: shift request
     person: 0
     date: ALL
-    shift_type: D
+    shiftType: D
   - type: shift request
     person: 1
     date: ALL
-    shift_type: E
+    shiftType: E
   - type: shift request
     person: 2
     date: ALL
-    shift_type: N
+    shiftType: N
   - type: shift request
     person: 3
     date: ALL
-    shift_type: A
+    shiftType: A

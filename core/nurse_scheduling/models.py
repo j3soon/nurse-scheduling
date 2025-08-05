@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import Annotated, Self
-from .utils import ALL, OFF
+from .constants import ALL, OFF
 
 AT_MOST_ONE_SHIFT_PER_DAY = 'at most one shift per day'
 SHIFT_TYPE_REQUIREMENT = 'shift type requirement'
@@ -17,6 +17,11 @@ class Person(BaseModel):
     id: int | str
     description: str | None = None
     history: List[str] | None = None
+
+class DateRange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    startDate: datetime.date
+    endDate: datetime.date
 
 class PeopleGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -45,7 +50,7 @@ class ShiftRequestPreference(BasePreference):
     description: str | None = None
     person: (int | str) | List[int | str]  # Single person/group ID or list
     date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
-    shift_type: (str | List[str])  # Single shift type ID or list
+    shiftType: (str | List[str])  # Single shift type ID or list
     weight: (int | str) = Field(default=1)
 
 class ShiftTypeSuccessionsPreference(BasePreference):
@@ -65,10 +70,10 @@ class ShiftTypeRequirementsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_TYPE_REQUIREMENT}$")] = SHIFT_TYPE_REQUIREMENT
     description: str | None = None
-    shift_type: (str | List[str])  # Single shift type ID or list of shift type IDs
-    required_num_people: int
-    qualified_people: (int | str) | List[int | str] | None = None   # Single person/group ID or list or None
-    preferred_num_people: int | None = None  # Preferred number of people for each shift type
+    shiftType: (str | List[str])  # Single shift type ID or list of shift type IDs
+    requiredNumPeople: int
+    qualifiedPeople: (int | str) | List[int | str] | None = None   # Single person/group ID or list or None
+    preferredNumPeople: int | None = None  # Preferred number of people for each shift type
     date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
     weight: (int | str) = Field(default=-1)
 
@@ -77,8 +82,8 @@ class ShiftCountPreference(BasePreference):
     type: Annotated[str, Field(pattern=f"^{SHIFT_COUNT}$")] = SHIFT_COUNT
     description: str | None = None
     person: (int | str) | List[int | str]  # Single person/group ID or list
-    count_dates: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
-    count_shift_types: (str | List[str])  # Single shift type ID or list
+    countDates: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
+    countShiftTypes: (str | List[str])  # Single shift type ID or list
     expression: (Tuple[str, (int | str)] | List[Tuple[str, (int | str)]])  # Single pair of mathematical expression and target value (int or special constant names) to evaluate or list
     weight: (int | str) = Field(default=-1)
 
@@ -86,11 +91,10 @@ class NurseSchedulingData(BaseModel):
     model_config = ConfigDict(extra="forbid")
     apiVersion: str
     description: str | None = None
-    startdate: datetime.date
-    enddate: datetime.date
+    dateRange: DateRange
     country: str | None = None
     people: List[Person]
-    shift_types: List[ShiftType]
+    shiftTypes: List[ShiftType]
     preferences: List[
         MaxOneShiftPerDayPreference |
         ShiftRequestPreference |
@@ -98,8 +102,8 @@ class NurseSchedulingData(BaseModel):
         ShiftTypeRequirementsPreference |
         ShiftCountPreference
     ]
-    people_groups: List[PeopleGroup] = Field(default_factory=list)
-    shift_types_groups: List[ShiftTypeGroup] = Field(default_factory=list)
+    peopleGroups: List[PeopleGroup] = Field(default_factory=list)
+    shiftTypesGroups: List[ShiftTypeGroup] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def validate_model(self) -> Self:
@@ -111,7 +115,7 @@ class NurseSchedulingData(BaseModel):
             raise ValueError(f"Missing required preferences: {missing}")
 
         # Validate dates
-        if self.enddate < self.startdate:
+        if self.dateRange.endDate < self.dateRange.startDate:
             raise ValueError('enddate must be after or equal to startdate')
             
         # Validate duplicate IDs and reserved IDs
@@ -119,14 +123,14 @@ class NurseSchedulingData(BaseModel):
         shift_type_and_group_ids = set()
         person_and_group_ids = set()
         
-        for shift_type in self.shift_types:
+        for shift_type in self.shiftTypes:
             if shift_type.id in shift_type_and_group_ids:
                 raise ValueError(f"Duplicated shift type ID: {shift_type.id}")
             if str(shift_type.id).upper() in reserved_ids:
                 raise ValueError(f"Shift type ID cannot be one of the reserved values: {reserved_ids}")
             shift_type_and_group_ids.add(shift_type.id)
 
-        for group in self.shift_types_groups:
+        for group in self.shiftTypesGroups:
             if group.id in shift_type_and_group_ids:
                 raise ValueError(f"Duplicated shift type group (or shift type) ID: {group.id}")
             if str(group.id).upper() in reserved_ids:
@@ -140,7 +144,7 @@ class NurseSchedulingData(BaseModel):
                 raise ValueError(f"Person ID cannot be one of the reserved values: {reserved_ids}")
             person_and_group_ids.add(person.id)
 
-        for group in self.people_groups:
+        for group in self.peopleGroups:
             if group.id in person_and_group_ids:
                 raise ValueError(f"Duplicated people group (or person) ID: {group.id}")
             person_and_group_ids.add(group.id)

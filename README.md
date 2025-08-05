@@ -41,6 +41,8 @@ Google OR-Tools is chosen due to the support of Python, which is the language I'
 
 We prioritize human readability and ease of editing by hand over machine parsing simplicity.
 
+The YAML format uses camelCase field names, following the conventions of Kubernetes.
+
 To allow quick prototyping without defining data type classes, we choose to keep the YAML input intact in memory. This requires extracting data explicitly using utility functions.
 
 <!-- TODO: Compare with INRC format and describe the differences and rationale) -->

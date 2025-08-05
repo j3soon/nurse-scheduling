@@ -1,6 +1,8 @@
 import datetime
 import re
 from .workdays.taiwan import is_freeday as is_freeday_TW
+from .models import DateRange
+from .constants import ALL, OFF, OFF_sid, INF, NINF
 
 MAP_WEEKDAY_STR = [
     'monday',
@@ -11,12 +13,6 @@ MAP_WEEKDAY_STR = [
     'saturday',
     'sunday',
 ]
-
-ALL = 'ALL' # For dates, shift types, and people
-OFF = 'OFF' # For shift types
-OFF_sid = -1 # For shift types
-INF = 'INF' # For weights
-NINF = '-INF' # For weights
 
 def ensure_list(val):
     if val is None:
@@ -41,7 +37,8 @@ def add_objective(ctx, weight, expression):
     else:
         ctx.objective += weight * expression
 
-def _parse_single_date(date: str, startdate: datetime.date, enddate: datetime.date):
+def _parse_single_date(date: str, date_range: DateRange):
+    startdate, enddate = date_range.startDate, date_range.endDate
     error_details = f'- Start date: {startdate}\n- End date: {enddate}\n'
     if match := re.match(r'^\d{1,2}$', date):
         if startdate.year != enddate.year or startdate.month != enddate.month:
@@ -55,7 +52,8 @@ def _parse_single_date(date: str, startdate: datetime.date, enddate: datetime.da
         return datetime.date(*map(int, match.groups()))
     raise ValueError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
 
-def parse_dates(dates, startdate: datetime.date, enddate: datetime.date, country: str):
+def parse_dates(dates, date_range: DateRange, country: str):
+    startdate, enddate = date_range.startDate, date_range.endDate
     MAP_KEYWORD_FILTER = {
         ALL: lambda date: True,
         'everyday': lambda date: True,
@@ -82,14 +80,14 @@ def parse_dates(dates, startdate: datetime.date, enddate: datetime.date, country
             weekday_index = MAP_WEEKDAY_STR.index(date_str)
             parsed_dates += [date for date in dates_in_timespan if date.weekday() == weekday_index]
         elif match := re.match(r'^([\d-]+)~([\d-]+)$', date_str):
-            range_start = _parse_single_date(match.group(1), startdate, enddate)
-            range_end = _parse_single_date(match.group(2), startdate, enddate)
+            range_start = _parse_single_date(match.group(1), date_range)
+            range_end = _parse_single_date(match.group(2), date_range)
             parsed_dates += [
                 range_start + datetime.timedelta(days=i)
                 for i in range((range_end - range_start).days + 1)
             ]
         else:
-            parsed_dates.append(_parse_single_date(date_str, startdate, enddate))
+            parsed_dates.append(_parse_single_date(date_str, date_range))
 
     result = []
     for date in parsed_dates:
