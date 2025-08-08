@@ -49,12 +49,59 @@ export default function ExportAndImportPage() {
     shiftCounts
   });
 
-  // Convert current state to YAML
-  const currentYaml = yaml.dump(filteredState, {
+  // Custom function to detect leaf arrays (arrays containing only primitives)
+  const isLeafArray = (value: any): boolean => {
+    if (!Array.isArray(value)) return false;
+    return value.every(item =>
+      typeof item === 'string' ||
+      typeof item === 'number' ||
+      typeof item === 'boolean' ||
+      item === null ||
+      item === undefined
+    );
+  };
+
+  // Custom dump wrapper for flow style
+  function CustomDump(data: any, opts: any = {}) {
+    if (!(this instanceof CustomDump)) return new CustomDump(data, opts);
+    this.data = data;
+    this.opts = opts;
+  }
+
+  CustomDump.prototype.represent = function () {
+    let result = yaml.dump(this.data, Object.assign({ replacer, schema }, this.opts));
+    result = result.trim();
+    if (result.includes('\n')) result = '\n' + result;
+    return result;
+  };
+
+  // Custom YAML type for flow formatting
+  const CustomDumpType = new yaml.Type('!format', {
+    kind: 'scalar',
+    resolve: () => false,
+    instanceOf: CustomDump,
+    represent: (d: any) => d.represent()
+  });
+
+  // Custom schema with the flow type
+  const schema = yaml.DEFAULT_SCHEMA.extend({ implicit: [CustomDumpType] });
+
+  // Replacer function to detect leaf arrays and apply flow style
+  function replacer(key: string, value: any) {
+    if (key === '') return value; // top-level, don't change this
+    if (isLeafArray(value)) {
+      return new (CustomDump as any)(value, { flowLevel: 0 });
+    }
+    return value; // default
+  }
+
+  // Convert current state to YAML with custom flow style for leaf arrays
+  // Ref: https://github.com/nodeca/js-yaml/issues/586#issuecomment-814310104
+  const currentYaml = new (CustomDump as any)(filteredState, {
     indent: 2,
     lineWidth: 120,
     noRefs: true
-  });
+  }).represent();
 
   const handleDownload = () => {
     const blob = new Blob([currentYaml], { type: 'application/x-yaml' });
