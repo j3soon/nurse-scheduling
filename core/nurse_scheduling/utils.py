@@ -1,29 +1,7 @@
 import datetime
 import re
-from .workdays.taiwan import is_freeday as is_freeday_TW
 from .models import DateRange
-from .constants import ALL, OFF, OFF_sid, INF, NINF, EVERYDAY, WEEKDAY, WEEKEND, WORKDAY, FREEDAY, WORKDAY_LABOR, FREEDAY_LABOR
-
-MAP_WEEKDAY_TO_STR = [
-    'monday',
-    'tuesday',
-    'wednesday',
-    'thursday',
-    'friday',
-    'saturday',
-    'sunday',
-]
-
-MAP_DATE_KEYWORD_TO_FILTER = {
-    ALL: lambda date: True,
-    EVERYDAY: lambda date: True,
-    WEEKDAY: lambda date: date.weekday() < 5,
-    WEEKEND: lambda date: date.weekday() >= 5,
-    WORKDAY: lambda date: not is_freeday_TW(date),
-    FREEDAY: is_freeday_TW,
-    WORKDAY_LABOR: lambda date: not is_freeday_TW(date, True),
-    FREEDAY_LABOR: lambda date: is_freeday_TW(date, True),
-}
+from .constants import INF, NINF, MAP_WEEKDAY_TO_STR, MAP_DATE_KEYWORD_TO_FILTER
 
 def ensure_list(val):
     if val is None:

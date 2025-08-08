@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import Annotated, Self
-from .constants import ALL, OFF, EVERYDAY, WEEKDAY, WEEKEND, WORKDAY, FREEDAY, WORKDAY_LABOR, FREEDAY_LABOR
+from .constants import ALL, OFF, MAP_WEEKDAY_TO_STR, MAP_DATE_KEYWORD_TO_FILTER
 
 AT_MOST_ONE_SHIFT_PER_DAY = 'at most one shift per day'
 SHIFT_TYPE_REQUIREMENT = 'shift type requirement'
@@ -141,7 +141,7 @@ class NurseSchedulingData(BaseModel):
             raise ValueError('enddate must be after or equal to startdate')
             
         # Validate duplicate IDs and reserved IDs
-        shift_type_reserved_ids = {keyword.upper() for keyword in {ALL, OFF}}
+        shift_type_reserved_ids = {k.upper() for k in {ALL, OFF}}
         shift_type_and_group_ids = set()
         for shift_type in self.shiftTypes.items:
             if shift_type.id in shift_type_and_group_ids:
@@ -157,7 +157,7 @@ class NurseSchedulingData(BaseModel):
             shift_type_and_group_ids.add(group.id)
 
         # Validate duplicate IDs and reserved IDs
-        people_reserved_ids = {keyword.upper() for keyword in {ALL}}
+        people_reserved_ids = {k.upper() for k in {ALL}}
         person_and_group_ids = set()
         for person in self.people.items:
             if person.id in person_and_group_ids:
@@ -175,7 +175,7 @@ class NurseSchedulingData(BaseModel):
         # Validate dates
         if self.dates.items:
             raise ValueError("dates.items is not allowed since it is automatically generated from dates.range")
-        date_reserved_ids = {keyword.upper() for keyword in {ALL, EVERYDAY, WEEKDAY, WEEKEND, WORKDAY, FREEDAY, WORKDAY_LABOR, FREEDAY_LABOR}}
+        date_reserved_ids = {k.upper() for k in MAP_WEEKDAY_TO_STR} | {k.upper() for k in MAP_DATE_KEYWORD_TO_FILTER}
         date_group_ids = set()
         for group in self.dates.groups:
             if group.id in date_group_ids:

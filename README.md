@@ -27,6 +27,7 @@ uv pip install -r requirements.txt
 python -m nurse_scheduling.cli <input_file_path>
 # run all tests
 pytest --log-cli-level=INFO
+# Note that setting `WRITE_TO_CSV=True` in `core/tests/test_all.py` is often useful for creating new test cases
 ```
 
 ## Design Philosophy

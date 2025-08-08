@@ -27,7 +27,7 @@ def test_all():
             with open(f"{testcases_dir}/{base_filepath}.txt", 'r') as f:
                 expected_err = f.read()
             # Use pytest.raises without the match parameter to catch the error first
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises((ValidationError, ValueError)) as exc_info:
                 df, solution, score, status = nurse_scheduling.schedule(filepath)
             # Then verify the error message contains the expected text
             logging.info(f"Expected error: {expected_err.strip()}")

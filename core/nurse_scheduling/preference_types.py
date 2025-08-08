@@ -4,6 +4,7 @@ from . import utils
 from .context import Context
 from .report import Report
 from . import models
+from . import constants
 
 # Leave most parsing to the caller, keep the function here simple.
 
@@ -77,7 +78,7 @@ def shift_request(ctx: Context, preference: models.ShiftRequestPreference, prefe
         # Note that the order of p and s is inverted deliberately
         for p in ps:
             weight = preference.weight
-            if preference.shiftType == utils.ALL:
+            if preference.shiftType == constants.ALL:
                 assert utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types)
                 # Add the objective
                 utils.add_objective(ctx, weight, ctx.offs[(d, p)].Not())
@@ -87,7 +88,7 @@ def shift_request(ctx: Context, preference: models.ShiftRequestPreference, prefe
                     raise ValueError(f"Shift type should be 'ALL', but got {preference.shiftType} instead")
                 for s in ss:
                     # Add the objective
-                    if s == utils.OFF_sid:
+                    if s == constants.OFF_sid:
                         utils.add_objective(ctx, weight, ctx.offs[(d, p)])
                         ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 1))
                     else:
@@ -113,8 +114,8 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
     ]
     parsed_pattern = []
     for i in range(len(flattened_pattern)):
-        if preference.pattern[i] == utils.ALL:
-            parsed_pattern.append(utils.ALL)
+        if preference.pattern[i] == constants.ALL:
+            parsed_pattern.append(constants.ALL)
         elif utils.is_ss_equivalent_to_all(flattened_pattern[i], ctx.n_shift_types):
             raise ValueError(f"Pattern must not include 'ALL', but got {flattened_pattern[i]}")
         else:
@@ -132,7 +133,7 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                 for i in range(len(history)):
                     if len(history[i]) != 1 and ctx.people.items[p].history[i] != utils.OFF:
                         raise ValueError(f"History must not include nested ID, but got {ctx.people.items[p].history[i]}")
-                    if ctx.people.items[p].history[i] == utils.ALL:
+                    if ctx.people.items[p].history[i] == constants.ALL:
                         raise ValueError(f"History must not include 'ALL', but got {ctx.people.items[p].history[i]}")
                     else:
                         history[i] = history[i][0]
@@ -149,10 +150,10 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                 # For each day and pattern, collect all matched shifts
                 match_shifts_in_day = []
                 for i in range(len(pattern)):
-                    if pattern[i] == utils.ALL:
+                    if pattern[i] == constants.ALL:
                         match_shifts_in_day.append([ctx.offs[(d_begin+i, p)].Not()])
                     else:
-                        match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] if s != utils.OFF_sid else ctx.offs[(d_begin+i, p)] for s in pattern[i]])
+                        match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] if s != constants.OFF_sid else ctx.offs[(d_begin+i, p)] for s in pattern[i]])
                 target_n_matched = len(pattern)
                 for idx, seq in enumerate(itertools.product(*match_shifts_in_day)):
                     assert len(seq) == len(pattern)
@@ -215,13 +216,13 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
         for p in ps:
             unique_var_prefix = f"pref_{preference_idx}_p_{p}"
             # Calculate actual number of shifts for this person
-            if preference.countShiftTypes == utils.ALL:
+            if preference.countShiftTypes == constants.ALL:
                 assert utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types)
                 x = sum(ctx.shifts[(d, s, p)] for d in c_ds for s in c_ss)
             else:
                 if utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types):
                     raise ValueError(f"Shift type should be 'ALL', but got {preference.count_shift_types} instead")
-                x = sum(ctx.shifts[(d, s, p)] if s != utils.OFF_sid else ctx.offs[(d, p)] for d in c_ds for s in c_ss)
+                x = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for d in c_ds for s in c_ss)
 
             # TODO: Also Report value of `x`
             
