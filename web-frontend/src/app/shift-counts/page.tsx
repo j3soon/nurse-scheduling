@@ -22,12 +22,17 @@ interface ShiftCountForm {
 
 export default function ShiftCountsPage() {
   const {
-    shiftCounts,
-    updateShiftCounts,
+    getPreferencesByType,
+    updatePreferencesByType,
     shiftTypeData,
     peopleData,
     dateData
   } = useSchedulingData();
+
+  // Get shift counts from the flattened preferences
+  const shiftCounts = getPreferencesByType<ShiftCountPreference>(SHIFT_COUNT);
+  const updateShiftCounts = (newPrefs: ShiftCountPreference[]) =>
+    updatePreferencesByType(SHIFT_COUNT, newPrefs);
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);

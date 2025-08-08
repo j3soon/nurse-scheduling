@@ -22,12 +22,17 @@ interface ShiftTypeRequirementForm {
 
 export default function ShiftTypeRequirementsPage() {
   const {
-    shiftTypeRequirements,
-    updateShiftTypeRequirements,
+    getPreferencesByType,
+    updatePreferencesByType,
     shiftTypeData,
     peopleData,
     dateData
   } = useSchedulingData();
+
+  // Get shift type requirements from the flattened preferences
+  const shiftTypeRequirements = getPreferencesByType<ShiftTypeRequirementsPreference>(SHIFT_TYPE_REQUIREMENT);
+  const updateShiftTypeRequirements = (newPrefs: ShiftTypeRequirementsPreference[]) =>
+    updatePreferencesByType(SHIFT_TYPE_REQUIREMENT, newPrefs);
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);

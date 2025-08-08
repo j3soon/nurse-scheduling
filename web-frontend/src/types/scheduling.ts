@@ -35,6 +35,7 @@ export enum DataType {
   SHIFT_TYPES = 'shiftTypes'
 }
 
+export const AT_MOST_ONE_SHIFT_PER_DAY = 'at most one shift per day';
 export const SHIFT_TYPE_REQUIREMENT = 'shift type requirement';
 export const SHIFT_REQUEST = 'shift request';
 export const SHIFT_TYPE_SUCCESSIONS = 'shift type successions';
@@ -46,6 +47,10 @@ export const SUPPORTED_SPECIAL_TARGETS = ['floor(AVG_SHIFTS_PER_PERSON)', 'ceil(
 export interface BasePreference {
   type: string;
   description?: string;
+}
+
+export interface AtMostOneShiftPerDayPreference extends BasePreference {
+  type: typeof AT_MOST_ONE_SHIFT_PER_DAY;
 }
 
 export interface ShiftTypeRequirementsPreference extends BasePreference {
@@ -86,3 +91,11 @@ export interface ShiftCountPreference extends BasePreference {
   target: number | typeof SUPPORTED_SPECIAL_TARGETS[number];
   weight: number;
 }
+
+// Union type for all preference types in the flattened structure
+export type Preference =
+  | AtMostOneShiftPerDayPreference
+  | ShiftTypeRequirementsPreference
+  | ShiftRequestPreference
+  | ShiftTypeSuccessionsPreference
+  | ShiftCountPreference;

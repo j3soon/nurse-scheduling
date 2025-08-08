@@ -20,11 +20,16 @@ interface ShiftTypeSuccessionForm {
 
 export default function ShiftTypeSuccessionsPage() {
   const {
-    shiftTypeSuccessions,
-    updateShiftTypeSuccessions,
+    getPreferencesByType,
+    updatePreferencesByType,
     shiftTypeData,
     peopleData
   } = useSchedulingData();
+
+  // Get shift type successions from the flattened preferences
+  const shiftTypeSuccessions = getPreferencesByType<ShiftTypeSuccessionsPreference>(SHIFT_TYPE_SUCCESSIONS);
+  const updateShiftTypeSuccessions = (newPrefs: ShiftTypeSuccessionsPreference[]) =>
+    updatePreferencesByType(SHIFT_TYPE_SUCCESSIONS, newPrefs);
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);

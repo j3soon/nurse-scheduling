@@ -17,11 +17,16 @@ export default function ShiftRequestsPage() {
     peopleData,
     shiftTypeData,
     dateRange,
-    shiftRequestPreferences,
-    updateShiftRequestPreferences,
+    getPreferencesByType,
+    updatePreferencesByType,
     addPersonHistory,
     updatePersonHistory,
   } = useSchedulingData();
+
+  // Get shift request preferences from the flattened preferences
+  const shiftRequestPreferences = getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST);
+  const updateShiftRequestPreferences = (newPrefs: ShiftRequestPreference[]) =>
+    updatePreferencesByType(SHIFT_REQUEST, newPrefs);
 
   const [showInstructions, setShowInstructions] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
