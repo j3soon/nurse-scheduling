@@ -5,7 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiEdit2, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftRequestPreference, SHIFT_REQUEST_PREFERENCE } from '@/types/scheduling';
+import { ShiftRequestPreference, SHIFT_REQUEST } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
 import { getWeightDisplayLabel, parseWeightValue, isValidWeightValue } from '@/utils/numberParsing';
@@ -140,7 +140,7 @@ export default function ShiftRequestsPage() {
     preferences.forEach(pref => {
       if (pref.weight !== 0) {
         const newPreference: ShiftRequestPreference = {
-          type: SHIFT_REQUEST_PREFERENCE,
+          type: SHIFT_REQUEST,
           person: personId,
           date: dateId,
           shift_type: pref.shiftTypeId,

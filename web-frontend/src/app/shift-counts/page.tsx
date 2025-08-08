@@ -5,7 +5,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiEdit2, FiTrash2, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftCountPreference, SHIFT_COUNT_PREFERENCE, SUPPORTED_EXPRESSIONS, SUPPORTED_SPECIAL_TARGETS } from '@/types/scheduling';
+import { ShiftCountPreference, SHIFT_COUNT, SUPPORTED_EXPRESSIONS, SUPPORTED_SPECIAL_TARGETS } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { parseWeightValue, isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
@@ -121,7 +121,7 @@ export default function ShiftCountsPage() {
     if (!validateForm()) return;
 
     const newShiftCount: ShiftCountPreference = {
-      type: SHIFT_COUNT_PREFERENCE,
+      type: SHIFT_COUNT,
       description: formData.description,
       person: formData.person,
       count_dates: formData.count_dates.length > 0 ? formData.count_dates : ['All'],

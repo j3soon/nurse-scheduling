@@ -5,7 +5,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiEdit2, FiTrash2, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftTypeSuccessionsPreference, SHIFT_TYPE_SUCCESSIONS_PREFERENCE } from '@/types/scheduling';
+import { ShiftTypeSuccessionsPreference, SHIFT_TYPE_SUCCESSIONS } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { RemovableTag } from '@/components/RemovableTag';
@@ -104,7 +104,7 @@ export default function ShiftTypeSuccessionsPage() {
     if (!validateForm()) return;
 
     const newSuccession: ShiftTypeSuccessionsPreference = {
-      type: SHIFT_TYPE_SUCCESSIONS_PREFERENCE,
+      type: SHIFT_TYPE_SUCCESSIONS,
       description: formData.description,
       person: formData.person,
       pattern: formData.pattern,

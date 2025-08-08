@@ -35,10 +35,10 @@ export enum DataType {
   SHIFT_TYPES = 'shiftTypes'
 }
 
-export const SHIFT_TYPE_REQUIREMENT = 'shift_type_requirement';
-export const SHIFT_REQUEST_PREFERENCE = 'shift_request_preference';
-export const SHIFT_TYPE_SUCCESSIONS_PREFERENCE = 'shift_type_successions_preference';
-export const SHIFT_COUNT_PREFERENCE = 'shift_count_preference';
+export const SHIFT_TYPE_REQUIREMENT = 'shift type requirement';
+export const SHIFT_REQUEST = 'shift request';
+export const SHIFT_TYPE_SUCCESSIONS = 'shift type successions';
+export const SHIFT_COUNT = 'shift count';
 
 export const SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T'] as const;
 export const SUPPORTED_SPECIAL_TARGETS = ['floor(AVG_SHIFTS_PER_PERSON)', 'ceil(AVG_SHIFTS_PER_PERSON)', 'round(AVG_SHIFTS_PER_PERSON)'] as const;
@@ -60,7 +60,7 @@ export interface ShiftTypeRequirementsPreference extends BasePreference {
 }
 
 export interface ShiftRequestPreference extends BasePreference {
-  type: typeof SHIFT_REQUEST_PREFERENCE;
+  type: typeof SHIFT_REQUEST;
   description?: string;
   person: string;
   date: string;
@@ -69,7 +69,7 @@ export interface ShiftRequestPreference extends BasePreference {
 }
 
 export interface ShiftTypeSuccessionsPreference extends BasePreference {
-  type: typeof SHIFT_TYPE_SUCCESSIONS_PREFERENCE;
+  type: typeof SHIFT_TYPE_SUCCESSIONS;
   description?: string;
   person: string[];
   pattern: string[];  // List of shift type IDs that are in succession
@@ -77,7 +77,7 @@ export interface ShiftTypeSuccessionsPreference extends BasePreference {
 }
 
 export interface ShiftCountPreference extends BasePreference {
-  type: typeof SHIFT_COUNT_PREFERENCE;
+  type: typeof SHIFT_COUNT;
   description?: string;
   person: string[];
   count_dates: string[];
