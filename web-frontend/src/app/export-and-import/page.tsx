@@ -268,6 +268,7 @@ export default function ExportAndImportPage() {
                   setYamlError(null);
                 }}
                 className="w-full h-96 p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0"
+                style={{ fontFamily: 'ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace' }}
                 placeholder="Enter YAML configuration..."
               />
               {yamlError && (
@@ -280,7 +281,10 @@ export default function ExportAndImportPage() {
               )}
             </div>
           ) : (
-            <pre className="w-full h-96 p-4 font-mono text-sm overflow-auto bg-gray-50 whitespace-pre-wrap">
+            <pre
+              className="w-full h-96 p-4 font-mono text-sm overflow-auto bg-gray-50 whitespace-pre-wrap"
+              style={{ fontFamily: 'ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace' }}
+            >
               {currentYaml}
             </pre>
           )}
