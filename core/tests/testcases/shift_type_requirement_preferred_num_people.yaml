@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests shift type requirements with both required (1) and preferred (2) number of people for all shift types (Day, Evening, Night)
-dateRange:
-  startDate: 2023-08-18
-  endDate: 2023-08-24
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-24
 people:
   items:
     - id: 0

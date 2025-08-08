@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests shift type requirements based on workday patterns, requiring one charting shift (A) on workdays and no charting shifts on freedays in 2023
-dateRange:
-  startDate: 2023-01-01
-  endDate: 2023-12-31
+dates:
+  range:
+    startDate: 2023-01-01
+    endDate: 2023-12-31
 country: TW
 people:
   items:

@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests shift requests for 2 nurses with negative weight preferences for night shifts over a week
-dateRange:
-  startDate: 2023-08-18
-  endDate: 2023-08-24
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-24
 people:
   items:
     - id: 0

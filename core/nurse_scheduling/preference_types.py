@@ -19,7 +19,7 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
     
     ds = range(ctx.n_days)
     if preference.date is not None:
-        ds = utils.parse_dates(preference.date, ctx.dateRange, ctx.country)
+        ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
     ss = utils.parse_sids(preference.shiftType, ctx.map_sid_s)
     if len(ss) == 0:
         raise ValueError(f"Non-empty shift types are required, but got {preference.shiftType}")
@@ -70,7 +70,7 @@ def shift_request(ctx: Context, preference: models.ShiftRequestPreference, prefe
     # For all people, try to fulfill the shift requests.
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * shifts[(d, s, p)]), for all satisfying (d, s)
-    ds = utils.parse_dates(preference.date, ctx.dateRange, ctx.country)
+    ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
     ss = utils.parse_sids(preference.shiftType, ctx.map_sid_s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     for d in ds:
@@ -177,7 +177,7 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
     # The expression is evaluated as a mathematical formula where x is the actual evaluated value
     # and T is the target value (can be a constant or special constant names)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    c_ds = utils.parse_dates(preference.countDates, ctx.dateRange, ctx.country)
+    c_ds = utils.parse_dates(preference.countDates, ctx.map_did_d, ctx.dates.range)
     c_ss = utils.parse_sids(preference.countShiftTypes, ctx.map_sid_s)
 
     # Calculate total preferred shifts across all shift type requirements

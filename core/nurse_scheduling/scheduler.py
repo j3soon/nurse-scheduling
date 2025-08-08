@@ -6,7 +6,7 @@ from ortools.sat.python import cp_model
 
 from . import exporter, preference_types
 from .context import Context
-from .utils import ortools_expression_to_bool_var
+from .utils import ortools_expression_to_bool_var, parse_dates, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
 from .constants import ALL, OFF, OFF_sid
 from .loader import load_data
 
@@ -19,10 +19,10 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
     ctx = Context(**dict(scenario))
     del scenario
-    ctx.n_days = (ctx.dateRange.endDate - ctx.dateRange.startDate).days + 1
+    ctx.n_days = (ctx.dates.range.endDate - ctx.dates.range.startDate).days + 1
     ctx.n_shift_types = len(ctx.shiftTypes.items)
     ctx.n_people = len(ctx.people.items)
-    ctx.dates = [ctx.dateRange.startDate + timedelta(days=d) for d in range(ctx.n_days)]
+    ctx.dates.items = [ctx.dates.range.startDate + timedelta(days=d) for d in range(ctx.n_days)]
 
     # Map shift type ID to shift type index
     for s in range(ctx.n_shift_types):
@@ -34,7 +34,7 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
     for g in range(len(ctx.shiftTypes.groups)):
         group = ctx.shiftTypes.groups[g]
         # Flatten and deduplicate shift type indices for the group
-        ctx.map_sid_s[group.id] = list(set().union(*[ctx.map_sid_s[sid] for sid in group.members]))
+        ctx.map_sid_s[group.id] = sorted(set().union(*[ctx.map_sid_s[sid] for sid in group.members]))
     # Map person ID to person index
     for p in range(ctx.n_people):
         ctx.map_pid_p[ctx.people.items[p].id] = [p]
@@ -44,7 +44,31 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
     for g in range(len(ctx.people.groups)):
         group = ctx.people.groups[g]
         # Flatten and deduplicate person indices for the group
-        ctx.map_pid_p[group.id] = list(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
+        ctx.map_pid_p[group.id] = sorted(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
+
+    # Map date string (YYYY-MM-DD) to date index
+    if ctx.country is not None and ctx.country != 'TW':
+        raise ValueError(f"Country {ctx.country} is not supported yet")
+    for d in range(ctx.n_days):
+        date_obj = ctx.dates.items[d]
+        ctx.map_did_d[str(date_obj)] = [d]
+    # Add date keywords
+    for keyword in MAP_DATE_KEYWORD_TO_FILTER:
+        ctx.map_did_d[keyword] = [d for d in range(ctx.n_days) if MAP_DATE_KEYWORD_TO_FILTER[keyword](ctx.dates.items[d])]
+    for keyword in MAP_WEEKDAY_TO_STR:
+        weekday_index = MAP_WEEKDAY_TO_STR.index(keyword)
+        ctx.map_did_d[keyword] = [d for d in range(ctx.n_days) if ctx.dates.items[d].weekday() == weekday_index]
+    # Map date group ID to list of date indices
+    for g in range(len(ctx.dates.groups)):
+        group = ctx.dates.groups[g]
+        # Flatten and deduplicate date indices for the group
+        date_indices = set()
+        for member in group.members:
+            if member in ctx.map_did_d:
+                date_indices.update(ctx.map_did_d[member])
+            else:
+                date_indices.update(parse_dates(member, ctx.map_did_d, ctx.dates.range))
+        ctx.map_did_d[group.id] = sorted(set(date_indices))
 
     logging.debug("Initializing solver model...")
 

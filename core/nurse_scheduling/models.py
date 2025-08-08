@@ -1,9 +1,10 @@
 import datetime
+import re
 from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import Annotated, Self
-from .constants import ALL, OFF
+from .constants import ALL, OFF, EVERYDAY, WEEKDAY, WEEKEND, WORKDAY, FREEDAY, WORKDAY_LABOR, FREEDAY_LABOR
 
 AT_MOST_ONE_SHIFT_PER_DAY = 'at most one shift per day'
 SHIFT_TYPE_REQUIREMENT = 'shift type requirement'
@@ -25,7 +26,7 @@ class DateRange(BaseModel):
 
 class PeopleGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: int | str
+    id: str
     description: str | None = None
     members: List[int | str]  # Can reference person IDs or other group IDs
 
@@ -36,9 +37,15 @@ class ShiftType(BaseModel):
 
 class ShiftTypeGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: int | str
+    id: str
     description: str | None = None
     members: List[int | str]  # Can reference shift type IDs or other group IDs
+
+class DateGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    description: str | None = None
+    members: List[int | str | datetime.date]  # Can reference date IDs, group IDs, or date objects
 
 class PeopleContainer(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -49,6 +56,12 @@ class ShiftTypesContainer(BaseModel):
     model_config = ConfigDict(extra="forbid")
     items: List[ShiftType]
     groups: List[ShiftTypeGroup] = Field(default_factory=list)
+
+class DateContainer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    range: DateRange
+    items: List[datetime.date] = Field(default_factory=list)  # Automatically generated from range
+    groups: List[DateGroup] = Field(default_factory=list)
 
 class BasePreference(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -102,7 +115,7 @@ class NurseSchedulingData(BaseModel):
     model_config = ConfigDict(extra="forbid")
     apiVersion: str
     description: str | None = None
-    dateRange: DateRange
+    dates: DateContainer
     country: str | None = None
     people: PeopleContainer
     shiftTypes: ShiftTypesContainer
@@ -124,38 +137,55 @@ class NurseSchedulingData(BaseModel):
             raise ValueError(f"Missing required preferences: {missing}")
 
         # Validate dates
-        if self.dateRange.endDate < self.dateRange.startDate:
+        if self.dates.range.endDate < self.dates.range.startDate:
             raise ValueError('enddate must be after or equal to startdate')
             
         # Validate duplicate IDs and reserved IDs
-        reserved_ids = {ALL, OFF}
+        shift_type_reserved_ids = {keyword.upper() for keyword in {ALL, OFF}}
         shift_type_and_group_ids = set()
-        person_and_group_ids = set()
-        
         for shift_type in self.shiftTypes.items:
             if shift_type.id in shift_type_and_group_ids:
                 raise ValueError(f"Duplicated shift type ID: {shift_type.id}")
-            if str(shift_type.id).upper() in reserved_ids:
-                raise ValueError(f"Shift type ID cannot be one of the reserved values: {reserved_ids}")
+            if str(shift_type.id).upper() in shift_type_reserved_ids:
+                raise ValueError(f"Shift type ID cannot be one of the reserved values: {shift_type_reserved_ids}")
             shift_type_and_group_ids.add(shift_type.id)
-
         for group in self.shiftTypes.groups:
             if group.id in shift_type_and_group_ids:
                 raise ValueError(f"Duplicated shift type group (or shift type) ID: {group.id}")
-            if str(group.id).upper() in reserved_ids:
-                raise ValueError(f"Shift type group ID cannot be one of the reserved values: {reserved_ids}")
+            if str(group.id).upper() in shift_type_reserved_ids:
+                raise ValueError(f"Shift type group ID cannot be one of the reserved values: {shift_type_reserved_ids}")
             shift_type_and_group_ids.add(group.id)
 
+        # Validate duplicate IDs and reserved IDs
+        people_reserved_ids = {keyword.upper() for keyword in {ALL}}
+        person_and_group_ids = set()
         for person in self.people.items:
             if person.id in person_and_group_ids:
                 raise ValueError(f"Duplicated person ID: {person.id}")
-            if str(person.id).upper() in reserved_ids:
-                raise ValueError(f"Person ID cannot be one of the reserved values: {reserved_ids}")
+            if str(person.id).upper() in people_reserved_ids:
+                raise ValueError(f"Person ID cannot be one of the reserved values: {people_reserved_ids}")
             person_and_group_ids.add(person.id)
-
         for group in self.people.groups:
             if group.id in person_and_group_ids:
                 raise ValueError(f"Duplicated people group (or person) ID: {group.id}")
+            if str(group.id).upper() in people_reserved_ids:
+                raise ValueError(f"People group ID cannot be one of the reserved values: {people_reserved_ids}")
             person_and_group_ids.add(group.id)
+
+        # Validate dates
+        if self.dates.items:
+            raise ValueError("dates.items is not allowed since it is automatically generated from dates.range")
+        date_reserved_ids = {keyword.upper() for keyword in {ALL, EVERYDAY, WEEKDAY, WEEKEND, WORKDAY, FREEDAY, WORKDAY_LABOR, FREEDAY_LABOR}}
+        date_group_ids = set()
+        for group in self.dates.groups:
+            if group.id in date_group_ids:
+                raise ValueError(f"Duplicated date group ID: {group.id}")
+            if str(group.id).upper() in date_reserved_ids:
+                raise ValueError(f"Date group ID cannot be one of the reserved values: {date_reserved_ids}")
+            if re.match(r'^\d{1,2}$', group.id) or \
+               re.match(r'^(\d{2})-(\d{2})$', group.id) or \
+               re.match(r'^(\d{4})-(\d{2})-(\d{2})$', group.id):
+                raise ValueError(f"Date group ID must not be in the format of YYYY-MM-DD, MM-DD, or D: {group.id}")
+            date_group_ids.add(group.id)
 
         return self

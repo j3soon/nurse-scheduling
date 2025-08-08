@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests various date format inputs (YYYY-MM-DD, MM-DD, and D) based on OR-Tools example 2 from <https://developers.google.com/optimization/scheduling/employee_scheduling>.
-dateRange:
-  startDate: 2023-09-02
-  endDate: 2023-09-08
+dates:
+  range:
+    startDate: 2023-09-02
+    endDate: 2023-09-08
 people:
   items:
     - id: 0

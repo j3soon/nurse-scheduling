@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests shift type requirements with specific date ranges, requiring one charting shift (A) from Aug 18-23 and no charting shifts on Aug 24
-dateRange:
-  startDate: 2023-08-18
-  endDate: 2023-08-24
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-24
 people:
   items:
     - id: 0

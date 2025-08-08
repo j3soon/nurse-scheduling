@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests unwanted shift patterns using string-based nurse IDs instead of numeric IDs to verify ID type flexibility
-dateRange:
-  startDate: 2023-08-18
-  endDate: 2023-08-24
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-24
 people:
   items:
     - id: n0

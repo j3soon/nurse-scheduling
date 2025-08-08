@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Basic nurse scheduling test with 4 nurses and 3 shift types (Day, Evening, Night)
-dateRange:
-  startDate: 2023-08-18
-  endDate: 2023-08-20
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-20
 people:
   items:
     - id: 0

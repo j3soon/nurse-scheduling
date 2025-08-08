@@ -11,16 +11,16 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
     df = pd.DataFrame(
         "",
         index=range(n_leading_rows + len(ctx.people.items) + n_trailing_rows),
-        columns=range(n_leading_cols + len(ctx.dates) + n_trailing_cols)
+        columns=range(n_leading_cols + len(ctx.dates.items) + n_trailing_cols)
     )
 
     # Fill day numbers and weekdays
     # - row 0 contains day number
     # - row 1 contains weekday
-    for d, date in enumerate(ctx.dates):
-        if ctx.dates[0].year != ctx.dates[-1].year:
+    for d, date in enumerate(ctx.dates.items):
+        if ctx.dates.items[0].year != ctx.dates.items[-1].year:
             df.iloc[0, n_leading_cols + d] = date.strftime('%Y/%-m/%-d')
-        elif ctx.dates[0].month != ctx.dates[-1].month:
+        elif ctx.dates.items[0].month != ctx.dates.items[-1].month:
             df.iloc[0, n_leading_cols + d] = date.strftime('%-m/%-d')
         else:
             df.iloc[0, n_leading_cols + d] = date.day

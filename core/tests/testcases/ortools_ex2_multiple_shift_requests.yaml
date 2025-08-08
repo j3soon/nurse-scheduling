@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests multiple shift requests based on OR-Tools example 2 from <https://developers.google.com/optimization/scheduling/employee_scheduling>.
-dateRange:
-  startDate: 2023-09-01
-  endDate: 2023-09-07
+dates:
+  range:
+    startDate: 2023-09-01
+    endDate: 2023-09-07
 people:
   items:
     - id: 0

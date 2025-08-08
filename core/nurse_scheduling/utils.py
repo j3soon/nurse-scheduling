@@ -2,9 +2,9 @@ import datetime
 import re
 from .workdays.taiwan import is_freeday as is_freeday_TW
 from .models import DateRange
-from .constants import ALL, OFF, OFF_sid, INF, NINF
+from .constants import ALL, OFF, OFF_sid, INF, NINF, EVERYDAY, WEEKDAY, WEEKEND, WORKDAY, FREEDAY, WORKDAY_LABOR, FREEDAY_LABOR
 
-MAP_WEEKDAY_STR = [
+MAP_WEEKDAY_TO_STR = [
     'monday',
     'tuesday',
     'wednesday',
@@ -13,6 +13,17 @@ MAP_WEEKDAY_STR = [
     'saturday',
     'sunday',
 ]
+
+MAP_DATE_KEYWORD_TO_FILTER = {
+    ALL: lambda date: True,
+    EVERYDAY: lambda date: True,
+    WEEKDAY: lambda date: date.weekday() < 5,
+    WEEKEND: lambda date: date.weekday() >= 5,
+    WORKDAY: lambda date: not is_freeday_TW(date),
+    FREEDAY: is_freeday_TW,
+    WORKDAY_LABOR: lambda date: not is_freeday_TW(date, True),
+    FREEDAY_LABOR: lambda date: is_freeday_TW(date, True),
+}
 
 def ensure_list(val):
     if val is None:
@@ -37,7 +48,7 @@ def add_objective(ctx, weight, expression):
     else:
         ctx.objective += weight * expression
 
-def _parse_single_date(date: str, date_range: DateRange):
+def _parse_single_date(date: str, date_range: DateRange) -> datetime.date:
     startdate, enddate = date_range.startDate, date_range.endDate
     error_details = f'- Start date: {startdate}\n- End date: {enddate}\n'
     if match := re.match(r'^\d{1,2}$', date):
@@ -52,33 +63,19 @@ def _parse_single_date(date: str, date_range: DateRange):
         return datetime.date(*map(int, match.groups()))
     raise ValueError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
 
-def parse_dates(dates, date_range: DateRange, country: str):
+def parse_dates(dates, map_did_d, date_range):
     startdate, enddate = date_range.startDate, date_range.endDate
-    MAP_KEYWORD_FILTER = {
-        ALL: lambda date: True,
-        'everyday': lambda date: True,
-        'weekday': lambda date: date.weekday() < 5,
-        'weekend': lambda date: date.weekday() >= 5,
-        'workday': lambda date: not is_freeday_TW(date),
-        'freeday': is_freeday_TW,
-        'workday(labor)': lambda date: not is_freeday_TW(date, True),
-        'freeday(labor)': lambda date: is_freeday_TW(date, True),
-    }
-
-    if country is not None and country != 'TW':
-        raise ValueError(f"Country {country} is not supported yet")
-
     dates = map(str, ensure_list(dates))
     n_days = (enddate - startdate).days + 1
     dates_in_timespan = [startdate + datetime.timedelta(days=i) for i in range(n_days)]
     parsed_dates = []
 
     for date_str in dates:
-        if date_str in MAP_KEYWORD_FILTER:
-            parsed_dates += filter(MAP_KEYWORD_FILTER[date_str], dates_in_timespan)
-        elif date_str in MAP_WEEKDAY_STR:
-            weekday_index = MAP_WEEKDAY_STR.index(date_str)
-            parsed_dates += [date for date in dates_in_timespan if date.weekday() == weekday_index]
+        if date_str in map_did_d:
+            parsed_dates += [
+                startdate + datetime.timedelta(days=i)
+                for i in map_did_d[date_str]
+            ]
         elif match := re.match(r'^([\d-]+)~([\d-]+)$', date_str):
             range_start = _parse_single_date(match.group(1), date_range)
             range_end = _parse_single_date(match.group(2), date_range)

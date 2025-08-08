@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests single shift pattern restrictions for avoiding specific shift types (Night shift)
-dateRange:
-  startDate: 2023-08-18
-  endDate: 2023-08-24
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-24
 people:
   items:
     - id: 0

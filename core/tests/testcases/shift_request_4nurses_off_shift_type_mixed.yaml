@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Mixing Off shift type with normal shift types, test negative infinity weight for L2 preference
-dateRange:
-  startDate: 2023-08-18
-  endDate: 2023-08-20
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-20
 people:
   items:
     - id: 0

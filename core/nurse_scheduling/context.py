@@ -12,7 +12,6 @@ class Context(NurseSchedulingData):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
     # Computed fields
-    dates: List[date] = Field(default_factory=list)
     n_days: int = None
     n_shift_types: int = None
     n_people: int = None
@@ -20,6 +19,7 @@ class Context(NurseSchedulingData):
     # Mapping fields
     map_sid_s: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps shift type ID to list of shift type indices
     map_pid_p: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps person/group ID to list of person indices
+    map_did_d: Dict[str, List[int]] = Field(default_factory=dict)  # Maps date/group ID to list of date indices
     
     # Fields used by the CP-SAT solver
     model: cp_model.CpModel = Field(default_factory=cp_model.CpModel)

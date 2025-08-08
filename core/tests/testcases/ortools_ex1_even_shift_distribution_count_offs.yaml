@@ -1,8 +1,9 @@
 apiVersion: alpha
 description: Tests even shift distribution based on OR-Tools example 1 from <https://developers.google.com/optimization/scheduling/employee_scheduling>.
-dateRange:
-  startDate: 2023-08-18
-  endDate: 2023-08-20
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-20
 people:
   items:
     - id: 0
