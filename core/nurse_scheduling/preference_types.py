@@ -84,8 +84,8 @@ def shift_request(ctx: Context, preference: models.ShiftRequestPreference, prefe
                 utils.add_objective(ctx, weight, ctx.offs[(d, p)].Not())
                 ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0))
             else:
-                if utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types):
-                    raise ValueError(f"Shift type should be 'ALL', but got {preference.shiftType} instead")
+                if ctx.n_shift_types > 1 and utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types):
+                    raise ValueError(f"In preference index {preference_idx}, the shift type is equivalent to 'ALL', please use 'ALL' instead.")
                 for s in ss:
                     # Add the objective
                     if s == constants.OFF_sid:
@@ -116,8 +116,8 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
     for i in range(len(flattened_pattern)):
         if preference.pattern[i] == constants.ALL:
             parsed_pattern.append(constants.ALL)
-        elif utils.is_ss_equivalent_to_all(flattened_pattern[i], ctx.n_shift_types):
-            raise ValueError(f"Pattern must not include 'ALL', but got {flattened_pattern[i]}")
+        elif ctx.n_shift_types > 1 and utils.is_ss_equivalent_to_all(flattened_pattern[i], ctx.n_shift_types):
+            raise ValueError(f"In preference index {preference_idx}, the {i}-th element of pattern is equivalent to 'ALL', please use 'ALL' instead.")
         else:
             parsed_pattern.append(flattened_pattern[i])
     assert len(parsed_pattern) == len(flattened_pattern)
@@ -220,8 +220,8 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 assert utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types)
                 x = sum(ctx.shifts[(d, s, p)] for d in c_ds for s in c_ss)
             else:
-                if utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types):
-                    raise ValueError(f"Shift type should be 'ALL', but got {preference.count_shift_types} instead")
+                if ctx.n_shift_types > 1 and utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types):
+                    raise ValueError(f"In preference index {preference_idx}, the shift type is equivalent to 'ALL', please use 'ALL' instead.")
                 x = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for d in c_ds for s in c_ss)
 
             # TODO: Also Report value of `x`
