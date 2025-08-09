@@ -690,11 +690,11 @@ export function useSchedulingData() {
       ...prevState,
       preferences: prevState.preferences.filter(pref => {
         if (pref.type === SHIFT_TYPE_REQUIREMENT) {
-          return (pref as ShiftTypeRequirementsPreference).shift_type.length > 0;
+          return (pref as ShiftTypeRequirementsPreference).shiftType.length > 0;
         } else if (pref.type === SHIFT_REQUEST) {
           return (pref as ShiftRequestPreference).person !== undefined &&
             (pref as ShiftRequestPreference).date !== undefined &&
-            (pref as ShiftRequestPreference).shift_type !== undefined;
+            (pref as ShiftRequestPreference).shiftType !== undefined;
         } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
           return (pref as ShiftTypeSuccessionsPreference).person.length > 0 &&
             (pref as ShiftTypeSuccessionsPreference).pattern.length > 0;

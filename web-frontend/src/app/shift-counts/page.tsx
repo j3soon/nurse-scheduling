@@ -84,8 +84,8 @@ export default function ShiftCountsPage() {
     setFormData({
       description: shiftCount.description ?? '',
       person: shiftCount.person,
-      count_dates: shiftCount.count_dates,
-      count_shift_types: shiftCount.count_shift_types,
+      count_dates: shiftCount.countDates,
+      count_shift_types: shiftCount.countShiftTypes,
       expression: shiftCount.expression,
       target: shiftCount.target,
       weight: shiftCount.weight
@@ -130,8 +130,8 @@ export default function ShiftCountsPage() {
       type: SHIFT_COUNT,
       description: formData.description,
       person: formData.person,
-      count_dates: formData.count_dates.length > 0 ? formData.count_dates : [ALL],
-      count_shift_types: formData.count_shift_types.length > 0 ? formData.count_shift_types : [ALL],
+      countDates: formData.count_dates.length > 0 ? formData.count_dates : [ALL],
+      countShiftTypes: formData.count_shift_types.length > 0 ? formData.count_shift_types : [ALL],
       expression: formData.expression,
       target: formData.target as typeof SUPPORTED_SPECIAL_TARGETS[number] | number,
       weight: formData.weight as number
@@ -481,11 +481,11 @@ export default function ShiftCountsPage() {
                       </div>
                       <div className="md:col-span-2 lg:col-span-3">
                         <span className="font-medium">Count Dates:</span>{' '}
-                        {shiftCount.count_dates.length > 0 ? shiftCount.count_dates.join(', ') : '(All Dates)'}
+                        {shiftCount.countDates.length > 0 ? shiftCount.countDates.join(', ') : '(All Dates)'}
                       </div>
                       <div className="md:col-span-2 lg:col-span-3">
                         <span className="font-medium">Count Shift Types:</span>{' '}
-                        {shiftCount.count_shift_types.length > 0 ? shiftCount.count_shift_types.join(', ') : '(All Shift Types)'}
+                        {shiftCount.countShiftTypes.length > 0 ? shiftCount.countShiftTypes.join(', ') : '(All Shift Types)'}
                       </div>
                     </div>
                   </div>

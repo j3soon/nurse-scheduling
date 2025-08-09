@@ -147,7 +147,7 @@ export default function ShiftRequestsPage() {
           type: SHIFT_REQUEST,
           person: personId,
           date: dateId,
-          shift_type: pref.shiftTypeId,
+          shiftType: pref.shiftTypeId,
           weight: pref.weight,
         };
         newPreferences.push(newPreference);
@@ -173,8 +173,8 @@ export default function ShiftRequestsPage() {
         return b.weight - a.weight;
       }
       // Compare shift_type indices in shiftTypeData.items
-      const indexA = getAllShiftTypes().findIndex(st => st.id === a.shift_type);
-      const indexB = getAllShiftTypes().findIndex(st => st.id === b.shift_type);
+      const indexA = getAllShiftTypes().findIndex(st => st.id === a.shiftType);
+      const indexB = getAllShiftTypes().findIndex(st => st.id === b.shiftType);
       if (indexA < indexB) return -1;
       if (indexA > indexB) return 1;
       return 0;
@@ -264,7 +264,7 @@ export default function ShiftRequestsPage() {
 
       // Convert to the format expected by updateShiftPreferences
       const updatedPreferences = currentPreferences.map(pref => ({
-        shiftTypeId: pref.shift_type,
+        shiftTypeId: pref.shiftType,
         weight: pref.weight
       }));
 
@@ -706,7 +706,7 @@ export default function ShiftRequestsPage() {
                                     {visiblePreferences.map((pref, index) => {
                                       return (
                                         <div key={index} className="text-xs font-semibold leading-tight px-0.5 whitespace-nowrap">
-                                          {pref.shift_type} ({getWeightDisplayLabel(pref.weight)})
+                                          {pref.shiftType} ({getWeightDisplayLabel(pref.weight)})
                                         </div>
                                       );
                                     })}
@@ -746,7 +746,7 @@ export default function ShiftRequestsPage() {
                   // Get person and date descriptions for display
                   const person = peopleData.items.find(p => p.id === preference.person);
                   const date = dateData.items.find(d => d.id === preference.date);
-                  const shiftType = getAllShiftTypes().find(st => st.id === preference.shift_type);
+                  const shiftType = getAllShiftTypes().find(st => st.id === preference.shiftType);
 
                   return (
                     <div key={index} className="px-6 py-5 bg-blue-50">
@@ -775,7 +775,7 @@ export default function ShiftRequestsPage() {
                             </div>
                             <div>
                               <span className="font-medium">Shift Type:</span>{' '}
-                              <span className="text-blue-900">{preference.shift_type}</span>
+                              <span className="text-blue-900">{preference.shiftType}</span>
                               {shiftType?.description && (
                                 <div className="text-xs text-blue-500 mt-1">{shiftType.description}</div>
                               )}
@@ -880,7 +880,7 @@ export default function ShiftRequestsPage() {
         personId={editorState.personId}
         dateId={editorState.dateId}
         shiftTypes={getAllShiftTypes()}
-        initialPreferences={getShiftPreferences(editorState.personId, editorState.dateId).map(p => ({ shiftTypeId: p.shift_type, weight: p.weight }))}
+        initialPreferences={getShiftPreferences(editorState.personId, editorState.dateId).map(p => ({ shiftTypeId: p.shiftType, weight: p.weight }))}
       />
 
       {/* History Editor Modal */}

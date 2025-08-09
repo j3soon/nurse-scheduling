@@ -56,10 +56,10 @@ export interface AtMostOneShiftPerDayPreference extends BasePreference {
 export interface ShiftTypeRequirementsPreference extends BasePreference {
   type: typeof SHIFT_TYPE_REQUIREMENT;
   description?: string;
-  shift_type: string[];
-  required_num_people: number;
-  qualified_people: string[];
-  preferred_num_people?: number;
+  shiftType: string[];
+  requiredNumPeople: number;
+  qualifiedPeople: string[];
+  preferredNumPeople?: number;
   date: string[];
   weight: number;
 }
@@ -69,7 +69,7 @@ export interface ShiftRequestPreference extends BasePreference {
   description?: string;
   person: string;
   date: string;
-  shift_type: string;
+  shiftType: string;
   weight: number;
 }
 
@@ -85,8 +85,8 @@ export interface ShiftCountPreference extends BasePreference {
   type: typeof SHIFT_COUNT;
   description?: string;
   person: string[];
-  count_dates: string[];
-  count_shift_types: string[];
+  countDates: string[];
+  countShiftTypes: string[];
   expression: typeof SUPPORTED_EXPRESSIONS[number];
   target: number | typeof SUPPORTED_SPECIAL_TARGETS[number];
   weight: number;

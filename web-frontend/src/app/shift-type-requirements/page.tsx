@@ -83,10 +83,10 @@ export default function ShiftTypeRequirementsPage() {
     const requirement = shiftTypeRequirements[index];
     setFormData({
       description: requirement.description ?? '',
-      shift_type: requirement.shift_type,
-      required_num_people: requirement.required_num_people,
-      qualified_people: requirement.qualified_people,
-      preferred_num_people: requirement.preferred_num_people,
+      shift_type: requirement.shiftType,
+      required_num_people: requirement.requiredNumPeople,
+      qualified_people: requirement.qualifiedPeople,
+      preferred_num_people: requirement.preferredNumPeople,
       date: requirement.date,
       weight: requirement.weight
     });
@@ -141,10 +141,10 @@ export default function ShiftTypeRequirementsPage() {
     const newRequirement: ShiftTypeRequirementsPreference = {
       type: SHIFT_TYPE_REQUIREMENT,
       description: formData.description,
-      shift_type: formData.shift_type,
-      required_num_people: formData.required_num_people,
-      qualified_people: formData.qualified_people.length > 0 ? formData.qualified_people : [ALL],
-      preferred_num_people: formData.preferred_num_people,
+      shiftType: formData.shift_type,
+      requiredNumPeople: formData.required_num_people,
+      qualifiedPeople: formData.qualified_people.length > 0 ? formData.qualified_people : [ALL],
+      preferredNumPeople: formData.preferred_num_people,
       date: formData.date.length > 0 ? formData.date : [ALL],
       weight: formData.weight as number
     };
@@ -476,21 +476,21 @@ export default function ShiftTypeRequirementsPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
                       <div>
                         <span className="font-medium">Shift Types:</span>{' '}
-                        {requirement.shift_type.join(', ')}
+                        {requirement.shiftType.join(', ')}
                       </div>
                       <div>
-                        <span className="font-medium">Required:</span> {requirement.required_num_people}
-                        {requirement.preferred_num_people && (
-                          <span> (Preferred: {requirement.preferred_num_people})</span>
+                        <span className="font-medium">Required:</span> {requirement.requiredNumPeople}
+                        {requirement.preferredNumPeople && (
+                          <span> (Preferred: {requirement.preferredNumPeople})</span>
                         )}
                       </div>
                       <div>
                         <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
                       </div>
-                      {requirement.qualified_people && (
+                      {requirement.qualifiedPeople && (
                         <div className="md:col-span-2 lg:col-span-3">
                           <span className="font-medium">Qualified:</span>{' '}
-                          {requirement.qualified_people.length > 0 ? requirement.qualified_people.join(', ') : '(All People)'}
+                          {requirement.qualifiedPeople.length > 0 ? requirement.qualifiedPeople.join(', ') : '(All People)'}
                         </div>
                       )}
                       {requirement.date && (
