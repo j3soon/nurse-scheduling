@@ -51,6 +51,7 @@ export default function ShiftTypePage() {
       removeItemFromGroup={removeItemFromGroup}
       reorderItems={reorderItems}
       reorderGroups={reorderGroups}
+      filterItemGroups={() => []}
     />
   );
 }

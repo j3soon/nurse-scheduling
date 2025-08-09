@@ -242,6 +242,7 @@ export default function DatePage() {
       removeItemFromGroup={removeItemFromGroup}
       reorderItems={reorderItems}
       reorderGroups={reorderGroups}
+      filterItemGroups={x => x}
       extraButtons={
         <ToggleButton
           label="Set Date Range"
