@@ -582,14 +582,14 @@ export function useSchedulingData() {
   ) => {
     const shiftTypeReqFieldMap = {
       [DataType.DATES]: 'date',
-      [DataType.PEOPLE]: 'qualified_people',
-      [DataType.SHIFT_TYPES]: 'shift_type'
+      [DataType.PEOPLE]: 'qualifiedPeople',
+      [DataType.SHIFT_TYPES]: 'shiftType'
     };
 
     const shiftRequestFieldMap = {
       [DataType.DATES]: 'date',
       [DataType.PEOPLE]: 'person',
-      [DataType.SHIFT_TYPES]: 'shift_type'
+      [DataType.SHIFT_TYPES]: 'shiftType'
     };
 
     const shiftTypeSuccessionsFieldMap = {
@@ -599,9 +599,9 @@ export function useSchedulingData() {
     };
 
     const shiftCountFieldMap = {
-      [DataType.DATES]: 'count_dates',
+      [DataType.DATES]: 'countDates',
       [DataType.PEOPLE]: 'person',
-      [DataType.SHIFT_TYPES]: 'count_shift_types'
+      [DataType.SHIFT_TYPES]: 'countShiftTypes'
     };
 
     updateState(prevState => ({
@@ -647,14 +647,14 @@ export function useSchedulingData() {
   ) => {
     const shiftTypeReqFieldMap = {
       [DataType.DATES]: 'date',
-      [DataType.PEOPLE]: 'qualified_people',
-      [DataType.SHIFT_TYPES]: 'shift_type'
+      [DataType.PEOPLE]: 'qualifiedPeople',
+      [DataType.SHIFT_TYPES]: 'shiftType'
     };
 
     const shiftRequestFieldMap = {
       [DataType.DATES]: 'date',
       [DataType.PEOPLE]: 'person',
-      [DataType.SHIFT_TYPES]: 'shift_type'
+      [DataType.SHIFT_TYPES]: 'shiftType'
     };
 
     const shiftTypeSuccessionsFieldMap = {
@@ -664,9 +664,9 @@ export function useSchedulingData() {
     };
 
     const shiftCountFieldMap = {
-      [DataType.DATES]: 'count_dates',
+      [DataType.DATES]: 'countDates',
       [DataType.PEOPLE]: 'person',
-      [DataType.SHIFT_TYPES]: 'count_shift_types'
+      [DataType.SHIFT_TYPES]: 'countShiftTypes'
     };
 
     // First, filter out the deleted ID from array fields and remove matching single-value preferences
