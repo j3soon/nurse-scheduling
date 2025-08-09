@@ -77,7 +77,7 @@ export default function ExportAndImportPage() {
     }
 
     represent(): string {
-      let result = yaml.dump(this.data, Object.assign({ replacer, schema }, this.opts));
+      let result = yaml.dump(this.data, Object.assign({ replacer, schema, noCompatMode: true }, this.opts));
       result = result.trim();
       if (result.includes('\n')) result = '\n' + result;
       return result;
