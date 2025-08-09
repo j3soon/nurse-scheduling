@@ -1,0 +1,25 @@
+apiVersion: alpha
+description: Tests validation error when extra parameter is provided
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-18
+people:
+  items:
+    - id: 0
+      description: n0
+shiftTypes:
+  items:
+    - id: D
+      description: Day shift type
+    - id: E
+      description: Evening shift type
+    - id: N
+      description: Night shift type
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+    preferredNumPeople: 2
+    weight: -0.1

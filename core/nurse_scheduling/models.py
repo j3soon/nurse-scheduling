@@ -1,8 +1,9 @@
 import datetime
+import math
 import re
 from typing import Any, Dict, List, Tuple
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from typing_extensions import Annotated, Self
 from .constants import ALL, OFF, MAP_WEEKDAY_TO_STR, MAP_DATE_KEYWORD_TO_FILTER
 
@@ -11,6 +12,13 @@ SHIFT_TYPE_REQUIREMENT = 'shift type requirement'
 SHIFT_REQUEST = 'shift request'
 SHIFT_TYPE_SUCCESSIONS = 'shift type successions'
 SHIFT_COUNT = 'shift count'
+
+def validate_weight(weight: int | float) -> int | float:
+    """Validate that float weights can only be positive or negative infinity."""
+    if isinstance(weight, float):
+        if weight != math.inf and weight != -math.inf:
+            raise ValueError("Float weights can only be positive infinity or negative infinity.")
+    return weight
 
 # Base models
 class Person(BaseModel):
@@ -75,6 +83,11 @@ class ShiftRequestPreference(BasePreference):
     date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     shiftType: (str | List[str])  # Single shift type ID or list
     weight: (int | float) = Field(default=1)  # For float can only be .inf or -.inf
+    
+    @field_validator('weight')
+    @classmethod
+    def validate_weight_field(cls, v):
+        return validate_weight(v)
 
 class ShiftTypeSuccessionsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
@@ -83,6 +96,11 @@ class ShiftTypeSuccessionsPreference(BasePreference):
     person: (int | str) | List[int | str]  # Single person/group ID or list
     pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
     weight: (int | float) = Field(default=1)  # For float can only be .inf or -.inf
+    
+    @field_validator('weight')
+    @classmethod
+    def validate_weight_field(cls, v):
+        return validate_weight(v)
 
 class MaxOneShiftPerDayPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
@@ -99,6 +117,11 @@ class ShiftTypeRequirementsPreference(BasePreference):
     preferredNumPeople: int | None = None  # Preferred number of people for each shift type
     date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
     weight: (int | float) = Field(default=-1)  # For float can only be .inf or -.inf
+    
+    @field_validator('weight')
+    @classmethod
+    def validate_weight_field(cls, v):
+        return validate_weight(v)
 
 class ShiftCountPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
@@ -110,6 +133,11 @@ class ShiftCountPreference(BasePreference):
     expression: str | List[str]  # Single mathematical expression or list of mathematical expressions
     target: (int | str) | List[int | str]  # Single target value (int or special constant names) or list of target values
     weight: (int | float) = Field(default=-1)  # For float can only be .inf or -.inf
+    
+    @field_validator('weight')
+    @classmethod
+    def validate_weight_field(cls, v):
+        return validate_weight(v)
 
 class NurseSchedulingData(BaseModel):
     model_config = ConfigDict(extra="forbid")
