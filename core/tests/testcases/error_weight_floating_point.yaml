@@ -1,5 +1,5 @@
 apiVersion: alpha
-description: Tests validation error when extra parameter is provided
+description: Tests validation error when weight is a non-infinite floating point number
 dates:
   range:
     startDate: 2023-08-18

@@ -36,15 +36,19 @@ def test_all():
                 f"Expected error '{expected_err.strip()}' not found in actual error: {str(exc_info.value)}"
             continue
         # If test should pass
-        with open(f"{testcases_dir}/{base_filepath}.csv", 'r') as f:
-            expected_csv = f.read()
+        if not WRITE_TO_CSV or os.path.isfile(f"{testcases_dir}/{base_filepath}.csv"):
+            with open(f"{testcases_dir}/{base_filepath}.csv", 'r') as f:
+                expected_csv = f.read()
         try:
             df, solution, score, status = nurse_scheduling.schedule(filepath)
             df2, solution2, score2, status2 = nurse_scheduling.schedule(filepath, avoid_solution=solution)
         except ValidationError as e:
             logging.debug(f"Validation error for '{base_filepath}': {e}")
             pytest.fail(f"Validation error for '{base_filepath}'")
-        actual_csv = df.to_csv(index=False, header=False)
+        if df is not None:
+            actual_csv = df.to_csv(index=False, header=False)
+        else:
+            actual_csv = status
         if WRITE_TO_CSV:
             with open(f"{testcases_dir}/{base_filepath}.csv", 'w') as f:
                 f.write(actual_csv)
