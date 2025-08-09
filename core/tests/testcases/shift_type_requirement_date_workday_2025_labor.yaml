@@ -18,8 +18,8 @@ preferences:
   - type: shift type requirement
     shiftType: A
     requiredNumPeople: 1
-    date: workday(labor)
+    date: WORKDAY(LABOR)
   - type: shift type requirement
     shiftType: A
     requiredNumPeople: 0
-    date: freeday(labor)
+    date: FREEDAY(LABOR)

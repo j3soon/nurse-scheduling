@@ -32,11 +32,11 @@ preferences:
   - type: shift type requirement
     shiftType: A
     requiredNumPeople: 1
-    date: weekday
+    date: WEEKDAY
   - type: shift type requirement
     shiftType: A
     requiredNumPeople: 0
-    date: weekend
+    date: WEEKEND
   - type: shift request
     person: 0
     date: ALL

@@ -29,7 +29,7 @@ preferences:
     requiredNumPeople: 1
   - type: shift count
     person: ALL
-    countDates: everyday
+    countDates: ALL
     countShiftTypes: ALL
     expression: ['x < T', 'x > T']
     target: [floor(AVG_SHIFTS_PER_PERSON), ceil(AVG_SHIFTS_PER_PERSON)]

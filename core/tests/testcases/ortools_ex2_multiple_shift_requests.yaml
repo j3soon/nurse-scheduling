@@ -31,7 +31,7 @@ preferences:
     requiredNumPeople: 1
   - type: shift count
     person: ALL
-    countDates: everyday
+    countDates: ALL
     countShiftTypes: ALL
     expression: '|x - T|^2'
     target: round(AVG_SHIFTS_PER_PERSON)

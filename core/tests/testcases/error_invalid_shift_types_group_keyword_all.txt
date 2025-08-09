@@ -1,1 +1,1 @@
-Value error, People group ID cannot be one of the reserved values
+Value error, Shift type group ID cannot be one of the reserved values

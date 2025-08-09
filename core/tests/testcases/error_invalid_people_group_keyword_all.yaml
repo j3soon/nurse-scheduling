@@ -4,9 +4,6 @@ dates:
   range:
     startDate: 2023-08-18
     endDate: 2023-08-18
-  groups:
-    - id: monday
-      members: []
 people:
   items:
     - id: 0

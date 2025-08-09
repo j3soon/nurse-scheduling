@@ -46,7 +46,7 @@ preferences:
     weight: 1
   - type: shift count
     person: 3
-    countDates: everyday
+    countDates: ALL
     countShiftTypes: [OFF, E, N]
     expression: '|x - T|^2'
     target: 0

@@ -5,7 +5,7 @@ dates:
     startDate: 2023-08-18
     endDate: 2023-08-18
   groups:
-    - id: Everyday
+    - id: Weekday
       members: []
 people:
   items:

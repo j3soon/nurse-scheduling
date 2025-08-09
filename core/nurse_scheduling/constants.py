@@ -8,21 +8,20 @@ INF = 'INF'  # For weights
 NINF = '-INF'  # For weights 
 
 MAP_WEEKDAY_TO_STR = [
-    'monday',
-    'tuesday',
-    'wednesday',
-    'thursday',
-    'friday',
-    'saturday',
-    'sunday',
+    'MONDAY',
+    'TUESDAY',
+    'WEDNESDAY',
+    'THURSDAY',
+    'FRIDAY',
+    'SATURDAY',
+    'SUNDAY',
 ]
 MAP_DATE_KEYWORD_TO_FILTER = {
     ALL: lambda date: True,
-    'everyday': lambda date: True,
-    'weekday': lambda date: date.weekday() < 5,
-    'weekend': lambda date: date.weekday() >= 5,
-    'workday': lambda date: not is_freeday_TW(date),
-    'freeday': is_freeday_TW,
-    'workday(labor)': lambda date: not is_freeday_TW(date, True),
-    'freeday(labor)': lambda date: is_freeday_TW(date, True),
+    'WEEKDAY': lambda date: date.weekday() < 5,
+    'WEEKEND': lambda date: date.weekday() >= 5,
+    'WORKDAY': lambda date: not is_freeday_TW(date),
+    'FREEDAY': is_freeday_TW,
+    'WORKDAY(LABOR)': lambda date: not is_freeday_TW(date, True),
+    'FREEDAY(LABOR)': lambda date: is_freeday_TW(date, True),
 }

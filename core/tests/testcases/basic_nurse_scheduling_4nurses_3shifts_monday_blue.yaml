@@ -41,6 +41,6 @@ preferences:
     shiftType: N
   - type: shift request
     person: 0
-    date: monday
+    date: MONDAY
     shiftType: ALL
     weight: -100

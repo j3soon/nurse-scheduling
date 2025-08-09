@@ -29,7 +29,7 @@ preferences:
     requiredNumPeople: 1
   - type: shift count
     person: ALL
-    countDates: everyday
+    countDates: ALL
     countShiftTypes: OFF
     expression: 'x <= T'
     target: 1
