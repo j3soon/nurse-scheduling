@@ -43,14 +43,14 @@ preferences:
     person: 3
     date: 2~3
     shiftType: D
-    weight: INF
+    weight: .inf
   - type: shift request
     person: 3
     date: 08-04~08-04
     shiftType: E
-    weight: INF
+    weight: .inf
   - type: shift request
     person: 3
     date: [2023-08-06~2023-08-07, 8~8]
     shiftType: N
-    weight: INF
+    weight: .inf

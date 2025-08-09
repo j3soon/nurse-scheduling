@@ -33,7 +33,7 @@ preferences:
     countShiftTypes: OFF
     expression: 'x <= T'
     target: 1
-    weight: INF
+    weight: .inf
   - type: shift request
     person: 0
     date: ALL

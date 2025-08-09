@@ -51,8 +51,8 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
                 
                 # Add the objective
                 weight = preference.weight
-                if weight in [utils.INF, utils.NINF]:
-                    raise ValueError(f"'INF' and '-INF' weights are not allowed for {models.SHIFT_TYPE_REQUIREMENT} with 'preferredNumPeople'. Use 'requiredNumPeople' instead to enforce hard constraints.")
+                if weight in [math.inf, -math.inf]:
+                    raise ValueError(f"Infinity weights are not allowed for {models.SHIFT_TYPE_REQUIREMENT} with 'preferredNumPeople'. Use 'requiredNumPeople' instead to enforce hard constraints.")
                 utils.add_objective(ctx, weight, diff)
                 ctx.reports.append(Report(f"shift_type_requirements_{diff_var_name}", diff, lambda x: x == 0))
 
@@ -242,10 +242,10 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 ctx.model_vars[squared_var_name] = squared = ctx.model.NewIntVar(0, MAX**2, squared_var_name)
                 ctx.model.AddMultiplicationEquality(squared, diff, diff)
                 # Add the objective
-                if weight == utils.INF:
-                    raise ValueError(f"'INF' weights are not allowed for shift count with '{expression}'.")
-                elif weight != utils.NINF and weight > 0:
-                    # -INF means x == T, which is okay
+                if weight == math.inf:
+                    raise ValueError(f"'.inf' weights are not allowed for shift count with '{expression}'.")
+                elif weight != -math.inf and weight > 0:
+                    # -inf means x == T, which is okay
                     raise ValueError(f"Weight must be non-positive for shift count with '{expression}'.")
                 utils.add_objective(ctx, weight, squared)
                 ctx.reports.append(Report(f"shift_count_{squared_var_name}", squared, lambda x: x == 0))

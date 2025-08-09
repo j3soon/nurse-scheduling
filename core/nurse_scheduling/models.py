@@ -74,7 +74,7 @@ class ShiftRequestPreference(BasePreference):
     person: (int | str) | List[int | str]  # Single person/group ID or list
     date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     shiftType: (str | List[str])  # Single shift type ID or list
-    weight: (int | str) = Field(default=1)
+    weight: (int | float) = Field(default=1)  # For float can only be .inf or -.inf
 
 class ShiftTypeSuccessionsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
@@ -82,7 +82,7 @@ class ShiftTypeSuccessionsPreference(BasePreference):
     description: str | None = None
     person: (int | str) | List[int | str]  # Single person/group ID or list
     pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
-    weight: (int | str) = Field(default=1)
+    weight: (int | float) = Field(default=1)  # For float can only be .inf or -.inf
 
 class MaxOneShiftPerDayPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
@@ -98,7 +98,7 @@ class ShiftTypeRequirementsPreference(BasePreference):
     qualifiedPeople: (int | str) | List[int | str] | None = None   # Single person/group ID or list or None
     preferredNumPeople: int | None = None  # Preferred number of people for each shift type
     date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
-    weight: (int | str) = Field(default=-1)
+    weight: (int | float) = Field(default=-1)  # For float can only be .inf or -.inf
 
 class ShiftCountPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
@@ -109,7 +109,7 @@ class ShiftCountPreference(BasePreference):
     countShiftTypes: (str | List[str])  # Single shift type ID or list
     expression: str | List[str]  # Single mathematical expression or list of mathematical expressions
     target: (int | str) | List[int | str]  # Single target value (int or special constant names) or list of target values
-    weight: (int | str) = Field(default=-1)
+    weight: (int | float) = Field(default=-1)  # For float can only be .inf or -.inf
 
 class NurseSchedulingData(BaseModel):
     model_config = ConfigDict(extra="forbid")

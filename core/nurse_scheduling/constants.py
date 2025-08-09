@@ -4,8 +4,6 @@ from .workdays.taiwan import is_freeday as is_freeday_TW
 ALL = 'ALL'  # For dates, shift types, and people
 OFF = 'OFF'  # For shift types
 OFF_sid = -1  # For shift types
-INF = 'INF'  # For weights
-NINF = '-INF'  # For weights 
 
 MAP_WEEKDAY_TO_STR = [
     'MONDAY',

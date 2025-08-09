@@ -33,7 +33,7 @@ preferences:
     countShiftTypes: ALL
     expression: 'x >= T'
     target: floor(AVG_SHIFTS_PER_PERSON)
-    weight: INF
+    weight: .inf
   - type: shift request
     person: 0
     date: ALL

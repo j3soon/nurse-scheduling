@@ -50,4 +50,4 @@ preferences:
     countShiftTypes: [OFF, E, N]
     expression: '|x - T|^2'
     target: 0
-    weight: -INF
+    weight: -.inf

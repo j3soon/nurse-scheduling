@@ -1,7 +1,8 @@
 import datetime
+import math
 import re
 from .models import DateRange
-from .constants import INF, NINF, MAP_WEEKDAY_TO_STR, MAP_DATE_KEYWORD_TO_FILTER
+from .constants import MAP_WEEKDAY_TO_STR, MAP_DATE_KEYWORD_TO_FILTER
 
 def ensure_list(val):
     if val is None:
@@ -19,9 +20,9 @@ def ortools_expression_to_bool_var(
     return var
 
 def add_objective(ctx, weight, expression):
-    if weight == INF:
+    if weight == math.inf:
         ctx.model.Add(expression == 1)
-    elif weight == NINF:
+    elif weight == -math.inf:
         ctx.model.Add(expression == 0)
     else:
         ctx.objective += weight * expression
