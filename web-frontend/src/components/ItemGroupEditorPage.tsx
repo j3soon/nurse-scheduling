@@ -183,6 +183,8 @@ export default function ItemGroupEditorPage({
       }
     }
     setError('');
+    // Scroll to top of the page
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const handleDelete = (id: string) => {

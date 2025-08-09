@@ -93,6 +93,8 @@ export default function ShiftTypeRequirementsPage() {
     setEditingIndex(index);
     setIsFormVisible(true);
     setErrors({});
+    // Scroll to top of the page
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const handleCancel = () => {
