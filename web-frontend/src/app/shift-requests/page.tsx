@@ -10,6 +10,7 @@ import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
 import { getWeightDisplayLabel, parseWeightValue, isValidWeightValue } from '@/utils/numberParsing';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
+import { ALL } from '@/utils/keywords';
 
 export default function ShiftRequestsPage() {
   const {
@@ -122,39 +123,54 @@ export default function ShiftRequestsPage() {
 
   // Helper function to create combined date entries (All Days + regular dates)
   const getCombinedDateEntries = () => {
-    const allDaysEntry = { id: '', description: 'All Days' };
+    const allDaysEntry = { id: ALL, description: 'Group containing all dates' };
     return [allDaysEntry, ...dateData.items];
   };
 
   // Helper function to get shift preferences for a person-date combination
   const getShiftPreferences = (personId: string, dateId: string): ShiftRequestPreference[] => {
     return shiftRequestPreferences.filter(
-      p => p.person === personId && p.date === dateId
+      p => p.person[0] === personId && p.date.includes(dateId)
     );
   };
 
   // Helper function to update shift preferences for a person-date combination
   const updateShiftPreferences = (personId: string, dateId: string, preferences: { shiftTypeId: string; weight: number }[]) => {
-    // Remove existing preferences for this person-date combination
-    const newPreferences = shiftRequestPreferences.filter(
-      p => !(p.person === personId && p.date === dateId)
-    );
-
-    // Add new preferences
-    preferences.forEach(pref => {
-      if (pref.weight !== 0) {
-        const newPreference: ShiftRequestPreference = {
-          type: SHIFT_REQUEST,
-          person: personId,
-          date: dateId,
-          shiftType: pref.shiftTypeId,
-          weight: pref.weight,
+    // Remove the date ID to update from the person's preferences
+    let filteredPreferences = shiftRequestPreferences.map(pref => {
+      if (pref.person[0] === personId) {
+        return {
+          ...pref,
+          date: pref.date.filter(id => id !== dateId),
         };
-        newPreferences.push(newPreference);
       }
+      return pref;
     });
 
-    updateShiftRequestPreferences(newPreferences);
+    // Add the date ID to update to the person's preferences
+    for (const preference of preferences) {
+      const existingPreference = filteredPreferences.find(
+        p => p.person[0] === personId &&
+        p.shiftType[0] === preference.shiftTypeId &&
+        p.weight === preference.weight
+      );
+      if (existingPreference) {
+        existingPreference.date.push(dateId);
+      } else {
+        filteredPreferences.push({
+          type: SHIFT_REQUEST,
+          person: [personId],
+          date: [dateId],
+          shiftType: [preference.shiftTypeId],
+          weight: preference.weight,
+        });
+      }
+    }
+
+    // Remove preferences with empty date
+    filteredPreferences = filteredPreferences.filter(p => p.date.length > 0);
+
+    updateShiftRequestPreferences(filteredPreferences);
   };
 
   // Helper function to get visual representation of preferences
@@ -173,8 +189,8 @@ export default function ShiftRequestsPage() {
         return b.weight - a.weight;
       }
       // Compare shift_type indices in shiftTypeData.items
-      const indexA = getAllShiftTypes().findIndex(st => st.id === a.shiftType);
-      const indexB = getAllShiftTypes().findIndex(st => st.id === b.shiftType);
+      const indexA = getAllShiftTypes().findIndex(st => a.shiftType[0] === st.id);
+      const indexB = getAllShiftTypes().findIndex(st => b.shiftType[0] === st.id);
       if (indexA < indexB) return -1;
       if (indexA > indexB) return 1;
       return 0;
@@ -264,12 +280,12 @@ export default function ShiftRequestsPage() {
 
       // Convert to the format expected by updateShiftPreferences
       const updatedPreferences = currentPreferences.map(pref => ({
-        shiftTypeId: pref.shiftType,
+        shiftTypeId: pref.shiftType[0],
         weight: pref.weight
       }));
 
       // Check if there's already a preference for this shift type
-      const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === addFormData.shiftType);
+      const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId[0] === addFormData.shiftType);
 
       // Use the parseWeightValue helper to consistently parse the weight
       const weightValue = addFormData.weight as number; // We know it's valid from validateWeight()
@@ -614,13 +630,13 @@ export default function ShiftRequestsPage() {
                       <th
                         key={dateEntry.id || 'all-days'}
                         className={`px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider ${
-                          dateEntry.id === ''
+                          dateEntry.id === ALL
                             ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200'
                             : ''
                         }`}
-                        title={dateEntry.id === '' ? 'Set preferences that apply to all days' : dateEntry.description || dateEntry.id}
+                        title={dateEntry.id === ALL ? 'Set preferences that apply to all days' : dateEntry.description || dateEntry.id}
                       >
-                        <div className="whitespace-nowrap">{dateEntry.id === '' ? 'All Days' : dateEntry.id}</div>
+                        <div className="whitespace-nowrap">{dateEntry.id === ALL ? 'All Days' : dateEntry.id}</div>
                       </th>
                     ))}
                   </tr>
@@ -630,6 +646,7 @@ export default function ShiftRequestsPage() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {peopleData.items.map((person) => (
                     <tr key={person.id} className="hover:bg-gray-50">
+                      {/* Person column */}
                       <td className="sticky left-0 z-10 bg-white px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 border-r border-gray-200 shadow-sm">
                         <div>
                           <div>{person.id}</div>
@@ -668,6 +685,7 @@ export default function ShiftRequestsPage() {
                           </td>
                         );
                       })}
+                      {/* All days and per-date columns */}
                       {getCombinedDateEntries().map((dateEntry) => {
                         const display = getPreferenceDisplay(person.id, dateEntry.id);
 
@@ -675,7 +693,7 @@ export default function ShiftRequestsPage() {
                           <td
                             key={`${person.id}-${dateEntry.id || 'all-days'}`}
                             className={`px-1 py-1 text-center cursor-pointer hover:bg-gray-50 transition-colors duration-150 ${
-                              dateEntry.id === '' ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200' : ''
+                              dateEntry.id === ALL ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200' : ''
                             }`}
                             onClick={() => !isAddMode && handleCellClick(person.id, dateEntry.id)}
                             onMouseEnter={() => handleCellMouseEnter(SelectedCellType.PREFERENCE, person.id, dateEntry.id)}
@@ -688,7 +706,7 @@ export default function ShiftRequestsPage() {
                                   ? `${display.color} ${display.textColor} hover:scale-105`
                                   : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
                               }`}
-                              title={dateEntry.id === ''
+                              title={dateEntry.id === ALL
                                 ? (isAddMode
                                   ? `Click or drag to update all-days preferences for ${person.id}`
                                   : `Click to update all-days preferences for ${person.id}`)
@@ -743,10 +761,9 @@ export default function ShiftRequestsPage() {
             ) : (
               <div className="divide-y divide-blue-200">
                 {shiftRequestPreferences.map((preference, index) => {
-                  // Get person and date descriptions for display
-                  const person = peopleData.items.find(p => p.id === preference.person);
-                  const date = dateData.items.find(d => d.id === preference.date);
-                  const shiftType = getAllShiftTypes().find(st => st.id === preference.shiftType);
+                  // Get person and shift type descriptions for display
+                  const person = peopleData.items.find(p => p.id === preference.person[0]);
+                  const shiftType = getAllShiftTypes().find(st => st.id === preference.shiftType[0]);
 
                   return (
                     <div key={index} className="px-6 py-5 bg-blue-50">
@@ -763,15 +780,11 @@ export default function ShiftRequestsPage() {
                             <div>
                               <span className="font-medium">Date:</span>{' '}
                               <span className="text-blue-900">
-                                {preference.date === '' ? 'All Days' : preference.date}
+                                {preference.date[0] === ALL ? 'All Days' : preference.date.join(', ')}
                               </span>
-                              {preference.date === '' ? (
+                              {preference.date[0] === ALL ? (
                                 <div className="text-xs text-blue-500 mt-1">Applies to all days</div>
-                              ) : (
-                                date?.description && (
-                                  <div className="text-xs text-blue-500 mt-1">{date.description}</div>
-                                )
-                              )}
+                              ) : null}
                             </div>
                             <div>
                               <span className="font-medium">Shift Type:</span>{' '}
@@ -790,15 +803,6 @@ export default function ShiftRequestsPage() {
                               </div>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex justify-end space-x-2 ml-4">
-                          <button
-                            onClick={() => openEditor(preference.person, preference.date)}
-                            className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
-                          >
-                            <FiEdit2 className="h-4 w-4" />
-                            Edit
-                          </button>
                         </div>
                       </div>
                     </div>
@@ -880,7 +884,7 @@ export default function ShiftRequestsPage() {
         personId={editorState.personId}
         dateId={editorState.dateId}
         shiftTypes={getAllShiftTypes()}
-        initialPreferences={getShiftPreferences(editorState.personId, editorState.dateId).map(p => ({ shiftTypeId: p.shiftType, weight: p.weight }))}
+        initialPreferences={getShiftPreferences(editorState.personId, editorState.dateId).map(p => ({ shiftTypeId: p.shiftType[0], weight: p.weight }))}
       />
 
       {/* History Editor Modal */}

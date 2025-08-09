@@ -67,9 +67,9 @@ export interface ShiftTypeRequirementsPreference extends BasePreference {
 export interface ShiftRequestPreference extends BasePreference {
   type: typeof SHIFT_REQUEST;
   description?: string;
-  person: string;
-  date: string;
-  shiftType: string;
+  person: string[];  // Should only contain one person
+  date: string[];  // Can contain multiple dates
+  shiftType: string[];  // Should only contain one shift type
   weight: number;
 }
 

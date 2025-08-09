@@ -617,7 +617,7 @@ export function useSchedulingData() {
           const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
           return {
             ...pref,
-            [fieldName]: (pref as ShiftRequestPreference)[fieldName] === oldId ? newId : (pref as ShiftRequestPreference)[fieldName]
+            [fieldName]: ((pref as ShiftRequestPreference)[fieldName] as string[]).map(id => id === oldId ? newId : id)
           };
         } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
           if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
@@ -684,7 +684,7 @@ export function useSchedulingData() {
             const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
             return {
               ...pref,
-              [fieldName]: (pref as ShiftRequestPreference)[fieldName] === deletedId ? undefined : (pref as ShiftRequestPreference)[fieldName]
+              [fieldName]: ((pref as ShiftRequestPreference)[fieldName] as string[]).filter(id => id !== deletedId)
             };
           } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
             if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
@@ -713,9 +713,9 @@ export function useSchedulingData() {
         if (pref.type === SHIFT_TYPE_REQUIREMENT) {
           return (pref as ShiftTypeRequirementsPreference).shiftType.length > 0;
         } else if (pref.type === SHIFT_REQUEST) {
-          return (pref as ShiftRequestPreference).person !== undefined &&
-            (pref as ShiftRequestPreference).date !== undefined &&
-            (pref as ShiftRequestPreference).shiftType !== undefined;
+          return (pref as ShiftRequestPreference).person.length > 0 &&
+            (pref as ShiftRequestPreference).date.length > 0 &&
+            (pref as ShiftRequestPreference).shiftType.length > 0;
         } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
           return (pref as ShiftTypeSuccessionsPreference).person.length > 0 &&
             (pref as ShiftTypeSuccessionsPreference).pattern.length > 0;
@@ -971,6 +971,43 @@ export function useSchedulingData() {
 
   const updatePreferencesByType = <T extends Preference>(type: string, newPreferences: T[]) => {
     const otherPreferences = historyState.state.preferences.filter(pref => pref.type !== type);
+    if (type === SHIFT_REQUEST) {
+      // Sort preferences by person, shift type, weight.
+      (newPreferences as ShiftRequestPreference[]).sort((a, b) => {
+        // Sort based on peopleData person index
+        const peopleIndexA = historyState.state.people.items.findIndex(p => p.id === a.person[0]);
+        const peopleIndexB = historyState.state.people.items.findIndex(p => p.id === b.person[0]);
+        const personOrder = peopleIndexA - peopleIndexB;
+        if (personOrder !== 0) return personOrder;
+        // Sort based on shiftTypeData shift type index
+        const shiftTypeIndexA = historyState.state.shiftTypes.items.findIndex(p => p.id === a.shiftType[0]);
+        const shiftTypeIndexB = historyState.state.shiftTypes.items.findIndex(p => p.id === b.shiftType[0]);
+        const shiftTypeOrder = shiftTypeIndexA - shiftTypeIndexB;
+        if (shiftTypeOrder !== 0) return shiftTypeOrder;
+        // Sort based on weight
+        return a.weight - b.weight;
+      });
+      // Sort each preference date array
+      (newPreferences as ShiftRequestPreference[]).forEach(pref => {
+        if (pref.person.length !== 1) {
+          console.error(`A single shift request corresponds to multiple people. ${ERROR_SHOULD_NOT_HAPPEN}`);
+          return pref;
+        }
+        if (pref.shiftType.length !== 1) {
+          console.error(`A single shift request corresponds to multiple shift types. ${ERROR_SHOULD_NOT_HAPPEN}`);
+          return pref;
+        }
+        if (pref.date.length === 0) {
+          console.error(`A single shift request corresponds to no dates. ${ERROR_SHOULD_NOT_HAPPEN}`);
+          return pref;
+        }
+        pref.date.sort((a, b) => {
+          const dateIndexA = historyState.state.dates.items.findIndex(p => p.id === a);
+          const dateIndexB = historyState.state.dates.items.findIndex(p => p.id === b);
+          return dateIndexA - dateIndexB;
+        });
+      });
+    }
     // Sort preferences by type after updating
     const updatedPreferences = [...otherPreferences, ...newPreferences].sort((a, b) => {
       const typeOrder = [AT_MOST_ONE_SHIFT_PER_DAY, SHIFT_TYPE_REQUIREMENT, SHIFT_REQUEST, SHIFT_TYPE_SUCCESSIONS, SHIFT_COUNT];
