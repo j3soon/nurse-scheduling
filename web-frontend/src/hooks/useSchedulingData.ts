@@ -1036,6 +1036,41 @@ export function useSchedulingData() {
       preferences: yamlData.preferences || []
     });
 
+    // If any ID is a number, convert it to a string
+    const convertIdsToString = (arr: { id: number | string }[]) => {
+      arr.forEach(obj => {
+        if (typeof obj.id === 'number') obj.id = String(obj.id);
+      });
+    };
+    convertIdsToString(newState.dates.items);
+    convertIdsToString(newState.dates.groups);
+    convertIdsToString(newState.people.items);
+    convertIdsToString(newState.people.groups);
+    convertIdsToString(newState.shiftTypes.items);
+    convertIdsToString(newState.shiftTypes.groups);
+    const convertArrayIdsToString = (arr: (number | string)[], isDate: boolean = false) => {
+      if (!Array.isArray(arr)) return;
+      for (let i = 0; i < arr.length; i++) {
+        if (typeof arr[i] === 'number') {
+          if (isDate) {
+            arr[i] = arr[i].toString().padStart(2, '0');
+          } else {
+            arr[i] = arr[i].toString();
+          }
+        }
+      }
+    };
+    newState.preferences.forEach(pref => {
+      convertArrayIdsToString(pref.shiftType);
+      convertArrayIdsToString(pref.qualifiedPeople);
+      convertArrayIdsToString(pref.date, true);
+      convertArrayIdsToString(pref.person);
+      convertArrayIdsToString(pref.shiftType);
+      convertArrayIdsToString(pref.pattern);
+      convertArrayIdsToString(pref.countDates, true);
+      convertArrayIdsToString(pref.countShiftTypes);
+    });
+
     // Add to history and update state
     setHistoryState(prevHistoryState => {
       const newHistoryState = addToHistory(prevHistoryState, newState);

@@ -4,7 +4,7 @@
 import { useState, useRef } from 'react';
 import { FiHelpCircle, FiDownload, FiSave, FiX, FiCopy, FiCheck, FiAlertCircle } from 'react-icons/fi';
 import yaml from 'js-yaml';
-import { SchedulingState, useSchedulingData } from '@/hooks/useSchedulingData';
+import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ToggleButton from '@/components/ToggleButton';
 
 // Type definitions for CustomDump class
@@ -157,7 +157,7 @@ export default function ExportAndImportPage() {
   const handleSaveEdit = () => {
     try {
       // Validate YAML by parsing it
-      const parsedData = yaml.load(editedYaml) as SchedulingState;
+      const parsedData = yaml.load(editedYaml);
 
       // Load the parsed data directly without validation, this willl create a new history state
       loadFromYaml(parsedData);
