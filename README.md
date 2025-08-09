@@ -24,7 +24,7 @@ source .venv/bin/activate
 # install dependencies
 uv pip install -r requirements.txt
 # run CLI
-python -m nurse_scheduling.cli <input_file_path>
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path]
 # run all tests
 pytest --log-cli-level=INFO
 # Note that setting `WRITE_TO_CSV=True` in `core/tests/test_all.py` is often useful for creating new test cases
