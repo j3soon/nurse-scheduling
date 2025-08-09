@@ -620,6 +620,9 @@ export function useSchedulingData() {
             [fieldName]: (pref as ShiftRequestPreference)[fieldName] === oldId ? newId : (pref as ShiftRequestPreference)[fieldName]
           };
         } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
+          if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
+            return pref;
+          }
           const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
           return {
             ...pref,
@@ -684,6 +687,9 @@ export function useSchedulingData() {
               [fieldName]: (pref as ShiftRequestPreference)[fieldName] === deletedId ? undefined : (pref as ShiftRequestPreference)[fieldName]
             };
           } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
+            if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
+              return pref;
+            }
             const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
             return {
               ...pref,
