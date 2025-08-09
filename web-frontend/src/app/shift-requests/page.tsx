@@ -16,7 +16,6 @@ export default function ShiftRequestsPage() {
     dateData,
     peopleData,
     shiftTypeData,
-    dateRange,
     getPreferencesByType,
     updatePreferencesByType,
     addPersonHistory,
@@ -417,7 +416,7 @@ export default function ShiftRequestsPage() {
 
 
   // Check if we have the required data
-  const hasRequiredData = (dateRange?.startDate && dateRange?.endDate && dateData.items.length > 0 && peopleData.items.length > 0 && (shiftTypeData.items.length > 0 || shiftTypeData.groups.length > 0));
+  const hasRequiredData = (dateData.range?.startDate && dateData.range?.endDate && dateData.items.length > 0 && peopleData.items.length > 0 && (shiftTypeData.items.length > 0 || shiftTypeData.groups.length > 0));
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -464,7 +463,7 @@ export default function ShiftRequestsPage() {
       {!hasRequiredData && (
         <div className="text-center">
           <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-            {(!dateRange?.startDate || !dateRange?.endDate || dateData.items.length === 0) ? (
+            {(!dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0) ? (
               <>
                 Please set up your dates first by visiting the{' '}
                 <Link href="/dates" className="text-blue-600 hover:text-blue-800 underline">

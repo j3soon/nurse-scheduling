@@ -11,7 +11,6 @@ import { DateRange, DataType } from '@/types/scheduling';
 
 export default function DatePage() {
   const {
-    dateRange,
     updateDateRange,
     dateData,
     // Get functions to pass as props
@@ -83,10 +82,10 @@ export default function DatePage() {
     } else {
       setMode(Mode.DATE_RANGE_EDITING);
       // Reset draft to current values
-      if (dateRange) {
+      if (dateData.range) {
         setDraft({
-          startDate: dateRange.startDate || '',
-          endDate: dateRange.endDate || '',
+          startDate: dateData.range.startDate || '',
+          endDate: dateData.range.endDate || '',
         });
       }
       setErrors({});
@@ -96,10 +95,10 @@ export default function DatePage() {
   const handleCancel = () => {
     setMode(Mode.NORMAL);
     // Reset to original values
-    if (dateRange) {
+    if (dateData.range) {
       setDraft({
-        startDate: dateRange.startDate || '',
-        endDate: dateRange.endDate || '',
+        startDate: dateData.range.startDate || '',
+        endDate: dateData.range.endDate || '',
       });
     }
     setErrors({});
@@ -115,7 +114,7 @@ export default function DatePage() {
             <div>
               <span className="text-sm font-medium text-gray-700">Start Date:</span>
               <div className="text-lg font-semibold text-gray-900">
-                {dateRange && dateRange.startDate ? new Date(dateRange.startDate).toLocaleDateString('en-US', {
+                {dateData.range && dateData.range.startDate ? new Date(dateData.range.startDate).toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
@@ -126,7 +125,7 @@ export default function DatePage() {
             <div>
               <span className="text-sm font-medium text-gray-700">End Date:</span>
               <div className="text-lg font-semibold text-gray-900">
-                {dateRange && dateRange.endDate ? new Date(dateRange.endDate).toLocaleDateString('en-US', {
+                {dateData.range && dateData.range.endDate ? new Date(dateData.range.endDate).toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
@@ -135,9 +134,9 @@ export default function DatePage() {
               </div>
             </div>
           </div>
-          {dateRange.startDate && dateRange.endDate && (
+          {dateData.range.startDate && dateData.range.endDate && (
             <div className="mt-3 text-sm text-blue-700">
-              Duration: {Math.ceil((new Date(dateRange.endDate).getDate() - new Date(dateRange.startDate).getDate()) + 1)} days
+              Duration: {Math.ceil((new Date(dateData.range.endDate).getDate() - new Date(dateData.range.startDate).getDate()) + 1)} days
             </div>
           )}
         </div>
@@ -209,7 +208,7 @@ export default function DatePage() {
             onClick={handleSave}
             className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
           >
-            {dateRange ? 'Update' : 'Apply'}
+            {dateData.range ? 'Update' : 'Apply'}
           </button>
         </div>
       </div>
