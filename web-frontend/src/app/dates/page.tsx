@@ -28,11 +28,20 @@ export default function DatePage() {
   // Mode state for date range and item group editing
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
   const [draft, setDraft] = useState<DateRange>({
-    startDate: '',
-    endDate: '',
+    startDate: undefined,
+    endDate: undefined,
   });
   // Error messages for start date and end date
   const [errors, setErrors] = useState<{[key: string]: string}>({});
+
+  // Helper functions to convert between Date and string for form inputs
+  const dateToString = (date?: Date): string => {
+    return date ? date.toISOString().split('T')[0] : '';
+  };
+
+  const stringToDate = (dateStr: string): Date | undefined => {
+    return dateStr ? new Date(dateStr) : undefined;
+  };
 
   // Instructions for the help component
   const instructions = [
@@ -57,7 +66,7 @@ export default function DatePage() {
       newErrors.endDate = 'End date is required';
     }
 
-    if (draft.startDate && draft.endDate && new Date(draft.startDate) > new Date(draft.endDate)) {
+    if (draft.startDate && draft.endDate && draft.startDate > draft.endDate) {
       newErrors.endDate = 'End date must be after start date';
     }
 
@@ -84,8 +93,8 @@ export default function DatePage() {
       // Reset draft to current values
       if (dateData.range) {
         setDraft({
-          startDate: dateData.range.startDate || '',
-          endDate: dateData.range.endDate || '',
+          startDate: dateData.range.startDate,
+          endDate: dateData.range.endDate,
         });
       }
       setErrors({});
@@ -97,8 +106,8 @@ export default function DatePage() {
     // Reset to original values
     if (dateData.range) {
       setDraft({
-        startDate: dateData.range.startDate || '',
-        endDate: dateData.range.endDate || '',
+        startDate: dateData.range.startDate,
+        endDate: dateData.range.endDate,
       });
     }
     setErrors({});
@@ -114,7 +123,7 @@ export default function DatePage() {
             <div>
               <span className="text-sm font-medium text-gray-700">Start Date:</span>
               <div className="text-lg font-semibold text-gray-900">
-                {dateData.range && dateData.range.startDate ? new Date(dateData.range.startDate).toLocaleDateString('en-US', {
+                {dateData.range && dateData.range.startDate ? dateData.range.startDate.toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
@@ -125,7 +134,7 @@ export default function DatePage() {
             <div>
               <span className="text-sm font-medium text-gray-700">End Date:</span>
               <div className="text-lg font-semibold text-gray-900">
-                {dateData.range && dateData.range.endDate ? new Date(dateData.range.endDate).toLocaleDateString('en-US', {
+                {dateData.range && dateData.range.endDate ? dateData.range.endDate.toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
@@ -136,7 +145,7 @@ export default function DatePage() {
           </div>
           {dateData.range.startDate && dateData.range.endDate && (
             <div className="mt-3 text-sm text-blue-700">
-              Duration: {Math.ceil((new Date(dateData.range.endDate).getDate() - new Date(dateData.range.startDate).getDate()) + 1)} days
+              Duration: {Math.ceil((dateData.range.endDate.getTime() - dateData.range.startDate.getTime()) / (1000 * 60 * 60 * 24) + 1)} days
             </div>
           )}
         </div>
@@ -160,8 +169,8 @@ export default function DatePage() {
             <input
               type="date"
               id="startDate"
-              value={draft.startDate}
-              onChange={(e) => setDraft(prev => ({ ...prev, startDate: e.target.value }))}
+              value={dateToString(draft.startDate)}
+              onChange={(e) => setDraft(prev => ({ ...prev, startDate: stringToDate(e.target.value) }))}
               className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                 errors.startDate ? 'border-red-500' : 'border-gray-300'
               }`}
@@ -181,8 +190,8 @@ export default function DatePage() {
             <input
               type="date"
               id="endDate"
-              value={draft.endDate}
-              onChange={(e) => setDraft(prev => ({ ...prev, endDate: e.target.value }))}
+              value={dateToString(draft.endDate)}
+              onChange={(e) => setDraft(prev => ({ ...prev, endDate: stringToDate(e.target.value) }))}
               className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                 errors.endDate ? 'border-red-500' : 'border-gray-300'
               }`}

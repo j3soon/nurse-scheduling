@@ -106,6 +106,9 @@ export default function ExportAndImportPage() {
     if (isLeafArray(value)) {
       return new CustomDump(value, { flowLevel: 0 });
     }
+    if (value instanceof Date) {
+      return value.toISOString().split('T')[0];
+    }
     return value; // default
   }
 
