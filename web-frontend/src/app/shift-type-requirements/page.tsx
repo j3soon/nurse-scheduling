@@ -9,6 +9,7 @@ import { ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { parseWeightValue, isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
+import { ALL } from '@/utils/keywords';
 
 interface ShiftTypeRequirementForm {
   description: string;
@@ -142,9 +143,9 @@ export default function ShiftTypeRequirementsPage() {
       description: formData.description,
       shift_type: formData.shift_type,
       required_num_people: formData.required_num_people,
-      qualified_people: formData.qualified_people.length > 0 ? formData.qualified_people : ['All'],
+      qualified_people: formData.qualified_people.length > 0 ? formData.qualified_people : [ALL],
       preferred_num_people: formData.preferred_num_people,
-      date: formData.date.length > 0 ? formData.date : ['All'],
+      date: formData.date.length > 0 ? formData.date : [ALL],
       weight: formData.weight as number
     };
 

@@ -9,6 +9,7 @@ import { ShiftCountPreference, SHIFT_COUNT, SUPPORTED_EXPRESSIONS, SUPPORTED_SPE
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { parseWeightValue, isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
+import { ALL } from '@/utils/keywords';
 
 interface ShiftCountForm {
   description: string;
@@ -129,10 +130,10 @@ export default function ShiftCountsPage() {
       type: SHIFT_COUNT,
       description: formData.description,
       person: formData.person,
-      count_dates: formData.count_dates.length > 0 ? formData.count_dates : ['All'],
-      count_shift_types: formData.count_shift_types.length > 0 ? formData.count_shift_types : ['All'],
+      count_dates: formData.count_dates.length > 0 ? formData.count_dates : [ALL],
+      count_shift_types: formData.count_shift_types.length > 0 ? formData.count_shift_types : [ALL],
       expression: formData.expression,
-      target: formData.target,
+      target: formData.target as typeof SUPPORTED_SPECIAL_TARGETS[number] | number,
       weight: formData.weight as number
     };
 
