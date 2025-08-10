@@ -295,11 +295,10 @@ export default function ShiftRequestsPage() {
     });
 
     // Find the global maximum weight
-    // const globalMaxWeight = Math.max(...shiftRequestPreferences.map(p => isFinite(p.weight) ? Math.abs(p.weight) : 1));
-    const globalMaxWeight = 10000;
+    const globalMaxWeight = 1000000;
 
     // Find the maximum absolute weight for this person-date combination
-    const maxWeight = Math.min(globalMaxWeight, Math.max(...preferences.map(p => isFinite(p.weight) ? Math.abs(p.weight) : 1)));
+    const maxWeight = Math.min(globalMaxWeight, Math.max(...preferences.map(p => isFinite(p.weight) ? Math.abs(p.weight) : globalMaxWeight)));
 
     const ratio = Math.max(0.05, Math.log2(maxWeight) / Math.log2(globalMaxWeight));
 
