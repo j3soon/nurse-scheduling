@@ -196,13 +196,13 @@ export default function ShiftRequestsPage() {
       return 0;
     });
     // Set cell color based on all weights
-    let cellColor = 'bg-yellow-100 border-yellow-400';
+    let cellColor = 'bg-yellow-100';
     let textColor = 'text-yellow-800';
     if (preferences.every(p => p.weight > 0)) {
-      cellColor = 'bg-green-100 border-green-400';
+      cellColor = 'bg-green-100';
       textColor = 'text-green-800';
     } else if (preferences.every(p => p.weight < 0)) {
-      cellColor = 'bg-red-100 border-red-400';
+      cellColor = 'bg-red-100';
       textColor = 'text-red-800';
     }
 
@@ -620,7 +620,7 @@ export default function ShiftRequestsPage() {
                     {Array.from({ length: historyColumnsCount }, (_, index) => (
                       <th
                         key={`history-${index}`}
-                        className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200"
+                        className="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200"
                         title={`History position H-${historyColumnsCount - index}`}
                       >
                         <div className="whitespace-nowrap">H-{historyColumnsCount - index}</div>
@@ -629,7 +629,7 @@ export default function ShiftRequestsPage() {
                     {getCombinedDateEntries().map((dateEntry) => (
                       <th
                         key={dateEntry.id || 'all-days'}
-                        className={`px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider ${
+                        className={`px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 ${
                           dateEntry.id === ALL
                             ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200'
                             : ''
@@ -666,7 +666,7 @@ export default function ShiftRequestsPage() {
                         return (
                           <td
                             key={`${person.id}-history-${index}`}
-                            className={`px-2 py-2 text-center border-r border-gray-200 ${
+                            className={`px-1 py-1 text-center border-r border-gray-200 ${
                               isClickable
                                 ? 'bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors duration-150'
                                 : 'bg-gray-50'
@@ -692,51 +692,47 @@ export default function ShiftRequestsPage() {
                         return (
                           <td
                             key={`${person.id}-${dateEntry.id || 'all-days'}`}
-                            className={`px-1 py-1 text-center cursor-pointer hover:bg-gray-50 transition-colors duration-150 ${
+                            className={`px-0.5 py-0.5 text-center cursor-pointer transition-colors duration-150 border-r border-gray-200 hover:bg-gray-100 ${
                               dateEntry.id === ALL ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200' : ''
+                            } ${
+                              display
+                                ? `${display.color} ${display.textColor}`
+                                : ''
                             }`}
+                            title={dateEntry.id === ALL
+                              ? (isAddMode
+                                ? `Click or drag to update all-days preferences for ${person.id}`
+                                : `Click to update all-days preferences for ${person.id}`)
+                              : (isAddMode
+                                ? `Click or drag to update preferences for ${person.id} on date ${dateEntry.id}`
+                                : `Click to update preferences for ${person.id} on date ${dateEntry.id}`)}
                             onClick={() => !isAddMode && handleCellClick(person.id, dateEntry.id)}
                             onMouseEnter={() => handleCellMouseEnter(SelectedCellType.PREFERENCE, person.id, dateEntry.id)}
                             onMouseDown={() => handleCellMouseDown(SelectedCellType.PREFERENCE, person.id, dateEntry.id)}
                             onMouseUp={() => handleCellMouseUp()}
                           >
-                            <div
-                              className={`min-w-16 w-auto h-12 mx-auto rounded-lg border-2 transition-all duration-200 flex flex-col items-center justify-center gap-0 shadow-sm hover:shadow-md ${
-                                display
-                                  ? `${display.color} ${display.textColor} hover:scale-105`
-                                  : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
-                              }`}
-                              title={dateEntry.id === ALL
-                                ? (isAddMode
-                                  ? `Click or drag to update all-days preferences for ${person.id}`
-                                  : `Click to update all-days preferences for ${person.id}`)
-                                : (isAddMode
-                                  ? `Click or drag to update preferences for ${person.id} on date ${dateEntry.id}`
-                                  : `Click to update preferences for ${person.id} on date ${dateEntry.id}`)}
-                            >
-                              {display && (() => {
-                                const maxVisible = display.preferences.length <= 3 ? 3 : 2; // Show all if 3 or fewer, otherwise show 2
-                                const visiblePreferences = display.preferences.slice(0, maxVisible);
-                                const remainingCount = display.preferences.length - maxVisible;
+                            {display && (() => {
+                              const maxVisible = display.preferences.length <= 3 ? 3 : 2; // Show all if 3 or fewer, otherwise show 2
+                              const visiblePreferences = display.preferences.slice(0, maxVisible);
+                              const remainingCount = display.preferences.length - maxVisible;
 
-                                return (
-                                  <>
-                                    {visiblePreferences.map((pref, index) => {
-                                      return (
-                                        <div key={index} className="text-xs font-semibold leading-tight px-0.5 whitespace-nowrap">
-                                          {pref.shiftType} ({getWeightDisplayLabel(pref.weight)})
-                                        </div>
-                                      );
-                                    })}
-                                    {remainingCount > 0 && (
-                                      <div className="text-[10px] font-medium opacity-75 px-0.5">
-                                        +{remainingCount} more
+                              return (
+                                <>
+                                  {visiblePreferences.map((pref, index) => {
+                                    return (
+                                      <div key={index} className="text-xs font-semibold leading-tight px-0.5 whitespace-nowrap">
+                                        {pref.shiftType} ({getWeightDisplayLabel(pref.weight)})
                                       </div>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                            </div>
+                                    );
+                                  })}
+                                  {remainingCount > 0 && (
+                                    <div className="text-[10px] font-medium opacity-75 px-0.5">
+                                      +{remainingCount} more
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </td>
                         );
                       })}
