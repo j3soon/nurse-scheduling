@@ -40,7 +40,15 @@ export function getWeightWithPositivePrefix(weight: number | string): string {
 export function getWeightDisplayLabel(weight: number | string): string {
   if (weight === Infinity) return '+∞';
   if (weight === -Infinity) return '-∞';
-  return getWeightWithPositivePrefix(weight);
+  // Reduce weights length
+  const ret = getWeightWithPositivePrefix(weight);
+  if (typeof weight === 'number') {
+    const str = weight.toString();
+    if (str.endsWith('000000000')) return ret.slice(0, -9) + 'b';
+    if (str.endsWith('000000')) return ret.slice(0, -6) + 'm';
+    if (str.endsWith('000')) return ret.slice(0, -3) + 'k';
+  }
+  return ret;
 }
 
 export function getWeightColor(weight: number | string): string {
