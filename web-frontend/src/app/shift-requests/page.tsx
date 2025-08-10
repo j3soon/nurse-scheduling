@@ -301,7 +301,7 @@ export default function ShiftRequestsPage() {
     // Find the maximum absolute weight for this person-date combination
     const maxWeight = Math.min(globalMaxWeight, Math.max(...preferences.map(p => isFinite(p.weight) ? Math.abs(p.weight) : 1)));
 
-    const ratio = Math.max(0.05, maxWeight / globalMaxWeight);
+    const ratio = Math.max(0.05, Math.log2(maxWeight) / Math.log2(globalMaxWeight));
 
     // Determine preference type
     const isAllPositive = preferences.every(p => p.weight > 0);
