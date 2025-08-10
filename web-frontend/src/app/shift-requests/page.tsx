@@ -289,7 +289,7 @@ export default function ShiftRequestsPage() {
       }));
 
       // Check if there's already a preference for this shift type
-      const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId[0] === addFormData.shiftType);
+      const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === addFormData.shiftType);
 
       // Use the parseWeightValue helper to consistently parse the weight
       const weightValue = addFormData.weight as number; // We know it's valid from validateWeight()
@@ -311,6 +311,7 @@ export default function ShiftRequestsPage() {
           });
         }
       }
+      console.log(`updatedPreferences B: ${JSON.stringify(updatedPreferences)}`);
       // Apply the changes
       updateShiftPreferences(personId, dateId, updatedPreferences);
     }
