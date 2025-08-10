@@ -88,6 +88,13 @@ export default function ShiftRequestsPage() {
     };
   }, []);
 
+  // Function to sync scroll position between main and sticky containers
+  const syncScrollPosition = () => {
+    if (mainScrollContainerRef.current && stickyScrollContainerRef.current && showStickyHeader) {
+      stickyScrollContainerRef.current.scrollLeft = mainScrollContainerRef.current.scrollLeft;
+    }
+  };
+
   // Function to measure and sync column widths
   const syncColumnWidths = () => {
     if (tableRef.current) {
@@ -134,12 +141,6 @@ export default function ShiftRequestsPage() {
 
   // Horizontal scroll synchronization with real-time updates
   useEffect(() => {
-    const syncScrollPosition = () => {
-      if (mainScrollContainerRef.current && stickyScrollContainerRef.current && showStickyHeader) {
-        stickyScrollContainerRef.current.scrollLeft = mainScrollContainerRef.current.scrollLeft;
-      }
-    };
-
     const handleMainScroll = () => {
       syncScrollPosition();
     };
@@ -160,10 +161,8 @@ export default function ShiftRequestsPage() {
       stickyContainer.addEventListener('scroll', handleStickyScroll, { passive: true });
     }
 
-    // Initial sync when sticky header becomes visible
-    if (showStickyHeader) {
-      syncScrollPosition();
-    }
+    // Always sync scroll position when sticky header visibility changes or DOM updates
+    syncScrollPosition();
 
     return () => {
       if (mainContainer) {
@@ -174,6 +173,11 @@ export default function ShiftRequestsPage() {
       }
     };
   }, [showStickyHeader]);
+
+  // Sync scroll position after page refresh when user scrolls down and table has horizontal scroll
+  useEffect(() => {
+    syncScrollPosition();
+  }, [columnWidths]);
 
   const resetForm = () => {
     setAddFormData({
