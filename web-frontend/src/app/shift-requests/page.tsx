@@ -227,6 +227,19 @@ export default function ShiftRequestsPage() {
     return [...dateData.groups, ...dateData.items];
   };
 
+  // Helper function to check if a date is a weekend (Saturday or Sunday)
+  const isWeekend = (dateId: string): boolean => {
+    if (!dateData.range) return false;
+
+    try {
+      const date = dateStrToDate(dateId, dateData.range);
+      const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+      return dayOfWeek === 0 || dayOfWeek === 6;
+    } catch {
+      return false;
+    }
+  };
+
   // Helper function to get shift preferences for a person-date combination
   const getShiftPreferences = (personId: string, dateId: string): ShiftRequestPreference[] => {
     return shiftRequestPreferences.filter(
@@ -564,38 +577,43 @@ export default function ShiftRequestsPage() {
         {Array.from({ length: historyColumnsCount }, (_, index) => (
           <th
             key={`history-${index}`}
-            className="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200"
+            className="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 bg-amber-100"
             title={`History position H-${historyColumnsCount - index}`}
             style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
           >
             <div className="whitespace-nowrap">H-{historyColumnsCount - index}</div>
           </th>
         ))}
-        {getCombinedDateEntries().map((dateEntry) => (
-          <th
-            key={dateEntry.id}
-            className={`px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 ${
-              dateEntry.id === dateData.groups[0].id
-                ? 'border-l-2 border-l-blue-200'
-                : ''
-            } ${
-              dateEntry.id === dateData.groups[dateData.groups.length - 1].id
-                ? 'border-r-2 border-r-blue-200'
-                : ''
-            }`}
-            title={dateEntry.description || dateEntry.id}
-            style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
-          >
-            <div className="whitespace-nowrap">
-              {dateEntry.id}
-              {dateData.items.find(item => item.id === dateEntry.id) && (
-                <span className="ml-1">
-                  {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString('en-US', { weekday: 'short' })}
-                </span>
-              )}
-            </div>
-          </th>
-        ))}
+        {getCombinedDateEntries().map((dateEntry) => {
+          const isWeekendDate = dateData.items.find(item => item.id === dateEntry.id) && isWeekend(dateEntry.id);
+          return (
+            <th
+              key={dateEntry.id}
+              className={`px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 ${
+                dateEntry.id === dateData.groups[0].id
+                  ? 'border-l-2 border-l-blue-200'
+                  : ''
+              } ${
+                dateEntry.id === dateData.groups[dateData.groups.length - 1].id
+                  ? 'border-r-2 border-r-blue-200'
+                  : ''
+              } ${
+                isWeekendDate ? 'bg-purple-100' : ''
+              }`}
+              title={dateEntry.description || dateEntry.id}
+              style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
+            >
+              <div className="whitespace-nowrap">
+                {dateEntry.id}
+                {dateData.items.find(item => item.id === dateEntry.id) && (
+                  <span className="ml-1">
+                    {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString('en-US', { weekday: 'short' })}
+                  </span>
+                )}
+              </div>
+            </th>
+          );
+        })}
       </tr>
     );
   };
@@ -830,6 +848,7 @@ export default function ShiftRequestsPage() {
                       {/* Date groups and per-date columns */}
                       {getCombinedDateEntries().map((dateEntry) => {
                         const display = getPreferenceDisplay(person.id, dateEntry.id);
+                        const isWeekendDate = dateData.items.find(item => item.id === dateEntry.id) && isWeekend(dateEntry.id);
 
                         return (
                           <td
@@ -846,9 +865,11 @@ export default function ShiftRequestsPage() {
                               display
                                 ? `${display.textColor}`
                                 : ''
+                            } ${
+                              isWeekendDate && !display ? 'bg-purple-50' : ''
                             }`}
                             style={{
-                              backgroundColor: display?.color
+                              backgroundColor: display?.color || undefined
                             }}
                             title={dateEntry.id === ALL
                               ? (isAddMode
