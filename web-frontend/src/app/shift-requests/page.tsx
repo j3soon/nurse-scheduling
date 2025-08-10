@@ -584,7 +584,7 @@ export default function ShiftRequestsPage() {
             title={dateEntry.id === ALL ? 'Set preferences that apply to all days' : dateEntry.description || dateEntry.id}
             style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
           >
-            <div className="whitespace-nowrap">{dateEntry.id === ALL ? 'All Days' : dateEntry.id}</div>
+            <div className="whitespace-nowrap">{dateEntry.id}</div>
           </th>
         ))}
       </tr>
@@ -597,7 +597,6 @@ export default function ShiftRequestsPage() {
     "History columns (H-1, H-2, etc.) show previous shift types assigned to each person",
     "Click on any history cell to set or edit shift types for that time period",
     "Each row represents a person, followed by their history, then date columns",
-    "The 'All Days' column allows you to set preferences that apply to all days for each person",
     "Click on any cell to set shift preferences with weights for different shift types",
     "In 'Quick Add Preference' mode, you can drag across multiple cells to quickly apply the same preference",
     "Green cells indicate positive preferences (wants this shift type)",
@@ -839,7 +838,7 @@ export default function ShiftRequestsPage() {
                           </td>
                         );
                       })}
-                      {/* All days and per-date columns */}
+                      {/* Date groups and per-date columns */}
                       {getCombinedDateEntries().map((dateEntry) => {
                         const display = getPreferenceDisplay(person.id, dateEntry.id);
 
@@ -939,11 +938,8 @@ export default function ShiftRequestsPage() {
                             <div>
                               <span className="font-medium">Date:</span>{' '}
                               <span className="text-blue-900">
-                                {preference.date[0] === ALL ? 'All Days' : preference.date.join(', ')}
+                                {preference.date.join(', ')}
                               </span>
-                              {preference.date[0] === ALL ? (
-                                <div className="text-xs text-blue-500 mt-1">Applies to all days</div>
-                              ) : null}
                             </div>
                             <div>
                               <span className="font-medium">Shift Type:</span>{' '}
