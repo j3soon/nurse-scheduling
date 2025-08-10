@@ -972,16 +972,19 @@ export function useSchedulingData() {
   const updatePreferencesByType = <T extends Preference>(type: string, newPreferences: T[]) => {
     const otherPreferences = historyState.state.preferences.filter(pref => pref.type !== type);
     if (type === SHIFT_REQUEST) {
+      const combinedPeopleEntries = [...historyState.state.people.groups, ...historyState.state.people.items];
+      const combinedShiftTypeEntries = [...historyState.state.shiftTypes.groups, ...historyState.state.shiftTypes.items];
+      const combinedDateEntries = [...historyState.state.dates.groups, ...historyState.state.dates.items];
       // Sort preferences by person, shift type, weight.
       (newPreferences as ShiftRequestPreference[]).sort((a, b) => {
         // Sort based on peopleData person index
-        const peopleIndexA = historyState.state.people.items.findIndex(p => p.id === a.person[0]);
-        const peopleIndexB = historyState.state.people.items.findIndex(p => p.id === b.person[0]);
+        const peopleIndexA = combinedPeopleEntries.findIndex(p => p.id === a.person[0]);
+        const peopleIndexB = combinedPeopleEntries.findIndex(p => p.id === b.person[0]);
         const personOrder = peopleIndexA - peopleIndexB;
         if (personOrder !== 0) return personOrder;
         // Sort based on shiftTypeData shift type index
-        const shiftTypeIndexA = historyState.state.shiftTypes.items.findIndex(p => p.id === a.shiftType[0]);
-        const shiftTypeIndexB = historyState.state.shiftTypes.items.findIndex(p => p.id === b.shiftType[0]);
+        const shiftTypeIndexA = combinedShiftTypeEntries.findIndex(p => p.id === a.shiftType[0]);
+        const shiftTypeIndexB = combinedShiftTypeEntries.findIndex(p => p.id === b.shiftType[0]);
         const shiftTypeOrder = shiftTypeIndexA - shiftTypeIndexB;
         if (shiftTypeOrder !== 0) return shiftTypeOrder;
         // Sort based on weight
@@ -1002,8 +1005,8 @@ export function useSchedulingData() {
           return pref;
         }
         pref.date.sort((a, b) => {
-          const dateIndexA = historyState.state.dates.items.findIndex(p => p.id === a);
-          const dateIndexB = historyState.state.dates.items.findIndex(p => p.id === b);
+          const dateIndexA = combinedDateEntries.findIndex(p => p.id === a);
+          const dateIndexB = combinedDateEntries.findIndex(p => p.id === b);
           return dateIndexA - dateIndexB;
         });
       });

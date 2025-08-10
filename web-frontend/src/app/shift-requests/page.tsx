@@ -219,10 +219,9 @@ export default function ShiftRequestsPage() {
     return [...shiftTypeData.items, ...shiftTypeData.groups];
   };
 
-  // Helper function to create combined date entries (All Days + regular dates)
+  // Helper function to create combined date entries (date groups + regular dates)
   const getCombinedDateEntries = () => {
-    const allDaysEntry = { id: ALL, description: 'Group containing all dates' };
-    return [allDaysEntry, ...dateData.items];
+    return [...dateData.groups, ...dateData.items];
   };
 
   // Helper function to get shift preferences for a person-date combination
@@ -555,10 +554,14 @@ export default function ShiftRequestsPage() {
         ))}
         {getCombinedDateEntries().map((dateEntry) => (
           <th
-            key={dateEntry.id || 'all-days'}
+            key={dateEntry.id}
             className={`px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 ${
-              dateEntry.id === ALL
-                ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200'
+              dateEntry.id === dateData.groups[0].id
+                ? 'border-l-2 border-l-blue-200'
+                : ''
+            } ${
+              dateEntry.id === dateData.groups[dateData.groups.length - 1].id
+                ? 'border-r-2 border-r-blue-200'
                 : ''
             }`}
             title={dateEntry.id === ALL ? 'Set preferences that apply to all days' : dateEntry.description || dateEntry.id}
@@ -845,7 +848,13 @@ export default function ShiftRequestsPage() {
                           <td
                             key={`${person.id}-${dateEntry.id || 'all-days'}`}
                             className={`px-0.5 py-0.5 text-center cursor-pointer transition-colors duration-150 border-r border-gray-200 hover:bg-gray-100 ${
-                              dateEntry.id === ALL ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200' : ''
+                              dateEntry.id === dateData.groups[0].id
+                                ? 'border-l-2 border-l-blue-200'
+                                : ''
+                            } ${
+                              dateEntry.id === dateData.groups[dateData.groups.length - 1].id
+                                ? 'border-r-2 border-r-blue-200'
+                                : ''
                             } ${
                               display
                                 ? `${display.textColor}`
