@@ -218,7 +218,7 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
 
             # TODO: Also Report value of `x`
             
-            SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T']
+            SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T', 'x = T']
             # Evaluate the expression
             if expression == '|x - T|^2':
                 # Note that a shift is represented as (d, s)
@@ -249,6 +249,7 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                     'x <= T': (x <= T, x > T),
                     'x > T': (x > T, x <= T),
                     'x < T': (x < T, x >= T),
+                    'x = T': (x == T, x != T),
                 }[expression]
                 # Add the objective
                 ctx.model_vars[expr_var_name] = expr = utils.ortools_expression_to_bool_var(
