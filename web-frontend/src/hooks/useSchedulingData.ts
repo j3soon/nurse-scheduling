@@ -11,7 +11,7 @@ export interface SchedulingState {
   apiVersion: string | number;
   description: string;
   dates: { range: DateRange, items: Item[]; groups: Group[] };
-  people: { items: Item[]; groups: Group[] };
+  people: { items: Item[]; groups: Group[]; history: string[] };
   shiftTypes: { items: Item[]; groups: Group[] };
   preferences: Preference[];
 }
@@ -205,7 +205,8 @@ function createDefaultPeople() {
       { id: 'Group 3', members: ['Person 3', 'Person 4', 'Person 5', 'Person 6'], description: '' },
       { id: 'Group 4', members: ['Person 4', 'Person 5', 'Person 6', 'Person 7', 'Person 8'], description: '' },
       { id: 'Group 5', members: ['Person 5', 'Person 6', 'Person 7', 'Person 8', 'Person 9', 'Person 10'], description: '' },
-    ]
+    ],
+    history: []
   };
 }
 
@@ -574,6 +575,20 @@ export function useSchedulingData() {
     updateData(dataType, newData);
   };
 
+  const updatePeopleHistoryForIdChange = (dataType: DataType, oldId: string, newId: string) => {
+    if (dataType !== DataType.SHIFT_TYPES) return;
+    updateState(prevState => ({
+      ...prevState,
+      people: {
+        ...prevState.people,
+        items: prevState.people.items.map(person => ({
+          ...person,
+          history: person.history?.map(h => h === oldId ? newId : h) || []
+        }))
+      }
+    }));
+  };
+
   // Unified function to update preferences when an ID changes
   const updatePreferencesForIdChange = (
     dataType: DataType,
@@ -777,6 +792,7 @@ export function useSchedulingData() {
     const newData = { items: updatedItems, groups: updatedGroups };
 
     updateData(dataType, newData);
+    updatePeopleHistoryForIdChange(dataType, oldId, newId);
     updatePreferencesForIdChange(dataType, oldId, newId);
   };
 
