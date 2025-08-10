@@ -13,6 +13,7 @@ import { getWeightDisplayLabel, isValidWeightValue } from '@/utils/numberParsing
 import WeightInput from '@/components/WeightInput';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { ALL } from '@/utils/keywords';
+import { dateStrToDate } from '@/utils/dateParsing';
 
 export default function ShiftRequestsPage() {
   const {
@@ -582,10 +583,17 @@ export default function ShiftRequestsPage() {
                 ? 'border-r-2 border-r-blue-200'
                 : ''
             }`}
-            title={dateEntry.id === ALL ? 'Set preferences that apply to all days' : dateEntry.description || dateEntry.id}
+            title={dateEntry.description || dateEntry.id}
             style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
           >
-            <div className="whitespace-nowrap">{dateEntry.id}</div>
+            <div className="whitespace-nowrap">
+              {dateEntry.id}
+              {dateData.items.find(item => item.id === dateEntry.id) && (
+                <span className="ml-1">
+                  {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString('en-US', { weekday: 'short' })}
+                </span>
+              )}
+            </div>
           </th>
         ))}
       </tr>
