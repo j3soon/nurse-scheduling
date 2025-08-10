@@ -293,21 +293,36 @@ export default function ShiftRequestsPage() {
       if (indexA > indexB) return 1;
       return 0;
     });
-    // Set cell color based on all weights
-    let cellColor = 'bg-yellow-100';
+
+    // Find the global maximum weight
+    // const globalMaxWeight = Math.max(...shiftRequestPreferences.map(p => isFinite(p.weight) ? Math.abs(p.weight) : 1));
+    const globalMaxWeight = 10000;
+
+    // Find the maximum absolute weight for this person-date combination
+    const maxWeight = Math.min(globalMaxWeight, Math.max(...preferences.map(p => isFinite(p.weight) ? Math.abs(p.weight) : 1)));
+
+    const ratio = Math.max(0.05, maxWeight / globalMaxWeight);
+
+    // Determine preference type
+    const isAllPositive = preferences.every(p => p.weight > 0);
+    const isAllNegative = preferences.every(p => p.weight < 0);
+
+    // Set cell/text color based on preference type
+    let cellColor = `rgba(250, 204, 21, ${ratio})`; // 'bg-yellow-400';
     let textColor = 'text-yellow-800';
-    if (preferences.every(p => p.weight > 0)) {
-      cellColor = 'bg-green-100';
+    if (isAllPositive) {
+      cellColor = `rgba(74, 222, 128, ${ratio})`; // 'bg-green-400';
       textColor = 'text-green-800';
-    } else if (preferences.every(p => p.weight < 0)) {
-      cellColor = 'bg-red-100';
+    } else if (isAllNegative) {
+      cellColor = `rgba(248, 113, 113, ${ratio})`; // 'bg-red-400';
       textColor = 'text-red-800';
     }
 
     return {
       preferences: sortedPreferences,
       color: cellColor,
-      textColor: textColor
+      textColor: textColor,
+      maxWeight: maxWeight
     };
   };
 
@@ -834,9 +849,12 @@ export default function ShiftRequestsPage() {
                               dateEntry.id === ALL ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200' : ''
                             } ${
                               display
-                                ? `${display.color} ${display.textColor}`
+                                ? `${display.textColor}`
                                 : ''
                             }`}
+                            style={{
+                              backgroundColor: display?.color
+                            }}
                             title={dateEntry.id === ALL
                               ? (isAddMode
                                 ? `Click or drag to update all-days preferences for ${person.id}`
