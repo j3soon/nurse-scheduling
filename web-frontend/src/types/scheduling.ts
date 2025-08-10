@@ -41,7 +41,7 @@ export const SHIFT_REQUEST = 'shift request';
 export const SHIFT_TYPE_SUCCESSIONS = 'shift type successions';
 export const SHIFT_COUNT = 'shift count';
 
-export const SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T'] as const;
+export const SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T', 'x = T'] as const;
 export const SUPPORTED_SPECIAL_TARGETS = ['floor(AVG_SHIFTS_PER_PERSON)', 'ceil(AVG_SHIFTS_PER_PERSON)', 'round(AVG_SHIFTS_PER_PERSON)'] as const;
 
 export interface BasePreference {
