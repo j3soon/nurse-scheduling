@@ -64,6 +64,7 @@ export default function ShiftRequestsPage() {
   // Sticky header
   const [showStickyHeader, setShowStickyHeader] = useState(false);
   const [columnWidths, setColumnWidths] = useState<number[]>([]);
+  const [stickyHeaderLeft, setStickyHeaderLeft] = useState(0);
   const tableRef = useRef<HTMLTableElement>(null);
   const mainScrollContainerRef = useRef<HTMLDivElement>(null);
   const stickyScrollContainerRef = useRef<HTMLDivElement>(null);
@@ -95,6 +96,10 @@ export default function ShiftRequestsPage() {
   const syncScrollPosition = () => {
     if (mainScrollContainerRef.current && stickyScrollContainerRef.current && showStickyHeader) {
       stickyScrollContainerRef.current.scrollLeft = mainScrollContainerRef.current.scrollLeft;
+    }
+    if (mainScrollContainerRef.current && tableRef.current && showStickyHeader) {
+      const tableRect = tableRef.current.getBoundingClientRect();
+      setStickyHeaderLeft(tableRect.left + mainScrollContainerRef.current.scrollLeft);
     }
   };
 
@@ -139,6 +144,18 @@ export default function ShiftRequestsPage() {
 
     return () => {
       resizeObserver.disconnect();
+    };
+  }, [showStickyHeader]);
+
+  // Add window resize listener to update sticky header position
+  useEffect(() => {
+    const handleResize = () => {
+      syncScrollPosition();
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
     };
   }, [showStickyHeader]);
 
@@ -442,7 +459,6 @@ export default function ShiftRequestsPage() {
         }
       }
 
-      console.log(`updatedPreferences B: ${JSON.stringify(updatedPreferences)}`);
       // Apply the changes
       updateShiftPreferences(personId, dateId, updatedPreferences);
     }
@@ -614,6 +630,12 @@ export default function ShiftRequestsPage() {
             </th>
           );
         })}
+        {/* Trailing empty white cell for better scrolling when sticky */}
+        {isSticky && (
+          <th className="px-2 py-2 bg-white border-r border-gray-200">
+            <div className="whitespace-nowrap w-screen"></div>
+          </th>
+        )}
       </tr>
     );
   };
@@ -642,22 +664,24 @@ export default function ShiftRequestsPage() {
     <div className="container mx-auto px-4 py-8">
       {/* Sticky Header - appears when scrolling */}
       {showStickyHeader && hasRequiredData && columnWidths.length > 0 && (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-white shadow-md border-b border-gray-200">
-          <div className="container mx-auto px-4">
-            <div
-              ref={stickyScrollContainerRef}
-              className="overflow-x-auto [&::-webkit-scrollbar]:hidden"
-              style={{
-                scrollbarWidth: 'none', // Hide scrollbar on Firefox
-                msOverflowStyle: 'none'  // Hide scrollbar on IE/Edge
-              }}
-            >
-              <table className="min-w-full divide-y divide-gray-200" style={{ tableLayout: 'fixed' }}>
-                <thead className="bg-gray-50">
-                  {renderTableHeader(true)}
-                </thead>
-              </table>
-            </div>
+        <div className="fixed top-0 z-50 bg-white shadow-md border-b border-gray-200"
+             style={{
+               left: `${stickyHeaderLeft}px`,
+               width: `calc(100vw - ${stickyHeaderLeft}px)`
+             }}>
+          <div
+            ref={stickyScrollContainerRef}
+            className="overflow-x-auto [&::-webkit-scrollbar]:hidden"
+            style={{
+              scrollbarWidth: 'none', // Hide scrollbar on Firefox
+              msOverflowStyle: 'none'  // Hide scrollbar on IE/Edge
+            }}
+          >
+            <table className="min-w-full divide-y divide-gray-200" style={{ tableLayout: 'fixed' }}>
+              <thead className="bg-gray-50">
+                {renderTableHeader(true)}
+              </thead>
+            </table>
           </div>
         </div>
       )}
