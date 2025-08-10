@@ -33,8 +33,8 @@ export function getWeightWithPositivePrefix(weight: number | string): string {
     return "Error (dev)";
   }
   if (typeof weight === 'string') return "Error";
-  if (typeof weight === 'number' && weight > 0) return `+${weight}`;
-  return weight.toString();
+  if (typeof weight === 'number' && weight > 0) return `+${weight.toLocaleString()}`;
+  return weight.toLocaleString();
 }
 
 export function getWeightDisplayLabel(weight: number | string): string {
