@@ -8,6 +8,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
+import { CheckboxList } from '@/components/CheckboxList';
 import { getWeightDisplayLabel, parseWeightValue, isValidWeightValue } from '@/utils/numberParsing';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { ALL } from '@/utils/keywords';
@@ -31,10 +32,10 @@ export default function ShiftRequestsPage() {
   const [showInstructions, setShowInstructions] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
   const [addFormData, setAddFormData] = useState<{
-    shiftType: string;
+    shiftTypes: string[];
     weight: number | string;
   }>({
-    shiftType: '',
+    shiftTypes: [],
     weight: 0,
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
@@ -181,7 +182,7 @@ export default function ShiftRequestsPage() {
 
   const resetForm = () => {
     setAddFormData({
-      shiftType: '',
+      shiftTypes: [],
       weight: 0,
     });
     setErrors({});
@@ -379,8 +380,8 @@ export default function ShiftRequestsPage() {
   const _handleCellSet = (personId: string, dateId: string) => {
     if (isAddMode) {
       // In add mode, update the preferences with the form data
-      // If no shift type is selected, clear all preferences for this person-date combination
-      if (!addFormData.shiftType) {
+      // If no shift types are selected, clear all preferences for this person-date combination
+      if (addFormData.shiftTypes.length === 0) {
         updateShiftPreferences(personId, dateId, []);
         return;
       }
@@ -399,29 +400,33 @@ export default function ShiftRequestsPage() {
         weight: pref.weight
       }));
 
-      // Check if there's already a preference for this shift type
-      const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === addFormData.shiftType);
-
       // Use the parseWeightValue helper to consistently parse the weight
       const weightValue = addFormData.weight as number; // We know it's valid from validateWeight()
 
-      if (existingIndex >= 0) {
-        // Update existing preference
-        if (weightValue === 0) {
-          // Remove preference if weight is 0
-          updatedPreferences.splice(existingIndex, 1);
+      // Iteratively set preferences for each selected shift type
+      for (const shiftTypeId of addFormData.shiftTypes) {
+        // Check if there's already a preference for this shift type
+        const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === shiftTypeId);
+
+        if (existingIndex >= 0) {
+          // Update existing preference
+          if (weightValue === 0) {
+            // Remove preference if weight is 0
+            updatedPreferences.splice(existingIndex, 1);
+          } else {
+            updatedPreferences[existingIndex].weight = weightValue;
+          }
         } else {
-          updatedPreferences[existingIndex].weight = weightValue;
-        }
-      } else {
-        // Add new preference (only if weight is not 0)
-        if (weightValue !== 0) {
-          updatedPreferences.push({
-            shiftTypeId: addFormData.shiftType,
-            weight: weightValue
-          });
+          // Add new preference (only if weight is not 0)
+          if (weightValue !== 0) {
+            updatedPreferences.push({
+              shiftTypeId: shiftTypeId,
+              weight: weightValue
+            });
+          }
         }
       }
+
       console.log(`updatedPreferences B: ${JSON.stringify(updatedPreferences)}`);
       // Apply the changes
       updateShiftPreferences(personId, dateId, updatedPreferences);
@@ -448,26 +453,38 @@ export default function ShiftRequestsPage() {
       const currentHistory = person.history!;
       const offset = historyColumnsCount - currentHistory.length;
 
-      // If no shift type is selected (Clear mode), clear the history position
-      if (!addFormData.shiftType) {
+      // TODO: here above
+
+      // If no shift types are selected (Clear mode), clear the history position
+      if (addFormData.shiftTypes.length === 0) {
         // If targeting a position after the actual history (empty history cells on the left)
         if (historyIndex >= offset) {
           const position = historyIndex - offset;
           updatePersonHistory(personId, position);
         }
       } else {
-        if (!shiftTypeData.items.find(st => st.id === addFormData.shiftType)) {
+        if (addFormData.shiftTypes.length > 1) {
+          setErrors({
+            shiftTypes: 'Cannot set history to multiple shift types.'
+          });
+          return;
+        }
+
+        // History can only be set to one shift type at a time, so we use the first one
+        const firstShiftType = addFormData.shiftTypes[0];
+
+        if (!shiftTypeData.items.find(st => st.id === firstShiftType)) {
           // Cannot set history to a shift type group.
           console.warn(`Cannot set history to a shift type group.`);
           return;
         }
         if (historyIndex < offset) {
           // If targeting a position before the actual history, add a new history entry
-          addPersonHistory(personId, addFormData.shiftType);
+          addPersonHistory(personId, firstShiftType);
         } else {
           // If targeting a position after the actual history, update the history entry
           const position = historyIndex - offset;
-          updatePersonHistory(personId, position, addFormData.shiftType);
+          updatePersonHistory(personId, position, firstShiftType);
         }
       }
     }
@@ -700,47 +717,29 @@ export default function ShiftRequestsPage() {
             <div className="space-y-6">
               {/* Shift Type Selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Shift Type
-                </label>
-                <div className="flex flex-wrap">
-                  {/* Clear selection option */}
-                  <label
-                    className="inline-flex items-center px-1 py-1"
-                    title="Clear selection - clicking cells will clear all preferences"
-                  >
-                    <input
-                      type="radio"
-                      name="shiftType"
-                      value=""
-                      checked={addFormData.shiftType === ''}
-                      onChange={(e) => setAddFormData(prev => ({ ...prev, shiftType: e.target.value }))}
-                      className="form-checkbox h-4 w-4 text-blue-600"
-                    />
-                    <span className="ml-2 text-sm text-gray-700 italic">
-                      Clear
-                    </span>
-                  </label>
-                  {getAllShiftTypes().map((shiftType) => (
-                    <label
-                      key={shiftType.id}
-                      className="inline-flex items-center px-1 py-1"
-                      title={shiftType.description}
-                    >
-                      <input
-                        type="radio"
-                        name="shiftType"
-                        value={shiftType.id}
-                        checked={addFormData.shiftType === shiftType.id}
-                        onChange={(e) => setAddFormData(prev => ({ ...prev, shiftType: e.target.value }))}
-                        className="form-checkbox h-4 w-4 text-blue-600"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">
-                        {shiftType.id}
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                <CheckboxList
+                  items={getAllShiftTypes().map(shiftType => ({
+                    id: shiftType.id,
+                    description: shiftType.description
+                  }))}
+                  selectedIds={addFormData.shiftTypes}
+                  onToggle={(id) => {
+                    setAddFormData(prev => ({
+                      ...prev,
+                      shiftTypes: prev.shiftTypes.includes(id)
+                        ? prev.shiftTypes.filter(shiftTypeId => shiftTypeId !== id)
+                        : [...prev.shiftTypes, id]
+                    }));
+                    setErrors(prev => ({ ...prev, shiftTypes: '' }));
+                  }}
+                  label="Shift Types (select multiple to set preferences for each)"
+                />
+                {errors.shiftTypes && (
+                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {errors.shiftTypes}
+                  </p>
+                )}
               </div>
 
               {/* Weight Input */}
@@ -831,7 +830,7 @@ export default function ShiftRequestsPage() {
                             onMouseDown={(e) => isClickable && handleCellMouseDown(SelectedCellType.HISTORY, person.id, index, e)}
                             onMouseUp={(e) => isClickable && handleCellMouseUp(e)}
                             title={isClickable ? (isAddMode
-                              ? `Click or drag to set history position H-${historyColumnsCount - index} to ${addFormData.shiftType || 'clear'}`
+                              ? `Click or drag to set history position H-${historyColumnsCount - index} to ${addFormData.shiftTypes.length > 0 ? addFormData.shiftTypes[0] : 'clear'}`
                               : `Click to edit history position H-${historyColumnsCount - index}`) : ''}
                           >
                             <div className={`text-sm font-medium ${isClickable ? 'text-gray-900' : 'text-gray-300'}`}>
