@@ -243,7 +243,9 @@ export default function ShiftRequestsPage() {
     }
   };
 
-  const handleCellMouseDown = (selectedCellType: SelectedCellType, personId: string, identifier: string | number) => {
+  const handleCellMouseDown = (selectedCellType: SelectedCellType, personId: string, identifier: string | number, event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    
     isMultiSelectDragRef.current = true;
     if (isAddMode) {
       if (selectedCellType === SelectedCellType.PREFERENCE) {
@@ -255,7 +257,9 @@ export default function ShiftRequestsPage() {
     document.body.style.userSelect = 'none';
   };
 
-  const handleCellMouseUp = () => {
+  const handleCellMouseUp = (event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    
     // End multi-select drag
     isMultiSelectDragRef.current = false;
     document.body.style.userSelect = '';
@@ -673,8 +677,8 @@ export default function ShiftRequestsPage() {
                             }`}
                             onClick={() => isClickable && !isAddMode && handleHistoryCellClick(person.id, index)}
                             onMouseEnter={() => isClickable && handleCellMouseEnter(SelectedCellType.HISTORY, person.id, index)}
-                            onMouseDown={() => isClickable && handleCellMouseDown(SelectedCellType.HISTORY, person.id, index)}
-                            onMouseUp={() => isClickable && handleCellMouseUp()}
+                            onMouseDown={(e) => isClickable && handleCellMouseDown(SelectedCellType.HISTORY, person.id, index, e)}
+                            onMouseUp={(e) => isClickable && handleCellMouseUp(e)}
                             title={isClickable ? (isAddMode
                               ? `Click or drag to set history position H-${historyColumnsCount - index} to ${addFormData.shiftType || 'clear'}`
                               : `Click to edit history position H-${historyColumnsCount - index}`) : ''}
@@ -708,8 +712,8 @@ export default function ShiftRequestsPage() {
                                 : `Click to update preferences for ${person.id} on date ${dateEntry.id}`)}
                             onClick={() => !isAddMode && handleCellClick(person.id, dateEntry.id)}
                             onMouseEnter={() => handleCellMouseEnter(SelectedCellType.PREFERENCE, person.id, dateEntry.id)}
-                            onMouseDown={() => handleCellMouseDown(SelectedCellType.PREFERENCE, person.id, dateEntry.id)}
-                            onMouseUp={() => handleCellMouseUp()}
+                            onMouseDown={(e) => handleCellMouseDown(SelectedCellType.PREFERENCE, person.id, dateEntry.id, e)}
+                            onMouseUp={(e) => handleCellMouseUp(e)}
                           >
                             {display && (() => {
                               const maxVisible = display.preferences.length <= 3 ? 3 : 2; // Show all if 3 or fewer, otherwise show 2

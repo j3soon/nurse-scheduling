@@ -34,7 +34,9 @@ export function CheckboxList({
     }
   };
 
-  const handleCheckboxMouseDown = (id: string) => {
+  const handleCheckboxMouseDown = (id: string, event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    
     if (id === mouseEnteredCheckboxIdRef.current && !isMultiSelectDragRef.current) {
       mouseDownCheckboxIdRef.current = id;
       document.body.style.userSelect = 'none';
@@ -52,7 +54,9 @@ export function CheckboxList({
     mouseEnteredCheckboxIdRef.current = '';
   };
 
-  const handleCheckboxMouseUp = (id: string) => {
+  const handleCheckboxMouseUp = (id: string, event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    
     if (!isMultiSelectDragRef.current) {
       // Normal checkbox click behavior
       handleToggle(id);
@@ -91,9 +95,9 @@ export function CheckboxList({
             className="inline-flex items-center px-1 py-1"
             title={item.description}
             onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
-            onMouseDown={() => handleCheckboxMouseDown(item.id)}
+            onMouseDown={(e) => handleCheckboxMouseDown(item.id, e)}
             onMouseLeave={() => handleCheckboxMouseLeave()}
-            onMouseUp={() => handleCheckboxMouseUp(item.id)}
+            onMouseUp={(e) => handleCheckboxMouseUp(item.id, e)}
           >
             <input
               type="checkbox"
