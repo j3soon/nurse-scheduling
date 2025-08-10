@@ -9,7 +9,8 @@ import { ShiftRequestPreference, SHIFT_REQUEST } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
 import { CheckboxList } from '@/components/CheckboxList';
-import { getWeightDisplayLabel, parseWeightValue, isValidWeightValue } from '@/utils/numberParsing';
+import { getWeightDisplayLabel, isValidWeightValue } from '@/utils/numberParsing';
+import WeightInput from '@/components/WeightInput';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { ALL } from '@/utils/keywords';
 
@@ -742,38 +743,18 @@ export default function ShiftRequestsPage() {
               </div>
 
               {/* Weight Input */}
-              <div>
-                <label htmlFor="weight" className="block text-sm font-medium text-gray-700 mb-2">
-                  Weight (priority)
-                </label>
-                <input
-                  type="text"
-                  id="weight"
-                  value={addFormData.weight}
-                  onChange={(e) => {
-                    setAddFormData(prev => ({
-                      ...prev,
-                      weight: parseWeightValue(e.target.value)
-                    }));
-                    // Clear error when user starts typing
-                    if (errors.weight) {
-                      setErrors(prev => ({ ...prev, weight: '' }));
-                    }
-                  }}
-                  className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 placeholder-gray-400 hover:border-gray-400 ${
-                    errors.weight
-                      ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
-                      : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
-                  }`}
-                  placeholder="Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)"
-                />
-                {errors.weight && (
-                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                    <FiAlertCircle className="h-4 w-4" />
-                    {errors.weight}
-                  </p>
-                )}
-              </div>
+              <WeightInput
+                value={addFormData.weight}
+                onChange={(value) => {
+                  setAddFormData(prev => ({ ...prev, weight: value }));
+                  // Clear error when user starts typing
+                  if (errors.weight) {
+                    setErrors(prev => ({ ...prev, weight: '' }));
+                  }
+                }}
+                error={errors.weight}
+                placeholder="Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)"
+              />
             </div>
           </div>
         </div>

@@ -55,6 +55,7 @@ export function getWeightColor(weight: number | string): string {
   const numWeight = typeof weight === 'string' ? 0 : weight;
   if (numWeight > 0) return 'text-green-600 bg-green-50';
   if (numWeight < 0) return 'text-red-600 bg-red-50';
+  if (typeof weight === 'string') return 'text-orange-800 bg-orange-300';
   return 'text-gray-500 bg-gray-50';
 }
 

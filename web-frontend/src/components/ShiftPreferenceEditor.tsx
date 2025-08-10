@@ -2,9 +2,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { FiX, FiAlertCircle, FiInfo } from 'react-icons/fi';
+import { FiX, FiInfo } from 'react-icons/fi';
 import { Item } from '@/types/scheduling';
-import { parseWeightValue, getWeightDisplayLabel, getWeightColor, isValidWeightValue } from '@/utils/numberParsing';
+import { getWeightDisplayLabel, getWeightColor, isValidWeightValue } from '@/utils/numberParsing';
+import WeightInput from '@/components/WeightInput';
 
 interface ShiftPreferenceEditorProps {
   isOpen: boolean;
@@ -26,31 +27,29 @@ export default function ShiftPreferenceEditor({
   initialPreferences
 }: ShiftPreferenceEditorProps) {
   const [preferences, setPreferences] = useState<{ shiftTypeId: string; weight: number | string }[]>(initialPreferences);
-  const [errors, setErrors] = useState<{[key: string]: string}>({});
 
   useEffect(() => {
     setPreferences(initialPreferences);
-    setErrors({});
   }, [initialPreferences, isOpen]);
 
-  const handleWeightChange = (shiftTypeId: string, inputValue: string) => {
-    const weight = parseWeightValue(inputValue);
+  const handleWeightChange = (shiftTypeId: string, weight: number | string) => {
+    const weightValue = weight as number;
 
     setPreferences(prev => {
       const existing = prev.find(p => p.shiftTypeId === shiftTypeId);
       if (existing) {
-        if (weight === 0) {
+        if (weightValue === 0) {
           // Remove preference if weight is 0
           return prev.filter(p => p.shiftTypeId !== shiftTypeId);
         } else {
           // Update existing preference
           return prev.map(p =>
-            p.shiftTypeId === shiftTypeId ? { ...p, weight } : p
+            p.shiftTypeId === shiftTypeId ? { ...p, weight: weightValue } : p
           );
         }
-      } else if (weight !== 0) {
+      } else if (weightValue !== 0) {
         // Add new preference
-        return [...prev, { shiftTypeId, weight }];
+        return [...prev, { shiftTypeId, weight: weightValue }];
       }
       return prev;
     });
@@ -71,7 +70,6 @@ export default function ShiftPreferenceEditor({
       }
     }
 
-    setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
@@ -84,13 +82,11 @@ export default function ShiftPreferenceEditor({
 
   const handleCancel = () => {
     setPreferences(initialPreferences);
-    setErrors({});
     onClose();
   };
 
   const clearAllPreferences = () => {
     setPreferences([]);
-    setErrors({});
   };
 
   if (!isOpen) return null;
@@ -137,91 +133,78 @@ export default function ShiftPreferenceEditor({
 
             {/* Preferences Table */}
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-              <div className="bg-gray-50 px-3 sm:px-6 py-3 border-b border-gray-200">
+              <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-gray-700">Shift Type Preferences</h3>
                   <span className="text-xs text-gray-500">{shiftTypes.length} shift types</span>
                 </div>
               </div>
 
-              {/* Table Header */}
-              <div className="bg-gray-50 px-3 sm:px-6 py-3 border-b border-gray-200">
-                <div className="grid grid-cols-12 gap-2 sm:gap-4 text-xs font-medium text-gray-600 uppercase tracking-wider">
-                  <div className="col-span-4 sm:col-span-5">Shift Type</div>
-                  <div className="col-span-3 sm:col-span-4 hidden sm:block">Description</div>
-                  <div className="col-span-4 sm:col-span-2 text-center">Weight</div>
-                  <div className="col-span-4 sm:col-span-1 text-center">Status</div>
-                </div>
-              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-auto">
+                        Shift Type
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                        Description
+                      </th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-600 uppercase tracking-wider w-auto">
+                        Weight
+                      </th>
+                      <th className="py-3 text-center text-xs font-medium text-gray-600 uppercase tracking-wider w-auto">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {shiftTypes.map((shiftType, index) => {
+                      const weight = getWeight(shiftType.id);
 
-              {/* Table Body */}
-              <div className="divide-y divide-gray-200">
-                {shiftTypes.map((shiftType, index) => {
-                  const weight = getWeight(shiftType.id);
-                  const hasError = errors[shiftType.id];
+                      return (
+                        <tr
+                          key={shiftType.id}
+                          className={`hover:bg-gray-50 transition-colors ${
+                            index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
+                          }`}
+                        >
+                          {/* Shift Type */}
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="font-medium text-sm text-gray-900">
+                              {shiftType.id}
+                            </div>
+                          </td>
 
-                  return (
-                    <div
-                      key={shiftType.id}
-                      className={`px-3 sm:px-6 py-4 hover:bg-gray-50 transition-colors ${
-                        index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
-                      }`}
-                    >
-                      <div className="grid grid-cols-12 gap-2 sm:gap-4 items-center">
-                        {/* Shift Type */}
-                        <div className="col-span-4 sm:col-span-5">
-                          <div className="font-medium text-sm text-gray-900 truncate">
-                            {shiftType.id}
-                          </div>
-                          {/* Show description on small screens */}
-                          <div className="sm:hidden text-xs text-gray-500 mt-1 truncate">
-                            {shiftType.description ? shiftType.description : <span className="italic text-gray-400">No description</span>}
-                          </div>
-                        </div>
+                          {/* Description */}
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-gray-600">
+                              {shiftType.description ? shiftType.description : <span className="italic text-gray-400">No description</span>}
+                            </div>
+                          </td>
 
-                        {/* Description */}
-                        <div className="col-span-3 sm:col-span-4 hidden sm:block">
-                          <div className="text-sm text-gray-600 truncate">
-                            {shiftType.description ? shiftType.description : <span className="italic text-gray-400">No description</span>}
-                          </div>
-                        </div>
+                          {/* Weight Input */}
+                          <td className="px-6 py-4 text-center whitespace-nowrap">
+                            <WeightInput
+                              value={weight}
+                              onChange={(value) => handleWeightChange(shiftType.id, value)}
+                              compact={true}
+                              label=""
+                              placeholder=""
+                            />
+                          </td>
 
-                        {/* Weight Input */}
-                        <div className="col-span-4 sm:col-span-2 flex justify-center">
-                          <input
-                            type="text"
-                            value={weight}
-                            onChange={(e) => handleWeightChange(shiftType.id, e.target.value)}
-                            className={`w-18 sm:w-20 px-2 sm:px-3 py-2 text-sm text-center border rounded-md transition-all ${
-                              hasError
-                                ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
-                                : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
-                            } focus:ring-2 focus:ring-opacity-50`}
-                          />
-                        </div>
-
-                        {/* Status Indicator */}
-                        <div className="col-span-4 sm:col-span-1 flex justify-center">
-                          {hasError ? (
-                            <FiAlertCircle className="h-5 w-5 text-red-500" />
-                          ) : (
-                            <div className={`px-1 sm:px-2 py-1 rounded-full text-xs font-medium ${getWeightColor(weight)}`}>
+                          {/* Status Indicator */}
+                          <td className="px-6 py-4 text-center whitespace-nowrap">
+                            <div className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${getWeightColor(weight)}`}>
                               {weight === 0 ? '—' : getWeightDisplayLabel(weight)}
                             </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Error Message */}
-                      {hasError && (
-                        <div className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                          <FiAlertCircle className="h-4 w-4" />
-                          {hasError}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
 
@@ -255,23 +238,23 @@ export default function ShiftPreferenceEditor({
         </div>
 
         {/* Footer */}
-        <div className="flex justify-between items-center p-3 sm:p-6 border-t border-gray-200 bg-gray-50 gap-2">
+        <div className="flex justify-between items-center p-6 border-t border-gray-200 bg-gray-50 gap-3">
           <button
             onClick={clearAllPreferences}
-            className="px-3 sm:px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium text-sm sm:text-base"
+            className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium"
           >
             Clear All
           </button>
-          <div className="flex gap-2 sm:gap-3">
+          <div className="flex gap-3">
             <button
               onClick={handleCancel}
-              className="px-4 sm:px-6 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium text-sm sm:text-base"
+              className="px-6 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
-              className="px-4 sm:px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium text-sm sm:text-base"
+              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
             >
               Save Preferences
             </button>
