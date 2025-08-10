@@ -64,28 +64,16 @@ export default function Navigation() {
           break;
         }
 
-        case 'a':
-        case 'A':
-        case 'h':
-        case 'H':
         case 'ArrowLeft':
           event.preventDefault();
           navigatePrevious();
           break;
 
-        case 'd':
-        case 'D':
-        case 'l':
-        case 'L':
         case 'ArrowRight':
           event.preventDefault();
           navigateNext();
           break;
 
-        case 'w':
-        case 'W':
-        case 'k':
-        case 'K':
         case 'ArrowUp':
           event.preventDefault();
           window.scrollBy({
@@ -94,10 +82,6 @@ export default function Navigation() {
           });
           break;
 
-        case 's':
-        case 'S':
-        case 'j':
-        case 'J':
         case 'ArrowDown':
           event.preventDefault();
           window.scrollBy({
@@ -139,7 +123,7 @@ export default function Navigation() {
         <button
           onClick={navigatePrevious}
           className="fixed left-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
-          title="Previous tab (A, H, ←)"
+          title="Previous tab (←)"
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -152,7 +136,7 @@ export default function Navigation() {
         <button
           onClick={navigateNext}
           className="fixed right-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
-          title="Next tab (D, L, →)"
+          title="Next tab (→)"
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
