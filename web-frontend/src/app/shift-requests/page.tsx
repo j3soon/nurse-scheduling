@@ -58,6 +58,13 @@ export default function ShiftRequestsPage() {
     historyIndex: -1,
   });
 
+  // Sticky header
+  const [showStickyHeader, setShowStickyHeader] = useState(false);
+  const [columnWidths, setColumnWidths] = useState<number[]>([]);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const mainScrollContainerRef = useRef<HTMLDivElement>(null);
+  const stickyScrollContainerRef = useRef<HTMLDivElement>(null);
+
   enum SelectedCellType {
     PREFERENCE,
     HISTORY,
@@ -80,6 +87,93 @@ export default function ShiftRequestsPage() {
       document.body.style.userSelect = '';
     };
   }, []);
+
+  // Function to measure and sync column widths
+  const syncColumnWidths = () => {
+    if (tableRef.current) {
+      const headerCells = tableRef.current.querySelectorAll('thead th');
+      const widths = Array.from(headerCells).map(cell => cell.getBoundingClientRect().width);
+      setColumnWidths(widths);
+    }
+  };
+
+  // Add scroll event listener to detect when table header should be sticky
+  useEffect(() => {
+    const handleScroll = () => {
+      if (tableRef.current) {
+        const tableRect = tableRef.current.getBoundingClientRect();
+        // Show sticky header when the table header is above the viewport but table bottom is still visible
+        const shouldShowSticky = tableRect.top < 0 && tableRect.bottom > 0;
+        setShowStickyHeader(shouldShowSticky);
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    // Cleanup event listener
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, [showStickyHeader]);
+
+  // Add resize observer to sync column widths when table layout changes
+  useEffect(() => {
+    if (!tableRef.current) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (showStickyHeader) {
+        syncColumnWidths();
+      }
+    });
+
+    resizeObserver.observe(tableRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [showStickyHeader]);
+
+  // Horizontal scroll synchronization with real-time updates
+  useEffect(() => {
+    const syncScrollPosition = () => {
+      if (mainScrollContainerRef.current && stickyScrollContainerRef.current && showStickyHeader) {
+        stickyScrollContainerRef.current.scrollLeft = mainScrollContainerRef.current.scrollLeft;
+      }
+    };
+
+    const handleMainScroll = () => {
+      syncScrollPosition();
+    };
+
+    const handleStickyScroll = () => {
+      // Always reset sticky header to match main table - no independent scrolling allowed
+      syncScrollPosition();
+    };
+
+    const mainContainer = mainScrollContainerRef.current;
+    const stickyContainer = stickyScrollContainerRef.current;
+
+    if (mainContainer) {
+      mainContainer.addEventListener('scroll', handleMainScroll, { passive: true });
+    }
+
+    if (stickyContainer && showStickyHeader) {
+      stickyContainer.addEventListener('scroll', handleStickyScroll, { passive: true });
+    }
+
+    // Initial sync when sticky header becomes visible
+    if (showStickyHeader) {
+      syncScrollPosition();
+    }
+
+    return () => {
+      if (mainContainer) {
+        mainContainer.removeEventListener('scroll', handleMainScroll);
+      }
+      if (stickyContainer) {
+        stickyContainer.removeEventListener('scroll', handleStickyScroll);
+      }
+    };
+  }, [showStickyHeader]);
 
   const resetForm = () => {
     setAddFormData({
@@ -245,7 +339,7 @@ export default function ShiftRequestsPage() {
 
   const handleCellMouseDown = (selectedCellType: SelectedCellType, personId: string, identifier: string | number, event: React.MouseEvent) => {
     if (event.button !== 0) return;
-    
+
     isMultiSelectDragRef.current = true;
     if (isAddMode) {
       if (selectedCellType === SelectedCellType.PREFERENCE) {
@@ -259,7 +353,7 @@ export default function ShiftRequestsPage() {
 
   const handleCellMouseUp = (event: React.MouseEvent) => {
     if (event.button !== 0) return;
-    
+
     // End multi-select drag
     isMultiSelectDragRef.current = false;
     document.body.style.userSelect = '';
@@ -418,6 +512,47 @@ export default function ShiftRequestsPage() {
     }
   };
 
+  // Helper function to render table header
+  const renderTableHeader = (isSticky = false) => {
+    let columnIndex = 0;
+
+    return (
+      <tr>
+        <th
+          className={`sticky left-0 z-10 bg-gray-50 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 shadow-sm`}
+          style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
+        >
+          People
+        </th>
+        {/* History columns */}
+        {Array.from({ length: historyColumnsCount }, (_, index) => (
+          <th
+            key={`history-${index}`}
+            className="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200"
+            title={`History position H-${historyColumnsCount - index}`}
+            style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
+          >
+            <div className="whitespace-nowrap">H-{historyColumnsCount - index}</div>
+          </th>
+        ))}
+        {getCombinedDateEntries().map((dateEntry) => (
+          <th
+            key={dateEntry.id || 'all-days'}
+            className={`px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 ${
+              dateEntry.id === ALL
+                ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200'
+                : ''
+            }`}
+            title={dateEntry.id === ALL ? 'Set preferences that apply to all days' : dateEntry.description || dateEntry.id}
+            style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
+          >
+            <div className="whitespace-nowrap">{dateEntry.id === ALL ? 'All Days' : dateEntry.id}</div>
+          </th>
+        ))}
+      </tr>
+    );
+  };
+
   // Instructions for the help component
   const instructions = [
     "This table shows shift preferences for each person on each date",
@@ -441,6 +576,27 @@ export default function ShiftRequestsPage() {
 
   return (
     <div className="container mx-auto px-4 py-8">
+      {/* Sticky Header - appears when scrolling */}
+      {showStickyHeader && hasRequiredData && columnWidths.length > 0 && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-white shadow-md border-b border-gray-200">
+          <div className="container mx-auto px-4">
+            <div
+              ref={stickyScrollContainerRef}
+              className="overflow-x-auto [&::-webkit-scrollbar]:hidden"
+              style={{
+                scrollbarWidth: 'none', // Hide scrollbar on Firefox
+                msOverflowStyle: 'none'  // Hide scrollbar on IE/Edge
+              }}
+            >
+              <table className="min-w-full divide-y divide-gray-200" style={{ tableLayout: 'fixed' }}>
+                <thead className="bg-gray-50">
+                  {renderTableHeader(true)}
+                </thead>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Requests</h1>
@@ -613,38 +769,11 @@ export default function ShiftRequestsPage() {
               <h3 className="text-lg font-semibold text-gray-800">Shift Preference Matrix</h3>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
+            <div ref={mainScrollContainerRef} className="overflow-x-auto">
+              <table ref={tableRef} className="min-w-full divide-y divide-gray-200">
                 {/* Header */}
                 <thead className="bg-gray-50">
-                  <tr>
-                    <th className="sticky left-0 z-10 bg-gray-50 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 shadow-sm">
-                      People
-                    </th>
-                    {/* History columns */}
-                    {Array.from({ length: historyColumnsCount }, (_, index) => (
-                      <th
-                        key={`history-${index}`}
-                        className="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200"
-                        title={`History position H-${historyColumnsCount - index}`}
-                      >
-                        <div className="whitespace-nowrap">H-{historyColumnsCount - index}</div>
-                      </th>
-                    ))}
-                    {getCombinedDateEntries().map((dateEntry) => (
-                      <th
-                        key={dateEntry.id || 'all-days'}
-                        className={`px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 ${
-                          dateEntry.id === ALL
-                            ? 'border-l-2 border-r-2 border-l-blue-200 border-r-blue-200'
-                            : ''
-                        }`}
-                        title={dateEntry.id === ALL ? 'Set preferences that apply to all days' : dateEntry.description || dateEntry.id}
-                      >
-                        <div className="whitespace-nowrap">{dateEntry.id === ALL ? 'All Days' : dateEntry.id}</div>
-                      </th>
-                    ))}
-                  </tr>
+                  {renderTableHeader()}
                 </thead>
 
                 {/* Body */}

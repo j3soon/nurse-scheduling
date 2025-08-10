@@ -36,7 +36,7 @@ export function CheckboxList({
 
   const handleCheckboxMouseDown = (id: string, event: React.MouseEvent) => {
     if (event.button !== 0) return;
-    
+
     if (id === mouseEnteredCheckboxIdRef.current && !isMultiSelectDragRef.current) {
       mouseDownCheckboxIdRef.current = id;
       document.body.style.userSelect = 'none';
@@ -56,7 +56,7 @@ export function CheckboxList({
 
   const handleCheckboxMouseUp = (id: string, event: React.MouseEvent) => {
     if (event.button !== 0) return;
-    
+
     if (!isMultiSelectDragRef.current) {
       // Normal checkbox click behavior
       handleToggle(id);
