@@ -27,21 +27,22 @@ export function parseNumberValue(inputValue: string): number | string {
   return parsed;
 }
 
-export function getWeightWithPositivePrefix(weight: number | string): string {
+export function getWeightWithPositivePrefix(weight: number | string, add_commas: boolean = true): string {
   if (weight === null) {
     console.error(`Weight is null. ${ERROR_SHOULD_NOT_HAPPEN}`);
     return "Error (dev)";
   }
   if (typeof weight === 'string') return "Error";
-  if (typeof weight === 'number' && weight > 0) return `+${weight.toLocaleString()}`;
-  return weight.toLocaleString();
+  const weight_str = add_commas ? weight.toLocaleString() : weight.toString();
+  if (typeof weight === 'number' && weight > 0) return `+${weight_str}`;
+  return weight_str;
 }
 
 export function getWeightDisplayLabel(weight: number | string): string {
   if (weight === Infinity) return '+∞';
   if (weight === -Infinity) return '-∞';
   // Reduce weights length
-  const ret = getWeightWithPositivePrefix(weight);
+  const ret = getWeightWithPositivePrefix(weight, false);
   if (typeof weight === 'number') {
     const str = weight.toString();
     if (str.endsWith('000000000')) return ret.slice(0, -9) + 'b';
