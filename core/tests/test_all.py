@@ -16,15 +16,16 @@ IGNORE_TESTS = []
 WRITE_TO_CSV = False
 
 def test_all():
-    tests = glob.glob(f"{testcases_dir}/*.yaml")
+    tests = glob.glob(f"{testcases_dir}/**/*.yaml", recursive=True)
     for test_no, filepath in enumerate(tests):
         base_filepath = os.path.splitext(os.path.basename(filepath))[0]
+        test_dir = os.path.dirname(filepath)
         if base_filepath in IGNORE_TESTS:
             continue
-        logging.info(f"Testing '{base_filepath}' ...")
+        logging.info(f"Testing '{filepath[len(testcases_dir)+1:]}' ...")
         # If test should fail
-        if os.path.isfile(f"{testcases_dir}/{base_filepath}.txt"):
-            with open(f"{testcases_dir}/{base_filepath}.txt", 'r') as f:
+        if os.path.isfile(f"{test_dir}/{base_filepath}.txt"):
+            with open(f"{test_dir}/{base_filepath}.txt", 'r') as f:
                 expected_err = f.read()
             # Use pytest.raises without the match parameter to catch the error first
             with pytest.raises((ValidationError, ValueError)) as exc_info:
@@ -36,8 +37,8 @@ def test_all():
                 f"Expected error '{expected_err.strip()}' not found in actual error: {str(exc_info.value)}"
             continue
         # If test should pass
-        if not WRITE_TO_CSV or os.path.isfile(f"{testcases_dir}/{base_filepath}.csv"):
-            with open(f"{testcases_dir}/{base_filepath}.csv", 'r') as f:
+        if not WRITE_TO_CSV or os.path.isfile(f"{test_dir}/{base_filepath}.csv"):
+            with open(f"{test_dir}/{base_filepath}.csv", 'r') as f:
                 expected_csv = f.read()
         try:
             df, solution, score, status = nurse_scheduling.schedule(filepath)
@@ -50,7 +51,7 @@ def test_all():
         else:
             actual_csv = status
         if WRITE_TO_CSV:
-            with open(f"{testcases_dir}/{base_filepath}.csv", 'w') as f:
+            with open(f"{test_dir}/{base_filepath}.csv", 'w') as f:
                 f.write(actual_csv)
             expected_csv = actual_csv
         not_unique_optimal = (df2 is not None and score == score2)
@@ -60,8 +61,9 @@ def test_all():
             logging.debug(f"Actual CSV:\n{actual_csv}")
             logging.debug(f"Actual output:\n{df}")
             logging.debug(f"Expected output:\n{pandas.read_csv( io.StringIO(expected_csv), header=None, keep_default_na=False)}")
-            pytest.fail(f"Output mismatch for '{testcases_dir}/{base_filepath}.yaml' ({test_no}/{len(tests)})")
+            pytest.fail(f"Output mismatch for '{filepath}' ({test_no}/{len(tests)})")
         if not_unique_optimal:
             logging.debug(f"Optimal Solution 1:\n{df}")
             logging.debug(f"Optimal Solution 2:\n{df2}")
-            pytest.fail(f"The optimal solution should be unique, but it is not for '{testcases_dir}/{base_filepath}.yaml' ({test_no}/{len(tests)})")
+            pytest.fail(f"The optimal solution should be unique, but it is not for '{filepath}' ({test_no}/{len(tests)})")
+    logging.info(f"All {test_no} tests passed")
