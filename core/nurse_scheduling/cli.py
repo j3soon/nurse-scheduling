@@ -13,6 +13,10 @@ def main():
     output_path = sys.argv[2] if len(sys.argv) == 3 else None
     
     df, solution, score, status = scheduler.schedule(filepath)
+
+    if df is None:
+        print("No solution found")
+        sys.exit(0)
     
     if output_path:
         # Save DataFrame to CSV
