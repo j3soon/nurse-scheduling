@@ -1,0 +1,44 @@
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-24
+people:
+  items:
+    - id: 0
+      description: Nurse 0
+    - id: 1
+      description: Nurse 1
+    - id: 2
+      description: Nurse 2
+    - id: 3
+      description: Nurse 3
+shiftTypes:
+  items:
+    - id: D
+      description: Day shift type
+    - id: E
+      description: Evening shift type
+    - id: N
+      description: Night shift type
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [D, E, N]
+    requiredNumPeople: 1
+  - type: shift type successions
+    person: 3
+    pattern: [N]
+    weight: .inf
+  - type: shift request
+    person: 0
+    date: ALL
+    shiftType: D
+  - type: shift request
+    person: 1
+    date: ALL
+    shiftType: E
+  - type: shift request
+    person: 2
+    date: ALL
+    shiftType: N
