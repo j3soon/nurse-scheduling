@@ -28,6 +28,7 @@ const getLabels = (dataType: DataType) => {
 export interface ItemGroupEditorPageData {
   items: Item[];
   groups: Group[];
+  history?: string[];
 }
 
 interface ItemGroupEditorPageProps {
