@@ -54,9 +54,9 @@ export default function ShiftTypeRequirementsPage() {
     "Define requirements for specific shift types (e.g., \"Night shifts need 3 senior nurses\")",
     "Select one or more shift types that this requirement applies to",
     "Set the required number of people for each instance of the shift type",
-    "Optionally specify which people or groups are qualified for this requirement (leave empty for all people)",
+    "Optionally specify which people or groups are qualified for this requirement",
     "Optionally set a preferred number of people (if different from required)",
-    "Optionally specify specific dates this requirement applies to (leave empty for all dates)",
+    "Optionally specify specific dates this requirement applies to",
     "Set weight to penalize unmet requirements (-1 is default, lower numbers = higher penalty)",
     "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
   ];
@@ -333,7 +333,7 @@ export default function ShiftTypeRequirementsPage() {
                         ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
                         : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
                     }`}
-                    placeholder="Leave empty if same as required"
+                    placeholder="Will automatically be set to required number of people if left empty"
                   />
                   {errors.preferred_num_people && (
                     <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
@@ -347,7 +347,7 @@ export default function ShiftTypeRequirementsPage() {
               {/* Qualified People */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Qualified People (optional - leave empty for all people)
+                  Qualified People (will automatically select all people if left empty)
                 </label>
                 {peopleData.items.length === 0 && peopleData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
@@ -379,7 +379,7 @@ export default function ShiftTypeRequirementsPage() {
               {/* Dates */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Dates (optional - leave empty for all dates)
+                  Dates (will automatically select all dates if left empty)
                 </label>
                 <div className="max-h-32 overflow-y-auto">
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
@@ -474,13 +474,13 @@ export default function ShiftTypeRequirementsPage() {
                       {requirement.qualifiedPeople && (
                         <div className="md:col-span-2 lg:col-span-3">
                           <span className="font-medium">Qualified:</span>{' '}
-                          {requirement.qualifiedPeople.length > 0 ? requirement.qualifiedPeople.join(', ') : '(All People)'}
+                          {requirement.qualifiedPeople.join(', ')}
                         </div>
                       )}
                       {requirement.date && (
                         <div className="md:col-span-2 lg:col-span-3">
                           <span className="font-medium">Dates:</span>{' '}
-                          {requirement.date.length > 0 ? requirement.date.join(', ') : '(All Dates)'}
+                          {requirement.date.join(', ')}
                         </div>
                       )}
                     </div>

@@ -53,8 +53,8 @@ export default function ShiftCountsPage() {
   const instructions = [
     "Set up shift count rules for people (e.g., \"Working shifts should be close to the average\")",
     "Select one or more people that this constraint applies to",
-    "Select which dates to count shifts for (leave empty for all dates)",
-    "Select which shift types to count (leave empty for all shift types)",
+    "Select which dates to count shifts for",
+    "Select which shift types to count",
     "Choose a mathematical expression to evaluate (e.g., 'x >= T' means count should be at least the target)",
     "Set the target value (number) or use special constants like 'floor(AVG_SHIFTS_PER_PERSON)'",
     "Set positive weight to encourage constraint matches and negative weight to discourage them",
@@ -274,7 +274,7 @@ export default function ShiftCountsPage() {
               {/* Count Dates */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Count Dates (optional - leave empty for all dates)
+                  Count Dates (will automatically select all dates if left empty)
                 </label>
                 <div className="max-h-32 overflow-y-auto">
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
@@ -308,7 +308,7 @@ export default function ShiftCountsPage() {
               {/* Count Shift Types */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Count Shift Types (optional - leave empty for all shift types)
+                  Count Shift Types (will automatically select all shift types if left empty)
                 </label>
                 {shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
@@ -465,11 +465,11 @@ export default function ShiftCountsPage() {
                       </div>
                       <div className="md:col-span-2 lg:col-span-3">
                         <span className="font-medium">Count Dates:</span>{' '}
-                        {shiftCount.countDates.length > 0 ? shiftCount.countDates.join(', ') : '(All Dates)'}
+                        {shiftCount.countDates.join(', ')}
                       </div>
                       <div className="md:col-span-2 lg:col-span-3">
                         <span className="font-medium">Count Shift Types:</span>{' '}
-                        {shiftCount.countShiftTypes.length > 0 ? shiftCount.countShiftTypes.join(', ') : '(All Shift Types)'}
+                        {shiftCount.countShiftTypes.join(', ')}
                       </div>
                     </div>
                   </div>
