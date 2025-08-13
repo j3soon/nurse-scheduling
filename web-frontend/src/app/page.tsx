@@ -23,9 +23,14 @@ export default function Home() {
         <h1 className="text-4xl font-bold mb-8 text-gray-800">
           Nurse Scheduling System
         </h1>
-        <p className="text-lg text-gray-600 mb-8">
+        <p className="text-lg text-gray-600 mb-4">
           Welcome to the Nurse Scheduling System. Use the tabs above to navigate.
         </p>
+        <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <p className="text-sm text-yellow-800">
+            ⚠️ This project is in active development. Breaking changes may occur without notice. Please proceed with caution.
+          </p>
+        </div>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button
             onClick={handleStartNew}
@@ -34,7 +39,7 @@ export default function Home() {
             New Schedule
           </button>
           <button
-            onClick={() => window.location.href = '/people'}
+            onClick={() => window.location.href = '/dates'}
             className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
             Continue
