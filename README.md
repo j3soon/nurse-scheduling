@@ -13,6 +13,18 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 ## How to run
 
+### Web Frontend
+
+Development version hosted on: <https://j3soon.github.io/nurse-scheduling/>
+
+```sh
+cd web-frontend
+npm install
+npm run dev
+```
+
+### Core
+
 ```sh
 cd core
 # install uv
@@ -29,6 +41,8 @@ python -m nurse_scheduling.cli <input_file_path> [output_csv_path]
 pytest --log-cli-level=INFO
 # Note that setting `WRITE_TO_CSV=True` in `core/tests/test_all.py` is often useful for creating new test cases
 ```
+
+Note: The tests and code coverage are only for the core module. The web frontend is not covered by tests.
 
 ## Design Philosophy
 
