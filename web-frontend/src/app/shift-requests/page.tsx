@@ -3,7 +3,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiEdit2, FiAlertCircle } from 'react-icons/fi';
+import { FiHelpCircle, FiEdit2, FiAlertCircle, FiUpload } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
@@ -68,6 +68,9 @@ export default function ShiftRequestsPage() {
   const tableRef = useRef<HTMLTableElement>(null);
   const mainScrollContainerRef = useRef<HTMLDivElement>(null);
   const stickyScrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // CSV upload
+  const csvFileInputRef = useRef<HTMLInputElement>(null);
 
   enum SelectedCellType {
     PREFERENCE,
@@ -228,6 +231,160 @@ export default function ShiftRequestsPage() {
     return Object.keys(newErrors).length === 0;
   };
 
+  const validateCsvData = (csvData: string[][]): {
+    isValid: boolean;
+    error?: string;
+    validatedData?: { personId: string; dateId: string; shiftType: string }[];
+  } => {
+    // Validate weight is valid
+    if (!validateWeight()) {
+      return { isValid: false, error: 'Weight must be a valid number, Infinity, or -Infinity.' };
+    }
+
+    // Validate weight is not zero
+    if (addFormData.weight === 0) {
+      return { isValid: false, error: 'Weight must be a non-zero number.' };
+    }
+
+    // Validate CSV shape - should have people count + 0 rows (header + people rows)
+    const expectedPeopleCount = peopleData.items.length;
+    const expectedDateCount = dateData.items.length;
+
+    if (csvData.length !== expectedPeopleCount + 0) {
+      return { isValid: false, error: `CSV should have ${expectedPeopleCount + 0} rows (1 header + ${expectedPeopleCount} people), but has ${csvData.length} rows.` };
+    }
+
+    // Validate each row has correct number of columns (date count)
+    // Validate that the column header is the person name (first column)
+    for (let i = 0; i < csvData.length; i++) {
+      if (csvData[i].length !== expectedDateCount + 1) {
+        return { isValid: false, error: `Row ${i + 1} should have ${expectedDateCount + 1} columns (dates), but has ${csvData[i].length} columns.` };
+      } else if (csvData[i][0] !== peopleData.items[i].id) {
+        return { isValid: false, error: `Row ${i + 1} should have "${peopleData.items[i].id}" as the first column, but has "${csvData[i][0]}".` };
+      }
+    }
+
+    // Get all valid shift type IDs
+    const validShiftTypes = getAllShiftTypes().map(st => st.id);
+    const validatedData: { personId: string; dateId: string; shiftType: string }[] = [];
+
+    // Validate shift types in data cells (skip header row, since it's already validated)
+    for (let r = 0; r < csvData.length; r++) {
+      const personId = peopleData.items[r].id; // Map row to person
+
+      for (let c = 1; c < csvData[r].length; c++) {
+        const cellValue = csvData[r][c].trim();
+        const dateId = dateData.items[c - 1].id;
+
+        // Skip empty cells
+        if (!cellValue) continue;
+
+        // Validate shift type
+        if (!validShiftTypes.includes(cellValue)) {
+          return { isValid: false, error: `Invalid shift type "${cellValue}" at row ${r + 1}, column ${c + 1}. Valid shift types: ${validShiftTypes.join(', ')}` };
+        }
+
+        validatedData.push({
+          personId,
+          dateId,
+          shiftType: cellValue
+        });
+      }
+    }
+
+    return { isValid: true, validatedData };
+  };
+
+  const processCsvData = (validatedData: { personId: string; dateId: string; shiftType: string }[]) => {
+    console.log('CSV Data Processing Summary:');
+    console.log('===========================');
+    console.log(`Total entries to process: ${validatedData.length}`);
+    console.log('Data entries:', validatedData);
+
+    // Group by person and date for efficient processing
+    const groupedData = validatedData.reduce((acc, entry) => {
+      const key = `${entry.personId}-${entry.dateId}`;
+      if (!acc[key]) {
+        acc[key] = {
+          personId: entry.personId,
+          dateId: entry.dateId,
+          deltaPreferences: []
+        };
+      }
+      acc[key].deltaPreferences.push({
+        shiftTypeId: entry.shiftType,
+        weight: addFormData.weight as number
+      });
+      return acc;
+    }, {} as Record<string, { personId: string; dateId: string; deltaPreferences: { shiftTypeId: string; weight: number }[] }>);
+
+    console.log('Grouped data by person-date:', groupedData);
+
+    // Prepare updates for computeNewShiftPreferences using delta mode
+    const updates = Object.values(groupedData).map(({ personId, dateId, deltaPreferences }) => ({
+      personId,
+      dateId,
+      deltaPreferences
+    }));
+
+    console.log('Updates to apply:', updates);
+
+    // Use the same logic as _handleCellSet via computeNewShiftPreferences helper
+    const newPreferences = computeNewShiftPreferences(shiftRequestPreferences, updates);
+
+    console.log('Final computed preferences:', newPreferences);
+
+    // Use updateShiftRequestPreferences to bulk update all preferences at once
+    updateShiftRequestPreferences(newPreferences);
+
+    console.log('CSV processing completed successfully!');
+  };
+
+  const handleCsvFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (!content) return;
+
+      try {
+        // Parse CSV content
+        const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+        const csvData = lines.map(line => line.split(',').map(cell => cell.trim()));
+
+        console.log('Raw CSV data:', csvData);
+
+        // Validate CSV data
+        const validation = validateCsvData(csvData);
+
+        if (!validation.isValid) {
+          alert(`CSV validation failed: ${validation.error}`);
+          return;
+        }
+
+        if (validation.validatedData && validation.validatedData.length > 0) {
+          // Process the validated data
+          processCsvData(validation.validatedData);
+          alert(`Successfully processed CSV file with ${validation.validatedData.length} shift preferences!`);
+        } else {
+          alert('No valid shift preferences found in CSV file.');
+        }
+      } catch (error) {
+        console.error('Error processing CSV file:', error);
+        alert('Error processing CSV file. Please check the file format.');
+      }
+    };
+
+    reader.readAsText(file);
+
+    // Reset file input
+    if (csvFileInputRef.current) {
+      csvFileInputRef.current.value = '';
+    }
+  };
+
   // Compute the history columns count (max history length + 1)
   const historyColumnsCount = Math.max(
     0,
@@ -264,43 +421,105 @@ export default function ShiftRequestsPage() {
     );
   };
 
-  // Helper function to update shift preferences for a person-date combination
-  const updateShiftPreferences = (personId: string, dateId: string, preferences: { shiftTypeId: string; weight: number }[]) => {
-    // Remove the date ID to update from the person's preferences
-    let filteredPreferences = shiftRequestPreferences.map(pref => {
-      if (pref.person[0] === personId) {
-        return {
-          ...pref,
-          date: pref.date.filter(id => id !== dateId),
-        };
-      }
-      return pref;
-    });
+  // Helper function to compute new shift preferences from delta updates
+  // This is necessary since ShiftRequestPreference is of type { person: string[]; date: string[]; shiftType: string[]; weight: number },
+  // where person and shiftType are single-element arrays. The date array is for readability of the exported YAML.
+  const computeNewShiftPreferences = (
+    currentPreferences: ShiftRequestPreference[],
+    updates: {
+      personId: string;
+      dateId: string;
+      deltaPreferences: { shiftTypeId: string; weight: number }[];
+      clearFirst?: boolean; // If true, clear all existing preferences for this person-date first
+    }[]
+  ): ShiftRequestPreference[] => {
+    let filteredPreferences = [...currentPreferences];
 
-    // Add the date ID to update to the person's preferences
-    for (const preference of preferences) {
-      const existingPreference = filteredPreferences.find(
-        p => p.person[0] === personId &&
-        p.shiftType[0] === preference.shiftTypeId &&
-        p.weight === preference.weight
+    // Process each update
+    for (const update of updates) {
+      const { personId, dateId, deltaPreferences, clearFirst = false } = update;
+
+      // Get current preferences for this person-date combination
+      const currentPersonDatePreferences = filteredPreferences.filter(
+        p => p.person[0] === personId && p.date.includes(dateId)
       );
-      if (existingPreference) {
-        existingPreference.date.push(dateId);
-      } else {
-        filteredPreferences.push({
-          type: SHIFT_REQUEST,
-          person: [personId],
-          date: [dateId],
-          shiftType: [preference.shiftTypeId],
-          weight: preference.weight,
-        });
+
+      // Convert to the format expected for processing
+      let updatedPreferences = currentPersonDatePreferences.map(pref => ({
+        shiftTypeId: pref.shiftType[0],
+        weight: pref.weight
+      }));
+
+      // Clear all existing preferences first if requested
+      if (clearFirst) {
+        updatedPreferences = [];
+      }
+
+      // Apply delta changes
+      for (const delta of deltaPreferences) {
+        const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === delta.shiftTypeId);
+
+        if (existingIndex >= 0) {
+          // Update existing preference
+          if (delta.weight === 0) {
+            // Remove preference if weight is 0
+            updatedPreferences.splice(existingIndex, 1);
+          } else {
+            updatedPreferences[existingIndex].weight = delta.weight;
+          }
+        } else {
+          // Add new preference (only if weight is not 0)
+          if (delta.weight !== 0) {
+            updatedPreferences.push({
+              shiftTypeId: delta.shiftTypeId,
+              weight: delta.weight
+            });
+          }
+        }
+      }
+
+      // Remove the date ID from all existing preferences for this person
+      filteredPreferences = filteredPreferences.map(pref => {
+        if (pref.person[0] === personId) {
+          return {
+            ...pref,
+            date: pref.date.filter(id => id !== dateId),
+          };
+        }
+        return pref;
+      });
+
+      // Add back the updated preferences
+      for (const preference of updatedPreferences) {
+        const existingPreference = filteredPreferences.find(
+          p => p.person[0] === personId &&
+          p.shiftType[0] === preference.shiftTypeId &&
+          p.weight === preference.weight
+        );
+        if (existingPreference) {
+          existingPreference.date.push(dateId);
+        } else {
+          filteredPreferences.push({
+            type: SHIFT_REQUEST,
+            person: [personId],
+            date: [dateId],
+            shiftType: [preference.shiftTypeId],
+            weight: preference.weight,
+          });
+        }
       }
     }
 
     // Remove preferences with empty date
-    filteredPreferences = filteredPreferences.filter(p => p.date.length > 0);
+    return filteredPreferences.filter(p => p.date.length > 0);
+  };
 
-    updateShiftRequestPreferences(filteredPreferences);
+  // Helper function to update shift preferences for a person-date combination
+  const updateShiftPreferences = (personId: string, dateId: string, deltaPreferences: { shiftTypeId: string; weight: number }[]) => {
+    // Use delta preferences with clearFirst to replicate full replacement behavior
+    const updates = [{ personId, dateId, deltaPreferences, clearFirst: true }];
+    const newPreferences = computeNewShiftPreferences(shiftRequestPreferences, updates);
+    updateShiftRequestPreferences(newPreferences);
   };
 
   // Helper function to get visual representation of preferences
@@ -423,44 +642,19 @@ export default function ShiftRequestsPage() {
         return;
       }
 
-      // Get current preferences for this person-date combination
-      const currentPreferences = getShiftPreferences(personId, dateId);
-
-      // Convert to the format expected by updateShiftPreferences
-      const updatedPreferences = currentPreferences.map(pref => ({
-        shiftTypeId: pref.shiftType[0],
-        weight: pref.weight
-      }));
-
       // Use the parseWeightValue helper to consistently parse the weight
       const weightValue = addFormData.weight as number; // We know it's valid from validateWeight()
 
-      // Iteratively set preferences for each selected shift type
-      for (const shiftTypeId of addFormData.shiftTypes) {
-        // Check if there's already a preference for this shift type
-        const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === shiftTypeId);
+      // Create delta preferences for each selected shift type
+      const deltaPreferences = addFormData.shiftTypes.map(shiftTypeId => ({
+        shiftTypeId,
+        weight: weightValue
+      }));
 
-        if (existingIndex >= 0) {
-          // Update existing preference
-          if (weightValue === 0) {
-            // Remove preference if weight is 0
-            updatedPreferences.splice(existingIndex, 1);
-          } else {
-            updatedPreferences[existingIndex].weight = weightValue;
-          }
-        } else {
-          // Add new preference (only if weight is not 0)
-          if (weightValue !== 0) {
-            updatedPreferences.push({
-              shiftTypeId: shiftTypeId,
-              weight: weightValue
-            });
-          }
-        }
-      }
-
-      // Apply the changes
-      updateShiftPreferences(personId, dateId, updatedPreferences);
+      // Use computeNewShiftPreferences with delta mode
+      const updates = [{ personId, dateId, deltaPreferences }];
+      const newPreferences = computeNewShiftPreferences(shiftRequestPreferences, updates);
+      updateShiftRequestPreferences(newPreferences);
     }
   };
 
@@ -760,9 +954,28 @@ export default function ShiftRequestsPage() {
       {hasRequiredData && isAddMode && (
         <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
           <div className="px-6 py-4">
-            <h2 className="text-lg font-semibold mb-4 text-gray-800">
-              Add Shift Preference
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-800">
+                Add Shift Preference
+              </h2>
+              <div className="relative">
+                <input
+                  ref={csvFileInputRef}
+                  type="file"
+                  accept=".csv,.txt"
+                  onChange={handleCsvFileUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => csvFileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                  title="Upload a CSV file with shift preferences (people x (dates + 1) matrix)"
+                >
+                  <FiUpload className="h-4 w-4" />
+                  Upload Shift Requests
+                </button>
+              </div>
+            </div>
 
             <div className="space-y-6">
               {/* Shift Type Selection */}
