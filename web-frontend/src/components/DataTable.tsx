@@ -14,9 +14,10 @@ interface DataTableProps<T> {
   data: T[];
   onReorder?: (newData: T[]) => void;
   getRowClassName?: (item: T, index: number) => string;
+  headerAction?: ReactNode;
 }
 
-export function DataTable<T>({ title, columns, data, onReorder, getRowClassName }: DataTableProps<T>) {
+export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, headerAction }: DataTableProps<T>) {
   const handleDragStart = (e: React.DragEvent<HTMLTableRowElement>, index: number) => {
     e.dataTransfer.setData('text/plain', index.toString());
     e.currentTarget.classList.add('opacity-50');
@@ -54,8 +55,9 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName 
 
   return (
     <div className="bg-white shadow-md rounded-lg overflow-auto h-fit">
-      <div className="px-6 py-4 border-b border-gray-200">
+      <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
         <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
+        {headerAction && <div className="flex items-center">{headerAction}</div>}
       </div>
       <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
