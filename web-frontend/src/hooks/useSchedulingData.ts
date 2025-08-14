@@ -447,7 +447,7 @@ export function useSchedulingData() {
     updateState(prevState => ({
       ...prevState,
       people: {
-        ...prevState.people,
+        ...peopleData,
         history: peopleData.history!
       }
     }));
