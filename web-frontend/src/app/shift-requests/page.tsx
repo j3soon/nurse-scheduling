@@ -375,7 +375,7 @@ export default function ShiftRequestsPage() {
     const validatedData: { personId: string; shiftTypeId: string; repetitionCount: number }[] = [];
 
     for (let i = 0; i < csvData.length; i++) {
-      const [personName, shiftTypeId, repetitionStr] = csvData[i];
+      const [, shiftTypeId, repetitionStr] = csvData[i];
       const personId = peopleData.items[i].id; // We already validated this matches
 
       // Skip if shift type is empty
