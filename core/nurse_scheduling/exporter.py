@@ -29,7 +29,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
     # Fill person descriptions
     # - column 0 contains person description
     for p, person in enumerate(ctx.people.items):
-        df.iloc[n_leading_rows+p, 0] = person.description
+        df.iloc[n_leading_rows+p, 0] = person.id
 
     # Set cell values based on solver results
     for (d, s, p) in ctx.shifts:

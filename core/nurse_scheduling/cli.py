@@ -19,8 +19,8 @@ def main():
         sys.exit(0)
     
     if output_path:
-        # Save DataFrame to CSV
-        df.to_csv(output_path, index=False, header=False)
+        # Save DataFrame to CSV with UTF-8 BOM for Excel compatibility
+        df.to_csv(output_path, index=False, header=False, encoding='utf-8-sig')
         print(f"Results saved to {output_path}")
         print(f"Score: {score}")
         print(f"Status: {status}")
