@@ -1,9 +1,9 @@
 ,2,3,4,5,6,7,8
 ,Sat,Sun,Mon,Tue,Wed,Thu,Fri
-Nurse 0,D,D,,,N,,N
-Nurse 1,,,E,E,E,,E
-Nurse 2,E,E,N,D,,N,
-Nurse 3,N,,D,,,D,D
-Nurse 4,,N,,N,D,E,
+0,D,D,,,N,,N
+1,,,E,E,E,,E
+2,E,E,N,D,,N,
+3,N,,D,,,D,D
+4,,N,,N,D,E,
 Score,-998678,,,,,,
 Status,OPTIMAL,,,,,,
