@@ -1,5 +1,6 @@
 import sys
 import argparse
+import logging
 from . import scheduler
 
 # TODO: Better CLI
@@ -11,11 +12,17 @@ def main():
     parser.add_argument('output_csv_path', nargs='?', help='Path to save the output CSV file (optional)')
     parser.add_argument('--prettify', action='store_true', 
                        help='Add extra columns and rows with counts (OFF counts per person, shift type counts per date)')
+    parser.add_argument('--verbose', action='store_true', 
+                       help='Enable verbose output (debug logging)')
     
     args = parser.parse_args()
     filepath = args.input_file_path
     output_path = args.output_csv_path
     prettify = args.prettify
+    verbose = args.verbose
+    
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
     
     df, solution, score, status = scheduler.schedule(filepath, prettify=prettify)
 
