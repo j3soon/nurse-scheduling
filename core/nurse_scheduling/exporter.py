@@ -2,6 +2,7 @@ import pandas as pd
 from ortools.sat.python import cp_model
 
 from .context import Context
+from . import utils, models, constants
 
 
 def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, prettify: bool = False):
@@ -37,10 +38,38 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
         df.iloc[n_leading_rows+p, 0] = person.id
 
     # Set cell values based on solver results
-    for (d, s, p) in ctx.shifts:
-        if solver.Value(ctx.shifts[(d, s, p)]) == 1:
-            assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
-            df.iloc[n_leading_rows+p, n_leading_cols+d] = ctx.shiftTypes.items[s].id
+    for (d, p) in ctx.map_dp_s.keys():
+        assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
+        cell_value = ""
+        for s in ctx.map_dp_s[(d, p)]:
+            if solver.Value(ctx.shifts[(d, s, p)]) == 1:
+                if cell_value != "":
+                    cell_value += ", "
+                cell_value += ctx.shiftTypes.items[s].id
+        if prettify:
+            # Add a ` [X]` suffix if the single-person, single-shift-type, list-of-single-date style shift request is violated
+            for pref in ctx.preferences:
+                if pref.type != models.SHIFT_REQUEST:
+                    continue
+                if pref.weight == 0:
+                    continue
+                ds = utils.parse_dates(pref.date, ctx.map_did_d, ctx.dates.range)
+                ss = utils.parse_sids(pref.shiftType, ctx.map_sid_s)
+                ps = utils.parse_pids(pref.person, ctx.map_pid_p)
+                if len(ss) != 1 or len(ps) != 1:
+                    # Skip since is not single person and single shift type style
+                    continue
+                if len(ds) != len(pref.date):
+                    # Skip since only count for single-date style
+                    continue
+                if d not in ds or p not in ps:
+                    continue
+                target_value = 1 if pref.weight > 0 else 0
+                for s in ss:
+                    var = ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)]
+                    if solver.Value(var) != target_value:
+                        cell_value += " [X]"
+        df.iloc[n_leading_rows+p, n_leading_cols+d] = cell_value
 
     # Fill objective value
     df.iloc[n_leading_rows + len(ctx.people.items), 0] = "Score"
@@ -50,11 +79,12 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
     df.iloc[n_leading_rows + len(ctx.people.items) + 1, 1] = ctx.solver_status
 
     # Sanity check with offs variables
-    for (d, p) in ctx.offs.keys():
-        if solver.Value(ctx.offs[(d, p)]) == 1:
-            assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
-        else:
-            assert df.iloc[n_leading_rows+p, n_leading_cols+d] != ""
+    if not prettify:
+        for (d, p) in ctx.offs.keys():
+            if solver.Value(ctx.offs[(d, p)]) == 1:
+                assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
+            else:
+                assert df.iloc[n_leading_rows+p, n_leading_cols+d] != ""
 
     if prettify:
         # Add header for OFF count column
