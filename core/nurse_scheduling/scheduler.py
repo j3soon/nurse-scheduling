@@ -10,7 +10,7 @@ from .utils import ortools_expression_to_bool_var, parse_dates, MAP_DATE_KEYWORD
 from .constants import ALL, OFF, OFF_sid
 from .loader import load_data
 
-def schedule(filepath: str, deterministic=False, avoid_solution=None):
+def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=False):
     logging.debug(f"Loading scenario from '{filepath}'...")
     scenario = load_data(filepath)
 
@@ -210,7 +210,7 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None):
     if not found:
         return None, None, None, ctx.solver_status
 
-    df = exporter.get_people_versus_date_dataframe(ctx, solver)
+    df = exporter.get_people_versus_date_dataframe(ctx, solver, prettify=prettify)
     solution = {}
     for (d, s, p) in ctx.shifts:
         solution[(d, s, p)] = solver.Value(ctx.shifts[(d, s, p)])

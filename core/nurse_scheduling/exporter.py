@@ -4,14 +4,19 @@ from ortools.sat.python import cp_model
 from .context import Context
 
 
-def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
+def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, prettify: bool = False):
     # Initialize dataframe with size including leading rows and columns
     n_leading_rows, n_leading_cols = 2, 1
     n_trailing_rows, n_trailing_cols = 2, 0
+    
+    # Add extra columns and rows for prettify mode
+    extra_cols = 2 if prettify else 0  # Empty column + OFF count column
+    extra_rows = (1 + ctx.n_shift_types) if prettify else 0  # Empty row + one row per shift type
+    
     df = pd.DataFrame(
         "",
-        index=range(n_leading_rows + len(ctx.people.items) + n_trailing_rows),
-        columns=range(n_leading_cols + len(ctx.dates.items) + n_trailing_cols)
+        index=range(n_leading_rows + len(ctx.people.items) + n_trailing_rows + extra_rows),
+        columns=range(n_leading_cols + len(ctx.dates.items) + n_trailing_cols + extra_cols)
     )
 
     # Fill day numbers and weekdays
@@ -50,5 +55,33 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver):
             assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
         else:
             assert df.iloc[n_leading_rows+p, n_leading_cols+d] != ""
+
+    if prettify:
+        # Add header for OFF count column
+        df.iloc[1, n_leading_cols + len(ctx.dates.items) + 1] = "OFF"
+        
+        # Count OFF days for each person (rows)
+        for p in range(len(ctx.people.items)):
+            off_count = sum(1 for d in range(len(ctx.dates.items)) 
+                           if solver.Value(ctx.offs[(d, p)]) == 1)
+            df.iloc[n_leading_rows + p, n_leading_cols + len(ctx.dates.items) + 1] = off_count
+        
+        # Add shift type count rows for each date (columns)
+        # First add an empty row
+        empty_row_index = n_leading_rows + len(ctx.people.items) + n_trailing_rows
+        
+        # Then add one row for each shift type
+        for s in range(ctx.n_shift_types):
+            shift_row_index = empty_row_index + 1 + s
+            shift_type_id = ctx.shiftTypes.items[s].id
+            
+            # Add shift type label in the first column
+            df.iloc[shift_row_index, 0] = f"{shift_type_id} Count"
+            
+            # Count occurrences of this shift type for each date
+            for d in range(len(ctx.dates.items)):
+                shift_count = sum(1 for p in range(len(ctx.people.items))
+                                if solver.Value(ctx.shifts[(d, s, p)]) == 1)
+                df.iloc[shift_row_index, n_leading_cols + d] = shift_count
 
     return df

@@ -1,18 +1,23 @@
 import sys
+import argparse
 from . import scheduler
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
 
 def main():
-    if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("Usage: python -m nurse_scheduling.cli <input_file_path> [output_csv_path]")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Nurse Scheduling Tool')
+    parser.add_argument('input_file_path', help='Path to the input file')
+    parser.add_argument('output_csv_path', nargs='?', help='Path to save the output CSV file (optional)')
+    parser.add_argument('--prettify', action='store_true', 
+                       help='Add extra columns and rows with counts (OFF counts per person, shift type counts per date)')
     
-    filepath = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) == 3 else None
+    args = parser.parse_args()
+    filepath = args.input_file_path
+    output_path = args.output_csv_path
+    prettify = args.prettify
     
-    df, solution, score, status = scheduler.schedule(filepath)
+    df, solution, score, status = scheduler.schedule(filepath, prettify=prettify)
 
     if df is None:
         print("No solution found")
