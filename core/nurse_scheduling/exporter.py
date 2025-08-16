@@ -136,4 +136,28 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                                 if solver.Value(ctx.shifts[(d, s, p)]) == 1)
                 df.iloc[shift_row_index, n_leading_cols + d] = shift_count
 
+    # Apply weekend highlighting if prettify is enabled
+    if prettify:
+        # Create a styler object to apply conditional formatting
+        def highlight_weekends(df):
+            # Create a style DataFrame with the same shape as the original
+            style_df = pd.DataFrame('', index=df.index, columns=df.columns)
+            
+            # Check each column to see if it represents a weekend
+            for col_idx in range(n_leading_cols, n_leading_cols + len(ctx.dates.items)):
+                # Get the weekday from row 1 (second row)
+                weekday = df.iloc[1, col_idx]
+                
+                # If it's Saturday or Sunday, highlight the entire column
+                if weekday in ['Sat', 'Sun']:
+                    # Apply background color to all rows in this column
+                    for row_idx in range(len(df)):
+                        style_df.iloc[row_idx, col_idx] = 'background-color: #dbeafe'  # Light blue background
+            
+            return style_df
+        
+        # Apply the styling and return the styled DataFrame
+        styled_df = df.style.apply(lambda x: highlight_weekends(df), axis=None)
+        return styled_df
+    
     return df
