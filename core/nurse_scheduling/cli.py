@@ -3,6 +3,8 @@ import argparse
 import logging
 import os.path
 from . import scheduler
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
@@ -46,7 +48,24 @@ def main():
     if output_path:
         # Save DataFrame in the specified format
         if output_format == 'xlsx':
+            # Save to Excel with advanced formatting
             df.to_excel(output_path, index=False, header=False)
+            
+            # Load the workbook to apply additional formatting
+            wb = load_workbook(output_path)
+            ws = wb.active
+            
+            # Apply center alignment to all cells
+            center_alignment = Alignment(horizontal='center')
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.alignment = center_alignment
+            
+            # Freeze the first two rows and first column (B3 is the cell after frozen area)
+            ws.freeze_panes = 'B3'
+            
+            # Save the formatted workbook
+            wb.save(output_path)
         else:  # csv format
             # Save DataFrame to CSV with UTF-8 BOM for Excel compatibility
             df.to_csv(output_path, index=False, header=False, encoding='utf-8-sig')
