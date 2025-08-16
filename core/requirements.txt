@@ -2,6 +2,8 @@ ortools==9.12.4544
 pandas
 ruamel.yaml
 pydantic
+openpyxl # For XLSX output support
+jinja2 # For prettifying output
 # For CI
 pytest
 pytest-cov
