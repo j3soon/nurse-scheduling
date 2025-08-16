@@ -1,5 +1,6 @@
 import itertools
 import logging
+import time
 from datetime import timedelta
 
 from ortools.sat.python import cp_model
@@ -155,15 +156,18 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
             cp_model.CpSolverSolutionCallback.__init__(self)
             self.n_solutions = 0
             self.best_score = float("-inf")
+            self.start_time = time.time()
 
         def on_solution_callback(self):
             current_score = self.Value(ctx.objective)
+            elapsed_time = time.time() - self.start_time
             self.n_solutions += 1
             if current_score > self.best_score:
                 self.best_score = current_score
                 self.n_solutions = 1
             logging.debug(f"# of (best) solutions found: {self.n_solutions}")
             logging.debug(f"current score: {current_score}")
+            logging.debug(f"elapsed time: {elapsed_time:.2f}s")
     solution_printer = PartialSolutionPrinter()
 
     logging.debug("Solving and showing partial results...")
