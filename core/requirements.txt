@@ -1,4 +1,4 @@
-ortools==9.12.4544 
+ortools==9.14.6206
 pandas
 ruamel.yaml
 pydantic

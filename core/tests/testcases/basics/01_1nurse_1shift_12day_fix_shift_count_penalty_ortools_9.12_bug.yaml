@@ -1,0 +1,23 @@
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2023-08-18
+    endDate: 2023-08-31
+people:
+  items:
+    - id: 0
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+  - type: shift count
+    person: 0
+    countDates: ALL
+    countShiftTypes: OFF
+    expression: '|x - T|^2'
+    target: 10
+    weight: -100
