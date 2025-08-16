@@ -37,6 +37,35 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
     for p, person in enumerate(ctx.people.items):
         df.iloc[n_leading_rows+p, 0] = person.id
 
+    # Pre-filter preferences to avoid repeated filtering in the inner loop
+    filtered_preferences = {}
+    if prettify:
+        for pref in ctx.preferences:
+            if pref.type != models.SHIFT_REQUEST:
+                continue
+            if pref.weight == 0:
+                continue
+            ds = utils.parse_dates(pref.date, ctx.map_did_d, ctx.dates.range)
+            ss = utils.parse_sids(pref.shiftType, ctx.map_sid_s)
+            ps = utils.parse_pids(pref.person, ctx.map_pid_p)
+            if len(ss) != 1 or len(ps) != 1:
+                # Skip since is not single person and single shift type style
+                continue
+            if len(ds) != len(pref.date):
+                # Skip since only count for single-date style
+                continue
+            
+            # Store filtered preferences by (d, p) key for quick lookup
+            for d in ds:
+                for p in ps:
+                    if (d, p) not in filtered_preferences:
+                        filtered_preferences[(d, p)] = []
+                    filtered_preferences[(d, p)].append({
+                        'pref': pref,
+                        'ss': ss,
+                        'target_value': 1 if pref.weight > 0 else 0
+                    })
+
     # Set cell values based on solver results
     for (d, p) in ctx.map_dp_s.keys():
         assert df.iloc[n_leading_rows+p, n_leading_cols+d] == ""
@@ -50,29 +79,18 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             # Only consider single-person, single-shift-type, list-of-single-date style shift request
             # Add a ` [OFF]` suffix if the person requests OFF
             # Add a ` [X]` suffix if the shift request is violated
-            for pref in ctx.preferences:
-                if pref.type != models.SHIFT_REQUEST:
-                    continue
-                if pref.weight == 0:
-                    continue
-                ds = utils.parse_dates(pref.date, ctx.map_did_d, ctx.dates.range)
-                ss = utils.parse_sids(pref.shiftType, ctx.map_sid_s)
-                ps = utils.parse_pids(pref.person, ctx.map_pid_p)
-                if len(ss) != 1 or len(ps) != 1:
-                    # Skip since is not single person and single shift type style
-                    continue
-                if len(ds) != len(pref.date):
-                    # Skip since only count for single-date style
-                    continue
-                if d not in ds or p not in ps:
-                    continue
-                target_value = 1 if pref.weight > 0 else 0
-                for s in ss:
-                    var = ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)]
-                    if s == constants.OFF_sid:
-                        cell_value += " [OFF]"
-                    if solver.Value(var) != target_value:
-                        cell_value += " [X]"
+            # Use pre-filtered preferences for this (d, p) combination
+            if (d, p) in filtered_preferences:
+                for pref_data in filtered_preferences[(d, p)]:
+                    pref = pref_data['pref']
+                    ss = pref_data['ss']
+                    target_value = pref_data['target_value']
+                    for s in ss:
+                        var = ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)]
+                        if s == constants.OFF_sid:
+                            cell_value += " [OFF]"
+                        if solver.Value(var) != target_value:
+                            cell_value += " [X]"
         df.iloc[n_leading_rows+p, n_leading_cols+d] = cell_value
 
     # Fill objective value
