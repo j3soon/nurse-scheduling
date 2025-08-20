@@ -5,14 +5,13 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiEdit2, FiAlertCircle, FiUpload } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftRequestPreference, SHIFT_REQUEST } from '@/types/scheduling';
+import { ShiftRequestPreference, SHIFT_REQUEST, Item } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
 import { CheckboxList } from '@/components/CheckboxList';
 import { getWeightDisplayLabel, isValidWeightValue } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
-import { ALL } from '@/utils/keywords';
 import { dateStrToDate } from '@/utils/dateParsing';
 import { DataType } from '@/types/scheduling';
 
@@ -573,6 +572,11 @@ export default function ShiftRequestsPage() {
   // Helper function to create combined date entries (date groups + regular dates)
   const getCombinedDateEntries = () => {
     return [...dateData.groups, ...dateData.items];
+  };
+
+  // Helper function to create combined people entries (people groups + regular people)
+  const getCombinedPeopleEntries = () => {
+    return [...peopleData.groups, ...peopleData.items];
   };
 
   // Helper function to check if a date is a weekend (Saturday or Sunday)
@@ -1255,36 +1259,60 @@ export default function ShiftRequestsPage() {
 
                 {/* Body */}
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {peopleData.items.map((person) => (
-                    <tr key={person.id} className="hover:bg-gray-50">
+                  {getCombinedPeopleEntries().map((personEntry) => {
+                    const isPeopleGroup = peopleData.groups.find(group => group.id === personEntry.id);
+                    const person = isPeopleGroup ? null : (personEntry as Item);
+
+                    return (
+                    <tr key={personEntry.id} className={`hover:bg-gray-50 ${
+                        personEntry.id === peopleData.groups[0].id
+                        ? 'border-t-2 border-t-green-200'
+                        : ''
+                    } ${
+                        personEntry.id === peopleData.groups[peopleData.groups.length - 1].id
+                        ? 'border-b-2 border-b-green-200'
+                        : ''
+                    }`}>
                       {/* Person column */}
                       <td className="sticky left-0 z-10 bg-white px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 border-r border-gray-200 shadow-sm">
                         <div>
-                          <div>{person.id}</div>
-                          {person.description && (
-                            <div className="text-gray-500 text-xs">{person.description}</div>
+                          <div>{personEntry.id}</div>
+                          {personEntry.description && (
+                            <div className="text-gray-500 text-xs">{personEntry.description}</div>
                           )}
                         </div>
                       </td>
                       {/* History columns */}
                       {Array.from({ length: historyColumnsCount }, (_, index) => {
-                        const historyValue = getHistoryValue(person.history!, index);
-                        const offset = historyColumnsCount - person.history!.length;
+                        // People groups don't have history, so show empty cells
+                        if (isPeopleGroup) {
+                          return (
+                            <td
+                              key={`${personEntry.id}-history-${index}`}
+                              className="px-1 py-1 text-center border-r border-gray-200 bg-gray-50"
+                            >
+                              <div className="text-sm font-medium text-gray-300">—</div>
+                            </td>
+                          );
+                        }
+
+                        const historyValue = getHistoryValue(person!.history!, index);
+                        const offset = historyColumnsCount - person!.history!.length;
 
                         // Only show one extra clickable cell, others are empty non-clickable
                         const isClickable = index >= offset - 1;
 
                         return (
                           <td
-                            key={`${person.id}-history-${index}`}
+                            key={`${personEntry.id}-history-${index}`}
                             className={`px-1 py-1 text-center border-r border-gray-200 ${
                               isClickable
                                 ? 'bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors duration-150'
                                 : 'bg-gray-50'
                             }`}
-                            onClick={() => isClickable && !isAddMode && handleHistoryCellClick(person.id, index)}
-                            onMouseEnter={() => isClickable && handleCellMouseEnter(SelectedCellType.HISTORY, person.id, index)}
-                            onMouseDown={(e) => isClickable && handleCellMouseDown(SelectedCellType.HISTORY, person.id, index, e)}
+                            onClick={() => isClickable && !isAddMode && handleHistoryCellClick(personEntry.id, index)}
+                            onMouseEnter={() => isClickable && handleCellMouseEnter(SelectedCellType.HISTORY, personEntry.id, index)}
+                            onMouseDown={(e) => isClickable && handleCellMouseDown(SelectedCellType.HISTORY, personEntry.id, index, e)}
                             onMouseUp={(e) => isClickable && handleCellMouseUp(e)}
                             title={isClickable ? (isAddMode
                               ? `Click or drag to set history position H-${historyColumnsCount - index} to ${addFormData.shiftTypes.length > 0 ? addFormData.shiftTypes[0] : 'clear'}`
@@ -1298,12 +1326,13 @@ export default function ShiftRequestsPage() {
                       })}
                       {/* Date groups and per-date columns */}
                       {getCombinedDateEntries().map((dateEntry) => {
-                        const display = getPreferenceDisplay(person.id, dateEntry.id);
+                        // Get preferences for both people groups and individual people
+                        const display = getPreferenceDisplay(personEntry.id, dateEntry.id);
                         const isWeekendDate = dateData.items.find(item => item.id === dateEntry.id) && isWeekend(dateEntry.id);
 
                         return (
                           <td
-                            key={`${person.id}-${dateEntry.id || 'all-days'}`}
+                            key={`${personEntry.id}-${dateEntry.id}`}
                             className={`px-0.5 py-0.5 text-center cursor-pointer transition-colors duration-150 border-r border-gray-200 hover:bg-gray-100 ${
                               dateEntry.id === dateData.groups[0].id
                                 ? 'border-l-2 border-l-blue-200'
@@ -1322,16 +1351,12 @@ export default function ShiftRequestsPage() {
                             style={{
                               backgroundColor: display?.color || undefined
                             }}
-                            title={dateEntry.id === ALL
-                              ? (isAddMode
-                                ? `Click or drag to update all-days preferences for ${person.id}`
-                                : `Click to update all-days preferences for ${person.id}`)
-                              : (isAddMode
-                                ? `Click or drag to update preferences for ${person.id} on date ${dateEntry.id}`
-                                : `Click to update preferences for ${person.id} on date ${dateEntry.id}`)}
-                            onClick={() => !isAddMode && handleCellClick(person.id, dateEntry.id)}
-                            onMouseEnter={() => handleCellMouseEnter(SelectedCellType.PREFERENCE, person.id, dateEntry.id)}
-                            onMouseDown={(e) => handleCellMouseDown(SelectedCellType.PREFERENCE, person.id, dateEntry.id, e)}
+                            title={isAddMode
+                              ? `Click or drag to update preferences for ${personEntry.id} on date ${dateEntry.id}`
+                              : `Click to update preferences for ${personEntry.id} on date ${dateEntry.id}`}
+                            onClick={() => !isAddMode && handleCellClick(personEntry.id, dateEntry.id)}
+                            onMouseEnter={() => handleCellMouseEnter(SelectedCellType.PREFERENCE, personEntry.id, dateEntry.id)}
+                            onMouseDown={(e) => handleCellMouseDown(SelectedCellType.PREFERENCE, personEntry.id, dateEntry.id, e)}
                             onMouseUp={(e) => handleCellMouseUp(e)}
                           >
                             {display && (() => {
@@ -1360,7 +1385,8 @@ export default function ShiftRequestsPage() {
                         );
                       })}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
