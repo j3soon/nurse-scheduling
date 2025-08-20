@@ -257,13 +257,35 @@ export default function ShiftRequestsPage() {
       return { isValid: false, error: `CSV should have ${expectedPeopleCount + 0} rows (1 header + ${expectedPeopleCount} people), but has ${csvData.length} rows.` };
     }
 
+    // Create a map of valid person IDs for quick lookup
+    const validPersonIds = new Set(peopleData.items.map(person => person.id));
+    const personRowMap = new Map<string, number>(); // Map person ID to row index
+
     // Validate each row has correct number of columns (date count)
-    // Validate that the column header is the person name (first column)
+    // Validate that the first column contains a valid person ID (allow out-of-order)
     for (let i = 0; i < csvData.length; i++) {
       if (csvData[i].length !== expectedDateCount + 1) {
         return { isValid: false, error: `Row ${i + 1} should have ${expectedDateCount + 1} columns (dates), but has ${csvData[i].length} columns.` };
-      } else if (csvData[i][0] !== peopleData.items[i].id) {
-        return { isValid: false, error: `Row ${i + 1} should have "${peopleData.items[i].id}" as the first column, but has "${csvData[i][0]}".` };
+      }
+
+      const personId = csvData[i][0].trim();
+      if (!validPersonIds.has(personId)) {
+        const validPersonList = Array.from(validPersonIds).join(', ');
+        return { isValid: false, error: `Row ${i + 1} has invalid person ID "${personId}". Valid person IDs: ${validPersonList}` };
+      }
+
+      // Check for duplicate person IDs in the CSV
+      if (personRowMap.has(personId)) {
+        return { isValid: false, error: `Duplicate person ID "${personId}" found at row ${i + 1}. Person was already seen at row ${personRowMap.get(personId)! + 1}.` };
+      }
+
+      personRowMap.set(personId, i);
+    }
+
+    // Validate that all expected people are present in the CSV
+    for (const person of peopleData.items) {
+      if (!personRowMap.has(person.id)) {
+        return { isValid: false, error: `Missing person "${person.id}" in CSV data. All people must be included.` };
       }
     }
 
@@ -271,9 +293,9 @@ export default function ShiftRequestsPage() {
     const validShiftTypes = getAllShiftTypes().map(st => st.id);
     const validatedData: { personId: string; dateId: string; shiftType: string }[] = [];
 
-    // Validate shift types in data cells (skip header row, since it's already validated)
+    // Validate shift types in data cells
     for (let r = 0; r < csvData.length; r++) {
-      const personId = peopleData.items[r].id; // Map row to person
+      const personId = csvData[r][0].trim(); // Get person ID from first column
 
       for (let c = 1; c < csvData[r].length; c++) {
         const cellValue = csvData[r][c].trim();
@@ -356,17 +378,35 @@ export default function ShiftRequestsPage() {
       return { isValid: false, error: `CSV should have ${expectedPeopleCount} rows (one per person), but has ${csvData.length} rows.` };
     }
 
+    // Create a map of valid person IDs for quick lookup
+    const validPersonIds = new Set(peopleData.items.map(person => person.id));
+    const personRowMap = new Map<string, number>(); // Map person ID to row index
+
     // Validate each row has correct number of columns (3 columns: name, shift type, repetition count)
+    // Validate that the first column contains a valid person ID (allow out-of-order)
     for (let i = 0; i < csvData.length; i++) {
       if (csvData[i].length !== 3) {
         return { isValid: false, error: `Row ${i + 1} should have 3 columns (name, shift type, repetition count), but has ${csvData[i].length} columns.` };
       }
 
-      // Validate that the person name matches the expected person for this row
-      const expectedPersonId = peopleData.items[i].id;
-      const actualPersonName = csvData[i][0].trim();
-      if (actualPersonName !== expectedPersonId) {
-        return { isValid: false, error: `Row ${i + 1} should have "${expectedPersonId}" as the first column, but has "${actualPersonName}".` };
+      const personId = csvData[i][0].trim();
+      if (!validPersonIds.has(personId)) {
+        const validPersonList = Array.from(validPersonIds).join(', ');
+        return { isValid: false, error: `Row ${i + 1} has invalid person ID "${personId}". Valid person IDs: ${validPersonList}` };
+      }
+
+      // Check for duplicate person IDs in the CSV
+      if (personRowMap.has(personId)) {
+        return { isValid: false, error: `Duplicate person ID "${personId}" found at row ${i + 1}. Person was already seen at row ${personRowMap.get(personId)! + 1}.` };
+      }
+
+      personRowMap.set(personId, i);
+    }
+
+    // Validate that all expected people are present in the CSV
+    for (const person of peopleData.items) {
+      if (!personRowMap.has(person.id)) {
+        return { isValid: false, error: `Missing person "${person.id}" in CSV data. All people must be included.` };
       }
     }
 
@@ -375,27 +415,26 @@ export default function ShiftRequestsPage() {
     const validatedData: { personId: string; shiftTypeId: string; repetitionCount: number }[] = [];
 
     for (let i = 0; i < csvData.length; i++) {
-      const [, shiftTypeId, repetitionStr] = csvData[i];
-      const personId = peopleData.items[i].id; // We already validated this matches
+      const [personId, shiftTypeId, repetitionStr] = csvData[i].map(cell => cell.trim());
 
       // Skip if shift type is empty
-      if (!shiftTypeId.trim()) {
+      if (!shiftTypeId) {
         validatedData.push({ personId, shiftTypeId: '', repetitionCount: 0 });
         continue;
       }
 
       // Validate shift type exists
-      if (!validShiftTypes.includes(shiftTypeId.trim())) {
+      if (!validShiftTypes.includes(shiftTypeId)) {
         return { isValid: false, error: `Invalid shift type "${shiftTypeId}" at row ${i + 1}. Valid shift types: ${validShiftTypes.join(', ')}` };
       }
 
       // Validate repetition count is a non-negative integer
-      const repetitionCount = parseInt(repetitionStr.trim());
+      const repetitionCount = parseInt(repetitionStr);
       if (isNaN(repetitionCount) || repetitionCount < 0) {
         return { isValid: false, error: `Invalid repetition count '${repetitionStr}' for person '${personId}' at row ${i + 1}. Must be a non-negative integer.` };
       }
 
-      validatedData.push({ personId, shiftTypeId: shiftTypeId.trim(), repetitionCount });
+      validatedData.push({ personId, shiftTypeId, repetitionCount });
     }
 
     return {
