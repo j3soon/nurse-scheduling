@@ -1,6 +1,11 @@
-site_name: Mkdocs Material Template
-# TODO (Set up site name):
+site_name: Nurse Scheduling
+# DONE (Set up site name):
 # - Replace the `site_name` value above with your site name.
+
+# Ref: https://github.com/oprypin/mkdocs-same-dir
+docs_dir: .
+site_dir: ../site
+
 theme:
   name: material
   # Ref: https://squidfunk.github.io/mkdocs-material/customization/#extending-the-theme
@@ -37,8 +42,8 @@ theme:
   features:
     # Ref: https://squidfunk.github.io/mkdocs-material/reference/code-blocks/#code-copy-button
     - content.code.copy
-    # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-navigation/#navigation-tabs
-    - navigation.tabs
+    # # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-navigation/#navigation-tabs
+    # - navigation.tabs
     # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-navigation/#navigation-expansion
     - navigation.expand
     # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-navigation/#section-index-pages
@@ -56,8 +61,8 @@ theme:
     # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-the-header/#mark-as-read
     - announce.dismiss
     # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-the-footer/
-    - navigation.footer
-    # TODO (Remove navigation footer):
+    # - navigation.footer
+    # DONE (Remove navigation footer):
     # - Comment the `navigation.footer` line above.
 
 markdown_extensions:
@@ -118,38 +123,40 @@ plugins:
   # Ref: https://github.com/ojacques/mkdocs-git-committers-plugin-2
   # Ref: https://github.com/ojacques/mkdocs-git-committers-plugin-2/issues/51#issuecomment-1951450239
   - git-committers:
-      repository: j3soon/mkdocs-material-template
-      branch: master
-  # TODO (Set up git contributors):
+      repository: j3soon/nurse-scheduling
+      branch: main
+  # DONE (Set up git contributors):
   # - Replace the `git-committers` settings above to match your repository.
   # - Generate a GitHub API key as described in the link above.
   #   Alternatively, generate a GitLab API key.
   # - Export the API key before running `mkdocs` commands.
   #       export MKDOCS_GIT_COMMITTERS_APIKEY="<YOUR_API_KEY>"
   # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-tags/
-  - tags:
-      tags_file: tags.md
+  # - tags:
+  #     tags_file: tags.md
+  # Ref: https://github.com/oprypin/mkdocs-same-dir
+  - same-dir
 
 extra:
   # Variable for inserting images easily
   imgroot: /../assets/images/
   # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-site-analytics
-  # analytics:
-  #   provider: google
-  #   property: G-XXXXXXXXXX # Google Analytics 4
-  # TODO (Set up site analytics):
+  analytics:
+    provider: google
+    property: G-6XNKT8P1RQ # Google Analytics 4
+  # DONE (Set up site analytics):
   # - Uncomment the `analytics` section above
   # - Refer to the link below for remaining steps:
   #       https://squidfunk.github.io/mkdocs-material/setup/setting-up-site-analytics
-  # TODO (Search console):
+  # DONE (Search console):
   # - After setting up Google Analytics, you might want to set up Google Search Console as well:
   #       https://search.google.com/search-console/
 
   # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-the-footer/#social-links
-  # social:
-  #   - icon: fontawesome/brands/github
-  #     link: <link>
-  # TODO (Add social links):
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/j3soon/nurse-scheduling
+  # DONE (Add social links):
   # - Uncomment the `social` section above
   # - Refer to the link below for remaining steps:
   #       https://squidfunk.github.io/mkdocs-material/setup/setting-up-the-footer/#social-links
@@ -160,38 +167,37 @@ extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-the-footer/#copyright-notice
-# copyright: Copyright &copy; 2023 <name>
-# TODO (Set up copyright notice):
+copyright: Copyright &copy; 2025 <a href="https://github.com/j3soon/nurse-scheduling">Nurse Scheduling Contributors</a>
+# DONE (Set up copyright notice):
 # - Uncomment the `copyright` line above and enter your name
 
 # Ref: https://squidfunk.github.io/mkdocs-material/setup/adding-a-git-repository/
-repo_url: https://github.com/j3soon/mkdocs-material-template
-# repo_name: j3soon/mkdocs-material-template
-# TODO (Set up git repository):
+repo_url: https://github.com/j3soon/nurse-scheduling
+repo_name: j3soon/nurse-scheduling
+# DONE (Set up git repository):
 # - Replace the `repo_url`/`repo_name` above to your repository URL
 
 # Ref: https://www.mkdocs.org/user-guide/configuration/#site_url
 # Ref: https://stackoverflow.com/a/59295885
-site_url: https://j3soon.github.io/mkdocs-material-template/
-# TODO (Set up site url):
+site_url: https://j3soon.github.io/nurse-scheduling/docs/
+# DONE (Set up site url):
 # - Replace the `site_url` above to your site URL
 
 # Ref: https://squidfunk.github.io/mkdocs-material/reference/#setting-the-page-description
 # Ref: https://www.mkdocs.org/user-guide/configuration/#site_description
-site_description: A preview website using the Mkdocs Material Template.
-# TODO (Set up site description):
+site_description: A user-friendly web app to automate the nurse scheduling task.
+# DONE (Set up site description):
 # - Replace the `site_description` above with your site description
 
 nav:
-  - Home:
-    - index.md
-    - styling-syntaxes.md
-    - dlbook-notations.md
-    # TODO (Remove sample pages):
+  - Home: index.md
+    # - styling-syntaxes.md
+    # - dlbook-notations.md
+    # DONE (Remove sample pages):
     # - Comment the sample pages entries above.
     # - Delete the pages and their assets in `docs/<PAGE_NAME>` and `docs/assets/images/<PAGE_NAME>`
-    - Tags: tags.md
-    # TODO (Remove tags page):
+    # - Tags: tags.md
+    # DONE (Remove tags page):
     # - Comment the `Tags` line above.
     # - Comment the `tags` entry in the `plugins` section.
     # - Delete the `docs/tags.md` file.
