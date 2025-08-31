@@ -15,8 +15,8 @@ def main():
     parser.add_argument('output_path', nargs='?', help='Path to save the output file (optional)')
     parser.add_argument('--prettify', action='store_true',
                        help='Enable prettify mode for enhanced output formatting')
-    parser.add_argument('--verbose', action='store_true', 
-                       help='Enable verbose output (debug logging)')
+    parser.add_argument('-v', '--verbose', action='count', default=0,
+                       help='Increase verbosity (can be used multiple times: -v, -vv, -vvv)')
     
     args = parser.parse_args()
     filepath = args.input_file_path
@@ -24,8 +24,13 @@ def main():
     prettify = args.prettify
     verbose = args.verbose
     
-    if verbose:
-        logging.basicConfig(level=logging.DEBUG)
+    # Configure logging based on verbosity level
+    if verbose >= 2:
+        logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
+    elif verbose == 1:
+        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    else:
+        logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
     
     # Infer output format from file extension
     output_format = None

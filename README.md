@@ -37,6 +37,8 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 # run CLI
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path]
+# run CLI with prettify and verbose
+python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
 # run all tests
 pytest --log-cli-level=INFO
 # Note that setting `WRITE_TO_CSV=True` in `core/tests/test_all.py` is often useful for creating new test cases

@@ -12,10 +12,10 @@ from .constants import ALL, OFF, OFF_sid
 from .loader import load_data
 
 def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=False):
-    logging.debug(f"Loading scenario from '{filepath}'...")
+    logging.info(f"Loading scenario from '{filepath}'...")
     scenario = load_data(filepath)
 
-    logging.debug("Extracting scenario data...")
+    logging.info("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
     ctx = Context(**dict(scenario))
@@ -71,9 +71,9 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
                 date_indices.update(parse_dates(member, ctx.map_did_d, ctx.dates.range))
         ctx.map_did_d[group.id] = sorted(set(date_indices))
 
-    logging.debug("Initializing solver model...")
+    logging.info("Initializing solver model...")
 
-    logging.debug("Creating shift variables...")
+    logging.info("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
     # In the following code, we always use the convention of (d, s, p)
     # to represent the index of (day, shift_type, person).
@@ -86,7 +86,7 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
 
     if avoid_solution is not None:
         avoid_solution_vars = []
-        logging.debug("Avoiding solution...")
+        logging.info("Avoiding solution...")
         for (d, s, p) in ctx.shifts:
             if avoid_solution[(d, s, p)] == 0:
                 avoid_solution_vars.append(ctx.shifts[(d, s, p)])
@@ -97,7 +97,7 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
         # Add constraint that at least one variable must be different from the solution to avoid
         ctx.model.AddBoolOr(avoid_solution_vars)
 
-    logging.debug("Creating off variables...")
+    logging.info("Creating off variables...")
     for d in range(ctx.n_days):
         for p in range(ctx.n_people):
             dp_shifts_sum = sum(ctx.shifts[(d, s, p)] for s in range(ctx.n_shift_types))
@@ -108,7 +108,7 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
                 dp_shifts_sum != 0,
             )
 
-    logging.debug("Creating maps for faster lookup...")
+    logging.info("Creating maps for faster lookup...")
     ctx.map_ds_p = {
         (d, s): {p for p in range(ctx.n_people) if (d, s, p) in ctx.shifts}
         for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types))
@@ -130,7 +130,7 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
         for p in range(ctx.n_people)
     }
 
-    logging.debug("Adding preferences (including constraints)...")
+    logging.info("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
     for i, preference in enumerate(ctx.preferences):
@@ -139,10 +139,10 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
     # Define objective (i.e., soft constraints)
     ctx.model.Maximize(ctx.objective)
 
-    logging.debug("Initializing solver...")
+    logging.info("Initializing solver...")
     solver = cp_model.CpSolver()
     if deterministic:
-        logging.debug("Configuring deterministic solver...")
+        logging.info("Configuring deterministic solver...")
         solver.parameters.random_seed = 0
         solver.parameters.num_workers = 1
         # Potentially related parameters are:
@@ -165,37 +165,37 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
             if current_score > self.best_score:
                 self.best_score = current_score
                 self.n_solutions = 1
-            logging.debug(f"# of (best) solutions found: {self.n_solutions}")
-            logging.debug(f"current score: {current_score}")
-            logging.debug(f"elapsed time: {elapsed_time:.2f}s")
+            logging.info(f"# of (best) solutions found: {self.n_solutions}")
+            logging.info(f"current score: {current_score}")
+            logging.info(f"elapsed time: {elapsed_time:.2f}s")
     solution_printer = PartialSolutionPrinter()
 
-    logging.debug("Solving and showing partial results...")
+    logging.info("Solving and showing partial results...")
     status = solver.Solve(ctx.model, solution_printer)
 
-    logging.debug(f"Status: {solver.StatusName(status)}")
+    logging.info(f"Status: {solver.StatusName(status)}")
 
     found = status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
     # Ref: https://developers.google.com/optimization/cp/cp_solver
     if status == cp_model.OPTIMAL:
-        logging.debug("Optimal solution found!")
+        logging.info("Optimal solution found!")
     elif status == cp_model.FEASIBLE:
-        logging.debug("Feasible solution found!")
+        logging.info("Feasible solution found!")
     elif status == cp_model.INFEASIBLE:
-        logging.debug("Proven infeasible!")
+        logging.info("Proven infeasible!")
     elif status == cp_model.MODEL_INVALID:
-        logging.debug("Model invalid!")
-        logging.debug("Validation Info:")
-        logging.debug(ctx.model.Validate())
+        logging.info("Model invalid!")
+        logging.info("Validation Info:")
+        logging.info(ctx.model.Validate())
     else:
-        logging.debug("No solution found!")
+        logging.info("No solution found!")
         raise ValueError(f"No solution found! Status: {solver.StatusName(status)}")
     ctx.solver_status = solver.StatusName(status)
 
-    logging.debug("Statistics:")
-    logging.debug(f"  - conflicts: {solver.NumConflicts()}")
-    logging.debug(f"  - branches : {solver.NumBranches()}")
-    logging.debug(f"  - wall time: {solver.WallTime()}s")
+    logging.info("Statistics:")
+    logging.info(f"  - conflicts: {solver.NumConflicts()}")
+    logging.info(f"  - branches : {solver.NumBranches()}")
+    logging.info(f"  - wall time: {solver.WallTime()}s")
     logging.debug("Variables:")
     for k, v in ctx.model_vars.items():
         try:
@@ -209,7 +209,7 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
             continue
         logging.debug(f"  - {report.description}: {val}")
 
-    logging.debug(f"Done.")
+    logging.info(f"Done.")
 
     if not found:
         return None, None, None, ctx.solver_status
