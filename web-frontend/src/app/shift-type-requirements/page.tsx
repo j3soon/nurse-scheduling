@@ -10,7 +10,6 @@ import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
-import { ALL } from '@/utils/keywords';
 
 interface ShiftTypeRequirementForm {
   description: string;
@@ -110,6 +109,14 @@ export default function ShiftTypeRequirementsPage() {
       newErrors.shift_type = 'At least one shift type must be selected';
     }
 
+    if (formData.qualified_people.length === 0) {
+      newErrors.qualified_people = 'At least one person must be selected';
+    }
+
+    if (formData.date.length === 0) {
+      newErrors.date = 'At least one date must be selected';
+    }
+
     if (!isValidNumberValue(formData.required_num_people)) {
       newErrors.required_num_people = 'Required number of people must be a valid number';
     } else if (typeof formData.required_num_people === 'number' && formData.required_num_people < 0) {
@@ -146,9 +153,9 @@ export default function ShiftTypeRequirementsPage() {
       description: formData.description,
       shiftType: formData.shift_type,
       requiredNumPeople: formData.required_num_people,
-      qualifiedPeople: formData.qualified_people.length > 0 ? formData.qualified_people : [ALL],
+      qualifiedPeople: formData.qualified_people,
       preferredNumPeople: formData.preferred_num_people,
-      date: formData.date.length > 0 ? formData.date : [ALL],
+      date: formData.date,
       weight: formData.weight as number
     };
 
@@ -347,7 +354,7 @@ export default function ShiftTypeRequirementsPage() {
               {/* Qualified People */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Qualified People (will automatically select all people if left empty)
+                  Qualified People *
                 </label>
                 {peopleData.items.length === 0 && peopleData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
@@ -372,14 +379,20 @@ export default function ShiftTypeRequirementsPage() {
                     selectedIds={formData.qualified_people}
                     onToggle={(id) => handleArrayFieldToggle('qualified_people', id)}
                     label=""
-                  />
+                                      />
+                )}
+                {errors.qualified_people && (
+                  <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {errors.qualified_people}
+                  </p>
                 )}
               </div>
 
               {/* Dates */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Dates (will automatically select all dates if left empty)
+                  Dates *
                 </label>
                 <div className="max-h-32 overflow-y-auto">
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
@@ -408,6 +421,12 @@ export default function ShiftTypeRequirementsPage() {
                     />
                   )}
                 </div>
+                {errors.date && (
+                  <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {errors.date}
+                  </p>
+                )}
               </div>
 
               {/* Weight */}

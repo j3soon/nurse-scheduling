@@ -10,7 +10,6 @@ import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
-import { ALL } from '@/utils/keywords';
 
 interface ShiftCountForm {
   description: string;
@@ -110,6 +109,14 @@ export default function ShiftCountsPage() {
       newErrors.person = 'At least one person must be selected';
     }
 
+    if (formData.count_dates.length === 0) {
+      newErrors.count_dates = 'At least one date must be selected';
+    }
+
+    if (formData.count_shift_types.length === 0) {
+      newErrors.count_shift_types = 'At least one shift type must be selected';
+    }
+
     if (!SUPPORTED_EXPRESSIONS.includes(formData.expression)) {
       newErrors.expression = 'Please select a valid expression';
     }
@@ -133,8 +140,8 @@ export default function ShiftCountsPage() {
       type: SHIFT_COUNT,
       description: formData.description,
       person: formData.person,
-      countDates: formData.count_dates.length > 0 ? formData.count_dates : [ALL],
-      countShiftTypes: formData.count_shift_types.length > 0 ? formData.count_shift_types : [ALL],
+      countDates: formData.count_dates,
+      countShiftTypes: formData.count_shift_types,
       expression: formData.expression,
       target: formData.target as typeof SUPPORTED_SPECIAL_TARGETS[number] | number,
       weight: formData.weight as number
@@ -274,7 +281,7 @@ export default function ShiftCountsPage() {
               {/* Count Dates */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Count Dates (will automatically select all dates if left empty)
+                  Count Dates *
                 </label>
                 <div className="max-h-32 overflow-y-auto">
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
@@ -303,12 +310,18 @@ export default function ShiftCountsPage() {
                     />
                   )}
                 </div>
+                {errors.count_dates && (
+                  <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {errors.count_dates}
+                  </p>
+                )}
               </div>
 
               {/* Count Shift Types */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Count Shift Types (will automatically select all shift types if left empty)
+                  Count Shift Types *
                 </label>
                 {shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
@@ -333,7 +346,13 @@ export default function ShiftCountsPage() {
                     selectedIds={formData.count_shift_types}
                     onToggle={(id) => handleArrayFieldToggle('count_shift_types', id)}
                     label=""
-                  />
+                                      />
+                )}
+                {errors.count_shift_types && (
+                  <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {errors.count_shift_types}
+                  </p>
                 )}
               </div>
 
