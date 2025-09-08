@@ -300,11 +300,18 @@ export default function ShiftTypeRequirementsPage() {
                     type="number"
                     min="0"
                     value={formData.required_num_people}
-                    onChange={(e) => setFormData(prev => ({
-                      ...prev,
+                    onChange={(e) => setFormData(prev => {
                       // Note that the isNaN check is necessary, since a simple parseInt(e.target.value) will return 0 if the value is exactly 0.
-                      required_num_people: isNaN(parseInt(e.target.value)) ? prev.required_num_people : parseInt(e.target.value)
-                    }))}
+                      const newRequiredValue = isNaN(parseInt(e.target.value)) ? prev.required_num_people : parseInt(e.target.value);
+                      return {
+                        ...prev,
+                        required_num_people: newRequiredValue,
+                        // If required_num_people has been parsed correctly and changed to same as preferred_num_people, also change preferred_num_people to undefined
+                        preferred_num_people: !isNaN(parseInt(e.target.value)) && newRequiredValue === prev.preferred_num_people
+                          ? undefined
+                          : prev.preferred_num_people,
+                      };
+                    })}
                     className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
                       errors.required_num_people
                         ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
@@ -329,6 +336,7 @@ export default function ShiftTypeRequirementsPage() {
                     value={formData.preferred_num_people ?? formData.required_num_people}
                     onChange={(e) => setFormData(prev => ({
                       ...prev,
+                      // If the parsed value matches required_num_people, set preferred_num_people to undefined; otherwise, set to the parsed value
                       preferred_num_people: isNaN(parseInt(e.target.value))
                         ? prev.preferred_num_people
                         : (parseInt(e.target.value) === prev.required_num_people
