@@ -9,7 +9,7 @@ import { ShiftRequestPreference, SHIFT_REQUEST, Item } from '@/types/scheduling'
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
 import { CheckboxList } from '@/components/CheckboxList';
-import { getWeightDisplayLabel, isValidWeightValue } from '@/utils/numberParsing';
+import { getWeightDisplayLabel, isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { dateStrToDate } from '@/utils/dateParsing';
@@ -70,6 +70,13 @@ export default function ShiftRequestsPage() {
   const mainScrollContainerRef = useRef<HTMLDivElement>(null);
   const stickyScrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Sticky Quick Add Preference
+  const [showStickyQuickAdd, setShowStickyQuickAdd] = useState(false);
+  const [quickAddHeight, setQuickAddHeight] = useState(0);
+  const quickAddRef = useRef<HTMLDivElement>(null);
+  const stickyQuickAddRef = useRef<HTMLDivElement>(null);
+  // TODO(perf): The multi-select drag feature is now lagging, unsure why.
+
   // CSV upload
   const shiftRequestFileInputRef = useRef<HTMLInputElement>(null);
   const peopleHistoryFileInputRef = useRef<HTMLInputElement>(null);
@@ -117,14 +124,47 @@ export default function ShiftRequestsPage() {
     }
   };
 
-  // Add scroll event listener to detect when table header should be sticky
+  // Add scroll event listener to detect when table header and quick add should be sticky
   useEffect(() => {
     const handleScroll = () => {
-      if (tableRef.current) {
+      // Compute required data check locally to avoid dependency issues
+      const hasRequiredDataLocal = (dateData.range?.startDate && dateData.range?.endDate && dateData.items.length > 0 && peopleData.items.length > 0 && (shiftTypeData.items.length > 0 || shiftTypeData.groups.length > 0));
+
+      if (tableRef.current && hasRequiredDataLocal) {
         const tableRect = tableRef.current.getBoundingClientRect();
+
+        // Determine if sticky elements should show based on table position
         // Show sticky header when the table header is above the viewport but table bottom is still visible
         const shouldShowSticky = tableRect.top < 0 && tableRect.bottom > 0;
-        setShowStickyHeader(shouldShowSticky);
+
+        // Quick Add sticky follows the same visibility as table header when in add mode
+        if (isAddMode) {
+          const quickAddRect = quickAddRef.current?.getBoundingClientRect();
+          const shouldShowStickyQuickAdd = !!(shouldShowSticky || quickAddRect && quickAddRect.bottom < 0);
+          setShowStickyQuickAdd(shouldShowStickyQuickAdd);
+
+          // Measure height of sticky quick add section
+          if (shouldShowStickyQuickAdd && stickyQuickAddRef.current) {
+            setQuickAddHeight(stickyQuickAddRef.current.offsetHeight);
+          } else {
+            setQuickAddHeight(0);
+          }
+
+          // Adjust table header position for Quick Add height
+          const topThreshold = shouldShowStickyQuickAdd ? (stickyQuickAddRef.current?.offsetHeight || 0) : 0;
+          const shouldShowStickyHeader = tableRect.top < topThreshold && tableRect.bottom > topThreshold;
+          setShowStickyHeader(shouldShowStickyHeader);
+        } else {
+          // Not in add mode - hide Quick Add and show normal table header
+          setShowStickyQuickAdd(false);
+          setQuickAddHeight(0);
+          setShowStickyHeader(shouldShowSticky);
+        }
+      } else {
+        // No table or required data - hide all sticky elements
+        setShowStickyQuickAdd(false);
+        setQuickAddHeight(0);
+        setShowStickyHeader(false);
       }
     };
 
@@ -133,7 +173,7 @@ export default function ShiftRequestsPage() {
     return () => {
       window.removeEventListener('scroll', handleScroll);
     };
-  }, [showStickyHeader]);
+  }, [showStickyHeader, showStickyQuickAdd, isAddMode, quickAddHeight, dateData, peopleData, shiftTypeData]);
 
   // Add resize observer to sync column widths when table layout changes
   useEffect(() => {
@@ -967,8 +1007,6 @@ export default function ShiftRequestsPage() {
       const currentHistory = person.history!;
       const offset = historyColumnsCount - currentHistory.length;
 
-      // TODO: here above
-
       // If no shift types are selected (Clear mode), clear the history position
       if (addFormData.shiftTypes.length === 0) {
         // If targeting a position after the actual history (empty history cells on the left)
@@ -1145,10 +1183,106 @@ export default function ShiftRequestsPage() {
 
   return (
     <div className="container mx-auto px-4 py-8">
+      {/* Sticky Quick Add Preference - compact version when scrolling */}
+      {showStickyQuickAdd && hasRequiredData && isAddMode && (
+        <div ref={stickyQuickAddRef} className="fixed top-0 left-0 right-0 z-50 bg-white shadow-md border-b border-gray-200">
+          <div className="container mx-auto px-4 py-3">
+            <div className="flex items-center gap-4 flex-wrap">
+              {/* Compact Shift Types */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start gap-2">
+                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap mt-1">Shift Types:</span>
+                  <div className="flex-1">
+                    <CheckboxList
+                      items={getAllShiftTypes().map(shiftType => ({
+                        id: shiftType.id,
+                        description: shiftType.description
+                      }))}
+                      selectedIds={addFormData.shiftTypes}
+                      onToggle={(id) => {
+                        setAddFormData(prev => ({
+                          ...prev,
+                          shiftTypes: prev.shiftTypes.includes(id)
+                            ? prev.shiftTypes.filter(shiftTypeId => shiftTypeId !== id)
+                            : [...prev.shiftTypes, id]
+                        }));
+                        setErrors(prev => ({ ...prev, shiftTypes: '' }));
+                      }}
+                      label=""
+                    />
+                    {errors.shiftTypes && (
+                      <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
+                        <FiAlertCircle className="h-3 w-3" />
+                        {errors.shiftTypes}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Inline Weight */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Weight:</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={addFormData.weight}
+                    onChange={(e) => {
+                      setAddFormData(prev => ({ ...prev, weight: parseWeightValue(e.target.value) }));
+                      if (errors.weight) {
+                        setErrors(prev => ({ ...prev, weight: '' }));
+                      }
+                    }}
+                    placeholder="±#"
+                    className={`w-16 px-2 py-1 text-sm border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-center ${
+                      errors.weight ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                    }`}
+                  />
+                  <div className="flex flex-col gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddFormData(prev => ({ ...prev, weight: Infinity }));
+                        if (errors.weight) {
+                          setErrors(prev => ({ ...prev, weight: '' }));
+                        }
+                      }}
+                      className="px-1 py-0.5 text-xs bg-green-100 text-green-700 hover:bg-green-200 border border-green-300 rounded transition-colors focus:outline-none focus:ring-1 focus:ring-green-200"
+                      title="Set to positive infinity (∞)"
+                    >
+                      +∞
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddFormData(prev => ({ ...prev, weight: -Infinity }));
+                        if (errors.weight) {
+                          setErrors(prev => ({ ...prev, weight: '' }));
+                        }
+                      }}
+                      className="px-1 py-0.5 text-xs bg-red-100 text-red-700 hover:bg-red-200 border border-red-300 rounded transition-colors focus:outline-none focus:ring-1 focus:ring-red-200"
+                      title="Set to negative infinity (-∞)"
+                    >
+                      -∞
+                    </button>
+                  </div>
+                </div>
+                {errors.weight && (
+                  <div className="flex items-center">
+                    <FiAlertCircle className="h-4 w-4 text-red-500" title={errors.weight} />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sticky Header - appears when scrolling */}
       {showStickyHeader && hasRequiredData && columnWidths.length > 0 && (
-        <div className="fixed top-0 z-50 bg-white shadow-md border-b border-gray-200"
+        <div className="fixed z-40 bg-white shadow-md border-b border-gray-200"
              style={{
+               top: `${showStickyQuickAdd ? quickAddHeight : 0}px`,
                left: `${stickyHeaderLeft}px`,
                width: `calc(100vw - ${stickyHeaderLeft}px)`
              }}>
@@ -1241,7 +1375,7 @@ export default function ShiftRequestsPage() {
       )}
 
       {hasRequiredData && isAddMode && (
-        <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
+        <div ref={quickAddRef} className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
           <div className="px-6 py-4">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-gray-800">
