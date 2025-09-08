@@ -3,7 +3,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiEdit2, FiAlertCircle, FiUpload } from 'react-icons/fi';
+import { FiHelpCircle, FiEdit2, FiAlertCircle, FiUpload, FiTrash2 } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST, Item } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
@@ -580,6 +580,114 @@ export default function ShiftRequestsPage() {
   // Helper function to create combined people entries (people groups + regular people)
   const getCombinedPeopleEntries = () => {
     return [...peopleData.groups, ...peopleData.items];
+  };
+
+  // Clear functions for different types of requests and history
+  const clearAllPeopleHistory = () => {
+    if (!confirm('Are you sure you want to clear all people history?')) {
+      return;
+    }
+
+    const updatedPeopleData = {
+      ...peopleData,
+      items: peopleData.items.map(person => ({
+        ...person,
+        history: []
+      }))
+    };
+
+    reorderItems(DataType.PEOPLE, updatedPeopleData, updatedPeopleData.items);
+  };
+
+  const clearIndividualPersonDateRequests = () => {
+    if (!confirm('Are you sure you want to clear all requests between individual people and individual dates?')) {
+      return;
+    }
+
+    // Filter out preferences where both person and date are individual items (not groups)
+    const individualPeopleIds = new Set(peopleData.items.map(p => p.id));
+    const individualDateIds = new Set(dateData.items.map(d => d.id));
+
+    const filteredPreferences = shiftRequestPreferences.filter(pref => {
+      const personId = pref.person[0];
+      const isIndividualPerson = individualPeopleIds.has(personId);
+      const hasOnlyIndividualDates = pref.date.every(dateId => individualDateIds.has(dateId));
+
+      // Keep this preference if it's NOT (individual person AND only individual dates)
+      return !(isIndividualPerson && hasOnlyIndividualDates);
+    });
+
+    updateShiftRequestPreferences(filteredPreferences);
+  };
+
+  const clearGroupToIndividualDateRequests = () => {
+    if (!confirm('Are you sure you want to clear all requests between people groups and individual dates?')) {
+      return;
+    }
+
+    // Filter out preferences where person is a group and dates are individual
+    const peopleGroupIds = new Set(peopleData.groups.map(g => g.id));
+    const individualDateIds = new Set(dateData.items.map(d => d.id));
+
+    const filteredPreferences = shiftRequestPreferences.filter(pref => {
+      const personId = pref.person[0];
+      const isPersonGroup = peopleGroupIds.has(personId);
+      const hasOnlyIndividualDates = pref.date.every(dateId => individualDateIds.has(dateId));
+
+      // Keep this preference if it's NOT (people group AND only individual dates)
+      return !(isPersonGroup && hasOnlyIndividualDates);
+    });
+
+    updateShiftRequestPreferences(filteredPreferences);
+  };
+
+  const clearIndividualPersonToDateGroupRequests = () => {
+    if (!confirm('Are you sure you want to clear all requests between individual people and date groups?')) {
+      return;
+    }
+
+    // Filter out preferences where person is individual and dates include groups
+    const individualPeopleIds = new Set(peopleData.items.map(p => p.id));
+    const dateGroupIds = new Set(dateData.groups.map(g => g.id));
+
+    const filteredPreferences = shiftRequestPreferences.filter(pref => {
+      const personId = pref.person[0];
+      const isIndividualPerson = individualPeopleIds.has(personId);
+      const hasAnyDateGroup = pref.date.some(dateId => dateGroupIds.has(dateId));
+
+      // Keep this preference if it's NOT (individual person AND has any date group)
+      return !(isIndividualPerson && hasAnyDateGroup);
+    });
+
+    updateShiftRequestPreferences(filteredPreferences);
+  };
+
+  const clearGroupToGroupRequests = () => {
+    if (!confirm('Are you sure you want to clear all requests between people groups and date groups?')) {
+      return;
+    }
+
+    // Filter out preferences where both person and dates are groups
+    const peopleGroupIds = new Set(peopleData.groups.map(g => g.id));
+    const dateGroupIds = new Set(dateData.groups.map(g => g.id));
+
+    const filteredPreferences = shiftRequestPreferences.filter(pref => {
+      const personId = pref.person[0];
+      const isPersonGroup = peopleGroupIds.has(personId);
+      const hasAnyDateGroup = pref.date.some(dateId => dateGroupIds.has(dateId));
+
+      // Keep this preference if it's NOT (people group AND has any date group)
+      return !(isPersonGroup && hasAnyDateGroup);
+    });
+
+    updateShiftRequestPreferences(filteredPreferences);
+  };
+
+  const clearAllRequests = () => {
+    if (!confirm('Are you sure you want to clear ALL shift requests?')) {
+      return;
+    }
+    updateShiftRequestPreferences([]);
   };
 
   // Helper function to check if a date is a weekend (Saturday or Sunday)
@@ -1247,6 +1355,77 @@ export default function ShiftRequestsPage() {
       {/* Show main content only if we have all required data */}
       {hasRequiredData && (
         <>
+          {/* Clear Data Section */}
+          <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800">Clear Data</h3>
+              <p className="text-sm text-gray-600 mt-1">Remove different types of data with targeted clear operations</p>
+            </div>
+            <div className="px-6 py-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Clear People History */}
+                <button
+                  onClick={clearAllPeopleHistory}
+                  className="px-4 py-2 text-sm font-medium text-amber-800 bg-amber-50 hover:bg-amber-100 rounded-md transition-colors flex items-center gap-2"
+                  title="Clear all shift history entries for all people"
+                >
+                  <FiTrash2 className="h-4 w-4" />
+                  Clear All People History
+                </button>
+
+                {/* Clear All Requests */}
+                <button
+                  onClick={clearAllRequests}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors flex items-center gap-2"
+                  title="Clear all shift requests completely"
+                >
+                  <FiTrash2 className="h-4 w-4" />
+                  Clear All Requests
+                </button>
+
+                {/* Clear Person Individual-to-Individual Date Requests */}
+                <button
+                  onClick={clearIndividualPersonDateRequests}
+                  className="px-4 py-2 text-sm font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-md transition-colors flex items-center gap-2"
+                  title="Clear all shift requests between individual people and individual dates"
+                >
+                  <FiTrash2 className="h-4 w-4" />
+                  Clear Person Individual-to-Individual Date Requests
+                </button>
+
+                {/* Clear People Group-to-Individual Date Requests */}
+                <button
+                  onClick={clearGroupToIndividualDateRequests}
+                  className="px-4 py-2 text-sm font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-md transition-colors flex items-center gap-2"
+                  title="Clear all shift requests between people groups and individual dates"
+                >
+                  <FiTrash2 className="h-4 w-4" />
+                  Clear People Group-to-Individual Date Requests
+                </button>
+
+                {/* Clear Person Individual-to-Group Dates Requests */}
+                <button
+                  onClick={clearIndividualPersonToDateGroupRequests}
+                  className="px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors flex items-center gap-2"
+                  title="Clear all shift requests between individual people and date groups"
+                >
+                  <FiTrash2 className="h-4 w-4" />
+                  Clear Person Individual-to-Group Dates Requests
+                </button>
+
+                {/* Clear People Group-to-Group Dates Requests */}
+                <button
+                  onClick={clearGroupToGroupRequests}
+                  className="px-4 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors flex items-center gap-2"
+                  title="Clear all shift requests between people groups and date groups"
+                >
+                  <FiTrash2 className="h-4 w-4" />
+                  Clear People Group-to-Group Dates Requests
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* Shift Requests Table */}
           <div className="bg-white shadow-md rounded-lg overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200">
