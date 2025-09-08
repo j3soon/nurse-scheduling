@@ -494,7 +494,10 @@ export default function ShiftRequestsPage() {
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
-      if (!content) return;
+      if (!content) {
+        alert('No content found in the uploaded file.');
+        return;
+      }
 
       try {
         // Parse CSV content
