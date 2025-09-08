@@ -4,7 +4,7 @@ import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 
 interface Column<T> {
   header: string;
-  accessor: ((item: T) => ReactNode) | keyof T;
+  accessor: ((item: T, index: number) => ReactNode) | keyof T;
   align?: 'left' | 'center' | 'right';
 }
 
@@ -97,7 +97,7 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                   }`}
                 >
                   {typeof column.accessor === 'function'
-                    ? column.accessor(item)
+                    ? column.accessor(item, rowIndex)
                     : String(item[column.accessor])}
                 </td>
               ))}

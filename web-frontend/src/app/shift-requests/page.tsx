@@ -1266,6 +1266,9 @@ export default function ShiftRequestsPage() {
                     const isPeopleGroup = peopleData.groups.find(group => group.id === personEntry.id);
                     const person = isPeopleGroup ? null : (personEntry as Item);
 
+                    // Calculate person index (only count actual people, not groups)
+                    const personIndex = person ? peopleData.items.findIndex(p => p.id === personEntry.id) + 1 : 0;
+
                     return (
                     <tr key={personEntry.id} className={`hover:bg-gray-50 ${
                         personEntry.id === peopleData.groups[0].id
@@ -1279,7 +1282,7 @@ export default function ShiftRequestsPage() {
                       {/* Person column */}
                       <td className="sticky left-0 z-10 bg-white px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 border-r border-gray-200 shadow-sm">
                         <div>
-                          <div>{personEntry.id}</div>
+                          <div>{person ? `${personIndex}. ${personEntry.id}` : personEntry.id}</div>
                           {personEntry.description && (
                             <div className="text-gray-500 text-xs">{personEntry.description}</div>
                           )}
