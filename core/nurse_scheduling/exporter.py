@@ -193,10 +193,10 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                                   for s in ctx.map_sid_s[member_id]))
                 df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
 
-    # Apply weekend highlighting if prettify is enabled
+    # Apply weekend highlighting and borders if prettify is enabled
     if prettify:
         # Create a styler object to apply conditional formatting
-        def highlight_weekends(df):
+        def apply_styling(df):
             # Create a style DataFrame with the same shape as the original
             style_df = pd.DataFrame('', index=df.index, columns=df.columns)
             
@@ -216,10 +216,46 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                     for row_idx in range(len(df)):
                         style_df.iloc[row_idx, col_idx] = 'background-color: #dbeafe'  # Light blue background
             
+            # Add borders to separate regions
+            # Horizontal borders
+            header_row_end = n_leading_rows - 1  # End of header region
+            people_row_end = header_row_end + len(ctx.people.items)  # End of people region
+            summary_row_end = people_row_end + n_trailing_rows  # End of summary region
+            individual_counts_row_end = summary_row_end + 1 + ctx.n_shift_types  # End of individual shift type counts
+            group_counts_row_end = individual_counts_row_end + len(ctx.shiftTypes.groups)  # End of group counts
+            
+            # Vertical borders  
+            name_col_end = n_leading_cols - 1  # End of name column
+            history_col_end = name_col_end + n_history_cols  # End of history columns
+            date_col_end = history_col_end + len(ctx.dates.items)  # End of date columns
+            off_weekend_col_end = date_col_end + 1 + 3  # End of OFF (weekend) count column
+            
+            # Apply borders to all cells, then add specific border styles
+            for row_idx in range(len(df)):
+                for col_idx in range(len(df.columns)):
+                    base_style = style_df.iloc[row_idx, col_idx]
+                    borders = []
+                    
+                    # Add horizontal borders
+                    if row_idx in [header_row_end, people_row_end, summary_row_end, individual_counts_row_end, group_counts_row_end]:
+                        borders.append('border-bottom: 2px solid #374151')
+                    
+                    # Add vertical borders
+                    if col_idx in [name_col_end, history_col_end, date_col_end, off_weekend_col_end]:
+                        borders.append('border-right: 2px solid #374151')
+                    
+                    # Combine base style with borders
+                    if borders:
+                        border_style = '; '.join(borders)
+                        if base_style:
+                            style_df.iloc[row_idx, col_idx] = f"{base_style}; {border_style}"
+                        else:
+                            style_df.iloc[row_idx, col_idx] = border_style
+            
             return style_df
         
         # Apply the styling and return the styled DataFrame
-        styled_df = df.style.apply(lambda x: highlight_weekends(df), axis=None)
+        styled_df = df.style.apply(lambda x: apply_styling(df), axis=None)
         return styled_df
     
     return df
