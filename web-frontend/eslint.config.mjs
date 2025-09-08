@@ -17,6 +17,8 @@ const eslintConfig = [
       "eol-last": ["error", "always"],
       // Disallow trailing whitespace at the end of lines
       "no-trailing-spaces": "error",
+      // Allow unused parameters that start with underscore
+      "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
     },
   },
 ];
