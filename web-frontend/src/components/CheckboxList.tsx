@@ -86,7 +86,9 @@ export function CheckboxList({
 
   return (
     <div className="space-y-2">
-      <h3 className="text-sm font-medium text-gray-700">{label}</h3>
+      {label && label !== '' && (
+        <h3 className="text-sm font-medium text-gray-700">{label}</h3>
+      )}
       {/* Horizontal padding is used instead of margin to avoid gaps between checkboxes that could cause text selection when dragging */}
       <div className="flex flex-wrap">
         {items.map(item => (

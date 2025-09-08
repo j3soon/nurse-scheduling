@@ -1190,8 +1190,8 @@ export default function ShiftRequestsPage() {
             <div className="flex items-center gap-4 flex-wrap">
               {/* Compact Shift Types */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-start gap-2">
-                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap mt-1">Shift Types:</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap">Shift Types:</span>
                   <div className="flex-1">
                     <CheckboxList
                       items={getAllShiftTypes().map(shiftType => ({
