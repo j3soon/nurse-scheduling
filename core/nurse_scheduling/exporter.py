@@ -18,7 +18,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
     
     # Add extra columns and rows for prettify mode
     extra_cols = 4 if prettify else 0  # Empty column + 3 OFF count columns (Total, Weekday, Weekend)
-    extra_rows = (1 + ctx.n_shift_types) if prettify else 0  # Empty row + one row per shift type
+    extra_rows = (1 + ctx.n_shift_types + len(ctx.shiftTypes.groups)) if prettify else 0  # Empty row + one row per shift type + one row per shift type group
     
     df = pd.DataFrame(
         "",
@@ -171,18 +171,26 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
         # First add an empty row
         empty_row_index = n_leading_rows + len(ctx.people.items) + n_trailing_rows
         
-        # Then add one row for each shift type
+        # Add one row for each individual shift type
         for s in range(ctx.n_shift_types):
             shift_row_index = empty_row_index + 1 + s
-            shift_type_id = ctx.shiftTypes.items[s].id
+            df.iloc[shift_row_index, 0] = f"{ctx.shiftTypes.items[s].id} Count"
             
-            # Add shift type label in the first column
-            df.iloc[shift_row_index, 0] = f"{shift_type_id} Count"
-            
-            # Count occurrences of this shift type for each date
             for d in range(len(ctx.dates.items)):
                 shift_count = sum(1 for p in range(len(ctx.people.items))
-                                if solver.Value(ctx.shifts[(d, s, p)]) == 1)
+                                  if solver.Value(ctx.shifts[(d, s, p)]) == 1)
+                df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
+        
+        # Add one row for each shift type group
+        for g, shift_group in enumerate(ctx.shiftTypes.groups):
+            shift_row_index = empty_row_index + 1 + ctx.n_shift_types + g
+            df.iloc[shift_row_index, 0] = f"{shift_group.id} Count"
+            
+            for d in range(len(ctx.dates.items)):
+                shift_count = sum(1 for p in range(len(ctx.people.items))
+                                  if any(solver.Value(ctx.shifts[(d, s, p)]) == 1
+                                  for member_id in shift_group.members
+                                  for s in ctx.map_sid_s[member_id]))
                 df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
 
     # Apply weekend highlighting if prettify is enabled
