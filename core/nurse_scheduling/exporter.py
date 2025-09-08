@@ -17,7 +17,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
         n_history_cols = max_history_length
     
     # Add extra columns and rows for prettify mode
-    extra_cols = 4 if prettify else 0  # Empty column + 3 OFF count columns (Total, Weekday, Weekend)
+    extra_cols = 6 if prettify else 0  # Empty column + 5 OFF count columns (Workday, Freeday, Total, Weekday, Weekend)
     extra_rows = (1 + ctx.n_shift_types + len(ctx.shiftTypes.groups)) if prettify else 0  # Empty row + one row per shift type + one row per shift type group
     
     df = pd.DataFrame(
@@ -141,14 +141,41 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                 assert df.iloc[n_leading_rows+p, col_idx] != ""
 
     if prettify:
+        # TODO: Remove the concept of workday and freeday groups entirely from core solver
+        # Instead, suggest these dates in the Web UI.
+        # After that, we can get the ID with exact match.
+        # Find date groups containing "workday" and "freeday" (case-insensitive)
+        workday_group_id = None
+        freeday_group_id = None
+        
+        # Use filter to simplify group lookup and ensure uniqueness
+        workday_groups = list(filter(lambda g: "workday" in g.id.lower(), ctx.dates.groups))
+        freeday_groups = list(filter(lambda g: "freeday" in g.id.lower(), ctx.dates.groups))
+        workday_group_id = workday_groups[0].id if len(workday_groups) == 1 else None
+        freeday_group_id = freeday_groups[0].id if len(freeday_groups) == 1 else None
+        if not workday_group_id or not freeday_group_id:
+            workday_group_id = None
+            freeday_group_id = None
+        
         # Add headers for OFF count columns
         off_col_start = n_leading_cols + n_history_cols + len(ctx.dates.items) + 1
-        df.iloc[1, off_col_start] = "OFF (Total)"
-        df.iloc[1, off_col_start + 1] = "OFF (Weekday)"
-        df.iloc[1, off_col_start + 2] = "OFF (Weekend)"
+        col_idx = off_col_start
+        
+        # Add workday and freeday columns if groups are found
+        if workday_group_id and freeday_group_id:
+            df.iloc[1, col_idx] = f"OFF ({workday_group_id})"
+            col_idx += 1
+            df.iloc[1, col_idx] = f"OFF ({freeday_group_id})"
+            col_idx += 1
+            
+        df.iloc[1, col_idx] = "OFF (Total)"
+        df.iloc[1, col_idx + 1] = "OFF (Weekday)"
+        df.iloc[1, col_idx + 2] = "OFF (Weekend)"
         
         # Count OFF days for each person (rows)
         for p in range(len(ctx.people.items)):
+            off_workday = 0
+            off_freeday = 0
             off_total = 0
             off_weekday = 0
             off_weekend = 0
@@ -162,10 +189,25 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                         off_weekend += 1
                     else:
                         off_weekday += 1
+                    
+                    # Check if this date belongs to workday or freeday groups
+                    if workday_group_id and freeday_group_id:
+                        if d in ctx.map_did_d[workday_group_id]:
+                            off_workday += 1
+                        if d in ctx.map_did_d[freeday_group_id]:
+                            off_freeday += 1
             
-            df.iloc[n_leading_rows + p, off_col_start] = off_total
-            df.iloc[n_leading_rows + p, off_col_start + 1] = off_weekday
-            df.iloc[n_leading_rows + p, off_col_start + 2] = off_weekend
+            # Fill the OFF count columns
+            col_idx = off_col_start
+            if workday_group_id and freeday_group_id:
+                df.iloc[n_leading_rows + p, col_idx] = off_workday
+                col_idx += 1
+                df.iloc[n_leading_rows + p, col_idx] = off_freeday
+                col_idx += 1
+                
+            df.iloc[n_leading_rows + p, col_idx] = off_total
+            df.iloc[n_leading_rows + p, col_idx + 1] = off_weekday
+            df.iloc[n_leading_rows + p, col_idx + 2] = off_weekend
         
         # Add shift type count rows for each date (columns)
         # First add an empty row
@@ -205,13 +247,20 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                 for row_idx in range(len(df)):
                     style_df.iloc[row_idx, col_idx] = 'background-color: #fefce8'  # Light yellow background
             
-            # Check each column to see if it represents a weekend (only date columns, not history columns)
+            # Check each column to see if it represents a weekend or freeday group (only date columns, not history columns)
             for col_idx in range(n_leading_cols + n_history_cols, n_leading_cols + n_history_cols + len(ctx.dates.items)):
+                d = col_idx - n_leading_cols - n_history_cols  # Get the date index
+                
                 # Get the weekday from row 1 (second row)
                 weekday = df.iloc[1, col_idx]
                 
-                # If it's Saturday or Sunday, highlight the entire column
-                if weekday in ['Sat', 'Sun']:
+                # Check if this date belongs to the freeday group (highest priority)
+                if freeday_group_id and d in ctx.map_did_d[freeday_group_id]:
+                    # Apply light green background for freeday group
+                    for row_idx in range(len(df)):
+                        style_df.iloc[row_idx, col_idx] = 'background-color: #dcfce7'  # Light green background
+                # If it's Saturday or Sunday, highlight the entire column (lower priority than freeday)
+                elif weekday in ['Sat', 'Sun']:
                     # Apply background color to all rows in this column
                     for row_idx in range(len(df)):
                         style_df.iloc[row_idx, col_idx] = 'background-color: #dbeafe'  # Light blue background
@@ -228,7 +277,14 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             name_col_end = n_leading_cols - 1  # End of name column
             history_col_end = name_col_end + n_history_cols  # End of history columns
             date_col_end = history_col_end + len(ctx.dates.items)  # End of date columns
-            off_weekend_col_end = date_col_end + 1 + 3  # End of OFF (weekend) count column
+            # Calculate OFF column positions dynamically
+            off_total_col = date_col_end + 1  # Start after empty column
+            if workday_group_id and freeday_group_id:
+                off_total_col += 2
+            off_total_col_end = off_total_col + 1  # End of OFF (Total) column
+            # Calculate the number of remaining OFF columns
+            num_remaining_off_cols = 2  # Weekday, Weekend
+            off_weekend_col_end = off_total_col_end + num_remaining_off_cols  # End of last OFF count column
             
             # Apply borders to all cells, then add specific border styles
             for row_idx in range(len(df)):
@@ -241,7 +297,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                         borders.append('border-bottom: 2px solid #374151')
                     
                     # Add vertical borders
-                    if col_idx in [name_col_end, history_col_end, date_col_end, off_weekend_col_end]:
+                    if col_idx in [name_col_end, history_col_end, date_col_end, off_total_col_end, off_weekend_col_end]:
                         borders.append('border-right: 2px solid #374151')
                     
                     # Add vertical border after Saturday columns (between Saturday and Sunday)
