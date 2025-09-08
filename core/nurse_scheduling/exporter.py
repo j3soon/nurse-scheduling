@@ -244,6 +244,11 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                     if col_idx in [name_col_end, history_col_end, date_col_end, off_weekend_col_end]:
                         borders.append('border-right: 2px solid #374151')
                     
+                    # Add vertical border after Saturday columns (between Saturday and Sunday)
+                    if (n_leading_cols + n_history_cols <= col_idx < n_leading_cols + n_history_cols + len(ctx.dates.items) and
+                        df.iloc[1, col_idx] == 'Sat'):
+                        borders.append('border-right: 2px solid #9ca3af')
+                    
                     # Combine base style with borders
                     if borders:
                         border_style = '; '.join(borders)
