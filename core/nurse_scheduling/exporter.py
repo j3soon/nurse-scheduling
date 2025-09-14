@@ -110,6 +110,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
         if prettify:
             # Only consider single-person, single-shift-type, list-of-single-date style shift request
             # Add a ` [OFF]` suffix if the person requests OFF
+            # Add a ` [<shift type id>]` suffix if the person requests a specific shift type
             # Add a ` [X]` suffix if the shift request is violated
             # Use pre-filtered preferences for this (d, p) combination
             if (d, p) in filtered_preferences:
@@ -121,6 +122,8 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                         var = ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)]
                         if s == constants.OFF_sid:
                             cell_value += " [OFF]"
+                        else:
+                            cell_value += f" [{ctx.shiftTypes.items[s].id}]"
                         if solver.Value(var) != target_value:
                             cell_value += " [X]"
         df.iloc[n_leading_rows+p, col_idx] = cell_value
