@@ -17,7 +17,8 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
         n_history_cols = max_history_length
     
     # Add extra columns and rows for prettify mode
-    extra_cols = 6 if prettify else 0  # Empty column + 5 OFF count columns (Workday, Freeday, Total, Weekday, Weekend)
+    shift_type_cols = ctx.n_shift_types + len(ctx.shiftTypes.groups) if prettify else 0  # Individual shift types + shift type groups
+    extra_cols = (6 + shift_type_cols) if prettify else shift_type_cols  # Empty column + 5 OFF count columns + shift type columns
     extra_rows = (1 + ctx.n_shift_types + len(ctx.shiftTypes.groups)) if prettify else 0  # Empty row + one row per shift type + one row per shift type group
     
     df = pd.DataFrame(
@@ -172,6 +173,20 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
         df.iloc[1, col_idx + 1] = "OFF (Weekday)"
         df.iloc[1, col_idx + 2] = "OFF (Weekend)"
         
+        # Add headers for shift type count columns
+        shift_type_col_start = col_idx + 3  # After the OFF columns
+        col_idx = shift_type_col_start
+        
+        # Add individual shift type column headers
+        for s in range(ctx.n_shift_types):
+            df.iloc[1, col_idx] = f"{ctx.shiftTypes.items[s].id} Count"
+            col_idx += 1
+        
+        # Add shift type group column headers
+        for shift_group in ctx.shiftTypes.groups:
+            df.iloc[1, col_idx] = f"{shift_group.id} Count"
+            col_idx += 1
+        
         # Count OFF days for each person (rows)
         for p in range(len(ctx.people.items)):
             off_workday = 0
@@ -208,6 +223,25 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             df.iloc[n_leading_rows + p, col_idx] = off_total
             df.iloc[n_leading_rows + p, col_idx + 1] = off_weekday
             df.iloc[n_leading_rows + p, col_idx + 2] = off_weekend
+            
+            # Fill shift type count columns for this person
+            shift_col_idx = shift_type_col_start
+            
+            # Count individual shift types for this person
+            for s in range(ctx.n_shift_types):
+                shift_count = sum(1 for d in range(len(ctx.dates.items))
+                                if solver.Value(ctx.shifts[(d, s, p)]) == 1)
+                df.iloc[n_leading_rows + p, shift_col_idx] = shift_count
+                shift_col_idx += 1
+            
+            # Count shift type groups for this person
+            for shift_group in ctx.shiftTypes.groups:
+                shift_group_count = sum(1 for d in range(len(ctx.dates.items))
+                                      if any(solver.Value(ctx.shifts[(d, s, p)]) == 1
+                                           for member_id in shift_group.members
+                                           for s in ctx.map_sid_s[member_id]))
+                df.iloc[n_leading_rows + p, shift_col_idx] = shift_group_count
+                shift_col_idx += 1
         
         # Add shift type count rows for each date (columns)
         # First add an empty row
@@ -270,8 +304,8 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             header_row_end = n_leading_rows - 1  # End of header region
             people_row_end = header_row_end + len(ctx.people.items)  # End of people region
             summary_row_end = people_row_end + n_trailing_rows  # End of summary region
-            individual_counts_row_end = summary_row_end + 1 + ctx.n_shift_types  # End of individual shift type counts
-            group_counts_row_end = individual_counts_row_end + len(ctx.shiftTypes.groups)  # End of group counts
+            shift_type_individual_counts_row_end = summary_row_end + 1 + ctx.n_shift_types  # End of individual shift type counts
+            shift_type_group_counts_row_end = shift_type_individual_counts_row_end + len(ctx.shiftTypes.groups)  # End of group counts
             
             # Vertical borders  
             name_col_end = n_leading_cols - 1  # End of name column
@@ -285,6 +319,9 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             # Calculate the number of remaining OFF columns
             num_remaining_off_cols = 2  # Weekday, Weekend
             off_weekend_col_end = off_total_col_end + num_remaining_off_cols  # End of last OFF count column
+            # Calculate shift type column positions
+            shift_type_individual_counts_col_end = off_weekend_col_end + ctx.n_shift_types
+            shift_type_group_counts_col_end = shift_type_individual_counts_col_end + len(ctx.shiftTypes.groups)
             
             # Apply borders to all cells, then add specific border styles
             for row_idx in range(len(df)):
@@ -293,11 +330,11 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                     borders = []
                     
                     # Add horizontal borders
-                    if row_idx in [header_row_end, people_row_end, summary_row_end, individual_counts_row_end, group_counts_row_end]:
+                    if row_idx in [header_row_end, people_row_end, summary_row_end, shift_type_individual_counts_row_end, shift_type_group_counts_row_end]:
                         borders.append('border-bottom: 2px solid #374151')
                     
                     # Add vertical borders
-                    if col_idx in [name_col_end, history_col_end, date_col_end, off_total_col_end, off_weekend_col_end]:
+                    if col_idx in [name_col_end, history_col_end, date_col_end, off_total_col_end, off_weekend_col_end, shift_type_individual_counts_col_end, shift_type_group_counts_col_end]:
                         borders.append('border-right: 2px solid #374151')
                     
                     # Add vertical border after Saturday columns (between Saturday and Sunday)
