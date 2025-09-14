@@ -4,7 +4,7 @@ import logging
 import os.path
 from . import scheduler
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Font
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
@@ -63,11 +63,16 @@ def main():
             wb = load_workbook(output_path)
             ws = wb.active
             
-            # Apply center alignment to all cells
+            # Apply center alignment to all cells, and
+            # dark red color to cells with single-style shift request violations
             center_alignment = Alignment(horizontal='center')
+            dark_red_font = Font(color='C00000')  # Dark red color for violations
             for row in ws.iter_rows():
                 for cell in row:
                     cell.alignment = center_alignment
+                    # Apply dark red font color if the cell contains "[X]"
+                    if cell.value and isinstance(cell.value, str) and "[X]" in cell.value:
+                        cell.font = dark_red_font
             
             # Freeze the first two rows and first column (B3 is the cell after frozen area)
             ws.freeze_panes = 'B3'
