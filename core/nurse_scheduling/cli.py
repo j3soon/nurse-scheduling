@@ -2,9 +2,7 @@ import sys
 import argparse
 import logging
 import os.path
-from . import scheduler
-from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font
+from . import scheduler, exporter
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
@@ -56,32 +54,9 @@ def main():
     if output_path:
         # Save DataFrame in the specified format
         if output_format == 'xlsx':
-            # Save to Excel with advanced formatting
-            df.to_excel(output_path, index=False, header=False)
-            
-            # Load the workbook to apply additional formatting
-            wb = load_workbook(output_path)
-            ws = wb.active
-            
-            # Apply center alignment to all cells, and
-            # dark red color to cells with single-style shift request violations
-            center_alignment = Alignment(horizontal='center')
-            dark_red_font = Font(color='C00000')  # Dark red color for violations
-            for row in ws.iter_rows():
-                for cell in row:
-                    cell.alignment = center_alignment
-                    # Apply dark red font color if the cell contains "[X]"
-                    if cell.value and isinstance(cell.value, str) and "[X]" in cell.value:
-                        cell.font = dark_red_font
-            
-            # Freeze the first two rows and first column (B3 is the cell after frozen area)
-            ws.freeze_panes = 'B3'
-            
-            # Save the formatted workbook
-            wb.save(output_path)
+            exporter.export_to_excel(df, output_path)
         else:  # csv format
-            # Save DataFrame to CSV with UTF-8 BOM for Excel compatibility
-            df.to_csv(output_path, index=False, header=False, encoding='utf-8-sig')
+            exporter.export_to_csv(df, output_path)
         print(f"Results saved to {output_path}")
         print(f"Score: {score}")
         print(f"Status: {status}")

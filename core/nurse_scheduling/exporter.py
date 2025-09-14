@@ -1,5 +1,7 @@
 import pandas as pd
 from ortools.sat.python import cp_model
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Font
 
 from .context import Context
 from . import utils, models, constants
@@ -360,3 +362,42 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
         return styled_df
     
     return df
+
+
+def export_to_excel(df, output_path):
+    """
+    Export DataFrame to Excel with advanced formatting including:
+    - Center alignment for all cells
+    - Dark red font for cells containing violation markers "[X]"
+    - Frozen panes at B3 (first two rows and first column)
+    """
+    # Save DataFrame to Excel
+    df.to_excel(output_path, index=False, header=False)
+    
+    # Load the workbook to apply additional formatting
+    wb = load_workbook(output_path)
+    ws = wb.active
+    
+    # Apply center alignment to all cells, and
+    # dark red color to cells with single-style shift request violations
+    center_alignment = Alignment(horizontal='center')
+    dark_red_font = Font(color='C00000')  # Dark red color for violations
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.alignment = center_alignment
+            # Apply dark red font color if the cell contains "[X]"
+            if cell.value and isinstance(cell.value, str) and "[X]" in cell.value:
+                cell.font = dark_red_font
+    
+    # Freeze the first two rows and first column (B3 is the cell after frozen area)
+    ws.freeze_panes = 'B3'
+    
+    # Save the formatted workbook
+    wb.save(output_path)
+
+
+def export_to_csv(df, output_path):
+    """
+    Export DataFrame to CSV with UTF-8 BOM for Excel compatibility.
+    """
+    df.to_csv(output_path, index=False, header=False, encoding='utf-8-sig')
