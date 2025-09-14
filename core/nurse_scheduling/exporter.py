@@ -1,7 +1,6 @@
 import pandas as pd
 from ortools.sat.python import cp_model
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font
 
 from .context import Context
 from . import utils, models, constants
@@ -281,10 +280,30 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             # Create a style DataFrame with the same shape as the original
             style_df = pd.DataFrame('', index=df.index, columns=df.columns)
             
+            # Apply center alignment to all cells
+            for row_idx in range(len(df)):
+                for col_idx in range(len(df.columns)):
+                    style_df.iloc[row_idx, col_idx] = 'text-align: center'
+            
+            # Apply dark red font color to cells containing violation markers "[X]"
+            for row_idx in range(len(df)):
+                for col_idx in range(len(df.columns)):
+                    cell_value = df.iloc[row_idx, col_idx]
+                    if cell_value and isinstance(cell_value, str) and "[X]" in cell_value:
+                        existing_style = style_df.iloc[row_idx, col_idx]
+                        if existing_style:
+                            style_df.iloc[row_idx, col_idx] = f"{existing_style}; color: #C00000"
+                        else:
+                            style_df.iloc[row_idx, col_idx] = "color: #C00000"
+            
             # Apply light yellow background to history columns
             for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
                 for row_idx in range(len(df)):
-                    style_df.iloc[row_idx, col_idx] = 'background-color: #fefce8'  # Light yellow background
+                    existing_style = style_df.iloc[row_idx, col_idx]
+                    if existing_style:
+                        style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #fefce8"
+                    else:
+                        style_df.iloc[row_idx, col_idx] = 'background-color: #fefce8'
             
             # Check each column to see if it represents a weekend or freeday group (only date columns, not history columns)
             for col_idx in range(n_leading_cols + n_history_cols, n_leading_cols + n_history_cols + len(ctx.dates.items)):
@@ -297,12 +316,20 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                 if freeday_group_id and d in ctx.map_did_d[freeday_group_id]:
                     # Apply light green background for freeday group
                     for row_idx in range(len(df)):
-                        style_df.iloc[row_idx, col_idx] = 'background-color: #dcfce7'  # Light green background
+                        existing_style = style_df.iloc[row_idx, col_idx]
+                        if existing_style:
+                            style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #dcfce7"
+                        else:
+                            style_df.iloc[row_idx, col_idx] = 'background-color: #dcfce7'
                 # If it's Saturday or Sunday, highlight the entire column (lower priority than freeday)
                 elif weekday in ['Sat', 'Sun']:
                     # Apply background color to all rows in this column
                     for row_idx in range(len(df)):
-                        style_df.iloc[row_idx, col_idx] = 'background-color: #dbeafe'  # Light blue background
+                        existing_style = style_df.iloc[row_idx, col_idx]
+                        if existing_style:
+                            style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #dbeafe"
+                        else:
+                            style_df.iloc[row_idx, col_idx] = 'background-color: #dbeafe'
             
             # Add borders to separate regions
             # Horizontal borders
@@ -366,10 +393,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
 
 def export_to_excel(df, output_path):
     """
-    Export DataFrame to Excel with advanced formatting including:
-    - Center alignment for all cells
-    - Dark red font for cells containing violation markers "[X]"
-    - Frozen panes at B3 (first two rows and first column)
+    Export DataFrame to Excel with frozen panes at B3 (first two rows and first column).
     """
     # Save DataFrame to Excel
     df.to_excel(output_path, index=False, header=False)
@@ -377,17 +401,6 @@ def export_to_excel(df, output_path):
     # Load the workbook to apply additional formatting
     wb = load_workbook(output_path)
     ws = wb.active
-    
-    # Apply center alignment to all cells, and
-    # dark red color to cells with single-style shift request violations
-    center_alignment = Alignment(horizontal='center')
-    dark_red_font = Font(color='C00000')  # Dark red color for violations
-    for row in ws.iter_rows():
-        for cell in row:
-            cell.alignment = center_alignment
-            # Apply dark red font color if the cell contains "[X]"
-            if cell.value and isinstance(cell.value, str) and "[X]" in cell.value:
-                cell.font = dark_red_font
     
     # Freeze the first two rows and first column (B3 is the cell after frozen area)
     ws.freeze_panes = 'B3'
