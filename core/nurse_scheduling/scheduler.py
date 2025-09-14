@@ -212,11 +212,11 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
     logging.info(f"Done.")
 
     if not found:
-        return None, None, None, ctx.solver_status
+        return None, None, None, ctx.solver_status, None
 
-    df = exporter.get_people_versus_date_dataframe(ctx, solver, prettify=prettify)
+    df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, solver, prettify=prettify)
     solution = {}
     for (d, s, p) in ctx.shifts:
         solution[(d, s, p)] = solver.Value(ctx.shifts[(d, s, p)])
     # TODO: Better way to return?
-    return df, solution, solver.Value(ctx.objective), ctx.solver_status
+    return df, solution, solver.Value(ctx.objective), ctx.solver_status, cell_export_info

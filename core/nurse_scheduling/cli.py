@@ -45,7 +45,7 @@ def main():
             print(f"Error: Unsupported output file extension '{file_ext}'. Supported formats: .csv, .xlsx")
             sys.exit(1)
     
-    df, solution, score, status = scheduler.schedule(filepath, prettify=prettify)
+    df, solution, score, status, cell_export_info = scheduler.schedule(filepath, prettify=prettify)
 
     if df is None:
         print("No solution found")
@@ -54,7 +54,7 @@ def main():
     if output_path:
         # Save DataFrame in the specified format
         if output_format == 'xlsx':
-            exporter.export_to_excel(df, output_path)
+            exporter.export_to_excel(df, output_path, cell_export_info)
         else:  # csv format
             exporter.export_to_csv(df, output_path)
         print(f"Results saved to {output_path}")

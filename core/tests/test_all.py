@@ -29,7 +29,7 @@ def test_all():
                 expected_err = f.read()
             # Use pytest.raises without the match parameter to catch the error first
             with pytest.raises((ValidationError, ValueError)) as exc_info:
-                df, solution, score, status = nurse_scheduling.schedule(filepath)
+                df, solution, score, status, cell_export_info = nurse_scheduling.schedule(filepath)
             # Then verify the error message contains the expected text
             logging.info(f"Expected error: {expected_err.strip()}")
             logging.info(f"Actual error: {str(exc_info.value)}")
@@ -41,8 +41,8 @@ def test_all():
             with open(f"{test_dir}/{base_filepath}.csv", 'r') as f:
                 expected_csv = f.read()
         try:
-            df, solution, score, status = nurse_scheduling.schedule(filepath)
-            df2, solution2, score2, status2 = nurse_scheduling.schedule(filepath, avoid_solution=solution)
+            df, solution, score, status, cell_export_info = nurse_scheduling.schedule(filepath)
+            df2, solution2, score2, status2, cell_export_info2 = nurse_scheduling.schedule(filepath, avoid_solution=solution)
         except ValidationError as e:
             logging.debug(f"Validation error for '{base_filepath}': {e}")
             pytest.fail(f"Validation error for '{base_filepath}'")

@@ -11,6 +11,9 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
     n_leading_rows, n_leading_cols = 2, 1
     n_trailing_rows, n_trailing_cols = 2, 0
     
+    # Dictionary to track cells with [X] markers and their weights for Excel notes
+    cell_export_info = {}
+    
     n_history_cols = 0
     # Add history columns after the name column (only if prettify is enabled)
     if prettify:
@@ -127,6 +130,12 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                             cell_value += f" [{ctx.shiftTypes.items[s].id}]"
                         if solver.Value(var) != target_value:
                             cell_value += " [X]"
+                            # Track this cell for Excel notes - store the weight
+                            excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
+                            excel_col = n_leading_cols + n_history_cols + d + 1  # +1 for 1-based Excel indexing
+                            if (excel_row, excel_col) not in cell_export_info:
+                                cell_export_info[(excel_row, excel_col)] = []
+                            cell_export_info[(excel_row, excel_col)].append(abs(pref.weight))
         df.iloc[n_leading_rows+p, col_idx] = cell_value
 
     # Fill objective value
@@ -386,14 +395,15 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
         
         # Apply the styling and return the styled DataFrame
         styled_df = df.style.apply(lambda x: apply_styling(df), axis=None)
-        return styled_df
+        return styled_df, cell_export_info
     
-    return df
+    return df, cell_export_info
 
 
-def export_to_excel(df, output_path):
+def export_to_excel(df, output_path, cell_export_info=None):
     """
     Export DataFrame to Excel with frozen panes at B3 (first two rows and first column).
+    Also adds notes/comments to cells with [X] markers showing the weight of unmet single-style requests.
     """
     # Save DataFrame to Excel
     df.to_excel(output_path, index=False, header=False)
@@ -404,6 +414,22 @@ def export_to_excel(df, output_path):
     
     # Freeze the first two rows and first column (B3 is the cell after frozen area)
     ws.freeze_panes = 'B3'
+    
+    # Add notes/comments to cells with [X] markers if cell_export_info is provided
+    if cell_export_info:
+        from openpyxl.comments import Comment
+        for (row, col), weights in cell_export_info.items():
+            cell = ws.cell(row=row, column=col)
+            # Calculate total weight and create note text
+            total_weight = sum(weights)
+            if len(weights) == 1:
+                note_text = f"Weight of unmet single-style request: {total_weight}"
+            else:
+                note_text = f"Weights of unmet single-style requests: {total_weight} (individual weights: {', '.join(map(str, weights))})"
+            
+            # Create and add the comment
+            comment = Comment(note_text, "Nurse Scheduling System")
+            cell.comment = comment
     
     # Save the formatted workbook
     wb.save(output_path)
