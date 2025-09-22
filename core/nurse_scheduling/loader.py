@@ -8,7 +8,7 @@ yaml = YAML(typ='safe')
 def _load_yaml(filepath: str) -> Dict[str, Any]:
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"File {filepath} should exist")
-    with open(filepath, "r") as r:
+    with open(filepath, "r", encoding="utf-8") as r:
         # Use ruamel.yaml instead of PyYAML to support YAML 1.2
         # This avoids the auto-conversion of special strings such as
         # `Off` into boolean value `False`.
