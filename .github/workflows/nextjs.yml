@@ -81,6 +81,26 @@ jobs:
         run: ${{ steps.detect-package-manager.outputs.runner }} next build
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - name: Install MkDocs dependencies
+        run: |
+          cd ../docs
+          pip install -r requirements.txt
+      - name: Build MkDocs
+        run: |
+          cd ../docs
+          mkdocs build
+        # Ref: https://github.com/ojacques/mkdocs-git-committers-plugin-2
+        # Ref: https://github.com/ojacques/mkdocs-git-committers-plugin-2/issues/51#issuecomment-1951450239
+        env:
+          MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.MKDOCS_GIT_COMMITTERS_APIKEY }}
+      - name: Copy docs site to web-frontend/out
+        run: |
+          mkdir -p out/docs
+          cp -r ../site/* out/docs/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
