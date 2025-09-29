@@ -30,6 +30,13 @@ npm install
 npm run dev
 ```
 
+For building static site, run:
+
+```sh
+cd web-frontend
+npm run build
+```
+
 ### Core
 
 ```sh
@@ -63,6 +70,13 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 # preview documentation
 mkdocs serve
+```
+
+For building static site, run:
+
+```sh
+cd docs
+mkdocs build
 ```
 
 ## Design Philosophy
