@@ -13,6 +13,13 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 ## How to run
 
+### Prerequisites
+
+- [Node.js, nvm, and npm](https://nodejs.org/en/download).
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+
+These are not hard requirements. If you know what you are doing, you can also use other tools to manage dependencies, such as `virtualenv` or `conda`.
+
 ### Web Frontend
 
 Development version hosted on: <https://j3soon.github.io/nurse-scheduling/>
@@ -27,8 +34,6 @@ npm run dev
 
 ```sh
 cd core
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
 # create virtual environment
 uv venv --python 3.12
 # activate virtual environment
@@ -45,6 +50,20 @@ pytest --log-cli-level=INFO
 ```
 
 Note: The tests and code coverage are only for the core module. The web frontend is not covered by tests.
+
+### Documentation
+
+```sh
+cd docs
+# create virtual environment
+uv venv --python 3.12
+# activate virtual environment
+source .venv/bin/activate
+# install dependencies
+uv pip install -r requirements.txt
+# preview documentation
+mkdocs serve
+```
 
 ## Design Philosophy
 
