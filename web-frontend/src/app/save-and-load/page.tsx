@@ -1,4 +1,4 @@
-// The Export and Import page for Tab "8. Export and Import"
+// The Save and Load page for Tab "8. Save and Load"
 'use client';
 
 import { useState, useRef } from 'react';
@@ -16,7 +16,7 @@ interface CustomDumpOptions {
   [key: string]: unknown;
 }
 
-export default function ExportAndImportPage() {
+export default function SaveAndLoadPage() {
   const {
     apiVersionData,
     descriptionData,
@@ -175,7 +175,7 @@ export default function ExportAndImportPage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
-          <h1 className="text-3xl font-bold text-gray-800">Export and Import</h1>
+          <h1 className="text-3xl font-bold text-gray-800">Save and Load</h1>
           {instructions.length > 0 && (
             <button
               onClick={() => setShowInstructions(!showInstructions)}
