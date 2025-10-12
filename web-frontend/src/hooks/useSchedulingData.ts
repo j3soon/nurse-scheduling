@@ -432,15 +432,42 @@ export function useSchedulingData() {
   };
 
   const updateDateRange = (dateRange: DateRange) => {
+    // First, determine which date IDs will be removed
+    const currentDateIds = new Set(
+      historyState.state.dates.range.startDate && historyState.state.dates.range.endDate
+        ? _generateDateItems(historyState.state.dates.range.startDate, historyState.state.dates.range.endDate).map(item => item.id)
+        : []
+    );
+
+    const newDateIds = new Set(
+      dateRange.startDate && dateRange.endDate
+        ? _generateDateItems(dateRange.startDate, dateRange.endDate).map(item => item.id)
+        : []
+    );
+
+    const removedDateIds = [...currentDateIds].filter(id => !newDateIds.has(id));
+
+    // Update the date range
     updateState(prevState => {
+      // Create newGroups by filtering out removed date IDs
+      const newGroups = prevState.dates.groups.map(group => ({
+        ...group,
+        members: group.members.filter(memberId => !removedDateIds.includes(memberId))
+      }));
+
       return {
         ...prevState,
         dates: {
           ...prevState.dates,
           range: dateRange,
+          groups: newGroups
+          // items will be auto-generated based on the new range
         }
       };
     });
+
+    // Clean up preferences for all removed date IDs using the existing helper function
+    updatePreferencesForIdDeletion(DataType.DATES, removedDateIds);
   };
 
   const updatePeopleData = (peopleData: ItemGroupEditorPageData) => {
@@ -658,11 +685,18 @@ export function useSchedulingData() {
     }));
   };
 
-  // Unified function to update preferences when an ID is deleted
+  // Unified function to update preferences when IDs are deleted
   const updatePreferencesForIdDeletion = (
     dataType: DataType,
-    deletedId: string
+    deletedIds: string[]
   ) => {
+    // Return early if no IDs to delete
+    if (deletedIds.length === 0) {
+      return;
+    }
+
+    const deletedIdsSet = new Set(deletedIds);
+
     const shiftTypeReqFieldMap = {
       [DataType.DATES]: 'date',
       [DataType.PEOPLE]: 'qualifiedPeople',
@@ -687,7 +721,7 @@ export function useSchedulingData() {
       [DataType.SHIFT_TYPES]: 'countShiftTypes'
     };
 
-    // First, filter out the deleted ID from array fields and remove matching single-value preferences
+    // First, filter out the deleted IDs from array fields and remove matching single-value preferences
     updateState(prevState => ({
       ...prevState,
       preferences: prevState.preferences
@@ -696,13 +730,13 @@ export function useSchedulingData() {
             const fieldName = shiftTypeReqFieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
             return {
               ...pref,
-              [fieldName]: ((pref as ShiftTypeRequirementsPreference)[fieldName] as string[]).filter(id => id !== deletedId)
+              [fieldName]: ((pref as ShiftTypeRequirementsPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
             };
           } else if (pref.type === SHIFT_REQUEST) {
             const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
             return {
               ...pref,
-              [fieldName]: ((pref as ShiftRequestPreference)[fieldName] as string[]).filter(id => id !== deletedId)
+              [fieldName]: ((pref as ShiftRequestPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
             };
           } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
             if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
@@ -711,13 +745,13 @@ export function useSchedulingData() {
             const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
             return {
               ...pref,
-              [fieldName]: ((pref as ShiftTypeSuccessionsPreference)[fieldName] as string[]).filter(id => id !== deletedId)
+              [fieldName]: ((pref as ShiftTypeSuccessionsPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
             };
           } else if (pref.type === SHIFT_COUNT) {
             const fieldName = shiftCountFieldMap[dataType] as keyof ShiftCountPreference;
             return {
               ...pref,
-              [fieldName]: ((pref as ShiftCountPreference)[fieldName] as string[]).filter(id => id !== deletedId)
+              [fieldName]: ((pref as ShiftCountPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
             };
           }
           return pref;
@@ -862,7 +896,7 @@ export function useSchedulingData() {
     const newData = { items: newItems, groups: newGroups };
 
     updateData(dataType, newData);
-    updatePreferencesForIdDeletion(dataType, id);
+    updatePreferencesForIdDeletion(dataType, [id]);
   };
 
   const deleteGroup = (
@@ -879,7 +913,7 @@ export function useSchedulingData() {
     const newData = { ...data, groups: newGroups };
 
     updateData(dataType, newData);
-    updatePreferencesForIdDeletion(dataType, id);
+    updatePreferencesForIdDeletion(dataType, [id]);
   };
 
   const removeItemFromGroup = (
