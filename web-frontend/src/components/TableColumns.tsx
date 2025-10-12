@@ -79,7 +79,7 @@ function IdColumn({
         onSave={(value) => onInlineSave(item.id, 'description', isItem, value)}
         onCancel={onInlineCancel}
         onDoubleClick={canEdit ? () => onInlineEdit(item.id, isItem, 'description') : undefined}
-        className="text-xs text-gray-400 mt-1"
+        className="text-xs text-gray-400 mt-1 max-w-[150px] truncate block"
         editClassName="text-xs mt-1 w-full"
         emptyText="Add description..."
         placeholder="Enter description..."

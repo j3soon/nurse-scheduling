@@ -87,6 +87,7 @@ export function InlineEdit({
     <div
       onDoubleClick={onDoubleClick}
       className={`${isReadOnly ? '' : 'cursor-pointer'} ${className} ${!hasValue ? emptyClassName : ''}`}
+      title={valueToDisplay}
     >
       {hasValue ? valueToDisplay : (emptyText || 'Add...')}
     </div>
