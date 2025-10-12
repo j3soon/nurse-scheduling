@@ -4,6 +4,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiEdit2, FiAlertCircle, FiUpload, FiTrash2 } from 'react-icons/fi';
+import UploadButton from '@/components/UploadButton';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST, Item } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
@@ -76,10 +77,6 @@ export default function ShiftRequestsPage() {
   const quickAddRef = useRef<HTMLDivElement>(null);
   const stickyQuickAddRef = useRef<HTMLDivElement>(null);
   // TODO(perf): The multi-select drag feature is now lagging, unsure why.
-
-  // CSV upload
-  const shiftRequestFileInputRef = useRef<HTMLInputElement>(null);
-  const peopleHistoryFileInputRef = useRef<HTMLInputElement>(null);
 
   enum SelectedCellType {
     PREFERENCE,
@@ -522,15 +519,8 @@ export default function ShiftRequestsPage() {
     console.log('People History CSV processing completed successfully!');
   };
 
-  // Shared CSV upload handler
-  const handleCsvUpload = (
-    event: React.ChangeEvent<HTMLInputElement>,
-    uploadType: 'shift-requests' | 'people-history',
-    fileInputRef: React.RefObject<HTMLInputElement | null>
-  ) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  // File processing functions for UploadButton components
+  const processShiftRequestFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
@@ -544,61 +534,70 @@ export default function ShiftRequestsPage() {
         const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
         const csvData = lines.map(line => line.split(',').map(cell => cell.trim()));
 
-        console.log(`Raw ${uploadType} CSV data:`, csvData);
+        console.log('Raw shift-requests CSV data:', csvData);
 
-        if (uploadType === 'shift-requests') {
-          // Validate CSV data
-          const validation = validateShiftRequestCsvData(csvData);
+        // Validate CSV data
+        const validation = validateShiftRequestCsvData(csvData);
 
-          if (!validation.isValid) {
-            alert(`CSV validation failed: ${validation.error}`);
-            return;
-          }
+        if (!validation.isValid) {
+          alert(`CSV validation failed: ${validation.error}`);
+          return;
+        }
 
-          if (validation.validatedData && validation.validatedData.length > 0) {
-            // Process the validated data
-            processShiftRequestCsvData(validation.validatedData);
-            alert(`Successfully processed CSV file with ${validation.validatedData.length} shift preferences!`);
-          } else {
-            alert('No valid shift preferences found in CSV file.');
-          }
-        } else if (uploadType === 'people-history') {
-          // Validate CSV data
-          const validation = validatePeopleHistoryCsvData(csvData);
-
-          if (!validation.isValid) {
-            alert(`CSV validation failed: ${validation.error}`);
-            return;
-          }
-
-          if (validation.validatedData && validation.validatedData.length > 0) {
-            // Process the validated data
-            processPeopleHistoryCsvData(validation.validatedData);
-            alert(`Successfully processed ${validation.validatedData.length} shift type entries from people history CSV!`);
-          } else {
-            alert('No valid entries found in the people history CSV file.');
-          }
+        if (validation.validatedData && validation.validatedData.length > 0) {
+          // Process the validated data
+          processShiftRequestCsvData(validation.validatedData);
+          alert(`Successfully processed CSV file with ${validation.validatedData.length} shift preferences!`);
+        } else {
+          alert('No valid shift preferences found in CSV file.');
         }
       } catch (error) {
-        console.error(`Error processing ${uploadType} CSV file:`, error);
-        alert(`Error processing ${uploadType} CSV file. Please check the file format.`);
+        console.error('Error processing shift-requests CSV file:', error);
+        alert('Error processing shift-requests CSV file. Please check the file format.');
       }
     };
 
     reader.readAsText(file);
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
   };
 
-  const handleShiftRequestUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    handleCsvUpload(event, 'shift-requests', shiftRequestFileInputRef);
-  };
+  const processPeopleHistoryFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (!content) {
+        alert('No content found in the uploaded file.');
+        return;
+      }
 
-  const handlePeopleHistoryUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    handleCsvUpload(event, 'people-history', peopleHistoryFileInputRef);
+      try {
+        // Parse CSV content
+        const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+        const csvData = lines.map(line => line.split(',').map(cell => cell.trim()));
+
+        console.log('Raw people-history CSV data:', csvData);
+
+        // Validate CSV data
+        const validation = validatePeopleHistoryCsvData(csvData);
+
+        if (!validation.isValid) {
+          alert(`CSV validation failed: ${validation.error}`);
+          return;
+        }
+
+        if (validation.validatedData && validation.validatedData.length > 0) {
+          // Process the validated data
+          processPeopleHistoryCsvData(validation.validatedData);
+          alert(`Successfully processed ${validation.validatedData.length} shift type entries from people history CSV!`);
+        } else {
+          alert('No valid entries found in the people history CSV file.');
+        }
+      } catch (error) {
+        console.error('Error processing people-history CSV file:', error);
+        alert('Error processing people-history CSV file. Please check the file format.');
+      }
+    };
+
+    reader.readAsText(file);
   };
 
   // Compute the history columns count (max history length + 1)
@@ -1382,61 +1381,38 @@ export default function ShiftRequestsPage() {
                 Add Shift Preference
               </h2>
               <div className="flex gap-2">
-                <div className="relative">
-                  <input
-                    ref={peopleHistoryFileInputRef}
-                    type="file"
-                    accept=".csv,.txt"
-                    onChange={handlePeopleHistoryUpload}
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => peopleHistoryFileInputRef.current?.click()}
-                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors bg-green-600 text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-                    title="Upload a CSV file with people history (name, shift type, repetition count)"
-                  >
-                    <FiUpload className="h-4 w-4" />
-                    Upload People History (shorthand)
-                  </button>
-                </div>
-                <div className="relative">
-                  <input
-                    ref={shiftRequestFileInputRef}
-                    type="file"
-                    accept=".csv,.txt"
-                    onChange={handleShiftRequestUpload}
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => {
-                      // Validate weight before allowing upload
-                      if (!validateWeight()) {
-                        return; // Don't proceed if weight is invalid
-                      }
-                      if (addFormData.weight === 0) {
-                        alert('Weight must be a non-zero number.');
-                        return; // Don't proceed if weight is zero
-                      }
-                      shiftRequestFileInputRef.current?.click();
-                    }}
-                    disabled={!isValidWeightValue(addFormData.weight) || addFormData.weight === 0}
-                    className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
-                      !isValidWeightValue(addFormData.weight) || addFormData.weight === 0
-                        ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                        : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500'
-                    }`}
-                    title={
-                      !isValidWeightValue(addFormData.weight)
-                        ? 'Weight must be a valid number, Infinity, or -Infinity'
-                        : addFormData.weight === 0
-                        ? 'Weight must be a non-zero number'
-                        : 'Upload a CSV file with shift preferences (people x (dates + 1) matrix)'
+                <UploadButton
+                  onFileUpload={processPeopleHistoryFile}
+                  acceptedFileTypes={['.csv', '.txt']}
+                  buttonText="Upload People History (shorthand)"
+                  tooltipText="Upload a CSV file with people history (name, shift type, repetition count)"
+                  className="bg-green-600 text-white hover:bg-green-700 focus:ring-green-500"
+                  icon={<FiUpload className="h-4 w-4" />}
+                />
+                <UploadButton
+                  onFileUpload={(file) => {
+                    // Validate weight before processing
+                    if (!validateWeight()) {
+                      return; // Don't proceed if weight is invalid
                     }
-                  >
-                    <FiUpload className="h-4 w-4" />
-                    Upload Shift Requests
-                  </button>
-                </div>
+                    if (addFormData.weight === 0) {
+                      alert('Weight must be a non-zero number.');
+                      return; // Don't proceed if weight is zero
+                    }
+                    processShiftRequestFile(file);
+                  }}
+                  acceptedFileTypes={['.csv', '.txt']}
+                  buttonText="Upload Shift Requests"
+                  tooltipText={
+                    !isValidWeightValue(addFormData.weight)
+                      ? 'Weight must be a valid number, Infinity, or -Infinity'
+                      : addFormData.weight === 0
+                      ? 'Weight must be a non-zero number'
+                      : 'Upload a CSV file with shift preferences (people x (dates + 1) matrix)'
+                  }
+                  disabled={!isValidWeightValue(addFormData.weight) || addFormData.weight === 0}
+                  icon={<FiUpload className="h-4 w-4" />}
+                />
               </div>
             </div>
 

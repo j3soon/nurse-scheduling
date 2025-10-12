@@ -2,10 +2,11 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { FiHelpCircle, FiDownload, FiSave, FiX, FiCopy, FiCheck, FiAlertCircle } from 'react-icons/fi';
+import { FiHelpCircle, FiDownload, FiSave, FiX, FiCopy, FiCheck, FiAlertCircle, FiUpload } from 'react-icons/fi';
 import yaml from 'js-yaml';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ToggleButton from '@/components/ToggleButton';
+import UploadButton from '@/components/UploadButton';
 
 // Type definitions for CustomDump class
 interface CustomDumpOptions {
@@ -38,6 +39,7 @@ export default function SaveAndLoadPage() {
   const instructions = [
     "View the complete current state of your scheduling setup in YAML format",
     "Click 'Download' to save the YAML file to your device",
+    "Click 'Upload' to load a YAML file from your device (drag and drop supported)",
     "Click 'Copy' to copy the YAML content",
     "Click 'Edit' to modify the YAML directly and apply changes",
     "Use this to backup your work or share your scheduling configuration",
@@ -171,6 +173,32 @@ export default function SaveAndLoadPage() {
     }
   };
 
+  const processYamlFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (!content) {
+        alert('No content found in the uploaded file.');
+        return;
+      }
+
+      try {
+        // Validate YAML by parsing it
+        const parsedData = yaml.load(content);
+
+        // Load the parsed data directly without validation, this will create a new history state
+        loadFromYaml(parsedData);
+
+        alert('YAML file loaded successfully!');
+      } catch (error) {
+        alert(`Error loading YAML file: ${error instanceof Error ? error.message : 'Invalid YAML format'}`);
+        console.error('Error processing YAML file:', error);
+      }
+    };
+
+    reader.readAsText(file);
+  };
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
@@ -189,17 +217,25 @@ export default function SaveAndLoadPage() {
         <div className="flex gap-4">
           <button
             onClick={handleDownload}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500"
           >
             <FiDownload className="h-4 w-4" />
             Download
           </button>
+          <UploadButton
+            onFileUpload={processYamlFile}
+            acceptedFileTypes={['.yaml', '.yml']}
+            buttonText="Upload"
+            tooltipText="Upload a YAML file to load configuration. You can click to select a file or drag and drop a file here."
+            className="bg-green-600 text-white hover:bg-green-700 focus:ring-green-500"
+            icon={<FiUpload className="h-4 w-4" />}
+          />
           <button
             onClick={handleCopyToClipboard}
-            className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
+            className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
               copied
-                ? 'bg-green-600 text-white'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
+                ? 'bg-indigo-700 text-white focus:ring-indigo-500'
+                : 'bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500'
             }`}
           >
             {copied ? <FiCheck className="h-4 w-4" /> : <FiCopy className="h-4 w-4" />}
