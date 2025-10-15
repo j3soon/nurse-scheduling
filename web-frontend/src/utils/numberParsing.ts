@@ -9,6 +9,28 @@ export function parseWeightValue(inputValue: string): number | string {
   } else if (inputValueLower === '-infinity' || inputValueLower === '-inf' || inputValueLower === '-∞') {
     return -Infinity;
   } else {
+    // Check for suffixes (k, m, b, t)
+    const suffixMatch = inputValue.match(/^([+-]?\d+(?:\.\d+)?)([kmbt])$/i);
+    if (suffixMatch) {
+      const numericPart = parseFloat(suffixMatch[1]);
+      const suffix = suffixMatch[2].toLowerCase();
+
+      const multipliers: { [key: string]: number } = {
+        'k': 1e3,
+        'm': 1e6,
+        'b': 1e9,
+        't': 1e12,
+      };
+
+      const result = numericPart * multipliers[suffix];
+      if (Number.isInteger(result)) {
+        return Math.round(result);
+      } else {
+        // Invalid values are left as strings
+        return inputValue;
+      }
+    }
+
     const parsed = parseInt(inputValue);
     if (isNaN(parsed)) {
       // Invalid values are left as strings
@@ -19,6 +41,24 @@ export function parseWeightValue(inputValue: string): number | string {
 }
 
 export function parseNumberValue(inputValue: string): number | string {
+  // Check for suffixes (k, m, b, t)
+  const suffixMatch = inputValue.match(/^([+-]?\d+(?:\.\d+)?)\s*([kmbt])$/i);
+  if (suffixMatch) {
+    const numericPart = parseFloat(suffixMatch[1]);
+    const suffix = suffixMatch[2].toLowerCase();
+
+    const multipliers: { [key: string]: number } = {
+      'k': 1e3,
+      'm': 1e6,
+      'b': 1e9,
+      't': 1e12,
+    };
+
+    const result = numericPart * multipliers[suffix];
+    // Return as integer if possible
+    return Number.isInteger(result) ? Math.round(result) : result;
+  }
+
   const parsed = parseInt(inputValue);
   if (isNaN(parsed)) {
     // Invalid values are left as strings

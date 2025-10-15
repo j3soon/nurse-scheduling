@@ -15,7 +15,7 @@ export default function WeightInput({
   value,
   onChange,
   error,
-  placeholder = "e.g., -1, -10, ∞",
+  placeholder = "e.g., -1, -10k, ∞",
   label = "Weight (priority)",
   compact = false
 }: WeightInputProps) {
