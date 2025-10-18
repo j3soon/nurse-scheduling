@@ -5,4 +5,4 @@ from typing import Any, Callable
 class Report:
     description: str
     variable: Any
-    skip_condition: Callable[[Any], bool] = lambda x: False
+    skip_condition: Callable[[Any], bool] = lambda x: False # Skip the report if the condition is true (success)

@@ -12,6 +12,7 @@ SHIFT_TYPE_REQUIREMENT = 'shift type requirement'
 SHIFT_REQUEST = 'shift request'
 SHIFT_TYPE_SUCCESSIONS = 'shift type successions'
 SHIFT_COUNT = 'shift count'
+SHIFT_AFFINITY = 'shift affinity'
 
 def validate_weight(weight: int | float) -> int | float:
     """Validate that float weights can only be positive or negative infinity."""
@@ -139,6 +140,21 @@ class ShiftCountPreference(BasePreference):
     def validate_weight_field(cls, v):
         return validate_weight(v)
 
+class ShiftAffinityPreference(BasePreference):
+    model_config = ConfigDict(extra="forbid")
+    type: Annotated[str, Field(pattern=f"^{SHIFT_AFFINITY}$")] = SHIFT_AFFINITY
+    description: str | None = None
+    date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
+    people1: (int | str) | List[int | str]  # First single person/group ID or list
+    people2: (int | str) | List[int | str]  # Second single person/group ID or list
+    shiftTypes: (str | List[str])  # Single shift type ID or list
+    weight: (int | float) = Field(default=1)  # For float can only be .inf or -.inf
+    
+    @field_validator('weight')
+    @classmethod
+    def validate_weight_field(cls, v):
+        return validate_weight(v)
+
 class NurseSchedulingData(BaseModel):
     model_config = ConfigDict(extra="forbid")
     apiVersion: str
@@ -152,7 +168,8 @@ class NurseSchedulingData(BaseModel):
         ShiftRequestPreference |
         ShiftTypeSuccessionsPreference |
         ShiftTypeRequirementsPreference |
-        ShiftCountPreference
+        ShiftCountPreference |
+        ShiftAffinityPreference
     ]
 
     @model_validator(mode='after')

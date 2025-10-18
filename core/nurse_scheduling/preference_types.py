@@ -263,10 +263,66 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
             else:
                 raise ValueError(f"Unsupported expression: {expression}. Supported expressions are: {SUPPORTED_EXPRESSIONS}")
 
+def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, preference_idx):
+    # Soft constraint
+    # For specified date, people1, people2, and shift types, encourage or discourage working together.
+    # Positive weight encourages affinity (working together), negative weight encourages repulsion (working apart)
+    # The preference is satisfied on the date if at least one member of people1 and
+    # at least one member of people2 are assigned to one of the specified shift types,
+    # which doesn't need to be the same shift type.
+    # i.e., max(weight * (some_people1_matched and some_people2_matched))
+
+    # Example scenarios (formulation rationale):
+    # - people1 represents a student who should work with at least one teacher in people2,
+    #   without needing additional incentive to work with more than one teacher.
+    # - Some members of people1 and people2 prefer not to work together,
+    #   while there are multiple shift types that have overlapping time.
+    
+    # Other considerations:
+    # - If people1 wants to work with multiple people2 simultaneously,
+    #   this can be modeled using multiple shift affinity preferences,
+    #   or potentially a nested representation in the future.
+    # - If people1 wants to work with people2 on multiple disjoint shift types,
+    #   this can also be handled with multiple shift affinity preferences,
+    #   or potential future nested representations.
+    #
+    # If the shift affinity preference is defined to act on each pair of people1 and people2,
+    # or people1 and people2 must both work on the exact same shift type,
+    # we cannot handle the example scenarios above.
+
+    ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
+    p1s = utils.parse_pids(preference.people1, ctx.map_pid_p)
+    p2s = utils.parse_pids(preference.people2, ctx.map_pid_p)
+    ss = utils.parse_sids(preference.shiftTypes, ctx.map_sid_s)
+    for d in ds:
+        unique_var_prefix = f"pref_{preference_idx}_d_{d}"
+        some_p1_matched_var_name = f"{unique_var_prefix}_some_p1_matched"
+        some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"
+        is_match_var_name = f"{unique_var_prefix}_is_match"
+        ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = utils.ortools_expression_to_bool_var(
+            ctx.model, some_p1_matched_var_name,
+            sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) != 0,
+            sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) == 0
+        )
+        ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = utils.ortools_expression_to_bool_var(
+            ctx.model, some_p2_matched_var_name,
+            sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) != 0,
+            sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) == 0
+        )
+        ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
+            ctx.model, is_match_var_name,
+            some_p1_matched + some_p2_matched == 2,
+            some_p1_matched + some_p2_matched != 2
+        )
+        weight = preference.weight
+        utils.add_objective(ctx, weight, is_match)
+        ctx.reports.append(Report(f"shift_affinity_pref_{preference_idx}_d_{d}", is_match, lambda x: x == 1))
+
 PREFERENCE_TYPES_TO_FUNC = {
     models.SHIFT_TYPE_REQUIREMENT: shift_type_requirements,
     models.AT_MOST_ONE_SHIFT_PER_DAY: all_people_work_at_most_one_shift_per_day,
     models.SHIFT_REQUEST: shift_request,
     models.SHIFT_TYPE_SUCCESSIONS: shift_type_successions,
     models.SHIFT_COUNT: shift_count,
+    models.SHIFT_AFFINITY: shift_affinity,
 }
