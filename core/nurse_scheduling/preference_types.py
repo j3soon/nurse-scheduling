@@ -267,32 +267,49 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
     # Soft constraint
     # For specified date, people1, people2, and shift types, encourage or discourage working together.
     # Positive weight encourages affinity (working together), negative weight encourages repulsion (working apart)
-    # The preference is satisfied on the date if at least one member of people1 and
-    # at least one member of people2 are assigned to one of the specified shift types,
-    # which doesn't need to be the same shift type.
-    # i.e., max(weight * (some_people1_matched and some_people2_matched))
+    # By unpacking the nested lists, for all `p1s` in `people1`,
+    # `p2s` in `people2`, and `ss` in `shiftTypes`,
+    # the preference is satisfied on the date if at least one member of `p1s` and
+    # at least one member of `p2s` are assigned to one of the specified shift types `ss`,
+    # which doesn't necessarily need to be the same shift type. i.e.,
+    # max(weight * (some_p1s_matched and some_p2s_matched)), for all `p1s` in `people1`, `p2s` in `people2`, and `ss` in `shiftTypes`
 
     # Example scenarios (formulation rationale):
-    # - people1 represents a student who should work with at least one teacher in people2,
+    # - `p1s` represents a student who should work with at least one teacher in `p2s`,
     #   without needing additional incentive to work with more than one teacher.
-    # - Some members of people1 and people2 prefer not to work together,
+    # - Some members of `p1s` and `p2s` prefer not to work together,
     #   while there are multiple shift types that have overlapping time.
     
     # Other considerations:
-    # - If people1 wants to work with multiple people2 simultaneously,
+    # - If `p1s` wants to work with multiple `p2s` simultaneously,
     #   this can be modeled using multiple shift affinity preferences,
-    #   or potentially a nested representation in the future.
-    # - If people1 wants to work with people2 on multiple disjoint shift types,
+    #   or the nested `people2` list.
+    # - If `p1s` wants to work with `p2s` on multiple shift types (with non-overlapping time),
     #   this can also be handled with multiple shift affinity preferences,
-    #   or a nested shift affinity preference.
+    #   or the nested `shiftTypes` list.
     #
     # If the shift affinity preference is defined to act on each pair of people1 and people2,
     # or people1 and people2 must both work on the exact same shift type,
-    # we cannot handle the example scenarios above.
+    # we will lose the ability to handle the example scenarios above.
+    # Therefore, the current formulation is the most flexible one, albeit a bit confusing on first sight.
 
     ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
-    p1s = utils.parse_pids(preference.people1, ctx.map_pid_p)
-    p2s = utils.parse_pids(preference.people2, ctx.map_pid_p)
+    if not isinstance(preference.people1, list):
+        raise ValueError(f"People1 must be a list, but got {type(preference.people1)}")
+    if not isinstance(preference.people2, list):
+        raise ValueError(f"People2 must be a list, but got {type(preference.people2)}")
+    # Convert each people1 element to a list and parse person IDs
+    flattened_people1 = [
+        sorted(set(itertools.chain.from_iterable(
+            utils.parse_pids(pid, ctx.map_pid_p) for pid in (element if isinstance(element, list) else [element])
+        ))) for element in preference.people1
+    ]
+    # Convert each people2 element to a list and parse person IDs
+    flattened_people2 = [
+        sorted(set(itertools.chain.from_iterable(
+            utils.parse_pids(pid, ctx.map_pid_p) for pid in (element if isinstance(element, list) else [element])
+        ))) for element in preference.people2
+    ]
     if not isinstance(preference.shiftTypes, list):
         raise ValueError(f"Shift types must be a list, but got {type(preference.shiftTypes)}")
     # Convert each shift type element to a list and parse shift type IDs
@@ -303,29 +320,31 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
     ]
 
     for d in ds:
-        for ss in flattened_shift_types:
-            unique_var_prefix = f"pref_{preference_idx}_d_{d}_ss_{ss}"
-            some_p1_matched_var_name = f"{unique_var_prefix}_some_p1_matched"
-            some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"
-            is_match_var_name = f"{unique_var_prefix}_is_match"
-            ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = utils.ortools_expression_to_bool_var(
-                ctx.model, some_p1_matched_var_name,
-                sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) != 0,
-                sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) == 0
-            )
-            ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = utils.ortools_expression_to_bool_var(
-                ctx.model, some_p2_matched_var_name,
-                sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) != 0,
-                sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) == 0
-            )
-            ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
-                ctx.model, is_match_var_name,
-                some_p1_matched + some_p2_matched == 2,
-                some_p1_matched + some_p2_matched != 2
-            )
-            weight = preference.weight
-            utils.add_objective(ctx, weight, is_match)
-            ctx.reports.append(Report(f"shift_affinity_{unique_var_prefix}_is_match", is_match, lambda x: x == 1))
+        for i, p1s in enumerate(flattened_people1):
+            for j, p2s in enumerate(flattened_people2):
+                for k, ss in enumerate(flattened_shift_types):
+                    unique_var_prefix = f"pref_{preference_idx}_d_{d}_i_{i}_j_{j}_k_{k}"
+                    some_p1_matched_var_name = f"{unique_var_prefix}_some_p1_matched"
+                    some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"
+                    is_match_var_name = f"{unique_var_prefix}_is_match"
+                    ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = utils.ortools_expression_to_bool_var(
+                        ctx.model, some_p1_matched_var_name,
+                        sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) != 0,
+                        sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) == 0
+                    )
+                    ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = utils.ortools_expression_to_bool_var(
+                        ctx.model, some_p2_matched_var_name,
+                        sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) != 0,
+                        sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) == 0
+                    )
+                    ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
+                        ctx.model, is_match_var_name,
+                        some_p1_matched + some_p2_matched == 2,
+                        some_p1_matched + some_p2_matched != 2
+                    )
+                    weight = preference.weight
+                    utils.add_objective(ctx, weight, is_match)
+                    ctx.reports.append(Report(f"shift_affinity_{unique_var_prefix}_is_match", is_match, lambda x: x == 1))
 
 PREFERENCE_TYPES_TO_FUNC = {
     models.SHIFT_TYPE_REQUIREMENT: shift_type_requirements,
