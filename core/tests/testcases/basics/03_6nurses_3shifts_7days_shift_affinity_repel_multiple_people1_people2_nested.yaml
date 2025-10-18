@@ -42,53 +42,17 @@ preferences:
     date: ALL
     people1: [0, 1]
     people2: [2, 3]
-    shiftTypes: [D]
-    weight: -10
-  - type: shift affinity
-    date: ALL
-    people1: [0, 1]
-    people2: [2, 3]
-    shiftTypes: [E]
-    weight: -10
-  - type: shift affinity
-    date: ALL
-    people1: [0, 1]
-    people2: [2, 3]
-    shiftTypes: [N]
+    shiftTypes: [D, E, N]
     weight: -10
   - type: shift affinity
     date: ALL
     people1: [0, 1]
     people2: [4, 5]
-    shiftTypes: [D]
-    weight: -10
-  - type: shift affinity
-    date: ALL
-    people1: [0, 1]
-    people2: [4, 5]
-    shiftTypes: [E]
-    weight: -10
-  - type: shift affinity
-    date: ALL
-    people1: [0, 1]
-    people2: [4, 5]
-    shiftTypes: [N]
+    shiftTypes: [D, E, N]
     weight: -10
   - type: shift affinity
     date: ALL
     people1: [2, 3]
     people2: [4, 5]
-    shiftTypes: [D]
-    weight: -10
-  - type: shift affinity
-    date: ALL
-    people1: [2, 3]
-    people2: [4, 5]
-    shiftTypes: [E]
-    weight: -10
-  - type: shift affinity
-    date: ALL
-    people1: [2, 3]
-    people2: [4, 5]
-    shiftTypes: [N]
+    shiftTypes: [D, E, N]
     weight: -10

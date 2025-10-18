@@ -46,41 +46,13 @@ preferences:
     date: ALL
     people1: [0, 1]
     people2: [4]
-    shiftTypes: [D]
-    weight: -10
-    description: Nurse 4 should not work with Nurse 0 and 1
-  - type: shift affinity
-    date: ALL
-    people1: [0, 1]
-    people2: [4]
-    shiftTypes: [E]
-    weight: -10
-    description: Nurse 4 should not work with Nurse 0 and 1
-  - type: shift affinity
-    date: ALL
-    people1: [0, 1]
-    people2: [4]
-    shiftTypes: [N]
+    shiftTypes: [D, E, N]
     weight: -10
     description: Nurse 4 should not work with Nurse 0 and 1
   - type: shift affinity
     date: ALL
     people1: [0, 1]
     people2: [5]
-    shiftTypes: [D]
-    weight: 10
-    description: Student should follow one teacher
-  - type: shift affinity
-    date: ALL
-    people1: [0, 1]
-    people2: [5]
-    shiftTypes: [E]
-    weight: 10
-    description: Student should follow one teacher
-  - type: shift affinity
-    date: ALL
-    people1: [0, 1]
-    people2: [5]
-    shiftTypes: [N]
+    shiftTypes: [D, E, N]
     weight: 10
     description: Student should follow one teacher

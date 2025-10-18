@@ -33,7 +33,7 @@ preferences:
     weight: -1
   - type: shift affinity
     date: ALL
-    people1: 1
-    people2: 2
-    shiftTypes: D
+    people1: [1]
+    people2: [2]
+    shiftTypes: [D]
     weight: 100

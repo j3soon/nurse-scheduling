@@ -72,17 +72,17 @@ preferences:
     date: ALL
     people1: [0]
     people2: [3]
-    shiftTypes: [Day]
+    shiftTypes: [[D, D+]]
     weight: 10
   - type: shift affinity
     date: ALL
     people1: [1]
     people2: [4]
-    shiftTypes: [Evening]
+    shiftTypes: [[E, E+]]
     weight: 10
   - type: shift affinity
     date: ALL
     people1: [2]
     people2: [5]
-    shiftTypes: [Night]
+    shiftTypes: [[N, N+]]
     weight: 10

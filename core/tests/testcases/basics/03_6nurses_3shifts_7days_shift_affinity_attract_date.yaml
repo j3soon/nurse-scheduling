@@ -44,19 +44,19 @@ preferences:
     shiftType: N
   - type: shift affinity
     date: [18, 19]
-    people1: 0
-    people2: 1
-    shiftTypes: D
+    people1: [0]
+    people2: [1]
+    shiftTypes: [D]
     weight: 10
   - type: shift affinity
     date: 20~21
-    people1: 1
-    people2: 2
-    shiftTypes: E
+    people1: [1]
+    people2: [2]
+    shiftTypes: [E]
     weight: 10
   - type: shift affinity
     date: 22~23
-    people1: 2
-    people2: 3
-    shiftTypes: N
+    people1: [2]
+    people2: [3]
+    shiftTypes: [N]
     weight: 10

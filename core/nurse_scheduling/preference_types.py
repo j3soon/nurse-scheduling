@@ -284,7 +284,7 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
     #   or potentially a nested representation in the future.
     # - If people1 wants to work with people2 on multiple disjoint shift types,
     #   this can also be handled with multiple shift affinity preferences,
-    #   or potential future nested representations.
+    #   or a nested shift affinity preference.
     #
     # If the shift affinity preference is defined to act on each pair of people1 and people2,
     # or people1 and people2 must both work on the exact same shift type,
@@ -293,30 +293,39 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
     ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
     p1s = utils.parse_pids(preference.people1, ctx.map_pid_p)
     p2s = utils.parse_pids(preference.people2, ctx.map_pid_p)
-    ss = utils.parse_sids(preference.shiftTypes, ctx.map_sid_s)
+    if not isinstance(preference.shiftTypes, list):
+        raise ValueError(f"Shift types must be a list, but got {type(preference.shiftTypes)}")
+    # Convert each shift type element to a list and parse shift type IDs
+    flattened_shift_types = [
+        sorted(set(itertools.chain.from_iterable(
+            utils.parse_sids(sid, ctx.map_sid_s) for sid in (element if isinstance(element, list) else [element])
+        ))) for element in preference.shiftTypes
+    ]
+
     for d in ds:
-        unique_var_prefix = f"pref_{preference_idx}_d_{d}"
-        some_p1_matched_var_name = f"{unique_var_prefix}_some_p1_matched"
-        some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"
-        is_match_var_name = f"{unique_var_prefix}_is_match"
-        ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = utils.ortools_expression_to_bool_var(
-            ctx.model, some_p1_matched_var_name,
-            sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) != 0,
-            sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) == 0
-        )
-        ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = utils.ortools_expression_to_bool_var(
-            ctx.model, some_p2_matched_var_name,
-            sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) != 0,
-            sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) == 0
-        )
-        ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
-            ctx.model, is_match_var_name,
-            some_p1_matched + some_p2_matched == 2,
-            some_p1_matched + some_p2_matched != 2
-        )
-        weight = preference.weight
-        utils.add_objective(ctx, weight, is_match)
-        ctx.reports.append(Report(f"shift_affinity_pref_{preference_idx}_d_{d}", is_match, lambda x: x == 1))
+        for ss in flattened_shift_types:
+            unique_var_prefix = f"pref_{preference_idx}_d_{d}_ss_{ss}"
+            some_p1_matched_var_name = f"{unique_var_prefix}_some_p1_matched"
+            some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"
+            is_match_var_name = f"{unique_var_prefix}_is_match"
+            ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = utils.ortools_expression_to_bool_var(
+                ctx.model, some_p1_matched_var_name,
+                sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) != 0,
+                sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) == 0
+            )
+            ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = utils.ortools_expression_to_bool_var(
+                ctx.model, some_p2_matched_var_name,
+                sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) != 0,
+                sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) == 0
+            )
+            ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
+                ctx.model, is_match_var_name,
+                some_p1_matched + some_p2_matched == 2,
+                some_p1_matched + some_p2_matched != 2
+            )
+            weight = preference.weight
+            utils.add_objective(ctx, weight, is_match)
+            ctx.reports.append(Report(f"shift_affinity_{unique_var_prefix}_is_match", is_match, lambda x: x == 1))
 
 PREFERENCE_TYPES_TO_FUNC = {
     models.SHIFT_TYPE_REQUIREMENT: shift_type_requirements,

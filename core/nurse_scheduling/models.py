@@ -145,9 +145,9 @@ class ShiftAffinityPreference(BasePreference):
     type: Annotated[str, Field(pattern=f"^{SHIFT_AFFINITY}$")] = SHIFT_AFFINITY
     description: str | None = None
     date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
-    people1: (int | str) | List[int | str]  # First single person/group ID or list
-    people2: (int | str) | List[int | str]  # Second single person/group ID or list
-    shiftTypes: (str | List[str])  # Single shift type ID or list
+    people1: List[int | str | List[int | str]]  # First person ID list or nested
+    people2: List[int | str | List[int | str]]  # Second person ID list or nested
+    shiftTypes: List[str | List[str]]  # Shift type ID list or nested
     weight: (int | float) = Field(default=1)  # For float can only be .inf or -.inf
     
     @field_validator('weight')
