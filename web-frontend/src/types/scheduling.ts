@@ -40,6 +40,7 @@ export const SHIFT_TYPE_REQUIREMENT = 'shift type requirement';
 export const SHIFT_REQUEST = 'shift request';
 export const SHIFT_TYPE_SUCCESSIONS = 'shift type successions';
 export const SHIFT_COUNT = 'shift count';
+export const SHIFT_AFFINITY = 'shift affinity';
 
 export const SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T', 'x = T'] as const;
 export const SUPPORTED_SPECIAL_TARGETS = ['floor(AVG_SHIFTS_PER_PERSON)', 'ceil(AVG_SHIFTS_PER_PERSON)', 'round(AVG_SHIFTS_PER_PERSON)'] as const;
@@ -92,10 +93,21 @@ export interface ShiftCountPreference extends BasePreference {
   weight: number;
 }
 
+export interface ShiftAffinityPreference extends BasePreference {
+  type: typeof SHIFT_AFFINITY;
+  description?: string;
+  date: string[];
+  people1: string[];
+  people2: string[];
+  shiftTypes: string[];
+  weight: number;
+}
+
 // Union type for all preference types in the flattened structure
 export type Preference =
   | AtMostOneShiftPerDayPreference
   | ShiftTypeRequirementsPreference
   | ShiftRequestPreference
   | ShiftTypeSuccessionsPreference
-  | ShiftCountPreference;
+  | ShiftCountPreference
+  | ShiftAffinityPreference;
