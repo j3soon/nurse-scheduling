@@ -1,7 +1,17 @@
 # Nurse Scheduling System
 
 [![tests](https://img.shields.io/github/actions/workflow/status/j3soon/nurse-scheduling/test-core.yaml?label=tests)](https://github.com/j3soon/nurse-scheduling/actions/workflows/test-core.yaml)
+[![build](https://img.shields.io/github/actions/workflow/status/j3soon/nurse-scheduling/nextjs.yml?label=build)](https://github.com/j3soon/nurse-scheduling/actions/workflows/nextjs.yml)
 [![codecov](https://codecov.io/github/j3soon/nurse-scheduling/graph/badge.svg?token=DPOvtAW1k2)](https://codecov.io/github/j3soon/nurse-scheduling)
+[![docs](https://img.shields.io/badge/docs-pre--release-blue?logo=googledocs)](https://j3soon.github.io/nurse-scheduling/docs/)
+
+A flexible web application designed to streamline and automate nurse scheduling, suitable for a wide range of diverse and complex real-world requirements.
+
+- Pre-built (frontend-only) version hosted on [GitHub Pages](https://j3soon.github.io/nurse-scheduling/).
+- Documentation hosted on [GitHub Pages](https://j3soon.github.io/nurse-scheduling/docs/).
+- Source code hosted on [GitHub](https://github.com/j3soon/nurse-scheduling).
+
+## Introduction
 
 The nurse scheduling (or employee scheduling) problem is a well-known problem in the field of operations research (OR) and can be (approximately) solved efficiently by constrained optimization.
 
@@ -79,23 +89,9 @@ cd docs
 mkdocs build
 ```
 
-## Design Philosophy
+## Acknowledgments
 
-### Choice of Solver
-
-Since I'm not an expert in operations research, I've done some research on suitable (open-source) solvers for this problem. The most popular ones seem to be [Timefold](https://github.com/TimefoldAI/timefold-solver) (previously [OptaPlanner](https://github.com/kiegroup/optaplanner)) and [Google OR-Tools](https://github.com/google/or-tools). There's also a [comparison](https://www.optaplanner.org/competitor/or-tools.html) between the two.
-
-Google OR-Tools is chosen due to the support of Python, which is the language I'm most familiar with this kind of project.
-
-### Choice of Input Format
-
-We prioritize human readability and ease of editing by hand over machine parsing simplicity.
-
-The YAML format uses camelCase field names, following the conventions of Kubernetes.
-
-To allow quick prototyping without defining data type classes, we choose to keep the YAML input intact in memory. This requires extracting data explicitly using utility functions.
-
-<!-- TODO: Compare with INRC format and describe the differences and rationale) -->
+This project would not have been possible without the contributions of [@ijsun](https://github.com/ijsun) and Jennifer Tseng.
 
 ## References
 
