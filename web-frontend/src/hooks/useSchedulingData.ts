@@ -692,7 +692,7 @@ export function useSchedulingData() {
             const key = fieldName as keyof ShiftAffinityPreference;
             const value = (pref as ShiftAffinityPreference)[key];
             if (Array.isArray(value)) {
-              updatedPref[key] = value.map((id: string) => id === oldId ? newId : id);
+              (updatedPref[key] as string[]) = value.map((id: string) => id === oldId ? newId : id);
             }
           });
           return updatedPref;
@@ -783,7 +783,7 @@ export function useSchedulingData() {
               const key = fieldName as keyof ShiftAffinityPreference;
               const value = (pref as ShiftAffinityPreference)[key];
               if (Array.isArray(value)) {
-                updatedPref[key] = value.filter(id => !deletedIdsSet.has(id));
+                (updatedPref[key] as string[]) = value.filter(id => !deletedIdsSet.has(id));
               }
             });
             return updatedPref;
