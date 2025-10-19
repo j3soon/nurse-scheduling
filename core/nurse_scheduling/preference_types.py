@@ -327,20 +327,23 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
                     some_p1_matched_var_name = f"{unique_var_prefix}_some_p1_matched"
                     some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"
                     is_match_var_name = f"{unique_var_prefix}_is_match"
+                    sum1 = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for p in p1s for s in ss)
                     ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = utils.ortools_expression_to_bool_var(
                         ctx.model, some_p1_matched_var_name,
-                        sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) != 0,
-                        sum(ctx.shifts[(d, s, p)] for p in p1s for s in ss) == 0
+                        sum1 != 0,
+                        sum1 == 0
                     )
+                    sum2 = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for p in p2s for s in ss)
                     ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = utils.ortools_expression_to_bool_var(
                         ctx.model, some_p2_matched_var_name,
-                        sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) != 0,
-                        sum(ctx.shifts[(d, s, p)] for p in p2s for s in ss) == 0
+                        sum2 != 0,
+                        sum2 == 0
                     )
+                    sum3 = some_p1_matched + some_p2_matched
                     ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
                         ctx.model, is_match_var_name,
-                        some_p1_matched + some_p2_matched == 2,
-                        some_p1_matched + some_p2_matched != 2
+                        sum3 == 2,
+                        sum3 != 2
                     )
                     weight = preference.weight
                     utils.add_objective(ctx, weight, is_match)
