@@ -5,11 +5,11 @@
 
 The nurse scheduling (or employee scheduling) problem is a well-known problem in the field of operations research (OR) and can be (approximately) solved efficiently by constrained optimization.
 
-However, the constraints vary significantly across hospitals or wards. Therefore, in practice, the problem is often solved by hand or with the help of Excel, which is really time-consuming. The entire process requires several hours or even more than ten hours, depending on the problem complexity (e.g., multiple wards).
+However, constraints can differ greatly between hospitals and wards, and there is currently no unified framework for modeling these diverse requirements. Most existing literature focuses on modeling an over-simplified constraint set, which is not applicable to real-world situations. Therefore, in practice, the problem is still often solved by hand with the help of Excel, which is often extremely time-consuming. The entire process requires several hours or even more than ten hours, depending on the problem complexity (e.g., co-scheduling of multiple understaffed wards).
 
-This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims to develop a user-friendly web app to automate the nurse scheduling task.
+This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims to develop a flexible web app to automate the nurse scheduling task, and to provide a unified framework for modeling all types of real-world scenarios without sacrificing flexibility.
 
-> This project is currently a **Work in Progress**, so it may not function as intended. A preliminary version (or a POC) of a command-line interface is implemented and verified by domain experts under a multi-ward scenario at 2023/08/20. We are currently refactoring the codebase along with test cases to make it more maintainable.
+> This project is in active development. Breaking changes may occur without notice. Please proceed with caution. Although the current version has been verified by domain experts and used successfully (with minimal post-adjustment) in several complex multi-ward scenarios involving up to ~100 nurses, it currently has a steep learning curve and lacks proper documentation.
 
 ## How to run
 
