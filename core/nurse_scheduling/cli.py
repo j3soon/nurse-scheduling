@@ -15,6 +15,8 @@ def main():
                        help='Enable prettify mode for enhanced output formatting')
     parser.add_argument('-v', '--verbose', action='count', default=0,
                        help='Increase verbosity (can be used multiple times: -v, -vv, -vvv)')
+    parser.add_argument('--timeout', type=int, default=None,
+                       help='Maximum running time in seconds. If reached, the solver will stop and the current best result (if any) will be exported.')
     
     args = parser.parse_args()
     filepath = args.input_file_path
@@ -45,7 +47,7 @@ def main():
             print(f"Error: Unsupported output file extension '{file_ext}'. Supported formats: .csv, .xlsx")
             sys.exit(1)
     
-    df, solution, score, status, cell_export_info = scheduler.schedule(filepath, prettify=prettify)
+    df, solution, score, status, cell_export_info = scheduler.schedule(filepath, prettify=prettify, timeout=args.timeout)
 
     if df is None:
         print("No solution found")

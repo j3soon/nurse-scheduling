@@ -11,7 +11,7 @@ from .utils import ortools_expression_to_bool_var, parse_dates, MAP_DATE_KEYWORD
 from .constants import ALL, OFF, OFF_sid
 from .loader import load_data
 
-def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=False):
+def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=False, timeout: int | None = None):
     logging.info(f"Loading scenario from '{filepath}'...")
     scenario = load_data(filepath)
 
@@ -170,7 +170,16 @@ def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=F
             logging.info(f"elapsed time: {elapsed_time:.2f}s")
     solution_printer = PartialSolutionPrinter()
 
+    # Configure timeout (max_time_in_seconds) if provided
+    if timeout is not None:
+        try:
+            solver.parameters.max_time_in_seconds = float(timeout)
+            logging.info(f"Solver time limit set to {timeout} seconds")
+        except Exception:
+            logging.warning("Unable to set solver timeout parameter; proceeding without time limit")
+
     logging.info("Solving and showing partial results...")
+    # The CpSolver will respect max_time_in_seconds and return when the time limit is reached.
     status = solver.Solve(ctx.model, solution_printer)
 
     logging.info(f"Status: {solver.StatusName(status)}")
