@@ -83,7 +83,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             ds = utils.parse_dates(pref.date, ctx.map_did_d, ctx.dates.range)
             ss = utils.parse_sids(pref.shiftType, ctx.map_sid_s)
             ps = utils.parse_pids(pref.person, ctx.map_pid_p)
-            if len(ss) != 1 or len(ps) != 1:
+            if len(pref.shiftType) != 1 or len(ps) != 1:
                 # Skip since is not single person and single shift type style
                 continue
             if len(ds) != len(pref.date):
@@ -122,20 +122,20 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                     pref = pref_data['pref']
                     ss = pref_data['ss']
                     target_value = pref_data['target_value']
-                    for s in ss:
-                        var = ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)]
-                        if s == constants.OFF_sid:
-                            cell_value += " [OFF]"
-                        else:
-                            cell_value += f" [{ctx.shiftTypes.items[s].id}]"
-                        if solver.Value(var) != target_value:
-                            cell_value += " [X]"
-                            # Track this cell for Excel notes - store the weight
-                            excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
-                            excel_col = n_leading_cols + n_history_cols + d + 1  # +1 for 1-based Excel indexing
-                            if (excel_row, excel_col) not in cell_export_info:
-                                cell_export_info[(excel_row, excel_col)] = []
-                            cell_export_info[(excel_row, excel_col)].append(abs(pref.weight))
+                    vars = [ctx.shifts[(d, s, p)] for s in ss] if constants.OFF_sid not in ss else [ctx.offs[(d, p)]]
+                    if constants.OFF_sid in ss:
+                        cell_value += " [OFF]"
+                    else:
+                        assert len(pref.shiftType) == 1
+                        cell_value += f" [{pref.shiftType[0]}]"
+                    if all((solver.Value(var) != target_value) for var in vars):
+                        cell_value += " [X]"
+                        # Track this cell for Excel notes - store the weight
+                        excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
+                        excel_col = n_leading_cols + n_history_cols + d + 1  # +1 for 1-based Excel indexing
+                        if (excel_row, excel_col) not in cell_export_info:
+                            cell_export_info[(excel_row, excel_col)] = []
+                        cell_export_info[(excel_row, excel_col)].append(abs(pref.weight))
         df.iloc[n_leading_rows+p, col_idx] = cell_value
 
     # Fill objective value
