@@ -96,6 +96,7 @@ class ShiftTypeSuccessionsPreference(BasePreference):
     description: str | None = None
     person: (int | str) | List[int | str]  # Single person/group ID or list
     pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
+    date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
     weight: (int | float) = Field(default=1)  # For float can only be .inf or -.inf
     
     @field_validator('weight')

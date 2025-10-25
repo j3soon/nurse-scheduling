@@ -117,8 +117,16 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
             parsed_pattern.append(flattened_pattern[i])
     assert len(parsed_pattern) == len(flattened_pattern)
 
+    ds = range(ctx.n_days)
+    # Parse date range if specified
+    if preference.date is not None:
+        ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
+
     for p in ps:
         for d_begin in range(ctx.n_days - len(flattened_pattern) + 1):
+            # Check if all dates in the pattern range are valid
+            if not all(d in ds for d in range(d_begin, d_begin + len(flattened_pattern))):
+                continue
             # Match all patterns that start at day d_begin
             patterns = [parsed_pattern]
             # Consider history data to check for patterns that start at day 0
