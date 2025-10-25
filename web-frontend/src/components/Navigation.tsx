@@ -101,7 +101,7 @@ export default function Navigation() {
     <div className="relative">
       <nav className="bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <div className="flex justify-center px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-start px-4 sm:px-6 lg:px-8">
             {tabs.map((tab, index) => (
               <button
                 key={tab.path}
