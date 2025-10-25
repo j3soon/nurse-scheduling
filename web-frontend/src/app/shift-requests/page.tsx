@@ -1573,7 +1573,7 @@ export default function ShiftRequestsPage() {
                         <div>
                           <div>{person ? `${personIndex}. ${personEntry.id}` : personEntry.id}</div>
                           {personEntry.description && (
-                            <div className="text-gray-500 text-xs">{personEntry.description}</div>
+                            <div className="text-gray-500 text-xs max-w-[150px] truncate">{personEntry.description}</div>
                           )}
                         </div>
                       </td>
@@ -1714,7 +1714,7 @@ export default function ShiftRequestsPage() {
                               <span className="font-medium">Person:</span>{' '}
                               <span className="text-blue-900">{preference.person}</span>
                               {person?.description && (
-                                <div className="text-xs text-blue-500 mt-1">{person.description}</div>
+                                <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>
                               )}
                             </div>
                             <div>
@@ -1727,7 +1727,7 @@ export default function ShiftRequestsPage() {
                               <span className="font-medium">Shift Type:</span>{' '}
                               <span className="text-blue-900">{preference.shiftType}</span>
                               {shiftType?.description && (
-                                <div className="text-xs text-blue-500 mt-1">{shiftType.description}</div>
+                                <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{shiftType.description}</div>
                               )}
                             </div>
                             <div>
@@ -1774,7 +1774,7 @@ export default function ShiftRequestsPage() {
                               Person: <span className="text-blue-900">{person.id}</span>
                             </div>
                             {person.description && (
-                              <div className="text-xs text-blue-500 mt-1">{person.description}</div>
+                              <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>
                             )}
                           </div>
                           <div className="flex flex-wrap gap-x-6 gap-y-3">
@@ -1787,7 +1787,7 @@ export default function ShiftRequestsPage() {
                                   <span className="font-medium">H-{historyPosition}:</span>{' '}
                                   <span className="text-blue-900">{shiftTypeId}</span>
                                   {shiftType?.description && (
-                                    <div className="text-xs text-blue-500 mt-1">{shiftType.description}</div>
+                                    <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{shiftType.description}</div>
                                   )}
                                 </div>
                               );
