@@ -16,6 +16,7 @@ interface ShiftTypeSuccessionForm {
   description: string;
   person: string[];
   pattern: string[];
+  date: string[];
   weight: number | string;
 }
 
@@ -24,7 +25,8 @@ export default function ShiftTypeSuccessionsPage() {
     getPreferencesByType,
     updatePreferencesByType,
     shiftTypeData,
-    peopleData
+    peopleData,
+    dateData
   } = useSchedulingData();
 
   // Get shift type successions from the flattened preferences
@@ -39,6 +41,7 @@ export default function ShiftTypeSuccessionsPage() {
     description: '',
     person: [],
     pattern: [],
+    date: [],
     weight: -1
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
@@ -49,6 +52,7 @@ export default function ShiftTypeSuccessionsPage() {
     "Define shift type succession preferences (e.g., \"Forbid Evening -> Day succession\")",
     "Select one or more people or groups this preference applies to",
     "Define the pattern of shift types in succession (minimum 2 shift types required)",
+    "Specify specific dates this succession applies to",
     "Set positive weight to encourage successions and negative weight to discourage them",
     "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
   ];
@@ -58,6 +62,7 @@ export default function ShiftTypeSuccessionsPage() {
       description: '',
       person: [],
       pattern: [],
+      date: [],
       weight: -1
     });
     setErrors({});
@@ -75,6 +80,7 @@ export default function ShiftTypeSuccessionsPage() {
       description: succession.description ?? '',
       person: succession.person,
       pattern: succession.pattern,
+      date: succession.date,
       weight: succession.weight
     });
     setEditingIndex(index);
@@ -100,6 +106,10 @@ export default function ShiftTypeSuccessionsPage() {
       newErrors.pattern = 'At least 2 shift types must be selected for a succession pattern';
     }
 
+    if (formData.date.length === 0) {
+      newErrors.date = 'At least one date must be selected';
+    }
+
     if (!isValidWeightValue(formData.weight)) {
       newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
     }
@@ -116,6 +126,7 @@ export default function ShiftTypeSuccessionsPage() {
       description: formData.description,
       person: formData.person,
       pattern: formData.pattern,
+      date: formData.date,
       weight: formData.weight as number
     };
 
@@ -139,12 +150,12 @@ export default function ShiftTypeSuccessionsPage() {
     updateShiftTypeSuccessions(newSuccessions);
   };
 
-  const handleArrayFieldToggle = (id: string) => {
+  const handleArrayFieldToggle = (field: 'person' | 'date', id: string) => {
     setFormData(prev => ({
       ...prev,
-      person: prev.person.includes(id)
-        ? prev.person.filter(v => v !== id)
-        : [...prev.person, id]
+      [field]: prev[field].includes(id)
+        ? prev[field].filter(v => v !== id)
+        : [...prev[field], id]
     }));
   };
 
@@ -320,7 +331,7 @@ export default function ShiftTypeSuccessionsPage() {
                       }))
                     ]}
                     selectedIds={formData.person}
-                    onToggle={(id) => handleArrayFieldToggle(id)}
+                    onToggle={(id) => handleArrayFieldToggle('person', id)}
                     label=""
                   />
                 )}
@@ -442,6 +453,46 @@ export default function ShiftTypeSuccessionsPage() {
                 )}
               </div>
 
+              {/* Dates */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Dates *
+                </label>
+                <div className="max-h-32 overflow-y-auto">
+                  {dateData.items.length === 0 && dateData.groups.length === 0 ? (
+                    <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
+                      No dates available. Please set up dates in the{' '}
+                      <Link href="/dates" className="text-blue-600 hover:text-blue-800 underline">
+                        Dates
+                      </Link>{' '}
+                      tab first.
+                    </div>
+                  ) : (
+                    <CheckboxList
+                      items={[
+                        ...dateData.items.map(date => ({
+                          id: date.id,
+                          description: date.description
+                        })),
+                        ...dateData.groups.map(group => ({
+                          id: group.id,
+                          description: group.description
+                        }))
+                      ]}
+                      selectedIds={formData.date}
+                      onToggle={(id) => handleArrayFieldToggle('date', id)}
+                      label=""
+                    />
+                  )}
+                </div>
+                {errors.date && (
+                  <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {errors.date}
+                  </p>
+                )}
+              </div>
+
               {/* Weight */}
               <WeightInput
                 value={formData.weight}
@@ -519,6 +570,12 @@ export default function ShiftTypeSuccessionsPage() {
                       <div>
                         <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(succession.weight)}
                       </div>
+                      {succession.date && succession.date.length > 0 && (
+                        <div className="md:col-span-2 lg:col-span-3">
+                          <span className="font-medium">Dates:</span>{' '}
+                          {succession.date.join(', ')}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex justify-end space-x-2 ml-4">

@@ -79,6 +79,7 @@ export interface ShiftTypeSuccessionsPreference extends BasePreference {
   description?: string;
   person: string[];
   pattern: string[];  // List of shift type IDs that are in succession
+  date: string[];
   weight: number;
 }
 
