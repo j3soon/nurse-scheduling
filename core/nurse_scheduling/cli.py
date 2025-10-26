@@ -2,6 +2,7 @@ import sys
 import argparse
 import logging
 import os.path
+from io import BytesIO
 from . import scheduler, exporter
 
 # TODO: Better CLI
@@ -47,18 +48,32 @@ def main():
             print(f"Error: Unsupported output file extension '{file_ext}'. Supported formats: .csv, .xlsx")
             sys.exit(1)
     
-    df, solution, score, status, cell_export_info = scheduler.schedule(filepath, prettify=prettify, timeout=args.timeout)
+    # Read input file
+    if not os.path.isfile(filepath):
+        print(f"Error: File '{filepath}' not found")
+        sys.exit(1)
+    
+    with open(filepath, 'rb') as f:
+        file_content = f.read()
+    
+    df, solution, score, status, cell_export_info = scheduler.schedule(file_content, prettify=prettify, timeout=args.timeout)
 
     if df is None:
         print("No solution found")
         sys.exit(0)
     
     if output_path:
-        # Save DataFrame in the specified format
+        # Export to buffer and write to file
+        buffer = BytesIO()
         if output_format == 'xlsx':
-            exporter.export_to_excel(df, output_path, cell_export_info)
+            exporter.export_to_excel(df, buffer, cell_export_info)
         else:  # csv format
-            exporter.export_to_csv(df, output_path)
+            exporter.export_to_csv(df, buffer)
+        
+        # Write buffer to file
+        with open(output_path, 'wb') as f:
+            f.write(buffer.getvalue())
+        
         print(f"Results saved to {output_path}")
         print(f"Score: {score}")
         print(f"Status: {status}")
