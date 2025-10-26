@@ -7,15 +7,7 @@ import yaml from 'js-yaml';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ToggleButton from '@/components/ToggleButton';
 import UploadButton from '@/components/UploadButton';
-
-// Type definitions for CustomDump class
-interface CustomDumpOptions {
-  flowLevel?: number;
-  indent?: number;
-  lineWidth?: number;
-  noRefs?: boolean;
-  [key: string]: unknown;
-}
+import { generateYamlFromState } from '@/utils/yamlGenerator';
 
 export default function SaveAndLoadPage() {
   const {
@@ -56,71 +48,8 @@ export default function SaveAndLoadPage() {
     preferences
   });
 
-  // Custom function to detect leaf arrays (arrays containing only primitives)
-  const isLeafArray = (value: unknown): boolean => {
-    if (!Array.isArray(value)) return false;
-    return value.every(item =>
-      typeof item === 'string' ||
-      typeof item === 'number' ||
-      typeof item === 'boolean' ||
-      item === null ||
-      item === undefined
-    );
-  };
-
-  // Custom dump wrapper for flow style
-  class CustomDump {
-    data: unknown;
-    opts: CustomDumpOptions;
-
-    constructor(data: unknown, opts: CustomDumpOptions = {}) {
-      this.data = data;
-      this.opts = opts;
-    }
-
-    represent(): string {
-      let result = yaml.dump(this.data, Object.assign({ replacer, schema, noCompatMode: true }, this.opts));
-      result = result.trim();
-      if (result.includes('\n')) result = '\n' + result;
-      return result;
-    }
-  }
-
-  // Custom YAML type for flow formatting
-  const CustomDumpType = new yaml.Type('!format', {
-    kind: 'scalar',
-    resolve: () => false,
-    instanceOf: CustomDump,
-    represent: (data: object) => {
-      if (data instanceof CustomDump) {
-        return data.represent();
-      }
-      return String(data);
-    }
-  });
-
-  // Custom schema with the flow type
-  const schema = yaml.DEFAULT_SCHEMA.extend({ implicit: [CustomDumpType] });
-
-  // Replacer function to detect leaf arrays and apply flow style
-  function replacer(key: string, value: unknown) {
-    if (key === '') return value; // top-level, don't change this
-    if (isLeafArray(value)) {
-      return new CustomDump(value, { flowLevel: 0 });
-    }
-    if (value instanceof Date) {
-      return value.toISOString().split('T')[0];
-    }
-    return value; // default
-  }
-
   // Convert current state to YAML with custom flow style for leaf arrays
-  // Ref: https://github.com/nodeca/js-yaml/issues/586#issuecomment-814310104
-  const currentYaml = new CustomDump(filteredState, {
-    indent: 2,
-    lineWidth: 120,
-    noRefs: true
-  }).represent().trim() + '\n';
+  const currentYaml = generateYamlFromState(filteredState);
 
   const handleDownload = () => {
     const blob = new Blob([currentYaml], { type: 'application/x-yaml' });
