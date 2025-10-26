@@ -42,13 +42,18 @@ def test_all():
         if base_filepath in IGNORE_TESTS:
             continue
         logging.info(f"Testing '{filepath[len(testcases_dir)+1:]}' ...")
+        
+        # Read file content
+        with open(filepath, 'rb') as f:
+            file_content = f.read()
+        
         # If test should fail
         if os.path.isfile(f"{test_dir}/{base_filepath}.txt"):
             with open(f"{test_dir}/{base_filepath}.txt", 'r') as f:
                 expected_err = f.read()
             # Use pytest.raises without the match parameter to catch the error first
             with pytest.raises((ValidationError, ValueError)) as exc_info:
-                df, solution, score, status, cell_export_info = nurse_scheduling.schedule(filepath)
+                df, solution, score, status, cell_export_info = nurse_scheduling.schedule(file_content)
             # Then verify the error message contains the expected text
             logging.info(f"Expected error: {expected_err.strip()}")
             logging.info(f"Actual error: {str(exc_info.value)}")
@@ -60,8 +65,8 @@ def test_all():
             with open(f"{test_dir}/{base_filepath}.csv", 'r') as f:
                 expected_csv = f.read()
         try:
-            df, solution, score, status, cell_export_info = nurse_scheduling.schedule(filepath)
-            df2, solution2, score2, status2, cell_export_info2 = nurse_scheduling.schedule(filepath, avoid_solution=solution)
+            df, solution, score, status, cell_export_info = nurse_scheduling.schedule(file_content)
+            df2, solution2, score2, status2, cell_export_info2 = nurse_scheduling.schedule(file_content, avoid_solution=solution)
         except ValidationError as e:
             logging.debug(f"Validation error for '{base_filepath}': {e}")
             pytest.fail(f"Validation error for '{base_filepath}'")

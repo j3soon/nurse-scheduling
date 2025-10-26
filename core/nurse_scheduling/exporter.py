@@ -18,6 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import pandas as pd
+from io import BytesIO, StringIO
 from ortools.sat.python import cp_model
 from openpyxl import load_workbook
 
@@ -141,6 +142,8 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                     pref = pref_data['pref']
                     ss = pref_data['ss']
                     target_value = pref_data['target_value']
+                    # Does not support shift type groups with mixed OFF and non-OFF shift types,
+                    # which in most cases should not happen.
                     vars = [ctx.shifts[(d, s, p)] for s in ss] if constants.OFF_sid not in ss else [ctx.offs[(d, p)]]
                     if constants.OFF_sid in ss:
                         cell_value += " [OFF]"
@@ -419,16 +422,23 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
     return df, cell_export_info
 
 
-def export_to_excel(df, output_path, cell_export_info=None):
+def export_to_excel(df, output_buffer, cell_export_info=None):
     """
     Export DataFrame to Excel with frozen panes at B3 (first two rows and first column).
     Also adds notes/comments to cells with [X] markers showing the weight of unmet single-style requests.
+    
+    Args:
+        output_buffer: BytesIO buffer to write to
+        cell_export_info: Dictionary containing cell comment information
     """
-    # Save DataFrame to Excel
-    df.to_excel(output_path, index=False, header=False)
+    
+    # Write to a temporary BytesIO buffer first
+    temp_buffer = BytesIO()
+    df.to_excel(temp_buffer, index=False, header=False)
+    temp_buffer.seek(0)
     
     # Load the workbook to apply additional formatting
-    wb = load_workbook(output_path)
+    wb = load_workbook(temp_buffer)
     ws = wb.active
     
     # Freeze the first two rows and first column (B3 is the cell after frozen area)
@@ -450,12 +460,24 @@ def export_to_excel(df, output_path, cell_export_info=None):
             comment = Comment(note_text, "Nurse Scheduling System")
             cell.comment = comment
     
-    # Save the formatted workbook
-    wb.save(output_path)
+    # Save to the output buffer
+    wb.save(output_buffer)
+    output_buffer.seek(0)
 
 
-def export_to_csv(df, output_path):
+def export_to_csv(df, output_buffer):
     """
     Export DataFrame to CSV with UTF-8 BOM for Excel compatibility.
+    
+    Args:
+        output_buffer: BytesIO buffer to write to (use BytesIO for proper encoding handling)
     """
-    df.to_csv(output_path, index=False, header=False, encoding='utf-8-sig')
+    # Write CSV to a StringIO first to get text, then encode with BOM
+    temp_buffer = StringIO()
+    df.to_csv(temp_buffer, index=False, header=False)
+    temp_buffer.seek(0)
+    
+    # Encode with UTF-8 BOM and write to output buffer
+    csv_content = temp_buffer.getvalue()
+    output_buffer.write(csv_content.encode('utf-8-sig'))
+    output_buffer.seek(0)

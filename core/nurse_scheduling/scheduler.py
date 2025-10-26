@@ -30,9 +30,9 @@ from .utils import ortools_expression_to_bool_var, parse_dates, MAP_DATE_KEYWORD
 from .constants import ALL, OFF, OFF_sid
 from .loader import load_data
 
-def schedule(filepath: str, deterministic=False, avoid_solution=None, prettify=False, timeout: int | None = None):
-    logging.info(f"Loading scenario from '{filepath}'...")
-    scenario = load_data(filepath)
+def schedule(file_content: bytes, deterministic=False, avoid_solution=None, prettify=False, timeout: int | None = None):
+    logging.info(f"Loading scenario from file content...")
+    scenario = load_data(file_content)
 
     logging.info("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
