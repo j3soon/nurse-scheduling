@@ -7,3 +7,6 @@ jinja2 # For prettifying output
 # For CI
 pytest
 pytest-cov
+# For web backend
+fastapi[standard]
+python-multipart

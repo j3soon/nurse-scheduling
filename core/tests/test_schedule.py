@@ -34,7 +34,7 @@ testcases_dir = f"{current_dir}/testcases"
 IGNORE_TESTS = []
 WRITE_TO_CSV = False
 
-def test_all():
+def test_schedule():
     tests = glob.glob(f"{testcases_dir}/**/*.yaml", recursive=True)
     for test_no, filepath in enumerate(tests):
         base_filepath = os.path.splitext(os.path.basename(filepath))[0]
@@ -91,3 +91,8 @@ def test_all():
             logging.debug(f"Optimal Solution 2:\n{df2}")
             pytest.fail(f"The optimal solution should be unique, but it is not for '{filepath}' ({test_no}/{len(tests)})")
     logging.info(f"All {test_no} tests passed")
+
+
+if __name__ == "__main__":
+    # Run tests with pytest
+    pytest.main([__file__, "-v", "--log-cli-level=INFO"])

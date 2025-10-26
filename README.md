@@ -31,6 +31,11 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 These are not hard requirements. If you know what you are doing, you can also use other tools to manage dependencies, such as [`nvm`/`npm`](https://nodejs.org/en/download) for Next.js, and `virtualenv` or `conda` for Python.
 
+```sh
+git clone https://github.com/j3soon/nurse-scheduling.git
+cd nurse-scheduling
+```
+
 ### Web Frontend
 
 ```sh
@@ -69,12 +74,35 @@ uv pip install -r requirements.txt
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path]
 # run CLI with prettify and verbose
 python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
-# run all tests
-pytest --log-cli-level=INFO
-# Note that setting `WRITE_TO_CSV=True` in `core/tests/test_all.py` is often useful for creating new test cases
+# run schedule tests
+python tests/test_schedule.py
+# or
+pytest tests/test_schedule.py --log-cli-level=INFO
+# Note that setting `WRITE_TO_CSV=True` in `core/tests/test_schedule.py` is often useful for creating new test cases
 ```
 
 Note: The tests and code coverage are only for the core module. The web frontend is not covered by tests.
+
+### Web Backend
+
+```sh
+cd core/nurse_scheduling
+# development mode
+fastapi dev serve.py
+# run curl (needs to be run after the server is running)
+./tests/test_serve_curl.sh
+# run serve tests (don't need to be run after the server is running)
+python tests/test_serve.py
+# or
+pytest tests/test_serve.py --log-cli-level=INFO
+```
+
+(TODO: Production mode instructions are not yet completed.)
+
+<!--
+# or in production mode
+fastapi run serve.py --port 8000 --workers 4
+-->
 
 ### Documentation
 
