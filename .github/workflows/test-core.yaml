@@ -19,8 +19,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements.txt
-      - name: Test with pytest
-        run: cd core && pytest --log-cli-level=DEBUG
+      - name: Test schedule with pytest
+        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule.py
+      - name: Test serve with pytest
+        run: cd core && pytest --log-cli-level=DEBUG tests/test_serve.py
       - name: Prepare code coverage data
         if: github.ref == 'refs/heads/main'
         run: cd core && pytest --cov .
