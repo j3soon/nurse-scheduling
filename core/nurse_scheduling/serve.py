@@ -26,6 +26,7 @@ origins = [
     # For Next.js local development
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://kaichen0712.github.io",
     # TODO: Add hosted URL and note on self-hosting
 ]
 
