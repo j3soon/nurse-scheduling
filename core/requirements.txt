@@ -1,4 +1,5 @@
 ortools==9.14.6206
+pulp
 pandas
 ruamel.yaml
 pydantic

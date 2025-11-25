@@ -70,8 +70,12 @@ uv venv --python 3.12
 source .venv/bin/activate
 # install dependencies
 uv pip install -r requirements.txt
-# run CLI
+# run CLI with default OR-Tools solver
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path]
+# for example:
+python -m nurse_scheduling.cli tests/testcases/basics/01_1nurse_1shift_1day.yaml
+# run CLI with PuLP solver
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp
 # run CLI with prettify and verbose
 python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
 # run schedule tests

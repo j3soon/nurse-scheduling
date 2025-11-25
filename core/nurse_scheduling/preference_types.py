@@ -51,22 +51,22 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
                 # If qualified_people is specified, only allow those people to work the shift
                 qualified_ps = utils.parse_pids(preference.qualifiedPeople, ctx.map_pid_p)
                 unqualified_n_people = sum(ctx.shifts[(d, s, p)] for p in range(ctx.n_people) if p not in qualified_ps)
-                ctx.model.Add(unqualified_n_people == 0)
+                ctx.solver.add_constraint(unqualified_n_people == 0)
             
             # Add constraint that exactly required_num_people must be assigned from the qualified people
             actual_n_people = sum(ctx.shifts[(d, s, p)] for p in qualified_ps)
             if preference.preferredNumPeople is not None:
-                ctx.model.Add(actual_n_people >= preference.requiredNumPeople)
+                ctx.solver.add_constraint(actual_n_people >= preference.requiredNumPeople)
             else:
-                ctx.model.Add(actual_n_people == preference.requiredNumPeople)
+                ctx.solver.add_constraint(actual_n_people == preference.requiredNumPeople)
 
             # Add soft constraint for preferred number of people if specified
             if preference.preferredNumPeople is not None:
-                ctx.model.Add(actual_n_people <= preference.preferredNumPeople)
+                ctx.solver.add_constraint(actual_n_people <= preference.preferredNumPeople)
                 # Create a variable to track the difference between actual and preferred number of people
                 diff_var_name = f"pref_{preference_idx}_d_{d}_s_{s}_diff"
-                ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, preference.preferredNumPeople, diff_var_name)
-                ctx.model.Add(diff == preference.preferredNumPeople - actual_n_people)
+                ctx.model_vars[diff_var_name] = diff = ctx.solver.new_int_var(0, preference.preferredNumPeople, diff_var_name)
+                ctx.solver.add_constraint(diff == preference.preferredNumPeople - actual_n_people)
                 
                 # Add the objective
                 weight = preference.weight
@@ -83,7 +83,7 @@ def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preferen
     for (d, p), ss in ctx.map_dp_s.items():
         actual_n_shifts = sum(ctx.shifts[(d, s, p)] for s in ss)
         maximum_n_shifts = 1
-        ctx.model.Add(actual_n_shifts <= maximum_n_shifts)
+        ctx.solver.add_constraint(actual_n_shifts <= maximum_n_shifts)
 
 def shift_request(ctx: Context, preference: models.ShiftRequestPreference, preference_idx):
     # Soft constraint
@@ -99,7 +99,7 @@ def shift_request(ctx: Context, preference: models.ShiftRequestPreference, prefe
             weight = preference.weight
             if utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types):
                 # Add the objective
-                utils.add_objective(ctx, weight, ctx.offs[(d, p)].Not())
+                utils.add_objective(ctx, weight, ctx.solver.negate(ctx.offs[(d, p)]))
                 ctx.reports.append(Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0))
             else:
                 for s in ss:
@@ -173,7 +173,7 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                 match_shifts_in_day = []
                 for i in range(len(pattern)):
                     if pattern[i] == constants.ALL:
-                        match_shifts_in_day.append([ctx.offs[(d_begin+i, p)].Not()])
+                        match_shifts_in_day.append([ctx.solver.negate(ctx.offs[(d_begin+i, p)])])
                     else:
                         match_shifts_in_day.append([ctx.shifts[(d_begin+i, s, p)] if s != constants.OFF_sid else ctx.offs[(d_begin+i, p)] for s in pattern[i]])
                 target_n_matched = len(pattern)
@@ -183,8 +183,8 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                     unique_var_prefix = f"shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
                     is_match_var_name = f"{unique_var_prefix}_is_match"
                     actual_n_matched = sum(seq)
-                    ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
-                        ctx.model, is_match_var_name,
+                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_from_expression(
+                        is_match_var_name,
                         actual_n_matched == target_n_matched,
                         actual_n_matched != target_n_matched
                     )
@@ -254,12 +254,14 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 # Create a variable to represent the deviation from target
                 MAX = max(total_shifts - T, T)
                 diff_var_name = f"{unique_var_prefix}_diff"
-                ctx.model_vars[diff_var_name] = diff = ctx.model.NewIntVar(0, MAX, diff_var_name) # Min is 0, since diff is assigned through AddAbsEquality
-                ctx.model.AddAbsEquality(diff, x - T)
+                ctx.model_vars[diff_var_name] = diff = ctx.solver.new_int_var(0, MAX, diff_var_name) # Min is 0, since diff is assigned through abs
+                # Use abstracted abs equality method
+                ctx.solver.add_abs_equality(diff, x - T)
                 # Square the difference
                 squared_var_name = f"{unique_var_prefix}_squared"
-                ctx.model_vars[squared_var_name] = squared = ctx.model.NewIntVar(0, MAX**2, squared_var_name)
-                ctx.model.AddMultiplicationEquality(squared, diff, diff)
+                ctx.model_vars[squared_var_name] = squared = ctx.solver.new_int_var(0, MAX**2, squared_var_name)
+                # Use abstracted multiplication equality method
+                ctx.solver.add_multiplication_equality(squared, diff, diff)
                 # Add the objective
                 if weight == math.inf:
                     raise ValueError(f"'.inf' weights are not allowed for shift count with '{expression}'.")
@@ -279,8 +281,8 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                     'x = T': (x == T, x != T),
                 }[expression]
                 # Add the objective
-                ctx.model_vars[expr_var_name] = expr = utils.ortools_expression_to_bool_var(
-                    ctx.model, expr_var_name,
+                ctx.model_vars[expr_var_name] = expr = ctx.solver.create_bool_var_from_expression(
+                    expr_var_name,
                     equations[0],
                     equations[1]
                 )
@@ -355,20 +357,20 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
                     some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"
                     is_match_var_name = f"{unique_var_prefix}_is_match"
                     sum1 = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for p in p1s for s in ss)
-                    ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = utils.ortools_expression_to_bool_var(
-                        ctx.model, some_p1_matched_var_name,
+                    ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = ctx.solver.create_bool_var_from_expression(
+                        some_p1_matched_var_name,
                         sum1 != 0,
                         sum1 == 0
                     )
                     sum2 = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for p in p2s for s in ss)
-                    ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = utils.ortools_expression_to_bool_var(
-                        ctx.model, some_p2_matched_var_name,
+                    ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = ctx.solver.create_bool_var_from_expression(
+                        some_p2_matched_var_name,
                         sum2 != 0,
                         sum2 == 0
                     )
                     sum3 = some_p1_matched + some_p2_matched
-                    ctx.model_vars[is_match_var_name] = is_match = utils.ortools_expression_to_bool_var(
-                        ctx.model, is_match_var_name,
+                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_from_expression(
+                        is_match_var_name,
                         sum3 == 2,
                         sum3 != 2
                     )

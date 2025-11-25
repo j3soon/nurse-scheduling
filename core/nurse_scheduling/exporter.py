@@ -18,15 +18,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import pandas as pd
-from io import BytesIO, StringIO
-from ortools.sat.python import cp_model
 from openpyxl import load_workbook
 
 from .context import Context
 from . import utils, models, constants
 
 
-def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, prettify: bool = False):
+def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Initialize dataframe with size including leading rows and columns
     n_leading_rows, n_leading_cols = 2, 1
     n_trailing_rows, n_trailing_cols = 2, 0
@@ -124,12 +122,14 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                     })
 
     # Set cell values based on solver results
+    solver = ctx.solver
+    
     for (d, p) in ctx.map_dp_s.keys():
         col_idx = n_leading_cols + n_history_cols + d
         assert df.iloc[n_leading_rows+p, col_idx] == ""
         cell_value = ""
         for s in ctx.map_dp_s[(d, p)]:
-            if solver.Value(ctx.shifts[(d, s, p)]) == 1:
+            if solver.get_value(ctx.shifts[(d, s, p)]) == 1:
                 if cell_value != "":
                     cell_value += ", "
                 cell_value += ctx.shiftTypes.items[s].id
@@ -152,7 +152,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
                     else:
                         assert len(pref.shiftType) == 1
                         cell_value += f" [{pref.shiftType[0]}]"
-                    if all((solver.Value(var) != target_value) for var in vars):
+                    if all((solver.get_value(var) != target_value) for var in vars):
                         cell_value += " [X]"
                         # Track this cell for Excel notes - store the weight
                         excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
@@ -164,7 +164,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
 
     # Fill objective value
     df.iloc[n_leading_rows + len(ctx.people.items), 0] = "Score"
-    df.iloc[n_leading_rows + len(ctx.people.items), n_leading_cols + n_history_cols] = solver.Value(ctx.objective) # or solver.ObjectiveValue()
+    df.iloc[n_leading_rows + len(ctx.people.items), n_leading_cols + n_history_cols] = solver.get_value(ctx.objective)
     # Fill solver status
     df.iloc[n_leading_rows + len(ctx.people.items) + 1, 0] = "Status"
     df.iloc[n_leading_rows + len(ctx.people.items) + 1, n_leading_cols + n_history_cols] = ctx.solver_status
@@ -173,7 +173,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
     if not prettify:
         for (d, p) in ctx.offs.keys():
             col_idx = n_leading_cols + n_history_cols + d
-            if solver.Value(ctx.offs[(d, p)]) == 1:
+            if solver.get_value(ctx.offs[(d, p)]) == 1:
                 assert df.iloc[n_leading_rows+p, col_idx] == ""
             else:
                 assert df.iloc[n_leading_rows+p, col_idx] != ""
@@ -233,7 +233,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             off_weekend = 0
             
             for d in range(len(ctx.dates.items)):
-                if solver.Value(ctx.offs[(d, p)]) == 1:
+                if solver.get_value(ctx.offs[(d, p)]) == 1:
                     off_total += 1
                     # Check if this date is a weekend
                     date = ctx.dates.items[d]
@@ -267,14 +267,14 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             # Count individual shift types for this person
             for s in range(ctx.n_shift_types):
                 shift_count = sum(1 for d in range(len(ctx.dates.items))
-                                if solver.Value(ctx.shifts[(d, s, p)]) == 1)
+                                if solver.get_value(ctx.shifts[(d, s, p)]) == 1)
                 df.iloc[n_leading_rows + p, shift_col_idx] = shift_count
                 shift_col_idx += 1
             
             # Count shift type groups for this person
             for shift_group in ctx.shiftTypes.groups:
                 shift_group_count = sum(1 for d in range(len(ctx.dates.items))
-                                      if any(solver.Value(ctx.shifts[(d, s, p)]) == 1
+                                      if any(solver.get_value(ctx.shifts[(d, s, p)]) == 1
                                            for member_id in shift_group.members
                                            for s in ctx.map_sid_s[member_id]))
                 df.iloc[n_leading_rows + p, shift_col_idx] = shift_group_count
@@ -291,7 +291,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             
             for d in range(len(ctx.dates.items)):
                 shift_count = sum(1 for p in range(len(ctx.people.items))
-                                  if solver.Value(ctx.shifts[(d, s, p)]) == 1)
+                                  if solver.get_value(ctx.shifts[(d, s, p)]) == 1)
                 df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
         
         # Add one row for each shift type group
@@ -301,7 +301,7 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
             
             for d in range(len(ctx.dates.items)):
                 shift_count = sum(1 for p in range(len(ctx.people.items))
-                                  if any(solver.Value(ctx.shifts[(d, s, p)]) == 1
+                                  if any(solver.get_value(ctx.shifts[(d, s, p)]) == 1
                                   for member_id in shift_group.members
                                   for s in ctx.map_sid_s[member_id]))
                 df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count

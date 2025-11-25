@@ -17,8 +17,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from ortools.sat.python import cp_model
-from typing import Dict, List
+from typing import Any, Dict, List
 from datetime import date
 from pydantic import ConfigDict, Field
 
@@ -26,6 +25,7 @@ from .models import (
     NurseSchedulingData,
 )
 from .report import Report
+from .solver_interface import SolverInterface
 
 class Context(NurseSchedulingData):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -40,13 +40,13 @@ class Context(NurseSchedulingData):
     map_pid_p: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps person/group ID to list of person indices
     map_did_d: Dict[str, List[int]] = Field(default_factory=dict)  # Maps date/group ID to list of date indices
     
-    # Fields used by the CP-SAT solver
-    model: cp_model.CpModel = Field(default_factory=cp_model.CpModel)
-    model_vars: Dict[str, cp_model.IntVar] = Field(default_factory=dict)
-    shifts: Dict[tuple[int, int, int], cp_model.IntVar] = Field(default_factory=dict)
+    # Fields used by the solver (abstracted)
+    solver: SolverInterface = None
+    model_vars: Dict[str, Any] = Field(default_factory=dict)
+    shifts: Dict[tuple[int, int, int], Any] = Field(default_factory=dict)
     """A set of indicator variables (shifts[(d, s, p)]) that are 1 if
     and only if a person (p) is assigned to a shift type (s) on day (d)."""
-    offs: Dict[tuple[int, int], cp_model.IntVar] = Field(default_factory=dict)
+    offs: Dict[tuple[int, int], Any] = Field(default_factory=dict)
     """A set of indicator variables (offs[(d, p)]) that are 1 if and
     only if a person (p) is off on day (d)."""
 
@@ -61,5 +61,5 @@ class Context(NurseSchedulingData):
     map_s_dp: Dict[int, set[tuple[int, int]]] = Field(default_factory=dict)  # Maps shift_type to set of (day, person) pairs
     map_p_ds: Dict[int, set[tuple[int, int]]] = Field(default_factory=dict)  # Maps person to set of (day, shift_type) pairs
     
-    # Optimization objective
-    objective: cp_model.LinearExpr = 0
+    # Optimization objective (expression type varies by solver)
+    objective: Any = 0
