@@ -177,6 +177,7 @@ class ShiftAffinityPreference(BasePreference):
 
 class NurseSchedulingData(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    appVersion: str | None = None
     apiVersion: str
     description: str | None = None
     dates: DateContainer
