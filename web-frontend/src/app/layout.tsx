@@ -51,7 +51,7 @@ export default function RootLayout({
           </div>
           <div>
             <a href="https://github.com/j3soon/nurse-scheduling" target="_blank" rel="noopener noreferrer" className="footer-link">Nurse Scheduling Project</a>{' '}
-            <a href="https://github.com/j3soon/nurse-scheduling/releases" target="_blank" rel="noopener noreferrer" className="footer-link">v0.0.0</a>.{' '}
+            (<a href="https://github.com/j3soon/nurse-scheduling/releases" target="_blank" rel="noopener noreferrer" className="footer-link">{process.env.NEXT_PUBLIC_APP_VERSION || 'v?.?.?'}</a>).{' '}
             Licensed under{' '}
             <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer" className="footer-link">AGPL-3.0</a>.
           </div>
