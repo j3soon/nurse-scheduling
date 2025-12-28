@@ -47,6 +47,13 @@ cd web-frontend
 npm run build
 ```
 
+For linting, run:
+
+```sh
+cd web-frontend
+npm run lint -- --fix
+```
+
 ### Core
 
 ```sh
