@@ -20,6 +20,16 @@
 // The layout for the entire app
 import type { Metadata } from "next";
 import Navigation from "@/components/Navigation";
+import { CURRENT_APP_VERSION } from "@/constants/version";
+import {
+  GITHUB_REPO_URL,
+  GITHUB_RELEASES_URL,
+  GITHUB_LICENSE_URL,
+  GITHUB_CODE_FREQUENCY_URL,
+  GITHUB_ACKNOWLEDGMENTS_URL,
+  GITHUB_AUTHOR_URL,
+  AGPL_LICENSE_URL,
+} from "@/constants/urls";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -44,16 +54,16 @@ export default function RootLayout({
         </main>
         <footer style={{ textAlign: 'center', padding: '1.5rem', marginTop: '2rem', fontSize: '0.875rem', color: 'gray' }}>
           <div>
-            <a href="https://github.com/j3soon/nurse-scheduling/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="footer-link">Copyright ©</a>{' '}
-            <a href="https://github.com/j3soon/nurse-scheduling/graphs/code-frequency" target="_blank" rel="noopener noreferrer" className="footer-link">2023-{new Date().getFullYear()}</a>{' '}
-            <a href="https://github.com/j3soon" target="_blank" rel="noopener noreferrer" className="footer-link">Johnson Sun</a> &{' '}
-            <a href="https://github.com/j3soon/nurse-scheduling#acknowledgments" target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.
+            <a href={GITHUB_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Copyright ©</a>{' '}
+            <a href={GITHUB_CODE_FREQUENCY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">2023-{new Date().getFullYear()}</a>{' '}
+            <a href={GITHUB_AUTHOR_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Johnson Sun</a> &{' '}
+            <a href={GITHUB_ACKNOWLEDGMENTS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.
           </div>
           <div>
-            <a href="https://github.com/j3soon/nurse-scheduling" target="_blank" rel="noopener noreferrer" className="footer-link">Nurse Scheduling Project</a>{' '}
-            (<a href="https://github.com/j3soon/nurse-scheduling/releases" target="_blank" rel="noopener noreferrer" className="footer-link">{process.env.NEXT_PUBLIC_APP_VERSION || 'v?.?.?'}</a>).{' '}
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Nurse Scheduling Project</a>{' '}
+            (<a href={GITHUB_RELEASES_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{CURRENT_APP_VERSION}</a>).{' '}
             Licensed under{' '}
-            <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer" className="footer-link">AGPL-3.0</a>.
+            <a href={AGPL_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">AGPL-3.0</a>.
           </div>
         </footer>
       </body>
