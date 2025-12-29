@@ -20,6 +20,7 @@
 // The layout for the entire app
 import type { Metadata } from "next";
 import Navigation from "@/components/Navigation";
+import VersionWarningBanner from "@/components/VersionWarningBanner";
 import { CURRENT_APP_VERSION } from "@/constants/version";
 import {
   GITHUB_REPO_URL,
@@ -48,6 +49,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+        <VersionWarningBanner />
         <Navigation />
         <main style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}>
           {children}
