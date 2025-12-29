@@ -1,14 +1,15 @@
 # Nurse Scheduling System
 
 [![tests](https://img.shields.io/github/actions/workflow/status/j3soon/nurse-scheduling/test-core.yaml?label=tests)](https://github.com/j3soon/nurse-scheduling/actions/workflows/test-core.yaml)
-[![build](https://img.shields.io/github/actions/workflow/status/j3soon/nurse-scheduling/nextjs.yml?label=build)](https://github.com/j3soon/nurse-scheduling/actions/workflows/nextjs.yml)
+[![Netlify Status](https://api.netlify.com/api/v1/badges/8ec5c5da-89e1-41e5-87b3-133ce1007783/deploy-status)](https://nursescheduling.org/)
 [![codecov](https://codecov.io/github/j3soon/nurse-scheduling/graph/badge.svg?token=DPOvtAW1k2)](https://codecov.io/github/j3soon/nurse-scheduling)
-[![docs](https://img.shields.io/badge/docs-pre--release-blue?logo=googledocs)](https://j3soon.github.io/nurse-scheduling/docs/)
+[![docs](https://img.shields.io/badge/docs-pre--release-blue?logo=googledocs)](https://nursescheduling.org/docs/)
 
 A flexible web application designed to streamline and automate nurse scheduling, suitable for a wide range of diverse and complex real-world requirements.
 
-- Pre-built (frontend-only) version hosted on [GitHub Pages](https://j3soon.github.io/nurse-scheduling/).
-- Documentation hosted on [GitHub Pages](https://j3soon.github.io/nurse-scheduling/docs/).
+- Stable version (frontend-only) hosted on [Netlify](https://nursescheduling.org/).
+- Development version hosted on [Netlify](https://dev.nursescheduling.org/).
+- Documentation hosted on [Netlify](https://nursescheduling.org/docs/).
 - Source code hosted on [GitHub](https://github.com/j3soon/nurse-scheduling).
 
 ## Introduction
@@ -31,8 +32,6 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 These are not hard requirements. If you know what you are doing, you can also use other tools to manage dependencies, such as `virtualenv` or `conda`.
 
 ### Web Frontend
-
-Development version hosted on: <https://j3soon.github.io/nurse-scheduling/>
 
 ```sh
 cd web-frontend

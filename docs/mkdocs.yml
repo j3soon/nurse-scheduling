@@ -179,7 +179,7 @@ repo_name: j3soon/nurse-scheduling
 
 # Ref: https://www.mkdocs.org/user-guide/configuration/#site_url
 # Ref: https://stackoverflow.com/a/59295885
-site_url: https://j3soon.github.io/nurse-scheduling/docs/
+site_url: https://nursescheduling.org/docs/
 # DONE (Set up site url):
 # - Replace the `site_url` above to your site URL
 
