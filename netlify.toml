@@ -1,0 +1,23 @@
+[build]
+  publish = "web-frontend/out"
+  command = """
+  rm -rf web-frontend/out
+  rm -rf site
+
+  cd web-frontend
+  npm install
+  npm run build
+  cd ..
+
+  cd docs
+  pip install -r requirements.txt
+  python -m mkdocs build
+  cd ..
+
+  mkdir -p web-frontend/out/docs
+  mv site/* web-frontend/out/docs/
+  """
+
+[build.environment]
+  NODE_VERSION = "25"
+  PYTHON_VERSION = "3.12"
