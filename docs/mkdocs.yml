@@ -192,6 +192,7 @@ site_description: A user-friendly web app to automate the nurse scheduling task.
 nav:
   - Home: index.md
   - Design: design.md
+  - timeline.md
     # - styling-syntaxes.md
     # - dlbook-notations.md
     # DONE (Remove sample pages):

@@ -97,7 +97,11 @@ mkdocs build
 
 ## Acknowledgments
 
-This project would not have been possible without the contributions of [@ijsun](https://github.com/ijsun) and Jennifer Tseng.
+This project would not have been possible without the contributions of [@ijsun](https://github.com/ijsun) and Jennifer Tzeng.
+
+## License
+
+This project is licensed under the [AGPL-3.0 License](https://github.com/j3soon/nurse-scheduling/blob/main/LICENSE).
 
 ## References
 
