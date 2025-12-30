@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
   basePath: process.env.GITHUB_REPOSITORY ? `/${process.env.GITHUB_REPOSITORY.split('/')[1]}` : '',
   env: {
     NEXT_PUBLIC_APP_VERSION: getGitVersion(),
+    NEXT_PUBLIC_GA_MEASUREMENT_ID: 'G-XGDWE4SWF7',
   },
 };
 

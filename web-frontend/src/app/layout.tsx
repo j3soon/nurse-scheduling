@@ -19,6 +19,7 @@
 
 // The layout for the entire app
 import type { Metadata } from "next";
+import Script from "next/script";
 import Navigation from "@/components/Navigation";
 import VersionWarningBanner from "@/components/VersionWarningBanner";
 import { CURRENT_APP_VERSION } from "@/constants/version";
@@ -49,6 +50,20 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+        <Script
+          async
+          src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID}`}
+          strategy="afterInteractive"
+        />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+
+            gtag('config', '${process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID}');
+          `}
+        </Script>
         <VersionWarningBanner />
         <Navigation />
         <main style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}>
