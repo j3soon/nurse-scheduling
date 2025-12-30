@@ -143,7 +143,7 @@ extra:
   # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-site-analytics
   analytics:
     provider: google
-    property: G-6XNKT8P1RQ # Google Analytics 4
+    property: G-XGDWE4SWF7 # Google Analytics 4
   # DONE (Set up site analytics):
   # - Uncomment the `analytics` section above
   # - Refer to the link below for remaining steps:
