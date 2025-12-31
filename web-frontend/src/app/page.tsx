@@ -20,12 +20,76 @@
 // The home page for Tab "0. Home"
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { FiChevronDown, FiCheck } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { STATIC_BUILD_URLS, GITHUB_BRANCHES_API_URL } from '@/constants/urls';
+
+type BuildEntry = { label: string; url: string };
 
 export default function Home() {
   const { createNewState } = useSchedulingData();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [currentOrigin, setCurrentOrigin] = useState('');
+  const [releaseBranches, setReleaseBranches] = useState<BuildEntry[]>([]);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setCurrentOrigin(window.location.origin);
+  }, []);
+
+  useEffect(() => {
+    const fetchReleaseBranches = async () => {
+      try {
+        const response = await fetch(GITHUB_BRANCHES_API_URL);
+        if (!response.ok) return;
+        const branches: { name: string }[] = await response.json();
+        const releases = branches
+          .map((b) => b.name.match(/^release\/(.+)$/))
+          .filter((m): m is RegExpMatchArray => m !== null)
+          .map((m) => ({
+            label: `v${m[1]}`,
+            url: `https://release-${m[1].replace(/\./g, '-')}.nursescheduling.org`,
+          }));
+        setReleaseBranches(releases);
+      } catch {
+        // Silently fail - releases just won't show
+      }
+    };
+    fetchReleaseBranches();
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    if (isDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isDropdownOpen]);
+
+  const buildUrls = useMemo(() => [...STATIC_BUILD_URLS, ...releaseBranches], [releaseBranches]);
+
+  const currentBuild = useMemo(() => {
+    if (!currentOrigin) return null;
+    const normalizedOrigin = currentOrigin.replace(/\/$/, '');
+    const found = buildUrls.find(
+      (build) => build.url.replace(/\/$/, '') === normalizedOrigin
+    );
+    if (found) return found;
+    return { label: 'unknown', url: currentOrigin };
+  }, [currentOrigin, buildUrls]);
+
+  const handleBuildSelect = (url: string) => {
+    setIsDropdownOpen(false);
+    if (url !== currentOrigin && url !== currentOrigin + '/') {
+      window.location.href = url;
+    }
+  };
 
   const handleStartNew = () => {
     setShowConfirmDialog(true);
@@ -34,6 +98,15 @@ export default function Home() {
   const confirmStartNew = () => {
     createNewState();
     setShowConfirmDialog(false);
+  };
+
+  const getBuildLabelColor = (label: string) => {
+    if (label === 'unknown') return 'text-orange-600';
+    if (label === 'local') return 'text-yellow-600';
+    if (label === 'dev') return 'text-blue-600';
+    if (label === 'main') return 'text-green-600';
+    if (label.startsWith('v')) return 'text-purple-600';
+    return 'text-gray-400';
   };
 
   return (
@@ -50,6 +123,7 @@ export default function Home() {
             ⚠️ This project is in active development. Breaking changes may occur without notice. Please proceed with caution.
           </p>
         </div>
+
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button
             onClick={handleStartNew}
@@ -64,6 +138,45 @@ export default function Home() {
             Continue
           </button>
         </div>
+      </div>
+
+      {/* Build Selector Dropdown */}
+      <div ref={dropdownRef} className="fixed bottom-4 right-4 z-20">
+        <button
+          onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-full shadow-sm hover:shadow"
+        >
+          <span className="text-gray-400">Build:</span>
+          <span className={`font-semibold ${getBuildLabelColor(currentBuild?.label || '')}`}>
+            {currentBuild?.label || 'loading...'}
+          </span>
+          <FiChevronDown className={`w-3 h-3 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {isDropdownOpen && (
+          <div className="absolute bottom-full mb-2 right-0 w-64 bg-white rounded-lg shadow-lg border border-gray-200">
+            {buildUrls.map((build) => (
+              <button
+                key={build.label}
+                onClick={() => handleBuildSelect(build.url)}
+                className={`w-full px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
+                  currentBuild?.label === build.label ? 'bg-blue-50' : ''
+                }`}
+              >
+                <span className={`font-medium w-14 text-left ${getBuildLabelColor(build.label)}`}>{build.label}</span>
+                <span className="text-gray-400 text-xs truncate flex-1 text-left">{build.url}</span>
+                {currentBuild?.label === build.label && <FiCheck className="w-4 h-4 text-blue-600" />}
+              </button>
+            ))}
+            {currentBuild?.label === 'unknown' && (
+              <div className="px-3 py-2 text-sm flex items-center gap-2 bg-orange-50 border-t border-gray-100 rounded-b-lg">
+                <span className={`font-medium w-14 text-left ${getBuildLabelColor('unknown')}`}>unknown</span>
+                <span className="text-gray-400 text-xs truncate flex-1 text-left">{currentOrigin}</span>
+                <FiCheck className="w-4 h-4 text-orange-600" />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Confirmation Dialog */}
