@@ -79,7 +79,7 @@ export function DraggableCardList<T>({
 
   return (
     <div className="bg-white shadow-md rounded-lg overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-200">
+      <div className="px-4 py-3 border-b border-gray-200">
         <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
       </div>
 
@@ -94,7 +94,7 @@ export function DraggableCardList<T>({
             return (
               <div
                 key={index}
-                className={`px-6 py-5 ${isDraggable ? 'cursor-move hover:bg-gray-50' : ''}`}
+                className={`px-4 py-2 ${isDraggable ? 'cursor-move hover:bg-gray-50' : ''}`}
                 draggable={isDraggable}
                 onDragStart={isDraggable ? (e) => handleDragStart(e, index) : undefined}
                 onDragEnd={isDraggable ? handleDragEnd : undefined}

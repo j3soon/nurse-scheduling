@@ -105,13 +105,13 @@ export function RemovableTag({
       {!readOnly && (
         <button
           onClick={onRemove}
-          className="flex items-center justify-center w-5 py-1 text-blue-600 hover:text-red-600 hover:bg-red-100 rounded-l transition-colors"
+          className="flex items-center justify-center px-1 py-0.5 text-blue-600 hover:text-red-600 hover:bg-red-100 rounded-l transition-colors"
           title={`Remove "${id}"`}
         >
           ×
         </button>
       )}
-      <span className="px-2 py-1 select-none">
+      <span className={`${readOnly ? 'px-1.5' : 'pr-1.5 pl-0'} py-0.5 select-none`}>
         {id}
       </span>
     </span>

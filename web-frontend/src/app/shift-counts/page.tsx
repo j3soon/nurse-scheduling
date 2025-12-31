@@ -503,7 +503,7 @@ export default function ShiftCountsPage() {
                 {shiftCount.person.join(', ')}
               </div>
               <div>
-                <span className="font-medium">Expression:</span> <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono">{shiftCount.expression.replace('T', shiftCount.target.toString())}</code>
+                <span className="font-medium">Expression:</span> <code className="px-1.5 py-0.5 bg-gray-100 rounded text-sm font-mono">{shiftCount.expression.replace('T', shiftCount.target.toString())}</code>
               </div>
               <div>
                 <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(shiftCount.weight)}

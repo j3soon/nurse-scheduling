@@ -75,23 +75,28 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
 
   return (
     <div className="bg-white shadow-md rounded-lg overflow-auto h-fit">
-      <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+      <div className="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
         <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
         {headerAction && <div className="flex items-center">{headerAction}</div>}
       </div>
       <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
           <tr>
-            {columns.map((column, index) => (
-              <th
-                key={index}
-                className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${
-                  column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
-                }`}
-              >
-                {column.header}
-              </th>
-            ))}
+            {columns.map((column, index) => {
+              const isFirstColumn = index === 0;
+              const isLastColumn = index === columns.length - 1;
+              return (
+                <th
+                  key={index}
+                  className={`px-2 ${isFirstColumn ? 'pl-4' : ''} py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${
+                    column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
+                  }`}
+                  style={isLastColumn ? { width: '80px', minWidth: '80px', maxWidth: '80px' } : undefined}
+                >
+                  {column.header}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
@@ -109,18 +114,22 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                 onDrop={isDraggable ? (e) => handleDrop(e, rowIndex) : undefined}
                 className={`${isDraggable ? 'cursor-move hover:bg-gray-50' : ''} ${customClassName}`}
               >
-              {columns.map((column, colIndex) => (
-                <td
-                  key={colIndex}
-                  className={`px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 ${
-                    column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
-                  }`}
-                >
-                  {typeof column.accessor === 'function'
-                    ? column.accessor(item, rowIndex)
-                    : String(item[column.accessor])}
-                </td>
-              ))}
+              {columns.map((column, colIndex) => {
+                const isLastColumn = colIndex === columns.length - 1;
+                return (
+                  <td
+                    key={colIndex}
+                    className={`${colIndex === 0 ? 'pl-4 pr-2' : 'px-2'} py-1 whitespace-nowrap text-sm font-medium text-gray-900 ${
+                      column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
+                    }`}
+                    style={isLastColumn ? { width: '80px', minWidth: '80px', maxWidth: '80px' } : undefined}
+                  >
+                    {typeof column.accessor === 'function'
+                      ? column.accessor(item, rowIndex)
+                      : String(item[column.accessor])}
+                  </td>
+                );
+              })}
                 </tr>
               );
             })}

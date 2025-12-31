@@ -1177,7 +1177,7 @@ export default function ShiftRequestsPage() {
     return (
       <tr>
         <th
-          className={`sticky left-0 z-10 bg-gray-50 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 shadow-sm`}
+          className={`sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 shadow-sm`}
           style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
         >
           People
@@ -1537,11 +1537,11 @@ export default function ShiftRequestsPage() {
         <>
           {/* Clear Data Section */}
           <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
+            <div className="px-4 py-3 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-800">Clear Data</h3>
               <p className="text-sm text-gray-600 mt-1">Remove different types of data with targeted clear operations</p>
             </div>
-            <div className="px-6 py-4">
+            <div className="px-4 py-3">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {/* Clear People History */}
                 <button
@@ -1608,7 +1608,7 @@ export default function ShiftRequestsPage() {
 
           {/* Shift Requests Table */}
           <div className="bg-white shadow-md rounded-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
+            <div className="px-4 py-3 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-800">Shift Preference Matrix</h3>
             </div>
 
@@ -1639,7 +1639,7 @@ export default function ShiftRequestsPage() {
                         : ''
                     }`}>
                       {/* Person column */}
-                      <td className="sticky left-0 z-10 bg-white px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 border-r border-gray-200 shadow-sm">
+                      <td className="sticky left-0 z-10 bg-white px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border-r border-gray-200 shadow-sm">
                         <div>
                           <div>{person ? `${personIndex}. ${personEntry.id}` : personEntry.id}</div>
                           {personEntry.description && (
