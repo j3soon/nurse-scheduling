@@ -18,6 +18,7 @@
  */
 
 // A table component that allows reordering of rows by dragging the mouse.
+// Note that this file highly duplicates with DraggableCardList.tsx.
 import { ReactNode } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 
@@ -48,16 +49,16 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
 
   const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>) => {
     e.preventDefault();
-    e.currentTarget.classList.add('border-y-2', 'border-blue-500');
+    e.currentTarget.classList.add('border-t-2', 'border-t-blue-500');
   };
 
   const handleDragLeave = (e: React.DragEvent<HTMLTableRowElement>) => {
-    e.currentTarget.classList.remove('border-y-2', 'border-blue-500');
+    e.currentTarget.classList.remove('border-t-2', 'border-t-blue-500');
   };
 
   const handleDrop = (e: React.DragEvent<HTMLTableRowElement>, dropIndex: number) => {
     e.preventDefault();
-    e.currentTarget.classList.remove('border-y-2', 'border-blue-500');
+    e.currentTarget.classList.remove('border-t-2', 'border-t-blue-500');
 
     const dragIndex = parseInt(e.dataTransfer.getData('text/plain'));
     if (!onReorder) {

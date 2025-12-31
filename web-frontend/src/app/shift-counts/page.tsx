@@ -22,10 +22,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiEdit2, FiTrash2, FiAlertCircle } from 'react-icons/fi';
+import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftCountPreference, SHIFT_COUNT, SUPPORTED_EXPRESSIONS, SUPPORTED_SPECIAL_TARGETS } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
+import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
@@ -472,67 +473,41 @@ export default function ShiftCountsPage() {
       )}
 
       {/* Shift Counts List */}
-      <div className="bg-white shadow-md rounded-lg overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-800">Current Shift Counts</h3>
-        </div>
-
-        {shiftCounts.length === 0 ? (
-          <div className="px-6 py-8 text-center text-gray-500">
-            No shift counts defined yet. Click &quot;Add Shift Count&quot; to get started.
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-200">
-            {shiftCounts.map((shiftCount, index) => (
-              <div key={index} className="px-6 py-5">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    {shiftCount.description && (
-                      <h4 className="font-medium text-gray-900 mb-3">{shiftCount.description}</h4>
-                    )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
-                      <div>
-                        <span className="font-medium">People:</span>{' '}
-                        {shiftCount.person.join(', ')}
-                      </div>
-                      <div>
-                        <span className="font-medium">Expression:</span> <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono">{shiftCount.expression.replace('T', shiftCount.target.toString())}</code>
-                      </div>
-                      <div>
-                        <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(shiftCount.weight)}
-                      </div>
-                      <div className="md:col-span-2 lg:col-span-3">
-                        <span className="font-medium">Count Dates:</span>{' '}
-                        {shiftCount.countDates.join(', ')}
-                      </div>
-                      <div className="md:col-span-2 lg:col-span-3">
-                        <span className="font-medium">Count Shift Types:</span>{' '}
-                        {shiftCount.countShiftTypes.join(', ')}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex justify-end space-x-2 ml-4">
-                    <button
-                      onClick={() => handleStartEdit(index)}
-                      className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
-                    >
-                      <FiEdit2 className="h-4 w-4" />
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(index)}
-                      className="text-red-600 hover:text-red-900 flex items-center gap-1 text-sm"
-                    >
-                      <FiTrash2 className="h-4 w-4" />
-                      Delete
-                    </button>
-                  </div>
-                </div>
+      <DraggableCardList
+        title="Current Shift Counts"
+        items={shiftCounts}
+        emptyMessage='No shift counts defined yet. Click "Add Shift Count" to get started.'
+        onEdit={handleStartEdit}
+        onDelete={handleDelete}
+        onReorder={updateShiftCounts}
+        renderContent={(shiftCount) => (
+          <>
+            {shiftCount.description && (
+              <h4 className="font-medium text-gray-900 mb-3">{shiftCount.description}</h4>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
+              <div>
+                <span className="font-medium">People:</span>{' '}
+                {shiftCount.person.join(', ')}
               </div>
-            ))}
-          </div>
+              <div>
+                <span className="font-medium">Expression:</span> <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono">{shiftCount.expression.replace('T', shiftCount.target.toString())}</code>
+              </div>
+              <div>
+                <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(shiftCount.weight)}
+              </div>
+              <div className="md:col-span-2 lg:col-span-3">
+                <span className="font-medium">Count Dates:</span>{' '}
+                {shiftCount.countDates.join(', ')}
+              </div>
+              <div className="md:col-span-2 lg:col-span-3">
+                <span className="font-medium">Count Shift Types:</span>{' '}
+                {shiftCount.countShiftTypes.join(', ')}
+              </div>
+            </div>
+          </>
         )}
-      </div>
+      />
     </div>
   );
 }
