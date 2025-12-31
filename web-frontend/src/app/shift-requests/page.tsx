@@ -82,13 +82,21 @@ export default function ShiftRequestsPage() {
     historyIndex: -1,
   });
 
-  // Sticky header
-  const [showStickyHeader, setShowStickyHeader] = useState(false);
-  const [columnWidths, setColumnWidths] = useState<number[]>([]);
-  const [stickyHeaderLeft, setStickyHeaderLeft] = useState(0);
+  // Table refs
   const tableRef = useRef<HTMLTableElement>(null);
   const mainScrollContainerRef = useRef<HTMLDivElement>(null);
-  const stickyScrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Sticky elements refs
+  const stickyHeaderRef = useRef<HTMLDivElement>(null);
+  const stickyHScrollbarRef = useRef<HTMLDivElement>(null);
+
+  // Sticky elements state (shared positioning for both header and scrollbar)
+  const [showStickyHeader, setShowStickyHeader] = useState(false);
+  const [showStickyHScrollbar, setShowStickyHScrollbar] = useState(false);
+  const [columnWidths, setColumnWidths] = useState<number[]>([]);
+  const [stickyContainerLeft, setStickyContainerLeft] = useState(0);
+  const [stickyContainerWidth, setStickyContainerWidth] = useState(0);
+  const [stickyContentWidth, setStickyContentWidth] = useState(0);
 
   // Sticky Quick Add Preference
   const [showStickyQuickAdd, setShowStickyQuickAdd] = useState(false);
@@ -121,15 +129,42 @@ export default function ShiftRequestsPage() {
   }, []);
 
   // Function to sync scroll position between main and sticky containers
-  const syncScrollPosition = () => {
-    if (mainScrollContainerRef.current && stickyScrollContainerRef.current && showStickyHeader) {
-      stickyScrollContainerRef.current.scrollLeft = mainScrollContainerRef.current.scrollLeft;
+  // All sticky elements sync bidirectionally with each other
+  // Note: We only check refs, not state, to avoid stale closure issues with scroll event handlers
+  const syncScrollPosition = (source: 'main' | 'stickyHeader' | 'stickyHScrollbar') => {
+    const mainContainer = mainScrollContainerRef.current;
+    const stickyHeader = stickyHeaderRef.current;
+    const stickyHScrollbar = stickyHScrollbarRef.current;
+
+    if (!mainContainer) return;
+
+    // Get the scroll position from the source
+    let scrollLeft: number;
+    if (source === 'main') {
+      scrollLeft = mainContainer.scrollLeft;
+    } else if (source === 'stickyHeader' && stickyHeader) {
+      scrollLeft = stickyHeader.scrollLeft;
+    } else if (source === 'stickyHScrollbar' && stickyHScrollbar) {
+      scrollLeft = stickyHScrollbar.scrollLeft;
+    } else {
+      return;
     }
-    if (mainScrollContainerRef.current && tableRef.current && showStickyHeader) {
-      const tableRect = tableRef.current.getBoundingClientRect();
-      setStickyHeaderLeft(tableRect.left + mainScrollContainerRef.current.scrollLeft);
+
+    // Sync to all other containers (ref check is sufficient since unmounted elements have null refs)
+    if (source !== 'main') {
+      mainContainer.scrollLeft = scrollLeft;
+    }
+    if (source !== 'stickyHeader' && stickyHeader) {
+      stickyHeader.scrollLeft = scrollLeft;
+    }
+    if (source !== 'stickyHScrollbar' && stickyHScrollbar) {
+      stickyHScrollbar.scrollLeft = scrollLeft;
     }
   };
+
+  // Scroll handlers for onScroll props (syncScrollPosition only uses refs, so no stale closure issues)
+  const handleStickyHeaderScroll = () => syncScrollPosition('stickyHeader');
+  const handleStickyHScrollbarScroll = () => syncScrollPosition('stickyHScrollbar');
 
   // Function to measure and sync column widths
   const syncColumnWidths = () => {
@@ -176,28 +211,56 @@ export default function ShiftRequestsPage() {
           setQuickAddHeight(0);
           setShowStickyHeader(shouldShowSticky);
         }
+
+        // Update shared sticky container positioning
+        const mainContainer = mainScrollContainerRef.current;
+        if (mainContainer) {
+          const containerRect = mainContainer.getBoundingClientRect();
+          setStickyContainerLeft(containerRect.left);
+          setStickyContainerWidth(containerRect.width);
+          setStickyContentWidth(mainContainer.scrollWidth);
+
+          // Show sticky horizontal scrollbar when the table bottom is below the viewport
+          // and the table has horizontal overflow
+          const hasHorizontalOverflow = mainContainer.scrollWidth > mainContainer.clientWidth;
+          const tableBottomBelowViewport = tableRect.bottom > window.innerHeight;
+          const tableTopAboveViewport = tableRect.top < window.innerHeight;
+          const shouldShowStickyHScrollbar = hasHorizontalOverflow && tableBottomBelowViewport && tableTopAboveViewport;
+
+          setShowStickyHScrollbar(shouldShowStickyHScrollbar);
+        }
       } else {
         // No table or required data - hide all sticky elements
         setShowStickyQuickAdd(false);
         setQuickAddHeight(0);
         setShowStickyHeader(false);
+        setShowStickyHScrollbar(false);
       }
     };
 
     window.addEventListener('scroll', handleScroll);
+    // Also check on initial mount
+    handleScroll();
     // Cleanup event listener
     return () => {
       window.removeEventListener('scroll', handleScroll);
     };
   }, [showStickyHeader, showStickyQuickAdd, isAddMode, quickAddHeight, dateData, peopleData, shiftTypeData]);
 
-  // Add resize observer to sync column widths when table layout changes
+  // Add resize observer to sync column widths and sticky container dimensions
   useEffect(() => {
     if (!tableRef.current) return;
 
     const resizeObserver = new ResizeObserver(() => {
       if (showStickyHeader) {
         syncColumnWidths();
+      }
+      // Update sticky container dimensions
+      if (mainScrollContainerRef.current) {
+        const containerRect = mainScrollContainerRef.current.getBoundingClientRect();
+        setStickyContainerLeft(containerRect.left);
+        setStickyContainerWidth(containerRect.width);
+        setStickyContentWidth(mainScrollContainerRef.current.scrollWidth);
       }
     });
 
@@ -208,56 +271,47 @@ export default function ShiftRequestsPage() {
     };
   }, [showStickyHeader]);
 
-  // Add window resize listener to update sticky header position
+  // Add window resize listener to update sticky container positions
   useEffect(() => {
     const handleResize = () => {
-      syncScrollPosition();
+      syncScrollPosition('main');
+      // Update sticky container dimensions
+      if (mainScrollContainerRef.current) {
+        const containerRect = mainScrollContainerRef.current.getBoundingClientRect();
+        setStickyContainerLeft(containerRect.left);
+        setStickyContainerWidth(containerRect.width);
+        setStickyContentWidth(mainScrollContainerRef.current.scrollWidth);
+      }
     };
 
     window.addEventListener('resize', handleResize);
     return () => {
       window.removeEventListener('resize', handleResize);
     };
-  }, [showStickyHeader]);
+  }, [showStickyHeader, showStickyHScrollbar]);
 
-  // Horizontal scroll synchronization with real-time updates
+  // Main container scroll synchronization
   useEffect(() => {
-    const handleMainScroll = () => {
-      syncScrollPosition();
-    };
-
-    const handleStickyScroll = () => {
-      // Always reset sticky header to match main table - no independent scrolling allowed
-      syncScrollPosition();
-    };
-
+    const handleMainScroll = () => syncScrollPosition('main');
     const mainContainer = mainScrollContainerRef.current;
-    const stickyContainer = stickyScrollContainerRef.current;
 
     if (mainContainer) {
       mainContainer.addEventListener('scroll', handleMainScroll, { passive: true });
     }
 
-    if (stickyContainer && showStickyHeader) {
-      stickyContainer.addEventListener('scroll', handleStickyScroll, { passive: true });
-    }
-
-    // Always sync scroll position when sticky header visibility changes or DOM updates
-    syncScrollPosition();
+    // Sync scroll position when sticky elements visibility changes
+    syncScrollPosition('main');
 
     return () => {
       if (mainContainer) {
         mainContainer.removeEventListener('scroll', handleMainScroll);
       }
-      if (stickyContainer) {
-        stickyContainer.removeEventListener('scroll', handleStickyScroll);
-      }
     };
-  }, [showStickyHeader]);
+  }, [showStickyHeader, showStickyHScrollbar]);
 
   // Sync scroll position after page refresh when user scrolls down and table has horizontal scroll
   useEffect(() => {
-    syncScrollPosition();
+    syncScrollPosition('main');
   }, [columnWidths]);
 
   const resetForm = () => {
@@ -1169,12 +1223,6 @@ export default function ShiftRequestsPage() {
             </th>
           );
         })}
-        {/* Trailing empty white cell for better scrolling when sticky */}
-        {isSticky && (
-          <th className="px-2 py-2 bg-white border-r border-gray-200">
-            <div className="whitespace-nowrap w-screen"></div>
-          </th>
-        )}
       </tr>
     );
   };
@@ -1298,21 +1346,24 @@ export default function ShiftRequestsPage() {
 
       {/* Sticky Header - appears when scrolling */}
       {showStickyHeader && hasRequiredData && columnWidths.length > 0 && (
-        <div className="fixed z-40 bg-white shadow-md border-b border-gray-200"
-             style={{
-               top: `${showStickyQuickAdd ? quickAddHeight : 0}px`,
-               left: `${stickyHeaderLeft}px`,
-               width: `calc(100vw - ${stickyHeaderLeft}px)`
-             }}>
+        <div
+          className="fixed z-40 bg-white shadow-md border-b border-gray-200"
+          style={{
+            top: showStickyQuickAdd ? quickAddHeight : 0,
+            left: stickyContainerLeft,
+            width: stickyContainerWidth,
+          }}
+        >
           <div
-            ref={stickyScrollContainerRef}
+            ref={stickyHeaderRef}
+            onScroll={handleStickyHeaderScroll}
             className="overflow-x-auto [&::-webkit-scrollbar]:hidden"
             style={{
               scrollbarWidth: 'none', // Hide scrollbar on Firefox
-              msOverflowStyle: 'none'  // Hide scrollbar on IE/Edge
+              msOverflowStyle: 'none', // Hide scrollbar on IE/Edge
             }}
           >
-            <table className="min-w-full divide-y divide-gray-200" style={{ tableLayout: 'fixed' }}>
+            <table className="min-w-full divide-y divide-gray-200" style={{ tableLayout: 'fixed', width: stickyContentWidth }}>
               <thead className="bg-gray-50">
                 {renderTableHeader(true)}
               </thead>
@@ -1830,6 +1881,26 @@ export default function ShiftRequestsPage() {
             )}
           </div>
         </>
+      )}
+
+      {/* Sticky Horizontal Scrollbar - appears when scrolling */}
+      {showStickyHScrollbar && hasRequiredData && (
+        <div
+          className="fixed bottom-0 z-40"
+          style={{
+            left: stickyContainerLeft,
+            width: stickyContainerWidth,
+          }}
+        >
+          <div
+            ref={stickyHScrollbarRef}
+            onScroll={handleStickyHScrollbarScroll}
+            className="overflow-x-scroll overflow-y-hidden"
+          >
+            {/* 12px is required for mouse enter scrollbar to work properly in Firefox */}
+            <div style={{ width: stickyContentWidth, height: '12px' }} />
+          </div>
+        </div>
       )}
 
       {/* Shift Preference Editor Modal */}
