@@ -30,6 +30,7 @@ import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
+import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 
 interface ShiftAffinityForm {
   description: string;
@@ -108,13 +109,19 @@ export default function ShiftAffinitiesPage() {
     setEditingIndex(index);
     setIsFormVisible(true);
     setErrors({});
-    // Scroll to top of the page
+    // Save current scroll position and scroll to top
+    saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const handleCancel = () => {
+    const wasEditing = editingIndex !== null;
     setIsFormVisible(false);
     resetForm();
+    // Restore scroll position if we were editing
+    if (wasEditing) {
+      restoreScrollPosition();
+    }
   };
 
   const validateForm = (): boolean => {
@@ -158,7 +165,8 @@ export default function ShiftAffinitiesPage() {
     };
 
     let newAffinities;
-    if (editingIndex !== null) {
+    const wasEditing = editingIndex !== null;
+    if (wasEditing) {
       // Edit existing shift affinity
       newAffinities = [...shiftAffinities];
       newAffinities[editingIndex] = newShiftAffinity;
@@ -170,6 +178,10 @@ export default function ShiftAffinitiesPage() {
     updateShiftAffinities(newAffinities);
     setIsFormVisible(false);
     resetForm();
+    // Restore scroll position if we were editing
+    if (wasEditing) {
+      restoreScrollPosition();
+    }
   };
 
   const handleDelete = (index: number) => {

@@ -30,6 +30,7 @@ import { isReservedKeyword } from '@/utils/keywords';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { Mode } from '@/constants/modes';
 import { Item, Group, DataType } from '@/types/scheduling';
+import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 
 const getLabels = (dataType: DataType) => {
   switch (dataType) {
@@ -146,6 +147,7 @@ export default function ItemGroupEditorPage({
       return;
     }
 
+    const wasEditing = !!draft.editingId;
     if (draft.isItem) {
       if (draft.editingId) {
         updateItem(dataType, data, draft.editingId, trimmedId, draft.groups, trimmedDescription);
@@ -163,6 +165,10 @@ export default function ItemGroupEditorPage({
     setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
     setMode(Mode.NORMAL);
     setError('');
+    // Restore scroll position if we were editing
+    if (wasEditing) {
+      restoreScrollPosition();
+    }
   };
 
   const handleStartEditing = (id: string) => {
@@ -205,7 +211,8 @@ export default function ItemGroupEditorPage({
       }
     }
     setError('');
-    // Scroll to top of the page
+    // Save current scroll position and scroll to top
+    saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
@@ -237,9 +244,14 @@ export default function ItemGroupEditorPage({
   };
 
   const handleCancel = () => {
+    const wasEditing = !!draft.editingId;
     setMode(Mode.NORMAL);
     setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
     setError('');
+    // Restore scroll position if we were editing
+    if (wasEditing) {
+      restoreScrollPosition();
+    }
   };
 
   const handleDraftIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
