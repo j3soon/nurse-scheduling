@@ -165,7 +165,7 @@ function useBaseTableColumns(
           // For items: show groups that contain this item
           const item = entity as Item;
           return (
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto min-w-[200px]">
               {groups
                 .filter(group => group.members.includes(item.id))
                 .map(group => (
@@ -184,7 +184,7 @@ function useBaseTableColumns(
           // For groups: show members of this group
           const group = entity as Group;
           return (
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto min-w-[200px]">
               {group.members
                 .map(memberId => items.find(i => i.id === memberId))
                 .map((item, index) => {
@@ -227,7 +227,7 @@ function useBaseTableColumns(
           />
         );
       },
-      align: 'right' as const
+      align: 'left' as const,
     });
   }
 

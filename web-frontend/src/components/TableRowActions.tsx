@@ -31,7 +31,7 @@ export function TableRowActions({ onEdit, onDelete }: TableRowActionsProps) {
   }
 
   return (
-    <div className="flex justify-end space-x-2">
+    <div className="flex flex-wrap justify-start gap-2">
       {onEdit && (
         <button
           onClick={onEdit}
