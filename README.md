@@ -26,32 +26,34 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 ### Prerequisites
 
-- [Node.js, nvm, and npm](https://nodejs.org/en/download).
+- [bun](https://bun.com/docs/installation).
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-These are not hard requirements. If you know what you are doing, you can also use other tools to manage dependencies, such as `virtualenv` or `conda`.
+These are not hard requirements. If you know what you are doing, you can also use other tools to manage dependencies, such as [`nvm`/`npm`](https://nodejs.org/en/download) for Next.js, and `virtualenv` or `conda` for Python.
 
 ### Web Frontend
 
 ```sh
 cd web-frontend
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 For building static site, run:
 
 ```sh
 cd web-frontend
-npm run build
+bun run build
 ```
 
 For linting, run:
 
 ```sh
 cd web-frontend
-npm run lint -- --fix
+bun run lint -- --fix
 ```
+
+> `bun` can be replaced directly with `npm`.
 
 ### Core
 
