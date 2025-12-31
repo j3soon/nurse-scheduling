@@ -65,6 +65,9 @@ export default function Navigation() {
 
       if (isInputFocused) return;
 
+      // Ignore number keys when modifier keys are pressed
+      const hasModifier = event.ctrlKey || event.altKey || event.shiftKey || event.metaKey;
+
       switch (event.key) {
         case '0':
         case '1':
@@ -76,6 +79,7 @@ export default function Navigation() {
         case '7':
         case '8':
         case '9': {
+          if (hasModifier) return;
           event.preventDefault();
           const index = parseInt(event.key);
           if (index < tabs.length) {
