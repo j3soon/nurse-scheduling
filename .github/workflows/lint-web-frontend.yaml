@@ -1,0 +1,18 @@
+name: Lint Web Frontend
+
+on:
+  - push
+  - pull_request
+
+jobs:
+  lint-web-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: cd web-frontend && bun install
+      - name: Lint
+        run: cd web-frontend && bun run lint
