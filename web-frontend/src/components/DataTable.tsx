@@ -84,14 +84,14 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
           <tr>
             {columns.map((column, index) => {
               const isFirstColumn = index === 0;
-              const isLastColumn = index === columns.length - 1;
+              const isThirdColumn = index === 2;
               return (
                 <th
                   key={index}
                   className={`px-2 ${isFirstColumn ? 'pl-4' : ''} py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${
                     column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
                   }`}
-                  style={isLastColumn ? { width: '80px', minWidth: '80px', maxWidth: '80px' } : undefined}
+                  style={isThirdColumn ? { width: '80px', minWidth: '80px', maxWidth: '80px' } : undefined}
                 >
                   {column.header}
                 </th>
@@ -115,14 +115,14 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                 className={`${isDraggable ? 'cursor-move hover:bg-gray-50' : ''} ${customClassName}`}
               >
               {columns.map((column, colIndex) => {
-                const isLastColumn = colIndex === columns.length - 1;
+                const isThirdColumn = colIndex === 2;
                 return (
                   <td
                     key={colIndex}
                     className={`${colIndex === 0 ? 'pl-4 pr-2' : 'px-2'} py-1 whitespace-nowrap text-sm font-medium text-gray-900 ${
                       column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
                     }`}
-                    style={isLastColumn ? { width: '80px', minWidth: '80px', maxWidth: '80px' } : undefined}
+                    style={isThirdColumn ? { width: '80px', minWidth: '80px', maxWidth: '80px' } : undefined}
                   >
                     {typeof column.accessor === 'function'
                       ? column.accessor(item, rowIndex)
