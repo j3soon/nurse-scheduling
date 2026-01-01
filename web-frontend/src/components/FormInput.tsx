@@ -42,7 +42,6 @@ export function FormInput({
   descriptionValue,
   descriptionPlaceholder,
   onDescriptionChange,
-  onKeyDown,
   error,
   onAction,
   onCancel,
@@ -56,7 +55,6 @@ export function FormInput({
           type="text"
           value={itemValue}
           onChange={onItemChange}
-          onKeyDown={onKeyDown}
           autoFocus
           placeholder={itemPlaceholder}
           className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out

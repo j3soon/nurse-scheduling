@@ -263,16 +263,6 @@ export default function ItemGroupEditorPage({
     setDraft(prev => ({ ...prev, description: e.target.value }));
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSave();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleCancel();
-    }
-  };
-
   const handleMemberToggle = (id: string) => {
     // Using a state updater function that takes the previous state as an argument is required for handling quick multi-select drag.
     // Since React state updates are asynchronous, directly setting the new state based on the previous state
@@ -484,7 +474,6 @@ export default function ItemGroupEditorPage({
           filterItemGroups={filterItemGroups}
           onIdChange={handleDraftIdChange}
           onDescriptionChange={handleDraftDescriptionChange}
-          onKeyDown={handleKeyDown}
           onMemberToggle={handleMemberToggle}
           onSave={handleSave}
           onCancel={handleCancel}
