@@ -22,7 +22,7 @@ import type { Metadata } from "next";
 import Script from "next/script";
 import Navigation from "@/components/Navigation";
 import VersionWarningBanner from "@/components/VersionWarningBanner";
-import { CURRENT_APP_VERSION } from "@/constants/version";
+import { CURRENT_APP_VERSION } from "@/utils/version";
 import {
   GITHUB_REPO_URL,
   GITHUB_RELEASES_URL,

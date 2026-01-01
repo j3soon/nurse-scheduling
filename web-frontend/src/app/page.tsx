@@ -23,9 +23,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { FiChevronDown, FiCheck } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { STATIC_BUILD_URLS, GITHUB_BRANCHES_API_URL } from '@/constants/urls';
-
-type BuildEntry = { label: string; url: string };
+import { STATIC_BUILD_URLS } from '@/constants/urls';
+import { fetchReleaseBranches, BuildEntry } from '@/utils/version';
 
 export default function Home() {
   const { createNewState } = useSchedulingData();
@@ -40,24 +39,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const fetchReleaseBranches = async () => {
-      try {
-        const response = await fetch(GITHUB_BRANCHES_API_URL);
-        if (!response.ok) return;
-        const branches: { name: string }[] = await response.json();
-        const releases = branches
-          .map((b) => b.name.match(/^release\/(.+)$/))
-          .filter((m): m is RegExpMatchArray => m !== null)
-          .map((m) => ({
-            label: `v${m[1]}`,
-            url: `https://release-${m[1].replace(/\./g, '-')}.nursescheduling.org`,
-          }));
-        setReleaseBranches(releases);
-      } catch {
-        // Silently fail - releases just won't show
-      }
+    const loadReleaseBranches = async () => {
+      const releases = await fetchReleaseBranches();
+      setReleaseBranches(releases);
     };
-    fetchReleaseBranches();
+    loadReleaseBranches();
   }, []);
 
   useEffect(() => {
@@ -154,7 +140,7 @@ export default function Home() {
         </button>
 
         {isDropdownOpen && (
-          <div className="absolute bottom-full mb-2 right-0 w-64 bg-white rounded-lg shadow-lg border border-gray-200">
+          <div className="absolute bottom-full mb-2 right-0 w-64 max-h-64 overflow-y-auto bg-white rounded-lg shadow-lg border border-gray-200">
             {buildUrls.map((build) => (
               <button
                 key={build.label}

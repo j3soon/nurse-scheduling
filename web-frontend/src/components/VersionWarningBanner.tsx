@@ -21,8 +21,8 @@
 
 import { useState, useEffect } from 'react';
 import { FiAlertTriangle, FiX } from 'react-icons/fi';
-import { CURRENT_APP_VERSION } from '@/constants/version';
-import { GITHUB_RELEASES_API_URL, WEBSITE_URL } from '@/constants/urls';
+import { CURRENT_APP_VERSION, fetchLatestTag, getMajorMinor } from '@/utils/version';
+import { WEBSITE_URL } from '@/constants/urls';
 
 type VersionStatus = 'match' | 'older' | 'dev' | 'error' | null;
 
@@ -32,29 +32,22 @@ export default function VersionWarningBanner() {
   const [fetchFailed, setFetchFailed] = useState(false);
 
   useEffect(() => {
-    const fetchLatestRelease = async () => {
-      try {
-        const response = await fetch(GITHUB_RELEASES_API_URL);
-        if (!response.ok) {
-          console.warn('Failed to fetch latest release:', response.status);
-          setFetchFailed(true);
-          return;
-        }
-        const data = await response.json();
-        setLatestVersion(data.tag_name);
-      } catch (err) {
-        console.warn('Failed to fetch latest release:', err);
+    const loadLatestTag = async () => {
+      const tag = await fetchLatestTag();
+      if (tag) {
+        setLatestVersion(tag);
+      } else {
         setFetchFailed(true);
       }
     };
 
-    fetchLatestRelease();
+    loadLatestTag();
   }, []);
 
   // Determine version status:
-  // - 'error' -> failed to fetch latest release
+  // - 'error' -> failed to fetch latest tag
   // - 'match' -> exact match
-  // - 'dev' -> prefix match (e.g., "v1.0.0-5-gabcdef" starts with "v1.0.0")
+  // - 'dev' -> same major.minor (e.g., "v1.0.0-5-gabcdef" matches "v1.0.1" on major.minor "v1.0")
   // - 'older' -> any other mismatch
   // - null -> still loading or unknown version
   const getVersionStatus = (): VersionStatus => {
@@ -75,8 +68,10 @@ export default function VersionWarningBanner() {
       return 'match';
     }
 
-    // Dev build: current version starts with latest version (prefix match)
-    if (CURRENT_APP_VERSION.startsWith(latestVersion)) {
+    // Dev build: current version has same major.minor as latest version
+    const currentMajorMinor = getMajorMinor(CURRENT_APP_VERSION);
+    const latestMajorMinor = getMajorMinor(latestVersion);
+    if (currentMajorMinor && latestMajorMinor && currentMajorMinor === latestMajorMinor) {
       return 'dev';
     }
 

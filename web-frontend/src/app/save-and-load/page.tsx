@@ -26,7 +26,7 @@ import yaml from 'js-yaml';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ToggleButton from '@/components/ToggleButton';
 import UploadButton from '@/components/UploadButton';
-import { CURRENT_APP_VERSION } from '@/constants/version';
+import { CURRENT_APP_VERSION } from '@/utils/version';
 
 // Type definitions for CustomDump class
 interface CustomDumpOptions {
