@@ -1,7 +1,7 @@
 /*
  * This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
  *
- * Copyright (C) 2023-2025 Johnson Sun
+ * Copyright (C) 2023-2026 Johnson Sun
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -50,6 +50,26 @@ export default function ShiftPreferenceEditor({
   useEffect(() => {
     setPreferences(initialPreferences);
   }, [initialPreferences, isOpen]);
+
+  // Handle global keydown for Enter/Escape when modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSave();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  });
 
   const handleWeightChange = (shiftTypeId: string, weight: number | string) => {
     const weightValue = weight as number;

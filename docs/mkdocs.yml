@@ -167,7 +167,7 @@ extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-the-footer/#copyright-notice
-copyright: Copyright &copy; 2025 <a href="https://github.com/j3soon/nurse-scheduling">Nurse Scheduling Contributors</a>
+copyright: Copyright &copy; 2023-2026 <a href="https://github.com/j3soon/nurse-scheduling">Nurse Scheduling Contributors</a>
 # DONE (Set up copyright notice):
 # - Uncomment the `copyright` line above and enter your name
 
