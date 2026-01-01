@@ -40,12 +40,11 @@ app = FastAPI(
     version=version
 )
 
-origins = [
-    # For Next.js local development
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    # TODO: Add hosted URL and note on self-hosting
-]
+# Regex to match allowed origins:
+# - http://localhost:3000, http://127.0.0.1:3000 (for Next.js local development)
+# - https://*.nursescheduling.org (including nursescheduling.org itself)
+#   Examples: https://nursescheduling.org, https://dev.nursescheduling.org, https://release-0-1.nursescheduling.org
+origin_regex = r"^(http://(localhost|127\.0\.0\.1):3000|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 
 expose_headers = [
     "Content-Disposition",
@@ -57,7 +56,7 @@ expose_headers = [
 # prevent Cross-Site Request Forgery (CSRF) attacks.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origin_regex=origin_regex,
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,
