@@ -21,7 +21,7 @@
 
 // GitHub URLs
 export const GITHUB_REPO_URL = 'https://github.com/j3soon/nurse-scheduling';
-export const GITHUB_RELEASES_URL = 'https://github.com/j3soon/nurse-scheduling/releases';
+export const GITHUB_TAGS_URL = 'https://github.com/j3soon/nurse-scheduling/tags';
 export const GITHUB_LICENSE_URL = 'https://github.com/j3soon/nurse-scheduling/blob/main/LICENSE';
 export const GITHUB_CODE_FREQUENCY_URL = 'https://github.com/j3soon/nurse-scheduling/graphs/code-frequency';
 export const GITHUB_ACKNOWLEDGMENTS_URL = 'https://github.com/j3soon/nurse-scheduling#acknowledgments';

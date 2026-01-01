@@ -99,6 +99,8 @@ mkdocs build
 
 This project would not have been possible without the contributions of [@ijsun](https://github.com/ijsun) and Jennifer Tzeng.
 
+You can find the full list of code contributors [here](https://github.com/j3soon/nurse-scheduling/graphs/contributors).
+
 ## License
 
 This project is licensed under the [AGPL-3.0 License](https://github.com/j3soon/nurse-scheduling/blob/main/LICENSE).

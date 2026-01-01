@@ -25,7 +25,7 @@ import VersionWarningBanner from "@/components/VersionWarningBanner";
 import { CURRENT_APP_VERSION } from "@/utils/version";
 import {
   GITHUB_REPO_URL,
-  GITHUB_RELEASES_URL,
+  GITHUB_TAGS_URL,
   GITHUB_LICENSE_URL,
   GITHUB_CODE_FREQUENCY_URL,
   GITHUB_ACKNOWLEDGMENTS_URL,
@@ -78,7 +78,7 @@ export default function RootLayout({
           </div>
           <div>
             <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Nurse Scheduling Project</a>{' '}
-            <a href={GITHUB_RELEASES_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{CURRENT_APP_VERSION}</a>.{' '}
+            <a href={GITHUB_TAGS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{CURRENT_APP_VERSION}</a>.{' '}
             Licensed under{' '}
             <a href={AGPL_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">AGPL-3.0</a>.
           </div>
