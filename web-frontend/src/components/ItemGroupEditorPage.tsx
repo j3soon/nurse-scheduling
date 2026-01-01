@@ -20,7 +20,7 @@
 // A component for managing a list of items and groups, and the relationships between them.
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FiHelpCircle } from 'react-icons/fi';
 import { DataTable } from '@/components/DataTable';
 import { AddEditItemGroupForm } from '@/components/AddEditItemGroupForm';
@@ -253,6 +253,26 @@ export default function ItemGroupEditorPage({
       restoreScrollPosition();
     }
   };
+
+  // Handle global keydown for Enter/Escape when form is visible
+  useEffect(() => {
+    if (mode !== Mode.ADDING && mode !== Mode.EDITING) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSave();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  });
 
   const handleDraftIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setDraft(prev => ({ ...prev, id: e.target.value }));

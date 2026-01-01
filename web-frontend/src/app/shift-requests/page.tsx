@@ -1242,7 +1242,22 @@ export default function ShiftRequestsPage() {
     "Use the navigation tabs or keyboard shortcuts to move between pages"
   ];
 
+  // Handle global keydown for Escape when add mode is active
+  useEffect(() => {
+    if (!isAddMode) return;
 
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  });
 
   // Check if we have the required data
   const hasRequiredData = (dateData.range?.startDate && dateData.range?.endDate && dateData.items.length > 0 && peopleData.items.length > 0 && (shiftTypeData.items.length > 0 || shiftTypeData.groups.length > 0));

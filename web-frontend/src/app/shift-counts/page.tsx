@@ -20,7 +20,7 @@
 // The shift counts management page for Tab "7. Shift Counts"
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
@@ -80,6 +80,26 @@ export default function ShiftCountsPage() {
     "Set positive weight to encourage constraint matches and negative weight to discourage them",
     "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
   ];
+
+  // Handle global keydown for Enter/Escape when form is visible
+  useEffect(() => {
+    if (!isFormVisible) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSave();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  });
 
   const resetForm = () => {
     setFormData({

@@ -20,7 +20,6 @@
 // A form component for adding and editing a single item or group and managing its relationships.
 'use client';
 
-import { useEffect } from 'react';
 import { FormInput } from '@/components/FormInput';
 import { CheckboxList } from '@/components/CheckboxList';
 import { Item, Group } from '@/types/scheduling';
@@ -64,24 +63,6 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   const isItem = draft.isItem;
   const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : "Group"}`;
   const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : "group"} ID`;
-
-  // Handle global keydown for Enter/Escape
-  useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        onSave();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        onCancel();
-      }
-    };
-
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleGlobalKeyDown);
-    };
-  }, [onSave, onCancel]);
 
   return (
     <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
