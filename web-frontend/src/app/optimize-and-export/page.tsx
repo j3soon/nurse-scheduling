@@ -279,7 +279,7 @@ export default function OptimizeAndExportPage() {
           {/* Timeout Input */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Timeout (seconds)
+              Solver Timeout (seconds)
             </label>
             <input
               type="number"

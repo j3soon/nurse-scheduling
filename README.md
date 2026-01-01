@@ -89,6 +89,8 @@ Note: The tests and code coverage are only for the core module. The web frontend
 cd core/nurse_scheduling
 # development mode
 fastapi dev serve.py
+
+cd ..
 # run curl (needs to be run after the server is running)
 ./tests/test_serve_curl.sh
 # run serve tests (don't need to be run after the server is running)

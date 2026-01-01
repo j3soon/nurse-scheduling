@@ -21,6 +21,9 @@ import glob
 import io
 import logging
 import os
+import sys
+# Add the project root to the Python path so imports will work when running directly
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import nurse_scheduling
 import pandas

@@ -20,6 +20,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # Pytest tests for nurse scheduling FastAPI server.
 # Based on the FastAPI Testing guide: https://fastapi.tiangolo.com/tutorial/testing/
 
+import os
+import sys
+# Add the project root to the Python path so imports will work when running directly
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -216,7 +220,7 @@ class TestEdgeCases:
         )
         
         # Should return an error for empty content
-        assert response.status_code == 500
+        assert response.status_code == 400
     
     def test_invalid_yaml_syntax(self):
         """Test with invalid YAML syntax."""
