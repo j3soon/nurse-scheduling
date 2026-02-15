@@ -48,7 +48,9 @@ def get_people_versus_date_dataframe(ctx: Context, solver: cp_model.CpSolver, pr
     df = pd.DataFrame(
         "",
         index=range(n_leading_rows + len(ctx.people.items) + n_trailing_rows + extra_rows),
-        columns=range(n_leading_cols + n_history_cols + len(ctx.dates.items) + n_trailing_cols + extra_cols)
+        columns=range(n_leading_cols + n_history_cols + len(ctx.dates.items) + n_trailing_cols + extra_cols),
+        # We could cast every write to str, but object dtype is much simpler for mixed cells.
+        dtype=object,
     )
 
     # Fill history column headers (only if prettify is enabled)
