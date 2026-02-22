@@ -78,14 +78,33 @@ python -m nurse_scheduling.cli tests/testcases/basics/01_1nurse_1shift_1day.yaml
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp
 # run CLI with prettify and verbose
 python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
+```
+
+Run tests:
+
+```sh
+cd core
+# run low-level solver encoding tests
+pytest --log-cli-level=INFO tests/test_solver_ortools.py
+pytest --log-cli-level=INFO tests/test_solver_pulp.py
 # run schedule regression tests (OR-Tools / PuLP)
 pytest --log-cli-level=INFO tests/test_schedule_ortools.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp.py
-# or with more info when test fails
+# run the full core test suite
+pytest --log-cli-level=INFO
+```
+
+For more debugging output when a test fails:
+
+```sh
+cd core
+pytest --log-cli-level=DEBUG tests/test_solver_ortools.py
+pytest --log-cli-level=DEBUG tests/test_solver_pulp.py
 pytest --log-cli-level=DEBUG tests/test_schedule_ortools.py
 pytest --log-cli-level=DEBUG tests/test_schedule_pulp.py
-# Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases
 ```
+
+Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
 
 Run core with Docker:
 
