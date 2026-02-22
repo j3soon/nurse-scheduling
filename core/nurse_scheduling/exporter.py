@@ -17,6 +17,8 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+from io import BytesIO, StringIO
+
 import pandas as pd
 from openpyxl import load_workbook
 
@@ -164,7 +166,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 
     # Fill objective value
     df.iloc[n_leading_rows + len(ctx.people.items), 0] = "Score"
-    df.iloc[n_leading_rows + len(ctx.people.items), n_leading_cols + n_history_cols] = solver.get_value(ctx.objective)
+    df.iloc[n_leading_rows + len(ctx.people.items), n_leading_cols + n_history_cols] = solver.get_objective_value()
     # Fill solver status
     df.iloc[n_leading_rows + len(ctx.people.items) + 1, 0] = "Status"
     df.iloc[n_leading_rows + len(ctx.people.items) + 1, n_leading_cols + n_history_cols] = ctx.solver_status

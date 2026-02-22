@@ -18,6 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 # Shared constants for the nurse scheduling module.
+from enum import Enum
 
 from .workdays.taiwan import is_freeday as is_freeday_TW
 
@@ -43,3 +44,11 @@ MAP_DATE_KEYWORD_TO_FILTER = {
     'WORKDAY(LABOR)': lambda date: not is_freeday_TW(date, True),
     'FREEDAY(LABOR)': lambda date: is_freeday_TW(date, True),
 }
+
+class Operator(str, Enum):
+    EQ = "=="
+    NE = "!="
+    GT = ">"
+    GE = ">="
+    LT = "<"
+    LE = "<="

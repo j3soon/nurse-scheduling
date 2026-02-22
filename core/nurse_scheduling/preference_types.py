@@ -183,10 +183,12 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                     unique_var_prefix = f"shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_seq_{idx}"
                     is_match_var_name = f"{unique_var_prefix}_is_match"
                     actual_n_matched = sum(seq)
-                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_from_expression(
+                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_with_constraint(
                         is_match_var_name,
-                        actual_n_matched == target_n_matched,
-                        actual_n_matched != target_n_matched
+                        actual_n_matched,
+                        constants.Operator.EQ,
+                        target_n_matched,
+                        (0, target_n_matched),
                     )
 
                     # Add the objective
@@ -244,6 +246,11 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 x = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for d in c_ds for s in c_ss)
 
             # TODO: Also Report value of `x`
+
+            # TODO: total_shifts may be a tighter bound, but the current bound
+            # will work even without considering each person can have one
+            # max shifts per day.
+            max_x = len(c_ds) * len(c_ss)
             
             SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T', 'x = T']
             # Evaluate the expression
@@ -252,16 +259,20 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 # i.e., min(weight * (actual_n_shifts - T) ** 2), for all p,
                 # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
                 # Create a variable to represent the deviation from target
-                MAX = max(total_shifts - T, T)
-                diff_var_name = f"{unique_var_prefix}_diff"
-                ctx.model_vars[diff_var_name] = diff = ctx.solver.new_int_var(0, MAX, diff_var_name) # Min is 0, since diff is assigned through abs
+                max_abs_diff = max(total_shifts - T, T)
+                abs_diff_var_name = f"{unique_var_prefix}_abs_diff"
+                ctx.model_vars[abs_diff_var_name] = abs_diff = ctx.solver.new_int_var(
+                    0,
+                    max_abs_diff,
+                    abs_diff_var_name,
+                )  # Min is 0, since abs_diff is assigned through abs
                 # Use abstracted abs equality method
-                ctx.solver.add_abs_equality(diff, x - T)
+                ctx.solver.add_abs_equality(abs_diff, x - T, (0 - T, max_x - T))
                 # Square the difference
                 squared_var_name = f"{unique_var_prefix}_squared"
-                ctx.model_vars[squared_var_name] = squared = ctx.solver.new_int_var(0, MAX**2, squared_var_name)
-                # Use abstracted multiplication equality method
-                ctx.solver.add_multiplication_equality(squared, diff, diff)
+                ctx.model_vars[squared_var_name] = squared = ctx.solver.new_int_var(0, max_abs_diff**2, squared_var_name)
+                # Use abstracted squared equality method
+                ctx.solver.add_squared_equality(squared, abs_diff, (0, max_abs_diff))
                 # Add the objective
                 if weight == math.inf:
                     raise ValueError(f"'.inf' weights are not allowed for shift count with '{expression}'.")
@@ -272,19 +283,20 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 ctx.reports.append(Report(f"shift_count_{squared_var_name}", squared, lambda x: x == 0))
             elif expression in SUPPORTED_EXPRESSIONS:
                 expr_var_name = f"{unique_var_prefix}_expr"
-                # str -> (expr, expr.Not())
-                equations = {
-                    'x >= T': (x >= T, x < T),
-                    'x <= T': (x <= T, x > T),
-                    'x > T': (x > T, x <= T),
-                    'x < T': (x < T, x >= T),
-                    'x = T': (x == T, x != T),
-                }[expression]
+                operators = {
+                    'x >= T': constants.Operator.GE,
+                    'x <= T': constants.Operator.LE,
+                    'x > T': constants.Operator.GT,
+                    'x < T': constants.Operator.LT,
+                    'x = T': constants.Operator.EQ,
+                }
                 # Add the objective
-                ctx.model_vars[expr_var_name] = expr = ctx.solver.create_bool_var_from_expression(
+                ctx.model_vars[expr_var_name] = expr = ctx.solver.create_bool_var_with_constraint(
                     expr_var_name,
-                    equations[0],
-                    equations[1]
+                    x,
+                    operators[expression],
+                    T,
+                    (0, max_x),
                 )
                 utils.add_objective(ctx, weight, expr)
                 # TODO: Be aware of signs of `weight`?
@@ -357,22 +369,28 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
                     some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"
                     is_match_var_name = f"{unique_var_prefix}_is_match"
                     sum1 = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for p in p1s for s in ss)
-                    ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = ctx.solver.create_bool_var_from_expression(
+                    ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = ctx.solver.create_bool_var_with_constraint(
                         some_p1_matched_var_name,
-                        sum1 != 0,
-                        sum1 == 0
+                        sum1,
+                        constants.Operator.GE,
+                        1,
+                        (0, len(p1s) * len(ss)),
                     )
                     sum2 = sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for p in p2s for s in ss)
-                    ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = ctx.solver.create_bool_var_from_expression(
+                    ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = ctx.solver.create_bool_var_with_constraint(
                         some_p2_matched_var_name,
-                        sum2 != 0,
-                        sum2 == 0
+                        sum2,
+                        constants.Operator.GE,
+                        1,
+                        (0, len(p2s) * len(ss)),
                     )
                     sum3 = some_p1_matched + some_p2_matched
-                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_from_expression(
+                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_with_constraint(
                         is_match_var_name,
-                        sum3 == 2,
-                        sum3 != 2
+                        sum3,
+                        constants.Operator.EQ,
+                        2,
+                        (0, 2),
                     )
                     weight = preference.weight
                     utils.add_objective(ctx, weight, is_match)

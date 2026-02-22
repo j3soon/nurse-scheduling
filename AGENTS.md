@@ -20,7 +20,7 @@
   - `uv venv --python 3.12 && source .venv/bin/activate`: create/activate venv.
   - `uv pip install -r requirements.txt`: install Python deps.
   - `python -m nurse_scheduling.cli <input.yaml> [output.csv]`: run scheduler CLI.
-  - `pytest --log-cli-level=DEBUG tests/test_schedule.py tests/test_serve.py`: run core tests.
+  - `pytest --log-cli-level=DEBUG tests/test_schedule_ortools.py tests/test_schedule_pulp.py tests/test_serve.py`: run core tests.
 
 ## Coding Style & Naming Conventions
 - Python: 4-space indentation, `snake_case` for functions/modules, `PascalCase` for classes, keep type names explicit.
@@ -30,7 +30,7 @@
 
 ## Testing Guidelines
 - Framework: `pytest` for core and backend tests.
-- Main suites: `core/tests/test_schedule.py`, `core/tests/test_serve.py`.
+- Main suites: `core/tests/test_schedule_ortools.py`, `core/tests/test_schedule_pulp.py`, `core/tests/test_serve.py`.
 - Add new scheduling cases as fixture pairs in `core/tests/testcases/**` (typically `.yaml` input with matching `.csv` or `.txt` expected output).
 - Run affected tests locally before opening a PR.
 

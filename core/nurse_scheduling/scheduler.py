@@ -19,13 +19,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import itertools
 import logging
-import time
 from datetime import timedelta
 
 from . import exporter, preference_types
+from .constants import ALL, OFF, OFF_sid, Operator
 from .context import Context
 from .utils import parse_dates, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
-from .constants import ALL, OFF, OFF_sid
 from .loader import load_data
 from .solver_interface import SolverStatus
 
@@ -132,10 +131,10 @@ def schedule(file_content: bytes, deterministic=False, avoid_solution=None, pret
         for p in range(ctx.n_people):
             dp_shifts_sum = sum(ctx.shifts[(d, s, p)] for s in range(ctx.n_shift_types))
             var_name = f"off_d{d}_p{p}"
-            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ctx.solver.create_bool_var_from_expression(
+            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ctx.solver.create_bool_var_with_constraint(
                 var_name,
-                dp_shifts_sum == 0,
-                dp_shifts_sum != 0,
+                dp_shifts_sum, Operator.EQ, 0,
+                (0, ctx.n_shift_types),  # we do not assume "at most one shift per day" here
             )
 
     logging.info("Creating maps for faster lookup...")

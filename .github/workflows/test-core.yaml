@@ -19,8 +19,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements.txt
-      - name: Test schedule with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule.py
+      - name: Test schedule (OR-Tools) with pytest
+        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule_ortools.py
+      - name: Test schedule (PuLP) with pytest
+        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule_pulp.py
       - name: Test serve with pytest
         run: cd core && pytest --log-cli-level=DEBUG tests/test_serve.py
       - name: Prepare code coverage data

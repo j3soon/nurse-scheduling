@@ -1,9 +1,29 @@
+"""
+This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+
+Copyright (C) 2023-2026 Johnson Sun
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
+
 """OR-Tools CP-SAT solver implementation."""
 
 import logging
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Tuple, Union
 from ortools.sat.python import cp_model
 
+from .constants import Operator
 from .solver_interface import SolverInterface, SolverStatus
 
 
@@ -16,6 +36,7 @@ class ORToolsSolver(SolverInterface):
         self.model = cp_model.CpModel()
         self.solver: cp_model.CpSolver = cp_model.CpSolver()
         self.status = None
+        self.solver_status = SolverStatus.UNKNOWN
         
     def new_bool_var(self, name: str) -> cp_model.IntVar:
         """Create a new boolean variable."""
@@ -69,25 +90,25 @@ class ORToolsSolver(SolverInterface):
         
         # Convert OR-Tools status to our enum
         if self.status == cp_model.OPTIMAL:
-            return SolverStatus.OPTIMAL
+            self.solver_status = SolverStatus.OPTIMAL
         elif self.status == cp_model.FEASIBLE:
-            return SolverStatus.FEASIBLE
+            self.solver_status = SolverStatus.FEASIBLE
         elif self.status == cp_model.INFEASIBLE:
-            return SolverStatus.INFEASIBLE
+            self.solver_status = SolverStatus.INFEASIBLE
         elif self.status == cp_model.MODEL_INVALID:
-            return SolverStatus.MODEL_INVALID
+            self.solver_status = SolverStatus.MODEL_INVALID
         else:
-            return SolverStatus.UNKNOWN
+            self.solver_status = SolverStatus.UNKNOWN
+        
+        return self.solver_status
     
     def get_value(self, var: Any) -> Union[int, float]:
         """Get the value of a variable in the solution."""
         return self.solver.Value(var)
     
-    def get_objective_value(self) -> float:
+    def get_objective_value(self) -> int:
         """Get the objective value of the solution."""
-        if self.objective_expr is not None:
-            return self.solver.Value(self.objective_expr)
-        return 0.0
+        return self.solver.Value(self.objective_expr)
     
     def get_statistics(self) -> Dict[str, Any]:
         """Get solver statistics."""
@@ -105,28 +126,44 @@ class ORToolsSolver(SolverInterface):
         """Negate a boolean variable."""
         return var.Not()
     
-    def create_bool_var_from_expression(self, name: str, true_expr, false_expr) -> Any:
-        """Create a boolean variable from expressions."""
+    def create_bool_var_with_constraint(self, name: str, source_expr: Any, operator: Operator, target_value: int, target_value_range: Tuple[int, int]) -> Any:
+        """Create a boolean variable with a constraint."""
         # Ref: https://stackoverflow.com/a/70571397
         # Ref: https://github.com/google/or-tools/blob/master/ortools/sat/docs/channeling.md
         var = self.model.NewBoolVar(name)
-        self.model.Add(true_expr).OnlyEnforceIf(var)
-        self.model.Add(false_expr).OnlyEnforceIf(var.Not())
+        if operator == Operator.EQ:
+            self.model.Add(source_expr == target_value).OnlyEnforceIf(var)
+            self.model.Add(source_expr != target_value).OnlyEnforceIf(var.Not())
+        elif operator == Operator.NE:
+            self.model.Add(source_expr != target_value).OnlyEnforceIf(var)
+            self.model.Add(source_expr == target_value).OnlyEnforceIf(var.Not())
+        elif operator == Operator.GE:
+            self.model.Add(source_expr >= target_value).OnlyEnforceIf(var)
+            self.model.Add(source_expr < target_value).OnlyEnforceIf(var.Not())
+        elif operator == Operator.GT:
+            self.model.Add(source_expr > target_value).OnlyEnforceIf(var)
+            self.model.Add(source_expr <= target_value).OnlyEnforceIf(var.Not())
+        elif operator == Operator.LE:
+            self.model.Add(source_expr <= target_value).OnlyEnforceIf(var)
+            self.model.Add(source_expr > target_value).OnlyEnforceIf(var.Not())
+        elif operator == Operator.LT:
+            self.model.Add(source_expr < target_value).OnlyEnforceIf(var)
+            self.model.Add(source_expr >= target_value).OnlyEnforceIf(var.Not())
+        else:
+            raise NotImplementedError(f"Operator {operator} not implemented for OR-Tools solver.")
         return var
     
-    def add_abs_equality(self, target_var: Any, source_expr) -> None:
+    def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: Tuple[int, int]) -> None:
         """Add a constraint that target_var = |source_expr|."""
         self.model.AddAbsEquality(target_var, source_expr)
     
-    def add_multiplication_equality(self, target_var: Any, var1: Any, var2: Any) -> None:
-        """Add a constraint that target_var = var1 * var2."""
-        self.model.AddMultiplicationEquality(target_var, var1, var2)
+    def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: Tuple[int, int]) -> None:
+        """Add a constraint that target_var = source_var^2."""
+        self.model.AddMultiplicationEquality(target_var, [source_var, source_var])
     
     def get_status_name(self) -> str:
-        """Get the status name from OR-Tools."""
-        if self.status is not None:
-            return self.solver.StatusName(self.status)
-        return "UNKNOWN"
+        """Get the generic solver status name."""
+        return self.solver_status.value
     
     def create_solution_callback(self, objective_var: Any = None) -> Any:
         """Create a solution callback for tracking intermediate solutions."""
