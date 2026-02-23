@@ -128,6 +128,11 @@ class SolverInterface(ABC):
             The solver status.
         """
         pass
+
+    @abstractmethod
+    def get_status_name(self) -> str:
+        """Get the generic solver status name."""
+        pass
     
     @abstractmethod
     def get_value(self, var: Any) -> Union[int, float]:
@@ -186,7 +191,7 @@ class SolverInterface(ABC):
         pass
     
     @abstractmethod
-    def create_bool_var_with_constraint(self, name: str, source_expr: Any, operator: Operator, target_value: int, target_value_range: Tuple[int, int]) -> Any:
+    def create_bool_var_with_constraint(self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: Tuple[int, int]) -> Any:
         """
         Create a boolean variable that reifies a bounded integer comparison.
 
@@ -198,7 +203,7 @@ class SolverInterface(ABC):
             source_expr: Integer-valued source expression.
             operator: Comparison operator.
             target_value: Right-hand-side comparison value.
-            target_value_range: Lower/upper bound of source_expr.
+            source_expr_range: Lower/upper bound of source_expr.
         """
         pass
     

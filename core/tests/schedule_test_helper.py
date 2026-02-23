@@ -48,9 +48,9 @@ CONTINUE_ON_ERROR = True  # False
 
 def run_schedule_regression_test(solver_type: str) -> None:
     tests = glob.glob(f"{TESTCASES_DIR}/**/*.yaml", recursive=True)
+    total_tests = len(tests)
     error_count = 0
-    test_no = 0
-    for test_no, filepath in enumerate(tests):
+    for test_no, filepath in enumerate(tests, start=1):
         base_filepath = os.path.splitext(os.path.basename(filepath))[0]
         test_dir = os.path.dirname(filepath)
         if base_filepath in IGNORE_TESTS:
@@ -82,11 +82,11 @@ def run_schedule_regression_test(solver_type: str) -> None:
                 expected_csv = f.read()
 
         try:
-            df, solution, score, status, cell_export_info = nurse_scheduling.schedule(
+            df, solution, score, status, _cell_export_info = nurse_scheduling.schedule(
                 file_content,
                 solver_type=solver_type,
             )
-            df2, solution2, score2, status2, cell_export_info2 = nurse_scheduling.schedule(
+            df2, _solution2, score2, _status2, _cell_export_info2 = nurse_scheduling.schedule(
                 file_content,
                 avoid_solution=solution,
                 solver_type=solver_type,
@@ -98,10 +98,10 @@ def run_schedule_regression_test(solver_type: str) -> None:
                 pytest.fail(f"Validation error for '{base_filepath}'")
             continue
         except Exception as e:
-            logging.debug(f"Assertion error for '{base_filepath}': {e}")
+            logging.debug(f"Unexpected error for '{base_filepath}': {e}")
             error_count += 1
             if not CONTINUE_ON_ERROR:
-                pytest.fail(f"Assertion error for '{base_filepath}'")
+                pytest.fail(f"Unexpected error for '{base_filepath}'")
             continue
 
         if df is not None:
@@ -128,7 +128,7 @@ def run_schedule_regression_test(solver_type: str) -> None:
             )
             error_count += 1
             if not CONTINUE_ON_ERROR:
-                pytest.fail(f"Output mismatch for '{filepath}' ({test_no}/{len(tests)})")
+                pytest.fail(f"Output mismatch for '{filepath}' ({test_no}/{total_tests})")
             continue
 
         if not_unique_optimal:
@@ -137,11 +137,11 @@ def run_schedule_regression_test(solver_type: str) -> None:
             error_count += 1
             if not CONTINUE_ON_ERROR:
                 pytest.fail(
-                    f"The optimal solution should be unique, but it is not for '{filepath}' ({test_no}/{len(tests)})"
+                    f"The optimal solution should be unique, but it is not for '{filepath}' ({test_no}/{total_tests})"
                 )
             continue
 
     if error_count > 0:
-        pytest.fail(f"Found {error_count}/{test_no} errors during testing")
+        pytest.fail(f"Found {error_count}/{total_tests} errors during testing")
     else:
-        logging.info(f"All {test_no} tests passed for solver={solver_type}")
+        logging.info(f"All {total_tests} tests passed for solver={solver_type}")

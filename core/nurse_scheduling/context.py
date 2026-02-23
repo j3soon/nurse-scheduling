@@ -17,7 +17,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from datetime import date
 from pydantic import ConfigDict, Field
 
@@ -41,7 +41,7 @@ class Context(NurseSchedulingData):
     map_did_d: Dict[str, List[int]] = Field(default_factory=dict)  # Maps date/group ID to list of date indices
     
     # Fields used by the solver (abstracted)
-    solver: SolverInterface = None
+    solver: Optional[SolverInterface] = None
     model_vars: Dict[str, Any] = Field(default_factory=dict)
     shifts: Dict[tuple[int, int, int], Any] = Field(default_factory=dict)
     """A set of indicator variables (shifts[(d, s, p)]) that are 1 if

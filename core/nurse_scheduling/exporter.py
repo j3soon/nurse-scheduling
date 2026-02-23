@@ -84,9 +84,8 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         if n_history_cols > 0:
             if person.history:
                 history = person.history
-                # Pad with empty strings at the front if history is shorter than max_history_length
-                max_history_length = max((len(person.history) for person in ctx.people.items if person.history), default=0)
-                padded_history = [""] * (max_history_length - len(history)) + history
+                # Pad with empty strings at the front if history is shorter than n_history_cols
+                padded_history = [""] * max(0, n_history_cols - len(history)) + history
                 for h in range(n_history_cols):
                     df.iloc[n_leading_rows+p, n_leading_cols + h] = padded_history[h]
             else:

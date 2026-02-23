@@ -156,10 +156,13 @@ class PuLPSolver(SolverInterface):
         
         # Solve the model
         # `msg=1` means verbose solve mode.
+        solver_kwargs = {"msg": 1}
+        if timeout is not None:
+            solver_kwargs["timeLimit"] = timeout
         if solver_options:
-            self.solver = pulp.PULP_CBC_CMD(timeLimit=timeout, msg=1, options=solver_options)
+            self.solver = pulp.PULP_CBC_CMD(options=solver_options, **solver_kwargs)
         else:
-            self.solver = pulp.PULP_CBC_CMD(msg=1)
+            self.solver = pulp.PULP_CBC_CMD(**solver_kwargs)
         
         self.status = self.model.solve(self.solver)
         self.solve_time = time.time() - start_time
@@ -186,11 +189,7 @@ class PuLPSolver(SolverInterface):
     
     def get_value(self, var: Any) -> Union[int, float]:
         """Get the value of a variable in the solution."""
-        if isinstance(var, pulp.LpVariable):
-            return pulp.value(var)
-        else:
-            # It might be an expression
-            return pulp.value(var)
+        return pulp.value(var)
     
     def get_objective_value(self) -> int:
         """Get the objective value of the solution."""
@@ -230,20 +229,13 @@ class PuLPSolver(SolverInterface):
         return "Model appears valid"
     
     def negate(self, var: Any) -> Any:
-        """
-        Negate a boolean variable.
-        
-        For PuLP, negation is represented as linear expression (1 - var).
-        """
-        if isinstance(var, pulp.LpVariable):
-            return 1 - var
-        # Also allow affine expressions and numeric values.
+        """Negate a boolean variable. For PuLP: (1 - var)."""
         return 1 - var
     
-    def create_bool_var_with_constraint(self, name: str, source_expr: Any, operator: Operator, target_value: int, target_value_range: Tuple[int, int]) -> Any:
+    def create_bool_var_with_constraint(self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: Tuple[int, int]) -> Any:
         """Create a boolean variable with a constraint."""
         var = self.new_bool_var(name)
-        m, M = int(target_value_range[0]), int(target_value_range[1])
+        m, M = int(source_expr_range[0]), int(source_expr_range[1])
         if m > M:
             raise ValueError(f"Invalid provided source expression bounds: [{m}, {M}]")
         # Use inferred bounds for sanity check to catch modeling errors.

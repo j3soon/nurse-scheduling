@@ -79,8 +79,11 @@ class ORToolsSolver(SolverInterface):
             try:
                 self.solver.parameters.max_time_in_seconds = float(timeout)
                 logging.info(f"Solver time limit set to {timeout} seconds")
-            except Exception:
-                logging.warning("Unable to set solver timeout parameter; proceeding without time limit")
+            except (ValueError, TypeError, AttributeError) as exc:
+                logging.warning(
+                    "Unable to set solver timeout parameter (%s); proceeding without time limit",
+                    exc,
+                )
         
         # Solve with or without callback
         if solution_callback is not None:
@@ -126,7 +129,7 @@ class ORToolsSolver(SolverInterface):
         """Negate a boolean variable."""
         return var.Not()
     
-    def create_bool_var_with_constraint(self, name: str, source_expr: Any, operator: Operator, target_value: int, target_value_range: Tuple[int, int]) -> Any:
+    def create_bool_var_with_constraint(self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: Tuple[int, int]) -> Any:
         """Create a boolean variable with a constraint."""
         # Ref: https://stackoverflow.com/a/70571397
         # Ref: https://github.com/google/or-tools/blob/master/ortools/sat/docs/channeling.md

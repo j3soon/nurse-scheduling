@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from nurse_scheduling.constants import Operator
 from nurse_scheduling.solver_interface import SolverStatus
 from nurse_scheduling.solver_pulp import PuLPSolver
+from tests.solver_test_utils import expected_bool_value
 
 # This module focuses on low-level PuLP solver encodings, especially
 # create_bool_var_with_constraint(...), using tiny synthetic models.
@@ -37,7 +38,7 @@ def _solve_eq_with_fixed_x(m: int, M: int, K: int, x_value: int) -> int:
 
     status = solver.solve()
     assert status == SolverStatus.OPTIMAL
-    return int(round(solver.get_value(y)))
+    return round(solver.get_value(y))
 
 
 def _solve_with_fixed_x(m: int, M: int, operator: Operator, K: int, x_value: int) -> int:
@@ -52,23 +53,7 @@ def _solve_with_fixed_x(m: int, M: int, operator: Operator, K: int, x_value: int
 
     status = solver.solve()
     assert status == SolverStatus.OPTIMAL
-    return int(round(solver.get_value(y)))
-
-
-def _expected_value(operator: Operator, x_value: int, k: int) -> int:
-    if operator == Operator.EQ:
-        return 1 if x_value == k else 0
-    if operator == Operator.NE:
-        return 1 if x_value != k else 0
-    if operator == Operator.GE:
-        return 1 if x_value >= k else 0
-    if operator == Operator.GT:
-        return 1 if x_value > k else 0
-    if operator == Operator.LE:
-        return 1 if x_value <= k else 0
-    if operator == Operator.LT:
-        return 1 if x_value < k else 0
-    raise AssertionError(f"Unhandled operator in test: {operator}")
+    return round(solver.get_value(y))
 
 
 def _solve_with_fixed_affine(
@@ -91,7 +76,7 @@ def _solve_with_fixed_affine(
     solver.set_objective(0, maximize=True)
     status = solver.solve()
     assert status == SolverStatus.OPTIMAL
-    return int(round(solver.get_value(y)))
+    return round(solver.get_value(y))
 
 
 @pytest.mark.parametrize("k", [0, 2, 4])
@@ -144,7 +129,7 @@ def test_create_bool_var_with_constraint_all_ops_truth_table(operator: Operator,
     m, M = 0, 4
     for x_value in range(m, M + 1):
         y_value = _solve_with_fixed_x(m, M, operator, k, x_value)
-        assert y_value == _expected_value(operator, x_value, k)
+        assert y_value == expected_bool_value(operator, x_value, k)
 
 
 @pytest.mark.parametrize(
@@ -167,7 +152,7 @@ def test_create_bool_var_with_constraint_negative_domain_truth_table(operator: O
     m, M = -3, 2
     for x_value in range(m, M + 1):
         y_value = _solve_with_fixed_x(m, M, operator, k, x_value)
-        assert y_value == _expected_value(operator, x_value, k)
+        assert y_value == expected_bool_value(operator, x_value, k)
 
 
 def test_create_bool_var_with_constraint_affine_expression_truth_table():
@@ -185,7 +170,7 @@ def test_create_bool_var_with_constraint_affine_expression_truth_table():
     for x_value in range(x_lb, x_ub + 1):
         expr_value = x_value + expr_offset
         y_value = _solve_with_fixed_affine(x_lb, x_ub, operator, k, x_value, expr_offset, expr_range)
-        assert y_value == _expected_value(operator, expr_value, k)
+        assert y_value == expected_bool_value(operator, expr_value, k)
 
 
 @pytest.mark.parametrize(
@@ -211,7 +196,7 @@ def test_create_bool_var_with_constraint_constant_expression(operator: Operator,
     solver.set_objective(0, maximize=True)
     status = solver.solve()
     assert status == SolverStatus.OPTIMAL
-    assert int(round(solver.get_value(y))) == expected
+    assert round(solver.get_value(y)) == expected
 
 
 def test_create_bool_var_with_constraint_rejects_invalid_provided_range_order():
