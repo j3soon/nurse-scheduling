@@ -37,12 +37,15 @@ def main():
                        help='Increase verbosity (can be used multiple times: -v, -vv, -vvv)')
     parser.add_argument('--timeout', type=int, default=None,
                        help='Maximum running time in seconds. If reached, the solver will stop and the current best result (if any) will be exported.')
+    parser.add_argument('--solver', type=str, default='ortools', choices=['ortools', 'pulp'],
+                       help='Choose the solver backend: ortools (default) or pulp')
     
     args = parser.parse_args()
     filepath = args.input_file_path
     output_path = args.output_path
     prettify = args.prettify
     verbose = args.verbose
+    solver_type = args.solver
     
     # Configure logging based on verbosity level
     if verbose >= 2:
@@ -74,8 +77,13 @@ def main():
     
     with open(filepath, 'rb') as f:
         file_content = f.read()
-    
-    df, solution, score, status, cell_export_info = scheduler.schedule(file_content, prettify=prettify, timeout=args.timeout)
+
+    df, solution, score, status, cell_export_info = scheduler.schedule(
+        file_content,
+        prettify=prettify,
+        timeout=args.timeout,
+        solver_type=solver_type,
+    )
 
     if df is None:
         print("No solution found")

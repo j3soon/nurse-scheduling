@@ -19,18 +19,16 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import itertools
 import logging
-import time
 from datetime import timedelta
 
-from ortools.sat.python import cp_model
-
 from . import exporter, preference_types
+from .constants import ALL, OFF, OFF_sid, Operator
 from .context import Context
-from .utils import ortools_expression_to_bool_var, parse_dates, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
-from .constants import ALL, OFF, OFF_sid
+from .utils import parse_dates, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
 from .loader import load_data
+from .solver_interface import SolverStatus
 
-def schedule(file_content: bytes, deterministic=False, avoid_solution=None, prettify=False, timeout: int | None = None):
+def schedule(file_content: bytes, deterministic=False, avoid_solution=None, prettify=False, timeout: int | None = None, solver_type: str = 'ortools'):
     logging.info(f"Loading scenario from file content...")
     scenario = load_data(file_content)
 
@@ -91,6 +89,18 @@ def schedule(file_content: bytes, deterministic=False, avoid_solution=None, pret
         ctx.map_did_d[group.id] = sorted(set(date_indices))
 
     logging.info("Initializing solver model...")
+    
+    # Initialize the solver based on solver_type
+    if solver_type.lower() == 'ortools':
+        from .solver_ortools import ORToolsSolver
+        logging.info("Using OR-Tools CP-SAT solver")
+        ctx.solver = ORToolsSolver()
+    elif solver_type.lower() == 'pulp':
+        from .solver_pulp import PuLPSolver
+        logging.info("Using PuLP solver")
+        ctx.solver = PuLPSolver()
+    else:
+        raise ValueError(f"Unknown solver type: {solver_type}. Supported types: 'ortools', 'pulp'")
 
     logging.info("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
@@ -101,7 +111,7 @@ def schedule(file_content: bytes, deterministic=False, avoid_solution=None, pret
         for s in range(ctx.n_shift_types):
             for p in range(ctx.n_people):
                 var_name = f"shift_d{d}_s{s}_p{p}"
-                ctx.model_vars[var_name] = ctx.shifts[(d, s, p)] = ctx.model.NewBoolVar(var_name)
+                ctx.model_vars[var_name] = ctx.shifts[(d, s, p)] = ctx.solver.new_bool_var(var_name)
 
     if avoid_solution is not None:
         avoid_solution_vars = []
@@ -110,21 +120,21 @@ def schedule(file_content: bytes, deterministic=False, avoid_solution=None, pret
             if avoid_solution[(d, s, p)] == 0:
                 avoid_solution_vars.append(ctx.shifts[(d, s, p)])
             elif avoid_solution[(d, s, p)] == 1:
-                avoid_solution_vars.append(ctx.shifts[(d, s, p)].Not())
+                avoid_solution_vars.append(ctx.solver.negate(ctx.shifts[(d, s, p)]))
             else:
                 raise ValueError(f"Invalid value: {avoid_solution[(d, s, p)]}")
         # Add constraint that at least one variable must be different from the solution to avoid
-        ctx.model.AddBoolOr(avoid_solution_vars)
+        ctx.solver.add_bool_or(avoid_solution_vars)
 
     logging.info("Creating off variables...")
     for d in range(ctx.n_days):
         for p in range(ctx.n_people):
             dp_shifts_sum = sum(ctx.shifts[(d, s, p)] for s in range(ctx.n_shift_types))
             var_name = f"off_d{d}_p{p}"
-            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ortools_expression_to_bool_var(
-                ctx.model, var_name,
-                dp_shifts_sum == 0,
-                dp_shifts_sum != 0,
+            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ctx.solver.create_bool_var_with_constraint(
+                var_name,
+                dp_shifts_sum, Operator.EQ, 0,
+                (0, ctx.n_shift_types),  # we do not assume "at most one shift per day" here
             )
 
     logging.info("Creating maps for faster lookup...")
@@ -156,83 +166,50 @@ def schedule(file_content: bytes, deterministic=False, avoid_solution=None, pret
         preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference, i)
 
     # Define objective (i.e., soft constraints)
-    ctx.model.Maximize(ctx.objective)
+    ctx.solver.set_objective(ctx.objective, maximize=True)
 
     logging.info("Initializing solver...")
-    solver = cp_model.CpSolver()
-    if deterministic:
-        logging.info("Configuring deterministic solver...")
-        solver.parameters.random_seed = 0
-        solver.parameters.num_workers = 1
-        # Potentially related parameters are:
-        # `random_seed`, `num_workers`, and `num_search_workers`
-        # Ref: https://github.com/google/or-tools/blob/stable/ortools/sat/sat_parameters.proto
-        # ctx.model.add_decision_strategy(list(ctx.shifts.values()), cp_model.CHOOSE_FIRST, cp_model.SELECT_MIN_VALUE)
-
-    class PartialSolutionPrinter(cp_model.CpSolverSolutionCallback):
-        """Print intermediate solutions."""
-        def __init__(self):
-            cp_model.CpSolverSolutionCallback.__init__(self)
-            self.n_solutions = 0
-            self.best_score = float("-inf")
-            self.start_time = time.time()
-
-        def on_solution_callback(self):
-            current_score = self.Value(ctx.objective)
-            elapsed_time = time.time() - self.start_time
-            self.n_solutions += 1
-            if current_score > self.best_score:
-                self.best_score = current_score
-                self.n_solutions = 1
-            logging.info(f"# of (best) solutions found: {self.n_solutions}")
-            logging.info(f"current score: {current_score}")
-            logging.info(f"elapsed time: {elapsed_time:.2f}s")
-    solution_printer = PartialSolutionPrinter()
-
-    # Configure timeout (max_time_in_seconds) if provided
-    if timeout is not None:
-        try:
-            solver.parameters.max_time_in_seconds = float(timeout)
-            logging.info(f"Solver time limit set to {timeout} seconds")
-        except Exception:
-            logging.warning("Unable to set solver timeout parameter; proceeding without time limit")
+    
+    # Create solution callback for tracking intermediate solutions
+    solution_callback = ctx.solver.create_solution_callback(ctx.objective)
 
     logging.info("Solving and showing partial results...")
-    # The CpSolver will respect max_time_in_seconds and return when the time limit is reached.
-    status = solver.Solve(ctx.model, solution_printer)
+    status = ctx.solver.solve(timeout=timeout, deterministic=deterministic, solution_callback=solution_callback)
 
-    logging.info(f"Status: {solver.StatusName(status)}")
+    # Get status name
+    ctx.solver_status = ctx.solver.get_status_name()
+    logging.info(f"Status: {ctx.solver_status}")
 
-    found = status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+    found = status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
     # Ref: https://developers.google.com/optimization/cp/cp_solver
-    if status == cp_model.OPTIMAL:
+    if status == SolverStatus.OPTIMAL:
         logging.info("Optimal solution found!")
-    elif status == cp_model.FEASIBLE:
+    elif status == SolverStatus.FEASIBLE:
         logging.info("Feasible solution found!")
-    elif status == cp_model.INFEASIBLE:
+    elif status == SolverStatus.INFEASIBLE:
         logging.info("Proven infeasible!")
-    elif status == cp_model.MODEL_INVALID:
+    elif status == SolverStatus.MODEL_INVALID:
         logging.info("Model invalid!")
         logging.info("Validation Info:")
-        logging.info(ctx.model.Validate())
+        logging.info(ctx.solver.validate_model())
     else:
         logging.info("No solution found!")
-        raise ValueError(f"No solution found! Status: {solver.StatusName(status)}")
-    ctx.solver_status = solver.StatusName(status)
+        raise ValueError(f"No solution found! Status: {ctx.solver_status}")
 
     logging.info("Statistics:")
-    logging.info(f"  - conflicts: {solver.NumConflicts()}")
-    logging.info(f"  - branches : {solver.NumBranches()}")
-    logging.info(f"  - wall time: {solver.WallTime()}s")
+    stats = ctx.solver.get_statistics()
+    for key, value in stats.items():
+        logging.info(f"  - {key}: {value}")
+    
     logging.debug("Variables:")
     for k, v in ctx.model_vars.items():
         try:
-            logging.debug(f"  - {k}: {solver.Value(v)}")
+            logging.debug(f"  - {k}: {ctx.solver.get_value(v)}")
         except Exception as e:
             logging.debug(f"  - {k}: [Error: {e}]")
     logging.debug("Reports:")
     for report in ctx.reports:
-        val = solver.Value(report.variable)
+        val = ctx.solver.get_value(report.variable)
         if report.skip_condition(val):
             continue
         logging.debug(f"  - {report.description}: {val}")
@@ -242,9 +219,9 @@ def schedule(file_content: bytes, deterministic=False, avoid_solution=None, pret
     if not found:
         return None, None, None, ctx.solver_status, None
 
-    df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, solver, prettify=prettify)
+    df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=prettify)
     solution = {}
     for (d, s, p) in ctx.shifts:
-        solution[(d, s, p)] = solver.Value(ctx.shifts[(d, s, p)])
+        solution[(d, s, p)] = ctx.solver.get_value(ctx.shifts[(d, s, p)])
     # TODO: Better way to return?
-    return df, solution, solver.Value(ctx.objective), ctx.solver_status, cell_export_info
+    return df, solution, ctx.solver.get_objective_value(), ctx.solver_status, cell_export_info

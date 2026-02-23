@@ -5,8 +5,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Codex CLI
 # Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/codex/Dockerfile
+# Common Codex Tools
+RUN apt-get update && apt-get install -y \
+    git \
+    jq \
+    ripgrep \
+    && rm -rf /var/lib/apt/lists/*
+# Install Codex CLI
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \

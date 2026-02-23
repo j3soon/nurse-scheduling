@@ -28,21 +28,19 @@ def ensure_list(val):
         return []
     return [val] if not isinstance(val, list) else val
 
-def ortools_expression_to_bool_var(
-        model, varname, true_expression, false_expression
-    ):
-    # Ref: https://stackoverflow.com/a/70571397
-    # Ref: https://github.com/google/or-tools/blob/master/ortools/sat/docs/channeling.md
-    var = model.NewBoolVar(varname)
-    model.Add(true_expression).OnlyEnforceIf(var)
-    model.Add(false_expression).OnlyEnforceIf(var.Not())
-    return var
-
 def add_objective(ctx, weight, expression):
+    """
+    Add an objective term with the given weight.
+    
+    Args:
+        ctx: Context object
+        weight: Weight for the objective term (can be inf/-inf for hard constraints)
+        expression: Expression to add to objective
+    """
     if weight == math.inf:
-        ctx.model.Add(expression == 1)
+        ctx.solver.add_constraint(expression == 1)
     elif weight == -math.inf:
-        ctx.model.Add(expression == 0)
+        ctx.solver.add_constraint(expression == 0)
     else:
         ctx.objective += weight * expression
 
