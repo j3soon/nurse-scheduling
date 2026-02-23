@@ -22,9 +22,9 @@ import logging
 from datetime import timedelta
 
 from . import exporter, preference_types
-from .constants import ALL, OFF, OFF_sid, Operator
+from .constants import ALL, OFF, OFF_sid, Operator, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
 from .context import Context
-from .utils import parse_dates, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
+from .utils import parse_dates
 from .loader import load_data
 from .solver_interface import SolverStatus
 
