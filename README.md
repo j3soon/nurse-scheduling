@@ -94,6 +94,8 @@ pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 # run the full core test suite
 pytest --log-cli-level=INFO
+# run basic Python lint checks for core
+ruff check nurse_scheduling tests
 ```
 
 For more debugging output when a test fails:

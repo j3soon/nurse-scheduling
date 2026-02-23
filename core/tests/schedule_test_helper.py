@@ -17,9 +17,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-"""
-Shared test helper for schedule regression tests across solver backends.
-"""
+# Shared test helper for schedule regression tests across solver backends.
 
 import glob
 import io

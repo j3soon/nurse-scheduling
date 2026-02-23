@@ -217,7 +217,7 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
     if len(expressions) != len(targets):
         raise ValueError(f"Number of expressions ({len(expressions)}) must match number of targets ({len(targets)})")
     if len(expressions) == 0:
-        raise ValueError(f"Expression must not be empty")
+        raise ValueError("Expression must not be empty")
     weight = preference.weight
     for i in range(len(expressions)):
         expression, target = expressions[i], targets[i]

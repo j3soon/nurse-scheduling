@@ -17,12 +17,9 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-"""
-Abstraction layer for constraint programming solvers.
-
-This module provides a unified interface for different constraint programming solvers
-(OR-Tools CP-SAT, PuLP, etc.) to enable easy switching between backends.
-"""
+# Abstraction layer for constraint programming solvers.
+# This module provides a unified interface for different constraint programming solvers
+# (OR-Tools CP-SAT, PuLP, etc.) to enable easy switching between backends.
 
 from abc import ABC, abstractmethod
 from enum import Enum

@@ -36,7 +36,7 @@ def schedule(
     timeout: int | None = None,
     solver: str = 'ortools/cp-sat',
 ):
-    logging.info(f"Loading scenario from file content...")
+    logging.info("Loading scenario from file content...")
     scenario = load_data(file_content)
 
     logging.info("Extracting scenario data...")
@@ -225,7 +225,7 @@ def schedule(
             continue
         logging.debug(f"  - {report.description}: {val}")
 
-    logging.info(f"Done.")
+    logging.info("Done.")
 
     if not found:
         return None, None, None, ctx.solver_status, None

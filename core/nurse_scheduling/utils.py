@@ -21,7 +21,6 @@ import datetime
 import math
 import re
 from .models import DateRange
-from .constants import MAP_WEEKDAY_TO_STR, MAP_DATE_KEYWORD_TO_FILTER
 
 def ensure_list(val):
     if val is None:
@@ -62,8 +61,6 @@ def _parse_single_date(date: str, date_range: DateRange) -> datetime.date:
 def parse_dates(dates, map_did_d, date_range):
     startdate, enddate = date_range.startDate, date_range.endDate
     dates = map(str, ensure_list(dates))
-    n_days = (enddate - startdate).days + 1
-    dates_in_timespan = [startdate + datetime.timedelta(days=i) for i in range(n_days)]
     parsed_dates = []
 
     for date_str in dates:

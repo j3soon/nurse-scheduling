@@ -20,13 +20,13 @@ jobs:
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements.txt
       - name: Test solver (OR-Tools) with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_solver_ortools.py
+        run: cd core && pytest --log-cli-level=DEBUG tests/test_solver_ortools_cp_sat.py
       - name: Test solver (PuLP) with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_solver_pulp.py
+        run: cd core && pytest --log-cli-level=DEBUG tests/test_solver_pulp_cbc.py
       - name: Test schedule (OR-Tools) with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule_ortools.py
+        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule_ortools_cp_sat.py
       - name: Test schedule (PuLP) with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule_pulp.py
+        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
       - name: Test serve with pytest
         run: cd core && pytest --log-cli-level=DEBUG tests/test_serve.py
       - name: Prepare code coverage data

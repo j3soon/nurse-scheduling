@@ -113,7 +113,7 @@ async def optimize_and_export_xlsx(
         content = yaml_content.encode('utf-8')
         input_name = f"nurse-scheduling-{datetime.now().strftime('%Y%m%d%H%M%S')}.yaml"
     
-    logging.info(f"Processing schedule optimization...")
+    logging.info("Processing schedule optimization...")
     logging.info(f"Input: {input_name}")
     logging.info(
         "Prettify: %s, Timeout: %s, Solver: selector=%s",
