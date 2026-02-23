@@ -21,4 +21,4 @@ from .schedule_test_helper import run_schedule_regression_test
 
 
 def test_schedule_pulp():
-    run_schedule_regression_test("pulp")
+    run_schedule_regression_test("pulp/cbc")

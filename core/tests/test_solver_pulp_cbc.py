@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling.constants import Operator
 from nurse_scheduling.solver_interface import SolverStatus
-from nurse_scheduling.solver_pulp import PuLPSolver
+from nurse_scheduling.solver_pulp_cbc import PuLPSolver
 from tests.solver_test_utils import expected_bool_value
 
 # This module focuses on low-level PuLP solver encodings, especially

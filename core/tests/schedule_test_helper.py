@@ -46,7 +46,7 @@ CONTINUE_ON_ERROR = True  # False
 # Note: In rare cases, running this test may fail due to segfault when using ortools solver.
 
 
-def run_schedule_regression_test(solver_type: str) -> None:
+def run_schedule_regression_test(solver: str) -> None:
     tests = glob.glob(f"{TESTCASES_DIR}/**/*.yaml", recursive=True)
     total_tests = len(tests)
     error_count = 0
@@ -55,7 +55,7 @@ def run_schedule_regression_test(solver_type: str) -> None:
         test_dir = os.path.dirname(filepath)
         if base_filepath in IGNORE_TESTS:
             continue
-        logging.info(f"[{solver_type}] Testing '{filepath[len(TESTCASES_DIR)+1:]}' ...")
+        logging.info(f"[{solver}] Testing '{filepath[len(TESTCASES_DIR)+1:]}' ...")
 
         # Read file content
         with open(filepath, "rb") as f:
@@ -67,7 +67,7 @@ def run_schedule_regression_test(solver_type: str) -> None:
                 expected_err = f.read()
             # Use pytest.raises without the match parameter to catch the error first
             with pytest.raises((ValidationError, ValueError)) as exc_info:
-                nurse_scheduling.schedule(file_content, solver_type=solver_type)
+                nurse_scheduling.schedule(file_content, solver=solver)
             # Then verify the error message contains the expected text
             logging.info(f"Expected error: {expected_err.strip()}")
             logging.info(f"Actual error: {str(exc_info.value)}")
@@ -84,12 +84,12 @@ def run_schedule_regression_test(solver_type: str) -> None:
         try:
             df, solution, score, status, _cell_export_info = nurse_scheduling.schedule(
                 file_content,
-                solver_type=solver_type,
+                solver=solver,
             )
             df2, _solution2, score2, _status2, _cell_export_info2 = nurse_scheduling.schedule(
                 file_content,
                 avoid_solution=solution,
-                solver_type=solver_type,
+                solver=solver,
             )
         except ValidationError as e:
             logging.debug(f"Validation error for '{base_filepath}': {e}")
@@ -144,4 +144,4 @@ def run_schedule_regression_test(solver_type: str) -> None:
     if error_count > 0:
         pytest.fail(f"Found {error_count}/{total_tests} errors during testing")
     else:
-        logging.info(f"All {total_tests} tests passed for solver={solver_type}")
+        logging.info(f"All {total_tests} tests passed for solver={solver}")

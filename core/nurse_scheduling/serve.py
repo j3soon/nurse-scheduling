@@ -77,7 +77,8 @@ async def optimize_and_export_xlsx(
     file: Optional[UploadFile] = File(None, description="YAML file with scheduling data"),
     yaml_content: Optional[str] = Form(None, description="YAML content as a string"),
     prettify: Optional[bool] = Form(None, description="Enable prettier output formatting"),
-    timeout: Optional[int] = Form(None, description="Max execution time in seconds")
+    timeout: Optional[int] = Form(None, description="Max execution time in seconds"),
+    solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc)"),
 ):
     """
     Optimize a nurse schedule from a YAML file or YAML string, and return an XLSX file.
@@ -114,7 +115,10 @@ async def optimize_and_export_xlsx(
     
     logging.info(f"Processing schedule optimization...")
     logging.info(f"Input: {input_name}")
-    logging.info(f"Prettify: {prettify}, Timeout: {timeout}")
+    logging.info(
+        "Prettify: %s, Timeout: %s, Solver: selector=%s",
+        prettify, timeout, solver,
+    )
 
     try:
         # Run the scheduler with file content directly
@@ -122,7 +126,8 @@ async def optimize_and_export_xlsx(
         df, solution, score, status, cell_export_info = scheduler.schedule(
             file_content=content,
             prettify=prettify,
-            timeout=timeout
+            timeout=timeout,
+            solver=solver,
         )
         
     except Exception as e:

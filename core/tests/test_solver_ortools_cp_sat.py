@@ -8,11 +8,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling.constants import Operator
 from nurse_scheduling.solver_interface import SolverStatus
-from nurse_scheduling.solver_ortools import ORToolsSolver
+from nurse_scheduling.solver_ortools_cp_sat import ORToolsSolver
 from tests.solver_test_utils import expected_bool_value
 
 # This module mirrors the low-level comparator truth-table checks in
-# test_solver_pulp.py, but targets the OR-Tools backend implementation.
+# test_solver_pulp_cbc.py, but targets the OR-Tools backend implementation.
 # It validates create_bool_var_with_constraint(...) behavior directly,
 # independent of the scheduling pipeline.
 #

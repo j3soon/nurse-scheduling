@@ -28,7 +28,14 @@ from .utils import parse_dates, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
 from .loader import load_data
 from .solver_interface import SolverStatus
 
-def schedule(file_content: bytes, deterministic=False, avoid_solution=None, prettify=False, timeout: int | None = None, solver_type: str = 'ortools'):
+def schedule(
+    file_content: bytes,
+    deterministic=False,
+    avoid_solution=None,
+    prettify=False,
+    timeout: int | None = None,
+    solver: str = 'ortools/cp-sat',
+):
     logging.info(f"Loading scenario from file content...")
     scenario = load_data(file_content)
 
@@ -90,17 +97,21 @@ def schedule(file_content: bytes, deterministic=False, avoid_solution=None, pret
 
     logging.info("Initializing solver model...")
     
-    # Initialize the solver based on solver_type
-    if solver_type.lower() == 'ortools':
-        from .solver_ortools import ORToolsSolver
-        logging.info("Using OR-Tools CP-SAT solver")
+    solver_backend, solver_engine = solver.lower().split("/", maxsplit=1)
+
+    # Initialize the solver based on backend provider + engine
+    if solver_backend == 'ortools' and solver_engine == 'cp-sat':
+        from .solver_ortools_cp_sat import ORToolsSolver
+        logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
         ctx.solver = ORToolsSolver()
-    elif solver_type.lower() == 'pulp':
-        from .solver_pulp import PuLPSolver
-        logging.info("Using PuLP solver")
+    elif solver_backend == 'pulp' and solver_engine == 'cbc':
+        from .solver_pulp_cbc import PuLPSolver
+        logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
         ctx.solver = PuLPSolver()
     else:
-        raise ValueError(f"Unknown solver type: {solver_type}. Supported types: 'ortools', 'pulp'")
+        raise ValueError(
+            f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}"
+        )
 
     logging.info("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling

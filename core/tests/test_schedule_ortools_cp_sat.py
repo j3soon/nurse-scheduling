@@ -21,4 +21,4 @@ from .schedule_test_helper import run_schedule_regression_test
 
 
 def test_schedule_ortools():
-    run_schedule_regression_test("ortools")
+    run_schedule_regression_test("ortools/cp-sat")
