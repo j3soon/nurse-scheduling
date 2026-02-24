@@ -119,6 +119,7 @@ plugins:
   # Ref: https://github.com/timvink/mkdocs-git-revision-date-localized-plugin
   - git-revision-date-localized:
       enable_creation_date: true
+      enable_parallel_processing: False
   # Ref: https://squidfunk.github.io/mkdocs-material/setup/adding-a-git-repository/#document-contributors
   # Ref: https://github.com/ojacques/mkdocs-git-committers-plugin-2
   # Ref: https://github.com/ojacques/mkdocs-git-committers-plugin-2/issues/51#issuecomment-1951450239
