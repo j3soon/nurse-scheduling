@@ -20,7 +20,7 @@
 // The home page for Tab "0. Home"
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { FiChevronDown, FiCheck } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { STATIC_BUILD_URLS } from '@/constants/urls';
@@ -30,7 +30,11 @@ export default function Home() {
   const { createNewState } = useSchedulingData();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const currentOrigin = typeof window === 'undefined' ? '' : window.location.origin;
+  const currentOrigin = useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => ''
+  );
   const [releaseBranches, setReleaseBranches] = useState<BuildEntry[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
