@@ -20,7 +20,7 @@
 // The date management page for Tab "1. Dates"
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
@@ -52,9 +52,6 @@ export default function DatePage() {
   });
   // Error messages for start date and end date
   const [errors, setErrors] = useState<{[key: string]: string}>({});
-  // Warning messages for date range validation
-  const [warnings, setWarnings] = useState<{[key: string]: string}>({});
-
   // Helper functions to convert between Date and string for form inputs
   const dateToString = (date?: Date): string => {
     return date ? date.toISOString().split('T')[0] : '';
@@ -80,19 +77,18 @@ export default function DatePage() {
     return isFirstDay && isLastDay;
   };
 
-  // Validate form whenever draft changes (for real-time warnings)
-  useEffect(() => {
-    if (mode === Mode.DATE_RANGE_EDITING) {
-      const newWarnings: {[key: string]: string} = {};
-
-      // Check for full month warning only if both dates are present and valid
-      if (!isFullMonth(draft.startDate, draft.endDate)) {
-        newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
-      }
-
-      setWarnings(newWarnings);
+  const warnings = useMemo<{[key: string]: string}>(() => {
+    if (mode !== Mode.DATE_RANGE_EDITING) {
+      return {};
     }
-  }, [draft.startDate, draft.endDate, mode]);
+
+    const newWarnings: {[key: string]: string} = {};
+    if (!isFullMonth(draft.startDate, draft.endDate)) {
+      newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
+    }
+
+    return newWarnings;
+  }, [draft.endDate, draft.startDate, mode]);
 
   // Instructions for the help component
   const instructions = [
@@ -108,7 +104,6 @@ export default function DatePage() {
 
   const validateForm = () => {
     const newErrors: {[key: string]: string} = {};
-    const newWarnings: {[key: string]: string} = {};
 
     if (!draft.startDate) {
       newErrors.startDate = 'Start date is required';
@@ -122,15 +117,7 @@ export default function DatePage() {
       newErrors.endDate = 'End date must be after start date';
     }
 
-    // Check for full month warning
-    if (draft.startDate && draft.endDate && draft.startDate <= draft.endDate) {
-      if (!isFullMonth(draft.startDate, draft.endDate)) {
-        newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
-      }
-    }
-
     setErrors(newErrors);
-    setWarnings(newWarnings);
     return Object.keys(newErrors).length === 0;
   };
 
@@ -158,7 +145,6 @@ export default function DatePage() {
         });
       }
       setErrors({});
-      setWarnings({});
     }
   };
 

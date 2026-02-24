@@ -30,13 +30,9 @@ export default function Home() {
   const { createNewState } = useSchedulingData();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [currentOrigin, setCurrentOrigin] = useState('');
+  const currentOrigin = typeof window === 'undefined' ? '' : window.location.origin;
   const [releaseBranches, setReleaseBranches] = useState<BuildEntry[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setCurrentOrigin(window.location.origin);
-  }, []);
 
   useEffect(() => {
     const loadReleaseBranches = async () => {
@@ -60,7 +56,7 @@ export default function Home() {
 
   const buildUrls = useMemo(() => [...STATIC_BUILD_URLS, ...releaseBranches], [releaseBranches]);
 
-  const currentBuild = useMemo(() => {
+  const currentBuild = useMemo<BuildEntry | null>(() => {
     if (!currentOrigin) return null;
     const normalizedOrigin = currentOrigin.replace(/\/$/, '');
     const found = buildUrls.find(
@@ -73,7 +69,7 @@ export default function Home() {
   const handleBuildSelect = (url: string) => {
     setIsDropdownOpen(false);
     if (url !== currentOrigin && url !== currentOrigin + '/') {
-      window.location.href = url;
+      window.location.assign(url);
     }
   };
 
@@ -118,7 +114,7 @@ export default function Home() {
             New Schedule
           </button>
           <button
-            onClick={() => window.location.href = '/dates'}
+            onClick={() => window.location.assign('/dates')}
             className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
             Continue

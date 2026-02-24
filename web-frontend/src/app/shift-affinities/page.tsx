@@ -78,26 +78,6 @@ export default function ShiftAffinitiesPage() {
     "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
   ];
 
-  // Handle global keydown for Enter/Escape when form is visible
-  useEffect(() => {
-    if (!isFormVisible) return;
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        handleSave();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        handleCancel();
-      }
-    };
-
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleGlobalKeyDown);
-    };
-  });
-
   const resetForm = () => {
     setFormData({
       description: '',
@@ -134,7 +114,7 @@ export default function ShiftAffinitiesPage() {
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
-  const handleCancel = () => {
+  function handleCancel() {
     const wasEditing = editingIndex !== null;
     setIsFormVisible(false);
     resetForm();
@@ -142,7 +122,7 @@ export default function ShiftAffinitiesPage() {
     if (wasEditing) {
       restoreScrollPosition();
     }
-  };
+  }
 
   const validateForm = (): boolean => {
     const newErrors: {[key: string]: string} = {};
@@ -171,7 +151,7 @@ export default function ShiftAffinitiesPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = () => {
+  function handleSave() {
     if (!validateForm()) return;
 
     const newShiftAffinity: ShiftAffinityPreference = {
@@ -202,7 +182,27 @@ export default function ShiftAffinitiesPage() {
     if (wasEditing) {
       restoreScrollPosition();
     }
-  };
+  }
+
+  // Handle global keydown for Enter/Escape when form is visible
+  useEffect(() => {
+    if (!isFormVisible) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSave();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  });
 
   const handleDelete = (index: number) => {
     const newShiftAffinities = shiftAffinities.filter((_, i) => i !== index);

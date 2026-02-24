@@ -45,52 +45,30 @@ export default function ShiftPreferenceEditor({
   shiftTypes,
   initialPreferences
 }: ShiftPreferenceEditorProps) {
-  const [preferences, setPreferences] = useState<{ shiftTypeId: string; weight: number | string }[]>(initialPreferences);
-
-  useEffect(() => {
-    setPreferences(initialPreferences);
-  }, [initialPreferences, isOpen]);
-
-  // Handle global keydown for Enter/Escape when modal is open
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        handleSave();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        handleCancel();
-      }
-    };
-
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleGlobalKeyDown);
-    };
-  });
+  const [draftPreferences, setDraftPreferences] = useState<{ shiftTypeId: string; weight: number | string }[] | null>(null);
+  const preferences = draftPreferences ?? initialPreferences;
 
   const handleWeightChange = (shiftTypeId: string, weight: number | string) => {
     const weightValue = weight as number;
 
-    setPreferences(prev => {
-      const existing = prev.find(p => p.shiftTypeId === shiftTypeId);
+    setDraftPreferences(prev => {
+      const current = prev ?? initialPreferences;
+      const existing = current.find(p => p.shiftTypeId === shiftTypeId);
       if (existing) {
         if (weightValue === 0) {
           // Remove preference if weight is 0
-          return prev.filter(p => p.shiftTypeId !== shiftTypeId);
+          return current.filter(p => p.shiftTypeId !== shiftTypeId);
         } else {
           // Update existing preference
-          return prev.map(p =>
+          return current.map(p =>
             p.shiftTypeId === shiftTypeId ? { ...p, weight: weightValue } : p
           );
         }
       } else if (weightValue !== 0) {
         // Add new preference
-        return [...prev, { shiftTypeId, weight: weightValue }];
+        return [...current, { shiftTypeId, weight: weightValue }];
       }
-      return prev;
+      return current;
     });
   };
 
@@ -112,20 +90,40 @@ export default function ShiftPreferenceEditor({
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = () => {
+  function handleSave() {
     if (!validateForm()) return;
     // Convert all weights to numbers
     onSave(preferences.map(p => ({ shiftTypeId: p.shiftTypeId, weight: p.weight as number })));
     onClose();
-  };
+  }
 
-  const handleCancel = () => {
-    setPreferences(initialPreferences);
+  function handleCancel() {
+    setDraftPreferences(null);
     onClose();
-  };
+  }
+
+  // Handle global keydown for Enter/Escape when modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSave();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  });
 
   const clearAllPreferences = () => {
-    setPreferences([]);
+    setDraftPreferences([]);
   };
 
   if (!isOpen) return null;

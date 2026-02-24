@@ -21,37 +21,36 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
+
+const TABS = [
+  { name: '0. Home', path: '/' },
+  { name: '1. Dates', path: '/dates' },
+  { name: '2. People', path: '/people' },
+  { name: '3. Shift Types', path: '/shift-types' },
+  { name: '4. Shift Type Requirements', path: '/shift-type-requirements' },
+  { name: '5. Shift Requests', path: '/shift-requests' },
+  { name: '6. Shift Type Successions', path: '/shift-type-successions' },
+  { name: '7. Shift Counts', path: '/shift-counts' },
+  { name: '8. Shift Affinities', path: '/shift-affinities' },
+  { name: '9. Save and Load', path: '/save-and-load' },
+  { name: '10. Optimize and Export', path: '/optimize-and-export' },
+];
 
 export default function Navigation() {
   const router = useRouter();
   const pathname = usePathname();
+  const currentTabIndex = TABS.findIndex(tab => tab.path === pathname);
 
-  const tabs = [
-    { name: '0. Home', path: '/' },
-    { name: '1. Dates', path: '/dates' },
-    { name: '2. People', path: '/people' },
-    { name: '3. Shift Types', path: '/shift-types' },
-    { name: '4. Shift Type Requirements', path: '/shift-type-requirements' },
-    { name: '5. Shift Requests', path: '/shift-requests' },
-    { name: '6. Shift Type Successions', path: '/shift-type-successions' },
-    { name: '7. Shift Counts', path: '/shift-counts' },
-    { name: '8. Shift Affinities', path: '/shift-affinities' },
-    { name: '9. Save and Load', path: '/save-and-load' },
-    { name: '10. Optimize and Export', path: '/optimize-and-export' },
-  ];
-
-  const currentTabIndex = tabs.findIndex(tab => tab.path === pathname);
-
-  const navigateToTab = (index: number) => {
-    if (index < 0 || index >= tabs.length || index === currentTabIndex) {
+  const navigateToTab = useCallback((index: number) => {
+    if (index < 0 || index >= TABS.length || index === currentTabIndex) {
       return;
     }
-    router.push(tabs[index].path);
-  };
+    router.push(TABS[index].path);
+  }, [currentTabIndex, router]);
 
-  const navigatePrevious = () => navigateToTab(currentTabIndex - 1);
-  const navigateNext = () => navigateToTab(currentTabIndex + 1);
+  const navigatePrevious = useCallback(() => navigateToTab(currentTabIndex - 1), [currentTabIndex, navigateToTab]);
+  const navigateNext = useCallback(() => navigateToTab(currentTabIndex + 1), [currentTabIndex, navigateToTab]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -83,7 +82,7 @@ export default function Navigation() {
           if (hasModifier) return;
           event.preventDefault();
           const index = parseInt(event.key);
-          if (index < tabs.length) {
+          if (index < TABS.length) {
             navigateToTab(index);
           }
           break;
@@ -119,14 +118,14 @@ export default function Navigation() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [currentTabIndex]);
+  }, [navigateNext, navigatePrevious, navigateToTab]);
 
   return (
     <div className="relative">
       <nav className="bg-white shadow-sm">
         <div className="overflow-x-auto">
           <div className="flex justify-start px-4 sm:px-6 lg:px-8">
-            {tabs.map((tab, index) => (
+            {TABS.map((tab, index) => (
               <button
                 key={tab.path}
                 onClick={() => navigateToTab(index)}
@@ -157,7 +156,7 @@ export default function Navigation() {
       )}
 
       {/* Right Arrow */}
-      {currentTabIndex < tabs.length - 1 && (
+      {currentTabIndex < TABS.length - 1 && (
         <button
           onClick={navigateNext}
           className="fixed right-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"

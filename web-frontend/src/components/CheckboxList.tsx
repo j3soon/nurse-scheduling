@@ -42,6 +42,14 @@ export function CheckboxList({
   const mouseEnteredCheckboxIdRef = useRef('');
   const isMultiSelectDragRef = useRef(false);
 
+  const setUserSelectDisabled = () => {
+    document.body.style.setProperty('user-select', 'none');
+  };
+
+  const clearUserSelectDisabled = () => {
+    document.body.style.removeProperty('user-select');
+  };
+
   const handleToggle = (id: string) => {
     onToggle(id);
   };
@@ -58,7 +66,7 @@ export function CheckboxList({
 
     if (id === mouseEnteredCheckboxIdRef.current && !isMultiSelectDragRef.current) {
       mouseDownCheckboxIdRef.current = id;
-      document.body.style.userSelect = 'none';
+      setUserSelectDisabled();
     }
   };
 
@@ -83,7 +91,7 @@ export function CheckboxList({
     // End multi-select drag
     isMultiSelectDragRef.current = false;
     mouseDownCheckboxIdRef.current = '';
-    document.body.style.userSelect = '';
+    clearUserSelectDisabled();
   };
 
   // Add event listener for mouse up outside the component
@@ -92,14 +100,14 @@ export function CheckboxList({
       // End multi-select drag
       isMultiSelectDragRef.current = false;
       mouseDownCheckboxIdRef.current = '';
-      document.body.style.userSelect = '';
+      clearUserSelectDisabled();
     };
 
     window.addEventListener('mouseup', handleGlobalMouseUp);
     // Cleanup event listener
     return () => {
       window.removeEventListener('mouseup', handleGlobalMouseUp);
-      document.body.style.userSelect = '';
+      clearUserSelectDisabled();
     };
   }, []);
 

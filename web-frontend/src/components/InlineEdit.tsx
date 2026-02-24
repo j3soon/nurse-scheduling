@@ -18,7 +18,7 @@
  */
 
 // A component for inline editing of a item value.
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface InlineEditProps {
   value: string;
@@ -47,16 +47,9 @@ export function InlineEdit({
   error,
   displayValue,
   emptyText,
-  emptyClassName = 'text-gray-300 italic'
+  emptyClassName = 'text-gray-300 italic',
 }: InlineEditProps) {
-  const [editValue, setEditValue] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isEditing) {
-      setEditValue(value);
-    }
-  }, [isEditing, value]);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -66,7 +59,7 @@ export function InlineEdit({
   }, [isEditing]);
 
   const handleSave = () => {
-    onSave(editValue.trim());
+    onSave((inputRef.current?.value ?? value).trim());
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -79,17 +72,13 @@ export function InlineEdit({
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEditValue(e.target.value);
-  };
-
   if (isEditing) {
     return (
       <input
+        key={value}
         ref={inputRef}
         type="text"
-        value={editValue}
-        onChange={handleChange}
+        defaultValue={value}
         onKeyDown={handleKeyDown}
         onBlur={handleSave}
         placeholder={placeholder}
