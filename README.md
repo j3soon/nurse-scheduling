@@ -36,6 +36,12 @@ git clone https://github.com/j3soon/nurse-scheduling.git
 cd nurse-scheduling
 ```
 
+For Linux only: to quickly set up all local environments (`core`, `web-frontend`, and `docs`) in one go, run:
+
+```sh
+./scripts/setup_env.sh
+```
+
 ### Web Frontend
 
 ```sh

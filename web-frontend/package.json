@@ -9,6 +9,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@sentry/nextjs": "^10",
     "js-yaml": "^4.1.1",
     "next": "16.1.6",
     "react": "19.2.4",
