@@ -26,6 +26,25 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from . import scheduler, exporter
 
+import sentry_sdk
+sentry_sdk.init(
+    dsn="https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
+    # Add data like request headers and IP for users, if applicable;
+    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+    send_default_pii=True,
+    # Set traces_sample_rate to 1.0 to capture 100%
+    # of transactions for tracing.
+    traces_sample_rate=1.0,
+    # To collect profiles for all profile sessions,
+    # set `profile_session_sample_rate` to 1.0.
+    profile_session_sample_rate=1.0,
+    # Profiles will be automatically collected while
+    # there is an active span.
+    profile_lifecycle="trace",
+    # Enable logs to be sent to Sentry
+    enable_logs=True,
+)
+
 # Configure logging to verbose level 1 (verbose levels defined in CLI)
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
