@@ -21,6 +21,7 @@
 
 import { useState, useEffect } from 'react';
 import { FiAlertTriangle, FiX } from 'react-icons/fi';
+import AppVersionText from '@/components/AppVersionText';
 import { CURRENT_APP_VERSION, fetchLatestTag, getMajorMinor } from '@/utils/version';
 import { WEBSITE_URL } from '@/constants/urls';
 
@@ -108,7 +109,12 @@ export default function VersionWarningBanner() {
           <span className="text-sm">
             {versionStatus === 'error' ? (
               <>
-                Unable to check for updates. You might be using an older version ({CURRENT_APP_VERSION}).{' '}
+                Unable to check for updates. You might be using an older version (
+                <AppVersionText
+                  version={CURRENT_APP_VERSION}
+                  commitClassName="font-semibold underline hover:text-gray-900"
+                />
+                ).{' '}
                 <a
                   href={WEBSITE_URL}
                   target="_blank"
@@ -120,7 +126,12 @@ export default function VersionWarningBanner() {
               </>
             ) : versionStatus === 'older' ? (
               <>
-                You are using an older version ({CURRENT_APP_VERSION}). Latest stable release:{' '}
+                You are using an older version (
+                <AppVersionText
+                  version={CURRENT_APP_VERSION}
+                  commitClassName="font-semibold underline hover:text-amber-900"
+                />
+                ). Latest stable release:{' '}
                 <a
                   href={WEBSITE_URL}
                   target="_blank"
@@ -132,7 +143,12 @@ export default function VersionWarningBanner() {
               </>
             ) : (
               <>
-                You are using a development version ({CURRENT_APP_VERSION}). Latest stable release:{' '}
+                You are using a development version (
+                <AppVersionText
+                  version={CURRENT_APP_VERSION}
+                  commitClassName="font-semibold underline hover:text-blue-900"
+                />
+                ). Latest stable release:{' '}
                 <a
                   href={WEBSITE_URL}
                   target="_blank"
