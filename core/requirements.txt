@@ -1,4 +1,4 @@
-ortools==9.14.6206
+ortools==9.15.6755
 pulp==3.3.0
 pandas
 ruamel.yaml

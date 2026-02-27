@@ -39,8 +39,6 @@ IGNORE_TESTS = []
 WRITE_TO_CSV = False
 CONTINUE_ON_ERROR = True  # False
 
-# Note: In rare cases, running this test may fail due to segfault when using ortools solver.
-
 
 def run_schedule_regression_test(solver: str) -> None:
     tests = glob.glob(f"{TESTCASES_DIR}/**/*.yaml", recursive=True)
