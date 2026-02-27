@@ -554,8 +554,10 @@ export function useSchedulingData() {
     data: ItemGroupEditorPageData,
     id: string,
     groupIds: string[],
-    description?: string
+    description?: string,
+    exportCellBackgroundColor?: string
   ): void => {
+    const normalizedExportCellBackgroundColor = exportCellBackgroundColor?.trim().toLowerCase() || undefined;
     // Check if the ID is a reserved keyword
     if (isReservedKeyword(dataType, id)) {
       console.error(`Cannot add item with ID "${id}" - it is a reserved keyword. ${ERROR_SHOULD_NOT_HAPPEN}`);
@@ -563,9 +565,12 @@ export function useSchedulingData() {
     }
 
     // Add the item
+    const newItemExport = normalizedExportCellBackgroundColor
+      ? { styles: { cell: { backgroundColor: normalizedExportCellBackgroundColor } } }
+      : undefined;
     const newItem = dataType === DataType.PEOPLE
-      ? { id, description: description || '', history: [] }
-      : { id, description: description || '' };
+      ? { id, description: description || '', history: [], export: newItemExport }
+      : { id, description: description || '', export: newItemExport };
     const newItems = [...data.items, newItem];
 
     // If groupIds is provided, add the item to those groups
@@ -598,8 +603,10 @@ export function useSchedulingData() {
     data: ItemGroupEditorPageData,
     id: string,
     memberIds: string[],
-    description?: string
+    description?: string,
+    exportCellBackgroundColor?: string
   ): void => {
+    const normalizedExportCellBackgroundColor = exportCellBackgroundColor?.trim().toLowerCase() || undefined;
     // Check if the ID is a reserved keyword
     if (isReservedKeyword(dataType, id)) {
       console.error(`Cannot add group with ID "${id}" - it is a reserved keyword. ${ERROR_SHOULD_NOT_HAPPEN}`);
@@ -616,7 +623,10 @@ export function useSchedulingData() {
       return;
     }
 
-    const newGroup = { id, members: sortedMembers, description: description || '' };
+    const newGroupExport = normalizedExportCellBackgroundColor
+      ? { styles: { cell: { backgroundColor: normalizedExportCellBackgroundColor } } }
+      : undefined;
+    const newGroup = { id, members: sortedMembers, description: description || '', export: newGroupExport };
     const newGroups = [...data.groups, newGroup];
 
     const newData = { ...data, groups: newGroups };
@@ -843,8 +853,10 @@ export function useSchedulingData() {
     oldId: string,
     newId: string,
     groupIds?: string[],
-    description?: string
+    description?: string,
+    exportCellBackgroundColor?: string
   ): void => {
+    const normalizedExportCellBackgroundColor = exportCellBackgroundColor?.trim().toLowerCase() || undefined;
     // Check if the new ID is a reserved keyword
     if (isReservedKeyword(dataType, newId)) {
       console.error(`Cannot update item to ID "${newId}" - it is a reserved keyword. ${ERROR_SHOULD_NOT_HAPPEN}`);
@@ -854,7 +866,23 @@ export function useSchedulingData() {
     // First update the item's ID and description
     const updatedItems = data.items.map(item =>
       item.id === oldId
-        ? { ...item, id: newId, description: description !== undefined ? description : item.description }
+        ? {
+            ...item,
+            id: newId,
+            description: description !== undefined ? description : item.description,
+            export: exportCellBackgroundColor !== undefined
+              ? {
+                  ...item.export,
+                  styles: {
+                    ...item.export?.styles,
+                    cell: {
+                      ...item.export?.styles?.cell,
+                      backgroundColor: normalizedExportCellBackgroundColor
+                    }
+                  }
+                }
+              : item.export
+          }
         : item
     );
 
@@ -897,8 +925,10 @@ export function useSchedulingData() {
     oldId: string,
     newId: string,
     members?: string[],
-    description?: string
+    description?: string,
+    exportCellBackgroundColor?: string
   ): void => {
+    const normalizedExportCellBackgroundColor = exportCellBackgroundColor?.trim().toLowerCase() || undefined;
     // Check if the new ID is a reserved keyword
     if (isReservedKeyword(dataType, newId)) {
       console.error(`Cannot update group to ID "${newId}" - it is a reserved keyword. ${ERROR_SHOULD_NOT_HAPPEN}`);
@@ -925,7 +955,24 @@ export function useSchedulingData() {
 
     const newGroups = data.groups.map(g =>
       g.id === oldId
-        ? { ...g, id: newId, members: sortedMembers, description: description !== undefined ? description : g.description }
+        ? {
+            ...g,
+            id: newId,
+            members: sortedMembers,
+            description: description !== undefined ? description : g.description,
+            export: exportCellBackgroundColor !== undefined
+              ? {
+                  ...g.export,
+                  styles: {
+                    ...g.export?.styles,
+                    cell: {
+                      ...g.export?.styles?.cell,
+                      backgroundColor: normalizedExportCellBackgroundColor
+                    }
+                  }
+                }
+              : g.export
+          }
         : g
     );
 

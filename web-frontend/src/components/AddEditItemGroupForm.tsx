@@ -24,6 +24,7 @@ import { FormInput } from '@/components/FormInput';
 import { CheckboxList } from '@/components/CheckboxList';
 import { Item, Group } from '@/types/scheduling';
 import { Mode } from '@/constants/modes';
+import { FiAlertCircle } from 'react-icons/fi';
 
 interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
   mode: Mode.ADDING | Mode.EDITING;
@@ -32,6 +33,7 @@ interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
     description: string;
     groups: string[];
     members: string[];
+    backgroundColor: string;
     isItem: boolean;
   };
   items: T[];
@@ -42,6 +44,9 @@ interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
   onIdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDescriptionChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onMemberToggle: (id: string) => void;
+  onBackgroundColorChange?: (color: string) => void;
+  onBackgroundColorReset?: () => void;
+  showExportStyleEditor?: boolean;
   onSave: () => void;
   onCancel: () => void;
 }
@@ -57,12 +62,33 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   onIdChange,
   onDescriptionChange,
   onMemberToggle,
+  onBackgroundColorChange,
+  onBackgroundColorReset,
+  showExportStyleEditor = false,
   onSave,
   onCancel,
 }: AddEditItemGroupFormProps<T, G>) {
   const isItem = draft.isItem;
   const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : "Group"}`;
   const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : "group"} ID`;
+  const isValidHexColor = /^#[0-9a-fA-F]{6}$/.test(draft.backgroundColor);
+  const hasColorInput = draft.backgroundColor.length > 0;
+  const pickerValue = isValidHexColor ? draft.backgroundColor : '#ffffff';
+  const pickerText = hasColorInput
+    ? (isValidHexColor ? draft.backgroundColor : '(Invalid)')
+    : 'Default';
+  const pickerTextColor = (() => {
+    if (hasColorInput && !isValidHexColor) return '#b91c1c';
+    if (!isValidHexColor) return '#4b5563';
+    const hex = draft.backgroundColor.slice(1);
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.6 ? '#111827' : '#f9fafb';
+  })();
+  const isColorError = showExportStyleEditor && error.toLowerCase().includes('background color');
+  const formError = isColorError ? '' : error;
 
   return (
     <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
@@ -75,7 +101,7 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           descriptionValue={draft.description}
           descriptionPlaceholder={`Enter ${isItem ? itemLabel.toLowerCase() : "group"} description (optional)`}
           onDescriptionChange={onDescriptionChange}
-          error={error}
+          error={formError}
           onAction={onSave}
           onCancel={onCancel}
           actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
@@ -86,6 +112,50 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
             onToggle={onMemberToggle}
             label={draft.isItem ? "Groups" : 'Members'}
           />
+          {showExportStyleEditor && (
+            <div className="space-y-2 border-t border-gray-200 pt-4">
+              <h3 className="text-sm font-semibold text-gray-800">Export Styles</h3>
+              <label className="block text-sm font-medium text-gray-700">Export Background Color</label>
+              <div className="flex items-center gap-3">
+                <div className="relative h-9 w-28">
+                  <input
+                    type="color"
+                    value={pickerValue}
+                    onChange={(e) => onBackgroundColorChange?.(e.target.value)}
+                    className="h-9 w-28 rounded border border-gray-300 bg-white cursor-pointer"
+                    title="Choose background color"
+                  />
+                  <span
+                    className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-[11px]"
+                    style={{ color: pickerTextColor }}
+                  >
+                    {pickerText}
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  value={draft.backgroundColor}
+                  onChange={(e) => onBackgroundColorChange?.(e.target.value)}
+                  placeholder="#RRGGBB"
+                  className="w-28 px-2 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+                  title="Enter export background color in hex"
+                />
+                <button
+                  type="button"
+                  onClick={onBackgroundColorReset}
+                  className="px-3 py-1 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Reset
+                </button>
+              </div>
+              {isColorError && (
+                <p className="text-sm text-red-600 flex items-center gap-1">
+                  <FiAlertCircle className="h-4 w-4" />
+                  {error}
+                </p>
+              )}
+            </div>
+          )}
         </FormInput>
       </div>
     </div>
