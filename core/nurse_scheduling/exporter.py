@@ -18,12 +18,112 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from io import BytesIO, StringIO
+from copy import copy
 
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+from openpyxl.styles import Border
+from openpyxl.styles.borders import Side
 
 from .context import Context
 from . import utils, models, constants
+
+def _get_font_color_for_background(hex_color: str) -> str:
+    """Return ARGB font color (black/white) for readable contrast on a hex background."""
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    # Match frontend threshold used in getPickerDisplay().
+    return "FF000000" if luminance > 0.6 else "FFFFFFFF"
+
+def _build_custom_export_style_info(
+    ctx: Context,
+    n_rows: int,
+    n_cols: int,
+    n_leading_rows: int,
+    n_leading_cols: int,
+    n_history_cols: int,
+):
+    """Build cell-level style overrides from ctx.export.formatting."""
+    if not ctx.export or not ctx.export.formatting:
+        return {}
+
+    style_map = {}
+
+    def set_style(row_idx: int, col_idx: int, background_color: str | None, bottom_border_color: str | None):
+        if row_idx < 0 or row_idx >= n_rows or col_idx < 0 or col_idx >= n_cols:
+            return
+        key = (row_idx + 1, col_idx + 1)  # Store in 1-based Excel coordinates
+        if key not in style_map:
+            style_map[key] = {}
+        if background_color:
+            style_map[key]["backgroundColor"] = background_color
+        if bottom_border_color:
+            style_map[key]["bottomBorderColor"] = bottom_border_color
+
+    for rule in ctx.export.formatting:
+        target_people = set()
+        target_dates = set()
+        target_shift_types = set()
+
+        if rule.type in ("row", "row header"):
+            for target in rule.targets:
+                if target not in ctx.map_pid_p:
+                    raise ValueError(f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'")
+                target_people.update(ctx.map_pid_p[target])
+
+        elif rule.type in ("column", "column header"):
+            for target in rule.targets:
+                target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
+
+        elif rule.type == "cell":
+            for target in rule.targets:
+                if target not in ctx.map_sid_s:
+                    raise ValueError(f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'")
+                # Filter to actual shift types (exclude OFF pseudo shift).
+                target_shift_types.update(s for s in ctx.map_sid_s[target] if 0 <= s < ctx.n_shift_types)
+
+        if rule.type == "row":
+            for p in target_people:
+                row_idx = n_leading_rows + p
+                for col_idx in range(n_cols):
+                    set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+
+        elif rule.type == "row header":
+            for p in target_people:
+                row_idx = n_leading_rows + p
+                set_style(row_idx, 0, rule.backgroundColor, rule.bottomBorderColor)
+
+        elif rule.type == "column":
+            score_row_idx = n_leading_rows + len(ctx.people.items)
+            status_row_idx = score_row_idx + 1
+            for d in target_dates:
+                col_idx = n_leading_cols + n_history_cols + d
+                for row_idx in range(n_rows):
+                    if row_idx in (score_row_idx, status_row_idx):
+                        # Skip styling for score/status summary rows since they are not part of the main schedule grid and should not be affected by column styles.
+                        continue
+                    set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+
+        elif rule.type == "column header":
+            for d in target_dates:
+                col_idx = n_leading_cols + n_history_cols + d
+                set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+
+        elif rule.type == "cell":
+            for d, p in ctx.map_dp_s.keys():
+                assigned_shift_types = [
+                    s for s in ctx.map_dp_s[(d, p)]
+                    if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                ]
+                if any(s in target_shift_types for s in assigned_shift_types):
+                    row_idx = n_leading_rows + p
+                    col_idx = n_leading_cols + n_history_cols + d
+                    set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+
+    return style_map
 
 
 def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
@@ -32,7 +132,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     n_trailing_rows, n_trailing_cols = 2, 0
     
     # Dictionary to track cells with [X] markers and their weights for Excel notes
-    cell_export_info = {}
+    cell_comment_info = {}
     
     n_history_cols = 0
     # Add history columns after the name column (only if prettify is enabled)
@@ -158,9 +258,9 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                         # Track this cell for Excel notes - store the weight
                         excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
                         excel_col = n_leading_cols + n_history_cols + d + 1  # +1 for 1-based Excel indexing
-                        if (excel_row, excel_col) not in cell_export_info:
-                            cell_export_info[(excel_row, excel_col)] = []
-                        cell_export_info[(excel_row, excel_col)].append(abs(pref.weight))
+                        if (excel_row, excel_col) not in cell_comment_info:
+                            cell_comment_info[(excel_row, excel_col)] = []
+                        cell_comment_info[(excel_row, excel_col)].append(abs(pref.weight))
         df.iloc[n_leading_rows+p, col_idx] = cell_value
 
     # Fill objective value
@@ -420,9 +520,15 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         
         # Apply the styling and return the styled DataFrame
         styled_df = df.style.apply(lambda x: apply_styling(df), axis=None)
-        return styled_df, cell_export_info
-    
-    return df, cell_export_info
+        style_info = _build_custom_export_style_info(
+            ctx, len(df.index), len(df.columns), n_leading_rows, n_leading_cols, n_history_cols
+        )
+        return styled_df, {"comments": cell_comment_info, "styles": style_info}
+
+    style_info = _build_custom_export_style_info(
+        ctx, len(df.index), len(df.columns), n_leading_rows, n_leading_cols, n_history_cols
+    )
+    return df, {"comments": cell_comment_info, "styles": style_info}
 
 
 def export_to_excel(df, output_buffer, cell_export_info=None):
@@ -447,10 +553,20 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
     # Freeze the first two rows and first column (B3 is the cell after frozen area)
     ws.freeze_panes = 'B3'
     
-    # Add notes/comments to cells with [X] markers if cell_export_info is provided
-    if cell_export_info:
+    # Backward compatibility: legacy shape was {(row, col): [weights]}.
+    comment_info = {}
+    style_info = {}
+    if isinstance(cell_export_info, dict):
+        if "comments" in cell_export_info or "styles" in cell_export_info:
+            comment_info = cell_export_info.get("comments") or {}
+            style_info = cell_export_info.get("styles") or {}
+        else:
+            comment_info = cell_export_info
+
+    # Add notes/comments to cells with [X] markers if comment_info is provided.
+    if comment_info:
         from openpyxl.comments import Comment
-        for (row, col), weights in cell_export_info.items():
+        for (row, col), weights in comment_info.items():
             cell = ws.cell(row=row, column=col)
             # Calculate total weight and create note text
             total_weight = sum(weights)
@@ -462,7 +578,38 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
             # Create and add the comment
             comment = Comment(note_text, "Nurse Scheduling System")
             cell.comment = comment
-    
+
+    # Apply custom export formatting styles.
+    if style_info:
+        for (row, col), styles in style_info.items():
+            cell = ws.cell(row=row, column=col)
+
+            background_color = styles.get("backgroundColor")
+            if background_color:
+                argb = f"FF{background_color[1:].upper()}"
+                cell.fill = PatternFill(fill_type="solid", start_color=argb, end_color=argb)
+                updated_font = copy(cell.font)
+                updated_font.color = _get_font_color_for_background(background_color)
+                cell.font = updated_font
+
+            bottom_border_color = styles.get("bottomBorderColor")
+            if bottom_border_color:
+                argb = f"FF{bottom_border_color[1:].upper()}"
+                existing_border = copy(cell.border)
+                existing_bottom = copy(existing_border.bottom)
+                border_style = existing_bottom.style or "thin"
+                cell.border = Border(
+                    left=existing_border.left,
+                    right=existing_border.right,
+                    top=existing_border.top,
+                    bottom=Side(style=border_style, color=argb),
+                    diagonal=existing_border.diagonal,
+                    diagonal_direction=existing_border.diagonal_direction,
+                    outline=existing_border.outline,
+                    vertical=existing_border.vertical,
+                    horizontal=existing_border.horizontal,
+                )
+
     # Save to the output buffer
     wb.save(output_buffer)
     output_buffer.seek(0)

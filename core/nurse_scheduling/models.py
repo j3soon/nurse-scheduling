@@ -91,6 +91,17 @@ class DateContainer(BaseModel):
     items: List[datetime.date] = Field(default_factory=list)  # Automatically generated from range
     groups: List[DateGroup] = Field(default_factory=list)
 
+class ExportFormattingRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Annotated[str, Field(pattern=r"^(cell|row|column|row header|column header)$")]
+    targets: List[int | str]
+    backgroundColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+    bottomBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+
+class ExportConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    formatting: List[ExportFormattingRule] = Field(default_factory=list)
+
 class BasePreference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: str
@@ -192,6 +203,7 @@ class NurseSchedulingData(BaseModel):
         ShiftCountPreference |
         ShiftAffinityPreference
     ]
+    export: ExportConfig = Field(default_factory=ExportConfig)
 
     @model_validator(mode='after')
     def validate_model(self) -> Self:
