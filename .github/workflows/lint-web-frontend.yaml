@@ -16,3 +16,5 @@ jobs:
         run: cd web-frontend && bun install
       - name: Lint
         run: cd web-frontend && bun run lint
+      - name: Build (For checking static build errors only)
+        run: cd web-frontend && bun run build

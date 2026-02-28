@@ -1,6 +1,7 @@
 [build]
   publish = "web-frontend/out"
   command = """
+  set -e
   rm -rf web-frontend/out
   rm -rf site
 
