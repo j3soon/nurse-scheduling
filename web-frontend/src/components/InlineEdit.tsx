@@ -31,7 +31,6 @@ interface InlineEditProps {
   editClassName?: string;
   error?: string;
   displayValue?: string; // For cases where display differs from edit value
-  exportCellBackgroundColor?: string;
   emptyText?: string; // Text to show when value is empty
   emptyClassName?: string;
 }
@@ -47,7 +46,6 @@ export function InlineEdit({
   editClassName = '',
   error,
   displayValue,
-  exportCellBackgroundColor,
   emptyText,
   emptyClassName = 'text-gray-300 italic',
 }: InlineEditProps) {
@@ -99,18 +97,7 @@ export function InlineEdit({
       className={`${isReadOnly ? '' : 'cursor-pointer'} ${className} ${!hasValue ? emptyClassName : ''}`}
       title={valueToDisplay}
     >
-      {hasValue ? (
-        <span className="inline-flex items-center gap-1.5">
-          <span>{valueToDisplay}</span>
-          {exportCellBackgroundColor && (
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-none border border-gray-300 align-middle"
-              style={{ backgroundColor: exportCellBackgroundColor }}
-              title={`Export Background Color: ${exportCellBackgroundColor}`}
-            />
-          )}
-        </span>
-      ) : (emptyText || 'Add...')}
+      {hasValue ? valueToDisplay : (emptyText || 'Add...')}
     </div>
   );
 }
