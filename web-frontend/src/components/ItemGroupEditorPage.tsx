@@ -63,10 +63,10 @@ interface ItemGroupEditorPageProps {
   children?: React.ReactNode;
   extraButtons?: React.ReactNode;
   itemTableHeaderAction?: React.ReactNode;
-  addItem: (dataType: DataType, data: ItemGroupEditorPageData, id: string, groupIds: string[], description?: string, exportCellBackgroundColor?: string) => void;
-  addGroup: (dataType: DataType, data: ItemGroupEditorPageData, id: string, memberIds: string[], description?: string, exportCellBackgroundColor?: string) => void;
-  updateItem: (dataType: DataType, data: ItemGroupEditorPageData, oldId: string, newId: string, groupIds?: string[], description?: string, exportCellBackgroundColor?: string) => void;
-  updateGroup: (dataType: DataType, data: ItemGroupEditorPageData, oldId: string, newId: string, members?: string[], description?: string, exportCellBackgroundColor?: string) => void;
+  addItem: (dataType: DataType, data: ItemGroupEditorPageData, id: string, groupIds: string[], description?: string) => void;
+  addGroup: (dataType: DataType, data: ItemGroupEditorPageData, id: string, memberIds: string[], description?: string) => void;
+  updateItem: (dataType: DataType, data: ItemGroupEditorPageData, oldId: string, newId: string, groupIds?: string[], description?: string) => void;
+  updateGroup: (dataType: DataType, data: ItemGroupEditorPageData, oldId: string, newId: string, members?: string[], description?: string) => void;
   deleteItem: (dataType: DataType, data: ItemGroupEditorPageData, id: string) => void;
   deleteGroup: (dataType: DataType, data: ItemGroupEditorPageData, id: string) => void;
   removeItemFromGroup: (dataType: DataType, data: ItemGroupEditorPageData, itemId: string, groupId: string) => void;
@@ -106,7 +106,6 @@ export default function ItemGroupEditorPage({
     description: string;
     groups: string[];
     members: string[];
-    backgroundColor: string;
     editingId?: string;
     isItem: boolean;  // Whether the draft is for an item or a group
   }>({
@@ -114,7 +113,6 @@ export default function ItemGroupEditorPage({
     description: '',
     groups: [],
     members: [],
-    backgroundColor: '',
     isItem: true,
   });
   const [error, setError] = useState<string>('');
@@ -134,8 +132,6 @@ export default function ItemGroupEditorPage({
   const handleSave = () => {
     const trimmedId = draft.id.trim();
     const trimmedDescription = draft.description.trim();
-    const trimmedBackgroundColor = draft.backgroundColor.trim();
-    const normalizedBackgroundColor = trimmedBackgroundColor.toLowerCase();
     if (!trimmedId) {
       setError(`${draft.isItem ? itemLabel : "Group"} ID cannot be empty`);
       return;
@@ -151,11 +147,6 @@ export default function ItemGroupEditorPage({
       return;
     }
 
-    if (normalizedBackgroundColor && !/^#[0-9a-f]{6}$/.test(normalizedBackgroundColor)) {
-      setError('Export Background Color must be a valid hex color in #RRGGBB format');
-      return;
-    }
-
     const wasEditing = !!draft.editingId;
     if (draft.isItem) {
       if (draft.editingId) {
@@ -165,8 +156,7 @@ export default function ItemGroupEditorPage({
           draft.editingId,
           trimmedId,
           draft.groups,
-          trimmedDescription,
-          normalizedBackgroundColor
+          trimmedDescription
         );
       } else {
         addItem(
@@ -174,8 +164,7 @@ export default function ItemGroupEditorPage({
           data,
           trimmedId,
           draft.groups,
-          trimmedDescription,
-          normalizedBackgroundColor
+          trimmedDescription
         );
       }
     } else {
@@ -186,8 +175,7 @@ export default function ItemGroupEditorPage({
           draft.editingId,
           trimmedId,
           draft.members,
-          trimmedDescription,
-          normalizedBackgroundColor
+          trimmedDescription
         );
       } else {
         addGroup(
@@ -195,13 +183,12 @@ export default function ItemGroupEditorPage({
           data,
           trimmedId,
           draft.members,
-          trimmedDescription,
-          normalizedBackgroundColor
+          trimmedDescription
         );
       }
     }
 
-    setDraft({ id: '', description: '', groups: [], members: [], backgroundColor: '', isItem: true });
+    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
     setMode(Mode.NORMAL);
     setError('');
     // Restore scroll position if we were editing
@@ -233,7 +220,6 @@ export default function ItemGroupEditorPage({
           description: item.description,
           groups: itemGroups,
           members: [],
-          backgroundColor: item.export?.styles?.cell?.backgroundColor || '',
           editingId: id,
           isItem: true
         });
@@ -257,7 +243,6 @@ export default function ItemGroupEditorPage({
           description: group.description,
           groups: [],
           members: group.members,
-          backgroundColor: group.export?.styles?.cell?.backgroundColor || '',
           editingId: id,
           isItem: false
         });
@@ -301,7 +286,7 @@ export default function ItemGroupEditorPage({
   const handleCancel = () => {
     const wasEditing = !!draft.editingId;
     setMode(Mode.NORMAL);
-    setDraft({ id: '', description: '', groups: [], members: [], backgroundColor: '', isItem: true });
+    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
     setError('');
     // Restore scroll position if we were editing
     if (wasEditing) {
@@ -357,15 +342,6 @@ export default function ItemGroupEditorPage({
           : [...prev.members, id]
       }));
     }
-  };
-
-  const handleDraftBackgroundColorChange = (color: string) => {
-    setDraft(prev => ({ ...prev, backgroundColor: color }));
-    setError('');
-  };
-
-  const handleDraftBackgroundColorReset = () => {
-    setDraft(prev => ({ ...prev, backgroundColor: '' }));
   };
 
   const handleStartInlineEditing = (id: string, isItem: boolean, field: 'id' | 'description' = 'id') => {
@@ -462,7 +438,7 @@ export default function ItemGroupEditorPage({
       handleCancel();
     } else {
       setMode(Mode.ADDING);
-      setDraft({ id: '', description: '', groups: [], members: [], backgroundColor: '', isItem });
+      setDraft({ id: '', description: '', groups: [], members: [], isItem });
       setError('');
     }
   };
@@ -559,9 +535,6 @@ export default function ItemGroupEditorPage({
           onIdChange={handleDraftIdChange}
           onDescriptionChange={handleDraftDescriptionChange}
           onMemberToggle={handleMemberToggle}
-          onBackgroundColorChange={handleDraftBackgroundColorChange}
-          onBackgroundColorReset={handleDraftBackgroundColorReset}
-          showExportStyleEditor={dataType === DataType.PEOPLE}
           onSave={handleSave}
           onCancel={handleCancel}
         />

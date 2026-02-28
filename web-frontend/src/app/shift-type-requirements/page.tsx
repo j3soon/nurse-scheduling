@@ -439,7 +439,7 @@ export default function ShiftTypeRequirementsPage() {
                     selectedIds={formData.qualified_people}
                     onToggle={(id) => handleArrayFieldToggle('qualified_people', id)}
                     label=""
-                                      />
+                  />
                 )}
                 {errors.qualified_people && (
                   <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
