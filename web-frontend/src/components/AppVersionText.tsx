@@ -20,7 +20,7 @@
 import { GITHUB_REPO_URL } from '@/constants/urls';
 
 const HASH_PATTERN = /^[0-9a-fA-F]+$/;
-const TAGGED_COMMIT_PATTERN = /^(?<tag>.+)(?<commitCount>-\d+)-g(?<hash>[0-9a-fA-F]+)$/;
+const TAGGED_COMMIT_PATTERN = /^(.+)(-\d+)-g([0-9a-fA-F]+)$/;
 
 type ParsedVersionParts = {
   tag: string;
@@ -44,12 +44,12 @@ function parseVersionParts(version: string): ParsedVersionParts {
     };
   }
 
-  const taggedCommitMatch = baseVersion.match(TAGGED_COMMIT_PATTERN)?.groups;
+  const taggedCommitMatch = baseVersion.match(TAGGED_COMMIT_PATTERN);
   if (taggedCommitMatch) {
     return {
-      tag: taggedCommitMatch.tag,
-      commitCount: taggedCommitMatch.commitCount,
-      hash: taggedCommitMatch.hash,
+      tag: taggedCommitMatch[1],
+      commitCount: taggedCommitMatch[2],
+      hash: taggedCommitMatch[3],
       dirtySuffix,
       isHashOnly: false,
     };
