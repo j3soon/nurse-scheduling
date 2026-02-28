@@ -19,7 +19,7 @@
 
 // A list component that allows reordering of card items by dragging.
 // Note that this file highly duplicates with DataTable.tsx.
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 import { FiEdit2, FiTrash2 } from 'react-icons/fi';
 
@@ -42,6 +42,8 @@ export function DraggableCardList<T>({
   onDelete,
   onReorder,
 }: DraggableCardListProps<T>) {
+  const [dragOverState, setDragOverState] = useState<{ index: number; insertAfter: boolean } | null>(null);
+
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, index: number) => {
     e.dataTransfer.setData('text/plain', index.toString());
     e.currentTarget.classList.add('opacity-50');
@@ -49,20 +51,23 @@ export function DraggableCardList<T>({
 
   const handleDragEnd = (e: React.DragEvent<HTMLDivElement>) => {
     e.currentTarget.classList.remove('opacity-50');
+    setDragOverState(null);
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>, index: number) => {
     e.preventDefault();
-    e.currentTarget.classList.add('border-t-2', 'border-t-blue-500');
+    const rect = e.currentTarget.getBoundingClientRect();
+    const insertAfter = e.clientY > rect.top + rect.height / 2;
+    setDragOverState({ index, insertAfter });
   };
 
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.currentTarget.classList.remove('border-t-2', 'border-t-blue-500');
+  const handleDragLeave = () => {
+    setDragOverState(null);
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>, dropIndex: number) => {
     e.preventDefault();
-    e.currentTarget.classList.remove('border-t-2', 'border-t-blue-500');
+    setDragOverState(null);
 
     const dragIndex = parseInt(e.dataTransfer.getData('text/plain'));
     if (!onReorder) {
@@ -70,8 +75,10 @@ export function DraggableCardList<T>({
       return;
     }
 
-    // When moving downward, removing the source item shifts the destination by -1.
-    const adjustedDropIndex = dragIndex < dropIndex ? dropIndex - 1 : dropIndex;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const insertAfter = e.clientY > rect.top + rect.height / 2;
+    const insertionIndex = insertAfter ? dropIndex + 1 : dropIndex;
+    const adjustedDropIndex = dragIndex < insertionIndex ? insertionIndex - 1 : insertionIndex;
 
     const newItems = [...items];
     const [draggedItem] = newItems.splice(dragIndex, 1);
@@ -96,11 +103,15 @@ export function DraggableCardList<T>({
             return (
               <div
                 key={index}
-                className={`px-4 py-2 ${isDraggable ? 'cursor-move hover:bg-gray-50' : ''}`}
+                className={`px-4 py-2 ${isDraggable ? 'cursor-move hover:bg-gray-50' : ''} ${
+                  dragOverState?.index === index
+                    ? (dragOverState.insertAfter ? 'border-b-2 border-b-blue-500' : 'border-t-2 border-t-blue-500')
+                    : ''
+                }`}
                 draggable={isDraggable}
                 onDragStart={isDraggable ? (e) => handleDragStart(e, index) : undefined}
                 onDragEnd={isDraggable ? handleDragEnd : undefined}
-                onDragOver={isDraggable ? handleDragOver : undefined}
+                onDragOver={isDraggable ? (e) => handleDragOver(e, index) : undefined}
                 onDragLeave={isDraggable ? handleDragLeave : undefined}
                 onDrop={isDraggable ? (e) => handleDrop(e, index) : undefined}
               >

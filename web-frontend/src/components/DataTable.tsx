@@ -19,7 +19,7 @@
 
 // A table component that allows reordering of rows by dragging the mouse.
 // Note that this file highly duplicates with DraggableCardList.tsx.
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 
 interface Column<T> {
@@ -38,6 +38,8 @@ interface DataTableProps<T> {
 }
 
 export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, headerAction }: DataTableProps<T>) {
+  const [dragOverState, setDragOverState] = useState<{ rowIndex: number; insertAfter: boolean } | null>(null);
+
   const handleDragStart = (e: React.DragEvent<HTMLTableRowElement>, index: number) => {
     e.dataTransfer.setData('text/plain', index.toString());
     e.currentTarget.classList.add('opacity-50');
@@ -45,20 +47,23 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
 
   const handleDragEnd = (e: React.DragEvent<HTMLTableRowElement>) => {
     e.currentTarget.classList.remove('opacity-50');
+    setDragOverState(null);
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>, rowIndex: number) => {
     e.preventDefault();
-    e.currentTarget.classList.add('border-t-2', 'border-t-blue-500');
+    const rect = e.currentTarget.getBoundingClientRect();
+    const insertAfter = e.clientY > rect.top + rect.height / 2;
+    setDragOverState({ rowIndex, insertAfter });
   };
 
-  const handleDragLeave = (e: React.DragEvent<HTMLTableRowElement>) => {
-    e.currentTarget.classList.remove('border-t-2', 'border-t-blue-500');
+  const handleDragLeave = () => {
+    setDragOverState(null);
   };
 
   const handleDrop = (e: React.DragEvent<HTMLTableRowElement>, dropIndex: number) => {
     e.preventDefault();
-    e.currentTarget.classList.remove('border-t-2', 'border-t-blue-500');
+    setDragOverState(null);
 
     const dragIndex = parseInt(e.dataTransfer.getData('text/plain'));
     if (!onReorder) {
@@ -66,8 +71,10 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
       return;
     }
 
-    // When moving downward, removing the source row shifts the destination by -1.
-    const adjustedDropIndex = dragIndex < dropIndex ? dropIndex - 1 : dropIndex;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const insertAfter = e.clientY > rect.top + rect.height / 2;
+    const insertionIndex = insertAfter ? dropIndex + 1 : dropIndex;
+    const adjustedDropIndex = dragIndex < insertionIndex ? insertionIndex - 1 : insertionIndex;
 
     const newData = [...data];
     const [draggedItem] = newData.splice(dragIndex, 1);
@@ -111,10 +118,14 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                 draggable={isDraggable}
                 onDragStart={isDraggable ? (e) => handleDragStart(e, rowIndex) : undefined}
                 onDragEnd={isDraggable ? handleDragEnd : undefined}
-                onDragOver={isDraggable ? handleDragOver : undefined}
+                onDragOver={isDraggable ? (e) => handleDragOver(e, rowIndex) : undefined}
                 onDragLeave={isDraggable ? handleDragLeave : undefined}
                 onDrop={isDraggable ? (e) => handleDrop(e, rowIndex) : undefined}
-                className={`${isDraggable ? 'cursor-move hover:bg-gray-50' : ''} ${customClassName}`}
+                className={`${isDraggable ? 'cursor-move hover:bg-gray-50' : ''} ${
+                  dragOverState?.rowIndex === rowIndex
+                    ? (dragOverState.insertAfter ? 'border-b-2 border-b-blue-500' : 'border-t-2 border-t-blue-500')
+                    : ''
+                } ${customClassName}`}
               >
               {columns.map((column, colIndex) => {
                 const isThirdColumn = colIndex === 2;
