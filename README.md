@@ -147,6 +147,18 @@ pytest --log-cli-level=INFO
 ruff check nurse_scheduling tests
 ```
 
+Generate coverage report:
+
+```sh
+cd core
+# terminal summary
+pytest --cov=nurse_scheduling
+# HTML report for local inspection
+pytest --cov=nurse_scheduling --cov-report=html
+# open report at:
+# htmlcov/index.html
+```
+
 For more debugging output when a test fails:
 
 ```sh
