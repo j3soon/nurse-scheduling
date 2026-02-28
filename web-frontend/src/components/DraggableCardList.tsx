@@ -70,10 +70,12 @@ export function DraggableCardList<T>({
       return;
     }
 
-    // The dropIndex here is where the item should be placed.
+    // When moving downward, removing the source item shifts the destination by -1.
+    const adjustedDropIndex = dragIndex < dropIndex ? dropIndex - 1 : dropIndex;
+
     const newItems = [...items];
     const [draggedItem] = newItems.splice(dragIndex, 1);
-    newItems.splice(dropIndex, 0, draggedItem);
+    newItems.splice(adjustedDropIndex, 0, draggedItem);
     onReorder(newItems);
   };
 

@@ -66,10 +66,12 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
       return;
     }
 
-    // The dropIndex here is where the item should be placed.
+    // When moving downward, removing the source row shifts the destination by -1.
+    const adjustedDropIndex = dragIndex < dropIndex ? dropIndex - 1 : dropIndex;
+
     const newData = [...data];
     const [draggedItem] = newData.splice(dragIndex, 1);
-    newData.splice(dropIndex, 0, draggedItem);
+    newData.splice(adjustedDropIndex, 0, draggedItem);
     onReorder(newData);
   };
 
