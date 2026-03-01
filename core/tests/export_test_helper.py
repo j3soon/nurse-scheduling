@@ -1,4 +1,4 @@
-"""Shared test helper for XLSX export regression tests across solver backends."""
+"""Shared test helper for XLSX golden regression tests across solver backends."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -30,42 +30,102 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import nurse_scheduling
 import nurse_scheduling.exporter as exporter
-import pandas
 import pytest
 from openpyxl import load_workbook
 from pydantic import ValidationError
 
 from .schedule_test_helper import CONTINUE_ON_ERROR, IGNORE_TESTS, TESTCASES_DIR
 
+WRITE_XLSX_GOLDEN = os.getenv("WRITE_XLSX_GOLDEN") == "1"
 
-def _extract_dataframe(df_like):
-    if isinstance(df_like, pandas.DataFrame):
-        return df_like
-    if hasattr(df_like, "data"):
-        return df_like.data
-    raise TypeError(f"Unsupported dataframe-like object: {type(df_like)!r}")
+def _normalize_color(color):
+    if color is None:
+        return None
+    return {
+        "type": color.type,
+        "rgb": color.rgb,
+        "indexed": color.indexed,
+        "theme": color.theme,
+        "tint": color.tint,
+    }
 
 
-def _normalize_cell(value):
-    return "" if value is None else str(value)
+def _normalize_border_side(side):
+    if side is None:
+        return None
+    return {
+        "style": side.style,
+        "color": _normalize_color(side.color),
+    }
 
 
-def _assert_workbook_matches_dataframe(df_like, workbook_bytes):
-    expected_df = _extract_dataframe(df_like)
-    wb = load_workbook(workbook_bytes)
-    ws = wb.active
-
-    assert ws.freeze_panes == "B3"
-    assert ws.max_row == expected_df.shape[0]
-    assert ws.max_column == expected_df.shape[1]
-
-    for r in range(expected_df.shape[0]):
-        for c in range(expected_df.shape[1]):
-            expected = _normalize_cell(expected_df.iloc[r, c])
-            actual = _normalize_cell(ws.cell(row=r + 1, column=c + 1).value)
-            assert actual == expected, (
-                f"Cell mismatch at R{r+1}C{c+1}: expected={expected!r}, actual={actual!r}"
+def _normalize_worksheet(ws):
+    normalized_cells = []
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+        normalized_row = []
+        for cell in row:
+            normalized_row.append(
+                {
+                    "value": cell.value,
+                    "number_format": cell.number_format,
+                    "font": {
+                        "name": cell.font.name,
+                        "size": cell.font.size,
+                        "bold": cell.font.bold,
+                        "italic": cell.font.italic,
+                        "underline": cell.font.underline,
+                        "color": _normalize_color(cell.font.color),
+                    },
+                    "fill": {
+                        "fill_type": cell.fill.fill_type,
+                        "fg": _normalize_color(cell.fill.fgColor),
+                        "bg": _normalize_color(cell.fill.bgColor),
+                    },
+                    "alignment": {
+                        "horizontal": cell.alignment.horizontal,
+                        "vertical": cell.alignment.vertical,
+                        "wrap_text": cell.alignment.wrap_text,
+                    },
+                    "border": {
+                        "left": _normalize_border_side(cell.border.left),
+                        "right": _normalize_border_side(cell.border.right),
+                        "top": _normalize_border_side(cell.border.top),
+                        "bottom": _normalize_border_side(cell.border.bottom),
+                    },
+                    "comment": None if cell.comment is None else {
+                        "text": cell.comment.text,
+                        "author": cell.comment.author,
+                    },
+                }
             )
+        normalized_cells.append(normalized_row)
+    return {
+        "title": ws.title,
+        "max_row": ws.max_row,
+        "max_column": ws.max_column,
+        "freeze_panes": ws.freeze_panes,
+        "cells": normalized_cells,
+    }
+
+
+def _assert_workbook_matches_golden(generated_xlsx: bytes, golden_xlsx_path: str):
+    generated_wb = load_workbook(BytesIO(generated_xlsx))
+    golden_wb = load_workbook(golden_xlsx_path)
+
+    generated_sheet_names = generated_wb.sheetnames
+    golden_sheet_names = golden_wb.sheetnames
+    assert generated_sheet_names == golden_sheet_names
+
+    for sheet_name in generated_sheet_names:
+        generated_ws = generated_wb[sheet_name]
+        golden_ws = golden_wb[sheet_name]
+        assert _normalize_worksheet(generated_ws) == _normalize_worksheet(golden_ws)
+
+
+def _get_golden_xlsx_path(filepath: str, prettify: bool) -> str:
+    if prettify:
+        return f"{filepath[:-5]}.prettify.xlsx"
+    return f"{filepath[:-5]}.xlsx"
 
 
 def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
@@ -112,7 +172,20 @@ def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
                 continue
             output = BytesIO()
             exporter.export_to_excel(df, output, cell_export_info)
-            _assert_workbook_matches_dataframe(df, output)
+            golden_xlsx_path = _get_golden_xlsx_path(filepath, prettify)
+
+            if WRITE_XLSX_GOLDEN:
+                with open(golden_xlsx_path, "wb") as f:
+                    f.write(output.getvalue())
+                continue
+
+            if not os.path.isfile(golden_xlsx_path):
+                raise FileNotFoundError(
+                    f"Missing golden XLSX: {golden_xlsx_path}. "
+                    "Run with WRITE_XLSX_GOLDEN=1 to generate/update golden files."
+                )
+
+            _assert_workbook_matches_golden(output.getvalue(), golden_xlsx_path)
         except ValidationError as e:
             logging.debug(f"Validation error for '{base_filepath}': {e}")
             error_count += 1
