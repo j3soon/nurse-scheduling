@@ -235,4 +235,78 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     expect(screen.getByRole('button', { name: /upload shift requests/i })).toBeDisabled();
     expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
+
+  it('parses whitespace-padded CSV values for shift requests', async () => {
+    const user = userEvent.setup();
+    fileContentsByName.set('shift-requests.csv', '  Person 1  ,  D  \n');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.change(
+      screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)'),
+      { target: { value: '2' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /upload shift requests/i }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledWith(
+      'shift request',
+      [
+        {
+          type: 'shift request',
+          person: ['Person 1'],
+          date: ['01'],
+          shiftType: ['D'],
+          weight: 2,
+        },
+      ],
+    );
+  });
+
+  it('accepts BOM-prefixed person IDs after CSV trimming', async () => {
+    const user = userEvent.setup();
+    fileContentsByName.set('shift-requests.csv', '\uFEFFPerson 1,D\n');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.change(
+      screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)'),
+      { target: { value: '2' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /upload shift requests/i }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledWith(
+      'shift request',
+      [
+        {
+          type: 'shift request',
+          person: ['Person 1'],
+          date: ['01'],
+          shiftType: ['D'],
+          weight: 2,
+        },
+      ],
+    );
+  });
+
+  it('rejects unknown shift type IDs in shift-requests CSV', async () => {
+    const user = userEvent.setup();
+    (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
+    fileContentsByName.set('shift-requests.csv', 'Person 1,X\n');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.change(
+      screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)'),
+      { target: { value: '2' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /upload shift requests/i }));
+
+    expect(alert).toHaveBeenCalledWith(
+      expect.stringContaining('CSV validation failed: Invalid shift type "X" at row 1, column 2'),
+    );
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
 });

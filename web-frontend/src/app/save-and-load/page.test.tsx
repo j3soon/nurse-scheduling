@@ -242,4 +242,41 @@ describe('SaveAndLoadPage', () => {
     expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'partial' }));
     expect(alert).toHaveBeenCalledWith('YAML file loaded successfully!');
   });
+
+  it('passes through unknown top-level keys when loading uploaded YAML', () => {
+    render(<SaveAndLoadPage />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'unknown-keys.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('unknown-keys.yaml', 'description: partial\ncustomFlag: true\n');
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(loadFromYaml).toHaveBeenCalledWith(
+      expect.objectContaining({ description: 'partial', customFlag: true }),
+    );
+  });
+
+  it('saves sparse edited YAML objects without surfacing an inline parse error', async () => {
+    const user = userEvent.setup();
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+      target: { value: 'people:\n  items:\n    - id: P1\n' },
+    });
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(loadFromYaml).toHaveBeenCalledWith(
+        expect.objectContaining({
+          people: expect.objectContaining({
+            items: [expect.objectContaining({ id: 'P1' })],
+          }),
+        }),
+      );
+    });
+    expect(screen.queryByText(/invalid yaml format/i)).not.toBeInTheDocument();
+  });
 });

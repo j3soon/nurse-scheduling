@@ -1244,4 +1244,81 @@ describe('useSchedulingData', () => {
       expect(result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST)).toHaveLength(1);
     });
   });
+
+  it('keeps memberships and preferences stable for description-only item updates', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updatePreferencesByType(SHIFT_REQUEST, [
+        { type: SHIFT_REQUEST, person: ['Person 1'], date: ['ALL'], shiftType: ['D'], weight: 1 },
+      ]);
+    });
+
+    const groupsBefore = result.current.peopleData.groups.map(group => ({
+      id: group.id,
+      members: [...group.members],
+    }));
+    const requestsBefore = result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST);
+
+    act(() => {
+      result.current.updateItem(
+        DataType.PEOPLE,
+        result.current.peopleData,
+        'Person 1',
+        'Person 1',
+        undefined,
+        'Updated description only',
+      );
+    });
+
+    await waitFor(() => {
+      const person1 = result.current.peopleData.items.find(item => item.id === 'Person 1');
+      expect(person1?.description).toBe('Updated description only');
+      expect(result.current.peopleData.groups.map(group => ({ id: group.id, members: group.members }))).toEqual(
+        groupsBefore,
+      );
+      expect(result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST)).toEqual(requestsBefore);
+    });
+  });
+
+  it('keeps group memberships and preference identities intact across chained reorders', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updatePreferencesByType(SHIFT_REQUEST, [
+        { type: SHIFT_REQUEST, person: ['Person 1'], date: ['ALL'], shiftType: ['D'], weight: 1 },
+        { type: SHIFT_REQUEST, person: ['Person 2'], date: ['ALL'], shiftType: ['N'], weight: 2 },
+      ]);
+    });
+
+    const baselineIds = result.current.peopleData.items.slice(0, 3).map(item => item.id);
+
+    act(() => {
+      const reorderedOnce = [
+        result.current.peopleData.items[1],
+        result.current.peopleData.items[2],
+        result.current.peopleData.items[0],
+        ...result.current.peopleData.items.slice(3),
+      ];
+      result.current.reorderItems(DataType.PEOPLE, result.current.peopleData, reorderedOnce);
+    });
+
+    act(() => {
+      const reorderedTwice = [
+        result.current.peopleData.items[2],
+        result.current.peopleData.items[0],
+        result.current.peopleData.items[1],
+        ...result.current.peopleData.items.slice(3),
+      ];
+      result.current.reorderItems(DataType.PEOPLE, result.current.peopleData, reorderedTwice);
+    });
+
+    await waitFor(() => {
+      const group1 = result.current.peopleData.groups.find(group => group.id === 'Group 1');
+      expect(group1?.members).toEqual(['Person 1', 'Person 2']);
+      const requests = result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST) as Array<{ person: string[] }>;
+      expect(requests.map(req => req.person[0]).sort()).toEqual(['Person 1', 'Person 2']);
+      expect(baselineIds).toEqual(['Person 1', 'Person 2', 'Person 3']);
+    });
+  });
 });

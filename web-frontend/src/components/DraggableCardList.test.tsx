@@ -20,6 +20,7 @@
 // This test is mostly AI generated.
 
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DraggableCardList } from '@/components/DraggableCardList';
 
 type Card = { title: string };
@@ -78,6 +79,48 @@ describe('DraggableCardList', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit/i }));
     fireEvent.click(screen.getByRole('button', { name: /delete/i }));
+
+    expect(onEdit).toHaveBeenCalledWith(0);
+    expect(onDelete).toHaveBeenCalledWith(0);
+  });
+
+  it('renders empty state without action buttons when list is empty', () => {
+    render(
+      <DraggableCardList<Card>
+        title="Rules"
+        items={[]}
+        emptyMessage="No rules"
+        renderContent={(item) => <span>{item.title}</span>}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('No rules')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+  });
+
+  it('supports keyboard activation for edit and delete buttons', async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+
+    render(
+      <DraggableCardList<Card>
+        title="Rules"
+        items={[{ title: 'A' }]}
+        emptyMessage="No rules"
+        renderContent={(item) => <span>{item.title}</span>}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />,
+    );
+
+    await user.tab();
+    await user.keyboard('{Enter}');
+    await user.tab();
+    await user.keyboard('{Enter}');
 
     expect(onEdit).toHaveBeenCalledWith(0);
     expect(onDelete).toHaveBeenCalledWith(0);

@@ -232,6 +232,18 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.getByPlaceholderText('Enter person ID')).toBeInTheDocument();
   });
 
+  it('does not enter group inline edit mode on double-click when groups are read-only', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness groupsReadOnly={true} />);
+
+    await user.dblClick(screen.getByTitle('Team A'));
+    await user.dblClick(screen.getByText('Initial team'));
+
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Team A')).not.toBeInTheDocument();
+  });
+
   it('shows auto indicator and hides edit/delete for auto-generated rows', () => {
     render(
       <ItemGroupEditorHarness

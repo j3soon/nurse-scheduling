@@ -233,4 +233,49 @@ describe('UploadButton', () => {
     fireEvent.dragLeave(button, { dataTransfer: { files: [] } });
     expect(button.className).not.toContain('border-dashed');
   });
+
+  it('uses the first dropped file when multiple files are dropped', () => {
+    const onFileUpload = vi.fn();
+
+    render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const firstFile = new File(['first'], 'first.yaml', { type: 'text/yaml' });
+    const secondFile = new File(['second'], 'second.yaml', { type: 'text/yaml' });
+    fireEvent.drop(screen.getByRole('button', { name: /upload/i }), {
+      dataTransfer: { files: [firstFile, secondFile] },
+    });
+
+    expect(onFileUpload).toHaveBeenCalledTimes(1);
+    expect(onFileUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'first.yaml' }));
+  });
+
+  it('accepts uppercase file extensions via case-insensitive validation', () => {
+    const onFileUpload = vi.fn();
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['name: test'], 'SCHEDULE.YAML', { type: 'text/yaml' });
+
+    fireEvent.change(input, {
+      target: { files: [file] },
+    });
+
+    expect(onFileUpload).toHaveBeenCalledTimes(1);
+    expect(onFileUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'SCHEDULE.YAML' }));
+  });
 });
