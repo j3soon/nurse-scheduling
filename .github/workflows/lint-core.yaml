@@ -19,5 +19,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements.txt
+      - name: Check core Python formatting with Ruff
+        run: cd core && ruff format --check nurse_scheduling tests
       - name: Lint core Python with Ruff
         run: cd core && ruff check nurse_scheduling tests

@@ -29,6 +29,7 @@ from openpyxl.styles.borders import Side
 from .context import Context
 from . import utils, models, constants
 
+
 def _get_font_color_for_background(hex_color: str) -> str:
     """Return ARGB font color (black/white) for readable contrast on a hex background."""
     r = int(hex_color[1:3], 16)
@@ -37,6 +38,7 @@ def _get_font_color_for_background(hex_color: str) -> str:
     luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
     # Match frontend threshold used in getPickerDisplay().
     return "FF000000" if luminance > 0.6 else "FFFFFFFF"
+
 
 def _build_custom_export_style_info(
     ctx: Context,
@@ -71,7 +73,9 @@ def _build_custom_export_style_info(
         if rule.type in ("row", "row header"):
             for target in rule.targets:
                 if target not in ctx.map_pid_p:
-                    raise ValueError(f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'")
+                    raise ValueError(
+                        f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
+                    )
                 target_people.update(ctx.map_pid_p[target])
 
         elif rule.type in ("column", "column header"):
@@ -81,7 +85,9 @@ def _build_custom_export_style_info(
         elif rule.type == "cell":
             for target in rule.targets:
                 if target not in ctx.map_sid_s:
-                    raise ValueError(f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'")
+                    raise ValueError(
+                        f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
+                    )
                 # Filter to actual shift types (exclude OFF pseudo shift).
                 target_shift_types.update(s for s in ctx.map_sid_s[target] if 0 <= s < ctx.n_shift_types)
 
@@ -115,8 +121,7 @@ def _build_custom_export_style_info(
         elif rule.type == "cell":
             for d, p in ctx.map_dp_s.keys():
                 assigned_shift_types = [
-                    s for s in ctx.map_dp_s[(d, p)]
-                    if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                    s for s in ctx.map_dp_s[(d, p)] if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
                 ]
                 if any(s in target_shift_types for s in assigned_shift_types):
                     row_idx = n_leading_rows + p
@@ -130,21 +135,27 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Initialize dataframe with size including leading rows and columns
     n_leading_rows, n_leading_cols = 2, 1
     n_trailing_rows, n_trailing_cols = 2, 0
-    
+
     # Dictionary to track cells with [X] markers and their weights for Excel notes
     cell_comment_info = {}
-    
+
     n_history_cols = 0
     # Add history columns after the name column (only if prettify is enabled)
     if prettify:
         max_history_length = max((len(person.history) for person in ctx.people.items if person.history), default=0)
         n_history_cols = max_history_length
-    
+
     # Add extra columns and rows for prettify mode
-    shift_type_cols = ctx.n_shift_types + len(ctx.shiftTypes.groups) if prettify else 0  # Individual shift types + shift type groups
-    extra_cols = (6 + shift_type_cols) if prettify else shift_type_cols  # Empty column + 5 OFF count columns + shift type columns
-    extra_rows = (1 + ctx.n_shift_types + len(ctx.shiftTypes.groups)) if prettify else 0  # Empty row + one row per shift type + one row per shift type group
-    
+    shift_type_cols = (
+        ctx.n_shift_types + len(ctx.shiftTypes.groups) if prettify else 0
+    )  # Individual shift types + shift type groups
+    extra_cols = (
+        (6 + shift_type_cols) if prettify else shift_type_cols
+    )  # Empty column + 5 OFF count columns + shift type columns
+    extra_rows = (
+        (1 + ctx.n_shift_types + len(ctx.shiftTypes.groups)) if prettify else 0
+    )  # Empty row + one row per shift type + one row per shift type group
+
     df = pd.DataFrame(
         "",
         index=range(n_leading_rows + len(ctx.people.items) + n_trailing_rows + extra_rows),
@@ -160,26 +171,26 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         for h in range(n_history_cols):
             df.iloc[0, n_leading_cols + h] = f"H-{n_history_cols - h}"
             df.iloc[1, n_leading_cols + h] = "History"
-    
+
     # Fill day numbers and weekdays
     # - row 0 contains day number
     # - row 1 contains weekday
     for d, date in enumerate(ctx.dates.items):
         col_idx = n_leading_cols + n_history_cols + d
         if ctx.dates.items[0].year != ctx.dates.items[-1].year:
-            df.iloc[0, col_idx] = date.strftime('%Y/%-m/%-d')
+            df.iloc[0, col_idx] = date.strftime("%Y/%-m/%-d")
         elif ctx.dates.items[0].month != ctx.dates.items[-1].month:
-            df.iloc[0, col_idx] = date.strftime('%-m/%-d')
+            df.iloc[0, col_idx] = date.strftime("%-m/%-d")
         else:
             df.iloc[0, col_idx] = date.day
-        df.iloc[1, col_idx] = date.strftime('%a')
+        df.iloc[1, col_idx] = date.strftime("%a")
 
     # Fill person descriptions and history
     # - column 0 contains person description
     # - columns 1 to n_history_cols contain history data (padded with empty strings, only if prettify)
     for p, person in enumerate(ctx.people.items):
-        df.iloc[n_leading_rows+p, 0] = person.id
-        
+        df.iloc[n_leading_rows + p, 0] = person.id
+
         # Fill history columns with proper padding (only if prettify is enabled)
         if n_history_cols > 0:
             if person.history:
@@ -187,11 +198,11 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 # Pad with empty strings at the front if history is shorter than n_history_cols
                 padded_history = [""] * max(0, n_history_cols - len(history)) + history
                 for h in range(n_history_cols):
-                    df.iloc[n_leading_rows+p, n_leading_cols + h] = padded_history[h]
+                    df.iloc[n_leading_rows + p, n_leading_cols + h] = padded_history[h]
             else:
                 # Fill with empty strings if no history
                 for h in range(n_history_cols):
-                    df.iloc[n_leading_rows+p, n_leading_cols + h] = ""
+                    df.iloc[n_leading_rows + p, n_leading_cols + h] = ""
 
     # Pre-filter preferences to avoid repeated filtering in the inner loop
     filtered_preferences = {}
@@ -211,24 +222,22 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             if len(ds) != date_input_len:
                 # Skip since only count for single-date style
                 continue
-            
+
             # Store filtered preferences by (d, p) key for quick lookup
             for d in ds:
                 for p in ps:
                     if (d, p) not in filtered_preferences:
                         filtered_preferences[(d, p)] = []
-                    filtered_preferences[(d, p)].append({
-                        'pref': pref,
-                        'ss': ss,
-                        'target_value': 1 if pref.weight > 0 else 0
-                    })
+                    filtered_preferences[(d, p)].append(
+                        {"pref": pref, "ss": ss, "target_value": 1 if pref.weight > 0 else 0}
+                    )
 
     # Set cell values based on solver results
     solver = ctx.solver
-    
-    for (d, p) in ctx.map_dp_s.keys():
+
+    for d, p in ctx.map_dp_s.keys():
         col_idx = n_leading_cols + n_history_cols + d
-        assert df.iloc[n_leading_rows+p, col_idx] == ""
+        assert df.iloc[n_leading_rows + p, col_idx] == ""
         cell_value = ""
         for s in ctx.map_dp_s[(d, p)]:
             if solver.get_value(ctx.shifts[(d, s, p)]) == 1:
@@ -243,9 +252,9 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             # Use pre-filtered preferences for this (d, p) combination
             if (d, p) in filtered_preferences:
                 for pref_data in filtered_preferences[(d, p)]:
-                    pref = pref_data['pref']
-                    ss = pref_data['ss']
-                    target_value = pref_data['target_value']
+                    pref = pref_data["pref"]
+                    ss = pref_data["ss"]
+                    target_value = pref_data["target_value"]
                     # Does not support shift type groups with mixed OFF and non-OFF shift types,
                     # which in most cases should not happen.
                     vars = [ctx.shifts[(d, s, p)] for s in ss] if constants.OFF_sid not in ss else [ctx.offs[(d, p)]]
@@ -262,7 +271,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                         if (excel_row, excel_col) not in cell_comment_info:
                             cell_comment_info[(excel_row, excel_col)] = []
                         cell_comment_info[(excel_row, excel_col)].append(abs(pref.weight))
-        df.iloc[n_leading_rows+p, col_idx] = cell_value
+        df.iloc[n_leading_rows + p, col_idx] = cell_value
 
     # Fill objective value
     df.iloc[n_leading_rows + len(ctx.people.items), 0] = "Score"
@@ -273,12 +282,12 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 
     # Sanity check with offs variables
     if not prettify:
-        for (d, p) in ctx.offs.keys():
+        for d, p in ctx.offs.keys():
             col_idx = n_leading_cols + n_history_cols + d
             if solver.get_value(ctx.offs[(d, p)]) == 1:
-                assert df.iloc[n_leading_rows+p, col_idx] == ""
+                assert df.iloc[n_leading_rows + p, col_idx] == ""
             else:
-                assert df.iloc[n_leading_rows+p, col_idx] != ""
+                assert df.iloc[n_leading_rows + p, col_idx] != ""
 
     if prettify:
         # TODO: Remove the concept of workday and freeday groups entirely from core solver
@@ -287,7 +296,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         # Find date groups containing "workday" and "freeday" (case-insensitive)
         workday_group_id = None
         freeday_group_id = None
-        
+
         # Use filter to simplify group lookup and ensure uniqueness
         workday_groups = list(filter(lambda g: "workday" in g.id.lower(), ctx.dates.groups))
         freeday_groups = list(filter(lambda g: "freeday" in g.id.lower(), ctx.dates.groups))
@@ -296,36 +305,36 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         if not workday_group_id or not freeday_group_id:
             workday_group_id = None
             freeday_group_id = None
-        
+
         # Add headers for OFF count columns
         off_col_start = n_leading_cols + n_history_cols + len(ctx.dates.items) + 1
         col_idx = off_col_start
-        
+
         # Add workday and freeday columns if groups are found
         if workday_group_id and freeday_group_id:
             df.iloc[1, col_idx] = f"OFF ({workday_group_id})"
             col_idx += 1
             df.iloc[1, col_idx] = f"OFF ({freeday_group_id})"
             col_idx += 1
-            
+
         df.iloc[1, col_idx] = "OFF (Total)"
         df.iloc[1, col_idx + 1] = "OFF (Weekday)"
         df.iloc[1, col_idx + 2] = "OFF (Weekend)"
-        
+
         # Add headers for shift type count columns
         shift_type_col_start = col_idx + 3  # After the OFF columns
         col_idx = shift_type_col_start
-        
+
         # Add individual shift type column headers
         for s in range(ctx.n_shift_types):
             df.iloc[1, col_idx] = f"{ctx.shiftTypes.items[s].id} Count"
             col_idx += 1
-        
+
         # Add shift type group column headers
         for shift_group in ctx.shiftTypes.groups:
             df.iloc[1, col_idx] = f"{shift_group.id} Count"
             col_idx += 1
-        
+
         # Count OFF days for each person (rows)
         for p in range(len(ctx.people.items)):
             off_workday = 0
@@ -333,7 +342,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             off_total = 0
             off_weekday = 0
             off_weekend = 0
-            
+
             for d in range(len(ctx.dates.items)):
                 if solver.get_value(ctx.offs[(d, p)]) == 1:
                     off_total += 1
@@ -343,14 +352,14 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                         off_weekend += 1
                     else:
                         off_weekday += 1
-                    
+
                     # Check if this date belongs to workday or freeday groups
                     if workday_group_id and freeday_group_id:
                         if d in ctx.map_did_d[workday_group_id]:
                             off_workday += 1
                         if d in ctx.map_did_d[freeday_group_id]:
                             off_freeday += 1
-            
+
             # Fill the OFF count columns
             col_idx = off_col_start
             if workday_group_id and freeday_group_id:
@@ -358,54 +367,66 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 col_idx += 1
                 df.iloc[n_leading_rows + p, col_idx] = off_freeday
                 col_idx += 1
-                
+
             df.iloc[n_leading_rows + p, col_idx] = off_total
             df.iloc[n_leading_rows + p, col_idx + 1] = off_weekday
             df.iloc[n_leading_rows + p, col_idx + 2] = off_weekend
-            
+
             # Fill shift type count columns for this person
             shift_col_idx = shift_type_col_start
-            
+
             # Count individual shift types for this person
             for s in range(ctx.n_shift_types):
-                shift_count = sum(1 for d in range(len(ctx.dates.items))
-                                if solver.get_value(ctx.shifts[(d, s, p)]) == 1)
+                shift_count = sum(
+                    1 for d in range(len(ctx.dates.items)) if solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                )
                 df.iloc[n_leading_rows + p, shift_col_idx] = shift_count
                 shift_col_idx += 1
-            
+
             # Count shift type groups for this person
             for shift_group in ctx.shiftTypes.groups:
-                shift_group_count = sum(1 for d in range(len(ctx.dates.items))
-                                      if any(solver.get_value(ctx.shifts[(d, s, p)]) == 1
-                                           for member_id in shift_group.members
-                                           for s in ctx.map_sid_s[member_id]))
+                shift_group_count = sum(
+                    1
+                    for d in range(len(ctx.dates.items))
+                    if any(
+                        solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                        for member_id in shift_group.members
+                        for s in ctx.map_sid_s[member_id]
+                    )
+                )
                 df.iloc[n_leading_rows + p, shift_col_idx] = shift_group_count
                 shift_col_idx += 1
-        
+
         # Add shift type count rows for each date (columns)
         # First add an empty row
         empty_row_index = n_leading_rows + len(ctx.people.items) + n_trailing_rows
-        
+
         # Add one row for each individual shift type
         for s in range(ctx.n_shift_types):
             shift_row_index = empty_row_index + 1 + s
             df.iloc[shift_row_index, 0] = f"{ctx.shiftTypes.items[s].id} Count"
-            
+
             for d in range(len(ctx.dates.items)):
-                shift_count = sum(1 for p in range(len(ctx.people.items))
-                                  if solver.get_value(ctx.shifts[(d, s, p)]) == 1)
+                shift_count = sum(
+                    1 for p in range(len(ctx.people.items)) if solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                )
                 df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
-        
+
         # Add one row for each shift type group
         for g, shift_group in enumerate(ctx.shiftTypes.groups):
             shift_row_index = empty_row_index + 1 + ctx.n_shift_types + g
             df.iloc[shift_row_index, 0] = f"{shift_group.id} Count"
-            
+
             for d in range(len(ctx.dates.items)):
-                shift_count = sum(1 for p in range(len(ctx.people.items))
-                                  if any(solver.get_value(ctx.shifts[(d, s, p)]) == 1
-                                  for member_id in shift_group.members
-                                  for s in ctx.map_sid_s[member_id]))
+                shift_count = sum(
+                    1
+                    for p in range(len(ctx.people.items))
+                    if any(
+                        solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                        for member_id in shift_group.members
+                        for s in ctx.map_sid_s[member_id]
+                    )
+                )
                 df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
 
     # Apply weekend highlighting and borders if prettify is enabled
@@ -413,13 +434,13 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         # Create a styler object to apply conditional formatting
         def apply_styling(df):
             # Create a style DataFrame with the same shape as the original
-            style_df = pd.DataFrame('', index=df.index, columns=df.columns)
-            
+            style_df = pd.DataFrame("", index=df.index, columns=df.columns)
+
             # Apply center alignment to all cells
             for row_idx in range(len(df)):
                 for col_idx in range(len(df.columns)):
-                    style_df.iloc[row_idx, col_idx] = 'text-align: center'
-            
+                    style_df.iloc[row_idx, col_idx] = "text-align: center"
+
             # Apply dark red font color to cells containing violation markers "[X]"
             for row_idx in range(len(df)):
                 for col_idx in range(len(df.columns)):
@@ -430,7 +451,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                             style_df.iloc[row_idx, col_idx] = f"{existing_style}; color: #C00000"
                         else:
                             style_df.iloc[row_idx, col_idx] = "color: #C00000"
-            
+
             # Apply light yellow background to history columns
             for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
                 for row_idx in range(len(df)):
@@ -438,15 +459,17 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                     if existing_style:
                         style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #fefce8"
                     else:
-                        style_df.iloc[row_idx, col_idx] = 'background-color: #fefce8'
-            
+                        style_df.iloc[row_idx, col_idx] = "background-color: #fefce8"
+
             # Check each column to see if it represents a weekend or freeday group (only date columns, not history columns)
-            for col_idx in range(n_leading_cols + n_history_cols, n_leading_cols + n_history_cols + len(ctx.dates.items)):
+            for col_idx in range(
+                n_leading_cols + n_history_cols, n_leading_cols + n_history_cols + len(ctx.dates.items)
+            ):
                 d = col_idx - n_leading_cols - n_history_cols  # Get the date index
-                
+
                 # Get the weekday from row 1 (second row)
                 weekday = df.iloc[1, col_idx]
-                
+
                 # Check if this date belongs to the freeday group (highest priority)
                 if freeday_group_id and d in ctx.map_did_d[freeday_group_id]:
                     # Apply light green background for freeday group
@@ -455,26 +478,30 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                         if existing_style:
                             style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #dcfce7"
                         else:
-                            style_df.iloc[row_idx, col_idx] = 'background-color: #dcfce7'
+                            style_df.iloc[row_idx, col_idx] = "background-color: #dcfce7"
                 # If it's Saturday or Sunday, highlight the entire column (lower priority than freeday)
-                elif weekday in ['Sat', 'Sun']:
+                elif weekday in ["Sat", "Sun"]:
                     # Apply background color to all rows in this column
                     for row_idx in range(len(df)):
                         existing_style = style_df.iloc[row_idx, col_idx]
                         if existing_style:
                             style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #dbeafe"
                         else:
-                            style_df.iloc[row_idx, col_idx] = 'background-color: #dbeafe'
-            
+                            style_df.iloc[row_idx, col_idx] = "background-color: #dbeafe"
+
             # Add borders to separate regions
             # Horizontal borders
             header_row_end = n_leading_rows - 1  # End of header region
             people_row_end = header_row_end + len(ctx.people.items)  # End of people region
             summary_row_end = people_row_end + n_trailing_rows  # End of summary region
-            shift_type_individual_counts_row_end = summary_row_end + 1 + ctx.n_shift_types  # End of individual shift type counts
-            shift_type_group_counts_row_end = shift_type_individual_counts_row_end + len(ctx.shiftTypes.groups)  # End of group counts
-            
-            # Vertical borders  
+            shift_type_individual_counts_row_end = (
+                summary_row_end + 1 + ctx.n_shift_types
+            )  # End of individual shift type counts
+            shift_type_group_counts_row_end = shift_type_individual_counts_row_end + len(
+                ctx.shiftTypes.groups
+            )  # End of group counts
+
+            # Vertical borders
             name_col_end = n_leading_cols - 1  # End of name column
             history_col_end = name_col_end + n_history_cols  # End of history columns
             date_col_end = history_col_end + len(ctx.dates.items)  # End of date columns
@@ -489,36 +516,54 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             # Calculate shift type column positions
             shift_type_individual_counts_col_end = off_weekend_col_end + ctx.n_shift_types
             shift_type_group_counts_col_end = shift_type_individual_counts_col_end + len(ctx.shiftTypes.groups)
-            
+
             # Apply borders to all cells, then add specific border styles
             for row_idx in range(len(df)):
                 for col_idx in range(len(df.columns)):
                     base_style = style_df.iloc[row_idx, col_idx]
                     borders = []
-                    
+
                     # Add horizontal borders
-                    if row_idx in [header_row_end, people_row_end, summary_row_end, shift_type_individual_counts_row_end, shift_type_group_counts_row_end]:
-                        borders.append('border-bottom: 2px solid #374151')
-                    
+                    if row_idx in [
+                        header_row_end,
+                        people_row_end,
+                        summary_row_end,
+                        shift_type_individual_counts_row_end,
+                        shift_type_group_counts_row_end,
+                    ]:
+                        borders.append("border-bottom: 2px solid #374151")
+
                     # Add vertical borders
-                    if col_idx in [name_col_end, history_col_end, date_col_end, off_total_col_end, off_weekend_col_end, shift_type_individual_counts_col_end, shift_type_group_counts_col_end]:
-                        borders.append('border-right: 2px solid #374151')
-                    
+                    if col_idx in [
+                        name_col_end,
+                        history_col_end,
+                        date_col_end,
+                        off_total_col_end,
+                        off_weekend_col_end,
+                        shift_type_individual_counts_col_end,
+                        shift_type_group_counts_col_end,
+                    ]:
+                        borders.append("border-right: 2px solid #374151")
+
                     # Add vertical border after Saturday columns (between Saturday and Sunday)
-                    if (n_leading_cols + n_history_cols <= col_idx < n_leading_cols + n_history_cols + len(ctx.dates.items) and
-                        df.iloc[1, col_idx] == 'Sat'):
-                        borders.append('border-right: 2px solid #9ca3af')
-                    
+                    if (
+                        n_leading_cols + n_history_cols
+                        <= col_idx
+                        < n_leading_cols + n_history_cols + len(ctx.dates.items)
+                        and df.iloc[1, col_idx] == "Sat"
+                    ):
+                        borders.append("border-right: 2px solid #9ca3af")
+
                     # Combine base style with borders
                     if borders:
-                        border_style = '; '.join(borders)
+                        border_style = "; ".join(borders)
                         if base_style:
                             style_df.iloc[row_idx, col_idx] = f"{base_style}; {border_style}"
                         else:
                             style_df.iloc[row_idx, col_idx] = border_style
-            
+
             return style_df
-        
+
         # Apply the styling and return the styled DataFrame
         styled_df = df.style.apply(lambda x: apply_styling(df), axis=None)
         style_info = _build_custom_export_style_info(
@@ -536,24 +581,24 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
     """
     Export DataFrame to Excel with frozen panes at B3 (first two rows and first column).
     Also adds notes/comments to cells with [X] markers showing the weight of unmet single-style requests.
-    
+
     Args:
         output_buffer: BytesIO buffer to write to
         cell_export_info: Dictionary containing cell comment information
     """
-    
+
     # Write to a temporary BytesIO buffer first
     temp_buffer = BytesIO()
     df.to_excel(temp_buffer, index=False, header=False)
     temp_buffer.seek(0)
-    
+
     # Load the workbook to apply additional formatting
     wb = load_workbook(temp_buffer)
     ws = wb.active
-    
+
     # Freeze the first two rows and first column (B3 is the cell after frozen area)
-    ws.freeze_panes = 'B3'
-    
+    ws.freeze_panes = "B3"
+
     # Backward compatibility: legacy shape was {(row, col): [weights]}.
     comment_info = {}
     style_info = {}
@@ -567,6 +612,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
     # Add notes/comments to cells with [X] markers if comment_info is provided.
     if comment_info:
         from openpyxl.comments import Comment
+
         for (row, col), weights in comment_info.items():
             cell = ws.cell(row=row, column=col)
             # Calculate total weight and create note text
@@ -575,7 +621,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                 note_text = f"Weight of unmet single-style request: {total_weight}"
             else:
                 note_text = f"Weights of unmet single-style requests: {total_weight} (individual weights: {', '.join(map(str, weights))})"
-            
+
             # Create and add the comment
             comment = Comment(note_text, "Nurse Scheduling System")
             cell.comment = comment
@@ -619,7 +665,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
 def export_to_csv(df, output_buffer):
     """
     Export DataFrame to CSV with UTF-8 BOM for Excel compatibility.
-    
+
     Args:
         output_buffer: BytesIO buffer to write to (use BytesIO for proper encoding handling)
     """
@@ -627,8 +673,8 @@ def export_to_csv(df, output_buffer):
     temp_buffer = StringIO()
     df.to_csv(temp_buffer, index=False, header=False)
     temp_buffer.seek(0)
-    
+
     # Encode with UTF-8 BOM and write to output buffer
     csv_content = temp_buffer.getvalue()
-    output_buffer.write(csv_content.encode('utf-8-sig'))
+    output_buffer.write(csv_content.encode("utf-8-sig"))
     output_buffer.seek(0)

@@ -38,6 +38,7 @@ from .schedule_test_helper import CONTINUE_ON_ERROR, IGNORE_TESTS, TESTCASES_DIR
 
 WRITE_XLSX_GOLDEN = os.getenv("WRITE_XLSX_GOLDEN") == "1"
 
+
 def _normalize_color(color):
     if color is None:
         return None
@@ -92,7 +93,9 @@ def _normalize_worksheet(ws):
                         "top": _normalize_border_side(cell.border.top),
                         "bottom": _normalize_border_side(cell.border.bottom),
                     },
-                    "comment": None if cell.comment is None else {
+                    "comment": None
+                    if cell.comment is None
+                    else {
                         "text": cell.comment.text,
                         "author": cell.comment.author,
                     },
@@ -142,7 +145,7 @@ def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
             "[%s][prettify=%s] Testing XLSX '%s' ...",
             solver,
             prettify,
-            filepath[len(TESTCASES_DIR) + 1:],
+            filepath[len(TESTCASES_DIR) + 1 :],
         )
 
         with open(filepath, "rb") as f:

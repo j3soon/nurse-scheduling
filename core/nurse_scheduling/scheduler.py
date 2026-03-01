@@ -28,13 +28,14 @@ from .utils import parse_dates
 from .loader import load_data
 from .solver_interface import SolverStatus
 
+
 def schedule(
     file_content: bytes,
     deterministic=False,
     avoid_solution=None,
     prettify=False,
     timeout: int | None = None,
-    solver: str = 'ortools/cp-sat',
+    solver: str = "ortools/cp-sat",
 ):
     logging.info("Loading scenario from file content...")
     scenario = load_data(file_content)
@@ -72,14 +73,16 @@ def schedule(
         ctx.map_pid_p[group.id] = sorted(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
 
     # Map date string (YYYY-MM-DD) to date index
-    if ctx.country is not None and ctx.country != 'TW':
+    if ctx.country is not None and ctx.country != "TW":
         raise ValueError(f"Country {ctx.country} is not supported yet")
     for d in range(ctx.n_days):
         date_obj = ctx.dates.items[d]
         ctx.map_did_d[str(date_obj)] = [d]
     # Add date keywords
     for keyword in MAP_DATE_KEYWORD_TO_FILTER:
-        ctx.map_did_d[keyword] = [d for d in range(ctx.n_days) if MAP_DATE_KEYWORD_TO_FILTER[keyword](ctx.dates.items[d])]
+        ctx.map_did_d[keyword] = [
+            d for d in range(ctx.n_days) if MAP_DATE_KEYWORD_TO_FILTER[keyword](ctx.dates.items[d])
+        ]
     for keyword in MAP_WEEKDAY_TO_STR:
         weekday_index = MAP_WEEKDAY_TO_STR.index(keyword)
         ctx.map_did_d[keyword] = [d for d in range(ctx.n_days) if ctx.dates.items[d].weekday() == weekday_index]
@@ -96,26 +99,27 @@ def schedule(
         ctx.map_did_d[group.id] = sorted(set(date_indices))
 
     logging.info("Initializing solver model...")
-    
+
     solver_backend, solver_engine = solver.lower().split("/", maxsplit=1)
 
     # Initialize the solver based on backend provider + engine
-    if solver_backend == 'ortools' and solver_engine == 'cp-sat':
+    if solver_backend == "ortools" and solver_engine == "cp-sat":
         from .solver_ortools_cp_sat import ORToolsSolver
+
         logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
         ctx.solver = ORToolsSolver()
-    elif solver_backend == 'pulp' and solver_engine == 'cbc':
+    elif solver_backend == "pulp" and solver_engine == "cbc":
         from .solver_pulp_cbc import PuLPSolver
+
         logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
         ctx.solver = PuLPSolver()
-    elif solver_backend == 'pulp' and solver_engine == 'cuopt':
+    elif solver_backend == "pulp" and solver_engine == "cuopt":
         from .solver_pulp_cuopt import PuLPCuOptSolver
+
         logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
         ctx.solver = PuLPCuOptSolver()
     else:
-        raise ValueError(
-            f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}"
-        )
+        raise ValueError(f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}")
 
     logging.info("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
@@ -131,7 +135,7 @@ def schedule(
     if avoid_solution is not None:
         avoid_solution_vars = []
         logging.info("Avoiding solution...")
-        for (d, s, p) in ctx.shifts:
+        for d, s, p in ctx.shifts:
             if avoid_solution[(d, s, p)] == 0:
                 avoid_solution_vars.append(ctx.shifts[(d, s, p)])
             elif avoid_solution[(d, s, p)] == 1:
@@ -148,7 +152,9 @@ def schedule(
             var_name = f"off_d{d}_p{p}"
             ctx.model_vars[var_name] = ctx.offs[(d, p)] = ctx.solver.create_bool_var_with_constraint(
                 var_name,
-                dp_shifts_sum, Operator.EQ, 0,
+                dp_shifts_sum,
+                Operator.EQ,
+                0,
                 (0, ctx.n_shift_types),  # we do not assume "at most one shift per day" here
             )
 
@@ -162,7 +168,11 @@ def schedule(
         for (d, p) in itertools.product(range(ctx.n_days), range(ctx.n_people))
     }
     ctx.map_d_sp = {
-        d: {(s, p) for (s, p) in itertools.product(range(ctx.n_shift_types), range(ctx.n_people)) if (d, s, p) in ctx.shifts}
+        d: {
+            (s, p)
+            for (s, p) in itertools.product(range(ctx.n_shift_types), range(ctx.n_people))
+            if (d, s, p) in ctx.shifts
+        }
         for d in range(ctx.n_days)
     }
     ctx.map_s_dp = {
@@ -170,7 +180,11 @@ def schedule(
         for s in range(ctx.n_shift_types)
     }
     ctx.map_p_ds = {
-        p: {(d, s) for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types)) if (d, s, p) in ctx.shifts}
+        p: {
+            (d, s)
+            for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types))
+            if (d, s, p) in ctx.shifts
+        }
         for p in range(ctx.n_people)
     }
 
@@ -184,7 +198,7 @@ def schedule(
     ctx.solver.set_objective(ctx.objective, maximize=True)
 
     logging.info("Initializing solver...")
-    
+
     # Create solution callback for tracking intermediate solutions
     solution_callback = ctx.solver.create_solution_callback(ctx.objective)
 
@@ -215,7 +229,7 @@ def schedule(
     stats = ctx.solver.get_statistics()
     for key, value in stats.items():
         logging.info(f"  - {key}: {value}")
-    
+
     logging.debug("Variables:")
     for k, v in ctx.model_vars.items():
         try:
@@ -236,7 +250,7 @@ def schedule(
 
     df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=prettify)
     solution = {}
-    for (d, s, p) in ctx.shifts:
+    for d, s, p in ctx.shifts:
         solution[(d, s, p)] = ctx.solver.get_value(ctx.shifts[(d, s, p)])
     # TODO: Better way to return?
     return df, solution, ctx.solver.get_objective_value(), ctx.solver_status, cell_export_info

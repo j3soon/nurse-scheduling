@@ -28,7 +28,7 @@ from .solver_interface import SolverInterface, SolverStatus
 
 class BasePuLPSolver(SolverInterface):
     """Shared PuLP solver implementation for engine-specific wrappers."""
-    
+
     def __init__(self, engine: str):
         """Initialize a PuLP solver for a specific engine."""
         super().__init__()
@@ -109,64 +109,65 @@ class BasePuLPSolver(SolverInterface):
         var = pulp.LpVariable(unique_name, cat=pulp.LpBinary)
         self.variables[unique_name] = var
         return var
-    
+
     def new_int_var(self, lb: int, ub: int, name: str) -> pulp.LpVariable:
         """Create a new integer variable."""
         unique_name = self._unique_name(name)
         var = pulp.LpVariable(unique_name, lowBound=lb, upBound=ub, cat=pulp.LpInteger)
         self.variables[unique_name] = var
         return var
-    
+
     def add_constraint(self, constraint, name: str = None) -> None:
         """Add a constraint to the model."""
         if name is None:
             name = self.unique_constraint_name("constraint")
         name = self._unique_name(name)
         self.model += constraint, name
-    
+
     def add_bool_or(self, literals: List[Any]) -> None:
         """
         Add a boolean OR constraint (at least one literal must be true).
-        
+
         For PuLP, we convert OR(x1, x2, ..., xn) to sum(x1, x2, ..., xn) >= 1
         Handle negations by converting ~xi to (1 - xi)
         """
         expr_sum = 0
         for lit in literals:
             expr_sum += lit
-        
+
         self.add_constraint(expr_sum >= 1, name=self.unique_constraint_name("bool_or"))
-    
+
     def set_objective(self, expression, maximize: bool = True) -> None:
         """Set the objective function."""
         self.objective_expr = expression
         self.maximize = maximize
-        
+
         # Handle plain numeric values (e.g., 0) by converting to PuLP expression
         if isinstance(expression, (int, float)):
             # Create a constant expression using PuLP
             expression = pulp.lpSum([expression])
-        
+
         if maximize:
             self.model.sense = pulp.LpMaximize
             self.model.setObjective(expression)
         else:
             self.model.sense = pulp.LpMinimize
             self.model.setObjective(expression)
-    
-    def solve(self, timeout: Union[int, None] = None, deterministic: bool = False,
-              solution_callback=None) -> SolverStatus:
+
+    def solve(
+        self, timeout: Union[int, None] = None, deterministic: bool = False, solution_callback=None
+    ) -> SolverStatus:
         """Solve the model using PuLP."""
         start_time = time.time()
 
         # Note: PuLP doesn't have built-in support for deterministic solving across all solvers
         if deterministic:
             logging.info("Deterministic mode requested (support varies by solver)")
-        
+
         # Note: PuLP doesn't support solution callbacks in the same way as OR-Tools
         if solution_callback is not None:
             logging.warning("Solution callbacks are not fully supported with PuLP solver")
-        
+
         # Solve the model.
         # `msg=1` means verbose solve mode.
         solver_kwargs = {"msg": 1}
@@ -201,10 +202,10 @@ class BasePuLPSolver(SolverInterface):
                     f"PuLP/{self.engine} backend is not available in this environment. "
                     "Ensure the required solver runtime is installed and configured."
                 )
-        
+
         self.status = self.model.solve(self.solver)
         self.solve_time = time.time() - start_time
-        
+
         # Convert PuLP status to our enum
         # Ref: https://www.coin-or.org/PuLP/constants.html
         if self.status == pulp.LpStatusOptimal:
@@ -227,14 +228,13 @@ class BasePuLPSolver(SolverInterface):
             self.solver_status = SolverStatus.UNKNOWN
         else:
             self.solver_status = SolverStatus.UNKNOWN
-        
+
         return self.solver_status
 
-    
     def get_value(self, var: Any) -> Union[int, float]:
         """Get the value of a variable in the solution."""
         return self._normalize_numeric_value(pulp.value(var))
-    
+
     def get_objective_value(self) -> int:
         """Get the objective value of the solution."""
         # We use int here to follow ortools' CP-SAT solver behavior, but we could solve with float if needed.
@@ -248,16 +248,16 @@ class BasePuLPSolver(SolverInterface):
                 raise ValueError(f"Objective value should be an integer, but got {val}.")
             return val
         return 0
-    
+
     def get_statistics(self) -> Dict[str, Any]:
         """Get solver statistics."""
         return {
-            'status': pulp.LpStatus[self.status],
-            'wall_time': self.solve_time,
-            'engine': self.engine,
-            'solver': str(self.solver) if self.solver else 'None',
+            "status": pulp.LpStatus[self.status],
+            "wall_time": self.solve_time,
+            "engine": self.engine,
+            "solver": str(self.solver) if self.solver else "None",
         }
-    
+
     def validate_model(self) -> str:
         """Validate the model."""
         # PuLP doesn't have built-in validation like OR-Tools
@@ -267,16 +267,18 @@ class BasePuLPSolver(SolverInterface):
             issues.append("No objective function set")
         if len(self.model.constraints) == 0:
             issues.append("No constraints defined")
-        
+
         if issues:
             return "Validation issues:\n" + "\n".join(f"  - {issue}" for issue in issues)
         return "Model appears valid"
-    
+
     def negate(self, var: Any) -> Any:
         """Negate a boolean variable. For PuLP: (1 - var)."""
         return 1 - var
-    
-    def create_bool_var_with_constraint(self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: Tuple[int, int]) -> Any:
+
+    def create_bool_var_with_constraint(
+        self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: Tuple[int, int]
+    ) -> Any:
         """Create a boolean variable with a constraint."""
         var = self.new_bool_var(name)
         m, M = int(source_expr_range[0]), int(source_expr_range[1])
@@ -286,8 +288,7 @@ class BasePuLPSolver(SolverInterface):
         inferred_m, inferred_M = self._infer_expr_bounds(source_expr)
         if m < inferred_m or M > inferred_M:
             raise ValueError(
-                f"Provided source expression bounds [{m}, {M}] exceed inferred bounds "
-                f"[{inferred_m}, {inferred_M}]"
+                f"Provided source expression bounds [{m}, {M}] exceed inferred bounds [{inferred_m}, {inferred_M}]"
             )
         K = int(target_value)
 
@@ -405,11 +406,11 @@ class BasePuLPSolver(SolverInterface):
             return var
 
         raise NotImplementedError(f"Operator {operator} not implemented for PuLP solver.")
-    
+
     def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: Tuple[int, int]) -> None:
         """
         Add a constraint that target_var = |source_expr|.
-        
+
         For PuLP, we linearize with one binary branch variable and Big-M bounds.
         """
         inferred_lb, inferred_ub = self._infer_expr_bounds(source_expr)
@@ -460,7 +461,7 @@ class BasePuLPSolver(SolverInterface):
             target_var <= -source_expr + 2 * big_m * sign_var,
             name=self.unique_constraint_name("abs_neg_ub"),
         )
-    
+
     def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: Tuple[int, int]) -> None:
         """
         Add a constraint that target_var = source_var^2.
@@ -496,8 +497,7 @@ class BasePuLPSolver(SolverInterface):
         if domain_size > 128:
             # The check here is arbitrary, but in practice it hardly exceeds 32 for our case.
             raise NotImplementedError(
-                f"Domain too large for exact square linearization: {domain_size}. "
-                "Consider tightening variable bounds."
+                f"Domain too large for exact square linearization: {domain_size}. Consider tightening variable bounds."
             )
 
         # Let x := source_var, t := target_var, and b_i be one-hot selectors over x's domain.
@@ -515,15 +515,15 @@ class BasePuLPSolver(SolverInterface):
             target_var == pulp.lpSum(((lb + i) ** 2) * selectors[i] for i in range(domain_size)),
             name=self.unique_constraint_name("square_bind_target"),
         )
-    
+
     def get_status_name(self) -> str:
         """Get the generic solver status name."""
         return self.solver_status.value
-    
+
     def create_solution_callback(self, objective_var: Any = None) -> Any:
         """
         Create a solution callback for tracking intermediate solutions.
-        
+
         Note: PuLP does not support solution callbacks in the same way as OR-Tools.
         This method returns None.
         """

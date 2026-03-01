@@ -145,9 +145,6 @@ def run_schedule_regression_test(solver: str) -> None:
         logging.error("Found %s/%s errors during testing:", error_count, total_tests)
         for failed_case in failed_cases:
             logging.error("  - %s", failed_case)
-        pytest.fail(
-            f"Found {error_count}/{total_tests} errors during testing:\n- "
-            + "\n- ".join(failed_cases)
-        )
+        pytest.fail(f"Found {error_count}/{total_tests} errors during testing:\n- " + "\n- ".join(failed_cases))
     else:
         logging.info(f"All {total_tests} tests passed for solver={solver}")
