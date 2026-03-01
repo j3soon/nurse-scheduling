@@ -42,6 +42,20 @@ For Linux only: to quickly set up all local environments (`core`, `web-frontend`
 ./scripts/setup_env.sh
 ```
 
+For Docker-based development environment:
+
+```sh
+# build image
+docker build -f Dockerfile -t j3soon/nurse-scheduling:dev .
+# persist Codex auth/config across containers
+mkdir -p ~/docker/.codex
+# mount project files and Codex config
+docker run --rm -it --network=host \
+  -v $(pwd):/app \
+  -v ~/docker/.codex:/root/.codex \
+  j3soon/nurse-scheduling:dev
+```
+
 ### Web Frontend
 
 ```sh
@@ -115,22 +129,6 @@ pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
 ```
 
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
-
-Run core with Docker:
-
-```sh
-cd core
-# build image
-docker build -f Dockerfile_cli_dev -t j3soon/nurse-scheduling:core-dev .
-cd ..
-# persist Codex auth/config across containers
-mkdir -p ~/docker/.codex
-# mount project files and Codex config
-docker run --rm -it --network=host \
-  -v $(pwd):/app \
-  -v ~/docker/.codex:/root/.codex \
-  j3soon/nurse-scheduling:core-dev
-```
 
 Note: The tests and code coverage are only for the core module. The web frontend is not covered by tests.
 
