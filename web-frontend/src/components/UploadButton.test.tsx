@@ -1,0 +1,236 @@
+/*
+ * This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+ *
+ * Copyright (C) 2023-2026 Johnson Sun
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+// This test is mostly AI generated.
+
+import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import UploadButton from '@/components/UploadButton';
+
+describe('UploadButton', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('uploads a valid selected file', async () => {
+    const user = userEvent.setup();
+    const onFileUpload = vi.fn();
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml', '.yml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['name: test'], 'schedule.yaml', { type: 'text/yaml' });
+
+    await user.upload(input, file);
+
+    expect(onFileUpload).toHaveBeenCalledTimes(1);
+    expect(onFileUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'schedule.yaml' }));
+  });
+
+  it('rejects invalid file extension from selected file and alerts', () => {
+    const onFileUpload = vi.fn();
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['x'], 'schedule.csv', { type: 'text/csv' });
+
+    fireEvent.change(input, {
+      target: { files: [file] },
+    });
+
+    expect(onFileUpload).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('Please upload a file with one of these extensions: .yaml');
+  });
+
+  it('handles drag-over and drop of a valid file', () => {
+    const onFileUpload = vi.fn();
+
+    render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /upload/i });
+
+    fireEvent.dragOver(button, {
+      dataTransfer: { files: [] },
+    });
+    expect(button.className).toContain('border-dashed');
+
+    const file = new File(['name: test'], 'drop.yaml', { type: 'text/yaml' });
+    fireEvent.drop(button, {
+      dataTransfer: { files: [file] },
+    });
+
+    expect(onFileUpload).toHaveBeenCalledTimes(1);
+    expect(onFileUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'drop.yaml' }));
+  });
+
+  it('alerts when drop has no files', () => {
+    const onFileUpload = vi.fn();
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /upload/i });
+
+    fireEvent.drop(button, {
+      dataTransfer: { files: [] },
+    });
+
+    expect(onFileUpload).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('No file was dropped.');
+  });
+
+  it('does not process dropped files when disabled', () => {
+    const onFileUpload = vi.fn();
+
+    render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+        disabled={true}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /upload/i });
+    const file = new File(['name: test'], 'drop.yaml', { type: 'text/yaml' });
+
+    fireEvent.drop(button, {
+      dataTransfer: { files: [file] },
+    });
+
+    expect(onFileUpload).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid file extension from drop and alerts', () => {
+    const onFileUpload = vi.fn();
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /upload/i });
+    const file = new File(['x'], 'drop.csv', { type: 'text/csv' });
+
+    fireEvent.drop(button, {
+      dataTransfer: { files: [file] },
+    });
+
+    expect(onFileUpload).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('Please upload a file with one of these extensions: .yaml');
+  });
+
+  it('applies drag-over style while removing hover/focus custom classes', () => {
+    const onFileUpload = vi.fn();
+
+    render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+        className="hover:bg-red-600 focus:ring-red-600 bg-green-600 text-white"
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /upload/i });
+    fireEvent.dragOver(button, {
+      dataTransfer: { files: [] },
+    });
+
+    expect(button.className).toContain('border-dashed');
+    expect(button.className).toContain('bg-green-600');
+    expect(button.className).not.toContain('hover:bg-red-600');
+    expect(button.className).not.toContain('focus:ring-red-600');
+  });
+
+  it('opens the hidden file input when upload button is clicked', async () => {
+    const user = userEvent.setup();
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={vi.fn()}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const clickSpy = vi.spyOn(input, 'click');
+
+    await user.click(screen.getByRole('button', { name: /upload/i }));
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears drag-over visual state on drag leave', () => {
+    render(
+      <UploadButton
+        onFileUpload={vi.fn()}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /upload/i });
+    fireEvent.dragOver(button, { dataTransfer: { files: [] } });
+    expect(button.className).toContain('border-dashed');
+
+    fireEvent.dragLeave(button, { dataTransfer: { files: [] } });
+    expect(button.className).not.toContain('border-dashed');
+  });
+});
