@@ -1,0 +1,28 @@
+name: Test Web Frontend
+
+on:
+  - push
+  - pull_request
+
+jobs:
+  test-web-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: cd web-frontend && bun install
+      - name: Run tests
+        run: cd web-frontend && bun run test
+      - name: Run tests with coverage
+        run: cd web-frontend && bun run test:coverage
+      - name: Upload frontend coverage to Codecov
+        if: github.event_name != 'pull_request'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./web-frontend/coverage/lcov.info
+          flags: web-frontend
+          name: web-frontend-vitest
