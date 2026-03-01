@@ -68,12 +68,14 @@ function GroupTableHarness({
   onInlineEdit,
   onEdit,
   onDelete,
+  groupsReadOnly = false,
 }: {
   groups: Group[];
   items: Item[];
   onInlineEdit: (id: string, isItem: boolean, field?: 'id' | 'description') => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  groupsReadOnly?: boolean;
 }) {
   const columns = useGroupTableColumns({
     items,
@@ -88,7 +90,7 @@ function GroupTableHarness({
     onEdit,
     onDelete,
     removeItemFromGroup: vi.fn(),
-    groupsReadOnly: false,
+    groupsReadOnly,
   });
 
   return <DataTable title="Groups" columns={columns} data={groups} />;
@@ -207,5 +209,24 @@ describe('TableColumns', () => {
 
     expect(removeItemFromGroup).toHaveBeenCalledWith('A', 'MANUAL_G');
     expect(screen.queryByTitle('Remove "AUTO_G"')).not.toBeInTheDocument();
+  });
+
+  it('does not trigger inline edit callback for groups when groups are read-only', async () => {
+    const user = userEvent.setup();
+    const onInlineEdit = vi.fn();
+
+    render(
+      <GroupTableHarness
+        groups={[{ id: 'G1', members: ['P1'], description: '' }]}
+        items={[{ id: 'P1', description: '' }]}
+        onInlineEdit={onInlineEdit}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        groupsReadOnly={true}
+      />,
+    );
+
+    await user.dblClick(screen.getByText('G1'));
+    expect(onInlineEdit).not.toHaveBeenCalled();
   });
 });
