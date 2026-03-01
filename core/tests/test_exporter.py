@@ -22,6 +22,7 @@
 import os
 import sys
 from io import BytesIO
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -192,3 +193,192 @@ export:
 
     with pytest.raises(ValueError, match="Invalid shift type identifier"):
         schedule(yaml_content, prettify=False)
+
+
+def test_date_headers_format_with_year_boundary():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2024-12-31
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+"""
+
+    df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=False)
+    assert df.iloc[0, 1] == "2024/12/31"
+    assert df.iloc[0, 2] == "2025/1/1"
+    assert df.iloc[0, 3] == "2025/1/2"
+
+
+def test_prettify_off_annotations_and_workday_freeday_headers():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-03
+  groups:
+    - id: my_workday
+      members: [WORKDAY]
+    - id: my_freeday
+      members: [FREEDAY]
+people:
+  items:
+    - id: n1
+      history: [D]
+    - id: n2
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: [D]
+    weight: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: [OFF]
+    weight: -5
+"""
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    # Weight-0 shift request should be ignored by prettify markers,
+    # while OFF request should still annotate the cell.
+    target_cell = str(df.iloc[2, 2])
+    assert "[OFF]" in target_cell
+    assert "[D]" not in target_cell
+
+    # History fallback branch for person without history.
+    assert df.iloc[3, 1] == ""
+
+    # Workday/freeday summary headers should be present when both groups are found.
+    headers = list(df.iloc[1, :])
+    assert "OFF (my_workday)" in headers
+    assert "OFF (my_freeday)" in headers
+
+
+def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
+    ctx = SimpleNamespace(
+        export=SimpleNamespace(
+            formatting=[
+                SimpleNamespace(
+                    type="row",
+                    targets=["n1"],
+                    backgroundColor="#22c55e",
+                    bottomBorderColor=None,
+                )
+            ]
+        ),
+        map_pid_p={"n1": [0]},
+        map_did_d={},
+        map_sid_s={},
+    )
+
+    # n_rows=0 forces set_style to hit out-of-bounds guard and skip writes.
+    style_map = exporter._build_custom_export_style_info(
+        ctx,
+        n_rows=0,
+        n_cols=1,
+        n_leading_rows=2,
+        n_leading_cols=1,
+        n_history_cols=0,
+    )
+    assert style_map == {}
+
+
+def test_dataframe_generation_supports_multiple_assigned_shift_types():
+    class DummySolver:
+        def get_value(self, var):
+            return 1 if var in {"v_d", "v_e"} else 0
+
+        def get_objective_value(self):
+            return 0
+
+    ctx = SimpleNamespace(
+        n_shift_types=2,
+        shiftTypes=SimpleNamespace(
+            items=[SimpleNamespace(id="D"), SimpleNamespace(id="E")],
+            groups=[],
+        ),
+        people=SimpleNamespace(items=[SimpleNamespace(id="n1", history=None)]),
+        dates=SimpleNamespace(
+            items=[
+                SimpleNamespace(
+                    year=2025, month=1, day=1, weekday=lambda: 2, strftime=lambda fmt: "Wed" if fmt == "%a" else "1"
+                )
+            ],
+            groups=[],
+            range=SimpleNamespace(
+                startDate=SimpleNamespace(year=2025, month=1), endDate=SimpleNamespace(year=2025, month=1)
+            ),
+        ),
+        map_dp_s={(0, 0): {0, 1}},
+        shifts={(0, 0, 0): "v_d", (0, 1, 0): "v_e"},
+        offs={(0, 0): "v_off"},
+        preferences=[],
+        map_sid_s={},
+        map_pid_p={},
+        map_did_d={},
+        solver=DummySolver(),
+        solver_status="OPTIMAL",
+        export=None,
+    )
+
+    df, info = exporter.get_people_versus_date_dataframe(ctx, prettify=False)
+    assert df.iloc[2, 1] == "D, E"
+    assert info["styles"] == {}
+
+
+def test_prettify_styling_executes_freeday_and_weekend_paths():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-03
+    endDate: 2025-01-05
+  groups:
+    - id: my_workday
+      members: [WORKDAY]
+    - id: my_freeday
+      members: [2025-01-05]
+people:
+  items:
+    - id: n1
+      history: [D]
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-03"]
+    shiftType: [OFF]
+    weight: -5
+"""
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    html = styled_df.to_html()
+    # Triggered style computation should include both freeday and weekend highlights.
+    assert "#dcfce7" in html
+    assert "#dbeafe" in html

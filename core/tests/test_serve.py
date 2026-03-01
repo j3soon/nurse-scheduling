@@ -17,6 +17,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# This test is mostly AI generated.
+
 # Based on the FastAPI Testing guide: https://fastapi.tiangolo.com/tutorial/testing/
 
 import os
@@ -248,6 +250,56 @@ class TestEdgeCases:
 
         assert response.status_code == 200
         assert len(response.content) > 0
+
+
+class TestServeInternals:
+    """Test serve module internal helper behavior."""
+
+    def test_should_enable_sentry_disabled_by_env(self, monkeypatch):
+        monkeypatch.setenv("DISABLE_SENTRY", "1")
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        monkeypatch.setattr("nurse_scheduling.serve.sys.modules", {})
+
+        assert app is not None
+        from nurse_scheduling.serve import _should_enable_sentry
+
+        assert _should_enable_sentry() is False
+
+    def test_should_enable_sentry_disabled_during_pytest(self, monkeypatch):
+        monkeypatch.delenv("DISABLE_SENTRY", raising=False)
+        monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_serve.py::fake")
+
+        from nurse_scheduling.serve import _should_enable_sentry
+
+        assert _should_enable_sentry() is False
+
+    def test_should_enable_sentry_true_when_not_disabled(self, monkeypatch):
+        monkeypatch.delenv("DISABLE_SENTRY", raising=False)
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        monkeypatch.setattr("nurse_scheduling.serve.sys.modules", {})
+
+        from nurse_scheduling.serve import _should_enable_sentry
+
+        assert _should_enable_sentry() is True
+
+
+class TestNoSolutionResponse:
+    """Test endpoint response when scheduler finds no solution."""
+
+    def test_no_solution_returns_400(self, monkeypatch):
+        def fake_schedule(*args, **kwargs):
+            return None, None, None, "INFEASIBLE", None
+
+        monkeypatch.setattr("nurse_scheduling.serve.scheduler.schedule", fake_schedule)
+
+        with open(VALID_YAML_FILE, "rb") as f:
+            response = client.post(
+                "/optimize-and-export-xlsx",
+                files={"file": ("01_1nurse_1shift_1day.yaml", f, "application/x-yaml")},
+            )
+
+        assert response.status_code == 400
+        assert "No solution found" in response.json()["detail"]
 
 
 if __name__ == "__main__":
