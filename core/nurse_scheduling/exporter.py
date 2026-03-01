@@ -207,7 +207,8 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             if len(pref.shiftType) != 1 or len(ps) != 1:
                 # Skip since is not single person and single shift type style
                 continue
-            if len(ds) != len(pref.date):
+            date_input_len = len(pref.date) if isinstance(pref.date, list) else 1
+            if len(ds) != date_input_len:
                 # Skip since only count for single-date style
                 continue
             
