@@ -37,8 +37,8 @@ def main():
                        help='Increase verbosity (can be used multiple times: -v, -vv, -vvv)')
     parser.add_argument('--timeout', type=int, default=None,
                        help='Maximum running time in seconds. If reached, the solver will stop and the current best result (if any) will be exported.')
-    parser.add_argument('--solver', type=str, default='ortools/cp-sat', choices=['ortools/cp-sat', 'pulp/cbc'],
-                       help="Solver selector (e.g., 'ortools/cp-sat' or 'pulp/cbc').")
+    parser.add_argument('--solver', type=str, default='ortools/cp-sat', choices=['ortools/cp-sat', 'pulp/cbc', 'pulp/cuopt'],
+                       help="Solver selector (e.g., 'ortools/cp-sat', 'pulp/cbc', or 'pulp/cuopt').")
     
     args = parser.parse_args()
     filepath = args.input_file_path

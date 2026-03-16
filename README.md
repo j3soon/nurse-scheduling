@@ -47,6 +47,13 @@ For Docker-based development environment:
 ```sh
 # build image
 docker build -f Dockerfile -t j3soon/nurse-scheduling:dev .
+# or optionally with cuOpt
+docker build -f Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
+```
+
+CPU solver:
+
+```sh
 # persist Codex auth/config across containers
 mkdir -p ~/docker/.codex
 # mount project files and Codex config
@@ -54,6 +61,18 @@ docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
   j3soon/nurse-scheduling:dev
+```
+
+GPU solver:
+
+```sh
+# persist Codex auth/config across containers
+mkdir -p ~/docker/.codex
+# mount project files and Codex config
+docker run --rm -it --gpus all --network=host \
+  -v $(pwd):/app \
+  -v ~/docker/.codex:/root/.codex \
+  j3soon/nurse-scheduling:dev-cuopt
 ```
 
 ### Web Frontend
@@ -109,9 +128,11 @@ cd core
 # run low-level solver encoding tests
 pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py
 pytest --log-cli-level=INFO tests/test_solver_pulp_cbc.py
+pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
 # run schedule regression tests (OR-Tools / PuLP)
 pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
+pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py  # TODO: Note that this test is flaky potentially due to an upstream issue: https://github.com/NVIDIA/cuopt/issues/960
 # run the full core test suite
 pytest --log-cli-level=INFO
 # run basic Python lint checks for core

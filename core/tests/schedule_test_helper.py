@@ -44,12 +44,14 @@ def run_schedule_regression_test(solver: str) -> None:
     tests = glob.glob(f"{TESTCASES_DIR}/**/*.yaml", recursive=True)
     total_tests = len(tests)
     error_count = 0
+    failed_cases: list[str] = []
     for test_no, filepath in enumerate(tests, start=1):
+        relative_filepath = filepath[len(TESTCASES_DIR) + 1 :]
         base_filepath = os.path.splitext(os.path.basename(filepath))[0]
         test_dir = os.path.dirname(filepath)
         if base_filepath in IGNORE_TESTS:
             continue
-        logging.info(f"[{solver}] Testing '{filepath[len(TESTCASES_DIR)+1:]}' ...")
+        logging.info(f"[{solver}] Testing '{relative_filepath}' ...")
 
         # Read file content
         with open(filepath, "rb") as f:
@@ -88,12 +90,14 @@ def run_schedule_regression_test(solver: str) -> None:
         except ValidationError as e:
             logging.debug(f"Validation error for '{base_filepath}': {e}")
             error_count += 1
+            failed_cases.append(f"{relative_filepath} [validation error]")
             if not CONTINUE_ON_ERROR:
                 pytest.fail(f"Validation error for '{base_filepath}'")
             continue
         except Exception as e:
             logging.debug(f"Unexpected error for '{base_filepath}': {e}")
             error_count += 1
+            failed_cases.append(f"{relative_filepath} [unexpected error]")
             if not CONTINUE_ON_ERROR:
                 pytest.fail(f"Unexpected error for '{base_filepath}'")
             continue
@@ -121,6 +125,7 @@ def run_schedule_regression_test(solver: str) -> None:
                 pandas.read_csv(io.StringIO(expected_csv), header=None, keep_default_na=False),
             )
             error_count += 1
+            failed_cases.append(f"{relative_filepath} [output mismatch]")
             if not CONTINUE_ON_ERROR:
                 pytest.fail(f"Output mismatch for '{filepath}' ({test_no}/{total_tests})")
             continue
@@ -129,6 +134,7 @@ def run_schedule_regression_test(solver: str) -> None:
             logging.debug(f"Optimal Solution 1:\n{df}")
             logging.debug(f"Optimal Solution 2:\n{df2}")
             error_count += 1
+            failed_cases.append(f"{relative_filepath} [non-unique optimal]")
             if not CONTINUE_ON_ERROR:
                 pytest.fail(
                     f"The optimal solution should be unique, but it is not for '{filepath}' ({test_no}/{total_tests})"
@@ -136,6 +142,12 @@ def run_schedule_regression_test(solver: str) -> None:
             continue
 
     if error_count > 0:
-        pytest.fail(f"Found {error_count}/{total_tests} errors during testing")
+        logging.error("Found %s/%s errors during testing:", error_count, total_tests)
+        for failed_case in failed_cases:
+            logging.error("  - %s", failed_case)
+        pytest.fail(
+            f"Found {error_count}/{total_tests} errors during testing:\n- "
+            + "\n- ".join(failed_cases)
+        )
     else:
         logging.info(f"All {total_tests} tests passed for solver={solver}")
