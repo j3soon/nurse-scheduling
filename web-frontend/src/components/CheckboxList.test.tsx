@@ -67,4 +67,41 @@ describe('CheckboxList', () => {
     expect(onToggle).toHaveBeenNthCalledWith(1, 'A');
     expect(onToggle).toHaveBeenNthCalledWith(2, 'B');
   });
+
+  it('toggles all checkboxes when dragging across them with the mouse button held down', () => {
+    const onToggle = vi.fn();
+
+    render(
+      <CheckboxList
+        label="Items"
+        items={[{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }]}
+        selectedIds={[]}
+        onToggle={onToggle}
+      />,
+    );
+
+    const labelA = screen.getByText('A').closest('label') as HTMLLabelElement;
+    const labelB = screen.getByText('B').closest('label') as HTMLLabelElement;
+    const labelC = screen.getByText('C').closest('label') as HTMLLabelElement;
+    const labelD = screen.getByText('D').closest('label') as HTMLLabelElement;
+
+    fireEvent.mouseEnter(labelA);
+    fireEvent.mouseDown(labelA, { button: 0 });
+    fireEvent.mouseLeave(labelA);
+
+    fireEvent.mouseEnter(labelB);
+    fireEvent.mouseLeave(labelB);
+
+    fireEvent.mouseEnter(labelC);
+    fireEvent.mouseLeave(labelC);
+
+    fireEvent.mouseEnter(labelD);
+    fireEvent.mouseUp(labelD, { button: 0 });
+
+    expect(onToggle).toHaveBeenCalledTimes(4);
+    expect(onToggle).toHaveBeenNthCalledWith(1, 'A');
+    expect(onToggle).toHaveBeenNthCalledWith(2, 'B');
+    expect(onToggle).toHaveBeenNthCalledWith(3, 'C');
+    expect(onToggle).toHaveBeenNthCalledWith(4, 'D');
+  });
 });
