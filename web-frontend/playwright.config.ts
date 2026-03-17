@@ -23,9 +23,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  fullyParallel: true,
+  fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
   reporter: 'list',
+  workers: 1,
   use: {
     baseURL: 'http://127.0.0.1:3000',
     trace: 'on-first-retry',
@@ -37,9 +38,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'bun x next dev --hostname 127.0.0.1 --port 3000',
+    command: 'bun run dev:e2e',
     env: {
       DISABLE_SENTRY: '1',
+      E2E_COVERAGE: process.env.E2E_COVERAGE ?? '0',
       NEXT_PUBLIC_DISABLE_SENTRY: '1',
     },
     url: 'http://127.0.0.1:3000',

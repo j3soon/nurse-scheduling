@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { disableModalDialogs, seedSchedulingState } from './helpers';
 
 test('csv uploads recover from invalid history input and populate downstream request/history state', async ({ page }) => {

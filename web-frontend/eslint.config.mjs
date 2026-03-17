@@ -11,7 +11,7 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "coverage/**", "test-results/**", "playwright-report/**", "next-env.d.ts"]
+  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "coverage/**", "coverage-e2e/**", ".e2e-coverage/**", "test-results/**", "playwright-report/**", "next-env.d.ts"]
 }];
 
 export default eslintConfig;

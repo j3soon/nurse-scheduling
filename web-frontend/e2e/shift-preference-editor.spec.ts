@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { disableModalDialogs, seedSchedulingState } from './helpers';
 
 test('shift preference editor persists mixed manual and infinity values through reopen', async ({ page }) => {

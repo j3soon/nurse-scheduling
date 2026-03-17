@@ -17,6 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+// This test is mostly AI generated.
+
 import { Page } from '@playwright/test';
 
 const STORAGE_KEY = 'nurse-scheduling-data';

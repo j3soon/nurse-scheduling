@@ -114,6 +114,18 @@ bun run test:e2e:ui
 
 > For the interactive UI mode, you may need to run the tests multiple times to get it passed, as the test is currently somewhat flaky. This is due to the delay of page update and is planned to be fixed in the future.
 
+In GitHub Actions, frontend browser integration tests run after frontend unit/coverage tests. The workflow uploads Playwright reports as build artifacts so failed CI runs keep browser traces and reports for debugging.
+
+Generate a separate browser-flow coverage report from Playwright:
+
+```sh
+cd web-frontend
+bun run test:e2e:coverage
+bun run coverage:e2e:report
+```
+
+This writes a separate report under `web-frontend/coverage-e2e/` and does not replace the main Vitest coverage report under `web-frontend/coverage/`.
+
 For building static site, run:
 
 ```sh

@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { seedSchedulingState } from './helpers';
 
 test('version warning upload respects cancel and continue branches', async ({ page }) => {
@@ -65,8 +65,8 @@ test('version warning upload respects cancel and continue branches', async ({ pa
 
   await page.goto('/save-and-load');
   await expect(page.getByRole('heading', { name: 'Save and Load' })).toBeVisible();
-  const currentYaml = await page.locator('pre').textContent();
   await expect(page.locator('pre')).toContainText('Team Alpha');
+  const currentYaml = await page.locator('pre').textContent();
   await page.goto('/people');
   await expect(page.getByTitle('Team Alpha', { exact: true })).toBeVisible();
   await expect(page.getByTitle('Team Omega', { exact: true })).toHaveCount(0);

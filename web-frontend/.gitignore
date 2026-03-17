@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/coverage-e2e
+/.e2e-coverage
 /playwright-report
 /test-results
 /blob-report

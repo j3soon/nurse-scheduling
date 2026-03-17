@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 import { disableModalDialogs, seedSchedulingState } from './helpers';
 
 test('save and load roundtrip restores seeded state after reset', async ({ page }) => {
@@ -68,6 +68,8 @@ test('save and load roundtrip restores seeded state after reset', async ({ page 
 
   await page.goto('/save-and-load');
   await expect(page.getByRole('heading', { name: 'Save and Load' })).toBeVisible();
+  await expect(page.locator('pre')).toContainText('Team Alpha');
+  await expect(page.locator('pre')).toContainText('shift request');
   const yamlText = await page.locator('pre').textContent();
   expect(yamlText).toContain('Team Alpha');
   expect(yamlText).toContain('shift request');
