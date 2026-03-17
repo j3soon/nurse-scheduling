@@ -95,4 +95,50 @@ describe('RemovableTag', () => {
     );
     expect(screen.getByText('P1').parentElement).toHaveClass('ring-2');
   });
+
+  it('renders description tooltip in read-only mode', () => {
+    render(<RemovableTag id="P1" description="Primary nurse" onRemove={vi.fn()} readOnly={true} />);
+
+    expect(screen.getByText('P1').closest('[title="Primary nurse"]')).toBeInTheDocument();
+    expect(screen.queryByTitle('Remove "P1"')).not.toBeInTheDocument();
+  });
+
+  it('triggers drag leave callback when provided', () => {
+    const onDragLeave = vi.fn();
+
+    render(
+      <RemovableTag
+        id="P1"
+        onRemove={vi.fn()}
+        draggable={true}
+        onDragLeave={onDragLeave}
+      />,
+    );
+
+    fireEvent.dragLeave(screen.getByText('P1').closest('span') as HTMLSpanElement);
+
+    expect(onDragLeave).toHaveBeenCalledTimes(1);
+  });
+
+  it('sets drag-over event semantics for drop targets', () => {
+    const onDragOver = vi.fn();
+    const dataTransfer = { dropEffect: '' };
+
+    render(
+      <RemovableTag
+        id="P1"
+        onRemove={vi.fn()}
+        draggable={true}
+        index={2}
+        onDragOver={onDragOver}
+      />,
+    );
+
+    fireEvent.dragOver(screen.getByText('P1').closest('span') as HTMLSpanElement, {
+      dataTransfer,
+    });
+
+    expect(dataTransfer.dropEffect).toBe('move');
+    expect(onDragOver).toHaveBeenCalledWith(2, expect.any(Object));
+  });
 });

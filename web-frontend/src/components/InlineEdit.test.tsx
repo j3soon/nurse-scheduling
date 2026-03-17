@@ -94,4 +94,40 @@ describe('InlineEdit', () => {
     await user.keyboard('{Escape}');
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('saves trimmed input on blur', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+
+    render(
+      <InlineEdit
+        value="Nurse E"
+        isEditing={true}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByRole('textbox');
+    await user.clear(input);
+    await user.type(input, '  Nurse F  ');
+    await user.tab();
+
+    expect(onSave).toHaveBeenCalledWith('Nurse F');
+  });
+
+  it('renders empty placeholder text in read-only mode without pointer styling', () => {
+    render(
+      <InlineEdit
+        value=""
+        isEditing={false}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        emptyText="Add description..."
+      />,
+    );
+
+    const value = screen.getByText('Add description...');
+    expect(value.className).not.toContain('cursor-pointer');
+  });
 });

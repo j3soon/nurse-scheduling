@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import yaml from 'js-yaml';
 import SaveAndLoadPage from '@/app/save-and-load/page';
@@ -185,6 +185,24 @@ describe('SaveAndLoadPage', () => {
     });
   });
 
+  it('logs copy failure when clipboard API is missing', async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /copy/i }));
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith('Failed to copy to clipboard:', expect.any(TypeError));
+    });
+    expect(screen.queryByRole('button', { name: /copied!/i })).not.toBeInTheDocument();
+  });
+
   it('triggers blob URL download and revokes it', async () => {
     const user = userEvent.setup();
     const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url');
@@ -196,6 +214,37 @@ describe('SaveAndLoadPage', () => {
 
     expect(createSpy).toHaveBeenCalled();
     expect(revokeSpy).toHaveBeenCalledWith('blob:mock-url');
+  });
+
+  it('uses a stable date-based filename for downloads', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(Date.prototype, 'toISOString').mockReturnValue('2026-03-17T12:34:56.000Z');
+
+    const anchorClick = vi.fn();
+    const originalAppendChild = document.body.appendChild.bind(document.body);
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((node) => {
+      if (node instanceof HTMLAnchorElement) {
+        vi.spyOn(node, 'click').mockImplementation(anchorClick);
+        return originalAppendChild(node);
+      }
+      return originalAppendChild(node);
+    });
+    const removeSpy = vi.spyOn(document.body, 'removeChild');
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /download/i }));
+
+    const appendedAnchor = appendSpy.mock.calls
+      .map(([node]) => node)
+      .find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement);
+
+    expect(appendedAnchor).toBeDefined();
+    expect(appendedAnchor.download).toBe('nurse-scheduling-2026-03-17.yaml');
+    expect(anchorClick).toHaveBeenCalled();
+    expect(removeSpy).toHaveBeenCalledWith(appendedAnchor);
   });
 
   it('alerts when uploaded YAML file has no content', () => {
@@ -278,5 +327,87 @@ describe('SaveAndLoadPage', () => {
       );
     });
     expect(screen.queryByText(/invalid yaml format/i)).not.toBeInTheDocument();
+  });
+
+  it('clears inline YAML error when editor text changes after a parse failure', async () => {
+    const user = userEvent.setup();
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    const editor = screen.getByPlaceholderText('Enter YAML configuration...');
+
+    fireEvent.change(editor, { target: { value: 'bad: [yaml' } });
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    expect(screen.getByText(/unexpected end/i)).toBeInTheDocument();
+
+    fireEvent.change(editor, { target: { value: 'description: recovered' } });
+    expect(screen.queryByText(/unexpected end/i)).not.toBeInTheDocument();
+  });
+
+  it('exits editor mode after canceling from an error state', async () => {
+    const user = userEvent.setup();
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+      target: { value: 'bad: [yaml' },
+    });
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    expect(screen.getByText(/unexpected end/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(screen.queryByPlaceholderText('Enter YAML configuration...')).not.toBeInTheDocument();
+    expect(screen.getByText('Current State YAML')).toBeInTheDocument();
+  });
+
+  it('shows copied state temporarily after successful clipboard copy', async () => {
+    vi.useFakeTimers();
+
+    render(<SaveAndLoadPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: /copy/i }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: /copied!/i })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(screen.getByRole('button', { name: /copy/i })).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it('resets unsaved editor text when toggling edit mode off and on again', async () => {
+    const user = userEvent.setup();
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    const editor = screen.getByPlaceholderText('Enter YAML configuration...') as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: 'description: unsaved change\n' } });
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    expect(screen.queryByPlaceholderText('Enter YAML configuration...')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    expect(screen.getByPlaceholderText('Enter YAML configuration...')).toHaveValue(
+      'apiVersion: alpha\ndescription: baseline\n',
+    );
+  });
+
+  it('does not prompt for confirmation when uploaded YAML has a matching app version', () => {
+    render(<SaveAndLoadPage />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'matching.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('matching.yaml', 'description: ok\nappVersion: unknown\n');
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'ok' }));
   });
 });

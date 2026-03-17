@@ -83,4 +83,112 @@ describe('Navigation', () => {
       behavior: 'smooth',
     });
   });
+
+  it('does not push when clicking the active tab or pressing a modified number shortcut', async () => {
+    const user = userEvent.setup();
+
+    render(<Navigation />);
+
+    await user.click(screen.getByRole('button', { name: '2. People' }));
+    fireEvent.keyDown(document, { key: '5', ctrlKey: true });
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('updates active tab styling on rerender when pathname changes', () => {
+    const { rerender } = render(<Navigation />);
+
+    expect(screen.getByRole('button', { name: '2. People' }).className).toContain('text-blue-600');
+
+    mockUsePathname.mockReturnValue('/save-and-load');
+    rerender(<Navigation />);
+
+    expect(screen.getByRole('button', { name: '9. Save and Load' }).className).toContain('text-blue-600');
+    expect(screen.getByRole('button', { name: '2. People' }).className).not.toContain('text-blue-600');
+  });
+
+  it('does nothing on boundary arrow navigation and supports ArrowUp scrolling', () => {
+    mockUsePathname.mockReturnValue('/');
+    const { rerender } = render(<Navigation />);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    expect(mockPush).not.toHaveBeenCalled();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(window.scrollBy).toHaveBeenCalledWith({
+      top: -window.innerHeight,
+      behavior: 'smooth',
+    });
+
+    mockUsePathname.mockReturnValue('/optimize-and-export');
+    rerender(<Navigation />);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('ignores shortcuts while textarea, select, or contenteditable elements are focused', () => {
+    render(<Navigation />);
+
+    const textarea = document.createElement('textarea');
+    document.body.appendChild(textarea);
+    textarea.focus();
+    fireEvent.keyDown(document, { key: '5' });
+    textarea.blur();
+    textarea.remove();
+
+    const select = document.createElement('select');
+    document.body.appendChild(select);
+    select.focus();
+    fireEvent.keyDown(document, { key: '5' });
+    select.blur();
+    select.remove();
+
+    const editable = document.createElement('div');
+    editable.setAttribute('contenteditable', 'true');
+    document.body.appendChild(editable);
+    editable.focus();
+    fireEvent.keyDown(document, { key: '5' });
+    editable.blur();
+    editable.remove();
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('navigates home with the 0 shortcut', () => {
+    render(<Navigation />);
+
+    fireEvent.keyDown(document, { key: '0' });
+
+    expect(mockPush).toHaveBeenCalledWith('/');
+  });
+
+  it('updates active-tab styling on rerender even while an editable element remains focused', () => {
+    const { rerender } = render(<Navigation />);
+    const editable = document.createElement('div');
+    editable.setAttribute('contenteditable', 'true');
+    document.body.appendChild(editable);
+    editable.focus();
+
+    fireEvent.keyDown(document, { key: '5' });
+    expect(mockPush).not.toHaveBeenCalled();
+
+    mockUsePathname.mockReturnValue('/shift-requests');
+    rerender(<Navigation />);
+
+    expect(screen.getByRole('button', { name: '5. Shift Requests' }).className).toContain('text-blue-600');
+    expect(screen.getByRole('button', { name: '2. People' }).className).not.toContain('text-blue-600');
+
+    editable.blur();
+    editable.remove();
+  });
+
+  it('removes keyboard listeners on unmount', () => {
+    const { unmount } = render(<Navigation />);
+
+    unmount();
+    fireEvent.keyDown(document, { key: '5' });
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
 });

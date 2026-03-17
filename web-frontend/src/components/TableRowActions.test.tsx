@@ -52,4 +52,16 @@ describe('TableRowActions', () => {
     expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
   });
+
+  it('supports Space key activation for action buttons', async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+
+    render(<TableRowActions onEdit={onEdit} />);
+
+    await user.tab();
+    await user.keyboard(' ');
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
 });

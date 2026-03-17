@@ -125,4 +125,228 @@ describe('DraggableCardList', () => {
     expect(onEdit).toHaveBeenCalledWith(0);
     expect(onDelete).toHaveBeenCalledWith(0);
   });
+
+  it('reorders items with insert-after drop logic and toggles drag-over styles', () => {
+    const onReorder = vi.fn();
+    const items: Card[] = [{ title: 'A' }, { title: 'B' }, { title: 'C' }];
+
+    const { container } = render(
+      <DraggableCardList<Card>
+        title="Rules"
+        items={items}
+        emptyMessage="No rules"
+        renderContent={(item) => <span>{item.title}</span>}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={onReorder}
+      />,
+    );
+
+    const cards = container.querySelectorAll('[draggable="true"]');
+    const source = cards[0] as HTMLDivElement;
+    const target = cards[1] as HTMLDivElement;
+    const dataTransfer = createDataTransfer();
+    dataTransfer.setData('text/plain', '0');
+
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer, clientY: 80 });
+    expect(target.className).toMatch(/border-(t|b)-2/);
+
+    fireEvent.dragLeave(target);
+    expect(target.className).not.toContain('border-b-2');
+
+    fireEvent.drop(target, { dataTransfer, clientY: 80 });
+    expect(onReorder).toHaveBeenCalledWith([{ title: 'A' }, { title: 'B' }, { title: 'C' }]);
+  });
+
+  it('renders cards as non-draggable when onReorder is missing', () => {
+    const items: Card[] = [{ title: 'A' }, { title: 'B' }];
+
+    const { container } = render(
+      <DraggableCardList<Card>
+        title="Rules"
+        items={items}
+        emptyMessage="No rules"
+        renderContent={(item) => <span>{item.title}</span>}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    const cards = container.querySelectorAll('[draggable="false"]');
+    expect(cards).toHaveLength(2);
+  });
+
+  it('reorders the last item to the front when dropped in the top half of the first card', () => {
+    const onReorder = vi.fn();
+    const items: Card[] = [{ title: 'A' }, { title: 'B' }, { title: 'C' }];
+
+    const { container } = render(
+      <DraggableCardList<Card>
+        title="Rules"
+        items={items}
+        emptyMessage="No rules"
+        renderContent={(item) => <span>{item.title}</span>}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={onReorder}
+      />,
+    );
+
+    const cards = container.querySelectorAll('[draggable="true"]');
+    const source = cards[2] as HTMLDivElement;
+    const target = cards[0] as HTMLDivElement;
+    const dataTransfer = createDataTransfer();
+    dataTransfer.setData('text/plain', '2');
+
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer, clientY: 10 });
+
+    expect(onReorder).toHaveBeenCalledWith([{ title: 'C' }, { title: 'A' }, { title: 'B' }]);
+  });
+
+  it('keeps the same order when an item is dropped back onto its current insert-after position', () => {
+    const onReorder = vi.fn();
+    const items: Card[] = [{ title: 'A' }, { title: 'B' }, { title: 'C' }];
+
+    const { container } = render(
+      <DraggableCardList<Card>
+        title="Rules"
+        items={items}
+        emptyMessage="No rules"
+        renderContent={(item) => <span>{item.title}</span>}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={onReorder}
+      />,
+    );
+
+    const cards = container.querySelectorAll('[draggable="true"]');
+    const source = cards[1] as HTMLDivElement;
+    const target = cards[1] as HTMLDivElement;
+    const dataTransfer = createDataTransfer();
+    dataTransfer.setData('text/plain', '1');
+
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer, clientY: 90 });
+
+    expect(onReorder).toHaveBeenCalledWith([{ title: 'A' }, { title: 'B' }, { title: 'C' }]);
+  });
+
+  it('clears drag-start visual state on drag end', () => {
+    const items: Card[] = [{ title: 'A' }, { title: 'B' }];
+
+    const { container } = render(
+      <DraggableCardList<Card>
+        title="Rules"
+        items={items}
+        emptyMessage="No rules"
+        renderContent={(item) => <span>{item.title}</span>}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={vi.fn()}
+      />,
+    );
+
+    const card = container.querySelector('[draggable="true"]') as HTMLDivElement;
+    const dataTransfer = createDataTransfer();
+
+    fireEvent.dragStart(card, { dataTransfer });
+    expect(card.className).toContain('opacity-50');
+
+    fireEvent.dragEnd(card);
+    expect(card.className).not.toContain('opacity-50');
+    expect(card.className).not.toContain('border-t-2');
+    expect(card.className).not.toContain('border-b-2');
+  });
+
+  it('moves drag-over highlight from one target to another', () => {
+    const items: Card[] = [{ title: 'A' }, { title: 'B' }, { title: 'C' }];
+
+    const { container } = render(
+      <DraggableCardList<Card>
+        title="Rules"
+        items={items}
+        emptyMessage="No rules"
+        renderContent={(item) => <span>{item.title}</span>}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onReorder={vi.fn()}
+      />,
+    );
+
+    const cards = container.querySelectorAll('[draggable="true"]');
+    const source = cards[0] as HTMLDivElement;
+    const firstTarget = cards[1] as HTMLDivElement;
+    const secondTarget = cards[2] as HTMLDivElement;
+    const dataTransfer = createDataTransfer();
+    dataTransfer.setData('text/plain', '0');
+
+    vi.spyOn(firstTarget, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      left: 0,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(secondTarget, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 100,
+      width: 100,
+      height: 100,
+      top: 100,
+      right: 100,
+      bottom: 200,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(firstTarget, { dataTransfer, clientY: 110 });
+    expect(firstTarget.className).toMatch(/border-(t|b)-2/);
+
+    fireEvent.dragOver(secondTarget, { dataTransfer, clientY: 190 });
+    expect(firstTarget.className).not.toMatch(/border-(t|b)-2/);
+    expect(secondTarget.className).toMatch(/border-(t|b)-2/);
+  });
 });

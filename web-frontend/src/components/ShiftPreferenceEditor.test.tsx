@@ -174,4 +174,82 @@ describe('ShiftPreferenceEditor', () => {
 
     expect(screen.queryByText('Active Preferences Summary')).not.toBeInTheDocument();
   });
+
+  it('removes a preference when its weight is changed back to zero', () => {
+    const onSave = vi.fn();
+
+    render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={onSave}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[{ shiftTypeId: 'D', weight: 3 }]}
+      />,
+    );
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /save preferences/i }));
+
+    expect(onSave).toHaveBeenCalledWith([]);
+  });
+
+  it('reopens with initial preferences after canceling unsaved changes', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[{ shiftTypeId: 'D', weight: 3 }]}
+      />,
+    );
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: '9' } });
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+    rerender(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[{ shiftTypeId: 'D', weight: 3 }]}
+      />,
+    );
+
+    expect(screen.getAllByRole('textbox')[0]).toHaveValue('3');
+  });
+
+  it('updates an existing draft preference instead of duplicating it before save', () => {
+    const onSave = vi.fn();
+
+    render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={onSave}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[{ shiftTypeId: 'D', weight: 1 }]}
+      />,
+    );
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: '4' } });
+    fireEvent.change(inputs[0], { target: { value: '6' } });
+    fireEvent.click(screen.getByRole('button', { name: /save preferences/i }));
+
+    expect(onSave).toHaveBeenCalledWith([{ shiftTypeId: 'D', weight: 6 }]);
+  });
 });

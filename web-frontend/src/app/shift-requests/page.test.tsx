@@ -309,4 +309,101 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     );
     expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
+
+  it('shows validation error for invalid repetition counts in people-history CSV', async () => {
+    const user = userEvent.setup();
+    (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
+    fileContentsByName.set('people-history.csv', 'Person 1,D,-1\n');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
+
+    expect(alert).toHaveBeenCalledWith(
+      expect.stringContaining("CSV validation failed: Invalid repetition count '-1' for person 'Person 1' at row 1"),
+    );
+    expect(reorderItems).not.toHaveBeenCalled();
+  });
+
+  it('shows validation error for unknown shift types in people-history CSV', async () => {
+    const user = userEvent.setup();
+    (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
+    fileContentsByName.set('people-history.csv', 'Person 1,X,1\n');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
+
+    expect(alert).toHaveBeenCalledWith(
+      expect.stringContaining('CSV validation failed: Invalid shift type "X" at row 1. Valid shift types: D'),
+    );
+    expect(reorderItems).not.toHaveBeenCalled();
+  });
+
+  it('accepts empty shift types in people-history CSV as zero-history rows', async () => {
+    const user = userEvent.setup();
+    (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
+    fileContentsByName.set('people-history.csv', 'Person 1,,0\n');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
+
+    expect(reorderItems).toHaveBeenCalledWith(
+      'people',
+      expect.objectContaining({
+        items: [expect.objectContaining({ id: 'Person 1', history: [] })],
+      }),
+      [expect.objectContaining({ id: 'Person 1', history: [] })],
+    );
+    expect(alert).toHaveBeenCalledWith('Successfully processed 1 shift type entries from people history CSV!');
+  });
+
+  it('shows exact row-count mismatch errors for multi-person people-history CSV uploads', async () => {
+    const user = userEvent.setup();
+    (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '01', description: 'Jan 1' }],
+        groups: [{ id: 'ALL_DATES', members: ['01'], description: '' }],
+      },
+      peopleData: {
+        items: [
+          { id: 'Person 1', description: '', history: [] },
+          { id: 'Person 2', description: '', history: [] },
+        ],
+        groups: [{ id: 'ALL_PEOPLE', members: ['Person 1', 'Person 2'], description: '' }],
+        history: [],
+      },
+      shiftTypeData: {
+        items: [{ id: 'D', description: 'Day' }],
+        groups: [{ id: 'ALL_SHIFT_TYPES', members: ['D'], description: '' }],
+      },
+      getPreferencesByType: vi.fn(() => []),
+      updatePreferencesByType,
+      addPersonHistory: vi.fn(),
+      updatePersonHistory: vi.fn(),
+      reorderItems,
+    });
+
+    fileContentsByName.set('people-history.csv', 'Person 1,D,1\n');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
+
+    expect(alert).toHaveBeenCalledWith(
+      'CSV validation failed: CSV should have 2 rows (one per person), but has 1 rows.',
+    );
+    expect(reorderItems).not.toHaveBeenCalled();
+  });
 });

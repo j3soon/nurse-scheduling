@@ -278,4 +278,156 @@ describe('UploadButton', () => {
     expect(onFileUpload).toHaveBeenCalledTimes(1);
     expect(onFileUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'SCHEDULE.YAML' }));
   });
+
+  it('resets file input value after invalid selection so the same file can be selected again', () => {
+    const onFileUpload = vi.fn();
+    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const badFile = new File(['bad'], 'schedule.csv', { type: 'text/csv' });
+
+    Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'C:\\fakepath\\schedule.csv' });
+    fireEvent.change(input, { target: { files: [badFile] } });
+    expect(input.value).toBe('');
+
+    Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'C:\\fakepath\\schedule.csv' });
+    fireEvent.change(input, { target: { files: [badFile] } });
+    expect(input.value).toBe('');
+    expect(onFileUpload).not.toHaveBeenCalled();
+  });
+
+  it('does not trigger hidden input click when disabled', async () => {
+    const user = userEvent.setup();
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={vi.fn()}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+        disabled={true}
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const clickSpy = vi.spyOn(input, 'click');
+
+    await user.click(screen.getByRole('button', { name: /upload/i }));
+
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not apply drag-over styling while disabled', () => {
+    render(
+      <UploadButton
+        onFileUpload={vi.fn()}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+        disabled={true}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /upload/i });
+    fireEvent.dragOver(button, { dataTransfer: { files: [] } });
+
+    expect(button.className).not.toContain('border-dashed');
+  });
+
+  it('accepts a valid file after an invalid selection using the same input element', () => {
+    const onFileUpload = vi.fn();
+    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const badFile = new File(['bad'], 'schedule.csv', { type: 'text/csv' });
+    const goodFile = new File(['good'], 'schedule.yaml', { type: 'text/yaml' });
+
+    Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'C:\\fakepath\\schedule.csv' });
+    fireEvent.change(input, { target: { files: [badFile] } });
+    expect(input.value).toBe('');
+
+    Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'C:\\fakepath\\schedule.yaml' });
+    fireEvent.change(input, { target: { files: [goodFile] } });
+
+    expect(onFileUpload).toHaveBeenCalledTimes(1);
+    expect(onFileUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'schedule.yaml' }));
+    expect(input.value).toBe('');
+  });
+
+  it('accepts a valid dropped file after a prior invalid dropped file', () => {
+    const onFileUpload = vi.fn();
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /upload/i });
+    const badFile = new File(['bad'], 'bad.csv', { type: 'text/csv' });
+    const goodFile = new File(['good'], 'good.yaml', { type: 'text/yaml' });
+
+    fireEvent.drop(button, { dataTransfer: { files: [badFile] } });
+    fireEvent.drop(button, { dataTransfer: { files: [goodFile] } });
+
+    expect(alertSpy).toHaveBeenCalledWith('Please upload a file with one of these extensions: .yaml');
+    expect(onFileUpload).toHaveBeenCalledTimes(1);
+    expect(onFileUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'good.yaml' }));
+  });
+
+  it('stops opening the hidden input after rerendering from enabled to disabled', async () => {
+    const user = userEvent.setup();
+    const { container, rerender } = render(
+      <UploadButton
+        onFileUpload={vi.fn()}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const clickSpy = vi.spyOn(input, 'click');
+
+    await user.click(screen.getByRole('button', { name: /upload/i }));
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <UploadButton
+        onFileUpload={vi.fn()}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+        disabled={true}
+      />,
+    );
+
+    fireEvent.dragOver(screen.getByRole('button', { name: /upload/i }), { dataTransfer: { files: [] } });
+    await user.click(screen.getByRole('button', { name: /upload/i }));
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: /upload/i }).className).not.toContain('border-dashed');
+  });
 });

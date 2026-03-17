@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DataTable } from '@/components/DataTable';
 import { useGroupTableColumns, useItemTableColumns } from '@/components/TableColumns';
@@ -187,6 +187,24 @@ describe('TableColumns', () => {
     expect(screen.queryByText('MISSING')).not.toBeInTheDocument();
   });
 
+  it('renders valid group member tags even when one referenced member is missing', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    render(
+      <GroupTableHarness
+        groups={[{ id: 'G1', members: ['P1', 'MISSING'], description: '' }]}
+        items={[{ id: 'P1', description: 'Primary nurse' }]}
+        onInlineEdit={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('P1')).toBeInTheDocument();
+    expect(screen.queryByText('MISSING')).not.toBeInTheDocument();
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
   it('renders removable tags only for non-auto groups and calls remove callback', async () => {
     const user = userEvent.setup();
     const removeItemFromGroup = vi.fn();
@@ -291,5 +309,70 @@ describe('TableColumns', () => {
     expect(screen.getByText('Auto')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+  });
+
+  it('shows and hides overflow indicator based on members container overflow', async () => {
+    const scrollHeightSpy = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get');
+    const clientHeightSpy = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get');
+
+    scrollHeightSpy.mockReturnValue(200);
+    clientHeightSpy.mockReturnValue(100);
+
+    render(
+      <ItemTableHarness
+        items={[{ id: 'A', description: '' }]}
+        groups={[
+          { id: 'G1', members: ['A'], description: '' },
+          { id: 'G2', members: ['A'], description: '' },
+        ]}
+        onInlineEdit={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTitle('Scroll for more')).toBeInTheDocument();
+
+    scrollHeightSpy.mockReturnValue(80);
+    clientHeightSpy.mockReturnValue(100);
+    window.dispatchEvent(new Event('resize'));
+
+    await waitFor(() => {
+      expect(screen.queryByTitle('Scroll for more')).not.toBeInTheDocument();
+    });
+  });
+
+  it('removes the correct remaining group after rerender shrinks the membership list', async () => {
+    const user = userEvent.setup();
+    const removeItemFromGroup = vi.fn();
+    const { rerender } = render(
+      <ItemTableHarness
+        items={[{ id: 'A', description: '' }]}
+        groups={[
+          { id: 'G1', members: ['A'], description: '' },
+          { id: 'G2', members: ['A'], description: '' },
+        ]}
+        onInlineEdit={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        removeItemFromGroup={removeItemFromGroup}
+      />,
+    );
+
+    rerender(
+      <ItemTableHarness
+        items={[{ id: 'A', description: '' }]}
+        groups={[{ id: 'G2', members: ['A'], description: '' }]}
+        onInlineEdit={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        removeItemFromGroup={removeItemFromGroup}
+      />,
+    );
+
+    await user.click(screen.getByTitle('Remove "G2"'));
+
+    expect(removeItemFromGroup).toHaveBeenCalledTimes(1);
+    expect(removeItemFromGroup).toHaveBeenCalledWith('A', 'G2');
   });
 });
