@@ -1748,4 +1748,184 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('renames a people group referenced across mixed preference types', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-08-01', endDate: '2026-08-01' },
+          items: [{ id: '01', description: '' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }, { id: 'P2', description: '', history: [] }],
+          groups: [{ id: 'G1', members: ['P1', 'P2'], description: '' }],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }],
+          groups: [],
+        },
+        preferences: [
+          { type: SHIFT_REQUEST, person: ['G1'], date: ['01'], shiftType: ['D'], weight: 1 },
+          { type: SHIFT_COUNT, person: ['G1'], countDates: ['01'], countShiftTypes: ['D'], expression: 'x >= T', target: 1, weight: 2 },
+          { type: SHIFT_AFFINITY, date: ['01'], people1: ['P1'], people2: ['G1'], shiftTypes: ['D'], weight: 3 },
+          { type: SHIFT_TYPE_REQUIREMENT, date: ['01'], shiftType: ['D'], qualifiedPeople: ['P1', 'G1'], requiredNumPeople: 1, weight: 4 },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.updateGroup(DataType.PEOPLE, result.current.peopleData, 'G1', 'G1X');
+    });
+
+    await waitFor(() => {
+      const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as { person: string[] } | undefined;
+      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as { person: string[] } | undefined;
+      const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as { people2: string[] } | undefined;
+      const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as { qualifiedPeople: string[] } | undefined;
+
+      expect(request?.person).toEqual(['G1X']);
+      expect(count?.person).toEqual(['G1X']);
+      expect(affinity?.people2).toEqual(['G1X']);
+      expect(requirement?.qualifiedPeople).toEqual(['P1', 'G1X']);
+    });
+  });
+
+  it('renames only the targeted reference when item and group IDs are mixed in preferences', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-08-02', endDate: '2026-08-02' },
+          items: [{ id: '01', description: '' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }, { id: 'P2', description: '', history: [] }],
+          groups: [{ id: 'G1', members: ['P1'], description: '' }],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }],
+          groups: [],
+        },
+        preferences: [
+          { type: SHIFT_TYPE_REQUIREMENT, date: ['01'], shiftType: ['D'], qualifiedPeople: ['P1', 'G1'], requiredNumPeople: 1, weight: 1 },
+          { type: SHIFT_AFFINITY, date: ['01'], people1: ['P1'], people2: ['G1'], shiftTypes: ['D'], weight: 2 },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.updateItem(DataType.PEOPLE, result.current.peopleData, 'P1', 'P1X');
+    });
+
+    await waitFor(() => {
+      const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as { qualifiedPeople: string[] } | undefined;
+      const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as { people1: string[]; people2: string[] } | undefined;
+
+      expect(requirement?.qualifiedPeople).toEqual(['P1X', 'G1']);
+      expect(affinity?.people1).toEqual(['P1X']);
+      expect(affinity?.people2).toEqual(['G1']);
+    });
+  });
+
+  it('removes old IDs after chained person renames', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-08-03', endDate: '2026-08-03' },
+          items: [{ id: '01', description: '' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [{ id: 'G1', members: ['P1'], description: '' }],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }],
+          groups: [],
+        },
+        preferences: [
+          { type: SHIFT_REQUEST, person: ['P1'], date: ['01'], shiftType: ['D'], weight: 1 },
+          { type: SHIFT_AFFINITY, date: ['01'], people1: ['P1'], people2: ['G1'], shiftTypes: ['D'], weight: 2 },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.updateItem(DataType.PEOPLE, result.current.peopleData, 'P1', 'P1X');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.some(item => item.id === 'P1X')).toBe(true);
+    });
+
+    act(() => {
+      result.current.updateItem(DataType.PEOPLE, result.current.peopleData, 'P1X', 'P1Y');
+    });
+
+    await waitFor(() => {
+      const serialized = JSON.stringify(result.current.preferences);
+      expect(result.current.peopleData.items.some(item => item.id === 'P1Y')).toBe(true);
+      expect(serialized.includes('"P1"')).toBe(false);
+      expect(serialized.includes('"P1X"')).toBe(false);
+      expect(serialized.includes('"P1Y"')).toBe(true);
+    });
+  });
+
+  it('keeps renamed references coherent when updatePreferencesByType runs afterward', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-08-04', endDate: '2026-08-04' },
+          items: [{ id: '01', description: '' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [{ id: 'G1', members: ['P1'], description: '' }],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }],
+          groups: [],
+        },
+        preferences: [
+          { type: SHIFT_REQUEST, person: ['P1'], date: ['01'], shiftType: ['D'], weight: 1 },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.updateItem(DataType.PEOPLE, result.current.peopleData, 'P1', 'P1X');
+      result.current.updatePreferencesByType(SHIFT_REQUEST, [
+        { type: SHIFT_REQUEST, person: ['P1X'], date: ['01'], shiftType: ['D'], weight: 3 },
+        { type: SHIFT_REQUEST, person: ['G1'], date: ['01'], shiftType: ['D'], weight: 2 },
+      ]);
+    });
+
+    await waitFor(() => {
+      const requests = result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST) as Array<{ person: string[]; weight: number }>;
+      expect(requests.map(req => req.person[0])).toEqual(['P1X', 'G1']);
+      expect(requests.map(req => req.weight)).toEqual([3, 2]);
+    });
+  });
+
 });

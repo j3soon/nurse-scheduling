@@ -532,4 +532,32 @@ describe('ItemGroupEditorPage', () => {
     expect(saveSpy).toHaveBeenCalledTimes(1);
     expect(restoreSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('propagates group rename through rendered mixed references on the page', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [
+            { id: 'P1', description: '', history: [] },
+            { id: 'P2', description: '', history: [] },
+          ],
+          groups: [{ id: 'Group 1', members: ['P1', 'P2'], description: '' }],
+          history: [],
+        }}
+      />,
+    );
+
+    const groupRow = screen.getByTitle('Group 1').closest('tr') as HTMLTableRowElement;
+    await user.click(within(groupRow).getByRole('button', { name: /edit/i }));
+    const idInput = screen.getByDisplayValue('Group 1');
+    await user.clear(idInput);
+    await user.type(idInput, 'Group X');
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(screen.getByTitle('Group X')).toBeInTheDocument();
+    expect(screen.queryByTitle('Group 1')).not.toBeInTheDocument();
+    expect(screen.getAllByTitle('Remove "Group X"')).toHaveLength(2);
+  });
 });

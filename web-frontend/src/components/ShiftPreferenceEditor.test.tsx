@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 
@@ -251,5 +251,116 @@ describe('ShiftPreferenceEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: /save preferences/i }));
 
     expect(onSave).toHaveBeenCalledWith([{ shiftTypeId: 'D', weight: 6 }]);
+  });
+
+  it('supports mixed manual and infinity-style edits in one save', () => {
+    const onSave = vi.fn();
+
+    render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={onSave}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[{ shiftTypeId: 'D', weight: 2 }]}
+      />,
+    );
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: '-3' } });
+    fireEvent.click(screen.getAllByRole('button', { name: '+∞' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: /save preferences/i }));
+
+    expect(onSave).toHaveBeenCalledWith([
+      { shiftTypeId: 'D', weight: -3 },
+      { shiftTypeId: 'N', weight: Infinity },
+    ]);
+  });
+
+  it('mixes zero-clearing with infinity values in one draft', () => {
+    const onSave = vi.fn();
+
+    render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={onSave}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[{ shiftTypeId: 'D', weight: 4 }, { shiftTypeId: 'N', weight: -2 }]}
+      />,
+    );
+
+    const inputs = screen.getAllByRole('textbox');
+    fireEvent.change(inputs[0], { target: { value: '0' } });
+    fireEvent.click(screen.getAllByRole('button', { name: '-∞' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: /save preferences/i }));
+
+    expect(onSave).toHaveBeenCalledWith([{ shiftTypeId: 'N', weight: -Infinity }]);
+  });
+
+  it('reopens with saved canonical mixed values after rerender', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const { rerender } = render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={onSave}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[{ shiftTypeId: 'D', weight: 1 }]}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: '+∞' })[0]);
+    fireEvent.change(screen.getAllByRole('textbox')[1], { target: { value: '-5' } });
+    await user.click(screen.getByRole('button', { name: /save preferences/i }));
+
+    expect(onSave).toHaveBeenCalledWith([
+      { shiftTypeId: 'D', weight: Infinity },
+      { shiftTypeId: 'N', weight: -5 },
+    ]);
+
+    rerender(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[{ shiftTypeId: 'D', weight: Infinity }, { shiftTypeId: 'N', weight: -5 }]}
+      />,
+    );
+
+    const inputs = screen.getAllByRole('textbox');
+    expect(inputs[0]).toHaveValue('Infinity');
+    expect(inputs[1]).toHaveValue('-5');
+  });
+
+  it('renders mixed-value summary entries in sorted order', () => {
+    render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[
+          { shiftTypeId: 'D', weight: Infinity },
+          { shiftTypeId: 'N', weight: -3 },
+        ]}
+      />,
+    );
+
+    const summary = screen.getByText('Active Preferences Summary').closest('div') as HTMLElement;
+    const labels = within(summary).getAllByText(/^(D|N)$/).map(node => node.textContent);
+    expect(labels).toEqual(['D', 'N']);
   });
 });
