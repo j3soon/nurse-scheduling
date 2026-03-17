@@ -874,6 +874,11 @@ export function useSchedulingData() {
     groupIds?: string[],
     description?: string
   ): void => {
+    if (dataType === DataType.DATES && oldId !== newId) {
+      console.error(`Cannot rename derived date item ID "${oldId}" to "${newId}". ${ERROR_SHOULD_NOT_HAPPEN}`);
+      return;
+    }
+
     // Check if the new ID is a reserved keyword
     if (isReservedKeyword(dataType, newId)) {
       console.error(`Cannot update item to ID "${newId}" - it is a reserved keyword. ${ERROR_SHOULD_NOT_HAPPEN}`);

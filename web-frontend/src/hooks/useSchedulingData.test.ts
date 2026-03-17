@@ -1618,8 +1618,9 @@ describe('useSchedulingData', () => {
     });
   });
 
-  it('renames a concrete date ID consistently across date-based preference shapes', async () => {
+  it('rejects renaming derived date IDs and leaves date-based preferences unchanged', async () => {
     const { result } = renderHook(() => useSchedulingData());
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     act(() => {
       result.current.loadFromYaml({
@@ -1660,12 +1661,17 @@ describe('useSchedulingData', () => {
       const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as { countDates: string[] } | undefined;
       const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as { date: string[] } | undefined;
 
-      expect(request?.date).toEqual(['01X']);
-      expect(requirement?.date).toEqual(['01X']);
+      expect(request?.date).toEqual(['01']);
+      expect(requirement?.date).toEqual(['01']);
       expect(successions?.date).toEqual(['01']);
-      expect(count?.countDates).toEqual(['01X', '02']);
-      expect(affinity?.date).toEqual(['01X']);
+      expect(count?.countDates).toEqual(['01', '02']);
+      expect(affinity?.date).toEqual(['01']);
+      expect(result.current.dateData.items.some(item => item.id === '01X')).toBe(false);
     });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Cannot rename derived date item ID "01" to "01X"'),
+    );
   });
 
   it('falls back cleanly when localStorage contains a partially corrupted nested state subtree', async () => {
