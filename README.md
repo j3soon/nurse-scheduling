@@ -112,6 +112,8 @@ bun run test:e2e
 bun run test:e2e:ui
 ```
 
+> For the interactive UI mode, you may need to run the tests multiple times to get it passed, as the test is currently somewhat flaky. This is due to the delay of page update and is planned to be fixed in the future.
+
 For building static site, run:
 
 ```sh
