@@ -77,12 +77,39 @@ docker run --rm -it --gpus all --network=host \
   j3soon/nurse-scheduling:dev-cuopt
 ```
 
+> May need to run `rm -rf .next` in `web-frontend` to clear the Next.js cache when switching between host and Docker environments.
+
 ### Web Frontend
 
 ```sh
 cd web-frontend
 bun install
 bun run dev
+```
+
+Run frontend unit/component tests:
+
+```sh
+cd web-frontend
+bun run test
+```
+
+Run frontend coverage:
+
+```sh
+cd web-frontend
+bun run test:coverage
+```
+
+Run frontend browser integration tests:
+
+```sh
+cd web-frontend
+bunx playwright install-deps chromium
+bunx playwright install chromium
+bun run test:e2e
+# or in interactive UI mode:
+bun run test:e2e:ui
 ```
 
 For building static site, run:
@@ -99,7 +126,7 @@ cd web-frontend
 bun run lint -- --fix
 ```
 
-> `bun` can be replaced directly with `npm`.
+> `bun` can be replaced directly with `npm` for the basic Next.js workflow, but the documented project scripts assume Bun.
 
 ### Core
 
@@ -175,7 +202,7 @@ pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
 
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
 
-Note: The tests and code coverage are only for the core module. The web frontend is not covered by tests.
+Note: The frontend now has Vitest coverage plus Playwright browser integration tests. The root GitHub Actions badge currently still points at the core workflow.
 
 ### Web Backend
 

@@ -26,5 +26,10 @@ RUN npm install -g @openai/codex
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+# Install Playwright Chromium browser and system dependencies so browser E2E tests
+# can run inside the development image without extra manual setup.
+RUN bunx playwright install --with-deps chromium
 
 ENTRYPOINT ["/bin/bash"]
