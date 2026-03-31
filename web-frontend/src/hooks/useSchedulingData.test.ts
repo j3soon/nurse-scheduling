@@ -131,6 +131,7 @@ describe('useSchedulingData', () => {
     expect(result.current.dateData.items.map(item => item.id)).toEqual(['01', '02', '03']);
   });
 
+
   it('supports undo and redo for history-aware updates', async () => {
     const { result } = renderHook(() => useSchedulingData());
 

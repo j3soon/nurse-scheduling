@@ -77,6 +77,19 @@ docker run --rm -it --gpus all --network=host \
   j3soon/nurse-scheduling:dev-cuopt
 ```
 
+or with X11 forwarding for running Playwright interactive mode in the container:
+
+```sh
+xhost +local:docker
+mkdir -p ~/docker/.codex
+docker run --rm -it --network=host \
+  -v $(pwd):/app \
+  -v ~/docker/.codex:/root/.codex \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  j3soon/nurse-scheduling:dev
+```
+
 > May need to run `rm -rf .next` in `web-frontend` to clear the Next.js cache when switching between host and Docker environments.
 
 ### Web Frontend
