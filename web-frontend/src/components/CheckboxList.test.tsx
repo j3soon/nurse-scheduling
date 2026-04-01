@@ -64,6 +64,7 @@ describe('CheckboxList', () => {
     fireEvent.mouseEnter(labelB);
     fireEvent.mouseUp(labelB, { button: 0 });
 
+    expect(onToggle).toHaveBeenCalledTimes(2);
     expect(onToggle).toHaveBeenNthCalledWith(1, 'A');
     expect(onToggle).toHaveBeenNthCalledWith(2, 'B');
   });
@@ -103,5 +104,98 @@ describe('CheckboxList', () => {
     expect(onToggle).toHaveBeenNthCalledWith(2, 'B');
     expect(onToggle).toHaveBeenNthCalledWith(3, 'C');
     expect(onToggle).toHaveBeenNthCalledWith(4, 'D');
+  });
+
+  it('toggles the same checkbox again when re-entered during one drag gesture', () => {
+    const onToggle = vi.fn();
+
+    render(
+      <CheckboxList
+        label="Items"
+        items={[{ id: 'A' }, { id: 'B' }, { id: 'C' }]}
+        selectedIds={[]}
+        onToggle={onToggle}
+      />,
+    );
+
+    const labelA = screen.getByText('A').closest('label') as HTMLLabelElement;
+    const labelB = screen.getByText('B').closest('label') as HTMLLabelElement;
+
+    fireEvent.mouseEnter(labelA);
+    fireEvent.mouseDown(labelA, { button: 0 });
+    fireEvent.mouseLeave(labelA);
+
+    fireEvent.mouseEnter(labelB);
+    fireEvent.mouseLeave(labelB);
+
+    fireEvent.mouseEnter(labelA);
+    fireEvent.mouseLeave(labelA);
+
+    fireEvent.mouseUp(labelA, { button: 0 });
+
+    expect(onToggle).toHaveBeenCalledTimes(3);
+    expect(onToggle).toHaveBeenNthCalledWith(1, 'A');
+    expect(onToggle).toHaveBeenNthCalledWith(2, 'B');
+    expect(onToggle).toHaveBeenNthCalledWith(3, 'A');
+  });
+
+  it('does not toggle again on mouse up after drag mode has started', () => {
+    const onToggle = vi.fn();
+
+    render(
+      <CheckboxList
+        label="Items"
+        items={[{ id: 'A' }, { id: 'B' }]}
+        selectedIds={[]}
+        onToggle={onToggle}
+      />,
+    );
+
+    const labelA = screen.getByText('A').closest('label') as HTMLLabelElement;
+    const labelB = screen.getByText('B').closest('label') as HTMLLabelElement;
+
+    fireEvent.mouseEnter(labelA);
+    fireEvent.mouseDown(labelA, { button: 0 });
+    fireEvent.mouseLeave(labelA);
+    fireEvent.mouseEnter(labelB);
+    fireEvent.mouseUp(labelB, { button: 0 });
+
+    expect(onToggle).toHaveBeenCalledTimes(2);
+    expect(onToggle).toHaveBeenNthCalledWith(1, 'A');
+    expect(onToggle).toHaveBeenNthCalledWith(2, 'B');
+  });
+
+  it('ends drag mode when mouse up happens outside the component', () => {
+    const onToggle = vi.fn();
+
+    render(
+      <div>
+        <CheckboxList
+          label="Items"
+          items={[{ id: 'A' }, { id: 'B' }, { id: 'C' }]}
+          selectedIds={[]}
+          onToggle={onToggle}
+        />
+        <div data-testid="outside">Outside</div>
+      </div>,
+    );
+
+    const labelA = screen.getByText('A').closest('label') as HTMLLabelElement;
+    const labelB = screen.getByText('B').closest('label') as HTMLLabelElement;
+    const labelC = screen.getByText('C').closest('label') as HTMLLabelElement;
+    const outside = screen.getByTestId('outside');
+
+    fireEvent.mouseEnter(labelA);
+    fireEvent.mouseDown(labelA, { button: 0 });
+    fireEvent.mouseLeave(labelA);
+    fireEvent.mouseEnter(labelB);
+    fireEvent.mouseLeave(labelB);
+    fireEvent.mouseUp(outside, { button: 0 });
+
+    fireEvent.mouseEnter(labelC);
+
+    expect(onToggle).toHaveBeenCalledTimes(2);
+    expect(onToggle).toHaveBeenNthCalledWith(1, 'A');
+    expect(onToggle).toHaveBeenNthCalledWith(2, 'B');
   });
 });
