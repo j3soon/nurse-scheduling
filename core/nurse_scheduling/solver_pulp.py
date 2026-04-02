@@ -190,9 +190,7 @@ class BasePuLPSolver(SolverInterface):
                 )
             if deterministic:
                 logging.warning("Deterministic mode is not implemented for PuLP/cuOpt; ignoring.")
-            # Ask cuOpt to prove optimality more aggressively instead of stopping
-            # at a nonzero MIP gap and returning a feasible incumbent.
-            self.solver = pulp.CUOPT(gapRel=0.0, optimality_tolerance=1e-2, **solver_kwargs)
+            self.solver = pulp.CUOPT(**solver_kwargs)
         else:
             raise ValueError(f"Unsupported PuLP solver engine: {self.engine!r}")
 
