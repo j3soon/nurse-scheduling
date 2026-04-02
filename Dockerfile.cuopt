@@ -1,5 +1,8 @@
 # Ref: https://docs.nvidia.com/cuopt/user-guide/latest/cuopt-server/quick-start.html#container-from-docker-hub
-FROM nvidia/cuopt:latest-cuda12.9-py3.13
+# TODO: Currently using nightly release due to upstream issue.
+# After next stable release, change the base image to `nvidia/cuopt:latest-cuda13.0-py3.13`
+# Ref: https://github.com/NVIDIA/cuopt/issues/960
+FROM nvidia/cuopt:26.4.0a-cuda13.0-py3.13
 
 WORKDIR /app
 

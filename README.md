@@ -28,6 +28,8 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 - [bun](https://bun.com/docs/installation).
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- [Docker](https://docs.docker.com/engine/install/ubuntu/) (optional, for Docker-based development environment and GPU solver).
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (optional, for GPU solver).
 
 These are not hard requirements. If you know what you are doing, you can also use other tools to manage dependencies, such as [`nvm`/`npm`](https://nodejs.org/en/download) for Next.js, and `virtualenv` or `conda` for Python.
 
@@ -101,6 +103,12 @@ bun run lint -- --fix
 
 ### Core
 
+We currently support three solvers: OR-Tools/CP-SAT, PuLP/CBC, and PuLP/cuOpt.
+
+- `ortools/cp-sat` is the default solver and the most battle-tested one.
+- `pulp/cbc` is only tested on basic test cases and now well-tested on real scenarios.
+- `pulp/cuopt` is the GPU-accelerated solver, which is also only tested on basic test cases. Due to its GPU requirement, it is not currently included in CI testing.
+
 ```sh
 cd core
 # create virtual environment
@@ -132,7 +140,7 @@ pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
 # run schedule regression tests (OR-Tools / PuLP)
 pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
-pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py  # TODO: Note that this test is flaky potentially due to an upstream issue: https://github.com/NVIDIA/cuopt/issues/960
+pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
 # run the full core test suite
 pytest --log-cli-level=INFO
 # run basic Python lint checks for core
