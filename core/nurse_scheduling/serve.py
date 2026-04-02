@@ -94,7 +94,7 @@ async def optimize_and_export_xlsx(
     yaml_content: Optional[str] = Form(None, description="YAML content as a string"),
     prettify: Optional[bool] = Form(None, description="Enable prettier output formatting"),
     timeout: Optional[int] = Form(None, description="Max execution time in seconds"),
-    solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc)"),
+    solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc, pulp/cuopt)"),
 ):
     """
     Optimize a nurse schedule from a YAML file or YAML string, and return an XLSX file.

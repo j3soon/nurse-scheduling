@@ -1,4 +1,4 @@
-"""PuLP/CBC solver wrapper."""
+"""Schedule regression test wrapper for the PuLP/cuOpt backend."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -17,11 +17,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from .solver_pulp import BasePuLPSolver
+from .schedule_test_helper import run_schedule_regression_test
 
 
-class PuLPSolver(BasePuLPSolver):
-    """PuLP solver configured to use CBC."""
-
-    def __init__(self):
-        super().__init__(engine="cbc")
+def test_schedule_pulp_cuopt():
+    run_schedule_regression_test("pulp/cuopt")

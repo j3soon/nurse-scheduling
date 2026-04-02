@@ -108,6 +108,10 @@ def schedule(
         from .solver_pulp_cbc import PuLPSolver
         logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
         ctx.solver = PuLPSolver()
+    elif solver_backend == 'pulp' and solver_engine == 'cuopt':
+        from .solver_pulp_cuopt import PuLPCuOptSolver
+        logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
+        ctx.solver = PuLPCuOptSolver()
     else:
         raise ValueError(
             f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}"

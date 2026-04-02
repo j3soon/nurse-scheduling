@@ -1,4 +1,4 @@
-"""PuLP/CBC solver wrapper."""
+"""PuLP/cuOpt solver wrapper."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -20,8 +20,8 @@
 from .solver_pulp import BasePuLPSolver
 
 
-class PuLPSolver(BasePuLPSolver):
-    """PuLP solver configured to use CBC."""
+class PuLPCuOptSolver(BasePuLPSolver):
+    """PuLP solver configured to use NVIDIA cuOpt."""
 
     def __init__(self):
-        super().__init__(engine="cbc")
+        super().__init__(engine="cuopt")
