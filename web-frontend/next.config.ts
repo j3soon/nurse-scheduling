@@ -5,9 +5,12 @@ import { execSync } from "child_process";
 function getGitVersion(): string {
   try {
     // Try to get version from git describe (uses tags + commits)
-    return execSync("git describe --tags --always --dirty", { encoding: "utf-8" }).trim();
+    return execSync("git describe --tags --always --dirty", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   } catch {
-    return "unknown";
+    return "v0.0.0-unknown";  // Fallback if git command fails (e.g., not a git repo)
   }
 }
 
