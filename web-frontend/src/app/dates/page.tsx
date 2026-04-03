@@ -29,6 +29,7 @@ import { Mode } from '@/constants/modes';
 import { DateRange, DataType } from '@/types/scheduling';
 import {
   getTaiwanHolidaySupportLabel,
+  getTaiwanHolidayEntriesInRange,
   includesUnimportedTaiwanLaborDay,
   isTaiwanHolidayRangeSupported,
 } from '@/utils/taiwanHolidays';
@@ -66,6 +67,14 @@ export default function DatePage() {
   const stringToDate = (dateStr: string): Date | undefined => {
     return dateStr ? new Date(dateStr) : undefined;
   };
+  const formatHolidayWeekday = (dateStr: string): string => {
+    return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short' });
+  };
+  const shouldShowHolidayTypeBadge = (dateStr: string, isFreeday: boolean): boolean => {
+    const weekday = new Date(dateStr).getDay();
+    const isWeekend = weekday === 0 || weekday === 6;
+    return isWeekend ? !isFreeday : isFreeday;
+  };
 
   // Helper function to check if date range represents a full month
   const isFullMonth = (startDate?: Date, endDate?: Date): boolean => {
@@ -102,6 +111,12 @@ export default function DatePage() {
   const taiwanHolidaySupportLabel = getTaiwanHolidaySupportLabel();
   const isTaiwanHolidayImportSupported = useMemo(
     () => isTaiwanHolidayRangeSupported(draft),
+    [draft]
+  );
+  const includedTaiwanHolidays = useMemo(
+    () => getTaiwanHolidayEntriesInRange(draft).filter(
+      (entry) => shouldShowHolidayTypeBadge(entry.date, entry.isFreeday)
+    ),
     [draft]
   );
 
@@ -273,15 +288,15 @@ export default function DatePage() {
         </div>
 
         {/* Warning message for non-full month selection */}
-        {warnings.dateRange && (
-          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+        {Object.entries(warnings).map(([warningKey, warningMessage]) => (
+          <div key={warningKey} className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
             <p className="text-sm text-yellow-800 flex items-center gap-2">
               <FiAlertCircle className="h-4 w-4 text-yellow-600" />
               <span className="font-medium">Warning:</span>
-              {warnings.dateRange}
+              {warningMessage}
             </p>
           </div>
-        )}
+        ))}
 
         <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
           <label className="flex items-start gap-3">
@@ -303,6 +318,32 @@ export default function DatePage() {
                 <p className="mt-2 text-sm text-amber-700">
                   Available only when the selected date range stays within {taiwanHolidaySupportLabel}.
                 </p>
+              )}
+              {isTaiwanHolidayImportSupported && includedTaiwanHolidays.length > 0 && (
+                <div className="mt-3 rounded-md border border-gray-200 bg-white p-3">
+                  <div className="text-sm font-medium text-gray-900">
+                    Included holiday entries
+                  </div>
+                  <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
+                    {includedTaiwanHolidays.map((entry) => (
+                      <div key={entry.date} className="rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-gray-700">{entry.date} ({formatHolidayWeekday(entry.date)})</span>
+                          {shouldShowHolidayTypeBadge(entry.date, entry.isFreeday) && (
+                            <span className={`rounded px-2 py-0.5 text-xs font-medium ${
+                              entry.isFreeday
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {entry.isFreeday ? 'FREEDAY' : 'WORKDAY'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-gray-600">{entry.reason}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </label>
