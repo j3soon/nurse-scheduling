@@ -125,6 +125,12 @@ bun run test:e2e
 bun run test:e2e:ui
 ```
 
+When using the repository `Dockerfile`, Chromium is preinstalled in the image at
+build time using the frontend's locked Playwright version. If you rebuild the
+image after Playwright version changes, `bun run test:e2e` and
+`bun run test:e2e:ui` should not require rerunning `bunx playwright install chromium`
+inside each new `docker run --rm` container.
+
 > For the interactive UI mode, you may need to run the tests multiple times to get it passed, as the test is currently somewhat flaky. This is due to the delay of page update and is planned to be fixed in the future.
 
 In GitHub Actions, frontend browser integration tests run after frontend unit/coverage tests. The workflow uploads Playwright reports as build artifacts so failed CI runs keep browser traces and reports for debugging.

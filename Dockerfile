@@ -28,8 +28,14 @@ RUN npm install -g @openai/codex
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
-# Install Playwright Chromium browser and system dependencies so browser E2E tests
-# can run inside the development image without extra manual setup.
+# Install the frontend's locked Playwright version and bake browser binaries into
+# a stable image path so they survive `docker run --rm` sessions.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY web-frontend/package.json web-frontend/bun.lock /tmp/web-frontend/
+WORKDIR /tmp/web-frontend
+RUN bun install --frozen-lockfile
 RUN bunx playwright install --with-deps chromium
+
+WORKDIR /app
 
 ENTRYPOINT ["/bin/bash"]
