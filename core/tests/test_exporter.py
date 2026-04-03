@@ -229,10 +229,10 @@ dates:
     startDate: 2025-01-01
     endDate: 2025-01-03
   groups:
-    - id: my_workday
-      members: [WORKDAY]
-    - id: my_freeday
-      members: [FREEDAY]
+    - id: WORKDAY
+      members: [2025-01-02, 2025-01-03]
+    - id: FREEDAY
+      members: [2025-01-01]
 people:
   items:
     - id: n1
@@ -271,8 +271,8 @@ preferences:
 
     # Workday/freeday summary headers should be present when both groups are found.
     headers = list(df.iloc[1, :])
-    assert "OFF (my_workday)" in headers
-    assert "OFF (my_freeday)" in headers
+    assert "OFF (WORKDAY)" in headers
+    assert "OFF (FREEDAY)" in headers
 
 
 def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
@@ -355,9 +355,9 @@ dates:
     startDate: 2025-01-03
     endDate: 2025-01-05
   groups:
-    - id: my_workday
-      members: [WORKDAY]
-    - id: my_freeday
+    - id: WORKDAY
+      members: [2025-01-03]
+    - id: FREEDAY
       members: [2025-01-05]
 people:
   items:
