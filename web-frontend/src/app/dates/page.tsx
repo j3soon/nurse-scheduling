@@ -27,6 +27,7 @@ import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import ToggleButton from '@/components/ToggleButton';
 import { Mode } from '@/constants/modes';
 import { DateRange, DataType } from '@/types/scheduling';
+import { getTaiwanHolidaySupportLabel, isTaiwanHolidayRangeSupported } from '@/utils/taiwanHolidays';
 
 export default function DatePage() {
   const {
@@ -50,6 +51,7 @@ export default function DatePage() {
     startDate: undefined,
     endDate: undefined,
   });
+  const [shouldImportTaiwanHolidays, setShouldImportTaiwanHolidays] = useState(true);
   // Error messages for start date and end date
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   // Helper functions to convert between Date and string for form inputs
@@ -90,12 +92,19 @@ export default function DatePage() {
     return newWarnings;
   }, [draft.endDate, draft.startDate, mode]);
 
+  const taiwanHolidaySupportLabel = getTaiwanHolidaySupportLabel();
+  const isTaiwanHolidayImportSupported = useMemo(
+    () => isTaiwanHolidayRangeSupported(draft),
+    [draft]
+  );
+
   // Instructions for the help component
   const instructions = [
     "Set the start and end dates for your scheduling period",
     "The end date must be after the start date",
     "Dates are automatically generated based on your date range",
     "Create groups to organize dates (e.g., \"Weekdays\", \"Weekends\", \"Workdays\", \"Freedays\")",
+    "When enabled, updating the date range can create or overwrite editable Taiwan holiday date groups such as WORKDAY and FREEDAY",
     "Click and drag through checkboxes to quickly select multiple dates when adding or editing",
     "Drag and drop to reorder groups",
     "Double-click to edit names or descriptions",
@@ -126,6 +135,8 @@ export default function DatePage() {
       updateDateRange({
         startDate: draft.startDate,
         endDate: draft.endDate,
+      }, {
+        importTaiwanHolidays: shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported,
       });
       setMode(Mode.NORMAL);
     }
@@ -144,6 +155,7 @@ export default function DatePage() {
           endDate: dateData.range.endDate,
         });
       }
+      setShouldImportTaiwanHolidays(true);
       setErrors({});
     }
   };
@@ -157,6 +169,7 @@ export default function DatePage() {
         endDate: dateData.range.endDate,
       });
     }
+    setShouldImportTaiwanHolidays(true);
     setErrors({});
   };
 
@@ -262,6 +275,31 @@ export default function DatePage() {
             </p>
           </div>
         )}
+
+        <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported}
+              disabled={!isTaiwanHolidayImportSupported}
+              onChange={(e) => setShouldImportTaiwanHolidays(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <div>
+              <div className="text-sm font-medium text-gray-900">
+                Import Taiwan holidays into date groups
+              </div>
+              <p className="mt-1 text-sm text-gray-600">
+                Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY, plus labor-specific variants when applicable.
+              </p>
+              {!isTaiwanHolidayImportSupported && (
+                <p className="mt-2 text-sm text-amber-700">
+                  Available only when the selected date range stays within {taiwanHolidaySupportLabel}.
+                </p>
+              )}
+            </div>
+          </label>
+        </div>
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-3 pt-4">
