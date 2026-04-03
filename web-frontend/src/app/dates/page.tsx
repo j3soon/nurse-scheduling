@@ -27,7 +27,11 @@ import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import ToggleButton from '@/components/ToggleButton';
 import { Mode } from '@/constants/modes';
 import { DateRange, DataType } from '@/types/scheduling';
-import { getTaiwanHolidaySupportLabel, isTaiwanHolidayRangeSupported } from '@/utils/taiwanHolidays';
+import {
+  getTaiwanHolidaySupportLabel,
+  includesUnimportedTaiwanLaborDay,
+  isTaiwanHolidayRangeSupported,
+} from '@/utils/taiwanHolidays';
 
 export default function DatePage() {
   const {
@@ -88,9 +92,12 @@ export default function DatePage() {
     if (!isFullMonth(draft.startDate, draft.endDate)) {
       newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
     }
+    if (includesUnimportedTaiwanLaborDay(draft)) {
+      newWarnings.laborDay = 'Taiwan holiday import does not include Labor Day on May 1. If needed, please manually adjust it after update.';
+    }
 
     return newWarnings;
-  }, [draft.endDate, draft.startDate, mode]);
+  }, [draft, mode]);
 
   const taiwanHolidaySupportLabel = getTaiwanHolidaySupportLabel();
   const isTaiwanHolidayImportSupported = useMemo(
@@ -290,7 +297,7 @@ export default function DatePage() {
                 Import Taiwan holidays into date groups
               </div>
               <p className="mt-1 text-sm text-gray-600">
-                Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY, plus labor-specific variants when applicable.
+                Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.
               </p>
               {!isTaiwanHolidayImportSupported && (
                 <p className="mt-2 text-sm text-amber-700">

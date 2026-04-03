@@ -27,8 +27,6 @@ import { dateStrToDate } from '@/utils/dateParsing';
 
 export const TAIWAN_WORKDAY_GROUP_ID = 'WORKDAY';
 export const TAIWAN_FREEDAY_GROUP_ID = 'FREEDAY';
-export const TAIWAN_LABOR_WORKDAY_GROUP_ID = 'WORKDAY(LABOR)';
-export const TAIWAN_LABOR_FREEDAY_GROUP_ID = 'FREEDAY(LABOR)';
 export const TAIWAN_HOLIDAY_SUPPORTED_START = '2023-01-01';
 export const TAIWAN_HOLIDAY_SUPPORTED_END = '2025-12-31';
 
@@ -117,15 +115,11 @@ export function isTaiwanHolidayRangeSupported(dateRange: DateRange): boolean {
   return start >= TAIWAN_HOLIDAY_SUPPORTED_START && end <= TAIWAN_HOLIDAY_SUPPORTED_END;
 }
 
-function isTaiwanFreeday(date: Date, isLabor = false): boolean {
+function isTaiwanFreeday(date: Date): boolean {
   const dateKey = formatDate(date);
   const special = SPECIAL_DATE_LOOKUP.get(dateKey);
   if (special !== undefined) {
     return special.isFreeday;
-  }
-
-  if (isLabor && dateKey === '2025-05-01') {
-    return true;
   }
 
   return date.getDay() === 0 || date.getDay() === 6;
@@ -148,8 +142,6 @@ export function buildTaiwanHolidayGroups(items: Item[], dateRange: DateRange): G
 
   const workdayMembers: string[] = [];
   const freedayMembers: string[] = [];
-  const laborWorkdayMembers: string[] = [];
-  const laborFreedayMembers: string[] = [];
 
   for (const item of items) {
     const date = dateStrToDate(item.id, dateRange);
@@ -158,15 +150,9 @@ export function buildTaiwanHolidayGroups(items: Item[], dateRange: DateRange): G
     } else {
       workdayMembers.push(item.id);
     }
-
-    if (isTaiwanFreeday(date, true)) {
-      laborFreedayMembers.push(item.id);
-    } else {
-      laborWorkdayMembers.push(item.id);
-    }
   }
 
-  const groups: Group[] = [
+  return [
     {
       id: TAIWAN_WORKDAY_GROUP_ID,
       description: 'Taiwan workdays imported from the current holiday calendar',
@@ -178,21 +164,8 @@ export function buildTaiwanHolidayGroups(items: Item[], dateRange: DateRange): G
       members: freedayMembers,
     },
   ];
+}
 
-  if (includesDate(dateRange, '2025-05-01')) {
-    groups.push(
-      {
-        id: TAIWAN_LABOR_WORKDAY_GROUP_ID,
-        description: 'Taiwan workdays for labor schedules imported from the current holiday calendar',
-        members: laborWorkdayMembers,
-      },
-      {
-        id: TAIWAN_LABOR_FREEDAY_GROUP_ID,
-        description: 'Taiwan freedays for labor schedules imported from the current holiday calendar',
-        members: laborFreedayMembers,
-      }
-    );
-  }
-
-  return groups;
+export function includesUnimportedTaiwanLaborDay(dateRange: DateRange): boolean {
+  return ['2023-05-01', '2024-05-01'].some(dateKey => includesDate(dateRange, dateKey));
 }
