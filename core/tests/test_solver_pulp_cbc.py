@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling.constants import Operator
 from nurse_scheduling.solver_interface import SolverStatus
+from nurse_scheduling import solver_pulp as solver_pulp_module
 from nurse_scheduling.solver_pulp_cbc import PuLPSolver
 from tests.solver_test_utils import expected_bool_value
 
@@ -305,7 +306,7 @@ def test_solve_maps_unbounded_and_undefined_to_unknown(monkeypatch, caplog, stat
         seen["kwargs"] = kwargs
         return DummyCmd()
 
-    monkeypatch.setattr("nurse_scheduling.solver_pulp_cbc.pulp.PULP_CBC_CMD", fake_cbc_cmd)
+    monkeypatch.setattr(solver_pulp_module.pulp, "PULP_CBC_CMD", fake_cbc_cmd)
     monkeypatch.setattr(solver.model, "solve", lambda _solver: status_code)
 
     with caplog.at_level("INFO"):
@@ -328,7 +329,7 @@ def test_solve_maps_not_solved_and_unknown_status_to_unknown(monkeypatch, status
         def __str__(self):
             return "DummyCBC"
 
-    monkeypatch.setattr("nurse_scheduling.solver_pulp_cbc.pulp.PULP_CBC_CMD", lambda *a, **k: DummyCmd())
+    monkeypatch.setattr(solver_pulp_module.pulp, "PULP_CBC_CMD", lambda *a, **k: DummyCmd())
     monkeypatch.setattr(solver.model, "solve", lambda _solver: status_code)
 
     status = solver.solve()
@@ -340,7 +341,7 @@ def test_get_objective_value_raises_for_non_integer(monkeypatch):
     x = solver.new_int_var(0, 1, "x")
     solver.set_objective(x, maximize=True)
 
-    monkeypatch.setattr("nurse_scheduling.solver_pulp_cbc.pulp.value", lambda _expr: 1.5)
+    monkeypatch.setattr(solver_pulp_module.pulp, "value", lambda _expr: 1.5)
 
     with pytest.raises(ValueError, match="Objective value should be an integer"):
         solver.get_objective_value()
