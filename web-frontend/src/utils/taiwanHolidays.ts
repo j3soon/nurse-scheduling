@@ -28,9 +28,14 @@ import { dateStrToDate } from '@/utils/dateParsing';
 export const TAIWAN_WORKDAY_GROUP_ID = 'WORKDAY';
 export const TAIWAN_FREEDAY_GROUP_ID = 'FREEDAY';
 export const TAIWAN_HOLIDAY_SUPPORTED_START = '2023-01-01';
-export const TAIWAN_HOLIDAY_SUPPORTED_END = '2025-12-31';
+export const TAIWAN_HOLIDAY_SUPPORTED_END = '2026-12-31';
 
 type TaiwanSpecialDateInfo = [string, string, boolean];
+export interface TaiwanHolidayEntry {
+  date: string;
+  reason: string;
+  isFreeday: boolean;
+}
 
 const SPECIAL_DATE_INFO: TaiwanSpecialDateInfo[] = [
   // 2023
@@ -196,4 +201,14 @@ export function buildTaiwanHolidayGroups(items: Item[], dateRange: DateRange): G
 
 export function includesUnimportedTaiwanLaborDay(dateRange: DateRange): boolean {
   return ['2023-05-01', '2024-05-01'].some(dateKey => includesDate(dateRange, dateKey));
+}
+
+export function getTaiwanHolidayEntriesInRange(dateRange: DateRange): TaiwanHolidayEntry[] {
+  if (!dateRange.startDate || !dateRange.endDate || !isTaiwanHolidayRangeSupported(dateRange)) {
+    return [];
+  }
+
+  return SPECIAL_DATE_INFO
+    .filter(([date]) => includesDate(dateRange, date))
+    .map(([date, reason, isFreeday]) => ({ date, reason, isFreeday }));
 }
