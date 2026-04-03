@@ -49,8 +49,10 @@ export default function ShiftRequestsPage() {
 
   // Get shift request preferences from the flattened preferences
   const shiftRequestPreferences = getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST);
-  const updateShiftRequestPreferences = (newPrefs: ShiftRequestPreference[]) =>
-    updatePreferencesByType(SHIFT_REQUEST, newPrefs);
+  const updateShiftRequestPreferences = (
+    newPrefs: ShiftRequestPreference[],
+    options?: { replaceLatestHistoryEntry?: boolean }
+  ) => updatePreferencesByType(SHIFT_REQUEST, newPrefs, options);
 
   const [showInstructions, setShowInstructions] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
@@ -111,12 +113,19 @@ export default function ShiftRequestsPage() {
   }
 
   const isMultiSelectDragRef = useRef(false);
+  // Tracks whether the current drag started on preference cells or history cells.
+  const dragCellTypeRef = useRef<SelectedCellType | null>(null);
+  // Prevents re-applying the same cell when the pointer re-enters it during one gesture.
+  const visitedDragCellsRef = useRef(new Set<string>());
 
   // Add event listener for mouse up outside the component to end drag selection
   useEffect(() => {
     const handleGlobalMouseUp = () => {
       // End multi-select drag
       isMultiSelectDragRef.current = false;
+      dragCellTypeRef.current = null;
+      visitedDragCellsRef.current.clear();
+      document.documentElement.style.userSelect = '';
       document.body.style.userSelect = '';
     };
 
@@ -124,6 +133,7 @@ export default function ShiftRequestsPage() {
     // Cleanup event listener
     return () => {
       window.removeEventListener('mouseup', handleGlobalMouseUp);
+      document.documentElement.style.userSelect = '';
       document.body.style.userSelect = '';
     };
   }, []);
@@ -463,7 +473,7 @@ export default function ShiftRequestsPage() {
 
     console.log('Updates to apply:', updates);
 
-    // Use the same logic as _handleCellSet via computeNewShiftPreferences helper
+    // Use the same logic as applyPreferenceCellEdit via computeNewShiftPreferences helper
     const newPreferences = computeNewShiftPreferences(shiftRequestPreferences, updates);
 
     console.log('Final computed preferences:', newPreferences);
@@ -916,11 +926,23 @@ export default function ShiftRequestsPage() {
   };
 
   // Helper function to update shift preferences for a person-date combination
-  const updateShiftPreferences = (personId: string, dateId: string, deltaPreferences: { shiftTypeId: string; weight: number }[]) => {
+  const updateShiftPreferences = (
+    personId: string,
+    dateId: string,
+    deltaPreferences: { shiftTypeId: string; weight: number }[],
+    options?: { replaceLatestHistoryEntry?: boolean; clearFirst?: boolean }
+  ) => {
     // Use delta preferences with clearFirst to replicate full replacement behavior
-    const updates = [{ personId, dateId, deltaPreferences, clearFirst: true }];
+    const updates = [{
+      personId,
+      dateId,
+      deltaPreferences,
+      clearFirst: options?.clearFirst ?? true
+    }];
     const newPreferences = computeNewShiftPreferences(shiftRequestPreferences, updates);
-    updateShiftRequestPreferences(newPreferences);
+    updateShiftRequestPreferences(newPreferences, {
+      replaceLatestHistoryEntry: options?.replaceLatestHistoryEntry
+    });
   };
 
   // Helper function to get visual representation of preferences
@@ -997,27 +1019,44 @@ export default function ShiftRequestsPage() {
     updateShiftPreferences(editorState.personId, editorState.dateId, preferences);
   };
 
-  const handleCellMouseEnter = (selectedCellType: SelectedCellType, personId: string, identifier: string | number) => {
-    if (isAddMode && isMultiSelectDragRef.current) {
-      if (selectedCellType === SelectedCellType.PREFERENCE) {
-        _handleCellSet(personId, identifier as string);
-      } else if (selectedCellType === SelectedCellType.HISTORY) {
-        handleHistoryCellClickInternal(personId, identifier as number);
-      }
+  const handleDraggedCell = (
+    selectedCellType: SelectedCellType,
+    personId: string,
+    identifier: string | number
+  ) => {
+    if (!isAddMode || !isMultiSelectDragRef.current || dragCellTypeRef.current !== selectedCellType) {
+      return;
     }
+
+    const dragKey = `${selectedCellType}:${personId}:${identifier}`;
+    const replaceLatestHistoryEntry = visitedDragCellsRef.current.size > 0;
+    if (visitedDragCellsRef.current.has(dragKey)) {
+      return;
+    }
+    visitedDragCellsRef.current.add(dragKey);
+
+    if (selectedCellType === SelectedCellType.PREFERENCE) {
+      applyPreferenceCellEdit(personId, identifier as string, replaceLatestHistoryEntry);
+    } else if (selectedCellType === SelectedCellType.HISTORY) {
+      applyHistoryCellEdit(personId, identifier as number, replaceLatestHistoryEntry);
+    }
+  };
+
+  const handleCellMouseEnter = (selectedCellType: SelectedCellType, personId: string, identifier: string | number) => {
+    handleDraggedCell(selectedCellType, personId, identifier);
   };
 
   const handleCellMouseDown = (selectedCellType: SelectedCellType, personId: string, identifier: string | number, event: React.MouseEvent) => {
     if (event.button !== 0) return;
+    event.preventDefault();
 
     isMultiSelectDragRef.current = true;
+    dragCellTypeRef.current = selectedCellType;
+    visitedDragCellsRef.current.clear();
     if (isAddMode) {
-      if (selectedCellType === SelectedCellType.PREFERENCE) {
-        _handleCellSet(personId, identifier as string);
-      } else if (selectedCellType === SelectedCellType.HISTORY) {
-        handleHistoryCellClickInternal(personId, identifier as number);
-      }
+      handleDraggedCell(selectedCellType, personId, identifier);
     }
+    document.documentElement.style.userSelect = 'none';
     document.body.style.userSelect = 'none';
   };
 
@@ -1026,15 +1065,18 @@ export default function ShiftRequestsPage() {
 
     // End multi-select drag
     isMultiSelectDragRef.current = false;
+    dragCellTypeRef.current = null;
+    visitedDragCellsRef.current.clear();
+    document.documentElement.style.userSelect = '';
     document.body.style.userSelect = '';
   };
 
-  const _handleCellSet = (personId: string, dateId: string) => {
+  const applyPreferenceCellEdit = (personId: string, dateId: string, replaceLatestHistoryEntry = false) => {
     if (isAddMode) {
       // In add mode, update the preferences with the form data
       // If no shift types are selected, clear all preferences for this person-date combination
       if (addFormData.shiftTypes.length === 0) {
-        updateShiftPreferences(personId, dateId, []);
+        updateShiftPreferences(personId, dateId, [], { replaceLatestHistoryEntry, clearFirst: true });
         return;
       }
 
@@ -1052,22 +1094,23 @@ export default function ShiftRequestsPage() {
         weight: weightValue
       }));
 
-      // Use computeNewShiftPreferences with delta mode
-      const updates = [{ personId, dateId, deltaPreferences }];
-      const newPreferences = computeNewShiftPreferences(shiftRequestPreferences, updates);
-      updateShiftRequestPreferences(newPreferences);
+      updateShiftPreferences(personId, dateId, deltaPreferences, { replaceLatestHistoryEntry, clearFirst: false });
     }
   };
 
   const handleCellClick = (personId: string, dateId: string) => {
     if (isAddMode) {
-      _handleCellSet(personId, dateId);
+      applyPreferenceCellEdit(personId, dateId);
     } else {
       openEditor(personId, dateId);
     }
   };
 
-  const handleHistoryCellClickInternal = (personId: string, historyIndex: number) => {
+  const applyHistoryCellEdit = (
+    personId: string,
+    historyIndex: number,
+    replaceLatestHistoryEntry = false
+  ) => {
     if (isAddMode) {
       // In add mode, directly update the history cell
       const person = peopleData.items.find(p => p.id === personId);
@@ -1084,7 +1127,7 @@ export default function ShiftRequestsPage() {
         // If targeting a position after the actual history (empty history cells on the left)
         if (historyIndex >= offset) {
           const position = historyIndex - offset;
-          updatePersonHistory(personId, position);
+          updatePersonHistory(personId, position, undefined, { replaceLatestHistoryEntry });
         }
       } else {
         if (addFormData.shiftTypes.length > 1) {
@@ -1104,11 +1147,11 @@ export default function ShiftRequestsPage() {
         }
         if (historyIndex < offset) {
           // If targeting a position before the actual history, add a new history entry
-          addPersonHistory(personId, firstShiftType);
+          addPersonHistory(personId, firstShiftType, { replaceLatestHistoryEntry });
         } else {
           // If targeting a position after the actual history, update the history entry
           const position = historyIndex - offset;
-          updatePersonHistory(personId, position, firstShiftType);
+          updatePersonHistory(personId, position, firstShiftType, { replaceLatestHistoryEntry });
         }
       }
     }
@@ -1164,7 +1207,7 @@ export default function ShiftRequestsPage() {
 
   const handleHistoryCellClick = (personId: string, historyIndex: number) => {
     if (isAddMode) {
-      handleHistoryCellClickInternal(personId, historyIndex);
+      applyHistoryCellEdit(personId, historyIndex);
     } else {
       openHistoryEditor(personId, historyIndex);
     }

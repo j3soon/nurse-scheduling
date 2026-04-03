@@ -163,6 +163,69 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('replaces the latest undo entry when replaceLatestHistoryEntry is true', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updatePreferencesByType(SHIFT_REQUEST, [
+        {
+          type: SHIFT_REQUEST,
+          person: ['Person 1'],
+          date: ['01'],
+          shiftType: ['D'],
+          weight: 2,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      const requests = result.current.getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST);
+      expect(requests).toEqual([
+        {
+          type: SHIFT_REQUEST,
+          person: ['Person 1'],
+          date: ['01'],
+          shiftType: ['D'],
+          weight: 2,
+        },
+      ]);
+    });
+
+    act(() => {
+      result.current.updatePreferencesByType(SHIFT_REQUEST, [
+        {
+          type: SHIFT_REQUEST,
+          person: ['Person 1'],
+          date: ['01', '02'],
+          shiftType: ['D'],
+          weight: 2,
+        },
+      ], { replaceLatestHistoryEntry: true });
+    });
+
+    await waitFor(() => {
+      const requests = result.current.getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST);
+      expect(requests).toEqual([
+        {
+          type: SHIFT_REQUEST,
+          person: ['Person 1'],
+          date: ['01', '02'],
+          shiftType: ['D'],
+          weight: 2,
+        },
+      ]);
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+
+    await waitFor(() => {
+      const requests = result.current.getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST);
+      expect(requests).toEqual([]);
+    });
+  });
+
   it('loads YAML with compatibility conversions and restores Infinity from storage', async () => {
     const { result, unmount } = renderHook(() => useSchedulingData());
 

@@ -153,6 +153,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
           weight: 2,
         },
       ],
+      undefined,
     );
     expect(alert).toHaveBeenCalledWith('Successfully processed CSV file with 1 shift preferences!');
   });
@@ -260,6 +261,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
           weight: 2,
         },
       ],
+      undefined,
     );
   });
 
@@ -287,6 +289,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
           weight: 2,
         },
       ],
+      undefined,
     );
   });
 
