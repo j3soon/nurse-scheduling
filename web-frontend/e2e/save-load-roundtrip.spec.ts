@@ -31,6 +31,10 @@ test('save and load roundtrip restores seeded state after reset', async ({ page 
    * 4. Confirm the original people and preference data return.
    */
   await disableModalDialogs(page);
+  const dialogs: string[] = [];
+  page.on('dialog', async dialog => {
+    dialogs.push(dialog.message());
+  });
   await seedSchedulingState(page, {
     apiVersion: 'test',
     description: 'roundtrip seed',
@@ -91,6 +95,8 @@ test('save and load roundtrip restores seeded state after reset', async ({ page 
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
+
+  await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
 
   await page.goto('/people');
   await expect(page.getByText('1. P1', { exact: true })).toBeVisible();

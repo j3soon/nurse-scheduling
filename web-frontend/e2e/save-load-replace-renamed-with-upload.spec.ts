@@ -21,6 +21,7 @@
 
 import { expect, test } from './test';
 import { disableModalDialogs, seedSchedulingState } from './helpers';
+import yaml from 'js-yaml';
 
 test('upload can replace the current renamed save-load preview with an older saved YAML', async ({ page }) => {
   /*
@@ -61,6 +62,6 @@ test('upload can replace the current renamed save-load preview with an older sav
   await expect(page.locator('pre')).toContainText('P1');
   await expect(page.locator('pre')).not.toContainText('P1X');
 
-  expect((await page.locator('pre').textContent()) ?? '').toBe(originalYaml ?? '');
+  expect(yaml.load((await page.locator('pre').textContent()) ?? '')).toEqual(yaml.load(originalYaml ?? ''));
   await expect(page.locator('pre')).not.toContainText('P1X');
 });

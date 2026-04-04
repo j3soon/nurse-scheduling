@@ -61,7 +61,7 @@ export async function seedSchedulingState(page: Page, state: StoredState) {
     ({ key, value, workerNamespaceKey }) => {
       // Mirror the app's worker-local storage key so seeded state lands in the
       // same bucket that the hook reads during the test run.
-      const workerNamespace = (window as Window & { [key: string]: string | undefined })[workerNamespaceKey];
+      const workerNamespace = (window as unknown as { [key: string]: string | undefined })[workerNamespaceKey];
       const storageKey = workerNamespace ? `${key}__${workerNamespace}` : key;
       window.localStorage.setItem(storageKey, value);
     },

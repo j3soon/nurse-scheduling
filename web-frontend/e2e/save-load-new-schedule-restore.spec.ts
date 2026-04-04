@@ -31,6 +31,10 @@ test('new schedule reset can be followed by restoring the just-created state fro
    * 4. Upload the captured YAML and confirm the created person returns.
    */
   await disableModalDialogs(page);
+  const dialogs: string[] = [];
+  page.on('dialog', async dialog => {
+    dialogs.push(dialog.message());
+  });
 
   await page.goto('/');
   await page.getByRole('button', { name: 'New Schedule' }).click();
@@ -61,6 +65,8 @@ test('new schedule reset can be followed by restoring the just-created state fro
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
+
+  await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
 
   await page.goto('/people');
   await expect(page.getByText('Restore Person', { exact: true })).toBeVisible();

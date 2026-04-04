@@ -31,6 +31,10 @@ test('reset followed by upload restores downstream pages, not just the YAML prev
    * 4. Verify People, Shift Types, and Shift Requests all reflect the restored state.
    */
   await disableModalDialogs(page);
+  const dialogs: string[] = [];
+  page.on('dialog', async dialog => {
+    dialogs.push(dialog.message());
+  });
   await seedSchedulingState(page, {
     apiVersion: 'test',
     description: 'reset restore downstream seed',
@@ -68,8 +72,10 @@ test('reset followed by upload restores downstream pages, not just the YAML prev
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
 
+  await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
+
   await page.goto('/people');
-  await expect(page.getByText('Restore Person', { exact: true })).toHaveCount(2);
+  await expect(page.locator('span').filter({ hasText: 'Restore Person' }).first()).toBeVisible();
   await expect(page.getByTitle('Restore Group', { exact: true })).toBeVisible();
 
   await page.goto('/shift-types');

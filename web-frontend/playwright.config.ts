@@ -38,7 +38,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'bun run dev:e2e',
+    command: 'bun run build:e2e && bun run start:e2e',
     env: {
       DISABLE_SENTRY: '1',
       E2E_COVERAGE: process.env.E2E_COVERAGE ?? '0',
