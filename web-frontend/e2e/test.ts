@@ -29,6 +29,12 @@ const isCoverageEnabled = process.env.E2E_COVERAGE === '1';
 
 const test = base.extend({
   page: async ({ page }, runPage, testInfo) => {
+    // Tag each Playwright worker so the app can keep worker-local storage state
+    // isolated while still using the normal storage key for real users.
+    await page.addInitScript((workerNamespace) => {
+      window.__PLAYWRIGHT_WORKER_NAMESPACE__ = workerNamespace;
+    }, `worker-${testInfo.workerIndex}`);
+
     if (isCoverageEnabled) {
       await page.coverage.startJSCoverage({
         resetOnNavigation: false,

@@ -22,6 +22,7 @@
 import { Page } from '@playwright/test';
 
 const STORAGE_KEY = 'nurse-scheduling-data';
+const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
 
 type StoredState = {
   apiVersion: string;
@@ -57,10 +58,14 @@ export async function seedSchedulingState(page: Page, state: StoredState) {
 
   await page.goto('/');
   await page.evaluate(
-    ({ key, value }) => {
-      window.localStorage.setItem(key, value);
+    ({ key, value, workerNamespaceKey }) => {
+      // Mirror the app's worker-local storage key so seeded state lands in the
+      // same bucket that the hook reads during the test run.
+      const workerNamespace = (window as Window & { [key: string]: string | undefined })[workerNamespaceKey];
+      const storageKey = workerNamespace ? `${key}__${workerNamespace}` : key;
+      window.localStorage.setItem(storageKey, value);
     },
-    { key: STORAGE_KEY, value: persisted }
+    { key: STORAGE_KEY, value: persisted, workerNamespaceKey: WORKER_NAMESPACE_KEY }
   );
 }
 

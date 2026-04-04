@@ -46,6 +46,21 @@ interface HistoryState {
 const STORAGE_KEY = 'nurse-scheduling-data';
 const MAX_HISTORY_SIZE = 50;
 
+type WorkerNamespaceWindow = Window & {
+  __PLAYWRIGHT_WORKER_NAMESPACE__?: string;
+};
+
+function getStorageKey(): string {
+  if (typeof window === 'undefined') {
+    return STORAGE_KEY;
+  }
+
+  // Playwright can run multiple workers against the same origin, so give each
+  // worker its own persistence bucket without changing the default browser key.
+  const workerNamespace = (window as WorkerNamespaceWindow).__PLAYWRIGHT_WORKER_NAMESPACE__;
+  return workerNamespace ? `${STORAGE_KEY}__${workerNamespace}` : STORAGE_KEY;
+}
+
 // Constants for infinity value handling in localStorage
 // JSON.stringify converts Infinity to null and JSON.parse doesn't handle infinity properly
 // These placeholders allow us to safely store and retrieve infinity values
@@ -298,7 +313,7 @@ function loadStateFromStorage(): HistoryState {
   if (typeof window === 'undefined') return createDefaultHistoryState();
 
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(getStorageKey());
 
     if (!stored) return createDefaultHistoryState();
 
@@ -357,7 +372,7 @@ function saveStateToStorage(historyState: HistoryState): void {
 
     // Replace infinity values with safe placeholders before JSON.stringify
     const safeHistoryState = replaceInfinityValues(historyStateToStore);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeHistoryState));
+    localStorage.setItem(getStorageKey(), JSON.stringify(safeHistoryState));
   } catch (error) {
     console.error('Failed to save data to localStorage:', error);
   }
