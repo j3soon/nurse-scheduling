@@ -149,6 +149,74 @@ describe('SaveAndLoadPage', () => {
     expect(loadFromYaml).not.toHaveBeenCalled();
   });
 
+  it('keeps the editor open with the same text when version mismatch confirmation is cancelled', async () => {
+    const user = userEvent.setup();
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    const editor = screen.getByPlaceholderText('Enter YAML configuration...');
+    fireEvent.change(editor, {
+      target: { value: 'apiVersion: alpha\ndescription: staged\nappVersion: v0.0.1\n' },
+    });
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(confirm).toHaveBeenCalled();
+    expect(loadFromYaml).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('Enter YAML configuration...')).toHaveValue(
+      'apiVersion: alpha\ndescription: staged\nappVersion: v0.0.1\n',
+    );
+    expect(screen.queryByText('Current State YAML')).not.toBeInTheDocument();
+  });
+
+  it('copies the current persisted YAML after version mismatch confirmation is cancelled', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+      target: { value: 'apiVersion: alpha\ndescription: staged\nappVersion: v0.0.1\n' },
+    });
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
+    await user.click(screen.getByRole('button', { name: /copy/i }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('apiVersion: alpha\ndescription: baseline\n');
+    });
+  });
+
+  it('downloads the current persisted YAML after version mismatch confirmation is cancelled', async () => {
+    const user = userEvent.setup();
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob | MediaSource) => {
+      expect(blob).toBeInstanceOf(Blob);
+      return 'blob:cancelled-version-warning';
+    });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    render(<SaveAndLoadPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit yaml/i }));
+    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+      target: { value: 'apiVersion: alpha\ndescription: staged\nappVersion: v0.0.1\n' },
+    });
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
+    await user.click(screen.getByRole('button', { name: /download/i }));
+
+    const blob = createSpy.mock.calls[0]?.[0] as Blob;
+    expect(await blob.text()).toBe('apiVersion: alpha\ndescription: baseline\n');
+  });
+
   it('does not load uploaded YAML when version mismatch confirmation is cancelled', async () => {
     (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
@@ -164,6 +232,91 @@ describe('SaveAndLoadPage', () => {
     });
     expect(loadFromYaml).not.toHaveBeenCalled();
     expect(alert).not.toHaveBeenCalledWith('YAML file loaded successfully!');
+  });
+
+  it('keeps the current preview, copy, and download state after upload confirmation is cancelled', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob | MediaSource) => {
+      expect(blob).toBeInstanceOf(Blob);
+      return 'blob:upload-cancelled';
+    });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    render(<SaveAndLoadPage />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'upload.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('upload.yaml', 'apiVersion: alpha\ndescription: from-upload\nappVersion: v0.0.1\n');
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(screen.getByText('Current State YAML')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /copy/i }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('apiVersion: alpha\ndescription: baseline\n');
+    });
+
+    await user.click(screen.getByRole('button', { name: /download/i }));
+    const blob = createSpy.mock.calls.at(-1)?.[0] as Blob;
+    expect(await blob.text()).toBe('apiVersion: alpha\ndescription: baseline\n');
+  });
+
+  it('keeps preview, copy, and download output consistent after loading replacement YAML', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob | MediaSource) => {
+      expect(blob).toBeInstanceOf(Blob);
+      return 'blob:loaded-replacement';
+    });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    mockGenerateYamlFromState.mockReturnValue('apiVersion: alpha\ndescription: uploaded state\n');
+
+    const { rerender } = render(<SaveAndLoadPage />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'upload.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('upload.yaml', 'apiVersion: alpha\ndescription: uploaded state\n');
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(loadFromYaml).toHaveBeenCalledWith(expect.objectContaining({ description: 'uploaded state' }));
+    });
+
+    mockUseSchedulingData.mockReturnValue({
+      apiVersionData: 'alpha',
+      descriptionData: 'uploaded state',
+      dateData: { range: { startDate: undefined, endDate: undefined }, items: [], groups: [] },
+      peopleData: { items: [{ id: 'Uploaded Person', description: '', history: [] }], groups: [], history: [] },
+      shiftTypeData: { items: [], groups: [] },
+      preferences: [],
+      exportData: { formatting: [] },
+      loadFromYaml,
+      filterAutoGeneratedState,
+    });
+    rerender(<SaveAndLoadPage />);
+
+    expect(screen.getByText('Current State YAML')).toBeInTheDocument();
+    expect(document.querySelector('pre')).toHaveTextContent('description: uploaded state');
+
+    await user.click(screen.getByRole('button', { name: /copy/i }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('apiVersion: alpha\ndescription: uploaded state\n');
+    });
+
+    await user.click(screen.getByRole('button', { name: /download/i }));
+    const blob = createSpy.mock.calls.at(-1)?.[0] as Blob;
+    expect(await blob.text()).toBe('apiVersion: alpha\ndescription: uploaded state\n');
   });
 
   it('logs copy-to-clipboard failure', async () => {

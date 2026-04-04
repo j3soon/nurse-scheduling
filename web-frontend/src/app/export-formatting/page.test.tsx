@@ -30,10 +30,13 @@ vi.mock('@/hooks/useSchedulingData', () => ({
 }));
 
 describe('ExportFormattingPage validation', () => {
+  const updateExportFormatting = vi.fn();
+
   beforeEach(() => {
+    updateExportFormatting.mockReset();
     mockUseSchedulingData.mockReturnValue({
       exportData: { formatting: [] },
-      updateExportFormatting: vi.fn(),
+      updateExportFormatting,
       peopleData: { items: [{ id: 'P1', description: '' }], groups: [] },
       dateData: { items: [{ id: '01', description: '' }], groups: [] },
       shiftTypeData: { items: [{ id: 'D', description: 'Day' }], groups: [] },
@@ -65,5 +68,162 @@ describe('ExportFormattingPage validation', () => {
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(screen.getByText('Background Color must be a valid hex color in #RRGGBB format')).toBeInTheDocument();
+  });
+
+  it('submits a valid formatting rule with Enter from the global keyboard handler', async () => {
+    const user = userEvent.setup();
+
+    render(<ExportFormattingPage />);
+
+    await user.click(screen.getByRole('button', { name: /add formatting rule/i }));
+    await user.selectOptions(screen.getByRole('combobox'), 'row');
+    await user.click(screen.getByRole('checkbox', { name: /P1/ }));
+    fireEvent.change(screen.getByTitle('Enter background color in hex'), { target: { value: '#abcdef' } });
+    fireEvent.keyDown(document, { key: 'Enter' });
+
+    expect(updateExportFormatting).toHaveBeenCalledWith([
+      {
+        type: 'row',
+        targets: ['P1'],
+        backgroundColor: '#abcdef',
+      },
+    ]);
+  });
+
+  it('cancels the open form with Escape without persisting a partial edit', async () => {
+    const user = userEvent.setup();
+
+    render(<ExportFormattingPage />);
+
+    await user.click(screen.getByRole('button', { name: /add formatting rule/i }));
+    await user.selectOptions(screen.getByRole('combobox'), 'column');
+    await user.click(screen.getByRole('checkbox', { name: /01/ }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(screen.queryByText('Add New Formatting Rule')).not.toBeInTheDocument();
+    expect(updateExportFormatting).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale invalid targets when editing a mismatched saved rule', async () => {
+    const user = userEvent.setup();
+
+    mockUseSchedulingData.mockReturnValue({
+      exportData: {
+        formatting: [
+          {
+            type: 'row',
+            targets: ['D'],
+            backgroundColor: '#abcdef',
+          },
+        ],
+      },
+      updateExportFormatting,
+      peopleData: { items: [{ id: 'P1', description: '' }], groups: [] },
+      dateData: { items: [{ id: '01', description: '' }], groups: [] },
+      shiftTypeData: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    });
+
+    render(<ExportFormattingPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit/i }));
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(screen.getByText('Selected targets are invalid for this rule type')).toBeInTheDocument();
+    expect(updateExportFormatting).not.toHaveBeenCalled();
+  });
+
+  it('blocks saving an edited rule when its previously valid targets disappear', async () => {
+    const user = userEvent.setup();
+
+    mockUseSchedulingData.mockReturnValue({
+      exportData: {
+        formatting: [
+          {
+            type: 'row',
+            targets: ['P1'],
+            backgroundColor: '#abcdef',
+          },
+        ],
+      },
+      updateExportFormatting,
+      peopleData: { items: [{ id: 'P1', description: '' }], groups: [] },
+      dateData: { items: [{ id: '01', description: '' }], groups: [] },
+      shiftTypeData: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    });
+
+    const { rerender } = render(<ExportFormattingPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit/i }));
+
+    mockUseSchedulingData.mockReturnValue({
+      exportData: {
+        formatting: [
+          {
+            type: 'row',
+            targets: ['P1'],
+            backgroundColor: '#abcdef',
+          },
+        ],
+      },
+      updateExportFormatting,
+      peopleData: { items: [], groups: [] },
+      dateData: { items: [{ id: '01', description: '' }], groups: [] },
+      shiftTypeData: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    });
+    rerender(<ExportFormattingPage />);
+
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(screen.getByText('Selected targets are invalid for this rule type')).toBeInTheDocument();
+    expect(updateExportFormatting).not.toHaveBeenCalled();
+  });
+
+  it('normalizes edited color values before saving', async () => {
+    const user = userEvent.setup();
+
+    render(<ExportFormattingPage />);
+
+    await user.click(screen.getByRole('button', { name: /add formatting rule/i }));
+    await user.click(screen.getByText('D'));
+    fireEvent.change(screen.getByTitle('Enter background color in hex'), { target: { value: '  #ABCDEF  ' } });
+    fireEvent.change(screen.getByTitle('Enter bottom border color in hex'), { target: { value: ' #123ABC ' } });
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(updateExportFormatting).toHaveBeenCalledWith([
+      {
+        type: 'cell',
+        targets: ['D'],
+        backgroundColor: '#abcdef',
+        bottomBorderColor: '#123abc',
+      },
+    ]);
+  });
+
+  it('preserves rule order when editing one formatting rule without reordering', async () => {
+    const user = userEvent.setup();
+
+    mockUseSchedulingData.mockReturnValue({
+      exportData: {
+        formatting: [
+          { type: 'row', targets: ['P1'], backgroundColor: '#111111' },
+          { type: 'cell', targets: ['D'], backgroundColor: '#222222' },
+        ],
+      },
+      updateExportFormatting,
+      peopleData: { items: [{ id: 'P1', description: '' }], groups: [] },
+      dateData: { items: [{ id: '01', description: '' }], groups: [] },
+      shiftTypeData: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    });
+
+    render(<ExportFormattingPage />);
+
+    await user.click(screen.getAllByRole('button', { name: /edit/i })[1]);
+    fireEvent.change(screen.getByTitle('Enter background color in hex'), { target: { value: '#333333' } });
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(updateExportFormatting).toHaveBeenCalledWith([
+      { type: 'row', targets: ['P1'], backgroundColor: '#111111' },
+      { type: 'cell', targets: ['D'], backgroundColor: '#333333' },
+    ]);
   });
 });

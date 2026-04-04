@@ -225,4 +225,150 @@ describe('PeoplePage upload parsing', () => {
     expect(alertSpy).toHaveBeenCalledWith('No people names found in the uploaded file.');
     expect(reorderItems).not.toHaveBeenCalled();
   });
+
+  it('alerts when the uploaded file resolves with no readable content', () => {
+    const reorderItems = vi.fn();
+
+    mockUseSchedulingData.mockReturnValue({
+      peopleData: {
+        items: [],
+        groups: [],
+        history: [],
+      },
+      reorderItems,
+      ...baseMockData,
+    });
+
+    fileContentsByName.set('people.txt', '');
+    vi.stubGlobal('FileReader', MockFileReader as unknown as typeof FileReader);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    render(<PeoplePage />);
+    fireEvent.click(screen.getByRole('button', { name: /upload people/i }));
+
+    expect(alertSpy).toHaveBeenCalledWith('No content found in the uploaded file.');
+    expect(reorderItems).not.toHaveBeenCalled();
+  });
+
+  it('limits uploaded people names to the first 1000 entries', () => {
+    const reorderItems = vi.fn();
+
+    mockUseSchedulingData.mockReturnValue({
+      peopleData: {
+        items: [],
+        groups: [],
+        history: [],
+      },
+      reorderItems,
+      ...baseMockData,
+    });
+
+    fileContentsByName.set(
+      'people.txt',
+      Array.from({ length: 1005 }, (_, index) => `Person ${index + 1}`).join('\n'),
+    );
+    vi.stubGlobal('FileReader', MockFileReader as unknown as typeof FileReader);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    render(<PeoplePage />);
+    fireEvent.click(screen.getByRole('button', { name: /upload people/i }));
+
+    expect(reorderItems).toHaveBeenCalledTimes(1);
+    expect(reorderItems.mock.calls[0][2]).toHaveLength(1000);
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Successfully uploaded 1000 people: 0 existing people reordered, 1000 new people added, 0 existing people moved to end.',
+    );
+  });
+
+  it('preserves existing descriptions and history when reordering known people via upload', () => {
+    const reorderItems = vi.fn();
+
+    mockUseSchedulingData.mockReturnValue({
+      peopleData: {
+        items: [
+          { id: 'Alice', description: 'Primary nurse', history: ['D'] },
+          { id: 'Bob', description: 'Night shift expert', history: ['N', 'N'] },
+        ],
+        groups: [],
+        history: [],
+      },
+      reorderItems,
+      ...baseMockData,
+    });
+
+    fileContentsByName.set('people.txt', 'Bob\nAlice\nCharlie\n');
+    vi.stubGlobal('FileReader', MockFileReader as unknown as typeof FileReader);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    render(<PeoplePage />);
+    fireEvent.click(screen.getByRole('button', { name: /upload people/i }));
+
+    expect(reorderItems).toHaveBeenCalledWith(
+      'people',
+      expect.objectContaining({
+        items: [
+          { id: 'Bob', description: 'Night shift expert', history: ['N', 'N'] },
+          { id: 'Alice', description: 'Primary nurse', history: ['D'] },
+          { id: 'Charlie', description: '', history: [] },
+        ],
+      }),
+      [
+        { id: 'Bob', description: 'Night shift expert', history: ['N', 'N'] },
+        { id: 'Alice', description: 'Primary nurse', history: ['D'] },
+        { id: 'Charlie', description: '', history: [] },
+      ],
+    );
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Successfully uploaded 3 people: 2 existing people reordered, 1 new people added, 0 existing people moved to end.',
+    );
+  });
+
+  it('recovers from duplicate-name upload errors and still preserves metadata on the next valid upload', () => {
+    const reorderItems = vi.fn();
+
+    mockUseSchedulingData.mockReturnValue({
+      peopleData: {
+        items: [
+          { id: 'Alice', description: 'Primary nurse', history: ['D'] },
+          { id: 'Bob', description: 'Night shift expert', history: ['N', 'N'] },
+        ],
+        groups: [],
+        history: [],
+      },
+      reorderItems,
+      ...baseMockData,
+    });
+
+    vi.stubGlobal('FileReader', MockFileReader as unknown as typeof FileReader);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    render(<PeoplePage />);
+
+    fileContentsByName.set('people.txt', 'Alice\nAlice\nBob\n');
+    fireEvent.click(screen.getByRole('button', { name: /upload people/i }));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Duplicate person name "Alice" found in the uploaded list. Please remove duplicates.',
+    );
+    expect(reorderItems).not.toHaveBeenCalled();
+
+    fileContentsByName.set('people.txt', 'Bob\nAlice\nCharlie\n');
+    fireEvent.click(screen.getByRole('button', { name: /upload people/i }));
+
+    expect(reorderItems).toHaveBeenCalledWith(
+      'people',
+      expect.objectContaining({
+        items: [
+          { id: 'Bob', description: 'Night shift expert', history: ['N', 'N'] },
+          { id: 'Alice', description: 'Primary nurse', history: ['D'] },
+          { id: 'Charlie', description: '', history: [] },
+        ],
+      }),
+      [
+        { id: 'Bob', description: 'Night shift expert', history: ['N', 'N'] },
+        { id: 'Alice', description: 'Primary nurse', history: ['D'] },
+        { id: 'Charlie', description: '', history: [] },
+      ],
+    );
+  });
 });

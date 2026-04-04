@@ -305,6 +305,55 @@ describe('UploadButton', () => {
     expect(onFileUpload).not.toHaveBeenCalled();
   });
 
+  it('uses a comma-joined accept attribute and matching alert message for multiple extensions', () => {
+    const onFileUpload = vi.fn();
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml', '.yml', '.csv']}
+        buttonText="Upload"
+        tooltipText="Upload data"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input.accept).toBe('.yaml,.yml,.csv');
+
+    fireEvent.change(input, {
+      target: { files: [new File(['bad'], 'schedule.txt', { type: 'text/plain' })] },
+    });
+
+    expect(onFileUpload).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Please upload a file with one of these extensions: .yaml, .yml, .csv',
+    );
+  });
+
+  it('rejects filenames without a usable extension', () => {
+    const onFileUpload = vi.fn();
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+
+    fireEvent.change(input, { target: { files: [new File(['x'], 'schedule', { type: 'text/plain' })] } });
+    fireEvent.change(input, { target: { files: [new File(['x'], 'schedule.', { type: 'text/plain' })] } });
+    fireEvent.change(input, { target: { files: [new File(['x'], '.env', { type: 'text/plain' })] } });
+
+    expect(onFileUpload).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledTimes(3);
+  });
+
   it('does not trigger hidden input click when disabled', async () => {
     const user = userEvent.setup();
 
@@ -369,6 +418,34 @@ describe('UploadButton', () => {
 
     expect(onFileUpload).toHaveBeenCalledTimes(1);
     expect(onFileUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'schedule.yaml' }));
+    expect(input.value).toBe('');
+  });
+
+  it('allows selecting the same valid filename twice by clearing the input after each upload', () => {
+    const onFileUpload = vi.fn();
+
+    const { container } = render(
+      <UploadButton
+        onFileUpload={onFileUpload}
+        acceptedFileTypes={['.yaml']}
+        buttonText="Upload"
+        tooltipText="Upload YAML"
+      />,
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['good'], 'schedule.yaml', { type: 'text/yaml' });
+
+    Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'C:\\fakepath\\schedule.yaml' });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(input.value).toBe('');
+
+    Object.defineProperty(input, 'value', { configurable: true, writable: true, value: 'C:\\fakepath\\schedule.yaml' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(onFileUpload).toHaveBeenCalledTimes(2);
+    expect(onFileUpload).toHaveBeenNthCalledWith(1, expect.objectContaining({ name: 'schedule.yaml' }));
+    expect(onFileUpload).toHaveBeenNthCalledWith(2, expect.objectContaining({ name: 'schedule.yaml' }));
     expect(input.value).toBe('');
   });
 

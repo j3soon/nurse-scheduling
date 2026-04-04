@@ -129,6 +129,19 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     expect(alert).toHaveBeenCalledWith('Successfully processed 1 shift type entries from people history CSV!');
   });
 
+  it('alerts when the uploaded people-history file has no content', async () => {
+    const user = userEvent.setup();
+    fileContentsByName.set('people-history.csv', '');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
+
+    expect(alert).toHaveBeenCalledWith('No content found in the uploaded file.');
+    expect(reorderItems).not.toHaveBeenCalled();
+  });
+
   it('processes valid shift-requests matrix CSV and updates preferences', async () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', 'Person 1,D\n');
@@ -158,6 +171,23 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     expect(alert).toHaveBeenCalledWith('Successfully processed CSV file with 1 shift preferences!');
   });
 
+  it('alerts when the uploaded shift-requests file has no content', async () => {
+    const user = userEvent.setup();
+    fileContentsByName.set('shift-requests.csv', '');
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.change(
+      screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)'),
+      { target: { value: '2' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /upload shift requests/i }));
+
+    expect(alert).toHaveBeenCalledWith('No content found in the uploaded file.');
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
   it('shows validation error for invalid person IDs in shift-requests CSV', async () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', 'Unknown,D\n');
@@ -175,6 +205,44 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
       expect.stringContaining('CSV validation failed: Row 1 has invalid person ID "Unknown"'),
     );
     expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
+  it('recovers from an invalid shift-requests CSV upload and then accepts a valid one', async () => {
+    const user = userEvent.setup();
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    fireEvent.change(
+      screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)'),
+      { target: { value: '2' } },
+    );
+
+    fileContentsByName.set('shift-requests.csv', 'Unknown,D\n');
+    fireEvent.click(screen.getByRole('button', { name: /upload shift requests/i }));
+
+    expect(alert).toHaveBeenCalledWith(
+      expect.stringContaining('CSV validation failed: Row 1 has invalid person ID "Unknown"'),
+    );
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+
+    fileContentsByName.set('shift-requests.csv', 'Person 1,D\n');
+    fireEvent.click(screen.getByRole('button', { name: /upload shift requests/i }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledWith(
+      'shift request',
+      [
+        {
+          type: 'shift request',
+          person: ['Person 1'],
+          date: ['01'],
+          shiftType: ['D'],
+          weight: 2,
+        },
+      ],
+      undefined,
+    );
+    expect(alert).toHaveBeenCalledWith('Successfully processed CSV file with 1 shift preferences!');
   });
 
   it('shows validation error for duplicate person rows in people-history CSV', async () => {
@@ -235,6 +303,134 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     await user.click(screen.getByText('D'));
     expect(screen.getByRole('button', { name: /upload shift requests/i })).toBeDisabled();
     expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
+  it('updates shift-request upload availability as the quick-add weight moves between invalid, valid, and zero values', async () => {
+    const user = userEvent.setup();
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    const weightInput = screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)');
+    const uploadButton = screen.getByRole('button', { name: /upload shift requests/i });
+
+    fireEvent.change(weightInput, { target: { value: 'not-a-number' } });
+    expect(uploadButton).toBeDisabled();
+
+    fireEvent.change(weightInput, { target: { value: '2' } });
+    expect(uploadButton).toBeEnabled();
+
+    await user.click(screen.getByText('D'));
+    fireEvent.change(weightInput, { target: { value: '0' } });
+    expect(uploadButton).toBeDisabled();
+
+    fireEvent.change(weightInput, { target: { value: '-Infinity' } });
+    expect(uploadButton).toBeEnabled();
+  });
+
+  it('keeps clear-mode cell edits usable even when the weight is invalid or zero', async () => {
+    const user = userEvent.setup();
+    const existingPreferences = [
+      {
+        type: 'shift request',
+        person: ['Person 1'],
+        date: ['01'],
+        shiftType: ['D'],
+        weight: 2,
+      },
+    ];
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '01', description: 'Jan 1' }],
+        groups: [{ id: 'ALL_DATES', members: ['01'], description: '' }],
+      },
+      peopleData: {
+        items: [{ id: 'Person 1', description: '', history: [] }],
+        groups: [{ id: 'ALL_PEOPLE', members: ['Person 1'], description: '' }],
+        history: [],
+      },
+      shiftTypeData: {
+        items: [{ id: 'D', description: 'Day' }],
+        groups: [{ id: 'ALL_SHIFT_TYPES', members: ['D'], description: '' }],
+      },
+      getPreferencesByType: vi.fn(() => existingPreferences),
+      updatePreferencesByType,
+      addPersonHistory: vi.fn(),
+      updatePersonHistory: vi.fn(),
+      reorderItems,
+    });
+
+    const { container } = render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    const uploadButton = screen.getByRole('button', { name: /upload shift requests/i });
+    const weightInput = screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)');
+    const requestCell = container.querySelector('td[title="Click or drag to update preferences for Person 1 on date 01"]') as HTMLTableCellElement;
+
+    fireEvent.change(weightInput, { target: { value: '0' } });
+    expect(uploadButton).toBeDisabled();
+    fireEvent.mouseDown(requestCell, { button: 0 });
+    fireEvent.mouseUp(requestCell, { button: 0 });
+    expect(updatePreferencesByType).toHaveBeenCalledWith('shift request', [], { replaceLatestHistoryEntry: false });
+
+    updatePreferencesByType.mockClear();
+    fireEvent.change(weightInput, { target: { value: 'not-a-number' } });
+    expect(uploadButton).toBeDisabled();
+    fireEvent.mouseDown(requestCell, { button: 0 });
+    fireEvent.mouseUp(requestCell, { button: 0 });
+    expect(updatePreferencesByType).toHaveBeenCalledWith('shift request', [], { replaceLatestHistoryEntry: false });
+  });
+
+  it('clears multiple occupied history slots during one clear-mode drag gesture', async () => {
+    const user = userEvent.setup();
+    const addPersonHistory = vi.fn();
+    const updatePersonHistory = vi.fn();
+
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '01', description: 'Jan 1' }],
+        groups: [{ id: 'ALL_DATES', members: ['01'], description: '' }],
+      },
+      peopleData: {
+        items: [{ id: 'Person 1', description: '', history: ['D', 'N'] }],
+        groups: [{ id: 'ALL_PEOPLE', members: ['Person 1'], description: '' }],
+        history: [],
+      },
+      shiftTypeData: {
+        items: [
+          { id: 'D', description: 'Day' },
+          { id: 'N', description: 'Night' },
+        ],
+        groups: [{ id: 'ALL_SHIFT_TYPES', members: ['D', 'N'], description: '' }],
+      },
+      getPreferencesByType: vi.fn(() => []),
+      updatePreferencesByType,
+      addPersonHistory,
+      updatePersonHistory,
+      reorderItems,
+    });
+
+    const { container } = render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    const firstHistoryCell = container.querySelector('td[title="Click or drag to set history position H-2 to clear"]') as HTMLTableCellElement;
+    const secondHistoryCell = container.querySelector('td[title="Click or drag to set history position H-1 to clear"]') as HTMLTableCellElement;
+
+    fireEvent.mouseDown(firstHistoryCell, { button: 0 });
+    fireEvent.mouseEnter(secondHistoryCell);
+    fireEvent.mouseUp(secondHistoryCell, { button: 0 });
+
+    expect(addPersonHistory).not.toHaveBeenCalled();
+    expect(updatePersonHistory).toHaveBeenNthCalledWith(1, 'Person 1', 0, undefined, { replaceLatestHistoryEntry: false });
+    expect(updatePersonHistory).toHaveBeenNthCalledWith(2, 'Person 1', 1, undefined, { replaceLatestHistoryEntry: true });
   });
 
   it('parses whitespace-padded CSV values for shift requests', async () => {
