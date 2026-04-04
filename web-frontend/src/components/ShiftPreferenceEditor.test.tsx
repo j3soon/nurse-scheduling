@@ -363,4 +363,50 @@ describe('ShiftPreferenceEditor', () => {
     const labels = within(summary).getAllByText(/^(D|N)$/).map(node => node.textContent);
     expect(labels).toEqual(['D', 'N']);
   });
+
+  it('moves keyboard focus into the modal controls with Tab', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[]}
+      />,
+    );
+
+    await user.tab();
+    expect(screen.getAllByRole('button')[0]).toHaveFocus();
+
+    await user.tab();
+    expect(screen.getAllByRole('textbox')[0]).toHaveFocus();
+  });
+
+  it('closes with Escape while a weight input is focused', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+
+    render(
+      <ShiftPreferenceEditor
+        isOpen={true}
+        onClose={onClose}
+        onSave={vi.fn()}
+        personId="P1"
+        dateId="01"
+        shiftTypes={shiftTypes}
+        initialPreferences={[]}
+      />,
+    );
+
+    await user.tab();
+    await user.tab();
+    expect(screen.getAllByRole('textbox')[0]).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

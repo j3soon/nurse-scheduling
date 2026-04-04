@@ -97,8 +97,9 @@ test('version warning upload respects cancel and continue branches', async ({ pa
   });
   const proceedDialog = await proceedDialogPromise;
   expect(proceedDialog.message()).toContain('App version mismatch detected');
+  const successDialogPromise = page.waitForEvent('dialog');
   await proceedDialog.accept();
-  const successDialog = await page.waitForEvent('dialog');
+  const successDialog = await successDialogPromise;
   expect(successDialog.message()).toContain('YAML file loaded successfully');
   await successDialog.accept();
   await expect(page.locator('pre')).toContainText('Team Omega');
