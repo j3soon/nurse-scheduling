@@ -82,6 +82,7 @@ def test_export_to_excel_applies_style_and_font_contrast():
     assert ws["B1"].font.color.rgb == "FF000000"
     assert ws["B1"].border.bottom.color is not None
     assert ws["B1"].border.bottom.color.rgb == "FF0EA5E9"
+    assert ws["B1"].border.bottom.style == "medium"
 
 
 def test_prettify_generates_comment_info_for_unmet_single_style_requests():
@@ -380,6 +381,6 @@ preferences:
     styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
     html = styled_df.to_html()
     assert "text-align: center" in html
-    assert "background-color: #fefce8" in html
+    assert "background-color: #fefce8" not in html
     assert "#dcfce7" not in html
     assert "#dbeafe" not in html

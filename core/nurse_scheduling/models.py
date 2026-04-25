@@ -104,7 +104,7 @@ class DateContainer(BaseModel):
 
 class ExportFormattingRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern=r"^(cell|row|column|row header|column header)$")]
+    type: Annotated[str, Field(pattern=r"^(cell|row|column|row header|column header|history column)$")]
     targets: List[int | str]
     backgroundColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     bottomBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None

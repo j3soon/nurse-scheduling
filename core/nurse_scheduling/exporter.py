@@ -91,6 +91,13 @@ def _build_custom_export_style_info(
                 # Filter to actual shift types (exclude OFF pseudo shift).
                 target_shift_types.update(s for s in ctx.map_sid_s[target] if 0 <= s < ctx.n_shift_types)
 
+        elif rule.type == "history column":
+            for target in rule.targets:
+                if target != constants.ALL:
+                    raise ValueError(
+                        f"Invalid history column identifier '{target}' in export formatting rule with type 'history column'"
+                    )
+
         if rule.type == "row":
             for p in target_people:
                 row_idx = n_leading_rows + p
@@ -126,6 +133,11 @@ def _build_custom_export_style_info(
                 if any(s in target_shift_types for s in assigned_shift_types):
                     row_idx = n_leading_rows + p
                     col_idx = n_leading_cols + n_history_cols + d
+                    set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+
+        elif rule.type == "history column":
+            for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
+                for row_idx in range(n_rows):
                     set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
 
     return style_map
@@ -452,15 +464,6 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                         else:
                             style_df.iloc[row_idx, col_idx] = "color: #C00000"
 
-            # Apply light yellow background to history columns
-            for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
-                for row_idx in range(len(df)):
-                    existing_style = style_df.iloc[row_idx, col_idx]
-                    if existing_style:
-                        style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #fefce8"
-                    else:
-                        style_df.iloc[row_idx, col_idx] = "background-color: #fefce8"
-
             # Add borders to separate regions
             # Horizontal borders
             header_row_end = n_leading_rows - 1  # End of header region
@@ -616,12 +619,12 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                 argb = f"FF{bottom_border_color[1:].upper()}"
                 existing_border = copy(cell.border)
                 existing_bottom = copy(existing_border.bottom)
-                border_style = existing_bottom.style or "thin"
+                border_style = existing_bottom.style if existing_bottom is not None else None
                 cell.border = Border(
                     left=existing_border.left,
                     right=existing_border.right,
                     top=existing_border.top,
-                    bottom=Side(style=border_style, color=argb),
+                    bottom=Side(style=border_style or "medium", color=argb),
                     diagonal=existing_border.diagonal,
                     diagonal_direction=existing_border.diagonal_direction,
                     outline=existing_border.outline,

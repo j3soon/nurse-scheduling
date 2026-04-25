@@ -23,7 +23,8 @@ export type ExportFormattingType =
   | 'row'
   | 'column'
   | 'row header'
-  | 'column header';
+  | 'column header'
+  | 'history column';
 
 export interface ExportFormatting {
   type: ExportFormattingType;

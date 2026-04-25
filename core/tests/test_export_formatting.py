@@ -126,3 +126,42 @@ export:
     # C4 bottom border from column rule overriding row rule.
     assert ws["C4"].border.bottom.color is not None
     assert ws["C4"].border.bottom.color.rgb == "FF3B82F6"
+
+
+def test_export_formatting_rule_applies_to_history_columns():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+      history: [D]
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+export:
+  formatting:
+    - type: history column
+      targets: [ALL]
+      backgroundColor: "#fefce8"
+"""
+
+    df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, cell_export_info)
+
+    wb = load_workbook(output)
+    ws = wb.active
+
+    # With prettify enabled, the first history column is between the name column and dates.
+    assert ws["B1"].value == "H-1"
+    assert ws["B1"].fill.fgColor.rgb == "FFFEFCE8"
+    assert ws["B3"].fill.fgColor.rgb == "FFFEFCE8"

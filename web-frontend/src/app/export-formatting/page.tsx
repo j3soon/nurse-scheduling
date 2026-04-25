@@ -29,6 +29,7 @@ import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
+import { ALL } from '@/utils/keywords';
 
 interface DraftRule {
   type: ExportFormattingType;
@@ -99,6 +100,17 @@ export default function ExportFormattingPage() {
       };
     }
 
+    if (draft.type === 'history column') {
+      return {
+        emptyText: null,
+        href: null,
+        hrefLabel: null,
+        options: [
+          { id: ALL, description: 'All history columns' },
+        ]
+      };
+    }
+
     return {
       emptyText: 'No shift types available. Please set up shift types in the',
       href: '/shift-types',
@@ -115,7 +127,7 @@ export default function ExportFormattingPage() {
 
   const instructions = [
     'Define global export formatting rules applied during export',
-    'Select one or more targets based on rule type: rows=people, columns=dates, cells=shift types',
+    'Select one or more targets based on rule type: rows=people, columns=dates, cells=shift types, history columns=histories',
     'Use #RRGGBB for color values',
     'Rules are evaluated in order',
     'Drag and drop cards to reorder rule priority',
@@ -346,6 +358,7 @@ export default function ExportFormattingPage() {
                     <option value="row">row</option>
                     <option value="column header">column header</option>
                     <option value="column">column</option>
+                    <option value="history column">history column</option>
                     <option value="cell">cell</option>
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
@@ -353,7 +366,9 @@ export default function ExportFormattingPage() {
                       ? 'This type targets people.'
                       : draft.type === 'column' || draft.type === 'column header'
                         ? 'This type targets dates.'
-                        : 'This type targets shift types.'}
+                        : draft.type === 'history column'
+                          ? 'This type targets people histories.'
+                          : 'This type targets shift types.'}
                   </p>
                 </div>
                 <div className="min-w-[260px]">

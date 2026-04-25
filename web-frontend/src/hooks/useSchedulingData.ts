@@ -298,6 +298,11 @@ function createDefaultState(): SchedulingState {
     export: {
       formatting: [
         {
+          type: 'history column',
+          targets: [ALL],
+          backgroundColor: '#fefce8'
+        },
+        {
           type: 'column',
           targets: [SATURDAY, SUNDAY],
           backgroundColor: '#dbeafe'
