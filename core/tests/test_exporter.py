@@ -347,7 +347,7 @@ def test_dataframe_generation_supports_multiple_assigned_shift_types():
     assert info["styles"] == {}
 
 
-def test_prettify_styling_executes_freeday_and_weekend_paths():
+def test_prettify_styling_does_not_add_default_freeday_or_weekend_colors():
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -379,6 +379,7 @@ preferences:
 """
     styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
     html = styled_df.to_html()
-    # Triggered style computation should include both freeday and weekend highlights.
-    assert "#dcfce7" in html
-    assert "#dbeafe" in html
+    assert "text-align: center" in html
+    assert "background-color: #fefce8" in html
+    assert "#dcfce7" not in html
+    assert "#dbeafe" not in html

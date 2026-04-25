@@ -429,7 +429,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 )
                 df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
 
-    # Apply weekend highlighting and borders if prettify is enabled
+    # Apply default styling and borders if prettify is enabled
     if prettify:
         # Create a styler object to apply conditional formatting
         def apply_styling(df):
@@ -460,34 +460,6 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                         style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #fefce8"
                     else:
                         style_df.iloc[row_idx, col_idx] = "background-color: #fefce8"
-
-            # Check each column to see if it represents a weekend or freeday group (only date columns, not history columns)
-            for col_idx in range(
-                n_leading_cols + n_history_cols, n_leading_cols + n_history_cols + len(ctx.dates.items)
-            ):
-                d = col_idx - n_leading_cols - n_history_cols  # Get the date index
-
-                # Get the weekday from row 1 (second row)
-                weekday = df.iloc[1, col_idx]
-
-                # Check if this date belongs to the freeday group (highest priority)
-                if freeday_group_id and d in ctx.map_did_d[freeday_group_id]:
-                    # Apply light green background for freeday group
-                    for row_idx in range(len(df)):
-                        existing_style = style_df.iloc[row_idx, col_idx]
-                        if existing_style:
-                            style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #dcfce7"
-                        else:
-                            style_df.iloc[row_idx, col_idx] = "background-color: #dcfce7"
-                # If it's Saturday or Sunday, highlight the entire column (lower priority than freeday)
-                elif weekday in ["Sat", "Sun"]:
-                    # Apply background color to all rows in this column
-                    for row_idx in range(len(df)):
-                        existing_style = style_df.iloc[row_idx, col_idx]
-                        if existing_style:
-                            style_df.iloc[row_idx, col_idx] = f"{existing_style}; background-color: #dbeafe"
-                        else:
-                            style_df.iloc[row_idx, col_idx] = "background-color: #dbeafe"
 
             # Add borders to separate regions
             # Horizontal borders
