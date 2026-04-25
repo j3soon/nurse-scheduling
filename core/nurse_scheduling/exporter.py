@@ -54,7 +54,13 @@ def _build_custom_export_style_info(
 
     style_map = {}
 
-    def set_style(row_idx: int, col_idx: int, background_color: str | None, bottom_border_color: str | None):
+    def set_style(
+        row_idx: int,
+        col_idx: int,
+        background_color: str | None,
+        bottom_border_color: str | None,
+        right_border_color: str | None,
+    ):
         if row_idx < 0 or row_idx >= n_rows or col_idx < 0 or col_idx >= n_cols:
             return
         key = (row_idx + 1, col_idx + 1)  # Store in 1-based Excel coordinates
@@ -64,6 +70,8 @@ def _build_custom_export_style_info(
             style_map[key]["backgroundColor"] = background_color
         if bottom_border_color:
             style_map[key]["bottomBorderColor"] = bottom_border_color
+        if right_border_color:
+            style_map[key]["rightBorderColor"] = right_border_color
 
     for rule in ctx.export.formatting:
         target_people = set()
@@ -102,12 +110,18 @@ def _build_custom_export_style_info(
             for p in target_people:
                 row_idx = n_leading_rows + p
                 for col_idx in range(n_cols):
-                    set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+                    set_style(
+                        row_idx,
+                        col_idx,
+                        rule.backgroundColor,
+                        rule.bottomBorderColor,
+                        rule.rightBorderColor,
+                    )
 
         elif rule.type == "row header":
             for p in target_people:
                 row_idx = n_leading_rows + p
-                set_style(row_idx, 0, rule.backgroundColor, rule.bottomBorderColor)
+                set_style(row_idx, 0, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
 
         elif rule.type == "column":
             score_row_idx = n_leading_rows + len(ctx.people.items)
@@ -118,12 +132,18 @@ def _build_custom_export_style_info(
                     if row_idx in (score_row_idx, status_row_idx):
                         # Skip styling for score/status summary rows since they are not part of the main schedule grid and should not be affected by column styles.
                         continue
-                    set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+                    set_style(
+                        row_idx,
+                        col_idx,
+                        rule.backgroundColor,
+                        rule.bottomBorderColor,
+                        rule.rightBorderColor,
+                    )
 
         elif rule.type == "column header":
             for d in target_dates:
                 col_idx = n_leading_cols + n_history_cols + d
-                set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+                set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
 
         elif rule.type == "cell":
             for d, p in ctx.map_dp_s.keys():
@@ -133,12 +153,24 @@ def _build_custom_export_style_info(
                 if any(s in target_shift_types for s in assigned_shift_types):
                     row_idx = n_leading_rows + p
                     col_idx = n_leading_cols + n_history_cols + d
-                    set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+                    set_style(
+                        row_idx,
+                        col_idx,
+                        rule.backgroundColor,
+                        rule.bottomBorderColor,
+                        rule.rightBorderColor,
+                    )
 
         elif rule.type == "history column":
             for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
                 for row_idx in range(n_rows):
-                    set_style(row_idx, col_idx, rule.backgroundColor, rule.bottomBorderColor)
+                    set_style(
+                        row_idx,
+                        col_idx,
+                        rule.backgroundColor,
+                        rule.bottomBorderColor,
+                        rule.rightBorderColor,
+                    )
 
     return style_map
 
@@ -520,15 +552,6 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                     ]:
                         borders.append("border-right: 2px solid #374151")
 
-                    # Add vertical border after Saturday columns (between Saturday and Sunday)
-                    if (
-                        n_leading_cols + n_history_cols
-                        <= col_idx
-                        < n_leading_cols + n_history_cols + len(ctx.dates.items)
-                        and df.iloc[1, col_idx] == "Sat"
-                    ):
-                        borders.append("border-right: 2px solid #9ca3af")
-
                     # Combine base style with borders
                     if borders:
                         border_style = "; ".join(borders)
@@ -615,16 +638,26 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                 cell.font = updated_font
 
             bottom_border_color = styles.get("bottomBorderColor")
-            if bottom_border_color:
-                argb = f"FF{bottom_border_color[1:].upper()}"
+            right_border_color = styles.get("rightBorderColor")
+            if bottom_border_color or right_border_color:
                 existing_border = copy(cell.border)
                 existing_bottom = copy(existing_border.bottom)
-                border_style = existing_bottom.style if existing_bottom is not None else None
+                existing_right = copy(existing_border.right)
+                bottom_style = existing_bottom.style if existing_bottom is not None else None
+                right_style = existing_right.style if existing_right is not None else None
                 cell.border = Border(
                     left=existing_border.left,
-                    right=existing_border.right,
+                    right=(
+                        Side(style=right_style or "medium", color=f"FF{right_border_color[1:].upper()}")
+                        if right_border_color
+                        else existing_border.right
+                    ),
                     top=existing_border.top,
-                    bottom=Side(style=border_style or "medium", color=argb),
+                    bottom=(
+                        Side(style=bottom_style or "medium", color=f"FF{bottom_border_color[1:].upper()}")
+                        if bottom_border_color
+                        else existing_border.bottom
+                    ),
                     diagonal=existing_border.diagonal,
                     diagonal_direction=existing_border.diagonal_direction,
                     outline=existing_border.outline,

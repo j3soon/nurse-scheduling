@@ -309,6 +309,11 @@ function createDefaultState(): SchedulingState {
         },
         {
           type: 'column',
+          targets: [SATURDAY],
+          rightBorderColor: '#9ca3af'
+        },
+        {
+          type: 'column',
           targets: [FREEDAY],
           backgroundColor: '#dcfce7'
         }

@@ -66,7 +66,11 @@ def test_export_to_excel_applies_style_and_font_contrast():
         "comments": {},
         "styles": {
             (1, 1): {"backgroundColor": "#111111"},
-            (1, 2): {"backgroundColor": "#f5f5f5", "bottomBorderColor": "#0ea5e9"},
+            (1, 2): {
+                "backgroundColor": "#f5f5f5",
+                "bottomBorderColor": "#0ea5e9",
+                "rightBorderColor": "#9ca3af",
+            },
         },
     }
 
@@ -83,6 +87,9 @@ def test_export_to_excel_applies_style_and_font_contrast():
     assert ws["B1"].border.bottom.color is not None
     assert ws["B1"].border.bottom.color.rgb == "FF0EA5E9"
     assert ws["B1"].border.bottom.style == "medium"
+    assert ws["B1"].border.right.color is not None
+    assert ws["B1"].border.right.color.rgb == "FF9CA3AF"
+    assert ws["B1"].border.right.style == "medium"
 
 
 def test_prettify_generates_comment_info_for_unmet_single_style_requests():
@@ -285,6 +292,7 @@ def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
                     targets=["n1"],
                     backgroundColor="#22c55e",
                     bottomBorderColor=None,
+                    rightBorderColor=None,
                 )
             ]
         ),
@@ -384,3 +392,4 @@ preferences:
     assert "background-color: #fefce8" not in html
     assert "#dcfce7" not in html
     assert "#dbeafe" not in html
+    assert "#9ca3af" not in html

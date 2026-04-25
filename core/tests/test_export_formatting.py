@@ -78,6 +78,7 @@ export:
       targets: ["2025-01-02"]
       backgroundColor: "#84cc16"
       bottomBorderColor: "#3b82f6"
+      rightBorderColor: "#9ca3af"
 """
 
     df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=False)
@@ -126,6 +127,8 @@ export:
     # C4 bottom border from column rule overriding row rule.
     assert ws["C4"].border.bottom.color is not None
     assert ws["C4"].border.bottom.color.rgb == "FF3B82F6"
+    assert ws["C4"].border.right.color is not None
+    assert ws["C4"].border.right.color.rgb == "FF9CA3AF"
 
 
 def test_export_formatting_rule_applies_to_history_columns():

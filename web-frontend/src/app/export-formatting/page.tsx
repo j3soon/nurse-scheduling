@@ -36,10 +36,11 @@ interface DraftRule {
   targetIds: string[];
   backgroundColor: string;
   bottomBorderColor: string;
+  rightBorderColor: string;
 }
 
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
-type ColorField = 'backgroundColor' | 'bottomBorderColor';
+type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor';
 
 const getPickerDisplay = (value: string) => {
   const isValidHexColor = HEX_COLOR_PATTERN.test(value);
@@ -72,6 +73,7 @@ export default function ExportFormattingPage() {
     targetIds: [],
     backgroundColor: '',
     bottomBorderColor: '',
+    rightBorderColor: '',
   });
 
   const formattingRules = exportData.formatting || [];
@@ -102,9 +104,9 @@ export default function ExportFormattingPage() {
 
     if (draft.type === 'history column') {
       return {
-        emptyText: null,
-        href: null,
-        hrefLabel: null,
+        emptyText: 'History columns are available when people have history entries. Add history in the',
+        href: '/shift-requests',
+        hrefLabel: 'Shift Requests',
         options: [
           { id: ALL, description: 'All history columns' },
         ]
@@ -148,6 +150,7 @@ export default function ExportFormattingPage() {
       targetIds: [],
       backgroundColor: '',
       bottomBorderColor: '',
+      rightBorderColor: '',
     });
     setError('');
     setEditingIndex(null);
@@ -165,6 +168,7 @@ export default function ExportFormattingPage() {
       targetIds: rule.targets,
       backgroundColor: rule.backgroundColor || '',
       bottomBorderColor: rule.bottomBorderColor || '',
+      rightBorderColor: rule.rightBorderColor || '',
     });
     setEditingIndex(index);
     setIsFormVisible(true);
@@ -185,6 +189,7 @@ export default function ExportFormattingPage() {
   const handleSave = () => {
     const backgroundColor = draft.backgroundColor.trim().toLowerCase();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
+    const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
 
     if (draft.targetIds.length === 0) {
       setError('Select at least one target');
@@ -207,7 +212,12 @@ export default function ExportFormattingPage() {
       setError(bottomBorderColorError);
       return;
     }
-    if (!backgroundColor && !bottomBorderColor) {
+    const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
+    if (rightBorderColorError) {
+      setError(rightBorderColorError);
+      return;
+    }
+    if (!backgroundColor && !bottomBorderColor && !rightBorderColor) {
       setError('At least one style field is required');
       return;
     }
@@ -218,6 +228,7 @@ export default function ExportFormattingPage() {
     };
     if (backgroundColor) newRule.backgroundColor = backgroundColor;
     if (bottomBorderColor) newRule.bottomBorderColor = bottomBorderColor;
+    if (rightBorderColor) newRule.rightBorderColor = rightBorderColor;
 
     const wasEditing = editingIndex !== null;
     if (wasEditing) {
@@ -377,6 +388,9 @@ export default function ExportFormattingPage() {
                 <div className="min-w-[260px]">
                   {renderColorField('bottomBorderColor', 'Bottom Border Color')}
                 </div>
+                <div className="min-w-[260px]">
+                  {renderColorField('rightBorderColor', 'Right Border Color')}
+                </div>
               </div>
 
               <div>
@@ -457,6 +471,11 @@ export default function ExportFormattingPage() {
             {rule.bottomBorderColor && (
               <div>
                 <span className="font-medium">Bottom Border:</span> {rule.bottomBorderColor}
+              </div>
+            )}
+            {rule.rightBorderColor && (
+              <div>
+                <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
               </div>
             )}
           </div>

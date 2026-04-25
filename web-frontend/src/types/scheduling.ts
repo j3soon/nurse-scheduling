@@ -31,6 +31,7 @@ export interface ExportFormatting {
   targets: string[];
   backgroundColor?: string;
   bottomBorderColor?: string;
+  rightBorderColor?: string;
 }
 
 export interface ExportConfig {
