@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Any, Dict, List, Tuple, Union
 
 from .constants import Operator
+from .progress import ProgressCallback
 
 
 # TODO: The current interface is based on ortools, can change it to be more general
@@ -230,12 +231,17 @@ class SolverInterface(ABC):
         pass
 
     @abstractmethod
-    def create_solution_callback(self, objective_var: Any = None) -> Any:
+    def create_solution_callback(
+        self,
+        objective_var: Any = None,
+        progress: ProgressCallback | None = None,
+    ) -> Any:
         """
         Create a solution callback for tracking intermediate solutions during solving.
 
         Args:
             objective_var: The objective variable to track (optional, solver-specific).
+            progress: Optional callback for structured progress events.
 
         Returns:
             A solver-specific solution callback object, or None if not supported.

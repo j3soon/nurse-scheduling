@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Tuple, Union
 import pulp
 
 from .constants import Operator
+from .progress import ProgressCallback
 from .solver_interface import SolverInterface, SolverStatus
 
 
@@ -520,7 +521,11 @@ class BasePuLPSolver(SolverInterface):
         """Get the generic solver status name."""
         return self.solver_status.value
 
-    def create_solution_callback(self, objective_var: Any = None) -> Any:
+    def create_solution_callback(
+        self,
+        objective_var: Any = None,
+        progress: ProgressCallback | None = None,
+    ) -> Any:
         """
         Create a solution callback for tracking intermediate solutions.
 

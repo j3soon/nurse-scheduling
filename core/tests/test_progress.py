@@ -24,6 +24,9 @@ from nurse_scheduling.progress import ProgressEvent
 
 
 VALID_YAML_FILE = Path(__file__).parent / "testcases" / "basics" / "01_1nurse_1shift_1day.yaml"
+VALID_PREFS_YAML_FILE = (
+    Path(__file__).parent / "testcases" / "basics" / "01_1nurse_1shift_1day_all_prefs.yaml"
+)
 
 
 def test_schedule_emits_phase_progress_events():
@@ -36,7 +39,8 @@ def test_schedule_emits_phase_progress_events():
 
     assert score == 0
     assert status == "OPTIMAL"
-    assert [event.code for event in events] == [
+    phase_and_completion_codes = [event.code for event in events if event.type != "solution"]
+    assert phase_and_completion_codes == [
         "loading_scenario",
         "parsing_data",
         "initializing_solver",
@@ -66,3 +70,21 @@ def test_schedule_without_progress_preserves_result():
     assert events
     assert score_with == score_without
     assert status_with == status_without
+
+
+def test_ortools_solver_emits_solution_progress_event():
+    events: list[ProgressEvent] = []
+
+    _df, _solution, _score, status, _cell_export_info = nurse_scheduling.schedule(
+        VALID_PREFS_YAML_FILE.read_bytes(),
+        progress=events.append,
+        solver="ortools/cp-sat",
+    )
+
+    solution_events = [event for event in events if event.type == "solution"]
+    assert status == "OPTIMAL"
+    assert solution_events
+    assert solution_events[0].code == "solution_found"
+    assert solution_events[0].score is not None
+    assert solution_events[0].solution_count is not None
+    assert solution_events[0].elapsed_seconds is not None

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Tuple, Union
 from ortools.sat.python import cp_model
 
 from .constants import Operator
+from .progress import ProgressCallback, ProgressEvent
 from .solver_interface import SolverInterface, SolverStatus
 
 
@@ -169,7 +170,11 @@ class ORToolsSolver(SolverInterface):
         """Get the generic solver status name."""
         return self.solver_status.value
 
-    def create_solution_callback(self, objective_var: Any = None) -> Any:
+    def create_solution_callback(
+        self,
+        objective_var: Any = None,
+        progress: ProgressCallback | None = None,
+    ) -> Any:
         """Create a solution callback for tracking intermediate solutions."""
         import time
 
@@ -193,5 +198,17 @@ class ORToolsSolver(SolverInterface):
                 logging.info(f"# of (best) solutions found: {self.n_solutions}")
                 logging.info(f"current score: {current_score}")
                 logging.info(f"elapsed time: {elapsed_time:.2f}s")
+                if progress is not None:
+                    progress(
+                        ProgressEvent(
+                            type="solution",
+                            code="solution_found",
+                            message="Intermediate solution found",
+                            progress=0.80,
+                            score=current_score,
+                            solution_count=self.n_solutions,
+                            elapsed_seconds=elapsed_time,
+                        )
+                    )
 
         return PartialSolutionPrinter(objective_var)

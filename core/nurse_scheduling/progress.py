@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-ProgressEventType = Literal["phase", "completed"]
+ProgressEventType = Literal["phase", "solution", "completed"]
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,9 @@ class ProgressEvent:
     code: str
     message: str
     progress: float | None = None
+    score: int | float | None = None
+    solution_count: int | None = None
+    elapsed_seconds: float | None = None
 
 
 ProgressCallback = Callable[[ProgressEvent], None]
