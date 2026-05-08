@@ -26,7 +26,19 @@ from .constants import ALL, OFF, OFF_sid, Operator, MAP_DATE_KEYWORD_TO_FILTER, 
 from .context import Context
 from .utils import parse_dates
 from .loader import load_data
+from .progress import ProgressCallback, ProgressEvent, ProgressEventType
 from .solver_interface import SolverStatus
+
+
+def _emit_progress(
+    progress: ProgressCallback | None,
+    event_type: ProgressEventType,
+    code: str,
+    message: str,
+    progress_value: float | None = None,
+) -> None:
+    if progress is not None:
+        progress(ProgressEvent(type=event_type, code=code, message=message, progress=progress_value))
 
 
 def schedule(
@@ -36,10 +48,13 @@ def schedule(
     prettify=False,
     timeout: int | None = None,
     solver: str = "ortools/cp-sat",
+    progress: ProgressCallback | None = None,
 ):
+    _emit_progress(progress, "phase", "loading_scenario", "Loading scenario from file content", 0.05)
     logging.info("Loading scenario from file content...")
     scenario = load_data(file_content)
 
+    _emit_progress(progress, "phase", "parsing_data", "Extracting scenario data", 0.10)
     logging.info("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
@@ -98,6 +113,7 @@ def schedule(
                 date_indices.update(parse_dates(member, ctx.map_did_d, ctx.dates.range))
         ctx.map_did_d[group.id] = sorted(set(date_indices))
 
+    _emit_progress(progress, "phase", "initializing_solver", "Initializing solver model", 0.20)
     logging.info("Initializing solver model...")
 
     solver_backend, solver_engine = solver.lower().split("/", maxsplit=1)
@@ -121,6 +137,7 @@ def schedule(
     else:
         raise ValueError(f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}")
 
+    _emit_progress(progress, "phase", "creating_shift_variables", "Creating shift variables", 0.30)
     logging.info("Creating shift variables...")
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
     # In the following code, we always use the convention of (d, s, p)
@@ -145,6 +162,7 @@ def schedule(
         # Add constraint that at least one variable must be different from the solution to avoid
         ctx.solver.add_bool_or(avoid_solution_vars)
 
+    _emit_progress(progress, "phase", "creating_off_variables", "Creating off variables", 0.40)
     logging.info("Creating off variables...")
     for d in range(ctx.n_days):
         for p in range(ctx.n_people):
@@ -158,6 +176,7 @@ def schedule(
                 (0, ctx.n_shift_types),  # we do not assume "at most one shift per day" here
             )
 
+    _emit_progress(progress, "phase", "creating_lookup_maps", "Creating maps for faster lookup", 0.50)
     logging.info("Creating maps for faster lookup...")
     ctx.map_ds_p = {
         (d, s): {p for p in range(ctx.n_people) if (d, s, p) in ctx.shifts}
@@ -188,6 +207,7 @@ def schedule(
         for p in range(ctx.n_people)
     }
 
+    _emit_progress(progress, "phase", "adding_preferences", "Adding preferences and constraints", 0.65)
     logging.info("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
@@ -200,8 +220,9 @@ def schedule(
     logging.info("Initializing solver...")
 
     # Create solution callback for tracking intermediate solutions
-    solution_callback = ctx.solver.create_solution_callback(ctx.objective)
+    solution_callback = ctx.solver.create_solution_callback(ctx.objective, progress=progress)
 
+    _emit_progress(progress, "phase", "solving", "Solving schedule model", 0.80)
     logging.info("Solving and showing partial results...")
     status = ctx.solver.solve(timeout=timeout, deterministic=deterministic, solution_callback=solution_callback)
 
@@ -248,9 +269,11 @@ def schedule(
     if not found:
         return None, None, None, ctx.solver_status, None
 
+    _emit_progress(progress, "phase", "exporting", "Preparing schedule output", 0.95)
     df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=prettify)
     solution = {}
     for d, s, p in ctx.shifts:
         solution[(d, s, p)] = ctx.solver.get_value(ctx.shifts[(d, s, p)])
     # TODO: Better way to return?
+    _emit_progress(progress, "completed", "completed", "Scheduling completed", 1.0)
     return df, solution, ctx.solver.get_objective_value(), ctx.solver_status, cell_export_info
