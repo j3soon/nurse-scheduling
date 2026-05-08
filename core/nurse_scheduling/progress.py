@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-ProgressEventType = Literal["phase", "solution", "completed"]
+ProgressEventType = Literal["phase", "solution", "completed", "failed"]
 
 
 @dataclass(frozen=True)

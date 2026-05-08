@@ -23,6 +23,7 @@
 
 import os
 import sys
+import json
 import types
 
 # Add the project root to the Python path so imports will work when running directly
@@ -177,6 +178,64 @@ class TestErrorCases:
         assert response.status_code == 500
         assert "detail" in response.json()
         assert "error" in response.json()["detail"].lower()
+
+
+class TestOptimizationJobs:
+    """Test async optimization job endpoints."""
+
+    def test_create_job_stream_events_and_download_result(self):
+        """Create an optimization job, drain SSE events, and download the XLSX result."""
+        yaml_content = VALID_YAML_FILE.read_text()
+
+        create_response = client.post(
+            "/optimization-jobs",
+            data={"yaml_content": yaml_content, "solver": "ortools/cp-sat"},
+        )
+        assert create_response.status_code == 200
+        job_id = create_response.json()["job_id"]
+
+        with client.stream("GET", f"/optimization-jobs/{job_id}/events") as event_response:
+            assert event_response.status_code == 200
+            event_body = "".join(event_response.iter_text())
+
+        assert "event: phase" in event_body
+        assert "event: completed" in event_body
+
+        result_response = client.get(f"/optimization-jobs/{job_id}/result")
+        assert result_response.status_code == 200
+        assert result_response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        assert result_response.headers["X-Schedule-Score"] == "0"
+        assert result_response.headers["X-Schedule-Status"] == "OPTIMAL"
+        assert len(result_response.content) > 0
+
+    def test_unknown_job_returns_404(self):
+        """Unknown job IDs should return 404."""
+        event_response = client.get("/optimization-jobs/not-found/events")
+        result_response = client.get("/optimization-jobs/not-found/result")
+
+        assert event_response.status_code == 404
+        assert result_response.status_code == 404
+
+    def test_failed_job_streams_failed_event(self):
+        """Invalid YAML should produce a failed SSE event."""
+        create_response = client.post(
+            "/optimization-jobs",
+            data={"yaml_content": "this is not: valid: yaml: syntax:"},
+        )
+        assert create_response.status_code == 200
+        job_id = create_response.json()["job_id"]
+
+        with client.stream("GET", f"/optimization-jobs/{job_id}/events") as event_response:
+            assert event_response.status_code == 200
+            event_body = "".join(event_response.iter_text())
+
+        assert "event: failed" in event_body
+        failed_lines = [line for line in event_body.splitlines() if line.startswith("data: ")]
+        failed_payloads = [json.loads(line.removeprefix("data: ")) for line in failed_lines]
+        assert any(payload["type"] == "failed" for payload in failed_payloads)
+
+        result_response = client.get(f"/optimization-jobs/{job_id}/result")
+        assert result_response.status_code == 400
 
 
 class TestMultipleValidScenarios:

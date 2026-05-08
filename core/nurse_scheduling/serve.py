@@ -18,17 +18,21 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
+import asyncio
 import os
 import subprocess
 import sys
 from datetime import datetime
 from io import BytesIO
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from queue import Empty
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from typing import Optional
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 from . import scheduler, exporter
+from .jobs import OptimizationJobManager, format_sse
+from .progress import ProgressEvent
 
 
 def _get_app_version() -> str:
@@ -84,6 +88,8 @@ title = "Nurse Scheduling API"
 version = "alpha"
 
 app = FastAPI(title=title, version=version)
+
+job_manager = OptimizationJobManager()
 
 # Regex to match allowed origins:
 # - http://localhost:3000, http://127.0.0.1:3000 (for Next.js local development)
@@ -203,6 +209,129 @@ async def optimize_and_export_xlsx(
             "Content-Disposition": f"attachment; filename={output_filename}",
             "X-Schedule-Score": str(score),
             "X-Schedule-Status": str(status),
+        },
+    )
+
+
+def run_optimization_job(
+    job_id: str,
+    content: bytes,
+    prettify: Optional[bool],
+    timeout: Optional[int],
+    solver: str,
+) -> None:
+    job = job_manager.get(job_id)
+    if job is None:
+        return
+
+    def emit(event: ProgressEvent) -> None:
+        if event.type == "completed":
+            job.emit(ProgressEvent(
+                type="phase",
+                code="schedule_completed",
+                message="Schedule solved; preparing result file",
+                progress=0.98,
+                score=event.score,
+            ))
+            return
+        job.emit(event)
+
+    try:
+        df, _solution, score, status, cell_export_info = scheduler.schedule(
+            file_content=content,
+            prettify=prettify,
+            timeout=timeout,
+            solver=solver,
+            progress=emit,
+        )
+    except Exception as e:
+        logging.error("Error during optimization job %s: %s", job_id, str(e))
+        job.fail(f"Error during optimization: {str(e)}")
+        return
+
+    if df is None:
+        job.fail("No solution found. The constraints may be too restrictive.")
+        return
+
+    output_buffer = BytesIO()
+    exporter.export_to_excel(df, output_buffer, cell_export_info)
+    output_filename = f"nurse-scheduling-{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+    job.complete(
+        filename=output_filename,
+        xlsx_bytes=output_buffer.getvalue(),
+        score=score,
+        solver_status=status,
+    )
+
+
+@app.post("/optimization-jobs")
+async def create_optimization_job(
+    background_tasks: BackgroundTasks,
+    yaml_content: str = Form(..., description="YAML content as a string"),
+    prettify: Optional[bool] = Form(None, description="Enable prettier output formatting"),
+    timeout: Optional[int] = Form(None, description="Max execution time in seconds"),
+    solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc, pulp/cuopt)"),
+):
+    job = job_manager.create()
+    background_tasks.add_task(
+        run_optimization_job,
+        job.id,
+        yaml_content.encode("utf-8"),
+        prettify,
+        timeout,
+        solver,
+    )
+    return {"job_id": job.id}
+
+
+@app.get("/optimization-jobs/{job_id}/events")
+async def stream_optimization_events(job_id: str):
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    async def event_generator():
+        while True:
+            try:
+                event = await asyncio.to_thread(job.events.get, True, 0.5)
+            except Empty:
+                if job.status in ("completed", "failed") and job.events.empty():
+                    break
+                yield ": ping\n\n"
+                continue
+
+            yield format_sse(event)
+            if event.type in ("completed", "failed"):
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/optimization-jobs/{job_id}/result")
+async def download_optimization_result(job_id: str):
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status == "failed":
+        raise HTTPException(status_code=400, detail=job.error or "Optimization failed")
+    if job.status != "completed" or job.xlsx_bytes is None:
+        raise HTTPException(status_code=409, detail="Job is not completed")
+
+    return StreamingResponse(
+        BytesIO(job.xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename={job.filename}",
+            "X-Schedule-Score": str(job.score),
+            "X-Schedule-Status": str(job.solver_status),
         },
     )
 
