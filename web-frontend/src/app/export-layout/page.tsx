@@ -1,0 +1,688 @@
+/*
+ * This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+ *
+ * Copyright (C) 2023-2026 Johnson Sun
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+// The export layout page for Tab "10. Export Layout"
+'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { FiAlertCircle, FiHelpCircle } from 'react-icons/fi';
+import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { ExportExtraColumn, ExportFormatting, ExportFormattingType } from '@/types/scheduling';
+import { CheckboxList } from '@/components/CheckboxList';
+import ToggleButton from '@/components/ToggleButton';
+import { DraggableCardList } from '@/components/DraggableCardList';
+import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
+import { ALL } from '@/utils/keywords';
+
+type RuleKind = 'style' | 'extra column';
+type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor';
+
+interface DraftRule {
+  kind: RuleKind;
+  type: ExportFormattingType;
+  targetIds: string[];
+  backgroundColor: string;
+  bottomBorderColor: string;
+  rightBorderColor: string;
+  header: string;
+  countShiftTypes: string[];
+  countDates: string[];
+}
+
+interface EditingTarget {
+  kind: RuleKind;
+  index: number;
+}
+
+interface SelectOption {
+  id: string;
+  description: string;
+}
+
+const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+const createEmptyDraft = (): DraftRule => ({
+  kind: 'style',
+  type: 'cell',
+  targetIds: [],
+  backgroundColor: '',
+  bottomBorderColor: '',
+  rightBorderColor: '',
+  header: '',
+  countShiftTypes: [],
+  countDates: [],
+});
+
+const getPickerDisplay = (value: string) => {
+  const isValidHexColor = HEX_COLOR_PATTERN.test(value);
+  const hasColorInput = value.length > 0;
+  const pickerValue = isValidHexColor ? value : '#ffffff';
+  const pickerText = hasColorInput
+    ? (isValidHexColor ? value : '(Invalid)')
+    : 'Default';
+  const pickerTextColor = (() => {
+    if (hasColorInput && !isValidHexColor) return '#b91c1c';
+    if (!isValidHexColor) return '#4b5563';
+    const hex = value.slice(1);
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.6 ? '#111827' : '#f9fafb';
+  })();
+  return { pickerValue, pickerText, pickerTextColor };
+};
+
+export default function ExportFormattingPage() {
+  const {
+    exportData,
+    updateExportFormatting,
+    updateExportExtraColumns,
+    updateExportConfig,
+    peopleData,
+    dateData,
+    shiftTypeData
+  } = useSchedulingData();
+  const [showInstructions, setShowInstructions] = useState(false);
+  const [isFormVisible, setIsFormVisible] = useState(false);
+  const [editingTarget, setEditingTarget] = useState<EditingTarget | null>(null);
+  const [error, setError] = useState('');
+  const [draft, setDraft] = useState<DraftRule>(createEmptyDraft);
+
+  const formattingRules = exportData.formatting || [];
+  const extraColumns = exportData.extraColumns || [];
+
+  const dateOptions = [
+    ...dateData.items.map(date => ({ id: date.id, description: date.description })),
+    ...dateData.groups.map(group => ({ id: group.id, description: group.description })),
+  ];
+  const shiftTypeOptions = [
+    ...shiftTypeData.items.map(shiftType => ({ id: shiftType.id, description: shiftType.description })),
+    ...shiftTypeData.groups.map(group => ({ id: group.id, description: group.description })),
+  ];
+
+  const getStyleTargetConfig = () => {
+    if (draft.type === 'row' || draft.type === 'row header') {
+      return {
+        emptyText: 'No people available. Please set up people in the',
+        href: '/people',
+        hrefLabel: 'People',
+        options: [
+          ...peopleData.items.map(person => ({ id: person.id, description: person.description })),
+          ...peopleData.groups.map(group => ({ id: group.id, description: group.description })),
+        ]
+      };
+    }
+
+    if (draft.type === 'column' || draft.type === 'column header') {
+      return {
+        emptyText: 'No dates available. Please set up dates in the',
+        href: '/dates',
+        hrefLabel: 'Dates',
+        options: dateOptions
+      };
+    }
+
+    if (draft.type === 'history column') {
+      return {
+        emptyText: 'History columns are available when people have history entries. Add history in the',
+        href: '/shift-requests',
+        hrefLabel: 'Shift Requests',
+        options: [
+          { id: ALL, description: 'All history columns' },
+        ]
+      };
+    }
+
+    return {
+      emptyText: 'No shift types available. Please set up shift types in the',
+      href: '/shift-types',
+      hrefLabel: 'Shift Types',
+      options: shiftTypeOptions
+    };
+  };
+
+  const styleTargetConfig = getStyleTargetConfig();
+  const instructions = [
+    'Create export style rules and extra count columns for prettified XLSX output',
+    'Style rules change cell appearance; extra columns add per-person count summaries',
+    'Extra columns count selected shift types over selected dates',
+    'Use #RRGGBB for color values',
+    'Rules are evaluated in order within each section'
+  ];
+
+  const validateColor = (value: string, fieldLabel: string): string | null => {
+    if (!value) return null;
+    if (!HEX_COLOR_PATTERN.test(value)) {
+      return `${fieldLabel} must be a valid hex color in #RRGGBB format`;
+    }
+    return null;
+  };
+
+  const resetForm = () => {
+    setDraft(createEmptyDraft());
+    setError('');
+    setEditingTarget(null);
+  };
+
+  const handleStartAdd = () => {
+    resetForm();
+    setIsFormVisible(true);
+  };
+
+  const handleStartEditStyle = (index: number) => {
+    const rule = formattingRules[index];
+    setDraft({
+      ...createEmptyDraft(),
+      kind: 'style',
+      type: rule.type,
+      targetIds: rule.targets,
+      backgroundColor: rule.backgroundColor || '',
+      bottomBorderColor: rule.bottomBorderColor || '',
+      rightBorderColor: rule.rightBorderColor || '',
+    });
+    setEditingTarget({ kind: 'style', index });
+    setIsFormVisible(true);
+    setError('');
+    saveScrollPosition();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+
+  const handleStartEditExtraColumn = (index: number) => {
+    const rule = extraColumns[index];
+    setDraft({
+      ...createEmptyDraft(),
+      kind: 'extra column',
+      header: rule.header,
+      countShiftTypes: rule.countShiftTypes,
+      countDates: rule.countDates,
+    });
+    setEditingTarget({ kind: 'extra column', index });
+    setIsFormVisible(true);
+    setError('');
+    saveScrollPosition();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+
+  const handleCancel = () => {
+    const wasEditing = editingTarget !== null;
+    setIsFormVisible(false);
+    resetForm();
+    if (wasEditing) {
+      restoreScrollPosition();
+    }
+  };
+
+  const saveStyleRule = () => {
+    const backgroundColor = draft.backgroundColor.trim().toLowerCase();
+    const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
+    const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
+
+    if (draft.targetIds.length === 0) {
+      setError('Select at least one target');
+      return false;
+    }
+
+    const validTargetIds = new Set(styleTargetConfig.options.map(option => option.id));
+    if (draft.targetIds.some(id => !validTargetIds.has(id))) {
+      setError('Selected targets are invalid for this rule type');
+      return false;
+    }
+
+    const backgroundColorError = validateColor(backgroundColor, 'Background Color');
+    if (backgroundColorError) {
+      setError(backgroundColorError);
+      return false;
+    }
+    const bottomBorderColorError = validateColor(bottomBorderColor, 'Bottom Border Color');
+    if (bottomBorderColorError) {
+      setError(bottomBorderColorError);
+      return false;
+    }
+    const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
+    if (rightBorderColorError) {
+      setError(rightBorderColorError);
+      return false;
+    }
+    if (!backgroundColor && !bottomBorderColor && !rightBorderColor) {
+      setError('At least one style field is required');
+      return false;
+    }
+
+    const newRule: ExportFormatting = {
+      type: draft.type,
+      targets: draft.targetIds
+    };
+    if (backgroundColor) newRule.backgroundColor = backgroundColor;
+    if (bottomBorderColor) newRule.bottomBorderColor = bottomBorderColor;
+    if (rightBorderColor) newRule.rightBorderColor = rightBorderColor;
+
+    const nextFormatting = [...formattingRules];
+    const nextExtraColumns = [...extraColumns];
+    if (editingTarget?.kind === 'style') {
+      nextFormatting[editingTarget.index] = newRule;
+    } else {
+      if (editingTarget?.kind === 'extra column') {
+        nextExtraColumns.splice(editingTarget.index, 1);
+      }
+      nextFormatting.push(newRule);
+    }
+    updateExportConfig({
+      ...exportData,
+      formatting: nextFormatting,
+      extraColumns: nextExtraColumns,
+    });
+    return true;
+  };
+
+  const saveExtraColumn = () => {
+    const header = draft.header.trim();
+    if (!header) {
+      setError('Column header is required');
+      return false;
+    }
+    if (draft.countShiftTypes.length === 0) {
+      setError('Select at least one shift type to count');
+      return false;
+    }
+    if (draft.countDates.length === 0) {
+      setError('Select at least one date target to count over');
+      return false;
+    }
+
+    const validShiftTypeIds = new Set(shiftTypeOptions.map(option => option.id));
+    if (draft.countShiftTypes.some(id => !validShiftTypeIds.has(id))) {
+      setError('Selected shift types are invalid for this extra column');
+      return false;
+    }
+    const validDateIds = new Set(dateOptions.map(option => option.id));
+    if (draft.countDates.some(id => !validDateIds.has(id))) {
+      setError('Selected dates are invalid for this extra column');
+      return false;
+    }
+
+    const newRule: ExportExtraColumn = {
+      type: 'count',
+      header,
+      countShiftTypes: draft.countShiftTypes,
+      countDates: draft.countDates
+    };
+
+    const nextFormatting = [...formattingRules];
+    const nextExtraColumns = [...extraColumns];
+    if (editingTarget?.kind === 'extra column') {
+      nextExtraColumns[editingTarget.index] = newRule;
+    } else {
+      if (editingTarget?.kind === 'style') {
+        nextFormatting.splice(editingTarget.index, 1);
+      }
+      nextExtraColumns.push(newRule);
+    }
+    updateExportConfig({
+      ...exportData,
+      formatting: nextFormatting,
+      extraColumns: nextExtraColumns,
+    });
+    return true;
+  };
+
+  const handleSave = () => {
+    const wasEditing = editingTarget !== null;
+    const didSave = draft.kind === 'style' ? saveStyleRule() : saveExtraColumn();
+    if (!didSave) return;
+
+    setIsFormVisible(false);
+    resetForm();
+    if (wasEditing) {
+      restoreScrollPosition();
+    }
+  };
+
+  useEffect(() => {
+    if (!isFormVisible) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSave();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  });
+
+  const renderColorField = (field: ColorField, label: string) => {
+    const value = draft[field];
+    const { pickerValue, pickerText, pickerTextColor } = getPickerDisplay(value);
+    return (
+      <div className="space-y-1">
+        <label className="block text-sm font-medium text-gray-700">{label}</label>
+        <div className="flex items-center gap-3">
+          <div className="relative h-9 w-28">
+            <input
+              type="color"
+              value={pickerValue}
+              onChange={(e) => setDraft(prev => ({ ...prev, [field]: e.target.value }))}
+              className="h-9 w-28 rounded border border-gray-300 bg-white cursor-pointer"
+              title={`Choose ${label.toLowerCase()}`}
+            />
+            <span
+              className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-[11px]"
+              style={{ color: pickerTextColor }}
+            >
+              {pickerText}
+            </span>
+          </div>
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => setDraft(prev => ({ ...prev, [field]: e.target.value }))}
+            placeholder="#RRGGBB"
+            className="w-28 px-2 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+            title={`Enter ${label.toLowerCase()} in hex`}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderCheckboxes = (
+    label: string,
+    options: SelectOption[],
+    selectedIds: string[],
+    onToggle: (id: string) => void,
+    emptyText: string,
+    href: string,
+    hrefLabel: string
+  ) => (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
+      {options.length === 0 ? (
+        <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
+          {emptyText}{' '}
+          <Link href={href} className="text-blue-600 hover:text-blue-800 underline">
+            {hrefLabel}
+          </Link>{' '}
+          tab first.
+        </div>
+      ) : (
+        <CheckboxList
+          items={options}
+          selectedIds={selectedIds}
+          onToggle={onToggle}
+          label=""
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold text-gray-800">Export Layout</h1>
+          {instructions.length > 0 && (
+            <button
+              onClick={() => setShowInstructions(!showInstructions)}
+              className="text-gray-500 hover:text-gray-700 transition-colors"
+              title="Toggle instructions"
+            >
+              <FiHelpCircle className="h-6 w-6" />
+            </button>
+          )}
+        </div>
+        <ToggleButton
+          label="Add Export Rule"
+          isToggled={isFormVisible}
+          onToggle={() => {
+            if (isFormVisible) {
+              handleCancel();
+            } else {
+              handleStartAdd();
+            }
+          }}
+        />
+      </div>
+
+      {showInstructions && instructions.length > 0 && (
+        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
+          <ul className="space-y-2 text-sm text-blue-700">
+            {instructions.map((instruction, index) => (
+              <li key={index}>• {instruction}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {isFormVisible && (
+        <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
+          <div className="px-6 py-4">
+            <h2 className="text-lg font-semibold mb-4 text-gray-800">
+              {editingTarget !== null ? 'Edit Export Rule' : 'Add Export Rule'}
+            </h2>
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-start gap-4">
+                <div className="min-w-[180px]">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Rule Kind</label>
+                  <select
+                    value={draft.kind}
+                    onChange={(e) => setDraft(prev => ({
+                      ...prev,
+                      kind: e.target.value as RuleKind,
+                      targetIds: [],
+                      countShiftTypes: [],
+                      countDates: []
+                    }))}
+                    className="px-3 py-2 border border-gray-300 rounded-md w-full"
+                  >
+                    <option value="style">Style</option>
+                    <option value="extra column">Extra Column</option>
+                  </select>
+                </div>
+
+                {draft.kind === 'style' ? (
+                  <>
+                    <div className="min-w-[180px]">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
+                      <select
+                        value={draft.type}
+                        onChange={(e) => setDraft(prev => ({
+                          ...prev,
+                          type: e.target.value as ExportFormattingType,
+                          targetIds: []
+                        }))}
+                        className="px-3 py-2 border border-gray-300 rounded-md w-full"
+                      >
+                        <option value="row header">row header</option>
+                        <option value="row">row</option>
+                        <option value="column header">column header</option>
+                        <option value="column">column</option>
+                        <option value="history column">history column</option>
+                        <option value="cell">cell</option>
+                      </select>
+                    </div>
+                    <div className="min-w-[260px]">
+                      {renderColorField('backgroundColor', 'Background Color')}
+                    </div>
+                    <div className="min-w-[260px]">
+                      {renderColorField('bottomBorderColor', 'Bottom Border Color')}
+                    </div>
+                    <div className="min-w-[260px]">
+                      {renderColorField('rightBorderColor', 'Right Border Color')}
+                    </div>
+                  </>
+                ) : (
+                  <div className="min-w-[280px]">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Column Header</label>
+                    <input
+                      type="text"
+                      value={draft.header}
+                      onChange={(e) => setDraft(prev => ({ ...prev, header: e.target.value }))}
+                      placeholder="OFF (Weekend)"
+                      className="px-3 py-2 border border-gray-300 rounded-md w-full"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {draft.kind === 'style' ? (
+                renderCheckboxes(
+                  'Targets *',
+                  styleTargetConfig.options,
+                  draft.targetIds,
+                  (id) => setDraft(prev => ({
+                    ...prev,
+                    targetIds: prev.targetIds.includes(id)
+                      ? prev.targetIds.filter(targetId => targetId !== id)
+                      : [...prev.targetIds, id]
+                  })),
+                  styleTargetConfig.emptyText,
+                  styleTargetConfig.href,
+                  styleTargetConfig.hrefLabel
+                )
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {renderCheckboxes(
+                    'Count Shift Types *',
+                    shiftTypeOptions,
+                    draft.countShiftTypes,
+                    (id) => setDraft(prev => ({
+                      ...prev,
+                      countShiftTypes: prev.countShiftTypes.includes(id)
+                        ? prev.countShiftTypes.filter(targetId => targetId !== id)
+                        : [...prev.countShiftTypes, id]
+                    })),
+                    'No shift types available. Please set up shift types in the',
+                    '/shift-types',
+                    'Shift Types'
+                  )}
+                  {renderCheckboxes(
+                    'Count Dates *',
+                    dateOptions,
+                    draft.countDates,
+                    (id) => setDraft(prev => ({
+                      ...prev,
+                      countDates: prev.countDates.includes(id)
+                        ? prev.countDates.filter(targetId => targetId !== id)
+                        : [...prev.countDates, id]
+                    })),
+                    'No dates available. Please set up dates in the',
+                    '/dates',
+                    'Dates'
+                  )}
+                </div>
+              )}
+
+              {error && (
+                <p className="text-sm text-red-600 flex items-center gap-1">
+                  <FiAlertCircle className="h-4 w-4" />
+                  {error}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  onClick={handleCancel}
+                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  {editingTarget !== null ? 'Update' : 'Add'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-6">
+        <DraggableCardList
+          title="Style Rules"
+          items={formattingRules}
+          emptyMessage='No style rules defined yet. Click "Add Export Rule" to get started.'
+          onEdit={handleStartEditStyle}
+          onDelete={(index) => updateExportFormatting(formattingRules.filter((_, i) => i !== index))}
+          onReorder={(newItems) => updateExportFormatting(newItems)}
+          renderContent={(rule) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
+              <div>
+                <span className="font-medium">Type:</span> {rule.type}
+              </div>
+              <div>
+                <span className="font-medium">Targets:</span> {rule.targets.join(', ')}
+              </div>
+              {rule.backgroundColor && (
+                <div>
+                  <span className="font-medium">Background:</span> {rule.backgroundColor}
+                </div>
+              )}
+              {rule.bottomBorderColor && (
+                <div>
+                  <span className="font-medium">Bottom Border:</span> {rule.bottomBorderColor}
+                </div>
+              )}
+              {rule.rightBorderColor && (
+                <div>
+                  <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
+                </div>
+              )}
+            </div>
+          )}
+        />
+
+        <DraggableCardList
+          title="Extra Columns"
+          items={extraColumns}
+          emptyMessage='No extra columns defined yet. Click "Add Export Rule" to get started.'
+          onEdit={handleStartEditExtraColumn}
+          onDelete={(index) => updateExportExtraColumns(extraColumns.filter((_, i) => i !== index))}
+          onReorder={(newItems) => updateExportExtraColumns(newItems)}
+          renderContent={(rule) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
+              <div>
+                <span className="font-medium">Header:</span> {rule.header}
+              </div>
+              <div>
+                <span className="font-medium">Type:</span> {rule.type}
+              </div>
+              <div>
+                <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
+              </div>
+              <div>
+                <span className="font-medium">Count Dates:</span> {rule.countDates.join(', ')}
+              </div>
+            </div>
+          )}
+        />
+      </div>
+    </div>
+  );
+}

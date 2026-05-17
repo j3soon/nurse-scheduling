@@ -34,8 +34,16 @@ export interface ExportFormatting {
   rightBorderColor?: string;
 }
 
+export interface ExportExtraColumn {
+  type: 'count';
+  header: string;
+  countShiftTypes: string[];
+  countDates: string[];
+}
+
 export interface ExportConfig {
   formatting?: ExportFormatting[];
+  extraColumns?: ExportExtraColumn[];
 }
 
 export interface Item {

@@ -264,6 +264,16 @@ preferences:
     date: ["2025-01-01"]
     shiftType: [OFF]
     weight: -5
+export:
+  extraColumns:
+    - type: count
+      header: OFF (WORKDAY)
+      countShiftTypes: [OFF]
+      countDates: [WORKDAY]
+    - type: count
+      header: OFF (FREEDAY)
+      countShiftTypes: [OFF]
+      countDates: [FREEDAY]
 """
     styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
     df = styled_df.data

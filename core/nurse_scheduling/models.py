@@ -111,9 +111,18 @@ class ExportFormattingRule(BaseModel):
     rightBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
 
 
+class ExportExtraColumn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Annotated[str, Field(pattern=r"^count$")]
+    header: str
+    countShiftTypes: List[int | str]
+    countDates: List[int | str]
+
+
 class ExportConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     formatting: List[ExportFormattingRule] = Field(default_factory=list)
+    extraColumns: List[ExportExtraColumn] = Field(default_factory=list)
 
 
 class BasePreference(BaseModel):
