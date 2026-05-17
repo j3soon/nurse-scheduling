@@ -188,6 +188,19 @@ def _count_extra_column_for_person(ctx: Context, p: int, count_dates, count_shif
     return count
 
 
+def _count_extra_row_for_date(ctx: Context, d: int, count_people, count_shift_types) -> int:
+    count = 0
+    for p in count_people:
+        if constants.OFF_sid in count_shift_types and ctx.solver.get_value(ctx.offs[(d, p)]) == 1:
+            count += 1
+            continue
+        if any(
+            0 <= s < ctx.n_shift_types and ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1 for s in count_shift_types
+        ):
+            count += 1
+    return count
+
+
 def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Initialize dataframe with size including leading rows and columns
     n_leading_rows, n_leading_cols = 2, 1
@@ -203,11 +216,10 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         n_history_cols = max_history_length
 
     extra_column_rules = ctx.export.extraColumns if prettify and ctx.export else []
+    extra_row_rules = ctx.export.extraRows if prettify and ctx.export else []
     # Add extra columns and rows for prettify mode
     extra_cols = (1 + len(extra_column_rules)) if extra_column_rules else 0  # Empty separator + configured columns
-    extra_rows = (
-        (1 + ctx.n_shift_types + len(ctx.shiftTypes.groups)) if prettify else 0
-    )  # Empty row + one row per shift type + one row per shift type group
+    extra_rows = (1 + len(extra_row_rules)) if extra_row_rules else 0  # Empty separator + configured rows
 
     df = pd.DataFrame(
         "",
@@ -357,37 +369,19 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                     count_shift_types,
                 )
 
-        # Add shift type count rows for each date (columns)
-        # First add an empty row
-        empty_row_index = n_leading_rows + len(ctx.people.items) + n_trailing_rows
-
-        # Add one row for each individual shift type
-        for s in range(ctx.n_shift_types):
-            shift_row_index = empty_row_index + 1 + s
-            df.iloc[shift_row_index, 0] = f"{ctx.shiftTypes.items[s].id} Count"
-
+        extra_row_start = n_leading_rows + len(ctx.people.items) + n_trailing_rows + 1
+        for rule_idx, rule in enumerate(extra_row_rules):
+            row_idx = extra_row_start + rule_idx
+            count_people = utils.parse_pids(rule.countPeople, ctx.map_pid_p)
+            count_shift_types = utils.parse_sids(rule.countShiftTypes, ctx.map_sid_s)
+            df.iloc[row_idx, 0] = rule.header
             for d in range(len(ctx.dates.items)):
-                shift_count = sum(
-                    1 for p in range(len(ctx.people.items)) if solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                df.iloc[row_idx, n_leading_cols + n_history_cols + d] = _count_extra_row_for_date(
+                    ctx,
+                    d,
+                    count_people,
+                    count_shift_types,
                 )
-                df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
-
-        # Add one row for each shift type group
-        for g, shift_group in enumerate(ctx.shiftTypes.groups):
-            shift_row_index = empty_row_index + 1 + ctx.n_shift_types + g
-            df.iloc[shift_row_index, 0] = f"{shift_group.id} Count"
-
-            for d in range(len(ctx.dates.items)):
-                shift_count = sum(
-                    1
-                    for p in range(len(ctx.people.items))
-                    if any(
-                        solver.get_value(ctx.shifts[(d, s, p)]) == 1
-                        for member_id in shift_group.members
-                        for s in ctx.map_sid_s[member_id]
-                    )
-                )
-                df.iloc[shift_row_index, n_leading_cols + n_history_cols + d] = shift_count
 
     # Apply default styling and borders if prettify is enabled
     if prettify:
@@ -417,12 +411,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             header_row_end = n_leading_rows - 1  # End of header region
             people_row_end = header_row_end + len(ctx.people.items)  # End of people region
             summary_row_end = people_row_end + n_trailing_rows  # End of summary region
-            shift_type_individual_counts_row_end = (
-                summary_row_end + 1 + ctx.n_shift_types
-            )  # End of individual shift type counts
-            shift_type_group_counts_row_end = shift_type_individual_counts_row_end + len(
-                ctx.shiftTypes.groups
-            )  # End of group counts
+            extra_rows_end = summary_row_end + len(extra_row_rules) + 1
 
             # Vertical borders
             name_col_end = n_leading_cols - 1  # End of name column
@@ -441,8 +430,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                         header_row_end,
                         people_row_end,
                         summary_row_end,
-                        shift_type_individual_counts_row_end,
-                        shift_type_group_counts_row_end,
+                        extra_rows_end,
                     ]:
                         borders.append("border-bottom: 2px solid #374151")
 

@@ -24,14 +24,14 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle, FiHelpCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ExportExtraColumn, ExportFormatting, ExportFormattingType } from '@/types/scheduling';
+import { ExportExtraColumn, ExportExtraRow, ExportFormatting, ExportFormattingType } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { ALL } from '@/utils/keywords';
 
-type RuleKind = 'style' | 'extra column';
+type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor';
 
 interface DraftRule {
@@ -44,6 +44,7 @@ interface DraftRule {
   header: string;
   countShiftTypes: string[];
   countDates: string[];
+  countPeople: string[];
 }
 
 interface EditingTarget {
@@ -68,6 +69,7 @@ const createEmptyDraft = (): DraftRule => ({
   header: '',
   countShiftTypes: [],
   countDates: [],
+  countPeople: [],
 });
 
 const getPickerDisplay = (value: string) => {
@@ -95,6 +97,7 @@ export default function ExportFormattingPage() {
     exportData,
     updateExportFormatting,
     updateExportExtraColumns,
+    updateExportExtraRows,
     updateExportConfig,
     peopleData,
     dateData,
@@ -108,7 +111,12 @@ export default function ExportFormattingPage() {
 
   const formattingRules = exportData.formatting || [];
   const extraColumns = exportData.extraColumns || [];
+  const extraRows = exportData.extraRows || [];
 
+  const peopleOptions = [
+    ...peopleData.items.map(person => ({ id: person.id, description: person.description })),
+    ...peopleData.groups.map(group => ({ id: group.id, description: group.description })),
+  ];
   const dateOptions = [
     ...dateData.items.map(date => ({ id: date.id, description: date.description })),
     ...dateData.groups.map(group => ({ id: group.id, description: group.description })),
@@ -124,10 +132,7 @@ export default function ExportFormattingPage() {
         emptyText: 'No people available. Please set up people in the',
         href: '/people',
         hrefLabel: 'People',
-        options: [
-          ...peopleData.items.map(person => ({ id: person.id, description: person.description })),
-          ...peopleData.groups.map(group => ({ id: group.id, description: group.description })),
-        ]
+        options: peopleOptions
       };
     }
 
@@ -161,8 +166,9 @@ export default function ExportFormattingPage() {
 
   const styleTargetConfig = getStyleTargetConfig();
   const instructions = [
-    'Create export style rules and extra count columns for prettified XLSX output',
+    'Create export style rules and extra count columns or rows for prettified XLSX output',
     'Style rules change cell appearance; extra columns add per-person count summaries',
+    'Extra rows add per-date count summaries',
     'Extra columns count selected shift types over selected dates',
     'Use #RRGGBB for color values',
     'Rules are evaluated in order within each section'
@@ -215,6 +221,22 @@ export default function ExportFormattingPage() {
       countDates: rule.countDates,
     });
     setEditingTarget({ kind: 'extra column', index });
+    setIsFormVisible(true);
+    setError('');
+    saveScrollPosition();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+
+  const handleStartEditExtraRow = (index: number) => {
+    const rule = extraRows[index];
+    setDraft({
+      ...createEmptyDraft(),
+      kind: 'extra row',
+      header: rule.header,
+      countShiftTypes: rule.countShiftTypes,
+      countPeople: rule.countPeople,
+    });
+    setEditingTarget({ kind: 'extra row', index });
     setIsFormVisible(true);
     setError('');
     saveScrollPosition();
@@ -276,11 +298,14 @@ export default function ExportFormattingPage() {
 
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
+    const nextExtraRows = [...extraRows];
     if (editingTarget?.kind === 'style') {
       nextFormatting[editingTarget.index] = newRule;
     } else {
       if (editingTarget?.kind === 'extra column') {
         nextExtraColumns.splice(editingTarget.index, 1);
+      } else if (editingTarget?.kind === 'extra row') {
+        nextExtraRows.splice(editingTarget.index, 1);
       }
       nextFormatting.push(newRule);
     }
@@ -288,6 +313,7 @@ export default function ExportFormattingPage() {
       ...exportData,
       formatting: nextFormatting,
       extraColumns: nextExtraColumns,
+      extraRows: nextExtraRows,
     });
     return true;
   };
@@ -327,11 +353,14 @@ export default function ExportFormattingPage() {
 
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
+    const nextExtraRows = [...extraRows];
     if (editingTarget?.kind === 'extra column') {
       nextExtraColumns[editingTarget.index] = newRule;
     } else {
       if (editingTarget?.kind === 'style') {
         nextFormatting.splice(editingTarget.index, 1);
+      } else if (editingTarget?.kind === 'extra row') {
+        nextExtraRows.splice(editingTarget.index, 1);
       }
       nextExtraColumns.push(newRule);
     }
@@ -339,13 +368,73 @@ export default function ExportFormattingPage() {
       ...exportData,
       formatting: nextFormatting,
       extraColumns: nextExtraColumns,
+      extraRows: nextExtraRows,
+    });
+    return true;
+  };
+
+  const saveExtraRow = () => {
+    const header = draft.header.trim();
+    if (!header) {
+      setError('Row header is required');
+      return false;
+    }
+    if (draft.countShiftTypes.length === 0) {
+      setError('Select at least one shift type to count');
+      return false;
+    }
+    if (draft.countPeople.length === 0) {
+      setError('Select at least one people target to count over');
+      return false;
+    }
+
+    const validShiftTypeIds = new Set(shiftTypeOptions.map(option => option.id));
+    if (draft.countShiftTypes.some(id => !validShiftTypeIds.has(id))) {
+      setError('Selected shift types are invalid for this extra row');
+      return false;
+    }
+    const validPeopleIds = new Set(peopleOptions.map(option => option.id));
+    if (draft.countPeople.some(id => !validPeopleIds.has(id))) {
+      setError('Selected people are invalid for this extra row');
+      return false;
+    }
+
+    const newRule: ExportExtraRow = {
+      type: 'count',
+      header,
+      countShiftTypes: draft.countShiftTypes,
+      countPeople: draft.countPeople
+    };
+
+    const nextFormatting = [...formattingRules];
+    const nextExtraColumns = [...extraColumns];
+    const nextExtraRows = [...extraRows];
+    if (editingTarget?.kind === 'extra row') {
+      nextExtraRows[editingTarget.index] = newRule;
+    } else {
+      if (editingTarget?.kind === 'style') {
+        nextFormatting.splice(editingTarget.index, 1);
+      } else if (editingTarget?.kind === 'extra column') {
+        nextExtraColumns.splice(editingTarget.index, 1);
+      }
+      nextExtraRows.push(newRule);
+    }
+    updateExportConfig({
+      ...exportData,
+      formatting: nextFormatting,
+      extraColumns: nextExtraColumns,
+      extraRows: nextExtraRows,
     });
     return true;
   };
 
   const handleSave = () => {
     const wasEditing = editingTarget !== null;
-    const didSave = draft.kind === 'style' ? saveStyleRule() : saveExtraColumn();
+    const didSave = draft.kind === 'style'
+      ? saveStyleRule()
+      : draft.kind === 'extra column'
+        ? saveExtraColumn()
+        : saveExtraRow();
     if (!didSave) return;
 
     setIsFormVisible(false);
@@ -495,12 +584,14 @@ export default function ExportFormattingPage() {
                       kind: e.target.value as RuleKind,
                       targetIds: [],
                       countShiftTypes: [],
-                      countDates: []
+                      countDates: [],
+                      countPeople: []
                     }))}
                     className="px-3 py-2 border border-gray-300 rounded-md w-full"
                   >
                     <option value="style">Style</option>
                     <option value="extra column">Extra Column</option>
+                    <option value="extra row">Extra Row</option>
                   </select>
                 </div>
 
@@ -537,12 +628,14 @@ export default function ExportFormattingPage() {
                   </>
                 ) : (
                   <div className="min-w-[280px]">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Column Header</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      {draft.kind === 'extra column' ? 'Column Header' : 'Row Header'}
+                    </label>
                     <input
                       type="text"
                       value={draft.header}
                       onChange={(e) => setDraft(prev => ({ ...prev, header: e.target.value }))}
-                      placeholder="OFF (Weekend)"
+                      placeholder={draft.kind === 'extra column' ? 'OFF (Weekend)' : 'Day Count'}
                       className="px-3 py-2 border border-gray-300 rounded-md w-full"
                     />
                   </div>
@@ -580,20 +673,35 @@ export default function ExportFormattingPage() {
                     '/shift-types',
                     'Shift Types'
                   )}
-                  {renderCheckboxes(
-                    'Count Dates *',
-                    dateOptions,
-                    draft.countDates,
-                    (id) => setDraft(prev => ({
-                      ...prev,
-                      countDates: prev.countDates.includes(id)
-                        ? prev.countDates.filter(targetId => targetId !== id)
-                        : [...prev.countDates, id]
-                    })),
-                    'No dates available. Please set up dates in the',
-                    '/dates',
-                    'Dates'
-                  )}
+                  {draft.kind === 'extra column'
+                    ? renderCheckboxes(
+                        'Count Dates *',
+                        dateOptions,
+                        draft.countDates,
+                        (id) => setDraft(prev => ({
+                          ...prev,
+                          countDates: prev.countDates.includes(id)
+                            ? prev.countDates.filter(targetId => targetId !== id)
+                            : [...prev.countDates, id]
+                        })),
+                        'No dates available. Please set up dates in the',
+                        '/dates',
+                        'Dates'
+                      )
+                    : renderCheckboxes(
+                        'Count People *',
+                        peopleOptions,
+                        draft.countPeople,
+                        (id) => setDraft(prev => ({
+                          ...prev,
+                          countPeople: prev.countPeople.includes(id)
+                            ? prev.countPeople.filter(targetId => targetId !== id)
+                            : [...prev.countPeople, id]
+                        })),
+                        'No people available. Please set up people in the',
+                        '/people',
+                        'People'
+                      )}
                 </div>
               )}
 
@@ -678,6 +786,31 @@ export default function ExportFormattingPage() {
               </div>
               <div>
                 <span className="font-medium">Count Dates:</span> {rule.countDates.join(', ')}
+              </div>
+            </div>
+          )}
+        />
+
+        <DraggableCardList
+          title="Extra Rows"
+          items={extraRows}
+          emptyMessage='No extra rows defined yet. Click "Add Export Rule" to get started.'
+          onEdit={handleStartEditExtraRow}
+          onDelete={(index) => updateExportExtraRows(extraRows.filter((_, i) => i !== index))}
+          onReorder={(newItems) => updateExportExtraRows(newItems)}
+          renderContent={(rule) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
+              <div>
+                <span className="font-medium">Header:</span> {rule.header}
+              </div>
+              <div>
+                <span className="font-medium">Type:</span> {rule.type}
+              </div>
+              <div>
+                <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
+              </div>
+              <div>
+                <span className="font-medium">Count People:</span> {rule.countPeople.join(', ')}
               </div>
             </div>
           )}

@@ -41,9 +41,17 @@ export interface ExportExtraColumn {
   countDates: string[];
 }
 
+export interface ExportExtraRow {
+  type: 'count';
+  header: string;
+  countShiftTypes: string[];
+  countPeople: string[];
+}
+
 export interface ExportConfig {
   formatting?: ExportFormatting[];
   extraColumns?: ExportExtraColumn[];
+  extraRows?: ExportExtraRow[];
 }
 
 export interface Item {

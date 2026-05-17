@@ -119,10 +119,19 @@ class ExportExtraColumn(BaseModel):
     countDates: List[int | str]
 
 
+class ExportExtraRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Annotated[str, Field(pattern=r"^count$")]
+    header: str
+    countShiftTypes: List[int | str]
+    countPeople: List[int | str]
+
+
 class ExportConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     formatting: List[ExportFormattingRule] = Field(default_factory=list)
     extraColumns: List[ExportExtraColumn] = Field(default_factory=list)
+    extraRows: List[ExportExtraRow] = Field(default_factory=list)
 
 
 class BasePreference(BaseModel):

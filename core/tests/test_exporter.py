@@ -274,6 +274,11 @@ export:
       header: OFF (FREEDAY)
       countShiftTypes: [OFF]
       countDates: [FREEDAY]
+  extraRows:
+    - type: count
+      header: OFF Count
+      countShiftTypes: [OFF]
+      countPeople: [ALL]
 """
     styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
     df = styled_df.data
@@ -291,6 +296,8 @@ export:
     headers = list(df.iloc[1, :])
     assert "OFF (WORKDAY)" in headers
     assert "OFF (FREEDAY)" in headers
+    assert df.iloc[7, 0] == "OFF Count"
+    assert df.iloc[7, 2] == 2
 
 
 def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
