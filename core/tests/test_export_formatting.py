@@ -61,7 +61,7 @@ preferences:
     weight: 100
 export:
   formatting:
-    - type: row header
+    - type: people header
       people: [n2]
       backgroundColor: "#f97316"
     - type: row
@@ -73,7 +73,7 @@ export:
       dates: [ALL]
       shiftTypes: [D]
       backgroundColor: "#1f2937"
-    - type: column header
+    - type: date header
       dates: ["2025-01-01"]
       backgroundColor: "#a855f7"
     - type: column
@@ -101,12 +101,12 @@ export:
     wb = load_workbook(output)
     ws = wb.active
 
-    # Row target is n2 (Excel row 4). Row rule is after row-header rule, so it wins.
+    # Row target is n2 (Excel row 4). Row rule is after people-header rule, so it wins.
     assert ws["A4"].fill.fgColor.rgb == "FF06B6D4"
     assert ws["B4"].fill.fgColor.rgb == "FF06B6D4"
     assert ws["D4"].fill.fgColor.rgb == "FF06B6D4"
 
-    # Column-header target is date 2025-01-01 (Excel column B), first row only.
+    # Date-header target is date 2025-01-01 (Excel column B), first row only.
     assert ws["B1"].fill.fgColor.rgb == "FFA855F7"
 
     # Column target is 2025-01-02 (Excel column C), and should style the entire column.
@@ -170,3 +170,40 @@ export:
     assert ws["B1"].value == "H-1"
     assert ws["B1"].fill.fgColor.rgb == "00000000"
     assert ws["B3"].fill.fgColor.rgb == "FFFEFCE8"
+
+
+def test_export_formatting_rule_applies_to_history_headers():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+      history: [D]
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+export:
+  formatting:
+    - type: history header
+      backgroundColor: "#fefce8"
+"""
+
+    df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, cell_export_info)
+
+    wb = load_workbook(output)
+    ws = wb.active
+
+    assert ws["B1"].value == "H-1"
+    assert ws["B1"].fill.fgColor.rgb == "FFFEFCE8"
+    assert ws["B3"].fill.fgColor.rgb == "00000000"

@@ -22,9 +22,10 @@ export type ExportFormattingType =
   | 'cell'
   | 'row'
   | 'column'
-  | 'row header'
-  | 'column header'
-  | 'history';
+  | 'people header'
+  | 'date header'
+  | 'history'
+  | 'history header';
 
 interface BaseExportFormatting {
   description?: string;
@@ -34,13 +35,17 @@ interface BaseExportFormatting {
 }
 
 export interface ExportPersonFormatting extends BaseExportFormatting {
-  type: 'row' | 'row header' | 'history';
+  type: 'row' | 'people header' | 'history';
   people: string[];
 }
 
 export interface ExportDateFormatting extends BaseExportFormatting {
-  type: 'column' | 'column header';
+  type: 'column' | 'date header';
   dates: string[];
+}
+
+export interface ExportHistoryHeaderFormatting extends BaseExportFormatting {
+  type: 'history header';
 }
 
 export interface ExportCellFormatting extends BaseExportFormatting {
@@ -53,6 +58,7 @@ export interface ExportCellFormatting extends BaseExportFormatting {
 export type ExportFormatting =
   | ExportPersonFormatting
   | ExportDateFormatting
+  | ExportHistoryHeaderFormatting
   | ExportCellFormatting;
 
 export interface ExportExtraColumn {

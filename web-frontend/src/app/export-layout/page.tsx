@@ -133,7 +133,7 @@ export default function ExportFormattingPage() {
   ];
 
   const getStyleTargetConfigs = () => {
-    if (draft.type === 'row' || draft.type === 'row header') {
+    if (draft.type === 'row' || draft.type === 'people header') {
       return [
         {
           field: 'people' as const,
@@ -146,7 +146,7 @@ export default function ExportFormattingPage() {
       ];
     }
 
-    if (draft.type === 'column' || draft.type === 'column header') {
+    if (draft.type === 'column' || draft.type === 'date header') {
       return [
         {
           field: 'dates' as const,
@@ -170,6 +170,10 @@ export default function ExportFormattingPage() {
           options: peopleOptions
         }
       ];
+    }
+
+    if (draft.type === 'history header') {
+      return [];
     }
 
     return [
@@ -355,11 +359,16 @@ export default function ExportFormattingPage() {
         dates: draft.dates,
         shiftTypes: draft.shiftTypes
       };
-    } else if (draft.type === 'column' || draft.type === 'column header') {
+    } else if (draft.type === 'column' || draft.type === 'date header') {
       newRule = {
         ...styleFields,
         type: draft.type,
         dates: draft.dates
+      };
+    } else if (draft.type === 'history header') {
+      newRule = {
+        ...styleFields,
+        type: draft.type
       };
     } else {
       newRule = {
@@ -700,10 +709,11 @@ export default function ExportFormattingPage() {
                         }))}
                         className="px-3 py-2 border border-gray-300 rounded-md w-full"
                       >
-                        <option value="row header">row header</option>
+                        <option value="people header">people header</option>
                         <option value="row">row</option>
-                        <option value="column header">column header</option>
+                        <option value="date header">date header</option>
                         <option value="column">column</option>
+                        <option value="history header">history header</option>
                         <option value="history">history</option>
                         <option value="cell">cell</option>
                       </select>

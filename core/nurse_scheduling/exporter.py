@@ -78,7 +78,7 @@ def _build_custom_export_style_info(
         target_dates = set()
         target_shift_types = set()
 
-        if rule.type in ("row", "row header", "history", "cell"):
+        if rule.type in ("row", "people header", "history", "cell"):
             for target in rule.people:
                 if target not in ctx.map_pid_p:
                     raise ValueError(
@@ -86,7 +86,7 @@ def _build_custom_export_style_info(
                     )
                 target_people.update(ctx.map_pid_p[target])
 
-        if rule.type in ("column", "column header", "cell"):
+        if rule.type in ("column", "date header", "cell"):
             for target in rule.dates:
                 target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
 
@@ -111,7 +111,7 @@ def _build_custom_export_style_info(
                         rule.rightBorderColor,
                     )
 
-        elif rule.type == "row header":
+        elif rule.type == "people header":
             for p in target_people:
                 row_idx = n_leading_rows + p
                 set_style(row_idx, 0, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
@@ -133,9 +133,13 @@ def _build_custom_export_style_info(
                         rule.rightBorderColor,
                     )
 
-        elif rule.type == "column header":
+        elif rule.type == "date header":
             for d in target_dates:
                 col_idx = n_leading_cols + n_history_cols + d
+                set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
+
+        elif rule.type == "history header":
+            for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
                 set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
 
         elif rule.type == "cell":

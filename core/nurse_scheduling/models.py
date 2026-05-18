@@ -111,13 +111,17 @@ class BaseExportFormattingRule(BaseModel):
 
 
 class ExportPersonFormattingRule(BaseExportFormattingRule):
-    type: Literal["row", "row header", "history"]
+    type: Literal["row", "people header", "history"]
     people: List[int | str]
 
 
 class ExportDateFormattingRule(BaseExportFormattingRule):
-    type: Literal["column", "column header"]
+    type: Literal["column", "date header"]
     dates: List[int | str]
+
+
+class ExportHistoryHeaderFormattingRule(BaseExportFormattingRule):
+    type: Literal["history header"]
 
 
 class ExportCellFormattingRule(BaseExportFormattingRule):
@@ -128,7 +132,10 @@ class ExportCellFormattingRule(BaseExportFormattingRule):
 
 
 ExportFormattingRule = Annotated[
-    ExportPersonFormattingRule | ExportDateFormattingRule | ExportCellFormattingRule,
+    ExportPersonFormattingRule
+    | ExportDateFormattingRule
+    | ExportHistoryHeaderFormattingRule
+    | ExportCellFormattingRule,
     Field(discriminator="type"),
 ]
 

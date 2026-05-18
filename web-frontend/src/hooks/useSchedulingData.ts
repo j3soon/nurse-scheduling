@@ -300,6 +300,11 @@ function createDefaultState(): SchedulingState {
       formatting: [
         {
           description: '',
+          type: 'history header',
+          backgroundColor: '#fefce8'
+        },
+        {
+          description: '',
           type: 'history',
           people: [ALL],
           backgroundColor: '#fefce8'
