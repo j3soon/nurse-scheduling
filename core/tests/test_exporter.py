@@ -163,7 +163,7 @@ preferences:
 export:
   formatting:
     - type: row
-      targets: [unknown_person]
+      people: [unknown_person]
       backgroundColor: "#22c55e"
 """
 
@@ -195,7 +195,9 @@ preferences:
 export:
   formatting:
     - type: cell
-      targets: [UNKNOWN_SHIFT]
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [UNKNOWN_SHIFT]
       backgroundColor: "#ef4444"
 """
 
@@ -306,7 +308,7 @@ def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
             formatting=[
                 SimpleNamespace(
                     type="row",
-                    targets=["n1"],
+                    people=["n1"],
                     backgroundColor="#22c55e",
                     bottomBorderColor=None,
                     rightBorderColor=None,

@@ -62,20 +62,22 @@ preferences:
 export:
   formatting:
     - type: row header
-      targets: [n2]
+      people: [n2]
       backgroundColor: "#f97316"
     - type: row
-      targets: [n2]
+      people: [n2]
       backgroundColor: "#06b6d4"
       bottomBorderColor: "#ef4444"
     - type: cell
-      targets: [D]
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
       backgroundColor: "#1f2937"
     - type: column header
-      targets: ["2025-01-01"]
+      dates: ["2025-01-01"]
       backgroundColor: "#a855f7"
     - type: column
-      targets: ["2025-01-02"]
+      dates: ["2025-01-02"]
       backgroundColor: "#84cc16"
       bottomBorderColor: "#3b82f6"
       rightBorderColor: "#9ca3af"
@@ -131,7 +133,7 @@ export:
     assert ws["C4"].border.right.color.rgb == "FF9CA3AF"
 
 
-def test_export_formatting_rule_applies_to_history_columns():
+def test_export_formatting_rule_applies_to_history_cells():
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -152,8 +154,8 @@ preferences:
     requiredNumPeople: 0
 export:
   formatting:
-    - type: history column
-      targets: [ALL]
+    - type: history
+      people: [ALL]
       backgroundColor: "#fefce8"
 """
 
@@ -166,5 +168,5 @@ export:
 
     # With prettify enabled, the first history column is between the name column and dates.
     assert ws["B1"].value == "H-1"
-    assert ws["B1"].fill.fgColor.rgb == "FFFEFCE8"
+    assert ws["B1"].fill.fgColor.rgb == "00000000"
     assert ws["B3"].fill.fgColor.rgb == "FFFEFCE8"

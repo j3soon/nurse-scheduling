@@ -78,33 +78,26 @@ def _build_custom_export_style_info(
         target_dates = set()
         target_shift_types = set()
 
-        if rule.type in ("row", "row header"):
-            for target in rule.targets:
+        if rule.type in ("row", "row header", "history", "cell"):
+            for target in rule.people:
                 if target not in ctx.map_pid_p:
                     raise ValueError(
                         f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
                     )
                 target_people.update(ctx.map_pid_p[target])
 
-        elif rule.type in ("column", "column header"):
-            for target in rule.targets:
+        if rule.type in ("column", "column header", "cell"):
+            for target in rule.dates:
                 target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
 
-        elif rule.type == "cell":
-            for target in rule.targets:
+        if rule.type == "cell":
+            for target in rule.shiftTypes:
                 if target not in ctx.map_sid_s:
                     raise ValueError(
                         f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
                     )
                 # Filter to actual shift types (exclude OFF pseudo shift).
                 target_shift_types.update(s for s in ctx.map_sid_s[target] if 0 <= s < ctx.n_shift_types)
-
-        elif rule.type == "history column":
-            for target in rule.targets:
-                if target != constants.ALL:
-                    raise ValueError(
-                        f"Invalid history column identifier '{target}' in export formatting rule with type 'history column'"
-                    )
 
         if rule.type == "row":
             for p in target_people:
@@ -146,24 +139,28 @@ def _build_custom_export_style_info(
                 set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
 
         elif rule.type == "cell":
-            for d, p in ctx.map_dp_s.keys():
-                assigned_shift_types = [
-                    s for s in ctx.map_dp_s[(d, p)] if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
-                ]
-                if any(s in target_shift_types for s in assigned_shift_types):
-                    row_idx = n_leading_rows + p
-                    col_idx = n_leading_cols + n_history_cols + d
-                    set_style(
-                        row_idx,
-                        col_idx,
-                        rule.backgroundColor,
-                        rule.bottomBorderColor,
-                        rule.rightBorderColor,
-                    )
+            for d in target_dates:
+                for p in target_people:
+                    if (d, p) not in ctx.map_dp_s:
+                        continue
+                    assigned_shift_types = [
+                        s for s in ctx.map_dp_s[(d, p)] if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                    ]
+                    if any(s in target_shift_types for s in assigned_shift_types):
+                        row_idx = n_leading_rows + p
+                        col_idx = n_leading_cols + n_history_cols + d
+                        set_style(
+                            row_idx,
+                            col_idx,
+                            rule.backgroundColor,
+                            rule.bottomBorderColor,
+                            rule.rightBorderColor,
+                        )
 
-        elif rule.type == "history column":
-            for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
-                for row_idx in range(n_rows):
+        elif rule.type == "history":
+            for p in target_people:
+                row_idx = n_leading_rows + p
+                for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
                     set_style(
                         row_idx,
                         col_idx,

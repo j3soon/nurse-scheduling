@@ -20,7 +20,7 @@
 import datetime
 import math
 import re
-from typing import List
+from typing import List, Literal
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from typing_extensions import Annotated, Self
@@ -102,14 +102,35 @@ class DateContainer(BaseModel):
     groups: List[DateGroup] = Field(default_factory=list)
 
 
-class ExportFormattingRule(BaseModel):
+class BaseExportFormattingRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
     description: str | None = None
-    type: Annotated[str, Field(pattern=r"^(cell|row|column|row header|column header|history column)$")]
-    targets: List[int | str]
     backgroundColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     bottomBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     rightBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+
+
+class ExportPersonFormattingRule(BaseExportFormattingRule):
+    type: Literal["row", "row header", "history"]
+    people: List[int | str]
+
+
+class ExportDateFormattingRule(BaseExportFormattingRule):
+    type: Literal["column", "column header"]
+    dates: List[int | str]
+
+
+class ExportCellFormattingRule(BaseExportFormattingRule):
+    type: Literal["cell"]
+    people: List[int | str]
+    dates: List[int | str]
+    shiftTypes: List[int | str]
+
+
+ExportFormattingRule = Annotated[
+    ExportPersonFormattingRule | ExportDateFormattingRule | ExportCellFormattingRule,
+    Field(discriminator="type"),
+]
 
 
 class ExportExtraColumn(BaseModel):

@@ -24,16 +24,36 @@ export type ExportFormattingType =
   | 'column'
   | 'row header'
   | 'column header'
-  | 'history column';
+  | 'history';
 
-export interface ExportFormatting {
+interface BaseExportFormatting {
   description?: string;
-  type: ExportFormattingType;
-  targets: string[];
   backgroundColor?: string;
   bottomBorderColor?: string;
   rightBorderColor?: string;
 }
+
+export interface ExportPersonFormatting extends BaseExportFormatting {
+  type: 'row' | 'row header' | 'history';
+  people: string[];
+}
+
+export interface ExportDateFormatting extends BaseExportFormatting {
+  type: 'column' | 'column header';
+  dates: string[];
+}
+
+export interface ExportCellFormatting extends BaseExportFormatting {
+  type: 'cell';
+  people: string[];
+  dates: string[];
+  shiftTypes: string[];
+}
+
+export type ExportFormatting =
+  | ExportPersonFormatting
+  | ExportDateFormatting
+  | ExportCellFormatting;
 
 export interface ExportExtraColumn {
   description?: string;

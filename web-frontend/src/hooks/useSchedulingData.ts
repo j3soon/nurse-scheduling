@@ -300,26 +300,26 @@ function createDefaultState(): SchedulingState {
       formatting: [
         {
           description: '',
-          type: 'history column',
-          targets: [ALL],
+          type: 'history',
+          people: [ALL],
           backgroundColor: '#fefce8'
         },
         {
           description: '',
           type: 'column',
-          targets: [SATURDAY, SUNDAY],
+          dates: [SATURDAY, SUNDAY],
           backgroundColor: '#dbeafe'
         },
         {
           description: '',
           type: 'column',
-          targets: [SATURDAY],
+          dates: [SATURDAY],
           rightBorderColor: '#9ca3af'
         },
         {
           description: '',
           type: 'column',
-          targets: [FREEDAY],
+          dates: [FREEDAY],
           backgroundColor: '#dcfce7'
         }
       ],
@@ -1416,7 +1416,15 @@ export function useSchedulingData() {
       }
     });
     newState.export.formatting?.forEach(rule => {
-      convertArrayIdsToString(rule.targets, rule.type === 'column' || rule.type === 'column header');
+      if ('people' in rule) {
+        convertArrayIdsToString(rule.people);
+      }
+      if ('dates' in rule) {
+        convertArrayIdsToString(rule.dates, true);
+      }
+      if ('shiftTypes' in rule) {
+        convertArrayIdsToString(rule.shiftTypes);
+      }
     });
     newState.export.extraColumns?.forEach(rule => {
       convertArrayIdsToString(rule.countShiftTypes);
