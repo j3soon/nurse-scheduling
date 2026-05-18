@@ -630,9 +630,7 @@ export function useSchedulingData() {
       };
     });
 
-    // Clean up preferences for all removed date IDs using the existing helper function
-    updatePreferencesForIdDeletion(DataType.DATES, removedDateIds);
-    updateExportLayoutForIdDeletion(DataType.DATES, removedDateIds);
+    updateReferencesForIdDeletion(DataType.DATES, removedDateIds);
   };
 
   const updatePeopleData = (peopleData: ItemGroupEditorPageData) => {
@@ -1086,6 +1084,24 @@ export function useSchedulingData() {
     }));
   };
 
+  const updateReferencesForIdChange = (
+    dataType: DataType,
+    oldId: string,
+    newId: string
+  ) => {
+    updatePeopleHistoryForIdChange(dataType, oldId, newId);
+    updatePreferencesForIdChange(dataType, oldId, newId);
+    updateExportLayoutForIdChange(dataType, oldId, newId);
+  };
+
+  const updateReferencesForIdDeletion = (
+    dataType: DataType,
+    deletedIds: string[]
+  ) => {
+    updatePreferencesForIdDeletion(dataType, deletedIds);
+    updateExportLayoutForIdDeletion(dataType, deletedIds);
+  };
+
   const updateItem = (
     dataType: DataType,
     data: ItemGroupEditorPageData,
@@ -1140,9 +1156,7 @@ export function useSchedulingData() {
     const newData = { items: updatedItems, groups: updatedGroups };
 
     updateData(dataType, newData);
-    updatePeopleHistoryForIdChange(dataType, oldId, newId);
-    updatePreferencesForIdChange(dataType, oldId, newId);
-    updateExportLayoutForIdChange(dataType, oldId, newId);
+    updateReferencesForIdChange(dataType, oldId, newId);
   };
 
   const updateGroup = (
@@ -1191,8 +1205,7 @@ export function useSchedulingData() {
     const newData = { ...data, groups: newGroups };
 
     updateData(dataType, newData);
-    updatePreferencesForIdChange(dataType, oldId, newId);
-    updateExportLayoutForIdChange(dataType, oldId, newId);
+    updateReferencesForIdChange(dataType, oldId, newId);
   };
 
   const deleteItem = (
@@ -1214,8 +1227,7 @@ export function useSchedulingData() {
     const newData = { items: newItems, groups: newGroups };
 
     updateData(dataType, newData);
-    updatePreferencesForIdDeletion(dataType, [id]);
-    updateExportLayoutForIdDeletion(dataType, [id]);
+    updateReferencesForIdDeletion(dataType, [id]);
   };
 
   const deleteGroup = (
@@ -1232,8 +1244,7 @@ export function useSchedulingData() {
     const newData = { ...data, groups: newGroups };
 
     updateData(dataType, newData);
-    updatePreferencesForIdDeletion(dataType, [id]);
-    updateExportLayoutForIdDeletion(dataType, [id]);
+    updateReferencesForIdDeletion(dataType, [id]);
   };
 
   const removeItemFromGroup = (
