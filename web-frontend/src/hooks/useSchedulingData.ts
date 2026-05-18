@@ -632,6 +632,7 @@ export function useSchedulingData() {
 
     // Clean up preferences for all removed date IDs using the existing helper function
     updatePreferencesForIdDeletion(DataType.DATES, removedDateIds);
+    updateExportLayoutForIdDeletion(DataType.DATES, removedDateIds);
   };
 
   const updatePeopleData = (peopleData: ItemGroupEditorPageData) => {
@@ -979,6 +980,112 @@ export function useSchedulingData() {
     }));
   };
 
+  const updateExportLayoutForIdDeletion = (
+    dataType: DataType,
+    deletedIds: string[]
+  ) => {
+    if (deletedIds.length === 0) {
+      return;
+    }
+
+    const deletedIdsSet = new Set(deletedIds);
+    const filterIds = (ids: string[]) => ids.filter(id => !deletedIdsSet.has(id));
+
+    updateState(prevState => ({
+      ...prevState,
+      export: {
+        ...prevState.export,
+        formatting: prevState.export.formatting
+          ?.map(rule => {
+            if (dataType === DataType.PEOPLE && 'people' in rule) {
+              return { ...rule, people: filterIds(rule.people) };
+            }
+            if (dataType === DataType.DATES && 'dates' in rule) {
+              return { ...rule, dates: filterIds(rule.dates) };
+            }
+            if (dataType === DataType.SHIFT_TYPES && 'shiftTypes' in rule) {
+              return { ...rule, shiftTypes: filterIds(rule.shiftTypes) };
+            }
+            return rule;
+          })
+          .filter(rule => {
+            if ('people' in rule && rule.people.length === 0) return false;
+            if ('dates' in rule && rule.dates.length === 0) return false;
+            if ('shiftTypes' in rule && rule.shiftTypes.length === 0) return false;
+            return true;
+          }),
+        extraColumns: prevState.export.extraColumns
+          ?.map(rule => {
+            if (dataType === DataType.DATES) {
+              return { ...rule, countDates: filterIds(rule.countDates) };
+            }
+            if (dataType === DataType.SHIFT_TYPES) {
+              return { ...rule, countShiftTypes: filterIds(rule.countShiftTypes) };
+            }
+            return rule;
+          })
+          .filter(rule => rule.countDates.length > 0 && rule.countShiftTypes.length > 0),
+        extraRows: prevState.export.extraRows
+          ?.map(rule => {
+            if (dataType === DataType.PEOPLE) {
+              return { ...rule, countPeople: filterIds(rule.countPeople) };
+            }
+            if (dataType === DataType.SHIFT_TYPES) {
+              return { ...rule, countShiftTypes: filterIds(rule.countShiftTypes) };
+            }
+            return rule;
+          })
+          .filter(rule => rule.countPeople.length > 0 && rule.countShiftTypes.length > 0)
+      }
+    }));
+  };
+
+  const updateExportLayoutForIdChange = (
+    dataType: DataType,
+    oldId: string,
+    newId: string
+  ) => {
+    const renameId = (id: string) => id === oldId ? newId : id;
+    const renameIds = (ids: string[]) => ids.map(renameId);
+
+    updateState(prevState => ({
+      ...prevState,
+      export: {
+        ...prevState.export,
+        formatting: prevState.export.formatting?.map(rule => {
+          if (dataType === DataType.PEOPLE && 'people' in rule) {
+            return { ...rule, people: renameIds(rule.people) };
+          }
+          if (dataType === DataType.DATES && 'dates' in rule) {
+            return { ...rule, dates: renameIds(rule.dates) };
+          }
+          if (dataType === DataType.SHIFT_TYPES && 'shiftTypes' in rule) {
+            return { ...rule, shiftTypes: renameIds(rule.shiftTypes) };
+          }
+          return rule;
+        }),
+        extraColumns: prevState.export.extraColumns?.map(rule => {
+          if (dataType === DataType.DATES) {
+            return { ...rule, countDates: renameIds(rule.countDates) };
+          }
+          if (dataType === DataType.SHIFT_TYPES) {
+            return { ...rule, countShiftTypes: renameIds(rule.countShiftTypes) };
+          }
+          return rule;
+        }),
+        extraRows: prevState.export.extraRows?.map(rule => {
+          if (dataType === DataType.PEOPLE) {
+            return { ...rule, countPeople: renameIds(rule.countPeople) };
+          }
+          if (dataType === DataType.SHIFT_TYPES) {
+            return { ...rule, countShiftTypes: renameIds(rule.countShiftTypes) };
+          }
+          return rule;
+        })
+      }
+    }));
+  };
+
   const updateItem = (
     dataType: DataType,
     data: ItemGroupEditorPageData,
@@ -1035,6 +1142,7 @@ export function useSchedulingData() {
     updateData(dataType, newData);
     updatePeopleHistoryForIdChange(dataType, oldId, newId);
     updatePreferencesForIdChange(dataType, oldId, newId);
+    updateExportLayoutForIdChange(dataType, oldId, newId);
   };
 
   const updateGroup = (
@@ -1084,6 +1192,7 @@ export function useSchedulingData() {
 
     updateData(dataType, newData);
     updatePreferencesForIdChange(dataType, oldId, newId);
+    updateExportLayoutForIdChange(dataType, oldId, newId);
   };
 
   const deleteItem = (
@@ -1106,6 +1215,7 @@ export function useSchedulingData() {
 
     updateData(dataType, newData);
     updatePreferencesForIdDeletion(dataType, [id]);
+    updateExportLayoutForIdDeletion(dataType, [id]);
   };
 
   const deleteGroup = (
@@ -1123,6 +1233,7 @@ export function useSchedulingData() {
 
     updateData(dataType, newData);
     updatePreferencesForIdDeletion(dataType, [id]);
+    updateExportLayoutForIdDeletion(dataType, [id]);
   };
 
   const removeItemFromGroup = (
