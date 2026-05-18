@@ -104,6 +104,7 @@ class DateContainer(BaseModel):
 
 class ExportFormattingRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    description: str | None = None
     type: Annotated[str, Field(pattern=r"^(cell|row|column|row header|column header|history column)$")]
     targets: List[int | str]
     backgroundColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
@@ -113,6 +114,7 @@ class ExportFormattingRule(BaseModel):
 
 class ExportExtraColumn(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    description: str | None = None
     type: Annotated[str, Field(pattern=r"^count$")]
     header: str
     countShiftTypes: List[int | str]
@@ -121,6 +123,7 @@ class ExportExtraColumn(BaseModel):
 
 class ExportExtraRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    description: str | None = None
     type: Annotated[str, Field(pattern=r"^count$")]
     header: str
     countShiftTypes: List[int | str]

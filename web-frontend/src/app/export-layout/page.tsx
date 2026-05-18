@@ -35,6 +35,7 @@ type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor';
 
 interface DraftRule {
+  description: string;
   kind: RuleKind;
   type: ExportFormattingType;
   targetIds: string[];
@@ -60,6 +61,7 @@ interface SelectOption {
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
 const createEmptyDraft = (): DraftRule => ({
+  description: '',
   kind: 'style',
   type: 'cell',
   targetIds: [],
@@ -197,6 +199,7 @@ export default function ExportFormattingPage() {
     const rule = formattingRules[index];
     setDraft({
       ...createEmptyDraft(),
+      description: rule.description || '',
       kind: 'style',
       type: rule.type,
       targetIds: rule.targets,
@@ -215,6 +218,7 @@ export default function ExportFormattingPage() {
     const rule = extraColumns[index];
     setDraft({
       ...createEmptyDraft(),
+      description: rule.description || '',
       kind: 'extra column',
       header: rule.header,
       countShiftTypes: rule.countShiftTypes,
@@ -231,6 +235,7 @@ export default function ExportFormattingPage() {
     const rule = extraRows[index];
     setDraft({
       ...createEmptyDraft(),
+      description: rule.description || '',
       kind: 'extra row',
       header: rule.header,
       countShiftTypes: rule.countShiftTypes,
@@ -253,6 +258,7 @@ export default function ExportFormattingPage() {
   };
 
   const saveStyleRule = () => {
+    const description = draft.description.trim();
     const backgroundColor = draft.backgroundColor.trim().toLowerCase();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
@@ -289,6 +295,7 @@ export default function ExportFormattingPage() {
     }
 
     const newRule: ExportFormatting = {
+      description,
       type: draft.type,
       targets: draft.targetIds
     };
@@ -320,6 +327,7 @@ export default function ExportFormattingPage() {
 
   const saveExtraColumn = () => {
     const header = draft.header.trim();
+    const description = draft.description.trim();
     if (!header) {
       setError('Column header is required');
       return false;
@@ -345,6 +353,7 @@ export default function ExportFormattingPage() {
     }
 
     const newRule: ExportExtraColumn = {
+      description,
       type: 'count',
       header,
       countShiftTypes: draft.countShiftTypes,
@@ -375,6 +384,7 @@ export default function ExportFormattingPage() {
 
   const saveExtraRow = () => {
     const header = draft.header.trim();
+    const description = draft.description.trim();
     if (!header) {
       setError('Row header is required');
       return false;
@@ -400,6 +410,7 @@ export default function ExportFormattingPage() {
     }
 
     const newRule: ExportExtraRow = {
+      description,
       type: 'count',
       header,
       countShiftTypes: draft.countShiftTypes,
@@ -574,6 +585,17 @@ export default function ExportFormattingPage() {
               {editingTarget !== null ? 'Edit Export Rule' : 'Add Export Rule'}
             </h2>
             <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <input
+                  type="text"
+                  value={draft.description}
+                  onChange={(e) => setDraft(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Optional note for this export rule"
+                  className="px-3 py-2 border border-gray-300 rounded-md w-full"
+                />
+              </div>
+
               <div className="flex flex-wrap items-start gap-4">
                 <div className="min-w-[180px]">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Rule Kind</label>
@@ -740,29 +762,34 @@ export default function ExportFormattingPage() {
           onDelete={(index) => updateExportFormatting(formattingRules.filter((_, i) => i !== index))}
           onReorder={(newItems) => updateExportFormatting(newItems)}
           renderContent={(rule) => (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
-              <div>
-                <span className="font-medium">Type:</span> {rule.type}
+            <>
+              {rule.description && (
+                <h4 className="font-medium text-gray-900 mb-3">{rule.description}</h4>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
+                <div>
+                  <span className="font-medium">Type:</span> {rule.type}
+                </div>
+                <div>
+                  <span className="font-medium">Targets:</span> {rule.targets.join(', ')}
+                </div>
+                {rule.backgroundColor && (
+                  <div>
+                    <span className="font-medium">Background:</span> {rule.backgroundColor}
+                  </div>
+                )}
+                {rule.bottomBorderColor && (
+                  <div>
+                    <span className="font-medium">Bottom Border:</span> {rule.bottomBorderColor}
+                  </div>
+                )}
+                {rule.rightBorderColor && (
+                  <div>
+                    <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
+                  </div>
+                )}
               </div>
-              <div>
-                <span className="font-medium">Targets:</span> {rule.targets.join(', ')}
-              </div>
-              {rule.backgroundColor && (
-                <div>
-                  <span className="font-medium">Background:</span> {rule.backgroundColor}
-                </div>
-              )}
-              {rule.bottomBorderColor && (
-                <div>
-                  <span className="font-medium">Bottom Border:</span> {rule.bottomBorderColor}
-                </div>
-              )}
-              {rule.rightBorderColor && (
-                <div>
-                  <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
-                </div>
-              )}
-            </div>
+            </>
           )}
         />
 
@@ -774,20 +801,25 @@ export default function ExportFormattingPage() {
           onDelete={(index) => updateExportExtraColumns(extraColumns.filter((_, i) => i !== index))}
           onReorder={(newItems) => updateExportExtraColumns(newItems)}
           renderContent={(rule) => (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
-              <div>
-                <span className="font-medium">Header:</span> {rule.header}
+            <>
+              {rule.description && (
+                <h4 className="font-medium text-gray-900 mb-3">{rule.description}</h4>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
+                <div>
+                  <span className="font-medium">Header:</span> {rule.header}
+                </div>
+                <div>
+                  <span className="font-medium">Type:</span> {rule.type}
+                </div>
+                <div>
+                  <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
+                </div>
+                <div>
+                  <span className="font-medium">Count Dates:</span> {rule.countDates.join(', ')}
+                </div>
               </div>
-              <div>
-                <span className="font-medium">Type:</span> {rule.type}
-              </div>
-              <div>
-                <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
-              </div>
-              <div>
-                <span className="font-medium">Count Dates:</span> {rule.countDates.join(', ')}
-              </div>
-            </div>
+            </>
           )}
         />
 
@@ -799,20 +831,25 @@ export default function ExportFormattingPage() {
           onDelete={(index) => updateExportExtraRows(extraRows.filter((_, i) => i !== index))}
           onReorder={(newItems) => updateExportExtraRows(newItems)}
           renderContent={(rule) => (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
-              <div>
-                <span className="font-medium">Header:</span> {rule.header}
+            <>
+              {rule.description && (
+                <h4 className="font-medium text-gray-900 mb-3">{rule.description}</h4>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
+                <div>
+                  <span className="font-medium">Header:</span> {rule.header}
+                </div>
+                <div>
+                  <span className="font-medium">Type:</span> {rule.type}
+                </div>
+                <div>
+                  <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
+                </div>
+                <div>
+                  <span className="font-medium">Count People:</span> {rule.countPeople.join(', ')}
+                </div>
               </div>
-              <div>
-                <span className="font-medium">Type:</span> {rule.type}
-              </div>
-              <div>
-                <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
-              </div>
-              <div>
-                <span className="font-medium">Count People:</span> {rule.countPeople.join(', ')}
-              </div>
-            </div>
+            </>
           )}
         />
       </div>

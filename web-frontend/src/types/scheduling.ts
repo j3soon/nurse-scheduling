@@ -27,6 +27,7 @@ export type ExportFormattingType =
   | 'history column';
 
 export interface ExportFormatting {
+  description?: string;
   type: ExportFormattingType;
   targets: string[];
   backgroundColor?: string;
@@ -35,6 +36,7 @@ export interface ExportFormatting {
 }
 
 export interface ExportExtraColumn {
+  description?: string;
   type: 'count';
   header: string;
   countShiftTypes: string[];
@@ -42,6 +44,7 @@ export interface ExportExtraColumn {
 }
 
 export interface ExportExtraRow {
+  description?: string;
   type: 'count';
   header: string;
   countShiftTypes: string[];

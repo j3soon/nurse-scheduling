@@ -299,21 +299,25 @@ function createDefaultState(): SchedulingState {
     export: {
       formatting: [
         {
+          description: '',
           type: 'history column',
           targets: [ALL],
           backgroundColor: '#fefce8'
         },
         {
+          description: '',
           type: 'column',
           targets: [SATURDAY, SUNDAY],
           backgroundColor: '#dbeafe'
         },
         {
+          description: '',
           type: 'column',
           targets: [SATURDAY],
           rightBorderColor: '#9ca3af'
         },
         {
+          description: '',
           type: 'column',
           targets: [FREEDAY],
           backgroundColor: '#dcfce7'
@@ -321,42 +325,49 @@ function createDefaultState(): SchedulingState {
       ],
       extraColumns: [
         {
+          description: '',
           type: 'count',
           header: `OFF (${WORKDAY})`,
           countShiftTypes: [OFF],
           countDates: [WORKDAY]
         },
         {
+          description: '',
           type: 'count',
           header: `OFF (${FREEDAY})`,
           countShiftTypes: [OFF],
           countDates: [FREEDAY]
         },
         {
+          description: '',
           type: 'count',
           header: 'OFF (Total)',
           countShiftTypes: [OFF],
           countDates: [ALL]
         },
         {
+          description: '',
           type: 'count',
           header: 'OFF (Weekday)',
           countShiftTypes: [OFF],
           countDates: [WEEKDAY]
         },
         {
+          description: '',
           type: 'count',
           header: 'OFF (Weekend)',
           countShiftTypes: [OFF],
           countDates: [WEEKEND]
         },
         ...shiftTypes.items.map(shiftType => ({
+          description: '',
           type: 'count' as const,
           header: `${shiftType.id} Count`,
           countShiftTypes: [shiftType.id],
           countDates: [ALL]
         })),
         ...shiftTypes.groups.map(group => ({
+          description: '',
           type: 'count' as const,
           header: `${group.id} Count`,
           countShiftTypes: [group.id],
@@ -365,12 +376,14 @@ function createDefaultState(): SchedulingState {
       ],
       extraRows: [
         ...shiftTypes.items.map(shiftType => ({
+          description: '',
           type: 'count' as const,
           header: `${shiftType.id} Count`,
           countShiftTypes: [shiftType.id],
           countPeople: [ALL]
         })),
         ...shiftTypes.groups.map(group => ({
+          description: '',
           type: 'count' as const,
           header: `${group.id} Count`,
           countShiftTypes: [group.id],
