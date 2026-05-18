@@ -32,6 +32,7 @@ import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor';
+type DraftArrayField = 'people' | 'dates' | 'shiftTypes' | 'countShiftTypes' | 'countDates' | 'countPeople';
 
 interface DraftRule {
   description: string;
@@ -60,6 +61,14 @@ interface SelectOption {
 }
 
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+const styleUsesPeople = (type: ExportFormattingType) =>
+  type === 'row' || type === 'people header' || type === 'history' || type === 'cell';
+
+const styleUsesDates = (type: ExportFormattingType) =>
+  type === 'column' || type === 'date header' || type === 'cell';
+
+const styleUsesShiftTypes = (type: ExportFormattingType) => type === 'cell';
 
 const createEmptyDraft = (): DraftRule => ({
   description: '',
@@ -132,79 +141,6 @@ export default function ExportFormattingPage() {
     ...shiftTypeData.groups.map(group => ({ id: group.id, description: group.description })),
   ];
 
-  const getStyleTargetConfigs = () => {
-    if (draft.type === 'row' || draft.type === 'people header') {
-      return [
-        {
-          field: 'people' as const,
-          label: 'People *',
-          emptyText: 'No people available. Please set up people in the',
-          href: '/people',
-          hrefLabel: 'People',
-          options: peopleOptions
-        }
-      ];
-    }
-
-    if (draft.type === 'column' || draft.type === 'date header') {
-      return [
-        {
-          field: 'dates' as const,
-          label: 'Dates *',
-          emptyText: 'No dates available. Please set up dates in the',
-          href: '/dates',
-          hrefLabel: 'Dates',
-          options: dateOptions
-        }
-      ];
-    }
-
-    if (draft.type === 'history') {
-      return [
-        {
-          field: 'people' as const,
-          label: 'People *',
-          emptyText: 'No people available. Please set up people in the',
-          href: '/people',
-          hrefLabel: 'People',
-          options: peopleOptions
-        }
-      ];
-    }
-
-    if (draft.type === 'history header') {
-      return [];
-    }
-
-    return [
-      {
-        field: 'people' as const,
-        label: 'People *',
-        emptyText: 'No people available. Please set up people in the',
-        href: '/people',
-        hrefLabel: 'People',
-        options: peopleOptions
-      },
-      {
-        field: 'dates' as const,
-        label: 'Dates *',
-        emptyText: 'No dates available. Please set up dates in the',
-        href: '/dates',
-        hrefLabel: 'Dates',
-        options: dateOptions
-      },
-      {
-        field: 'shiftTypes' as const,
-        label: 'Shift Types *',
-        emptyText: 'No shift types available. Please set up shift types in the',
-        href: '/shift-types',
-        hrefLabel: 'Shift Types',
-        options: shiftTypeOptions
-      }
-    ];
-  };
-
-  const styleTargetConfigs = getStyleTargetConfigs();
   const instructions = [
     'Create export style rules and extra count columns or rows for prettified XLSX output',
     'Style rules change cell appearance; extra columns add per-person count summaries',
@@ -297,19 +233,30 @@ export default function ExportFormattingPage() {
     }
   };
 
-  const validateStyleTargets = () => {
-    for (const config of styleTargetConfigs) {
-      const selectedIds = draft[config.field];
-      if (selectedIds.length === 0) {
-        setError(`Select at least one ${config.label.replace(' *', '').toLowerCase()}`);
-        return false;
-      }
+  const validateSelectedOptions = (label: string, selectedIds: string[], options: SelectOption[]) => {
+    if (selectedIds.length === 0) {
+      setError(`Select at least one ${label.toLowerCase()}`);
+      return false;
+    }
 
-      const validTargetIds = new Set(config.options.map(option => option.id));
-      if (selectedIds.some(id => !validTargetIds.has(id))) {
-        setError(`Selected ${config.label.replace(' *', '').toLowerCase()} are invalid for this rule type`);
-        return false;
-      }
+    const validIds = new Set(options.map(option => option.id));
+    if (selectedIds.some(id => !validIds.has(id))) {
+      setError(`Selected ${label.toLowerCase()} are invalid for this rule type`);
+      return false;
+    }
+
+    return true;
+  };
+
+  const validateStyleTargets = () => {
+    if (styleUsesPeople(draft.type) && !validateSelectedOptions('people', draft.people, peopleOptions)) {
+      return false;
+    }
+    if (styleUsesDates(draft.type) && !validateSelectedOptions('dates', draft.dates, dateOptions)) {
+      return false;
+    }
+    if (styleUsesShiftTypes(draft.type) && !validateSelectedOptions('shift types', draft.shiftTypes, shiftTypeOptions)) {
+      return false;
     }
     return true;
   };
@@ -591,11 +538,10 @@ export default function ExportFormattingPage() {
     onToggle: (id: string) => void,
     emptyText: string,
     href: string,
-    hrefLabel: string
-  ) => (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
-      {options.length === 0 ? (
+    hrefLabel: string,
+    scrollable = false
+  ) => {
+    const content = options.length === 0 ? (
         <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
           {emptyText}{' '}
           <Link href={href} className="text-blue-600 hover:text-blue-800 underline">
@@ -610,6 +556,58 @@ export default function ExportFormattingPage() {
           onToggle={onToggle}
           label=""
         />
+      );
+
+    return (
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
+        {scrollable && options.length > 0 ? (
+          <div className="max-h-32 overflow-y-auto">{content}</div>
+        ) : content}
+      </div>
+    );
+  };
+
+  const toggleDraftArrayField = (field: DraftArrayField, id: string) => {
+    setDraft(prev => ({
+      ...prev,
+      [field]: prev[field].includes(id)
+        ? prev[field].filter(targetId => targetId !== id)
+        : [...prev[field], id]
+    }));
+  };
+
+  const renderStyleTargetRows = () => (
+    <div className="space-y-6">
+      {styleUsesPeople(draft.type) && renderCheckboxes(
+        'People *',
+        peopleOptions,
+        draft.people,
+        (id) => toggleDraftArrayField('people', id),
+        'No people available. Please set up people in the',
+        '/people',
+        'People'
+      )}
+
+      {styleUsesDates(draft.type) && renderCheckboxes(
+        'Dates *',
+        dateOptions,
+        draft.dates,
+        (id) => toggleDraftArrayField('dates', id),
+        'No dates available. Please set up dates in the',
+        '/dates',
+        'Dates',
+        true
+      )}
+
+      {styleUsesShiftTypes(draft.type) && renderCheckboxes(
+        'Shift Types *',
+        shiftTypeOptions,
+        draft.shiftTypes,
+        (id) => toggleDraftArrayField('shiftTypes', id),
+        'No shift types available. Please set up shift types in the',
+        '/shift-types',
+        'Shift Types'
       )}
     </div>
   );
@@ -745,38 +743,14 @@ export default function ExportFormattingPage() {
               </div>
 
               {draft.kind === 'style' ? (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {styleTargetConfigs.map(config => (
-                    <div key={config.field}>
-                      {renderCheckboxes(
-                        config.label,
-                        config.options,
-                        draft[config.field],
-                        (id) => setDraft(prev => ({
-                          ...prev,
-                          [config.field]: prev[config.field].includes(id)
-                            ? prev[config.field].filter(targetId => targetId !== id)
-                            : [...prev[config.field], id]
-                        })),
-                        config.emptyText,
-                        config.href,
-                        config.hrefLabel
-                      )}
-                    </div>
-                  ))}
-                </div>
+                renderStyleTargetRows()
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {renderCheckboxes(
                     'Count Shift Types *',
                     shiftTypeOptions,
                     draft.countShiftTypes,
-                    (id) => setDraft(prev => ({
-                      ...prev,
-                      countShiftTypes: prev.countShiftTypes.includes(id)
-                        ? prev.countShiftTypes.filter(targetId => targetId !== id)
-                        : [...prev.countShiftTypes, id]
-                    })),
+                    (id) => toggleDraftArrayField('countShiftTypes', id),
                     'No shift types available. Please set up shift types in the',
                     '/shift-types',
                     'Shift Types'
@@ -786,12 +760,7 @@ export default function ExportFormattingPage() {
                         'Count Dates *',
                         dateOptions,
                         draft.countDates,
-                        (id) => setDraft(prev => ({
-                          ...prev,
-                          countDates: prev.countDates.includes(id)
-                            ? prev.countDates.filter(targetId => targetId !== id)
-                            : [...prev.countDates, id]
-                        })),
+                        (id) => toggleDraftArrayField('countDates', id),
                         'No dates available. Please set up dates in the',
                         '/dates',
                         'Dates'
@@ -800,12 +769,7 @@ export default function ExportFormattingPage() {
                         'Count People *',
                         peopleOptions,
                         draft.countPeople,
-                        (id) => setDraft(prev => ({
-                          ...prev,
-                          countPeople: prev.countPeople.includes(id)
-                            ? prev.countPeople.filter(targetId => targetId !== id)
-                            : [...prev.countPeople, id]
-                        })),
+                        (id) => toggleDraftArrayField('countPeople', id),
                         'No people available. Please set up people in the',
                         '/people',
                         'People'
