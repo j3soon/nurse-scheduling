@@ -25,6 +25,7 @@ from typing import Optional
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from . import scheduler, exporter
+from .loader import InputError
 
 import sentry_sdk
 sentry_sdk.init(
@@ -146,6 +147,13 @@ async def optimize_and_export_xlsx(
             solver=solver,
         )
         
+    except InputError as e:
+        # Bad user input -> HTTP 400
+        logging.warning(f"Invalid input for optimization: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid input: {str(e)}"
+        )
     except Exception as e:
         # TODO(security): Returning the error message to the client may be a security risk
         logging.error(f"Error during optimization: {str(e)}")

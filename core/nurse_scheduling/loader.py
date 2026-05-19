@@ -24,6 +24,11 @@ from .models import NurseSchedulingData
 
 yaml = YAML(typ='safe')
 
+
+class InputError(ValueError):
+    """Raised when user-provided input fails validation (HTTP 400 candidate)."""
+    pass
+
 def _load_yaml(content: bytes) -> Dict[str, Any]:
     """Load YAML from bytes content.
     
@@ -48,5 +53,17 @@ def load_data(content: bytes) -> NurseSchedulingData:
     Returns:
         NurseSchedulingData: The validated scheduling data
     """
-    data = _load_yaml(content)
-    return NurseSchedulingData(**data)
+    try:
+        data = _load_yaml(content)
+    except Exception as e:
+        raise InputError(f"Invalid YAML: {e}") from e
+    if not isinstance(data, dict):
+        raise InputError(
+            "Invalid YAML input: expected a mapping (key-value object) at the top level, "
+            f"but got {type(data).__name__}."
+        )
+    try:
+        return NurseSchedulingData(**data)
+    except TypeError as e:
+        # e.g. unexpected/missing keyword arguments from a malformed mapping
+        raise InputError(f"Invalid scheduling data: {e}") from e
