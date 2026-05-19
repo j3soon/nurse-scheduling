@@ -24,6 +24,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from typing import Optional
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
+from ruamel.yaml import YAMLError
 from . import scheduler, exporter
 
 import sentry_sdk
@@ -145,7 +147,24 @@ async def optimize_and_export_xlsx(
             timeout=timeout,
             solver=solver,
         )
-        
+
+    except YAMLError as e:
+        # Malformed YAML supplied by the client -> 400 Bad Request.
+        # Use only the first line of the parser error to avoid leaking
+        # internal file paths or excessive parser detail.
+        logging.warning(f"Invalid YAML input: {str(e)}")
+        reason = str(e).splitlines()[0] if str(e) else "could not parse YAML"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid YAML input: {reason}"
+        )
+    except ValidationError as e:
+        # Schema validation failure from NurseSchedulingData(**data) -> 400.
+        logging.warning(f"Invalid scheduling data: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid scheduling data: {e.error_count()} validation error(s)"
+        )
     except Exception as e:
         # TODO(security): Returning the error message to the client may be a security risk
         logging.error(f"Error during optimization: {str(e)}")
