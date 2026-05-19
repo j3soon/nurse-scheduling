@@ -24,6 +24,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from typing import Optional
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 from . import scheduler, exporter
 
 import sentry_sdk
@@ -146,6 +147,16 @@ async def optimize_and_export_xlsx(
             solver=solver,
         )
         
+    except ValidationError as e:
+        # Pydantic validation failed on the supplied YAML input. This is a
+        # client-side mistake (e.g. missing required fields like
+        # `dates.range.startDate`/`endDate`), so surface a 400 with the
+        # validation details instead of a generic 500.
+        logging.warning(f"Invalid scheduling data: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid scheduling data: {str(e)}"
+        )
     except Exception as e:
         # TODO(security): Returning the error message to the client may be a security risk
         logging.error(f"Error during optimization: {str(e)}")

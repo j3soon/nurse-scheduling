@@ -70,6 +70,13 @@ export default function OptimizeAndExportPage() {
   // Convert current state to YAML
   const currentYaml = generateYamlFromState(filteredState);
 
+  // The backend's NurseSchedulingData requires both startDate and endDate on
+  // dates.range. If either is missing, the YAML generator emits `range: {}`
+  // and the backend returns a Pydantic ValidationError. Guard against that
+  // here so users get an actionable message instead of a server error.
+  const isDateRangeMissing =
+    !dateData?.range?.startDate || !dateData?.range?.endDate;
+
   const handleOptimizeAndDownload = async () => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -77,6 +84,14 @@ export default function OptimizeAndExportPage() {
     setScheduleFilename(null);
     setScheduleScore(null);
     setScheduleStatus(null);
+
+    if (isDateRangeMissing) {
+      setErrorMessage(
+        "Please set both a start date and an end date on the Dates page before optimizing."
+      );
+      setIsLoading(false);
+      return;
+    }
 
     try {
       // Prepare form data
@@ -299,9 +314,10 @@ export default function OptimizeAndExportPage() {
           <div className="flex justify-end">
             <button
               onClick={handleOptimizeAndDownload}
-              disabled={isLoading}
+              disabled={isLoading || isDateRangeMissing}
+              title={isDateRangeMissing ? 'Set both a start date and an end date on the Dates page first.' : undefined}
               className={`flex items-center gap-2 px-6 py-2 font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
-                isLoading
+                isLoading || isDateRangeMissing
                   ? 'bg-gray-400 cursor-not-allowed text-white'
                   : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500'
               }`}
