@@ -28,8 +28,9 @@ import { ExportExtraColumn, ExportExtraRow, ExportFormatting, ExportFormattingTy
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { DraggableCardList } from '@/components/DraggableCardList';
+import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
-import { getWeightDisplayLabel, isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
+import { isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor';
@@ -51,8 +52,8 @@ interface DraftRule {
   countPeople: string[];
   requestShape: string[];
   satisfied: '' | 'true' | 'false';
-  weightRangeMin: string;
-  weightRangeMax: string;
+  weightRangeMin: number | string;
+  weightRangeMax: number | string;
   appendText: string;
   noteText: string;
 }
@@ -206,8 +207,8 @@ export default function ExportFormattingPage() {
       satisfied: 'when' in rule && rule.when?.preference.satisfied !== undefined
         ? String(rule.when.preference.satisfied) as 'true' | 'false'
         : '',
-      weightRangeMin: 'when' in rule && rule.when?.preference.weightRange?.[0] !== undefined ? getWeightDisplayLabel(rule.when.preference.weightRange[0]) : '',
-      weightRangeMax: 'when' in rule && rule.when?.preference.weightRange?.[1] !== undefined ? getWeightDisplayLabel(rule.when.preference.weightRange[1]) : '',
+      weightRangeMin: 'when' in rule && rule.when?.preference.weightRange?.[0] !== undefined ? rule.when.preference.weightRange[0] : '',
+      weightRangeMax: 'when' in rule && rule.when?.preference.weightRange?.[1] !== undefined ? rule.when.preference.weightRange[1] : '',
       appendText: 'appendText' in rule ? rule.appendText || '' : '',
       noteText: 'note' in rule ? rule.note?.text || '' : '',
     });
@@ -290,8 +291,8 @@ export default function ExportFormattingPage() {
   };
 
   const parseOptionalWeightRange = (): number[] | undefined | null => {
-    const minInput = draft.weightRangeMin.trim();
-    const maxInput = draft.weightRangeMax.trim();
+    const minInput = String(draft.weightRangeMin).trim();
+    const maxInput = String(draft.weightRangeMax).trim();
     if (!minInput && !maxInput) {
       return undefined;
     }
@@ -319,6 +320,7 @@ export default function ExportFormattingPage() {
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
     const appendText = draft.appendText;
     const noteText = draft.noteText.trim();
+    const hasCondition = draft.requestShape.length > 0 || draft.satisfied !== '' || Boolean(String(draft.weightRangeMin).trim() || String(draft.weightRangeMax).trim());
 
     if (!validateStyleTargets()) {
       return false;
@@ -364,7 +366,7 @@ export default function ExportFormattingPage() {
         people: draft.people,
         dates: draft.dates,
         shiftTypes: draft.shiftTypes,
-        ...((appendText || noteText) ? {
+        ...((appendText || noteText || hasCondition) ? {
           when: {
             preference: {
               types: ['shift request'],
@@ -751,26 +753,18 @@ export default function ExportFormattingPage() {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Minimum Weight (inclusive)</label>
-            <input
-              type="text"
-              value={draft.weightRangeMin}
-              onChange={(e) => setDraft(prev => ({ ...prev, weightRangeMin: e.target.value }))}
-              placeholder="-Infinity"
-              className="px-3 py-2 border border-gray-300 rounded-md w-full"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Maximum Weight (inclusive)</label>
-            <input
-              type="text"
-              value={draft.weightRangeMax}
-              onChange={(e) => setDraft(prev => ({ ...prev, weightRangeMax: e.target.value }))}
-              placeholder="Infinity"
-              className="px-3 py-2 border border-gray-300 rounded-md w-full"
-            />
-          </div>
+          <WeightInput
+            value={draft.weightRangeMin}
+            onChange={(value) => setDraft(prev => ({ ...prev, weightRangeMin: value }))}
+            label="Minimum Weight (inclusive)"
+            placeholder="-Infinity"
+          />
+          <WeightInput
+            value={draft.weightRangeMax}
+            onChange={(value) => setDraft(prev => ({ ...prev, weightRangeMax: value }))}
+            label="Maximum Weight (inclusive)"
+            placeholder="Infinity"
+          />
         </div>
       </div>
     );
@@ -913,7 +907,7 @@ export default function ExportFormattingPage() {
                   {renderCellWhenFields()}
                 </>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-6">
                   {renderCheckboxes(
                     'Count Shift Types *',
                     shiftTypeOptions,
@@ -1028,22 +1022,32 @@ export default function ExportFormattingPage() {
                     <span className="font-medium">Note:</span> {rule.note.text}
                   </div>
                 )}
-                {'when' in rule && rule.when?.preference.requestShape && (
-                  <div>
-                    <span className="font-medium">Request Shape:</span>{' '}
-                    {rule.when.preference.requestShape.join(', ')}
-                  </div>
-                )}
-                {'when' in rule && rule.when?.preference.satisfied !== undefined && (
-                  <div>
-                    <span className="font-medium">Satisfied:</span>{' '}
-                    {String(rule.when.preference.satisfied)}
-                  </div>
-                )}
-                {'when' in rule && rule.when?.preference.weightRange && (
-                  <div>
-                    <span className="font-medium">Weight Range:</span>{' '}
-                    {rule.when.preference.weightRange.join(', ')}
+                {'when' in rule && rule.when && (
+                  <div className="md:col-span-2 mt-2 rounded-md bg-gray-50 border-l-2 border-blue-200 px-3 py-2">
+                    <div className="font-bold text-gray-800 mb-1">When:</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
+                      <div>
+                        <span className="font-medium">Preference:</span> shift request
+                      </div>
+                      {rule.when.preference.requestShape && (
+                        <div>
+                          <span className="font-medium">Request Shape:</span>{' '}
+                          {rule.when.preference.requestShape.join(', ')}
+                        </div>
+                      )}
+                      {rule.when.preference.satisfied !== undefined && (
+                        <div>
+                          <span className="font-medium">Satisfied:</span>{' '}
+                          {String(rule.when.preference.satisfied)}
+                        </div>
+                      )}
+                      {rule.when.preference.weightRange && (
+                        <div>
+                          <span className="font-medium">Weight Range (inclusive):</span>{' '}
+                          {rule.when.preference.weightRange.join(' to ')}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

@@ -298,6 +298,112 @@ export:
         schedule(yaml_content, prettify=True)
 
 
+def test_export_formatting_rejects_non_cell_when_and_annotations():
+    base_ctx = SimpleNamespace(
+        export=SimpleNamespace(formatting=[]),
+        map_pid_p={"n1": [0]},
+        map_did_d={},
+        map_sid_s={},
+    )
+
+    base_ctx.export.formatting = [
+        SimpleNamespace(
+            type="row",
+            people=["n1"],
+            backgroundColor="#22c55e",
+            bottomBorderColor=None,
+            rightBorderColor=None,
+            when=SimpleNamespace(),
+            appendText=None,
+            note=None,
+        )
+    ]
+    with pytest.raises(ValueError, match="'when' is only supported"):
+        exporter._build_custom_export_style_info(
+            base_ctx,
+            n_rows=1,
+            n_cols=1,
+            n_leading_rows=0,
+            n_leading_cols=0,
+            n_history_cols=0,
+        )
+
+    base_ctx.export.formatting = [
+        SimpleNamespace(
+            type="row",
+            people=["n1"],
+            backgroundColor="#22c55e",
+            bottomBorderColor=None,
+            rightBorderColor=None,
+            when=None,
+            appendText=" [X]",
+            note=None,
+        )
+    ]
+    with pytest.raises(ValueError, match="annotations are only supported"):
+        exporter._build_custom_export_style_info(
+            base_ctx,
+            n_rows=1,
+            n_cols=1,
+            n_leading_rows=0,
+            n_leading_cols=0,
+            n_history_cols=0,
+        )
+
+
+def test_export_annotation_unknown_request_shape_matches_all_but_not_specific_shape():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+    - id: n2
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+  - type: shift request
+    person: [n1, n2]
+    date: ["2025-01-01"]
+    shiftType: D
+    weight: -5
+export:
+  formatting:
+    - type: cell
+      appendText: " [specific]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+    - type: cell
+      appendText: " [all]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [ALL]
+"""
+
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    assert str(df.iloc[2, 1]) == " [all]"
+    assert str(df.iloc[3, 1]) == " [all]"
+
+
 def test_invalid_row_target_in_export_formatting_raises():
     yaml_content = b"""
 apiVersion: alpha
