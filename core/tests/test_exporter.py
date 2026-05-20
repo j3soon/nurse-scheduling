@@ -119,6 +119,21 @@ preferences:
     date: ["2025-01-01"]
     shiftType: D
     weight: -10
+export:
+  formatting:
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL, OFF]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+          satisfied: false
+          weightRange: [-.inf, .inf]
+      appendText: " [X]"
+      note:
+        text: "Weight of unmet single-style request: {totalAbsWeight}"
 """
 
     df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
@@ -137,6 +152,150 @@ preferences:
     comment = ws.cell(row=row, column=col).comment
     assert comment is not None
     assert "Weight of unmet single-style request: 10" in comment.text
+
+
+def test_export_annotations_expand_compacted_shift_request_dates_before_matching_shape():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+  groups:
+    - id: FREEDAY
+      members: [2025-01-02]
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01", FREEDAY]
+    shiftType: D
+    weight: -5
+export:
+  formatting:
+    - type: cell
+      appendText: " [I]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+    - type: cell
+      appendText: " [G]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-group]
+"""
+
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    assert str(df.iloc[2, 1]) == " [I]"
+    assert str(df.iloc[2, 2]) == " [G]"
+
+
+def test_export_annotation_total_abs_weight_sums_matched_requests_for_cell():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [D, E]
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: D
+    weight: -5
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: E
+    weight: -7
+export:
+  formatting:
+    - type: cell
+      note:
+        text: "Total matched absolute weight: {totalAbsWeight}"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+          satisfied: true
+"""
+
+    _df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+
+    assert cell_export_info["comments"] == {(3, 2): ["Total matched absolute weight: 12"]}
+
+
+def test_export_annotation_rejects_reversed_weight_range():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: D
+    weight: -5
+export:
+  formatting:
+    - type: cell
+      appendText: " [X]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          weightRange: [10, -10]
+"""
+
+    with pytest.raises(ValueError, match="weightRange minimum"):
+        schedule(yaml_content, prettify=True)
 
 
 def test_invalid_row_target_in_export_formatting_raises():
@@ -267,6 +426,17 @@ preferences:
     shiftType: [OFF]
     weight: -5
 export:
+  formatting:
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL, OFF]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+          weightRange: [-.inf, .inf]
+      appendText: " [{shiftType}]"
   extraColumns:
     - type: count
       header: OFF (WORKDAY)

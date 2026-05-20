@@ -24,15 +24,16 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle, FiHelpCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ExportExtraColumn, ExportExtraRow, ExportFormatting, ExportFormattingType } from '@/types/scheduling';
+import { ExportExtraColumn, ExportExtraRow, ExportFormatting, ExportFormattingType, ExportRequestShape } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
+import { getWeightDisplayLabel, isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor';
-type DraftArrayField = 'people' | 'dates' | 'shiftTypes' | 'countShiftTypes' | 'countDates' | 'countPeople';
+type DraftArrayField = 'people' | 'dates' | 'shiftTypes' | 'countShiftTypes' | 'countDates' | 'countPeople' | 'requestShape';
 
 interface DraftRule {
   description: string;
@@ -48,6 +49,12 @@ interface DraftRule {
   countShiftTypes: string[];
   countDates: string[];
   countPeople: string[];
+  requestShape: string[];
+  satisfied: '' | 'true' | 'false';
+  weightRangeMin: string;
+  weightRangeMax: string;
+  appendText: string;
+  noteText: string;
 }
 
 interface EditingTarget {
@@ -61,6 +68,13 @@ interface SelectOption {
 }
 
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const REQUEST_SHAPE_OPTIONS: SelectOption[] = [
+  { id: 'ALL', description: 'All request shapes' },
+  { id: 'person-item-to-date-item', description: 'Person item to date item' },
+  { id: 'people-group-to-date-item', description: 'People group to date item' },
+  { id: 'person-item-to-date-group', description: 'Person item to date group' },
+  { id: 'people-group-to-date-group', description: 'People group to date group' },
+];
 
 const styleUsesPeople = (type: ExportFormattingType) =>
   type === 'row' || type === 'people header' || type === 'history' || type === 'cell';
@@ -84,6 +98,12 @@ const createEmptyDraft = (): DraftRule => ({
   countShiftTypes: [],
   countDates: [],
   countPeople: [],
+  requestShape: [],
+  satisfied: '',
+  weightRangeMin: '',
+  weightRangeMax: '',
+  appendText: '',
+  noteText: '',
 });
 
 const getPickerDisplay = (value: string) => {
@@ -182,6 +202,14 @@ export default function ExportFormattingPage() {
       backgroundColor: rule.backgroundColor || '',
       bottomBorderColor: rule.bottomBorderColor || '',
       rightBorderColor: rule.rightBorderColor || '',
+      requestShape: 'when' in rule && rule.when?.preference.requestShape ? rule.when.preference.requestShape : [],
+      satisfied: 'when' in rule && rule.when?.preference.satisfied !== undefined
+        ? String(rule.when.preference.satisfied) as 'true' | 'false'
+        : '',
+      weightRangeMin: 'when' in rule && rule.when?.preference.weightRange?.[0] !== undefined ? getWeightDisplayLabel(rule.when.preference.weightRange[0]) : '',
+      weightRangeMax: 'when' in rule && rule.when?.preference.weightRange?.[1] !== undefined ? getWeightDisplayLabel(rule.when.preference.weightRange[1]) : '',
+      appendText: 'appendText' in rule ? rule.appendText || '' : '',
+      noteText: 'note' in rule ? rule.note?.text || '' : '',
     });
     setEditingTarget({ kind: 'style', index });
     setIsFormVisible(true);
@@ -261,13 +289,42 @@ export default function ExportFormattingPage() {
     return true;
   };
 
+  const parseOptionalWeightRange = (): number[] | undefined | null => {
+    const minInput = draft.weightRangeMin.trim();
+    const maxInput = draft.weightRangeMax.trim();
+    if (!minInput && !maxInput) {
+      return undefined;
+    }
+    if (!minInput || !maxInput) {
+      setError('Weight Range requires both minimum and maximum values');
+      return null;
+    }
+    const minWeight = parseWeightValue(minInput);
+    const maxWeight = parseWeightValue(maxInput);
+    if (!isValidWeightValue(minWeight) || !isValidWeightValue(maxWeight)) {
+      setError('Weight Range values must be valid numbers, Infinity, or -Infinity');
+      return null;
+    }
+    if (minWeight > maxWeight) {
+      setError('Weight Range minimum must be less than or equal to maximum');
+      return null;
+    }
+    return [minWeight as number, maxWeight as number];
+  };
+
   const saveStyleRule = () => {
     const description = draft.description.trim();
     const backgroundColor = draft.backgroundColor.trim().toLowerCase();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
+    const appendText = draft.appendText;
+    const noteText = draft.noteText.trim();
 
     if (!validateStyleTargets()) {
+      return false;
+    }
+    const weightRange = parseOptionalWeightRange();
+    if (weightRange === null) {
       return false;
     }
 
@@ -286,8 +343,8 @@ export default function ExportFormattingPage() {
       setError(rightBorderColorError);
       return false;
     }
-    if (!backgroundColor && !bottomBorderColor && !rightBorderColor) {
-      setError('At least one style field is required');
+    if (!backgroundColor && !bottomBorderColor && !rightBorderColor && !appendText && !noteText) {
+      setError('At least one style or annotation field is required');
       return false;
     }
 
@@ -302,9 +359,21 @@ export default function ExportFormattingPage() {
       newRule = {
         ...styleFields,
         type: draft.type,
+        ...(appendText ? { appendText } : {}),
+        ...(noteText ? { note: { text: noteText } } : {}),
         people: draft.people,
         dates: draft.dates,
-        shiftTypes: draft.shiftTypes
+        shiftTypes: draft.shiftTypes,
+        ...((appendText || noteText) ? {
+          when: {
+            preference: {
+              types: ['shift request'],
+              ...(draft.requestShape.length > 0 ? { requestShape: draft.requestShape as ExportRequestShape[] } : {}),
+              ...(draft.satisfied ? { satisfied: draft.satisfied === 'true' } : {}),
+              ...(weightRange ? { weightRange } : {})
+            }
+          }
+        } : {}),
       };
     } else if (draft.type === 'column' || draft.type === 'date header') {
       newRule = {
@@ -612,6 +681,101 @@ export default function ExportFormattingPage() {
     </div>
   );
 
+  const renderCellAnnotationActionFields = () => {
+    if (draft.kind !== 'style' || draft.type !== 'cell') {
+      return null;
+    }
+
+    return (
+      <div className="space-y-4 pt-6">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Append Text</label>
+          <input
+            type="text"
+            value={draft.appendText}
+            onChange={(e) => setDraft(prev => ({ ...prev, appendText: e.target.value }))}
+            placeholder=" [{shiftType}]"
+            className="px-3 py-2 border border-gray-300 rounded-md w-full"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Note Text</label>
+          <input
+            type="text"
+            value={draft.noteText}
+            onChange={(e) => setDraft(prev => ({ ...prev, noteText: e.target.value }))}
+            placeholder="Weight of unmet single-style request: {totalAbsWeight}"
+            className="px-3 py-2 border border-gray-300 rounded-md w-full"
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderCellWhenFields = () => {
+    if (draft.kind !== 'style' || draft.type !== 'cell') {
+      return null;
+    }
+
+    return (
+      <div className="space-y-4 border-t border-gray-200 pt-6">
+        <div>
+          <h3 className="text-sm font-medium text-gray-700">When (optional)</h3>
+          <p className="text-xs text-gray-500 mt-1">
+            Limits this cell rule to matching shift request preferences. Leave empty to match all selected cells.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Satisfied</label>
+          <select
+            value={draft.satisfied}
+            onChange={(e) => setDraft(prev => ({ ...prev, satisfied: e.target.value as DraftRule['satisfied'] }))}
+            className="px-3 py-2 border border-gray-300 rounded-md w-full"
+          >
+            <option value="">Any</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        </div>
+
+        {renderCheckboxes(
+          'Request Shape',
+          REQUEST_SHAPE_OPTIONS,
+          draft.requestShape,
+          (id) => toggleDraftArrayField('requestShape', id),
+          'No request shape options available.',
+          '/shift-requests',
+          'Shift Requests'
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Minimum Weight (inclusive)</label>
+            <input
+              type="text"
+              value={draft.weightRangeMin}
+              onChange={(e) => setDraft(prev => ({ ...prev, weightRangeMin: e.target.value }))}
+              placeholder="-Infinity"
+              className="px-3 py-2 border border-gray-300 rounded-md w-full"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Maximum Weight (inclusive)</label>
+            <input
+              type="text"
+              value={draft.weightRangeMax}
+              onChange={(e) => setDraft(prev => ({ ...prev, weightRangeMax: e.target.value }))}
+              placeholder="Infinity"
+              className="px-3 py-2 border border-gray-300 rounded-md w-full"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
@@ -743,7 +907,11 @@ export default function ExportFormattingPage() {
               </div>
 
               {draft.kind === 'style' ? (
-                renderStyleTargetRows()
+                <>
+                  {renderCellAnnotationActionFields()}
+                  {renderStyleTargetRows()}
+                  {renderCellWhenFields()}
+                </>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {renderCheckboxes(
@@ -848,6 +1016,34 @@ export default function ExportFormattingPage() {
                 {rule.rightBorderColor && (
                   <div>
                     <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
+                  </div>
+                )}
+                {'appendText' in rule && rule.appendText && (
+                  <div>
+                    <span className="font-medium">Append Text:</span> {rule.appendText}
+                  </div>
+                )}
+                {'note' in rule && rule.note && (
+                  <div>
+                    <span className="font-medium">Note:</span> {rule.note.text}
+                  </div>
+                )}
+                {'when' in rule && rule.when?.preference.requestShape && (
+                  <div>
+                    <span className="font-medium">Request Shape:</span>{' '}
+                    {rule.when.preference.requestShape.join(', ')}
+                  </div>
+                )}
+                {'when' in rule && rule.when?.preference.satisfied !== undefined && (
+                  <div>
+                    <span className="font-medium">Satisfied:</span>{' '}
+                    {String(rule.when.preference.satisfied)}
+                  </div>
+                )}
+                {'when' in rule && rule.when?.preference.weightRange && (
+                  <div>
+                    <span className="font-medium">Weight Range:</span>{' '}
+                    {rule.when.preference.weightRange.join(', ')}
                   </div>
                 )}
               </div>

@@ -74,6 +74,8 @@ def _build_custom_export_style_info(
             style_map[key]["rightBorderColor"] = right_border_color
 
     for rule in ctx.export.formatting:
+        _validate_export_formatting_rule_usage(rule)
+
         target_people = set()
         target_dates = set()
         target_shift_types = set()
@@ -96,8 +98,7 @@ def _build_custom_export_style_info(
                     raise ValueError(
                         f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
                     )
-                # Filter to actual shift types (exclude OFF pseudo shift).
-                target_shift_types.update(s for s in ctx.map_sid_s[target] if 0 <= s < ctx.n_shift_types)
+                target_shift_types.update(ctx.map_sid_s[target])
 
         if rule.type == "row":
             for p in target_people:
@@ -143,14 +144,34 @@ def _build_custom_export_style_info(
                 set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
 
         elif rule.type == "cell":
-            for d in target_dates:
-                for p in target_people:
-                    if (d, p) not in ctx.map_dp_s:
-                        continue
-                    assigned_shift_types = [
-                        s for s in ctx.map_dp_s[(d, p)] if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
-                    ]
-                    if any(s in target_shift_types for s in assigned_shift_types):
+            if rule.when:
+                for d, p, _pref, _requested_shift_type in _iter_matching_cell_preferences(
+                    ctx,
+                    target_people=target_people,
+                    target_dates=target_dates,
+                    target_shift_types=target_shift_types,
+                    condition=rule.when,
+                ):
+                    row_idx = n_leading_rows + p
+                    col_idx = n_leading_cols + n_history_cols + d
+                    set_style(
+                        row_idx,
+                        col_idx,
+                        rule.backgroundColor,
+                        rule.bottomBorderColor,
+                        rule.rightBorderColor,
+                    )
+            else:
+                actual_target_shift_types = {s for s in target_shift_types if 0 <= s < ctx.n_shift_types}
+                for d in target_dates:
+                    for p in target_people:
+                        if (d, p) not in ctx.map_dp_s:
+                            continue
+                        assigned_shift_types = [
+                            s for s in ctx.map_dp_s[(d, p)] if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                        ]
+                        if not any(s in actual_target_shift_types for s in assigned_shift_types):
+                            continue
                         row_idx = n_leading_rows + p
                         col_idx = n_leading_cols + n_history_cols + d
                         set_style(
@@ -202,12 +223,181 @@ def _count_extra_row_for_date(ctx: Context, d: int, count_people, count_shift_ty
     return count
 
 
+def _validate_export_formatting_rule_usage(rule):
+    if rule.type != "cell" and getattr(rule, "when", None):
+        raise ValueError("export formatting 'when' is only supported for rules with type 'cell'")
+    if rule.type != "cell" and (getattr(rule, "appendText", None) or getattr(rule, "note", None)):
+        raise ValueError("export formatting annotations are only supported for rules with type 'cell'")
+
+
+def _get_shift_request_shape(ctx: Context, person_target, date_target) -> str:
+    person_id = person_target
+    person_item_ids = {person.id for person in ctx.people.items}
+    people_group_ids = {group.id for group in ctx.people.groups}
+    date_item_ids = {str(date) for date in ctx.dates.items}
+    date_group_ids = {group.id for group in ctx.dates.groups}
+    date_id = str(date_target)
+
+    if person_id in person_item_ids:
+        person_shape = "person-item"
+    elif person_id in people_group_ids:
+        person_shape = "people-group"
+    else:
+        return "unknown"
+
+    if date_id in date_item_ids:
+        date_shape = "date-item"
+    elif date_id in date_group_ids:
+        date_shape = "date-group"
+    else:
+        return "unknown"
+
+    return f"{person_shape}-to-{date_shape}"
+
+
+def _render_export_template(template: str, *, pref, requested_shift_type: str, total_abs_weight: int | float) -> str:
+    return (
+        template.replace("{shiftType}", requested_shift_type)
+        .replace("{weight}", str(pref.weight))
+        .replace("{absWeight}", str(abs(pref.weight)))
+        .replace("{totalAbsWeight}", str(total_abs_weight))
+    )
+
+
+def _build_cell_annotation_rules(ctx: Context):
+    if not ctx.export or not ctx.export.formatting:
+        return []
+
+    annotation_rules = []
+    for rule in ctx.export.formatting:
+        _validate_export_formatting_rule_usage(rule)
+
+        if rule.type != "cell" or not rule.when or (not rule.appendText and not rule.note):
+            continue
+
+        target_people = set()
+        target_dates = set()
+        target_shift_types = set()
+        for target in rule.people:
+            if target not in ctx.map_pid_p:
+                raise ValueError(
+                    f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
+                )
+            target_people.update(ctx.map_pid_p[target])
+        for target in rule.dates:
+            target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
+        for target in rule.shiftTypes:
+            if target not in ctx.map_sid_s:
+                raise ValueError(f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'")
+            target_shift_types.update(ctx.map_sid_s[target])
+        annotation_rules.append(
+            {
+                "rule": rule,
+                "people": target_people,
+                "dates": target_dates,
+                "shift_types": target_shift_types,
+            }
+        )
+
+    return annotation_rules
+
+
+def _export_preference_condition_matches(ctx: Context, condition, pref, *, request_shape: str, satisfied: bool):
+    pref_condition = condition.preference
+    unsupported_types = set(pref_condition.types) - {models.SHIFT_REQUEST}
+    if unsupported_types:
+        raise ValueError(f"Unsupported export formatting preference condition type(s): {sorted(unsupported_types)}")
+    if pref.type not in pref_condition.types:
+        return False
+    if pref_condition.satisfied is not None and pref_condition.satisfied != satisfied:
+        return False
+    if pref_condition.weightRange is not None:
+        if len(pref_condition.weightRange) != 2:
+            raise ValueError("export formatting preference weightRange must contain exactly two values")
+        min_weight, max_weight = pref_condition.weightRange
+        if min_weight > max_weight:
+            raise ValueError("export formatting preference weightRange minimum must be less than or equal to maximum")
+        if pref.weight < min_weight or pref.weight > max_weight:
+            return False
+    if pref_condition.requestShape is not None and constants.ALL not in pref_condition.requestShape:
+        if request_shape not in pref_condition.requestShape:
+            return False
+    return True
+
+
+def _iter_expanded_shift_request_targets(ctx: Context, pref):
+    """Expand compact frontend shift request date targets for export matching.
+
+    The frontend stores one preference per person/shiftType/weight and accumulates
+    matrix date targets in ``pref.date``. Each entry in ``pref.date`` is still a
+    distinct matrix target: either an individual date column or a date-group
+    column. Shape matching must use that original target before expanding it to
+    concrete schedule dates for the exported sheet.
+    """
+    person_targets = utils.ensure_list(pref.person)
+    date_targets = utils.ensure_list(pref.date)
+    if len(person_targets) != 1:
+        for date_target in date_targets:
+            yield date_target, utils.parse_dates(date_target, ctx.map_did_d, ctx.dates.range), "unknown"
+        return
+
+    person_target = person_targets[0]
+    for date_target in date_targets:
+        yield (
+            date_target,
+            utils.parse_dates(date_target, ctx.map_did_d, ctx.dates.range),
+            _get_shift_request_shape(ctx, person_target, date_target),
+        )
+
+
+def _iter_matching_cell_preferences(
+    ctx: Context,
+    *,
+    target_people: set[int],
+    target_dates: set[int],
+    target_shift_types: set[int],
+    condition,
+):
+    solver = ctx.solver
+    for pref in ctx.preferences:
+        if pref.type != models.SHIFT_REQUEST:
+            continue
+        if pref.weight == 0:
+            continue
+
+        shift_type_targets = utils.ensure_list(pref.shiftType)
+        if len(shift_type_targets) != 1:
+            raise ValueError("export formatting shift request annotations require exactly one shiftType per preference")
+
+        ss = utils.parse_sids(shift_type_targets, ctx.map_sid_s)
+        ps = utils.parse_pids(pref.person, ctx.map_pid_p)
+        if not any(s in target_shift_types for s in ss):
+            continue
+
+        requested_shift_type = shift_type_targets[0]
+
+        for _date_target, ds, request_shape in _iter_expanded_shift_request_targets(ctx, pref):
+            for d in ds:
+                if d not in target_dates:
+                    continue
+                for p in ps:
+                    if p not in target_people:
+                        continue
+                    target_value = 1 if pref.weight > 0 else 0
+                    vars = [ctx.offs[(d, p)] if s == constants.OFF_sid else ctx.shifts[(d, s, p)] for s in ss]
+                    satisfied = not all((solver.get_value(var) != target_value) for var in vars)
+                    if _export_preference_condition_matches(
+                        ctx, condition, pref, request_shape=request_shape, satisfied=satisfied
+                    ):
+                        yield d, p, pref, requested_shift_type
+
+
 def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Initialize dataframe with size including leading rows and columns
     n_leading_rows, n_leading_cols = 2, 1
     n_trailing_rows, n_trailing_cols = 2, 0
 
-    # Dictionary to track cells with [X] markers and their weights for Excel notes
+    # Dictionary to track cells with generated Excel notes
     cell_comment_info = {}
 
     n_history_cols = 0
@@ -270,32 +460,44 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 for h in range(n_history_cols):
                     df.iloc[n_leading_rows + p, n_leading_cols + h] = ""
 
-    # Pre-filter preferences to avoid repeated filtering in the inner loop
-    filtered_preferences = {}
-    if prettify:
-        for pref in ctx.preferences:
-            if pref.type != models.SHIFT_REQUEST:
-                continue
-            if pref.weight == 0:
-                continue
-            ds = utils.parse_dates(pref.date, ctx.map_did_d, ctx.dates.range)
-            ss = utils.parse_sids(pref.shiftType, ctx.map_sid_s)
-            ps = utils.parse_pids(pref.person, ctx.map_pid_p)
-            if len(pref.shiftType) != 1 or len(ps) != 1:
-                # Skip since is not single person and single shift type style
-                continue
-            date_input_len = len(pref.date) if isinstance(pref.date, list) else 1
-            if len(ds) != date_input_len:
-                # Skip since only count for single-date style
-                continue
+    annotation_rules = _build_cell_annotation_rules(ctx) if prettify else []
+    cell_annotations = {}
+    if annotation_rules:
+        for annotation_rule_data in annotation_rules:
+            rule = annotation_rule_data["rule"]
+            matches_by_cell = {}
+            for d, p, pref, requested_shift_type in _iter_matching_cell_preferences(
+                ctx,
+                target_people=annotation_rule_data["people"],
+                target_dates=annotation_rule_data["dates"],
+                target_shift_types=annotation_rule_data["shift_types"],
+                condition=rule.when,
+            ):
+                matches_by_cell.setdefault((d, p), []).append((pref, requested_shift_type))
 
-            # Store filtered preferences by (d, p) key for quick lookup
-            for d in ds:
-                for p in ps:
-                    if (d, p) not in filtered_preferences:
-                        filtered_preferences[(d, p)] = []
-                    filtered_preferences[(d, p)].append(
-                        {"pref": pref, "ss": ss, "target_value": 1 if pref.weight > 0 else 0}
+            for (d, p), matches in matches_by_cell.items():
+                if (d, p) not in cell_annotations:
+                    cell_annotations[(d, p)] = {"append_text": [], "notes": []}
+                total_abs_weight = sum(abs(pref.weight) for pref, _requested_shift_type in matches)
+                for pref, requested_shift_type in matches:
+                    rendered_context = {
+                        "pref": pref,
+                        "requested_shift_type": requested_shift_type,
+                        "total_abs_weight": total_abs_weight,
+                    }
+                    if rule.appendText:
+                        cell_annotations[(d, p)]["append_text"].append(
+                            _render_export_template(rule.appendText, **rendered_context)
+                        )
+                if rule.note:
+                    pref, requested_shift_type = matches[0]
+                    cell_annotations[(d, p)]["notes"].append(
+                        _render_export_template(
+                            rule.note.text,
+                            pref=pref,
+                            requested_shift_type=requested_shift_type,
+                            total_abs_weight=total_abs_weight,
+                        )
                     )
 
     # Set cell values based on solver results
@@ -310,33 +512,13 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 if cell_value != "":
                     cell_value += ", "
                 cell_value += ctx.shiftTypes.items[s].id
-        if prettify:
-            # Only consider single-person, single-shift-type, list-of-single-date style shift request
-            # Add a ` [OFF]` suffix if the person requests OFF
-            # Add a ` [<shift type id>]` suffix if the person requests a specific shift type
-            # Add a ` [X]` suffix if the shift request is violated
-            # Use pre-filtered preferences for this (d, p) combination
-            if (d, p) in filtered_preferences:
-                for pref_data in filtered_preferences[(d, p)]:
-                    pref = pref_data["pref"]
-                    ss = pref_data["ss"]
-                    target_value = pref_data["target_value"]
-                    # Does not support shift type groups with mixed OFF and non-OFF shift types,
-                    # which in most cases should not happen.
-                    vars = [ctx.shifts[(d, s, p)] for s in ss] if constants.OFF_sid not in ss else [ctx.offs[(d, p)]]
-                    if constants.OFF_sid in ss:
-                        cell_value += " [OFF]"
-                    else:
-                        assert len(pref.shiftType) == 1
-                        cell_value += f" [{pref.shiftType[0]}]"
-                    if all((solver.get_value(var) != target_value) for var in vars):
-                        cell_value += " [X]"
-                        # Track this cell for Excel notes - store the weight
-                        excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
-                        excel_col = n_leading_cols + n_history_cols + d + 1  # +1 for 1-based Excel indexing
-                        if (excel_row, excel_col) not in cell_comment_info:
-                            cell_comment_info[(excel_row, excel_col)] = []
-                        cell_comment_info[(excel_row, excel_col)].append(abs(pref.weight))
+        if prettify and (d, p) in cell_annotations:
+            for append_text in cell_annotations[(d, p)]["append_text"]:
+                cell_value += append_text
+            if cell_annotations[(d, p)]["notes"]:
+                excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
+                excel_col = n_leading_cols + n_history_cols + d + 1  # +1 for 1-based Excel indexing
+                cell_comment_info[(excel_row, excel_col)] = cell_annotations[(d, p)]["notes"]
         df.iloc[n_leading_rows + p, col_idx] = cell_value
 
     # Fill objective value
@@ -470,7 +652,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 def export_to_excel(df, output_buffer, cell_export_info=None):
     """
     Export DataFrame to Excel with frozen panes at B3 (first two rows and first column).
-    Also adds notes/comments to cells with [X] markers showing the weight of unmet single-style requests.
+    Also adds configured notes/comments to cells.
 
     Args:
         output_buffer: BytesIO buffer to write to
@@ -503,14 +685,17 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
     if comment_info:
         from openpyxl.comments import Comment
 
-        for (row, col), weights in comment_info.items():
+        for (row, col), notes in comment_info.items():
             cell = ws.cell(row=row, column=col)
-            # Calculate total weight and create note text
-            total_weight = sum(weights)
-            if len(weights) == 1:
-                note_text = f"Weight of unmet single-style request: {total_weight}"
+            if all(isinstance(note, str) for note in notes):
+                note_text = "\n".join(notes)
             else:
-                note_text = f"Weights of unmet single-style requests: {total_weight} (individual weights: {', '.join(map(str, weights))})"
+                # Legacy shape: a list of unmet request weights.
+                total_weight = sum(notes)
+                if len(notes) == 1:
+                    note_text = f"Weight of unmet single-style request: {total_weight}"
+                else:
+                    note_text = f"Weights of unmet single-style requests: {total_weight} (individual weights: {', '.join(map(str, notes))})"
 
             # Create and add the comment
             comment = Comment(note_text, "Nurse Scheduling System")

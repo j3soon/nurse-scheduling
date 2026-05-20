@@ -27,6 +27,28 @@ export type ExportFormattingType =
   | 'history'
   | 'history header';
 
+export type ExportRequestShape =
+  | 'person-item-to-date-item'
+  | 'people-group-to-date-item'
+  | 'person-item-to-date-group'
+  | 'people-group-to-date-group'
+  | 'ALL';
+
+export interface ExportPreferenceCondition {
+  types: ['shift request'];
+  requestShape?: ExportRequestShape[];
+  satisfied?: boolean;
+  weightRange?: number[];
+}
+
+export interface ExportFormattingCondition {
+  preference: ExportPreferenceCondition;
+}
+
+export interface ExportFormattingNote {
+  text: string;
+}
+
 interface BaseExportFormatting {
   description?: string;
   backgroundColor?: string;
@@ -50,9 +72,12 @@ export interface ExportHistoryHeaderFormatting extends BaseExportFormatting {
 
 export interface ExportCellFormatting extends BaseExportFormatting {
   type: 'cell';
+  appendText?: string;
+  note?: ExportFormattingNote;
   people: string[];
   dates: string[];
   shiftTypes: string[];
+  when?: ExportFormattingCondition;
 }
 
 export type ExportFormatting =

@@ -822,9 +822,9 @@ export default function ShiftRequestsPage() {
     );
   };
 
-  // Helper function to compute new shift preferences from delta updates
-  // This is necessary since ShiftRequestPreference is of type { person: string[]; date: string[]; shiftType: string[]; weight: number },
-  // where person and shiftType are single-element arrays. The date array is for readability of the exported YAML.
+  // Helper function to compute new shift preferences from delta updates.
+  // Shift requests are compacted for storage: one preference per person/shiftType/weight can contain multiple matrix date targets in `date`.
+  // Those targets may be individual dates or date groups. The matrix display expands them by checking `date.includes(dateId)`.
   const computeNewShiftPreferences = (
     currentPreferences: ShiftRequestPreference[],
     updates: {

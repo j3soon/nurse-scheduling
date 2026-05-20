@@ -299,6 +299,40 @@ function createDefaultState(): SchedulingState {
     export: {
       formatting: [
         {
+          description: 'Show requested shift request target',
+          type: 'cell',
+          appendText: ' [{shiftType}]',
+          people: [ALL],
+          dates: [ALL],
+          shiftTypes: [ALL, OFF],
+          when: {
+            preference: {
+              types: ['shift request'],
+              requestShape: ['person-item-to-date-item'],
+              weightRange: [-Infinity, Infinity]
+            }
+          }
+        },
+        {
+          description: 'Mark unsatisfied shift requests',
+          type: 'cell',
+          appendText: ' [X]',
+          note: {
+            text: 'Weight of unmet single-style request: {totalAbsWeight}'
+          },
+          people: [ALL],
+          dates: [ALL],
+          shiftTypes: [ALL, OFF],
+          when: {
+            preference: {
+              types: ['shift request'],
+              requestShape: ['person-item-to-date-item'],
+              satisfied: false,
+              weightRange: [-Infinity, Infinity]
+            }
+          }
+        },
+        {
           description: '',
           type: 'history header',
           backgroundColor: '#fefce8'

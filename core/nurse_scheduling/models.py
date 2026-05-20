@@ -124,11 +124,43 @@ class ExportHistoryHeaderFormattingRule(BaseExportFormattingRule):
     type: Literal["history header"]
 
 
+class ExportPreferenceCondition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    types: List[Literal["shift request"]]
+    requestShape: (
+        List[
+            Literal[
+                "person-item-to-date-item",
+                "people-group-to-date-item",
+                "person-item-to-date-group",
+                "people-group-to-date-group",
+                "ALL",
+            ]
+        ]
+        | None
+    ) = None
+    satisfied: bool | None = None
+    weightRange: List[int | float] | None = None
+
+
+class ExportFormattingCondition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    preference: ExportPreferenceCondition
+
+
+class ExportFormattingNote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str
+
+
 class ExportCellFormattingRule(BaseExportFormattingRule):
     type: Literal["cell"]
+    appendText: str | None = None
+    note: ExportFormattingNote | None = None
     people: List[int | str]
     dates: List[int | str]
     shiftTypes: List[int | str]
+    when: ExportFormattingCondition | None = None
 
 
 ExportFormattingRule = Annotated[
