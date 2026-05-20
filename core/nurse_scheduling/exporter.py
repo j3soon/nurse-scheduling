@@ -328,8 +328,9 @@ def _export_preference_condition_matches(ctx: Context, condition, pref, *, reque
 def _iter_expanded_shift_request_targets(ctx: Context, pref):
     """Expand compact frontend shift request date targets for export matching.
 
-    The frontend stores one preference per person/shiftType/weight and accumulates
-    matrix date targets in ``pref.date``. Each entry in ``pref.date`` is still a
+    Frontend edits compact real date items together, while date groups remain
+    separate preferences so overlapping groups can stack. Older saved YAML can
+    still contain mixed targets in ``pref.date``. Each entry is treated as a
     distinct matrix target: either an individual date column or a date-group
     column. Shape matching must use that original target before expanding it to
     concrete schedule dates for the exported sheet.

@@ -823,8 +823,8 @@ export default function ShiftRequestsPage() {
   };
 
   // Helper function to compute new shift preferences from delta updates.
-  // Shift requests are compacted for storage: one preference per person/shiftType/weight can contain multiple matrix date targets in `date`.
-  // Those targets may be individual dates or date groups. The matrix display expands them by checking `date.includes(dateId)`.
+  // Real date items are compacted together for readable YAML. Date groups stay as separate preferences
+  // so overlapping targets like ALL, WEEKDAY, and WEEKEND can stack as separate weights.
   const computeNewShiftPreferences = (
     currentPreferences: ShiftRequestPreference[],
     updates: {
@@ -839,6 +839,8 @@ export default function ShiftRequestsPage() {
     // Process each update
     for (const update of updates) {
       const { personId, dateId, deltaPreferences, clearFirst = false } = update;
+      const dateItemIds = new Set(dateData.items.map(date => date.id));
+      const isDateItem = dateItemIds.has(dateId);
 
       // Get current preferences for this person-date combination
       const currentPersonDatePreferences = filteredPreferences.filter(
@@ -892,22 +894,23 @@ export default function ShiftRequestsPage() {
 
       // Add back the updated preferences
       for (const preference of updatedPreferences) {
-        const existingPreference = filteredPreferences.find(
+        const existingPreference = isDateItem ? filteredPreferences.find(
           p => p.person[0] === personId &&
-          p.shiftType[0] === preference.shiftTypeId &&
-          p.weight === preference.weight
-        );
+            p.shiftType[0] === preference.shiftTypeId &&
+            p.weight === preference.weight &&
+            p.date.every(id => dateItemIds.has(id))
+        ) : undefined;
         if (existingPreference) {
           existingPreference.date.push(dateId);
-        } else {
-          filteredPreferences.push({
-            type: SHIFT_REQUEST,
-            person: [personId],
-            date: [dateId],
-            shiftType: [preference.shiftTypeId],
-            weight: preference.weight,
-          });
+          continue;
         }
+        filteredPreferences.push({
+          type: SHIFT_REQUEST,
+          person: [personId],
+          date: [dateId],
+          shiftType: [preference.shiftTypeId],
+          weight: preference.weight,
+        });
       }
     }
 
