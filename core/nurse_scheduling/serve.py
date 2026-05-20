@@ -146,7 +146,13 @@ async def optimize_and_export_xlsx(
             timeout=timeout,
             solver=solver,
         )
-        
+    except NotImplementedError as e:
+        # User input error: unsupported apiVersion or other unsupported scenario feature.
+        logging.warning(f"Unsupported request: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported API version: {str(e)}"
+        )
     except ValidationError as e:
         # User-supplied scheduling data failed schema validation -> HTTP 400
         logging.error(f"Invalid scheduling data: {str(e)}")
