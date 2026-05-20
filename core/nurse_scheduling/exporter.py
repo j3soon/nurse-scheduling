@@ -236,6 +236,7 @@ def _get_shift_request_shape(ctx: Context, person_target, date_target) -> str:
     people_group_ids = {group.id for group in ctx.people.groups}
     date_item_ids = {str(date) for date in ctx.dates.items}
     date_group_ids = {group.id for group in ctx.dates.groups}
+    date_keyword_ids = set(constants.MAP_DATE_KEYWORD_TO_FILTER) | set(constants.MAP_WEEKDAY_TO_STR)
     date_id = str(date_target)
 
     if person_id in person_item_ids:
@@ -247,10 +248,14 @@ def _get_shift_request_shape(ctx: Context, person_target, date_target) -> str:
 
     if date_id in date_item_ids:
         date_shape = "date-item"
-    elif date_id in date_group_ids:
+    elif date_id in date_group_ids or date_id in date_keyword_ids:
         date_shape = "date-group"
     else:
-        return "unknown"
+        try:
+            parsed_dates = utils.parse_dates(date_id, ctx.map_did_d, ctx.dates.range)
+        except ValueError:
+            return "unknown"
+        date_shape = "date-item" if len(parsed_dates) == 1 else "date-group"
 
     return f"{person_shape}-to-{date_shape}"
 

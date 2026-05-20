@@ -177,7 +177,7 @@ preferences:
     requiredNumPeople: 0
   - type: shift request
     person: n1
-    date: ["2025-01-01", FREEDAY]
+    date: ["01", FREEDAY]
     shiftType: D
     weight: -5
 export:
