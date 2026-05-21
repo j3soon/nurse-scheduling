@@ -45,18 +45,12 @@ def test_export_to_csv_writes_utf8_bom():
     assert payload.decode("utf-8-sig") == "A,B\nC,D\n"
 
 
-def test_export_to_excel_supports_legacy_comment_info_shape():
+def test_export_to_excel_rejects_legacy_comment_info_shape():
     df = pd.DataFrame([["x"]])
     output = BytesIO()
 
-    # Legacy shape: {(row, col): [weights]}
-    exporter.export_to_excel(df, output, {(1, 1): [3, 7]})
-
-    wb = load_workbook(output)
-    ws = wb.active
-    assert ws["A1"].comment is not None
-    assert "Weights of unmet single-style requests: 10" in ws["A1"].comment.text
-    assert "3, 7" in ws["A1"].comment.text
+    with pytest.raises(ValueError, match="cell_export_info must be a dictionary"):
+        exporter.export_to_excel(df, output, {(1, 1): [3, 7]})
 
 
 def test_export_to_excel_applies_style_and_font_contrast():

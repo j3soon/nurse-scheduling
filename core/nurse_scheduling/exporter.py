@@ -676,11 +676,11 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 def export_to_excel(df, output_buffer, cell_export_info=None):
     """
     Export DataFrame to Excel with frozen panes at B3 (first two rows and first column).
-    Also adds configured notes/comments to cells.
+    Also applies configured cell notes and styles.
 
     Args:
         output_buffer: BytesIO buffer to write to
-        cell_export_info: Dictionary containing cell comment information
+        cell_export_info: Dictionary containing comments/styles from dataframe export
     """
 
     # Write to a temporary BytesIO buffer first
@@ -695,15 +695,13 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
     # Freeze the first two rows and first column (B3 is the cell after frozen area)
     ws.freeze_panes = "B3"
 
-    # Backward compatibility: legacy shape was {(row, col): [weights]}.
     comment_info = {}
     style_info = {}
-    if isinstance(cell_export_info, dict):
-        if "comments" in cell_export_info or "styles" in cell_export_info:
-            comment_info = cell_export_info.get("comments") or {}
-            style_info = cell_export_info.get("styles") or {}
-        else:
-            comment_info = cell_export_info
+    if cell_export_info is not None:
+        if not isinstance(cell_export_info, dict) or not {"comments", "styles"}.issuperset(cell_export_info):
+            raise ValueError("cell_export_info must be a dictionary with optional 'comments' and 'styles' keys")
+        comment_info = cell_export_info.get("comments") or {}
+        style_info = cell_export_info.get("styles") or {}
 
     # Add configured notes/comments to cells if comment_info is provided.
     if comment_info:
@@ -711,17 +709,10 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
 
         for (row, col), notes in comment_info.items():
             cell = ws.cell(row=row, column=col)
-            if all(isinstance(note, str) for note in notes):
-                note_text = "\n".join(notes)
-            else:
-                # Legacy shape: a list of unmet request weights.
-                total_weight = sum(notes)
-                if len(notes) == 1:
-                    note_text = f"Weight of unmet single-style request: {total_weight}"
-                else:
-                    note_text = f"Weights of unmet single-style requests: {total_weight} (individual weights: {', '.join(map(str, notes))})"
+            if not all(isinstance(note, str) for note in notes):
+                raise ValueError("cell_export_info comments must be lists of strings")
+            note_text = "\n".join(notes)
 
-            # Create and add the comment
             comment = Comment(note_text, "Nurse Scheduling System")
             cell.comment = comment
 
