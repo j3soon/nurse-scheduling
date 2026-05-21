@@ -695,7 +695,7 @@ export function useSchedulingData() {
         newGroups = replaceDateGroups(newGroups, buildTaiwanHolidayGroups(generatedDateItems, dateRange));
       }
 
-      return {
+      const nextState = {
         ...prevState,
         dates: {
           ...prevState.dates,
@@ -704,54 +704,44 @@ export function useSchedulingData() {
           // items will be auto-generated based on the new range
         }
       };
+      return applyReferencesForIdDeletion(nextState, DataType.DATES, removedDateIds);
     });
-
-    updateReferencesForIdDeletion(DataType.DATES, removedDateIds);
   };
 
-  const updatePeopleData = (peopleData: ItemGroupEditorPageData) => {
-    updateState(prevState => ({
-      ...prevState,
-      people: peopleData
-    }));
+  const applyDataUpdate = (
+    state: SchedulingState,
+    dataType: DataType,
+    newData: ItemGroupEditorPageData
+  ): SchedulingState => {
+    switch (dataType) {
+      case DataType.DATES:
+        return {
+          ...state,
+          dates: {
+            ...state.dates,
+            items: state.dates.items,
+            groups: newData.groups
+          }
+        };
+      case DataType.PEOPLE:
+        return {
+          ...state,
+          people: newData
+        };
+      case DataType.SHIFT_TYPES:
+        return {
+          ...state,
+          shiftTypes: newData
+        };
+    }
   };
-
-  const updateShiftTypeData = (shiftTypeData: ItemGroupEditorPageData) => {
-    updateState(prevState => ({
-      ...prevState,
-      shiftTypes: shiftTypeData
-    }));
-  };
-
-  const updateDateData = (dateData: ItemGroupEditorPageData) => {
-    updateState(prevState => ({
-      ...prevState,
-      dates: {
-        ...prevState.dates,
-        items: prevState.dates.items, // Keep computed items
-        groups: dateData.groups
-      }
-    }));
-  };
-
-
 
   // Private helper function to update data based on dataType
   const updateData = (
     dataType: DataType,
     newData: ItemGroupEditorPageData
   ): void => {
-    switch (dataType) {
-      case DataType.DATES:
-        updateDateData(newData);
-        break;
-      case DataType.PEOPLE:
-        updatePeopleData(newData);
-        break;
-      case DataType.SHIFT_TYPES:
-        updateShiftTypeData(newData);
-        break;
-    }
+    updateState(prevState => applyDataUpdate(prevState, dataType, newData));
   };
 
   // Reset to defaults
@@ -841,26 +831,32 @@ export function useSchedulingData() {
     updateData(dataType, newData);
   };
 
-  const updatePeopleHistoryForIdChange = (dataType: DataType, oldId: string, newId: string) => {
-    if (dataType !== DataType.SHIFT_TYPES) return;
-    updateState(prevState => ({
-      ...prevState,
+  const applyPeopleHistoryForIdChange = (
+    state: SchedulingState,
+    dataType: DataType,
+    oldId: string,
+    newId: string
+  ): SchedulingState => {
+    if (dataType !== DataType.SHIFT_TYPES) return state;
+    return {
+      ...state,
       people: {
-        ...prevState.people,
-        items: prevState.people.items.map(person => ({
+        ...state.people,
+        items: state.people.items.map(person => ({
           ...person,
           history: person.history?.map(h => h === oldId ? newId : h) || []
         }))
       }
-    }));
+    };
   };
 
   // Unified function to update preferences when an ID changes
-  const updatePreferencesForIdChange = (
+  const applyPreferencesForIdChange = (
+    state: SchedulingState,
     dataType: DataType,
     oldId: string,
     newId: string
-  ) => {
+  ): SchedulingState => {
     const shiftTypeReqFieldMap = {
       [DataType.DATES]: 'date',
       [DataType.PEOPLE]: 'qualifiedPeople',
@@ -891,9 +887,9 @@ export function useSchedulingData() {
       [DataType.SHIFT_TYPES]: ['shiftTypes']
     };
 
-    updateState(prevState => ({
-      ...prevState,
-      preferences: prevState.preferences.map(pref => {
+    return {
+      ...state,
+      preferences: state.preferences.map(pref => {
         if (pref.type === SHIFT_TYPE_REQUIREMENT) {
           const fieldName = shiftTypeReqFieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
           return {
@@ -935,17 +931,18 @@ export function useSchedulingData() {
         }
         return pref;
       })
-    }));
+    };
   };
 
   // Unified function to update preferences when IDs are deleted
-  const updatePreferencesForIdDeletion = (
+  const applyPreferencesForIdDeletion = (
+    state: SchedulingState,
     dataType: DataType,
     deletedIds: string[]
-  ) => {
+  ): SchedulingState => {
     // Return early if no IDs to delete
     if (deletedIds.length === 0) {
-      return;
+      return state;
     }
 
     const deletedIdsSet = new Set(deletedIds);
@@ -980,58 +977,52 @@ export function useSchedulingData() {
       [DataType.SHIFT_TYPES]: ['shiftTypes']
     };
 
-    // First, filter out the deleted IDs from array fields and remove matching single-value preferences
-    updateState(prevState => ({
-      ...prevState,
-      preferences: prevState.preferences
-        .map(pref => {
-          if (pref.type === SHIFT_TYPE_REQUIREMENT) {
-            const fieldName = shiftTypeReqFieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
-            return {
-              ...pref,
-              [fieldName]: ((pref as ShiftTypeRequirementsPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
-            };
-          } else if (pref.type === SHIFT_REQUEST) {
-            const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
-            return {
-              ...pref,
-              [fieldName]: ((pref as ShiftRequestPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
-            };
-          } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
-            if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
-              return pref;
-            }
-            const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
-            return {
-              ...pref,
-              [fieldName]: ((pref as ShiftTypeSuccessionsPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
-            };
-          } else if (pref.type === SHIFT_COUNT) {
-            const fieldName = shiftCountFieldMap[dataType] as keyof ShiftCountPreference;
-            return {
-              ...pref,
-              [fieldName]: ((pref as ShiftCountPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
-            };
-          } else if (pref.type === SHIFT_AFFINITY) {
-            const fieldNames = shiftAffinityFieldMap[dataType];
-            const updatedPref = { ...pref } as ShiftAffinityPreference;
-            fieldNames.forEach(fieldName => {
-              const key = fieldName as keyof ShiftAffinityPreference;
-              const value = (pref as ShiftAffinityPreference)[key];
-              if (Array.isArray(value)) {
-                (updatedPref[key] as string[]) = value.filter(id => !deletedIdsSet.has(id));
-              }
-            });
-            return updatedPref;
+    const preferences = state.preferences
+      // First, filter out the deleted IDs from array fields and remove matching single-value preferences
+      .map(pref => {
+        if (pref.type === SHIFT_TYPE_REQUIREMENT) {
+          const fieldName = shiftTypeReqFieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
+          return {
+            ...pref,
+            [fieldName]: ((pref as ShiftTypeRequirementsPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
+          };
+        } else if (pref.type === SHIFT_REQUEST) {
+          const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
+          return {
+            ...pref,
+            [fieldName]: ((pref as ShiftRequestPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
+          };
+        } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
+          if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
+            return pref;
           }
-          return pref;
-        })
-    }));
-
-    // Second, remove preferences with empty required fields
-    updateState(prevState => ({
-      ...prevState,
-      preferences: prevState.preferences.filter(pref => {
+          const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
+          return {
+            ...pref,
+            [fieldName]: ((pref as ShiftTypeSuccessionsPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
+          };
+        } else if (pref.type === SHIFT_COUNT) {
+          const fieldName = shiftCountFieldMap[dataType] as keyof ShiftCountPreference;
+          return {
+            ...pref,
+            [fieldName]: ((pref as ShiftCountPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
+          };
+        } else if (pref.type === SHIFT_AFFINITY) {
+          const fieldNames = shiftAffinityFieldMap[dataType];
+          const updatedPref = { ...pref } as ShiftAffinityPreference;
+          fieldNames.forEach(fieldName => {
+            const key = fieldName as keyof ShiftAffinityPreference;
+            const value = (pref as ShiftAffinityPreference)[key];
+            if (Array.isArray(value)) {
+              (updatedPref[key] as string[]) = value.filter(id => !deletedIdsSet.has(id));
+            }
+          });
+          return updatedPref;
+        }
+        return pref;
+      })
+      // Second, remove preferences with empty required fields
+      .filter(pref => {
         if (pref.type === SHIFT_TYPE_REQUIREMENT) {
           return (pref as ShiftTypeRequirementsPreference).shiftType.length > 0;
         } else if (pref.type === SHIFT_REQUEST) {
@@ -1050,26 +1041,31 @@ export function useSchedulingData() {
             (pref as ShiftAffinityPreference).shiftTypes.length > 0;
         }
         return true;
-      })
-    }));
+      });
+
+    return {
+      ...state,
+      preferences
+    };
   };
 
-  const updateExportLayoutForIdDeletion = (
+  const applyExportLayoutForIdDeletion = (
+    state: SchedulingState,
     dataType: DataType,
     deletedIds: string[]
-  ) => {
+  ): SchedulingState => {
     if (deletedIds.length === 0) {
-      return;
+      return state;
     }
 
     const deletedIdsSet = new Set(deletedIds);
     const filterIds = (ids: string[]) => ids.filter(id => !deletedIdsSet.has(id));
 
-    updateState(prevState => ({
-      ...prevState,
+    return {
+      ...state,
       export: {
-        ...prevState.export,
-        formatting: prevState.export.formatting
+        ...state.export,
+        formatting: state.export.formatting
           ?.map(rule => {
             if (dataType === DataType.PEOPLE && 'people' in rule) {
               return { ...rule, people: filterIds(rule.people) };
@@ -1088,7 +1084,7 @@ export function useSchedulingData() {
             if ('shiftTypes' in rule && rule.shiftTypes.length === 0) return false;
             return true;
           }),
-        extraColumns: prevState.export.extraColumns
+        extraColumns: state.export.extraColumns
           ?.map(rule => {
             if (dataType === DataType.DATES) {
               return { ...rule, countDates: filterIds(rule.countDates) };
@@ -1099,7 +1095,7 @@ export function useSchedulingData() {
             return rule;
           })
           .filter(rule => rule.countDates.length > 0 && rule.countShiftTypes.length > 0),
-        extraRows: prevState.export.extraRows
+        extraRows: state.export.extraRows
           ?.map(rule => {
             if (dataType === DataType.PEOPLE) {
               return { ...rule, countPeople: filterIds(rule.countPeople) };
@@ -1111,22 +1107,23 @@ export function useSchedulingData() {
           })
           .filter(rule => rule.countPeople.length > 0 && rule.countShiftTypes.length > 0)
       }
-    }));
+    };
   };
 
-  const updateExportLayoutForIdChange = (
+  const applyExportLayoutForIdChange = (
+    state: SchedulingState,
     dataType: DataType,
     oldId: string,
     newId: string
-  ) => {
+  ): SchedulingState => {
     const renameId = (id: string) => id === oldId ? newId : id;
     const renameIds = (ids: string[]) => ids.map(renameId);
 
-    updateState(prevState => ({
-      ...prevState,
+    return {
+      ...state,
       export: {
-        ...prevState.export,
-        formatting: prevState.export.formatting?.map(rule => {
+        ...state.export,
+        formatting: state.export.formatting?.map(rule => {
           if (dataType === DataType.PEOPLE && 'people' in rule) {
             return { ...rule, people: renameIds(rule.people) };
           }
@@ -1138,7 +1135,7 @@ export function useSchedulingData() {
           }
           return rule;
         }),
-        extraColumns: prevState.export.extraColumns?.map(rule => {
+        extraColumns: state.export.extraColumns?.map(rule => {
           if (dataType === DataType.DATES) {
             return { ...rule, countDates: renameIds(rule.countDates) };
           }
@@ -1147,7 +1144,7 @@ export function useSchedulingData() {
           }
           return rule;
         }),
-        extraRows: prevState.export.extraRows?.map(rule => {
+        extraRows: state.export.extraRows?.map(rule => {
           if (dataType === DataType.PEOPLE) {
             return { ...rule, countPeople: renameIds(rule.countPeople) };
           }
@@ -1157,25 +1154,29 @@ export function useSchedulingData() {
           return rule;
         })
       }
-    }));
+    };
   };
 
-  const updateReferencesForIdChange = (
+  const applyReferencesForIdChange = (
+    state: SchedulingState,
     dataType: DataType,
     oldId: string,
     newId: string
-  ) => {
-    updatePeopleHistoryForIdChange(dataType, oldId, newId);
-    updatePreferencesForIdChange(dataType, oldId, newId);
-    updateExportLayoutForIdChange(dataType, oldId, newId);
+  ): SchedulingState => {
+    let nextState = applyPeopleHistoryForIdChange(state, dataType, oldId, newId);
+    nextState = applyPreferencesForIdChange(nextState, dataType, oldId, newId);
+    nextState = applyExportLayoutForIdChange(nextState, dataType, oldId, newId);
+    return nextState;
   };
 
-  const updateReferencesForIdDeletion = (
+  const applyReferencesForIdDeletion = (
+    state: SchedulingState,
     dataType: DataType,
     deletedIds: string[]
-  ) => {
-    updatePreferencesForIdDeletion(dataType, deletedIds);
-    updateExportLayoutForIdDeletion(dataType, deletedIds);
+  ): SchedulingState => {
+    let nextState = applyPreferencesForIdDeletion(state, dataType, deletedIds);
+    nextState = applyExportLayoutForIdDeletion(nextState, dataType, deletedIds);
+    return nextState;
   };
 
   const updateItem = (
@@ -1231,8 +1232,10 @@ export function useSchedulingData() {
 
     const newData = { items: updatedItems, groups: updatedGroups };
 
-    updateData(dataType, newData);
-    updateReferencesForIdChange(dataType, oldId, newId);
+    updateState(prevState => {
+      const nextState = applyDataUpdate(prevState, dataType, newData);
+      return applyReferencesForIdChange(nextState, dataType, oldId, newId);
+    });
   };
 
   const updateGroup = (
@@ -1280,8 +1283,10 @@ export function useSchedulingData() {
 
     const newData = { ...data, groups: newGroups };
 
-    updateData(dataType, newData);
-    updateReferencesForIdChange(dataType, oldId, newId);
+    updateState(prevState => {
+      const nextState = applyDataUpdate(prevState, dataType, newData);
+      return applyReferencesForIdChange(nextState, dataType, oldId, newId);
+    });
   };
 
   const deleteItem = (
@@ -1302,8 +1307,10 @@ export function useSchedulingData() {
 
     const newData = { items: newItems, groups: newGroups };
 
-    updateData(dataType, newData);
-    updateReferencesForIdDeletion(dataType, [id]);
+    updateState(prevState => {
+      const nextState = applyDataUpdate(prevState, dataType, newData);
+      return applyReferencesForIdDeletion(nextState, dataType, [id]);
+    });
   };
 
   const deleteGroup = (
@@ -1319,8 +1326,10 @@ export function useSchedulingData() {
     const newGroups = data.groups.filter(g => g.id !== id);
     const newData = { ...data, groups: newGroups };
 
-    updateData(dataType, newData);
-    updateReferencesForIdDeletion(dataType, [id]);
+    updateState(prevState => {
+      const nextState = applyDataUpdate(prevState, dataType, newData);
+      return applyReferencesForIdDeletion(nextState, dataType, [id]);
+    });
   };
 
   const removeItemFromGroup = (
