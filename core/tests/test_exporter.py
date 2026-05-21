@@ -253,6 +253,62 @@ export:
     assert cell_export_info["comments"] == {(3, 2): ["Total matched absolute weight: 12"]}
 
 
+def test_export_annotation_treats_multi_shift_type_request_shape_as_unknown():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [D, E]
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: [D, E]
+    weight: 5
+export:
+  formatting:
+    - type: cell
+      appendText: " [specific]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+          weightRange: [-.inf, .inf]
+    - type: cell
+      appendText: " [all:{shiftType}]"
+      note:
+        text: "Total matched absolute weight: {totalAbsWeight}"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [ALL]
+          weightRange: [-.inf, .inf]
+"""
+
+    styled_df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+
+    assert str(styled_df.data.iloc[2, 1]) == " [all:D, E]"
+    assert cell_export_info["comments"] == {(3, 2): ["Total matched absolute weight: 5"]}
+
+
 def test_export_annotation_rejects_reversed_weight_range():
     yaml_content = b"""
 apiVersion: alpha

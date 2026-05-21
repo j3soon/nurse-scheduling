@@ -302,6 +302,10 @@ def _render_export_template(template: str, *, pref, requested_shift_type: str, t
     )
 
 
+def _format_requested_shift_type(shift_type_targets) -> str:
+    return ", ".join(str(target) for target in shift_type_targets)
+
+
 def _build_cell_annotation_rules(ctx: Context):
     if not ctx.export or not ctx.export.formatting:
         return []
@@ -370,12 +374,14 @@ def _iter_expanded_shift_request_targets(ctx: Context, pref):
     separate preferences so overlapping groups can stack. Older saved YAML can
     still contain mixed targets in ``pref.date``. Each entry is treated as a
     distinct matrix target: either an individual date column or a date-group
-    column. Shape matching must use that original target before expanding it to
-    concrete schedule dates for the exported sheet.
+    column. Shape matching must use that original target, plus the person and
+    shift-type target shapes, before expanding to concrete schedule dates for
+    the exported sheet.
     """
     person_targets = utils.ensure_list(pref.person)
     date_targets = utils.ensure_list(pref.date)
-    if len(person_targets) != 1:
+    shift_type_targets = utils.ensure_list(pref.shiftType)
+    if len(person_targets) != 1 or len(shift_type_targets) != 1:
         for date_target in date_targets:
             yield date_target, utils.parse_dates(date_target, ctx.map_did_d, ctx.dates.range), "unknown"
         return
@@ -405,15 +411,12 @@ def _iter_matching_cell_preferences(
             continue
 
         shift_type_targets = utils.ensure_list(pref.shiftType)
-        if len(shift_type_targets) != 1:
-            raise ValueError("export formatting shift request annotations require exactly one shiftType per preference")
-
         ss = utils.parse_sids(shift_type_targets, ctx.map_sid_s)
         ps = utils.parse_pids(pref.person, ctx.map_pid_p)
         if not any(s in target_shift_types for s in ss):
             continue
 
-        requested_shift_type = shift_type_targets[0]
+        requested_shift_type = _format_requested_shift_type(shift_type_targets)
 
         for _date_target, ds, request_shape in _iter_expanded_shift_request_targets(ctx, pref):
             for d in ds:
