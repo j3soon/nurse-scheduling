@@ -189,7 +189,9 @@ def _build_custom_export_style_info(
                         rule.fontColor,
                     )
             else:
-                actual_target_shift_types = {s for s in target_shift_types if 0 <= s < ctx.n_shift_types}
+                actual_target_shift_types = {
+                    s for s in target_shift_types if s == constants.OFF_sid or 0 <= s < ctx.n_shift_types
+                }
                 for d in target_dates:
                     for p in target_people:
                         if (d, p) not in ctx.map_dp_s:
@@ -197,6 +199,8 @@ def _build_custom_export_style_info(
                         assigned_shift_types = [
                             s for s in ctx.map_dp_s[(d, p)] if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
                         ]
+                        if ctx.solver.get_value(ctx.offs[(d, p)]) == 1:
+                            assigned_shift_types.append(constants.OFF_sid)
                         if not any(s in actual_target_shift_types for s in assigned_shift_types):
                             continue
                         row_idx = n_leading_rows + p

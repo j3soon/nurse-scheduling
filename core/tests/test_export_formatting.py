@@ -176,6 +176,43 @@ export:
     assert ws["B3"].fill.fgColor.rgb == "FFFEFCE8"
 
 
+def test_export_formatting_cell_rule_applies_to_off_assignments():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+export:
+  formatting:
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [OFF]
+      backgroundColor: "#22c55e"
+"""
+
+    df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=False)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, cell_export_info)
+
+    wb = load_workbook(output)
+    ws = wb.active
+
+    assert ws["B3"].fill.fgColor.rgb == "FF22C55E"
+
+
 def test_export_formatting_rule_applies_to_history_headers():
     yaml_content = b"""
 apiVersion: alpha
