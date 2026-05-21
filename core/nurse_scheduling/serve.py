@@ -75,6 +75,7 @@ if _should_enable_sentry():
         # Enable logs to be sent to Sentry
         enable_logs=True,
     )
+    sentry_sdk.set_tag("app", "backend")
 
 # Configure logging to verbose level 1 (verbose levels defined in CLI)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

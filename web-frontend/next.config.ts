@@ -40,6 +40,7 @@ export default withSentryConfig(nextConfig, {
 
   release: {
     name: sentryRelease,
+    setCommits: { auto: true },
   },
 
   // For all available options, see:

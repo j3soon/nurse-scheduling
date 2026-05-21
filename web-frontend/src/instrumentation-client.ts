@@ -28,4 +28,6 @@ Sentry.init({
   sendDefaultPii: true,
 });
 
+Sentry.setTag("app", "frontend");
+
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
