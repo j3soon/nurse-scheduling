@@ -38,7 +38,7 @@ export default function OptimizeAndExportPage() {
   } = useSchedulingData();
 
   const [showInstructions, setShowInstructions] = useState(false);
-  const [apiEndpoint, setApiEndpoint] = useState(process.env.BACKEND_API_URL || 'http://localhost:8000');
+  const [apiEndpoint, setApiEndpoint] = useState(process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8000');
   const [prettifyArg, setPrettifyArg] = useState(true);
   const [timeoutArg, setTimeoutArg] = useState<number>(300);
   const [isLoading, setIsLoading] = useState(false);
