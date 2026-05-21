@@ -808,7 +808,7 @@ export default function ShiftRequestsPage() {
 
     try {
       const date = dateStrToDate(dateId, dateData.range);
-      const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+      const dayOfWeek = date.getUTCDay(); // 0 = Sunday, 6 = Saturday
       return dayOfWeek === 0 || dayOfWeek === 6;
     } catch {
       return false;
@@ -1219,7 +1219,7 @@ export default function ShiftRequestsPage() {
                 {dateEntry.id}
                 {dateData.items.find(item => item.id === dateEntry.id) && (
                   <span className="ml-1">
-                    {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString('en-US', { weekday: 'short' })}
+                    {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })}
                   </span>
                 )}
               </div>

@@ -64,16 +64,17 @@ function _generateDateItems(startDate: Date, endDate: Date): Item[] {
   const dates: Item[] = [];
 
   // Determine ID format based on date range scope
-  const sameYear = startDate.getFullYear() === endDate.getFullYear();
-  const sameMonth = sameYear && startDate.getMonth() === endDate.getMonth();
+  const sameYear = startDate.getUTCFullYear() === endDate.getUTCFullYear();
+  const sameMonth = sameYear && startDate.getUTCMonth() === endDate.getUTCMonth();
 
-  for (let date = new Date(startDate); date <= endDate; date.setDate(date.getDate() + 1)) {
+  for (let date = new Date(startDate); date <= endDate; date.setUTCDate(date.getUTCDate() + 1)) {
     const dateStr = date.toISOString().split('T')[0];
-    const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
     const formattedDate = date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
-      year: 'numeric'
+      year: 'numeric',
+      timeZone: 'UTC'
     });
 
     // Generate ID based on date range scope

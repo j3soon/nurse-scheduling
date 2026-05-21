@@ -155,7 +155,7 @@ function isTaiwanFreeday(date: Date): boolean {
     return special.isFreeday;
   }
 
-  return date.getDay() === 0 || date.getDay() === 6;
+  return date.getUTCDay() === 0 || date.getUTCDay() === 6;
 }
 
 function includesDate(dateRange: DateRange, dateKey: string): boolean {
