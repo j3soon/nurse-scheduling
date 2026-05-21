@@ -28,6 +28,80 @@ from .utils import parse_dates
 from .loader import load_data
 from .solver_interface import SolverStatus
 
+
+def _topo_sort_groups(groups, kind):
+    """Return group ids ordered so each group is preceded by any groups it
+    references in its `members`. Raises ValueError on cycles.
+    """
+    by_id = {g.id: g for g in groups}
+    group_ids = set(by_id)
+    resolved = []
+    state = {}  # gid -> 0 unvisited, 1 visiting, 2 done
+
+    def visit(gid, stack):
+        s = state.get(gid, 0)
+        if s == 2:
+            return
+        if s == 1:
+            cycle = " -> ".join(stack + [gid])
+            raise ValueError(
+                f"Cycle detected in {kind} group dependencies: {cycle}"
+            )
+        state[gid] = 1
+        for member in by_id[gid].members:
+            if member in group_ids and member != gid:
+                visit(member, stack + [gid])
+        state[gid] = 2
+        resolved.append(gid)
+
+    for g in groups:
+        visit(g.id, [])
+    return resolved, by_id, group_ids
+
+
+def _resolve_id_groups(groups, id_map, kind):
+    """Resolve `groups` whose members reference existing keys in `id_map` or
+    other groups in `groups`. Validates references up-front and resolves in
+    dependency order so declaration order does not matter.
+    """
+    if not groups:
+        return
+    resolved, by_id, group_ids = _topo_sort_groups(groups, kind)
+    # Validate references up-front for a clear error message.
+    for group in groups:
+        for member in group.members:
+            if member not in id_map and member not in group_ids:
+                raise ValueError(
+                    f"{kind} group '{group.id}' references unknown id '{member}'"
+                )
+    for gid in resolved:
+        group = by_id[gid]
+        id_map[gid] = sorted(set().union(*[id_map[m] for m in group.members]))
+
+
+def _resolve_date_groups(groups, id_map, date_range):
+    """Resolve date groups in dependency order. Members that are not group ids
+    and not already in `id_map` are passed through `parse_dates` as before.
+    """
+    if not groups:
+        return
+    resolved, by_id, group_ids = _topo_sort_groups(groups, "date")
+    for gid in resolved:
+        group = by_id[gid]
+        date_indices = set()
+        for member in group.members:
+            if member in id_map:
+                date_indices.update(id_map[member])
+            else:
+                try:
+                    date_indices.update(parse_dates(member, id_map, date_range))
+                except Exception as e:
+                    raise ValueError(
+                        f"date group '{gid}' references unknown member '{member}': {e}"
+                    )
+        id_map[gid] = sorted(date_indices)
+
+
 def schedule(
     file_content: bytes,
     deterministic=False,
@@ -56,20 +130,18 @@ def schedule(
     ctx.map_sid_s[ALL] = list(range(ctx.n_shift_types))
     ctx.map_sid_s[OFF] = [OFF_sid]
     # Map shift type group ID to list of shift type indices
-    for g in range(len(ctx.shiftTypes.groups)):
-        group = ctx.shiftTypes.groups[g]
-        # Flatten and deduplicate shift type indices for the group
-        ctx.map_sid_s[group.id] = sorted(set().union(*[ctx.map_sid_s[sid] for sid in group.members]))
+    # Resolved in dependency order with validation so a group can reference
+    # other groups regardless of declaration order, and unknown ids raise a
+    # clear ValueError instead of an opaque KeyError.
+    _resolve_id_groups(ctx.shiftTypes.groups, ctx.map_sid_s, kind="shift type")
     # Map person ID to person index
     for p in range(ctx.n_people):
         ctx.map_pid_p[ctx.people.items[p].id] = [p]
     # Add people ALL keyword
     ctx.map_pid_p[ALL] = list(range(ctx.n_people))
     # Map people group ID to list of person indices
-    for g in range(len(ctx.people.groups)):
-        group = ctx.people.groups[g]
-        # Flatten and deduplicate person indices for the group
-        ctx.map_pid_p[group.id] = sorted(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
+    # See note above on shift type groups.
+    _resolve_id_groups(ctx.people.groups, ctx.map_pid_p, kind="people")
 
     # Map date string (YYYY-MM-DD) to date index
     if ctx.country is not None and ctx.country != 'TW':
@@ -84,16 +156,10 @@ def schedule(
         weekday_index = MAP_WEEKDAY_TO_STR.index(keyword)
         ctx.map_did_d[keyword] = [d for d in range(ctx.n_days) if ctx.dates.items[d].weekday() == weekday_index]
     # Map date group ID to list of date indices
-    for g in range(len(ctx.dates.groups)):
-        group = ctx.dates.groups[g]
-        # Flatten and deduplicate date indices for the group
-        date_indices = set()
-        for member in group.members:
-            if member in ctx.map_did_d:
-                date_indices.update(ctx.map_did_d[member])
-            else:
-                date_indices.update(parse_dates(member, ctx.map_did_d, ctx.dates.range))
-        ctx.map_did_d[group.id] = sorted(set(date_indices))
+    # Resolved in dependency order so a date group can reference other date
+    # groups regardless of declaration order. Non-group members continue to
+    # fall back to parse_dates.
+    _resolve_date_groups(ctx.dates.groups, ctx.map_did_d, ctx.dates.range)
 
     logging.info("Initializing solver model...")
     
