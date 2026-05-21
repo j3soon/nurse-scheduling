@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// The export layout page for Tab "10. Export Layout"
+// The export layout page for Tab "9. Export Layout"
 'use client';
 
 import { useEffect, useState } from 'react';
