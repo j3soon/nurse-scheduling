@@ -1,7 +1,7 @@
 {
   "servers": {
     "Sentry": {
-      "url": "https://mcp.sentry.dev/mcp/none-32n/javascript-nextjs",
+      "url": "https://mcp.sentry.dev/mcp/j3soon/nurse-scheduling",
       "type": "http"
     }
   }
