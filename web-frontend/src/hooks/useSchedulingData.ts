@@ -401,12 +401,12 @@ export function generateExportLayoutConfig(
         dates: [SATURDAY],
         rightBorderColor: '#9ca3af'
       },
-      {
+      ...(hasFreedayGroup ? [{
         description: '',
-        type: 'column',
+        type: 'column' as const,
         dates: [FREEDAY],
         backgroundColor: '#dcfce7'
-      }
+      }] : [])
     ],
     extraColumns: [
       {
