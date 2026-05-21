@@ -1171,17 +1171,29 @@ export function useSchedulingData() {
     convertIdsToString(newState.people.groups);
     convertIdsToString(newState.shiftTypes.items);
     convertIdsToString(newState.shiftTypes.groups);
-    const convertArrayIdsToString = (arr: (number | string)[], isDate: boolean = false) => {
-      if (!Array.isArray(arr)) return;
+    // Coerce a preference field into an array of strings. Handles the case
+    // where persisted/loaded data has a single scalar value (string/number)
+    // instead of the array shape declared by the TypeScript types, which
+    // would otherwise cause runtime errors like `.join is not a function`
+    // in renderers that trust the declared array type.
+    const normalizePrefArray = <T extends Record<string, unknown>>(
+      pref: T,
+      key: keyof T,
+      isDate: boolean = false,
+    ) => {
+      const value = pref[key];
+      if (value === undefined || value === null) return;
+      const arr = Array.isArray(value) ? value : [value];
       for (let i = 0; i < arr.length; i++) {
         if (typeof arr[i] === 'number') {
           if (isDate) {
-            arr[i] = arr[i].toString().padStart(2, '0');
+            arr[i] = (arr[i] as number).toString().padStart(2, '0');
           } else {
-            arr[i] = arr[i].toString();
+            arr[i] = (arr[i] as number).toString();
           }
         }
       }
+      (pref as Record<string, unknown>)[key as string] = arr;
     };
     newState.preferences.forEach(pref => {
       // Compatibility: Add missing date field for those not required by the backend solver.
@@ -1191,37 +1203,19 @@ export function useSchedulingData() {
         (pref as ShiftTypeSuccessionsPreference).date = [ALL];
       }
 
-      // Type-safe property access with proper type guards
-      if ('shiftType' in pref && pref.shiftType) {
-        convertArrayIdsToString(pref.shiftType);
-      }
-      if ('qualifiedPeople' in pref && pref.qualifiedPeople) {
-        convertArrayIdsToString(pref.qualifiedPeople);
-      }
-      if ('date' in pref && pref.date) {
-        convertArrayIdsToString(pref.date, true);
-      }
-      if ('person' in pref && pref.person) {
-        convertArrayIdsToString(pref.person);
-      }
-      if ('pattern' in pref && pref.pattern) {
-        convertArrayIdsToString(pref.pattern);
-      }
-      if ('countDates' in pref && pref.countDates) {
-        convertArrayIdsToString(pref.countDates, true);
-      }
-      if ('countShiftTypes' in pref && pref.countShiftTypes) {
-        convertArrayIdsToString(pref.countShiftTypes);
-      }
-      if ('people1' in pref && pref.people1) {
-        convertArrayIdsToString(pref.people1);
-      }
-      if ('people2' in pref && pref.people2) {
-        convertArrayIdsToString(pref.people2);
-      }
-      if ('shiftTypes' in pref && pref.shiftTypes) {
-        convertArrayIdsToString(pref.shiftTypes);
-      }
+      // Normalize all array-typed preference fields so renderers can rely on
+      // them being real arrays (matches the declared `string[]` types).
+      const p = pref as unknown as Record<string, unknown>;
+      if ('shiftType' in p) normalizePrefArray(p, 'shiftType');
+      if ('qualifiedPeople' in p) normalizePrefArray(p, 'qualifiedPeople');
+      if ('date' in p) normalizePrefArray(p, 'date', true);
+      if ('person' in p) normalizePrefArray(p, 'person');
+      if ('pattern' in p) normalizePrefArray(p, 'pattern');
+      if ('countDates' in p) normalizePrefArray(p, 'countDates', true);
+      if ('countShiftTypes' in p) normalizePrefArray(p, 'countShiftTypes');
+      if ('people1' in p) normalizePrefArray(p, 'people1');
+      if ('people2' in p) normalizePrefArray(p, 'people2');
+      if ('shiftTypes' in p) normalizePrefArray(p, 'shiftTypes');
     });
 
     // Add to history and update state

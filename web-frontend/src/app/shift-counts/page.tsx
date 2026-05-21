@@ -520,7 +520,7 @@ export default function ShiftCountsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
               <div>
                 <span className="font-medium">People:</span>{' '}
-                {shiftCount.person.join(', ')}
+                {(Array.isArray(shiftCount.person) ? shiftCount.person : [shiftCount.person]).join(', ')}
               </div>
               <div>
                 <span className="font-medium">Expression:</span> <code className="px-1.5 py-0.5 bg-gray-100 rounded text-sm font-mono">{shiftCount.expression.replace('T', shiftCount.target.toString())}</code>
@@ -530,11 +530,11 @@ export default function ShiftCountsPage() {
               </div>
               <div className="md:col-span-2 lg:col-span-3">
                 <span className="font-medium">Count Dates:</span>{' '}
-                {shiftCount.countDates.join(', ')}
+                {(Array.isArray(shiftCount.countDates) ? shiftCount.countDates : [shiftCount.countDates]).join(', ')}
               </div>
               <div className="md:col-span-2 lg:col-span-3">
                 <span className="font-medium">Count Shift Types:</span>{' '}
-                {shiftCount.countShiftTypes.join(', ')}
+                {(Array.isArray(shiftCount.countShiftTypes) ? shiftCount.countShiftTypes : [shiftCount.countShiftTypes]).join(', ')}
               </div>
             </div>
           </>
