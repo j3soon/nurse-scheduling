@@ -19,6 +19,7 @@
 
 import logging
 import os
+import subprocess
 import sys
 from datetime import datetime
 from io import BytesIO
@@ -30,6 +31,17 @@ from pydantic import ValidationError
 from . import scheduler, exporter
 
 
+def _get_app_version() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "describe", "--tags", "--always", "--dirty"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "v0.0.0-unknown"
+
+
 def _should_enable_sentry() -> bool:
     if os.getenv("DISABLE_SENTRY"):
         return False
@@ -39,11 +51,15 @@ def _should_enable_sentry() -> bool:
     return True
 
 
+app_version = _get_app_version()
+
+
 if _should_enable_sentry():
     import sentry_sdk
 
     sentry_sdk.init(
         dsn="https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
+        release=os.getenv("SENTRY_RELEASE", f"nurse-scheduling@{app_version}"),
         # Add data like request headers and IP for users, if applicable;
         # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
         send_default_pii=True,
@@ -94,7 +110,11 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"message": title, "version": version}
+    return {
+        "message": title,
+        "version": version,
+        "appVersion": app_version,
+    }
 
 
 # TODO: Check args

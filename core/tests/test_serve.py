@@ -52,8 +52,11 @@ class TestServerHealth:
         json_data = response.json()
         assert "message" in json_data
         assert "version" in json_data
+        assert "appVersion" in json_data
         assert json_data["message"] == "Nurse Scheduling API"
         assert json_data["version"] == "alpha"
+        assert isinstance(json_data["appVersion"], str)
+        assert json_data["appVersion"]
 
 
 class TestValidRequests:
