@@ -68,6 +68,7 @@ export:
       people: [n2]
       backgroundColor: "#06b6d4"
       bottomBorderColor: "#ef4444"
+      fontColor: "#dc2626"
     - type: cell
       people: [ALL]
       dates: [ALL]
@@ -105,6 +106,9 @@ export:
     assert ws["A4"].fill.fgColor.rgb == "FF06B6D4"
     assert ws["B4"].fill.fgColor.rgb == "FF06B6D4"
     assert ws["D4"].fill.fgColor.rgb == "FF06B6D4"
+    assert ws["A4"].font.color.rgb == "FFDC2626"
+    assert ws["B4"].font.color.rgb == "FFDC2626"
+    assert ws["D4"].font.color.rgb == "FFDC2626"
 
     # Date-header target is date 2025-01-01 (Excel column B), first row only.
     assert ws["B1"].fill.fgColor.rgb == "FFA855F7"

@@ -70,6 +70,7 @@ def test_export_to_excel_applies_style_and_font_contrast():
                 "backgroundColor": "#f5f5f5",
                 "bottomBorderColor": "#0ea5e9",
                 "rightBorderColor": "#9ca3af",
+                "fontColor": "#dc2626",
             },
         },
     }
@@ -83,7 +84,7 @@ def test_export_to_excel_applies_style_and_font_contrast():
     assert ws["A1"].font.color.rgb == "FFFFFFFF"
     assert ws["B1"].fill.fgColor.rgb == "FFF5F5F5"
     assert ws["B1"].font.color is not None
-    assert ws["B1"].font.color.rgb == "FF000000"
+    assert ws["B1"].font.color.rgb == "FFDC2626"
     assert ws["B1"].border.bottom.color is not None
     assert ws["B1"].border.bottom.color.rgb == "FF0EA5E9"
     assert ws["B1"].border.bottom.style == "medium"
@@ -313,6 +314,7 @@ def test_export_formatting_rejects_non_cell_when_and_annotations():
             backgroundColor="#22c55e",
             bottomBorderColor=None,
             rightBorderColor=None,
+            fontColor=None,
             when=SimpleNamespace(),
             appendText=None,
             note=None,
@@ -335,6 +337,7 @@ def test_export_formatting_rejects_non_cell_when_and_annotations():
             backgroundColor="#22c55e",
             bottomBorderColor=None,
             rightBorderColor=None,
+            fontColor=None,
             when=None,
             appendText=" [X]",
             note=None,
@@ -588,6 +591,7 @@ def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
                     backgroundColor="#22c55e",
                     bottomBorderColor=None,
                     rightBorderColor=None,
+                    fontColor=None,
                 )
             ]
         ),

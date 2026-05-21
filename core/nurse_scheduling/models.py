@@ -108,6 +108,7 @@ class BaseExportFormattingRule(BaseModel):
     backgroundColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     bottomBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     rightBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+    fontColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
 
 
 class ExportPersonFormattingRule(BaseExportFormattingRule):

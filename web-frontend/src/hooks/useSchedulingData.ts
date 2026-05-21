@@ -317,6 +317,7 @@ function createDefaultState(): SchedulingState {
           description: 'Mark unsatisfied shift requests',
           type: 'cell',
           appendText: ' [X]',
+          fontColor: '#c00000',
           note: {
             text: 'Weight of unmet single-style request: {totalAbsWeight}'
           },

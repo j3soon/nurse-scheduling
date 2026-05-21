@@ -33,7 +33,7 @@ import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
-type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor';
+type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor' | 'fontColor';
 type DraftArrayField = 'people' | 'dates' | 'shiftTypes' | 'countShiftTypes' | 'countDates' | 'countPeople' | 'requestShape';
 
 interface DraftRule {
@@ -46,6 +46,7 @@ interface DraftRule {
   backgroundColor: string;
   bottomBorderColor: string;
   rightBorderColor: string;
+  fontColor: string;
   header: string;
   countShiftTypes: string[];
   countDates: string[];
@@ -95,6 +96,7 @@ const createEmptyDraft = (): DraftRule => ({
   backgroundColor: '',
   bottomBorderColor: '',
   rightBorderColor: '',
+  fontColor: '',
   header: '',
   countShiftTypes: [],
   countDates: [],
@@ -203,6 +205,7 @@ export default function ExportFormattingPage() {
       backgroundColor: rule.backgroundColor || '',
       bottomBorderColor: rule.bottomBorderColor || '',
       rightBorderColor: rule.rightBorderColor || '',
+      fontColor: rule.fontColor || '',
       requestShape: 'when' in rule && rule.when?.preference.requestShape ? rule.when.preference.requestShape : [],
       satisfied: 'when' in rule && rule.when?.preference.satisfied !== undefined
         ? String(rule.when.preference.satisfied) as 'true' | 'false'
@@ -318,6 +321,7 @@ export default function ExportFormattingPage() {
     const backgroundColor = draft.backgroundColor.trim().toLowerCase();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
+    const fontColor = draft.fontColor.trim().toLowerCase();
     const appendText = draft.appendText;
     const noteText = draft.noteText.trim();
     const hasCondition = draft.requestShape.length > 0 || draft.satisfied !== '' || Boolean(String(draft.weightRangeMin).trim() || String(draft.weightRangeMax).trim());
@@ -345,7 +349,12 @@ export default function ExportFormattingPage() {
       setError(rightBorderColorError);
       return false;
     }
-    if (!backgroundColor && !bottomBorderColor && !rightBorderColor && !appendText && !noteText) {
+    const fontColorError = validateColor(fontColor, 'Font Color');
+    if (fontColorError) {
+      setError(fontColorError);
+      return false;
+    }
+    if (!backgroundColor && !bottomBorderColor && !rightBorderColor && !fontColor && !appendText && !noteText) {
       setError('At least one style or annotation field is required');
       return false;
     }
@@ -355,6 +364,7 @@ export default function ExportFormattingPage() {
       ...(backgroundColor ? { backgroundColor } : {}),
       ...(bottomBorderColor ? { bottomBorderColor } : {}),
       ...(rightBorderColor ? { rightBorderColor } : {}),
+      ...(fontColor ? { fontColor } : {}),
     };
     let newRule: ExportFormatting;
     if (draft.type === 'cell') {
@@ -883,6 +893,9 @@ export default function ExportFormattingPage() {
                     <div className="min-w-[260px]">
                       {renderColorField('rightBorderColor', 'Right Border Color')}
                     </div>
+                    <div className="min-w-[260px]">
+                      {renderColorField('fontColor', 'Font Color')}
+                    </div>
                   </>
                 ) : (
                   <div className="min-w-[280px]">
@@ -1010,6 +1023,11 @@ export default function ExportFormattingPage() {
                 {rule.rightBorderColor && (
                   <div>
                     <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
+                  </div>
+                )}
+                {rule.fontColor && (
+                  <div>
+                    <span className="font-medium">Font:</span> {rule.fontColor}
                   </div>
                 )}
                 {'appendText' in rule && rule.appendText && (

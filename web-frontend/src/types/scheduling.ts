@@ -54,6 +54,7 @@ interface BaseExportFormatting {
   backgroundColor?: string;
   bottomBorderColor?: string;
   rightBorderColor?: string;
+  fontColor?: string;
 }
 
 export interface ExportPersonFormatting extends BaseExportFormatting {

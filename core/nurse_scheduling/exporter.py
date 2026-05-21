@@ -60,6 +60,7 @@ def _build_custom_export_style_info(
         background_color: str | None,
         bottom_border_color: str | None,
         right_border_color: str | None,
+        font_color: str | None,
     ):
         if row_idx < 0 or row_idx >= n_rows or col_idx < 0 or col_idx >= n_cols:
             return
@@ -72,6 +73,8 @@ def _build_custom_export_style_info(
             style_map[key]["bottomBorderColor"] = bottom_border_color
         if right_border_color:
             style_map[key]["rightBorderColor"] = right_border_color
+        if font_color:
+            style_map[key]["fontColor"] = font_color
 
     for rule in ctx.export.formatting:
         _validate_export_formatting_rule_usage(rule)
@@ -110,12 +113,20 @@ def _build_custom_export_style_info(
                         rule.backgroundColor,
                         rule.bottomBorderColor,
                         rule.rightBorderColor,
+                        rule.fontColor,
                     )
 
         elif rule.type == "people header":
             for p in target_people:
                 row_idx = n_leading_rows + p
-                set_style(row_idx, 0, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
+                set_style(
+                    row_idx,
+                    0,
+                    rule.backgroundColor,
+                    rule.bottomBorderColor,
+                    rule.rightBorderColor,
+                    rule.fontColor,
+                )
 
         elif rule.type == "column":
             score_row_idx = n_leading_rows + len(ctx.people.items)
@@ -132,16 +143,31 @@ def _build_custom_export_style_info(
                         rule.backgroundColor,
                         rule.bottomBorderColor,
                         rule.rightBorderColor,
+                        rule.fontColor,
                     )
 
         elif rule.type == "date header":
             for d in target_dates:
                 col_idx = n_leading_cols + n_history_cols + d
-                set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
+                set_style(
+                    0,
+                    col_idx,
+                    rule.backgroundColor,
+                    rule.bottomBorderColor,
+                    rule.rightBorderColor,
+                    rule.fontColor,
+                )
 
         elif rule.type == "history header":
             for col_idx in range(n_leading_cols, n_leading_cols + n_history_cols):
-                set_style(0, col_idx, rule.backgroundColor, rule.bottomBorderColor, rule.rightBorderColor)
+                set_style(
+                    0,
+                    col_idx,
+                    rule.backgroundColor,
+                    rule.bottomBorderColor,
+                    rule.rightBorderColor,
+                    rule.fontColor,
+                )
 
         elif rule.type == "cell":
             if rule.when:
@@ -160,6 +186,7 @@ def _build_custom_export_style_info(
                         rule.backgroundColor,
                         rule.bottomBorderColor,
                         rule.rightBorderColor,
+                        rule.fontColor,
                     )
             else:
                 actual_target_shift_types = {s for s in target_shift_types if 0 <= s < ctx.n_shift_types}
@@ -180,6 +207,7 @@ def _build_custom_export_style_info(
                             rule.backgroundColor,
                             rule.bottomBorderColor,
                             rule.rightBorderColor,
+                            rule.fontColor,
                         )
 
         elif rule.type == "history":
@@ -192,6 +220,7 @@ def _build_custom_export_style_info(
                         rule.backgroundColor,
                         rule.bottomBorderColor,
                         rule.rightBorderColor,
+                        rule.fontColor,
                     )
 
     return style_map
@@ -584,17 +613,6 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 for col_idx in range(len(df.columns)):
                     style_df.iloc[row_idx, col_idx] = "text-align: center"
 
-            # Apply dark red font color to cells containing violation markers "[X]"
-            for row_idx in range(len(df)):
-                for col_idx in range(len(df.columns)):
-                    cell_value = df.iloc[row_idx, col_idx]
-                    if cell_value and isinstance(cell_value, str) and "[X]" in cell_value:
-                        existing_style = style_df.iloc[row_idx, col_idx]
-                        if existing_style:
-                            style_df.iloc[row_idx, col_idx] = f"{existing_style}; color: #C00000"
-                        else:
-                            style_df.iloc[row_idx, col_idx] = "color: #C00000"
-
             # Add borders to separate regions
             # Horizontal borders
             header_row_end = n_leading_rows - 1  # End of header region
@@ -687,7 +705,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
         else:
             comment_info = cell_export_info
 
-    # Add notes/comments to cells with [X] markers if comment_info is provided.
+    # Add configured notes/comments to cells if comment_info is provided.
     if comment_info:
         from openpyxl.comments import Comment
 
@@ -718,6 +736,12 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                 cell.fill = PatternFill(fill_type="solid", start_color=argb, end_color=argb)
                 updated_font = copy(cell.font)
                 updated_font.color = _get_font_color_for_background(background_color)
+                cell.font = updated_font
+
+            font_color = styles.get("fontColor")
+            if font_color:
+                updated_font = copy(cell.font)
+                updated_font.color = f"FF{font_color[1:].upper()}"
                 cell.font = updated_font
 
             bottom_border_color = styles.get("bottomBorderColor")
