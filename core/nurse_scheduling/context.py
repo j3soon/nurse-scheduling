@@ -26,19 +26,24 @@ from .models import (
 from .report import Report
 from .solver_interface import SolverInterface
 
+
 class Context(NurseSchedulingData):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     # Computed fields
     n_days: int = None
     n_shift_types: int = None
     n_people: int = None
-    
+
     # Mapping fields
-    map_sid_s: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps shift type ID to list of shift type indices
-    map_pid_p: Dict[str | int, List[int]] = Field(default_factory=dict)  # Maps person/group ID to list of person indices
+    map_sid_s: Dict[str | int, List[int]] = Field(
+        default_factory=dict
+    )  # Maps shift type ID to list of shift type indices
+    map_pid_p: Dict[str | int, List[int]] = Field(
+        default_factory=dict
+    )  # Maps person/group ID to list of person indices
     map_did_d: Dict[str, List[int]] = Field(default_factory=dict)  # Maps date/group ID to list of date indices
-    
+
     # Fields used by the solver (abstracted)
     solver: Optional[SolverInterface] = None
     model_vars: Dict[str, Any] = Field(default_factory=dict)
@@ -52,13 +57,19 @@ class Context(NurseSchedulingData):
     # Results and reporting
     reports: List[Report] = Field(default_factory=list)
     solver_status: str | None = None
-    
+
     # Lookup maps
     map_ds_p: Dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, shift_type) to set of people
     map_dp_s: Dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, person) to set of shift types
-    map_d_sp: Dict[int, set[tuple[int, int]]] = Field(default_factory=dict)  # Maps day to set of (shift_type, person) pairs
-    map_s_dp: Dict[int, set[tuple[int, int]]] = Field(default_factory=dict)  # Maps shift_type to set of (day, person) pairs
-    map_p_ds: Dict[int, set[tuple[int, int]]] = Field(default_factory=dict)  # Maps person to set of (day, shift_type) pairs
-    
+    map_d_sp: Dict[int, set[tuple[int, int]]] = Field(
+        default_factory=dict
+    )  # Maps day to set of (shift_type, person) pairs
+    map_s_dp: Dict[int, set[tuple[int, int]]] = Field(
+        default_factory=dict
+    )  # Maps shift_type to set of (day, person) pairs
+    map_p_ds: Dict[int, set[tuple[int, int]]] = Field(
+        default_factory=dict
+    )  # Maps person to set of (day, shift_type) pairs
+
     # Optimization objective (expression type varies by solver)
     objective: Any = 0

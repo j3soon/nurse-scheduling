@@ -22,14 +22,15 @@ from ruamel.yaml import YAML
 from typing import Dict, Any
 from .models import NurseSchedulingData
 
-yaml = YAML(typ='safe')
+yaml = YAML(typ="safe")
+
 
 def _load_yaml(content: bytes) -> Dict[str, Any]:
     """Load YAML from bytes content.
-    
+
     Args:
         content: File content as bytes
-    
+
     Returns:
         Dict[str, Any]: The loaded YAML data
     """
@@ -39,12 +40,13 @@ def _load_yaml(content: bytes) -> Dict[str, Any]:
     # `Off` into boolean value `False`.
     return yaml.load(stream)
 
+
 def load_data(content: bytes) -> NurseSchedulingData:
     """Load nurse scheduling data from YAML bytes content.
-    
+
     Args:
         content: File content as bytes
-    
+
     Returns:
         NurseSchedulingData: The validated scheduling data
     """

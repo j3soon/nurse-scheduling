@@ -22,15 +22,17 @@ import math
 import re
 from .models import DateRange
 
+
 def ensure_list(val):
     if val is None:
         return []
     return [val] if not isinstance(val, list) else val
 
+
 def add_objective(ctx, weight, expression):
     """
     Add an objective term with the given weight.
-    
+
     Args:
         ctx: Context object
         weight: Weight for the objective term (can be inf/-inf for hard constraints)
@@ -43,20 +45,26 @@ def add_objective(ctx, weight, expression):
     else:
         ctx.objective += weight * expression
 
+
 def _parse_single_date(date: str, date_range: DateRange) -> datetime.date:
     startdate, enddate = date_range.startDate, date_range.endDate
-    error_details = f'- Start date: {startdate}\n- End date: {enddate}\n'
-    if match := re.match(r'^\d{1,2}$', date):
+    error_details = f"- Start date: {startdate}\n- End date: {enddate}\n"
+    if match := re.match(r"^\d{1,2}$", date):
         if startdate.year != enddate.year or startdate.month != enddate.month:
-            raise ValueError(f'Pure day format (D) is not allowed when start date and end date are not in the same month.\n{error_details}')
+            raise ValueError(
+                f"Pure day format (D) is not allowed when start date and end date are not in the same month.\n{error_details}"
+            )
         return datetime.date(startdate.year, startdate.month, int(match.group(0)))
-    elif match := re.match(r'^(\d{2})-(\d{2})$', date):
+    elif match := re.match(r"^(\d{2})-(\d{2})$", date):
         if startdate.year != enddate.year:
-            raise ValueError(f'Pure month-day format (MM-DD) is not allowed when start date and end date are not in the same year.\n{error_details}')
+            raise ValueError(
+                f"Pure month-day format (MM-DD) is not allowed when start date and end date are not in the same year.\n{error_details}"
+            )
         return datetime.date(startdate.year, *map(int, match.groups()))
-    elif match := re.match(r'^(\d{4})-(\d{2})-(\d{2})$', date):
+    elif match := re.match(r"^(\d{4})-(\d{2})-(\d{2})$", date):
         return datetime.date(*map(int, match.groups()))
     raise ValueError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
+
 
 def parse_dates(dates, map_did_d, date_range):
     startdate, enddate = date_range.startDate, date_range.endDate
@@ -65,16 +73,12 @@ def parse_dates(dates, map_did_d, date_range):
 
     for date_str in dates:
         if date_str in map_did_d:
-            parsed_dates += [
-                startdate + datetime.timedelta(days=i)
-                for i in map_did_d[date_str]
-            ]
-        elif match := re.match(r'^([\d-]+)~([\d-]+)$', date_str):
+            parsed_dates += [startdate + datetime.timedelta(days=i) for i in map_did_d[date_str]]
+        elif match := re.match(r"^([\d-]+)~([\d-]+)$", date_str):
             range_start = _parse_single_date(match.group(1), date_range)
             range_end = _parse_single_date(match.group(2), date_range)
             parsed_dates += [
-                range_start + datetime.timedelta(days=i)
-                for i in range((range_end - range_start).days + 1)
+                range_start + datetime.timedelta(days=i) for i in range((range_end - range_start).days + 1)
             ]
         else:
             parsed_dates.append(_parse_single_date(date_str, date_range))
@@ -87,6 +91,7 @@ def parse_dates(dates, map_did_d, date_range):
 
     return sorted(set(result))
 
+
 def parse_sids(sids, map_sid_s):
     sids = ensure_list(sids)
     result = []
@@ -96,6 +101,7 @@ def parse_sids(sids, map_sid_s):
         result.extend(map_sid_s[sid])
     return sorted(set(result))
 
+
 def parse_pids(pids, map_pid_p):
     pids = ensure_list(pids)
     result = []
@@ -104,6 +110,7 @@ def parse_pids(pids, map_pid_p):
             raise ValueError(f"Unknown person ID: {pid}")
         result.extend(map_pid_p[pid])
     return sorted(set(result))
+
 
 def is_ss_equivalent_to_all(ss, n_shift_types):
     return set(ss) == set(range(n_shift_types))
