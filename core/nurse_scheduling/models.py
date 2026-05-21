@@ -176,6 +176,7 @@ ExportFormattingRule = Annotated[
 class ExportExtraColumn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     description: str | None = None
+    rightBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     type: Annotated[str, Field(pattern=r"^count$")]
     header: str
     countShiftTypes: List[int | str]
@@ -185,6 +186,7 @@ class ExportExtraColumn(BaseModel):
 class ExportExtraRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
     description: str | None = None
+    bottomBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     type: Annotated[str, Field(pattern=r"^count$")]
     header: str
     countShiftTypes: List[int | str]

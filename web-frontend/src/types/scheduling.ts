@@ -89,6 +89,7 @@ export type ExportFormatting =
 
 export interface ExportExtraColumn {
   description?: string;
+  rightBorderColor?: string;
   type: 'count';
   header: string;
   countShiftTypes: string[];
@@ -97,6 +98,7 @@ export interface ExportExtraColumn {
 
 export interface ExportExtraRow {
   description?: string;
+  bottomBorderColor?: string;
   type: 'count';
   header: string;
   countShiftTypes: string[];

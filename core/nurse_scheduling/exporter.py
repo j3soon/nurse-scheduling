@@ -665,6 +665,16 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         style_info = _build_custom_export_style_info(
             ctx, len(df.index), len(df.columns), n_leading_rows, n_leading_cols, n_history_cols
         )
+        for rule_idx, rule in enumerate(extra_column_rules):
+            if rule.rightBorderColor:
+                col_idx = extra_col_start + rule_idx
+                for row_idx in range(len(df.index)):
+                    style_info.setdefault((row_idx + 1, col_idx + 1), {})["rightBorderColor"] = rule.rightBorderColor
+        for rule_idx, rule in enumerate(extra_row_rules):
+            if rule.bottomBorderColor:
+                row_idx = extra_row_start + rule_idx
+                for col_idx in range(len(df.columns)):
+                    style_info.setdefault((row_idx + 1, col_idx + 1), {})["bottomBorderColor"] = rule.bottomBorderColor
         return styled_df, {"comments": cell_comment_info, "styles": style_info}
 
     style_info = _build_custom_export_style_info(

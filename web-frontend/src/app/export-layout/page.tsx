@@ -22,8 +22,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { FiAlertCircle, FiHelpCircle } from 'react-icons/fi';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { FiAlertCircle, FiHelpCircle, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
+import { generateExportLayoutConfig, useSchedulingData } from '@/hooks/useSchedulingData';
 import { ExportExtraColumn, ExportExtraRow, ExportFormatting, ExportFormattingType, ExportRequestShape } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
@@ -150,6 +150,40 @@ export default function ExportFormattingPage() {
   const extraColumns = exportData.extraColumns || [];
   const extraRows = exportData.extraRows || [];
 
+  const clearAllExportLayoutEntries = () => {
+    if (confirm('Are you sure you want to clear ALL export layout entries?')) {
+      updateExportConfig({
+        formatting: [],
+        extraColumns: [],
+        extraRows: []
+      });
+    }
+  };
+
+  const clearAllAndRegenerateExportLayoutEntries = () => {
+    if (confirm('Are you sure you want to clear ALL export layout entries and regenerate them?')) {
+      updateExportConfig(generateExportLayoutConfig(shiftTypeData, dateData.groups));
+    }
+  };
+
+  const clearStyleRules = () => {
+    if (confirm('Are you sure you want to clear all export style rules?')) {
+      updateExportFormatting([]);
+    }
+  };
+
+  const clearExtraColumns = () => {
+    if (confirm('Are you sure you want to clear all export extra columns?')) {
+      updateExportExtraColumns([]);
+    }
+  };
+
+  const clearExtraRows = () => {
+    if (confirm('Are you sure you want to clear all export extra rows?')) {
+      updateExportExtraRows([]);
+    }
+  };
+
   const peopleOptions = [
     ...peopleData.items.map(person => ({ id: person.id, description: person.description })),
     ...peopleData.groups.map(group => ({ id: group.id, description: group.description })),
@@ -231,6 +265,7 @@ export default function ExportFormattingPage() {
       header: rule.header,
       countShiftTypes: rule.countShiftTypes,
       countDates: rule.countDates,
+      rightBorderColor: rule.rightBorderColor || '',
     });
     setEditingTarget({ kind: 'extra column', index });
     setIsFormVisible(true);
@@ -248,6 +283,7 @@ export default function ExportFormattingPage() {
       header: rule.header,
       countShiftTypes: rule.countShiftTypes,
       countPeople: rule.countPeople,
+      bottomBorderColor: rule.bottomBorderColor || '',
     });
     setEditingTarget({ kind: 'extra row', index });
     setIsFormVisible(true);
@@ -431,8 +467,14 @@ export default function ExportFormattingPage() {
   const saveExtraColumn = () => {
     const header = draft.header.trim();
     const description = draft.description.trim();
+    const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
     if (!header) {
       setError('Column header is required');
+      return false;
+    }
+    const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
+    if (rightBorderColorError) {
+      setError(rightBorderColorError);
       return false;
     }
     if (draft.countShiftTypes.length === 0) {
@@ -460,7 +502,8 @@ export default function ExportFormattingPage() {
       type: 'count',
       header,
       countShiftTypes: draft.countShiftTypes,
-      countDates: draft.countDates
+      countDates: draft.countDates,
+      ...(rightBorderColor ? { rightBorderColor } : {})
     };
 
     const nextFormatting = [...formattingRules];
@@ -488,8 +531,14 @@ export default function ExportFormattingPage() {
   const saveExtraRow = () => {
     const header = draft.header.trim();
     const description = draft.description.trim();
+    const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
     if (!header) {
       setError('Row header is required');
+      return false;
+    }
+    const bottomBorderColorError = validateColor(bottomBorderColor, 'Bottom Border Color');
+    if (bottomBorderColorError) {
+      setError(bottomBorderColorError);
       return false;
     }
     if (draft.countShiftTypes.length === 0) {
@@ -517,7 +566,8 @@ export default function ExportFormattingPage() {
       type: 'count',
       header,
       countShiftTypes: draft.countShiftTypes,
-      countPeople: draft.countPeople
+      countPeople: draft.countPeople,
+      ...(bottomBorderColor ? { bottomBorderColor } : {})
     };
 
     const nextFormatting = [...formattingRules];
@@ -819,6 +869,61 @@ export default function ExportFormattingPage() {
         </div>
       )}
 
+      <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-800">Clear Data</h3>
+          <p className="text-sm text-gray-600 mt-1">Remove or regenerate export layout entries with targeted operations</p>
+        </div>
+        <div className="px-4 py-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <button
+              onClick={clearAllExportLayoutEntries}
+              className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors flex items-center gap-2"
+              title="Clear all export layout entries completely"
+            >
+              <FiTrash2 className="h-4 w-4" />
+              Clear All
+            </button>
+
+            <button
+              onClick={clearAllAndRegenerateExportLayoutEntries}
+              className="px-4 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors flex items-center gap-2"
+              title="Clear all export layout entries and regenerate count entries from current shift types"
+            >
+              <FiRefreshCw className="h-4 w-4" />
+              Clear All and Regenerate
+            </button>
+
+            <button
+              onClick={clearStyleRules}
+              className="px-4 py-2 text-sm font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-md transition-colors flex items-center gap-2"
+              title="Clear all export style rules"
+            >
+              <FiTrash2 className="h-4 w-4" />
+              Clear Style Rules
+            </button>
+
+            <button
+              onClick={clearExtraColumns}
+              className="px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors flex items-center gap-2"
+              title="Clear all export extra columns"
+            >
+              <FiTrash2 className="h-4 w-4" />
+              Clear Extra Columns
+            </button>
+
+            <button
+              onClick={clearExtraRows}
+              className="px-4 py-2 text-sm font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-md transition-colors flex items-center gap-2"
+              title="Clear all export extra rows"
+            >
+              <FiTrash2 className="h-4 w-4" />
+              Clear Extra Rows
+            </button>
+          </div>
+        </div>
+      </div>
+
       {isFormVisible && (
         <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
           <div className="px-6 py-4">
@@ -898,18 +1003,25 @@ export default function ExportFormattingPage() {
                     </div>
                   </>
                 ) : (
-                  <div className="min-w-[280px]">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      {draft.kind === 'extra column' ? 'Column Header' : 'Row Header'}
-                    </label>
-                    <input
-                      type="text"
-                      value={draft.header}
-                      onChange={(e) => setDraft(prev => ({ ...prev, header: e.target.value }))}
-                      placeholder={draft.kind === 'extra column' ? 'OFF (Weekend)' : 'Day Count'}
-                      className="px-3 py-2 border border-gray-300 rounded-md w-full"
-                    />
-                  </div>
+                  <>
+                    <div className="min-w-[280px]">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {draft.kind === 'extra column' ? 'Column Header' : 'Row Header'}
+                      </label>
+                      <input
+                        type="text"
+                        value={draft.header}
+                        onChange={(e) => setDraft(prev => ({ ...prev, header: e.target.value }))}
+                        placeholder={draft.kind === 'extra column' ? 'OFF (Weekend)' : 'Day Count'}
+                        className="px-3 py-2 border border-gray-300 rounded-md w-full"
+                      />
+                    </div>
+                    <div className="min-w-[260px]">
+                      {draft.kind === 'extra column'
+                        ? renderColorField('rightBorderColor', 'Right Border Color')
+                        : renderColorField('bottomBorderColor', 'Bottom Border Color')}
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -1098,6 +1210,11 @@ export default function ExportFormattingPage() {
                 <div>
                   <span className="font-medium">Count Dates:</span> {rule.countDates.join(', ')}
                 </div>
+                {rule.rightBorderColor && (
+                  <div>
+                    <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -1128,6 +1245,11 @@ export default function ExportFormattingPage() {
                 <div>
                   <span className="font-medium">Count People:</span> {rule.countPeople.join(', ')}
                 </div>
+                {rule.bottomBorderColor && (
+                  <div>
+                    <span className="font-medium">Bottom Border:</span> {rule.bottomBorderColor}
+                  </div>
+                )}
               </div>
             </>
           )}
