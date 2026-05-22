@@ -21,7 +21,7 @@
 import { useEffect, useRef } from 'react';
 
 interface InlineEditProps {
-  value: string;
+  value: string | number | null | undefined;
   isEditing: boolean;
   onSave: (value: string) => void;
   onCancel: () => void;
@@ -30,7 +30,7 @@ interface InlineEditProps {
   className?: string;
   editClassName?: string;
   error?: string;
-  displayValue?: string; // For cases where display differs from edit value
+  displayValue?: string | number | null; // For cases where display differs from edit value
   emptyText?: string; // Text to show when value is empty
   emptyClassName?: string;
 }
@@ -59,7 +59,7 @@ export function InlineEdit({
   }, [isEditing]);
 
   const handleSave = () => {
-    onSave((inputRef.current?.value ?? value).trim());
+    onSave(String(inputRef.current?.value ?? value ?? '').trim());
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -75,10 +75,10 @@ export function InlineEdit({
   if (isEditing) {
     return (
       <input
-        key={value}
+        key={String(value ?? '')}
         ref={inputRef}
         type="text"
-        defaultValue={value}
+        defaultValue={String(value ?? '')}
         onKeyDown={handleKeyDown}
         onBlur={handleSave}
         placeholder={placeholder}
@@ -87,7 +87,7 @@ export function InlineEdit({
     );
   }
 
-  const valueToDisplay = displayValue || value;
+  const valueToDisplay = String(displayValue ?? value ?? '');
   const hasValue = valueToDisplay.trim().length > 0;
   const isReadOnly = !onDoubleClick;
 
