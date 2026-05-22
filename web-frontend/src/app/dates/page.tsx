@@ -75,6 +75,10 @@ export default function DatePage() {
     const isWeekend = weekday === 0 || weekday === 6;
     return isWeekend ? !isFreeday : isFreeday;
   };
+  const isTaiwanHolidayImportSupported = useMemo(
+    () => isTaiwanHolidayRangeSupported(draft),
+    [draft]
+  );
 
   // Helper function to check if date range represents a full month
   const isFullMonth = (startDate?: Date, endDate?: Date): boolean => {
@@ -101,18 +105,14 @@ export default function DatePage() {
     if (!isFullMonth(draft.startDate, draft.endDate)) {
       newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
     }
-    if (includesUnimportedTaiwanLaborDay(draft)) {
+    if (shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported && includesUnimportedTaiwanLaborDay(draft)) {
       newWarnings.laborDay = 'Taiwan holiday import does not include Labor Day on May 1. If needed, please manually adjust it after update.';
     }
 
     return newWarnings;
-  }, [draft, mode]);
+  }, [draft, isTaiwanHolidayImportSupported, mode, shouldImportTaiwanHolidays]);
 
   const taiwanHolidaySupportLabel = getTaiwanHolidaySupportLabel();
-  const isTaiwanHolidayImportSupported = useMemo(
-    () => isTaiwanHolidayRangeSupported(draft),
-    [draft]
-  );
   const includedTaiwanHolidays = useMemo(
     () => getTaiwanHolidayEntriesInRange(draft).filter(
       (entry) => shouldShowHolidayTypeBadge(entry.date, entry.isFreeday)
