@@ -412,7 +412,7 @@ export default function ExportFormattingPage() {
         people: draft.people,
         dates: draft.dates,
         shiftTypes: draft.shiftTypes,
-        ...((appendText || noteText || hasCondition) ? {
+        ...(hasCondition ? {
           when: {
             preference: {
               types: ['shift request'],
