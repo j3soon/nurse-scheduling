@@ -293,8 +293,12 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_WORKDAY_GROUP_ID)).toBeUndefined();
-      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_FREEDAY_GROUP_ID)).toBeUndefined();
+      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_WORKDAY_GROUP_ID)).toEqual(
+        expect.objectContaining({ members: [] }),
+      );
+      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_FREEDAY_GROUP_ID)).toEqual(
+        expect.objectContaining({ members: [] }),
+      );
     });
   });
 
@@ -972,7 +976,7 @@ describe('useSchedulingData', () => {
       result.current.updateExportFormatting([
         {
           type: 'row',
-          targets: ['Person 1'],
+          people: ['Person 1'],
           backgroundColor: '#ffffff',
         },
       ]);
@@ -998,7 +1002,7 @@ describe('useSchedulingData', () => {
       result.current.updateExportFormatting([
         {
           type: 'row',
-          targets: ['Person 1'],
+          people: ['Person 1'],
           backgroundColor: '#ffffff',
         },
       ]);
@@ -1021,7 +1025,7 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       expect(result.current.descriptionData).toBe('yaml without export formatting');
-      expect(result.current.exportData.formatting).toEqual([]);
+      expect(result.current.exportData).toBeUndefined();
     });
   });
 
