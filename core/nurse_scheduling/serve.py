@@ -19,6 +19,7 @@
 
 import logging
 import os
+import subprocess
 import sys
 from datetime import datetime
 from io import BytesIO
@@ -26,7 +27,19 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from typing import Optional
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 from . import scheduler, exporter
+
+
+def _get_app_version() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "describe", "--tags", "--always", "--dirty"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "v0.0.0-unknown"
 
 
 def _should_enable_sentry() -> bool:
@@ -38,11 +51,15 @@ def _should_enable_sentry() -> bool:
     return True
 
 
+app_version = _get_app_version()
+
+
 if _should_enable_sentry():
     import sentry_sdk
 
     sentry_sdk.init(
         dsn="https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
+        release=os.getenv("SENTRY_RELEASE", f"nurse-scheduling@{app_version}"),
         # Add data like request headers and IP for users, if applicable;
         # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
         send_default_pii=True,
@@ -58,6 +75,7 @@ if _should_enable_sentry():
         # Enable logs to be sent to Sentry
         enable_logs=True,
     )
+    sentry_sdk.set_tag("app", "backend")
 
 # Configure logging to verbose level 1 (verbose levels defined in CLI)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -93,7 +111,11 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"message": title, "version": version}
+    return {
+        "message": title,
+        "version": version,
+        "appVersion": app_version,
+    }
 
 
 # TODO: Check args
@@ -147,7 +169,14 @@ async def optimize_and_export_xlsx(
             timeout=timeout,
             solver=solver,
         )
-
+    except NotImplementedError as e:
+        # User input error: unsupported apiVersion or other unsupported scenario feature.
+        logging.warning(f"Unsupported request: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Unsupported API version: {str(e)}")
+    except ValidationError as e:
+        # User-supplied scheduling data failed schema validation -> HTTP 400
+        logging.error(f"Invalid scheduling data: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid scheduling data: {str(e)}")
     except Exception as e:
         # TODO(security): Returning the error message to the client may be a security risk
         logging.error(f"Error during optimization: {str(e)}")

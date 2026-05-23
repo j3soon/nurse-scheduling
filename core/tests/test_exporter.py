@@ -45,18 +45,12 @@ def test_export_to_csv_writes_utf8_bom():
     assert payload.decode("utf-8-sig") == "A,B\nC,D\n"
 
 
-def test_export_to_excel_supports_legacy_comment_info_shape():
+def test_export_to_excel_rejects_legacy_comment_info_shape():
     df = pd.DataFrame([["x"]])
     output = BytesIO()
 
-    # Legacy shape: {(row, col): [weights]}
-    exporter.export_to_excel(df, output, {(1, 1): [3, 7]})
-
-    wb = load_workbook(output)
-    ws = wb.active
-    assert ws["A1"].comment is not None
-    assert "Weights of unmet single-style requests: 10" in ws["A1"].comment.text
-    assert "3, 7" in ws["A1"].comment.text
+    with pytest.raises(ValueError, match="cell_export_info must be a dictionary"):
+        exporter.export_to_excel(df, output, {(1, 1): [3, 7]})
 
 
 def test_export_to_excel_applies_style_and_font_contrast():
@@ -66,7 +60,12 @@ def test_export_to_excel_applies_style_and_font_contrast():
         "comments": {},
         "styles": {
             (1, 1): {"backgroundColor": "#111111"},
-            (1, 2): {"backgroundColor": "#f5f5f5", "bottomBorderColor": "#0ea5e9"},
+            (1, 2): {
+                "backgroundColor": "#f5f5f5",
+                "bottomBorderColor": "#0ea5e9",
+                "rightBorderColor": "#9ca3af",
+                "fontColor": "#dc2626",
+            },
         },
     }
 
@@ -79,9 +78,13 @@ def test_export_to_excel_applies_style_and_font_contrast():
     assert ws["A1"].font.color.rgb == "FFFFFFFF"
     assert ws["B1"].fill.fgColor.rgb == "FFF5F5F5"
     assert ws["B1"].font.color is not None
-    assert ws["B1"].font.color.rgb == "FF000000"
+    assert ws["B1"].font.color.rgb == "FFDC2626"
     assert ws["B1"].border.bottom.color is not None
     assert ws["B1"].border.bottom.color.rgb == "FF0EA5E9"
+    assert ws["B1"].border.bottom.style == "medium"
+    assert ws["B1"].border.right.color is not None
+    assert ws["B1"].border.right.color.rgb == "FF9CA3AF"
+    assert ws["B1"].border.right.style == "medium"
 
 
 def test_prettify_generates_comment_info_for_unmet_single_style_requests():
@@ -111,6 +114,21 @@ preferences:
     date: ["2025-01-01"]
     shiftType: D
     weight: -10
+export:
+  formatting:
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL, OFF]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+          satisfied: false
+          weightRange: [-.inf, .inf]
+      appendText: " [X]"
+      note:
+        text: "Weight of unmet single-style request: {totalAbsWeight}"
 """
 
     df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
@@ -129,6 +147,314 @@ preferences:
     comment = ws.cell(row=row, column=col).comment
     assert comment is not None
     assert "Weight of unmet single-style request: 10" in comment.text
+
+
+def test_export_annotations_expand_compacted_shift_request_dates_before_matching_shape():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+  groups:
+    - id: FREEDAY
+      members: [2025-01-02]
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["01", FREEDAY]
+    shiftType: D
+    weight: -5
+export:
+  formatting:
+    - type: cell
+      appendText: " [I]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+    - type: cell
+      appendText: " [G]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-group]
+"""
+
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    assert str(df.iloc[2, 1]) == " [I]"
+    assert str(df.iloc[2, 2]) == " [G]"
+
+
+def test_export_annotation_total_abs_weight_sums_matched_requests_for_cell():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [D, E]
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: D
+    weight: -5
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: E
+    weight: -7
+export:
+  formatting:
+    - type: cell
+      note:
+        text: "Total matched absolute weight: {totalAbsWeight}"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+          satisfied: true
+"""
+
+    _df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+
+    assert cell_export_info["comments"] == {(3, 2): ["Total matched absolute weight: 12"]}
+
+
+def test_export_annotation_treats_multi_shift_type_request_shape_as_unknown():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [D, E]
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: [D, E]
+    weight: 5
+export:
+  formatting:
+    - type: cell
+      appendText: " [specific]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+          weightRange: [-.inf, .inf]
+    - type: cell
+      appendText: " [all:{shiftType}]"
+      note:
+        text: "Total matched absolute weight: {totalAbsWeight}"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [ALL]
+          weightRange: [-.inf, .inf]
+"""
+
+    styled_df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+
+    assert str(styled_df.data.iloc[2, 1]) == " [all:D, E]"
+    assert cell_export_info["comments"] == {(3, 2): ["Total matched absolute weight: 5"]}
+
+
+def test_export_annotation_rejects_reversed_weight_range():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: D
+    weight: -5
+export:
+  formatting:
+    - type: cell
+      appendText: " [X]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          weightRange: [10, -10]
+"""
+
+    with pytest.raises(ValueError, match="weightRange minimum"):
+        schedule(yaml_content, prettify=True)
+
+
+def test_export_formatting_rejects_non_cell_when_and_annotations():
+    base_ctx = SimpleNamespace(
+        export=SimpleNamespace(formatting=[]),
+        map_pid_p={"n1": [0]},
+        map_did_d={},
+        map_sid_s={},
+    )
+
+    base_ctx.export.formatting = [
+        SimpleNamespace(
+            type="row",
+            people=["n1"],
+            backgroundColor="#22c55e",
+            bottomBorderColor=None,
+            rightBorderColor=None,
+            fontColor=None,
+            when=SimpleNamespace(),
+            appendText=None,
+            note=None,
+        )
+    ]
+    with pytest.raises(ValueError, match="'when' is only supported"):
+        exporter._build_custom_export_style_info(
+            base_ctx,
+            n_rows=1,
+            n_cols=1,
+            n_leading_rows=0,
+            n_leading_cols=0,
+            n_history_cols=0,
+        )
+
+    base_ctx.export.formatting = [
+        SimpleNamespace(
+            type="row",
+            people=["n1"],
+            backgroundColor="#22c55e",
+            bottomBorderColor=None,
+            rightBorderColor=None,
+            fontColor=None,
+            when=None,
+            appendText=" [X]",
+            note=None,
+        )
+    ]
+    with pytest.raises(ValueError, match="annotations are only supported"):
+        exporter._build_custom_export_style_info(
+            base_ctx,
+            n_rows=1,
+            n_cols=1,
+            n_leading_rows=0,
+            n_leading_cols=0,
+            n_history_cols=0,
+        )
+
+
+def test_export_annotation_unknown_request_shape_matches_all_but_not_specific_shape():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+    - id: n2
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+  - type: shift request
+    person: [n1, n2]
+    date: ["2025-01-01"]
+    shiftType: D
+    weight: -5
+export:
+  formatting:
+    - type: cell
+      appendText: " [specific]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+    - type: cell
+      appendText: " [all]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [ALL]
+"""
+
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    assert str(df.iloc[2, 1]) == " [all]"
+    assert str(df.iloc[3, 1]) == " [all]"
 
 
 def test_invalid_row_target_in_export_formatting_raises():
@@ -155,7 +481,7 @@ preferences:
 export:
   formatting:
     - type: row
-      targets: [unknown_person]
+      people: [unknown_person]
       backgroundColor: "#22c55e"
 """
 
@@ -187,7 +513,9 @@ preferences:
 export:
   formatting:
     - type: cell
-      targets: [UNKNOWN_SHIFT]
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [UNKNOWN_SHIFT]
       backgroundColor: "#ef4444"
 """
 
@@ -256,6 +584,32 @@ preferences:
     date: ["2025-01-01"]
     shiftType: [OFF]
     weight: -5
+export:
+  formatting:
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL, OFF]
+      when:
+        preference:
+          types: ["shift request"]
+          requestShape: [person-item-to-date-item]
+          weightRange: [-.inf, .inf]
+      appendText: " [{shiftType}]"
+  extraColumns:
+    - type: count
+      header: OFF (WORKDAY)
+      countShiftTypes: [OFF]
+      countDates: [WORKDAY]
+    - type: count
+      header: OFF (FREEDAY)
+      countShiftTypes: [OFF]
+      countDates: [FREEDAY]
+  extraRows:
+    - type: count
+      header: OFF Count
+      countShiftTypes: [OFF]
+      countPeople: [ALL]
 """
     styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
     df = styled_df.data
@@ -273,6 +627,8 @@ preferences:
     headers = list(df.iloc[1, :])
     assert "OFF (WORKDAY)" in headers
     assert "OFF (FREEDAY)" in headers
+    assert df.iloc[7, 0] == "OFF Count"
+    assert df.iloc[7, 2] == 2
 
 
 def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
@@ -281,9 +637,11 @@ def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
             formatting=[
                 SimpleNamespace(
                     type="row",
-                    targets=["n1"],
+                    people=["n1"],
                     backgroundColor="#22c55e",
                     bottomBorderColor=None,
+                    rightBorderColor=None,
+                    fontColor=None,
                 )
             ]
         ),
@@ -347,7 +705,7 @@ def test_dataframe_generation_supports_multiple_assigned_shift_types():
     assert info["styles"] == {}
 
 
-def test_prettify_styling_executes_freeday_and_weekend_paths():
+def test_prettify_styling_does_not_add_default_freeday_or_weekend_colors():
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -379,6 +737,8 @@ preferences:
 """
     styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
     html = styled_df.to_html()
-    # Triggered style computation should include both freeday and weekend highlights.
-    assert "#dcfce7" in html
-    assert "#dbeafe" in html
+    assert "text-align: center" in html
+    assert "background-color: #fefce8" not in html
+    assert "#dcfce7" not in html
+    assert "#dbeafe" not in html
+    assert "#9ca3af" not in html

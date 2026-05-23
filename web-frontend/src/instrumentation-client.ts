@@ -32,4 +32,6 @@ if (!isSentryDisabled) {
   });
 }
 
+Sentry.setTag("app", "frontend");
+
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

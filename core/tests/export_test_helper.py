@@ -153,7 +153,7 @@ def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
 
         # If test should fail, preserve parity with schedule regression behavior.
         if os.path.isfile(f"{test_dir}/{base_filepath}.txt"):
-            with open(f"{test_dir}/{base_filepath}.txt", "r") as f:
+            with open(f"{test_dir}/{base_filepath}.txt", "r", encoding="utf-8") as f:
                 expected_err = f.read()
             with pytest.raises((ValidationError, ValueError)) as exc_info:
                 nurse_scheduling.schedule(file_content, solver=solver, prettify=prettify)

@@ -33,8 +33,8 @@ const TABS = [
   { name: '6. Shift Type Successions', path: '/shift-type-successions' },
   { name: '7. Shift Counts', path: '/shift-counts' },
   { name: '8. Shift Affinities', path: '/shift-affinities' },
-  { name: '9. Save and Load', path: '/save-and-load' },
-  { name: '10. Export Formatting', path: '/export-formatting' },
+  { name: '9. Export Layout', path: '/export-layout' },
+  { name: '10. Save and Load', path: '/save-and-load' },
   { name: '11. Optimize and Export', path: '/optimize-and-export' },
 ];
 

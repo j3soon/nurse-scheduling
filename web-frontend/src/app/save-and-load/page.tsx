@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// The Save and Load page for Tab "9. Save and Load"
+// The Save and Load page for Tab "10. Save and Load"
 'use client';
 
 import { useState, useRef } from 'react';
@@ -67,7 +67,7 @@ export default function SaveAndLoadPage() {
     people: peopleData,
     shiftTypes: shiftTypeData,
     preferences,
-    export: exportData
+    ...(exportData ? { export: exportData } : {})
   });
 
   // Convert current state to YAML with custom flow style for leaf arrays

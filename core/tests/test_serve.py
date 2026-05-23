@@ -23,6 +23,7 @@
 
 import os
 import sys
+import types
 
 # Add the project root to the Python path so imports will work when running directly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -51,8 +52,11 @@ class TestServerHealth:
         json_data = response.json()
         assert "message" in json_data
         assert "version" in json_data
+        assert "appVersion" in json_data
         assert json_data["message"] == "Nurse Scheduling API"
         assert json_data["version"] == "alpha"
+        assert isinstance(json_data["appVersion"], str)
+        assert json_data["appVersion"]
 
 
 class TestValidRequests:
@@ -258,7 +262,7 @@ class TestServeInternals:
     def test_should_enable_sentry_disabled_by_env(self, monkeypatch):
         monkeypatch.setenv("DISABLE_SENTRY", "1")
         monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-        monkeypatch.setattr("nurse_scheduling.serve.sys.modules", {})
+        monkeypatch.setattr("nurse_scheduling.serve.sys", types.SimpleNamespace(modules={}))
 
         assert app is not None
         from nurse_scheduling.serve import _should_enable_sentry
@@ -276,7 +280,7 @@ class TestServeInternals:
     def test_should_enable_sentry_true_when_not_disabled(self, monkeypatch):
         monkeypatch.delenv("DISABLE_SENTRY", raising=False)
         monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-        monkeypatch.setattr("nurse_scheduling.serve.sys.modules", {})
+        monkeypatch.setattr("nurse_scheduling.serve.sys", types.SimpleNamespace(modules={}))
 
         from nurse_scheduling.serve import _should_enable_sentry
 

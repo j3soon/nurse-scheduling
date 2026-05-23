@@ -30,8 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from nurse_scheduling import cli
 
 
-def test_cli_missing_input_file_exits_with_error(monkeypatch, capsys):
-    missing_file = "/tmp/does-not-exist.yaml"
+def test_cli_missing_input_file_exits_with_error(tmp_path, monkeypatch, capsys):
+    missing_file = str(tmp_path / "does-not-exist.yaml")
     monkeypatch.setattr(sys, "argv", ["nurse-scheduling", missing_file])
 
     with pytest.raises(SystemExit) as exc_info:

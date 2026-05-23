@@ -61,23 +61,27 @@ preferences:
     weight: 100
 export:
   formatting:
-    - type: row header
-      targets: [n2]
+    - type: people header
+      people: [n2]
       backgroundColor: "#f97316"
     - type: row
-      targets: [n2]
+      people: [n2]
       backgroundColor: "#06b6d4"
       bottomBorderColor: "#ef4444"
+      fontColor: "#dc2626"
     - type: cell
-      targets: [D]
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [D]
       backgroundColor: "#1f2937"
-    - type: column header
-      targets: ["2025-01-01"]
+    - type: date header
+      dates: ["2025-01-01"]
       backgroundColor: "#a855f7"
     - type: column
-      targets: ["2025-01-02"]
+      dates: ["2025-01-02"]
       backgroundColor: "#84cc16"
       bottomBorderColor: "#3b82f6"
+      rightBorderColor: "#9ca3af"
 """
 
     df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=False)
@@ -98,12 +102,15 @@ export:
     wb = load_workbook(output)
     ws = wb.active
 
-    # Row target is n2 (Excel row 4). Row rule is after row-header rule, so it wins.
+    # Row target is n2 (Excel row 4). Row rule is after people-header rule, so it wins.
     assert ws["A4"].fill.fgColor.rgb == "FF06B6D4"
     assert ws["B4"].fill.fgColor.rgb == "FF06B6D4"
     assert ws["D4"].fill.fgColor.rgb == "FF06B6D4"
+    assert ws["A4"].font.color.rgb == "FFDC2626"
+    assert ws["B4"].font.color.rgb == "FFDC2626"
+    assert ws["D4"].font.color.rgb == "FFDC2626"
 
-    # Column-header target is date 2025-01-01 (Excel column B), first row only.
+    # Date-header target is date 2025-01-01 (Excel column B), first row only.
     assert ws["B1"].fill.fgColor.rgb == "FFA855F7"
 
     # Column target is 2025-01-02 (Excel column C), and should style the entire column.
@@ -126,3 +133,118 @@ export:
     # C4 bottom border from column rule overriding row rule.
     assert ws["C4"].border.bottom.color is not None
     assert ws["C4"].border.bottom.color.rgb == "FF3B82F6"
+    assert ws["C4"].border.right.color is not None
+    assert ws["C4"].border.right.color.rgb == "FF9CA3AF"
+
+
+def test_export_formatting_rule_applies_to_history_cells():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+      history: [D]
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+export:
+  formatting:
+    - type: history
+      people: [ALL]
+      backgroundColor: "#fefce8"
+"""
+
+    df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, cell_export_info)
+
+    wb = load_workbook(output)
+    ws = wb.active
+
+    # With prettify enabled, the first history column is between the name column and dates.
+    assert ws["B1"].value == "H-1"
+    assert ws["B1"].fill.fgColor.rgb == "00000000"
+    assert ws["B3"].fill.fgColor.rgb == "FFFEFCE8"
+
+
+def test_export_formatting_cell_rule_applies_to_off_assignments():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+export:
+  formatting:
+    - type: cell
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [OFF]
+      backgroundColor: "#22c55e"
+"""
+
+    df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=False)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, cell_export_info)
+
+    wb = load_workbook(output)
+    ws = wb.active
+
+    assert ws["B3"].fill.fgColor.rgb == "FF22C55E"
+
+
+def test_export_formatting_rule_applies_to_history_headers():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+      history: [D]
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+export:
+  formatting:
+    - type: history header
+      backgroundColor: "#fefce8"
+"""
+
+    df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, cell_export_info)
+
+    wb = load_workbook(output)
+    ws = wb.active
+
+    assert ws["B1"].value == "H-1"
+    assert ws["B1"].fill.fgColor.rgb == "FFFEFCE8"
+    assert ws["B3"].fill.fgColor.rgb == "00000000"

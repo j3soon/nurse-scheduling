@@ -14,11 +14,14 @@ function getGitVersion(): string {
   }
 }
 
+const appVersion = getGitVersion();
+const sentryRelease = process.env.SENTRY_RELEASE || `nurse-scheduling@${appVersion}`;
+
 const nextConfig: NextConfig = {
   /* config options here */
   output: 'export',
   env: {
-    NEXT_PUBLIC_APP_VERSION: getGitVersion(),
+    NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_GA_MEASUREMENT_ID: 'G-XGDWE4SWF7',
   },
 };
@@ -27,12 +30,17 @@ export default withSentryConfig(nextConfig, {
   // For all available options, see:
   // https://www.npmjs.com/package/@sentry/webpack-plugin#options
 
-  org: "none-32n",
+  org: "j3soon",
 
-  project: "javascript-nextjs",
+  project: "nurse-scheduling",
 
   // Only print logs for uploading source maps in CI
   silent: !process.env.CI,
+
+  release: {
+    name: sentryRelease,
+    setCommits: { auto: true },
+  },
 
   // For all available options, see:
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/

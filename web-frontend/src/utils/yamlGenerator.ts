@@ -19,6 +19,7 @@
 
 // Utility functions for YAML generation with custom formatting
 import yaml from 'js-yaml';
+import { CURRENT_APP_VERSION } from '@/utils/version';
 
 // Type definitions for CustomDump class
 export interface CustomDumpOptions {
@@ -106,6 +107,10 @@ export function generateYamlFromState(
     ...options
   };
 
-  return new CustomDump(stateObject, defaultOptions).represent().trim() + '\n';
-}
+  const exportObject = {
+    ...(stateObject as object),
+    appVersion: CURRENT_APP_VERSION
+  };
 
+  return new CustomDump(exportObject, defaultOptions).represent().trim() + '\n';
+}

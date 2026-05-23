@@ -20,7 +20,7 @@
 import datetime
 import math
 import re
-from typing import List
+from typing import List, Literal
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from typing_extensions import Annotated, Self
@@ -102,17 +102,102 @@ class DateContainer(BaseModel):
     groups: List[DateGroup] = Field(default_factory=list)
 
 
-class ExportFormattingRule(BaseModel):
+class BaseExportFormattingRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    type: Annotated[str, Field(pattern=r"^(cell|row|column|row header|column header)$")]
-    targets: List[int | str]
+    description: str | None = None
     backgroundColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     bottomBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+    rightBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+    fontColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+
+
+class ExportPersonFormattingRule(BaseExportFormattingRule):
+    type: Literal["row", "people header", "history"]
+    people: List[int | str]
+
+
+class ExportDateFormattingRule(BaseExportFormattingRule):
+    type: Literal["column", "date header"]
+    dates: List[int | str]
+
+
+class ExportHistoryHeaderFormattingRule(BaseExportFormattingRule):
+    type: Literal["history header"]
+
+
+class ExportPreferenceCondition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    types: List[Literal["shift request"]]
+    requestShape: (
+        List[
+            Literal[
+                "person-item-to-date-item",
+                "people-group-to-date-item",
+                "person-item-to-date-group",
+                "people-group-to-date-group",
+                "ALL",
+            ]
+        ]
+        | None
+    ) = None
+    satisfied: bool | None = None
+    weightRange: List[int | float] | None = None
+
+
+class ExportFormattingCondition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    preference: ExportPreferenceCondition
+
+
+class ExportFormattingNote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str
+
+
+class ExportCellFormattingRule(BaseExportFormattingRule):
+    type: Literal["cell"]
+    appendText: str | None = None
+    note: ExportFormattingNote | None = None
+    people: List[int | str]
+    dates: List[int | str]
+    shiftTypes: List[int | str]
+    when: ExportFormattingCondition | None = None
+
+
+ExportFormattingRule = Annotated[
+    ExportPersonFormattingRule
+    | ExportDateFormattingRule
+    | ExportHistoryHeaderFormattingRule
+    | ExportCellFormattingRule,
+    Field(discriminator="type"),
+]
+
+
+class ExportExtraColumn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    description: str | None = None
+    rightBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+    type: Annotated[str, Field(pattern=r"^count$")]
+    header: str
+    countShiftTypes: List[int | str]
+    countDates: List[int | str]
+
+
+class ExportExtraRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    description: str | None = None
+    bottomBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
+    type: Annotated[str, Field(pattern=r"^count$")]
+    header: str
+    countShiftTypes: List[int | str]
+    countPeople: List[int | str]
 
 
 class ExportConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     formatting: List[ExportFormattingRule] = Field(default_factory=list)
+    extraColumns: List[ExportExtraColumn] = Field(default_factory=list)
+    extraRows: List[ExportExtraRow] = Field(default_factory=list)
 
 
 class BasePreference(BaseModel):

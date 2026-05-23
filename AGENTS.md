@@ -36,6 +36,7 @@
 - Run affected tests locally before opening a PR, and run Ruff on touched core files.
 
 ## Agent Workflow Requirement
+- When changing frontend rename/delete behavior for people, dates, or shift types, keep all references in sync, including preferences and export layout entries.
 - After agent code modifications in `core/`, run Ruff before finishing:
   - `cd core && ruff check nurse_scheduling tests`
   - `cd core && ruff format nurse_scheduling tests`

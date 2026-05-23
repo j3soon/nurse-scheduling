@@ -33,14 +33,14 @@ export function dateStrToDate(dateStr: string, dateRange: DateRange): Date {
   }
   // If id is MM-DD, infer year from dateRange.startDate
   if (/^\d{2}-\d{2}$/.test(dateStr)) {
-    const yyyy = dateRange.startDate!.getFullYear().toString().padStart(4, '0');
+    const yyyy = dateRange.startDate!.getUTCFullYear().toString().padStart(4, '0');
     const [mm, dd] = dateStr.split('-');
     return new Date(`${yyyy}-${mm}-${dd}`);
   }
   // If id is DD, infer month and year from dateRange.startDate
   if (/^\d{2}$/.test(dateStr)) {
-    const yyyy = dateRange.startDate!.getFullYear().toString().padStart(4, '0');
-    const mm = (dateRange.startDate!.getMonth() + 1).toString().padStart(2, '0');
+    const yyyy = dateRange.startDate!.getUTCFullYear().toString().padStart(4, '0');
+    const mm = (dateRange.startDate!.getUTCMonth() + 1).toString().padStart(2, '0');
     const dd = dateStr;
     return new Date(`${yyyy}-${mm}-${dd}`);
   }
