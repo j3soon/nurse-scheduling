@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from collections.abc import Mapping
 from io import BytesIO
 from ruamel.yaml import YAML
 from typing import Dict, Any
@@ -49,4 +50,9 @@ def load_data(content: bytes) -> NurseSchedulingData:
         NurseSchedulingData: The validated scheduling data
     """
     data = _load_yaml(content)
+    if not isinstance(data, Mapping):
+        raise ValueError(
+            f"Invalid YAML content: expected a mapping at the top level, "
+            f"got {type(data).__name__} instead."
+        )
     return NurseSchedulingData(**data)

@@ -160,6 +160,13 @@ async def optimize_and_export_xlsx(
             status_code=400,
             detail=f"Invalid scheduling data: {str(e)}"
         )
+    except ValueError as e:
+        # Malformed input (e.g. YAML that doesn't parse to a mapping) -> HTTP 400
+        logging.warning(f"Invalid input: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid input: {str(e)}"
+        )
     except Exception as e:
         # TODO(security): Returning the error message to the client may be a security risk
         logging.error(f"Error during optimization: {str(e)}")
