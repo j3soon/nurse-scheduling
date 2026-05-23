@@ -18,6 +18,99 @@
  */
 
 // The types for the scheduling data.
+export type ExportFormattingType =
+  | 'cell'
+  | 'row'
+  | 'column'
+  | 'people header'
+  | 'date header'
+  | 'history'
+  | 'history header';
+
+export type ExportRequestShape =
+  | 'person-item-to-date-item'
+  | 'people-group-to-date-item'
+  | 'person-item-to-date-group'
+  | 'people-group-to-date-group'
+  | 'ALL';
+
+export interface ExportPreferenceCondition {
+  types: ['shift request'];
+  requestShape?: ExportRequestShape[];
+  satisfied?: boolean;
+  weightRange?: number[];
+}
+
+export interface ExportFormattingCondition {
+  preference: ExportPreferenceCondition;
+}
+
+export interface ExportFormattingNote {
+  text: string;
+}
+
+interface BaseExportFormatting {
+  description?: string;
+  backgroundColor?: string;
+  bottomBorderColor?: string;
+  rightBorderColor?: string;
+  fontColor?: string;
+}
+
+export interface ExportPersonFormatting extends BaseExportFormatting {
+  type: 'row' | 'people header' | 'history';
+  people: string[];
+}
+
+export interface ExportDateFormatting extends BaseExportFormatting {
+  type: 'column' | 'date header';
+  dates: string[];
+}
+
+export interface ExportHistoryHeaderFormatting extends BaseExportFormatting {
+  type: 'history header';
+}
+
+export interface ExportCellFormatting extends BaseExportFormatting {
+  type: 'cell';
+  appendText?: string;
+  note?: ExportFormattingNote;
+  people: string[];
+  dates: string[];
+  shiftTypes: string[];
+  when?: ExportFormattingCondition;
+}
+
+export type ExportFormatting =
+  | ExportPersonFormatting
+  | ExportDateFormatting
+  | ExportHistoryHeaderFormatting
+  | ExportCellFormatting;
+
+export interface ExportExtraColumn {
+  description?: string;
+  rightBorderColor?: string;
+  type: 'count';
+  header: string;
+  countShiftTypes: string[];
+  countDates: string[];
+}
+
+export interface ExportExtraRow {
+  description?: string;
+  bottomBorderColor?: string;
+  type: 'count';
+  header: string;
+  countShiftTypes: string[];
+  countPeople: string[];
+}
+
+export interface ExportConfig {
+  formatting?: ExportFormatting[];
+  extraColumns?: ExportExtraColumn[];
+  extraRows?: ExportExtraRow[];
+}
+
 export interface Item {
   id: string;
   description: string;

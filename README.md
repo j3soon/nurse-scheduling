@@ -143,8 +143,24 @@ pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
 # run the full core test suite
 pytest --log-cli-level=INFO
-# run basic Python lint checks for core
+# run Python lint checks for core
 ruff check nurse_scheduling tests
+# auto-fix lint issues when possible
+ruff check --fix nurse_scheduling tests
+# apply consistent formatting
+ruff format nurse_scheduling tests
+```
+
+Generate coverage report:
+
+```sh
+cd core
+# terminal summary
+pytest --cov=nurse_scheduling
+# HTML report for local inspection
+pytest --cov=nurse_scheduling --cov-report=html
+# open report at:
+# htmlcov/index.html
 ```
 
 For more debugging output when a test fails:

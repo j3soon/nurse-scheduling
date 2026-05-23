@@ -27,6 +27,12 @@ import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import ToggleButton from '@/components/ToggleButton';
 import { Mode } from '@/constants/modes';
 import { DateRange, DataType } from '@/types/scheduling';
+import {
+  getTaiwanHolidaySupportLabel,
+  getTaiwanHolidayEntriesInRange,
+  includesUnimportedTaiwanLaborDay,
+  isTaiwanHolidayRangeSupported,
+} from '@/utils/taiwanHolidays';
 
 export default function DatePage() {
   const {
@@ -50,6 +56,7 @@ export default function DatePage() {
     startDate: undefined,
     endDate: undefined,
   });
+  const [shouldImportTaiwanHolidays, setShouldImportTaiwanHolidays] = useState(true);
   // Error messages for start date and end date
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   // Helper functions to convert between Date and string for form inputs
@@ -60,19 +67,31 @@ export default function DatePage() {
   const stringToDate = (dateStr: string): Date | undefined => {
     return dateStr ? new Date(dateStr) : undefined;
   };
+  const formatHolidayWeekday = (dateStr: string): string => {
+    return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+  };
+  const shouldShowHolidayTypeBadge = (dateStr: string, isFreeday: boolean): boolean => {
+    const weekday = new Date(dateStr).getUTCDay();
+    const isWeekend = weekday === 0 || weekday === 6;
+    return isWeekend ? !isFreeday : isFreeday;
+  };
+  const isTaiwanHolidayImportSupported = useMemo(
+    () => isTaiwanHolidayRangeSupported(draft),
+    [draft]
+  );
 
   // Helper function to check if date range represents a full month
   const isFullMonth = (startDate?: Date, endDate?: Date): boolean => {
     if (!startDate || !endDate) return false;
 
     // Check if start date is the first day of the month
-    const isFirstDay = startDate.getDate() === 1;
+    const isFirstDay = startDate.getUTCDate() === 1;
 
     // Check if end date is the last day of the same month/year
-    const lastDayOfMonth = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
-    const isLastDay = endDate.getDate() === lastDayOfMonth.getDate() &&
-                      endDate.getMonth() === startDate.getMonth() &&
-                      endDate.getFullYear() === startDate.getFullYear();
+    const lastDayOfMonth = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 1, 0));
+    const isLastDay = endDate.getUTCDate() === lastDayOfMonth.getUTCDate() &&
+                      endDate.getUTCMonth() === startDate.getUTCMonth() &&
+                      endDate.getUTCFullYear() === startDate.getUTCFullYear();
 
     return isFirstDay && isLastDay;
   };
@@ -86,9 +105,20 @@ export default function DatePage() {
     if (!isFullMonth(draft.startDate, draft.endDate)) {
       newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
     }
+    if (shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported && includesUnimportedTaiwanLaborDay(draft)) {
+      newWarnings.laborDay = 'Taiwan holiday import does not include Labor Day on May 1. If needed, please manually adjust it after update.';
+    }
 
     return newWarnings;
-  }, [draft.endDate, draft.startDate, mode]);
+  }, [draft, isTaiwanHolidayImportSupported, mode, shouldImportTaiwanHolidays]);
+
+  const taiwanHolidaySupportLabel = getTaiwanHolidaySupportLabel();
+  const includedTaiwanHolidays = useMemo(
+    () => getTaiwanHolidayEntriesInRange(draft).filter(
+      (entry) => shouldShowHolidayTypeBadge(entry.date, entry.isFreeday)
+    ),
+    [draft]
+  );
 
   // Instructions for the help component
   const instructions = [
@@ -96,6 +126,7 @@ export default function DatePage() {
     "The end date must be after the start date",
     "Dates are automatically generated based on your date range",
     "Create groups to organize dates (e.g., \"Weekdays\", \"Weekends\", \"Workdays\", \"Freedays\")",
+    "When enabled, updating the date range can create or overwrite editable Taiwan holiday date groups such as WORKDAY and FREEDAY",
     "Click and drag through checkboxes to quickly select multiple dates when adding or editing",
     "Drag and drop to reorder groups",
     "Double-click to edit names or descriptions",
@@ -126,6 +157,8 @@ export default function DatePage() {
       updateDateRange({
         startDate: draft.startDate,
         endDate: draft.endDate,
+      }, {
+        importTaiwanHolidays: shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported,
       });
       setMode(Mode.NORMAL);
     }
@@ -144,6 +177,7 @@ export default function DatePage() {
           endDate: dateData.range.endDate,
         });
       }
+      setShouldImportTaiwanHolidays(true);
       setErrors({});
     }
   };
@@ -157,6 +191,7 @@ export default function DatePage() {
         endDate: dateData.range.endDate,
       });
     }
+    setShouldImportTaiwanHolidays(true);
     setErrors({});
   };
 
@@ -174,7 +209,8 @@ export default function DatePage() {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
-                  day: 'numeric'
+                  day: 'numeric',
+                  timeZone: 'UTC'
                 }) : '-'}
               </div>
             </div>
@@ -185,7 +221,8 @@ export default function DatePage() {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
-                  day: 'numeric'
+                  day: 'numeric',
+                  timeZone: 'UTC'
                 }) : '-'}
               </div>
             </div>
@@ -253,15 +290,66 @@ export default function DatePage() {
         </div>
 
         {/* Warning message for non-full month selection */}
-        {warnings.dateRange && (
-          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+        {Object.entries(warnings).map(([warningKey, warningMessage]) => (
+          <div key={warningKey} className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
             <p className="text-sm text-yellow-800 flex items-center gap-2">
               <FiAlertCircle className="h-4 w-4 text-yellow-600" />
               <span className="font-medium">Warning:</span>
-              {warnings.dateRange}
+              {warningMessage}
             </p>
           </div>
-        )}
+        ))}
+
+        <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported}
+              disabled={!isTaiwanHolidayImportSupported}
+              onChange={(e) => setShouldImportTaiwanHolidays(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <div>
+              <div className="text-sm font-medium text-gray-900">
+                Import Taiwan holidays into date groups
+              </div>
+              <p className="mt-1 text-sm text-gray-600">
+                Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.
+              </p>
+              {!isTaiwanHolidayImportSupported && (
+                <p className="mt-2 text-sm text-amber-700">
+                  Available only when the selected date range stays within {taiwanHolidaySupportLabel}.
+                </p>
+              )}
+              {isTaiwanHolidayImportSupported && includedTaiwanHolidays.length > 0 && (
+                <div className="mt-3 rounded-md border border-gray-200 bg-white p-3">
+                  <div className="text-sm font-medium text-gray-900">
+                    Included holiday entries
+                  </div>
+                  <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
+                    {includedTaiwanHolidays.map((entry) => (
+                      <div key={entry.date} className="rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-gray-700">{entry.date} ({formatHolidayWeekday(entry.date)})</span>
+                          {shouldShowHolidayTypeBadge(entry.date, entry.isFreeday) && (
+                            <span className={`rounded px-2 py-0.5 text-xs font-medium ${
+                              entry.isFreeday
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {entry.isFreeday ? 'FREEDAY' : 'WORKDAY'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-gray-600">{entry.reason}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </label>
+        </div>
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-3 pt-4">

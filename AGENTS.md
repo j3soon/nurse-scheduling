@@ -1,39 +1,79 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `core/`: Python scheduling engine and API.
-  - `core/nurse_scheduling/`: CLI, scheduler, data models, exporter, FastAPI server (`serve.py`).
-  - `core/tests/`: pytest suites and YAML/CSV test fixtures under `core/tests/testcases/`.
-- `web-frontend/`: Next.js + TypeScript app (App Router).
-  - `web-frontend/src/app/`: route pages.
-  - `web-frontend/src/components/`, `src/hooks/`, `src/utils/`, `src/types/`: shared UI logic and utilities.
+- `core/`: Python scheduling engine, CLI, and FastAPI backend (`core/nurse_scheduling/serve.py`).
+- `core/tests/`: pytest suites and fixtures under `core/tests/testcases/`.
+- `web-frontend/`: Next.js + TypeScript app (App Router) with shared code in `src/components/`, `src/hooks/`, `src/utils/`, and `src/types/`.
 - `docs/`: MkDocs source and overrides.
-- `thirdparty/`: external calendar data and helper scripts.
+- `scripts/`: setup utilities (for example `scripts/setup_env.sh`).
+- `thirdparty/`: external calendar data and helpers.
 
 ## Build, Test, and Development Commands
 - Frontend (from `web-frontend/`):
   - `bun install`: install JS dependencies.
   - `bun run dev`: run local dev server.
   - `bun run build`: production build.
-  - `bun run lint`: run ESLint (also used in CI).
+  - `bun run lint -- --fix`: run ESLint with fixes.
 - Core (from `core/`):
   - `uv venv --python 3.12 && source .venv/bin/activate`: create/activate venv.
   - `uv pip install -r requirements.txt`: install Python deps.
-  - `python -m nurse_scheduling.cli <input.yaml> [output.csv]`: run scheduler CLI.
-  - `pytest --log-cli-level=DEBUG`: run full core test suite.
-  - `pytest --log-cli-level=DEBUG tests/test_solver_ortools.py tests/test_solver_pulp.py tests/test_schedule_ortools.py tests/test_schedule_pulp.py tests/test_serve.py`: run core tests explicitly.
+  - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver ortools/cp-sat|pulp/cbc`: run scheduler CLI.
+  - `pytest --log-cli-level=INFO`: run full core test suite.
+  - `pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run primary solver/schedule suites.
+  - `ruff check nurse_scheduling tests`: lint core Python code.
+  - `ruff format nurse_scheduling tests`: format core Python code.
 
 ## Coding Style & Naming Conventions
 - Python: 4-space indentation, `snake_case` for functions/modules, `PascalCase` for classes, keep type names explicit.
 - TypeScript/React: component files and components in `PascalCase`; hooks prefixed with `use`.
-- Linting: frontend uses `next/core-web-vitals` + TypeScript rules via `web-frontend/eslint.config.mjs`.
+- Linting: frontend uses `next/core-web-vitals` + TypeScript rules via `web-frontend/eslint.config.mjs`; core uses Ruff.
 - Keep file endings clean: no trailing spaces; newline at end of file.
 
 ## Testing Guidelines
 - Framework: `pytest` for core and backend tests.
-- Main suites: `core/tests/test_solver_ortools.py`, `core/tests/test_solver_pulp.py`, `core/tests/test_schedule_ortools.py`, `core/tests/test_schedule_pulp.py`, `core/tests/test_serve.py`.
+- Main suites: `core/tests/test_solver_ortools_cp_sat.py`, `core/tests/test_solver_pulp_cbc.py`, `core/tests/test_schedule_ortools_cp_sat.py`, `core/tests/test_schedule_pulp_cbc.py`, `core/tests/test_serve.py`.
 - Add new scheduling cases as fixture pairs in `core/tests/testcases/**` (typically `.yaml` input with matching `.csv` or `.txt` expected output).
-- Run affected tests locally before opening a PR.
+- Run affected tests locally before opening a PR, and run Ruff on touched core files.
+
+## Agent Workflow Requirement
+- When changing frontend rename/delete behavior for people, dates, or shift types, keep all references in sync, including preferences and export layout entries.
+- After agent code modifications in `core/`, run Ruff before finishing:
+  - `cd core && ruff check nurse_scheduling tests`
+  - `cd core && ruff format nurse_scheduling tests`
+- After agent code modifications in `core/`, run affected tests before finishing:
+  - `cd core && pytest --log-cli-level=INFO <affected_test_paths>`
+- Every Python file should keep the repository header convention:
+  - module docstring/description at the top, then the AGPL license header block.
+  - for Python test files mostly generated directly by AI coding agents, add:
+    - `# This test is mostly AI generated.`
+    - place it immediately after the license header block.
+
+### Python Header Template
+```python
+"""<Module description here>."""
+
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+#
+# Copyright (C) 2023-2026 Johnson Sun
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
+
+Optional line for tests mostly generated by AI agents (place right after the license block):
+```python
+# This test is mostly AI generated.
+```
 
 ## Commit & Pull Request Guidelines
 - Follow Conventional Commits as seen in history, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `refactor(core): ...`.

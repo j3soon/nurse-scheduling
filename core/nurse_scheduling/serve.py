@@ -18,6 +18,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
+import os
+import sys
 from datetime import datetime
 from io import BytesIO
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
@@ -27,35 +29,44 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 from . import scheduler, exporter
 
-import sentry_sdk
-sentry_sdk.init(
-    dsn="https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
-    # Add data like request headers and IP for users, if applicable;
-    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
-    send_default_pii=True,
-    # Set traces_sample_rate to 1.0 to capture 100%
-    # of transactions for tracing.
-    traces_sample_rate=1.0,
-    # To collect profiles for all profile sessions,
-    # set `profile_session_sample_rate` to 1.0.
-    profile_session_sample_rate=1.0,
-    # Profiles will be automatically collected while
-    # there is an active span.
-    profile_lifecycle="trace",
-    # Enable logs to be sent to Sentry
-    enable_logs=True,
-)
+
+def _should_enable_sentry() -> bool:
+    if os.getenv("DISABLE_SENTRY"):
+        return False
+    # Avoid sending errors from local/unit test runs by default.
+    if "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules:
+        return False
+    return True
+
+
+if _should_enable_sentry():
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn="https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
+        # Add data like request headers and IP for users, if applicable;
+        # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+        send_default_pii=True,
+        # Set traces_sample_rate to 1.0 to capture 100%
+        # of transactions for tracing.
+        traces_sample_rate=1.0,
+        # To collect profiles for all profile sessions,
+        # set `profile_session_sample_rate` to 1.0.
+        profile_session_sample_rate=1.0,
+        # Profiles will be automatically collected while
+        # there is an active span.
+        profile_lifecycle="trace",
+        # Enable logs to be sent to Sentry
+        enable_logs=True,
+    )
 
 # Configure logging to verbose level 1 (verbose levels defined in CLI)
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 title = "Nurse Scheduling API"
 version = "alpha"
 
-app = FastAPI(
-    title=title,
-    version=version
-)
+app = FastAPI(title=title, version=version)
 
 # Regex to match allowed origins:
 # - http://localhost:3000, http://127.0.0.1:3000 (for Next.js local development)
@@ -83,10 +94,8 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {
-        "message": title,
-        "version": version
-    }
+    return {"message": title, "version": version}
+
 
 # TODO: Check args
 @app.post("/optimize-and-export-xlsx")
@@ -104,37 +113,30 @@ async def optimize_and_export_xlsx(
     """
     # Validate that exactly one input method is provided
     if file is None and yaml_content is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Either 'file' or 'yaml_content' must be provided"
-        )
-    
+        raise HTTPException(status_code=400, detail="Either 'file' or 'yaml_content' must be provided")
+
     if file is not None and yaml_content is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide either 'file' or 'yaml_content', not both"
-        )
-    
+        raise HTTPException(status_code=400, detail="Provide either 'file' or 'yaml_content', not both")
+
     # Read content from file or use provided yaml_content
     if file is not None:
         # Validate that the uploaded file is a YAML file (sanity check, not for security)
-        if not file.filename.endswith(('.yaml', '.yml')):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid file type. Please upload a YAML file (.yaml or .yml)"
-            )
+        if not file.filename.endswith((".yaml", ".yml")):
+            raise HTTPException(status_code=400, detail="Invalid file type. Please upload a YAML file (.yaml or .yml)")
         content = await file.read()
         input_name = file.filename
     else:
         # Use yaml_content string directly
-        content = yaml_content.encode('utf-8')
+        content = yaml_content.encode("utf-8")
         input_name = f"nurse-scheduling-{datetime.now().strftime('%Y%m%d%H%M%S')}.yaml"
-    
+
     logging.info("Processing schedule optimization...")
     logging.info(f"Input: {input_name}")
     logging.info(
         "Prettify: %s, Timeout: %s, Solver: selector=%s",
-        prettify, timeout, solver,
+        prettify,
+        timeout,
+        solver,
     )
 
     try:
@@ -149,41 +151,29 @@ async def optimize_and_export_xlsx(
     except NotImplementedError as e:
         # User input error: unsupported apiVersion or other unsupported scenario feature.
         logging.warning(f"Unsupported request: {str(e)}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported API version: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unsupported API version: {str(e)}")
     except ValidationError as e:
         # User-supplied scheduling data failed schema validation -> HTTP 400
         logging.error(f"Invalid scheduling data: {str(e)}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid scheduling data: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid scheduling data: {str(e)}")
     except Exception as e:
         # TODO(security): Returning the error message to the client may be a security risk
         logging.error(f"Error during optimization: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error during optimization: {str(e)}"
-        )
-        
+        raise HTTPException(status_code=500, detail=f"Error during optimization: {str(e)}")
+
     if df is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No solution found. The constraints may be too restrictive."
-        )
-    
+        raise HTTPException(status_code=400, detail="No solution found. The constraints may be too restrictive.")
+
     # Export to Excel in memory
     output_buffer = BytesIO()
     exporter.export_to_excel(df, output_buffer, cell_export_info)
-    
+
     logging.info(f"Optimization complete. Score: {score}, Status: {status}")
-    
+
     # Generate output filename
-    base_filename = input_name.rsplit('.', 1)[0]
+    base_filename = input_name.rsplit(".", 1)[0]
     output_filename = f"{base_filename}.xlsx"
-    
+
     # Return the file from memory
     return StreamingResponse(
         output_buffer,
@@ -191,11 +181,12 @@ async def optimize_and_export_xlsx(
         headers={
             "Content-Disposition": f"attachment; filename={output_filename}",
             "X-Schedule-Score": str(score),
-            "X-Schedule-Status": str(status)
-        }
+            "X-Schedule-Status": str(status),
+        },
     )
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

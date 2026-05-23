@@ -19,21 +19,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements.txt
-      - name: Test solver (OR-Tools) with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_solver_ortools_cp_sat.py
-      - name: Test solver (PuLP) with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_solver_pulp_cbc.py
-      - name: Test schedule (OR-Tools) with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule_ortools_cp_sat.py
-      - name: Test schedule (PuLP) with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
-      - name: Test serve with pytest
-        run: cd core && pytest --log-cli-level=DEBUG tests/test_serve.py
-      - name: Prepare code coverage data
-        if: github.ref == 'refs/heads/main'
-        run: cd core && pytest --cov .
+      - name: Test with pytest and collect coverage
+        run: cd core && pytest --cov=nurse_scheduling --log-cli-level=DEBUG tests --ignore=tests/test_schedule_pulp_cuopt.py
       - name: Upload coverage to Codecov
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

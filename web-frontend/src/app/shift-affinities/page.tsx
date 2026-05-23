@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// The shift affinities management page for Tab "9. Shift Affinities"
+// The shift affinities management page for Tab "8. Shift Affinities"
 'use client';
 
 import { useState, useEffect } from 'react';

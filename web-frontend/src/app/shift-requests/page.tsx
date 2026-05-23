@@ -808,7 +808,7 @@ export default function ShiftRequestsPage() {
 
     try {
       const date = dateStrToDate(dateId, dateData.range);
-      const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+      const dayOfWeek = date.getUTCDay(); // 0 = Sunday, 6 = Saturday
       return dayOfWeek === 0 || dayOfWeek === 6;
     } catch {
       return false;
@@ -822,9 +822,9 @@ export default function ShiftRequestsPage() {
     );
   };
 
-  // Helper function to compute new shift preferences from delta updates
-  // This is necessary since ShiftRequestPreference is of type { person: string[]; date: string[]; shiftType: string[]; weight: number },
-  // where person and shiftType are single-element arrays. The date array is for readability of the exported YAML.
+  // Helper function to compute new shift preferences from delta updates.
+  // Real date items are compacted together for readable YAML. Date groups stay as separate preferences
+  // so overlapping targets like ALL, WEEKDAY, and WEEKEND can stack as separate weights.
   const computeNewShiftPreferences = (
     currentPreferences: ShiftRequestPreference[],
     updates: {
@@ -839,6 +839,8 @@ export default function ShiftRequestsPage() {
     // Process each update
     for (const update of updates) {
       const { personId, dateId, deltaPreferences, clearFirst = false } = update;
+      const dateItemIds = new Set(dateData.items.map(date => date.id));
+      const isDateItem = dateItemIds.has(dateId);
 
       // Get current preferences for this person-date combination
       const currentPersonDatePreferences = filteredPreferences.filter(
@@ -892,22 +894,23 @@ export default function ShiftRequestsPage() {
 
       // Add back the updated preferences
       for (const preference of updatedPreferences) {
-        const existingPreference = filteredPreferences.find(
+        const existingPreference = isDateItem ? filteredPreferences.find(
           p => p.person[0] === personId &&
-          p.shiftType[0] === preference.shiftTypeId &&
-          p.weight === preference.weight
-        );
+            p.shiftType[0] === preference.shiftTypeId &&
+            p.weight === preference.weight &&
+            p.date.every(id => dateItemIds.has(id))
+        ) : undefined;
         if (existingPreference) {
           existingPreference.date.push(dateId);
-        } else {
-          filteredPreferences.push({
-            type: SHIFT_REQUEST,
-            person: [personId],
-            date: [dateId],
-            shiftType: [preference.shiftTypeId],
-            weight: preference.weight,
-          });
+          continue;
         }
+        filteredPreferences.push({
+          type: SHIFT_REQUEST,
+          person: [personId],
+          date: [dateId],
+          shiftType: [preference.shiftTypeId],
+          weight: preference.weight,
+        });
       }
     }
 
@@ -1216,7 +1219,7 @@ export default function ShiftRequestsPage() {
                 {dateEntry.id}
                 {dateData.items.find(item => item.id === dateEntry.id) && (
                   <span className="ml-1">
-                    {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString('en-US', { weekday: 'short' })}
+                    {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })}
                   </span>
                 )}
               </div>

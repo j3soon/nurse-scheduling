@@ -48,7 +48,6 @@ const getLabels = (dataType: DataType) => {
 export interface ItemGroupEditorPageData {
   items: Item[];
   groups: Group[];
-  history?: string[];
 }
 
 interface ItemGroupEditorPageProps {
@@ -150,15 +149,41 @@ export default function ItemGroupEditorPage({
     const wasEditing = !!draft.editingId;
     if (draft.isItem) {
       if (draft.editingId) {
-        updateItem(dataType, data, draft.editingId, trimmedId, draft.groups, trimmedDescription);
+        updateItem(
+          dataType,
+          data,
+          draft.editingId,
+          trimmedId,
+          draft.groups,
+          trimmedDescription
+        );
       } else {
-        addItem(dataType, data, trimmedId, draft.groups, trimmedDescription);
+        addItem(
+          dataType,
+          data,
+          trimmedId,
+          draft.groups,
+          trimmedDescription
+        );
       }
     } else {
       if (draft.editingId) {
-        updateGroup(dataType, data, draft.editingId, trimmedId, draft.members, trimmedDescription);
+        updateGroup(
+          dataType,
+          data,
+          draft.editingId,
+          trimmedId,
+          draft.members,
+          trimmedDescription
+        );
       } else {
-        addGroup(dataType, data, trimmedId, draft.members, trimmedDescription);
+        addGroup(
+          dataType,
+          data,
+          trimmedId,
+          draft.members,
+          trimmedDescription
+        );
       }
     }
 
@@ -189,7 +214,14 @@ export default function ItemGroupEditorPage({
         const itemGroups = groups
           .filter(g => g.members.includes(item.id))
           .map(g => g.id);
-        setDraft({ id: item.id, description: item.description, groups: itemGroups, members: [], editingId: id, isItem: true });
+        setDraft({
+          id: item.id,
+          description: item.description,
+          groups: itemGroups,
+          members: [],
+          editingId: id,
+          isItem: true
+        });
       } else {
         console.error(`${itemLabel} with ID ${id} not found during edit. ${ERROR_SHOULD_NOT_HAPPEN}`);
       }
@@ -205,7 +237,14 @@ export default function ItemGroupEditorPage({
       }
       const group = groups.find(g => g.id === id);
       if (group) {
-        setDraft({ id: group.id, description: group.description, groups: [], members: group.members, editingId: id, isItem: false });
+        setDraft({
+          id: group.id,
+          description: group.description,
+          groups: [],
+          members: group.members,
+          editingId: id,
+          isItem: false
+        });
       } else {
         console.error(`Group with ID ${id} not found during edit. ${ERROR_SHOULD_NOT_HAPPEN}`);
       }

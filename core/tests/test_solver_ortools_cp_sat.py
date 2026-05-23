@@ -1,7 +1,29 @@
+"""Low-level OR-Tools CP-SAT solver encoding tests for comparison constraints."""
+
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+#
+# Copyright (C) 2023-2026 Johnson Sun
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# This test is mostly AI generated.
+
 import os
 import sys
 
 import pytest
+from ortools.sat.python import cp_model
 
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -152,3 +174,92 @@ def test_create_bool_var_with_constraint_constant_expression(operator: Operator,
     status = solver.solve()
     assert status == SolverStatus.OPTIMAL
     assert int(solver.get_value(y)) == expected
+
+
+def test_set_objective_minimize_branch():
+    solver = ORToolsSolver()
+    x = solver.new_int_var(0, 1, "x")
+
+    solver.set_objective(x, maximize=False)
+
+    assert solver.maximize is False
+
+
+@pytest.mark.parametrize(
+    ("native_status", "expected"),
+    [
+        (cp_model.FEASIBLE, SolverStatus.FEASIBLE),
+        (cp_model.MODEL_INVALID, SolverStatus.MODEL_INVALID),
+        (999, SolverStatus.UNKNOWN),
+    ],
+)
+def test_solve_maps_non_optimal_statuses(monkeypatch, native_status, expected):
+    solver = ORToolsSolver()
+
+    class DummyParams:
+        pass
+
+    class DummyCpSolver:
+        def __init__(self):
+            self.parameters = DummyParams()
+
+        def Solve(self, model, callback=None):
+            return native_status
+
+    solver.solver = DummyCpSolver()
+    status = solver.solve(deterministic=True, timeout=3, solution_callback=object())
+
+    assert status == expected
+    assert solver.get_status_name() == expected.value
+    assert solver.solver.parameters.random_seed == 0
+    assert solver.solver.parameters.num_workers == 1
+    assert solver.solver.parameters.max_time_in_seconds == 3.0
+
+
+def test_solve_timeout_parameter_warning_on_assignment_failure(caplog):
+    solver = ORToolsSolver()
+
+    class BadParams:
+        def __setattr__(self, name, value):
+            if name == "max_time_in_seconds":
+                raise AttributeError("unsupported")
+            object.__setattr__(self, name, value)
+
+    class DummyCpSolver:
+        def __init__(self):
+            self.parameters = BadParams()
+
+        def Solve(self, model, callback=None):
+            return cp_model.OPTIMAL
+
+    solver.solver = DummyCpSolver()
+
+    with caplog.at_level("WARNING"):
+        status = solver.solve(timeout=1)
+
+    assert status == SolverStatus.OPTIMAL
+    assert "Unable to set solver timeout parameter" in caplog.text
+
+
+def test_create_bool_var_with_constraint_rejects_unknown_operator():
+    solver = ORToolsSolver()
+    x = solver.new_int_var(0, 1, "x")
+
+    with pytest.raises(NotImplementedError, match="not implemented for OR-Tools solver"):
+        solver.create_bool_var_with_constraint("cmp", x, "BAD", 0, (0, 1))
+
+
+def test_solution_callback_logs_progress(caplog):
+    solver = ORToolsSolver()
+    x = solver.new_int_var(0, 1, "x")
+    callback = solver.create_solution_callback(x)
+
+    callback.Value = lambda _var: 7
+    callback.start_time = 0.0
+
+    with caplog.at_level("INFO"):
+        callback.on_solution_callback()
+
+    assert "# of (best) solutions found: 1" in caplog.text
+    assert "current score: 7" in caplog.text
+    assert "elapsed time:" in caplog.text

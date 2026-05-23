@@ -1,6 +1,28 @@
+"""Low-level PuLP CBC solver encoding tests for comparison constraints."""
+
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+#
+# Copyright (C) 2023-2026 Johnson Sun
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# This test is mostly AI generated.
+
 import os
 import sys
 
+import pulp
 import pytest
 
 # Add the project root to the Python path so imports work when running directly.
@@ -8,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling.constants import Operator
 from nurse_scheduling.solver_interface import SolverStatus
+from nurse_scheduling import solver_pulp as solver_pulp_module
 from nurse_scheduling.solver_pulp_cbc import PuLPSolver
 from tests.solver_test_utils import expected_bool_value
 
@@ -220,3 +243,179 @@ def test_create_bool_var_with_constraint_rejects_range_exceeding_inferred_bounds
     x = solver.new_int_var(0, 4, "x")
     with pytest.raises(ValueError, match="exceed inferred bounds"):
         solver.create_bool_var_with_constraint("bad_range", x, Operator.EQ, 2, (-1, 5))
+
+
+def test_infer_expr_bounds_rejects_unbounded_variable():
+    solver = PuLPSolver()
+    unbounded = pulp.LpVariable("x_unbounded", lowBound=0, cat=pulp.LpInteger)
+
+    with pytest.raises(ValueError, match="unbounded variable"):
+        solver._infer_expr_bounds(unbounded)
+
+
+def test_infer_expr_bounds_rejects_non_integer_coefficient():
+    solver = PuLPSolver()
+    x = solver.new_int_var(0, 3, "x")
+    expr = 0.5 * x + 1
+
+    with pytest.raises(ValueError, match="Non-integer coefficient"):
+        solver._infer_expr_bounds(expr)
+
+
+def test_infer_expr_bounds_rejects_unsupported_expression_type():
+    solver = PuLPSolver()
+
+    with pytest.raises(TypeError, match="Unsupported expression type"):
+        solver._infer_expr_bounds("bad-expr")
+
+
+def test_set_objective_minimize_sets_model_sense():
+    solver = PuLPSolver()
+    x = solver.new_int_var(0, 2, "x")
+
+    solver.set_objective(x, maximize=False)
+
+    assert solver.model.sense == pulp.LpMinimize
+
+
+def test_validate_model_reports_missing_objective_and_constraints():
+    solver = PuLPSolver()
+
+    report = solver.validate_model()
+
+    assert "No objective function set" in report
+    assert "No constraints defined" in report
+
+
+@pytest.mark.parametrize(
+    ("status_code", "warning_text"),
+    [
+        (pulp.LpStatusUnbounded, "Model is unbounded"),
+        (pulp.LpStatusUndefined, "Solver returned undefined status"),
+    ],
+)
+def test_solve_maps_unbounded_and_undefined_to_unknown(monkeypatch, caplog, status_code, warning_text):
+    solver = PuLPSolver()
+    seen = {}
+
+    class DummyCmd:
+        def __str__(self):
+            return "DummyCBC"
+
+    def fake_cbc_cmd(*args, **kwargs):
+        seen["kwargs"] = kwargs
+        return DummyCmd()
+
+    monkeypatch.setattr(solver_pulp_module.pulp, "PULP_CBC_CMD", fake_cbc_cmd)
+    monkeypatch.setattr(solver.model, "solve", lambda _solver: status_code)
+
+    with caplog.at_level("INFO"):
+        status = solver.solve(timeout=9, deterministic=True, solution_callback=object())
+
+    assert status == SolverStatus.UNKNOWN
+    assert solver.get_status_name() == "UNKNOWN"
+    assert seen["kwargs"]["timeLimit"] == 9
+    assert "randomS 0" in seen["kwargs"]["options"]
+    assert "threads 1" in seen["kwargs"]["options"]
+    assert "Solution callbacks are not fully supported with PuLP solver" in caplog.text
+    assert warning_text in caplog.text
+
+
+@pytest.mark.parametrize("status_code", [pulp.LpStatusNotSolved, 123456])
+def test_solve_maps_not_solved_and_unknown_status_to_unknown(monkeypatch, status_code):
+    solver = PuLPSolver()
+
+    class DummyCmd:
+        def __str__(self):
+            return "DummyCBC"
+
+    monkeypatch.setattr(solver_pulp_module.pulp, "PULP_CBC_CMD", lambda *a, **k: DummyCmd())
+    monkeypatch.setattr(solver.model, "solve", lambda _solver: status_code)
+
+    status = solver.solve()
+    assert status == SolverStatus.UNKNOWN
+
+
+def test_get_objective_value_raises_for_non_integer(monkeypatch):
+    solver = PuLPSolver()
+    x = solver.new_int_var(0, 1, "x")
+    solver.set_objective(x, maximize=True)
+
+    monkeypatch.setattr(solver_pulp_module.pulp, "value", lambda _expr: 1.5)
+
+    with pytest.raises(ValueError, match="Objective value should be an integer"):
+        solver.get_objective_value()
+
+
+def test_get_objective_value_returns_zero_when_objective_missing():
+    solver = PuLPSolver()
+    assert solver.get_objective_value() == 0
+
+
+def test_validate_model_returns_ok_when_objective_and_constraints_present():
+    solver = PuLPSolver()
+    x = solver.new_int_var(0, 1, "x_valid")
+    solver.add_constraint(x >= 0)
+    solver.set_objective(x)
+
+    assert solver.validate_model() == "Model appears valid"
+
+
+def test_add_abs_equality_rejects_invalid_or_excessive_bounds():
+    solver = PuLPSolver()
+    t = solver.new_int_var(0, 10, "t")
+    x = solver.new_int_var(0, 4, "x")
+
+    with pytest.raises(ValueError, match="Invalid source expression bounds for abs"):
+        solver.add_abs_equality(t, x, (5, 4))
+    with pytest.raises(ValueError, match="exceed inferred bounds"):
+        solver.add_abs_equality(t, x, (-1, 4))
+
+
+def test_add_squared_equality_validation_errors():
+    solver = PuLPSolver()
+    t = solver.new_int_var(0, 100, "t")
+    bounded = solver.new_int_var(0, 5, "x")
+    unbounded = pulp.LpVariable("x_unbounded_sq", lowBound=0, cat=pulp.LpInteger)
+    large = solver.new_int_var(0, 200, "x_large")
+
+    with pytest.raises(NotImplementedError, match="expects a bounded variable or constant"):
+        solver.add_squared_equality(t, "bad-source", (0, 1))
+    with pytest.raises(ValueError, match="Cannot linearize square for unbounded variable"):
+        solver.add_squared_equality(t, unbounded, (0, 10))
+    with pytest.raises(ValueError, match="Invalid source variable bounds for square"):
+        solver.add_squared_equality(t, bounded, (5, 4))
+    with pytest.raises(ValueError, match="Negative lower bound"):
+        solver.add_squared_equality(t, bounded, (-1, 5))
+    with pytest.raises(ValueError, match="exceed inferred bounds"):
+        solver.add_squared_equality(t, bounded, (0, 6))
+    with pytest.raises(NotImplementedError, match="Domain too large"):
+        solver.add_squared_equality(t, large, (0, 200))
+
+
+def test_add_squared_equality_constant_source_branch():
+    solver = PuLPSolver()
+    target = solver.new_int_var(0, 100, "square_target")
+    solver.add_squared_equality(target, 5, (0, 10))
+    solver.set_objective(0)
+
+    status = solver.solve()
+    assert status == SolverStatus.OPTIMAL
+    assert round(solver.get_value(target)) == 25
+
+
+def test_infer_expr_bounds_rejects_unbounded_variable_inside_affine():
+    solver = PuLPSolver()
+    x = pulp.LpVariable("x_affine_unbounded", lowBound=0, cat=pulp.LpInteger)
+    expr = x + 1
+
+    with pytest.raises(ValueError, match="unbounded variable in expression"):
+        solver._infer_expr_bounds(expr)
+
+
+def test_create_bool_var_with_constraint_rejects_unknown_operator():
+    solver = PuLPSolver()
+    x = solver.new_int_var(0, 1, "x_unknown_op")
+
+    with pytest.raises(NotImplementedError, match="not implemented for PuLP solver"):
+        solver.create_bool_var_with_constraint("cmp", x, "BAD", 0, (0, 1))
