@@ -33,6 +33,27 @@ SHIFT_TYPE_SUCCESSIONS = 'shift type successions'
 SHIFT_COUNT = 'shift count'
 SHIFT_AFFINITY = 'shift affinity'
 
+# Allowed values for ExportFormatting.type. Keep in sync with the web frontend
+# (web-frontend/src/hooks/useSchedulingData.ts) and with the styler in
+# core/nurse_scheduling/exporter.py.
+FORMAT_CELL = 'cell'
+FORMAT_ROW = 'row'
+FORMAT_COLUMN = 'column'
+FORMAT_ROW_HEADER = 'row header'
+FORMAT_COLUMN_HEADER = 'column header'
+FORMAT_HISTORY_COLUMN = 'history column'
+FORMAT_HISTORY_COLUMN_HEADER = 'history column header'
+EXPORT_FORMATTING_TYPES = (
+    FORMAT_CELL,
+    FORMAT_ROW,
+    FORMAT_COLUMN,
+    FORMAT_ROW_HEADER,
+    FORMAT_COLUMN_HEADER,
+    FORMAT_HISTORY_COLUMN,
+    FORMAT_HISTORY_COLUMN_HEADER,
+)
+EXPORT_FORMATTING_TYPE_PATTERN = f"^({'|'.join(EXPORT_FORMATTING_TYPES)})$"
+
 def validate_weight(weight: int | float) -> int | float:
     """Validate that float weights can only be positive or negative infinity."""
     if isinstance(weight, float):
@@ -175,6 +196,20 @@ class ShiftAffinityPreference(BasePreference):
     def validate_weight_field(cls, v):
         return validate_weight(v)
 
+class ExportFormatting(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Allowed values include the original cell/row/column/row header/column header
+    # set as well as the newer 'history column' / 'history column header' variants
+    # emitted by the frontend once history columns were added to the exporter
+    # (see exporter.py's n_history_cols / 'History' label logic).
+    type: Annotated[str, Field(pattern=EXPORT_FORMATTING_TYPE_PATTERN)]
+    targets: List[int | str | datetime.date] = Field(default_factory=list)
+    backgroundColor: str | None = None
+
+class ExportConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    formatting: List[ExportFormatting] = Field(default_factory=list)
+
 class NurseSchedulingData(BaseModel):
     model_config = ConfigDict(extra="forbid")
     appVersion: str | None = None
@@ -192,6 +227,7 @@ class NurseSchedulingData(BaseModel):
         ShiftCountPreference |
         ShiftAffinityPreference
     ]
+    export: ExportConfig | None = None
 
     @model_validator(mode='after')
     def validate_model(self) -> Self:
