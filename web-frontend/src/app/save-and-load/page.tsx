@@ -67,7 +67,7 @@ export default function SaveAndLoadPage() {
     people: peopleData,
     shiftTypes: shiftTypeData,
     preferences,
-    export: exportData
+    ...(exportData ? { export: exportData } : {})
   });
 
   // Convert current state to YAML with custom flow style for leaf arrays

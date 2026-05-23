@@ -23,7 +23,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle, FiHelpCircle, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
-import { generateExportLayoutConfig, useSchedulingData } from '@/hooks/useSchedulingData';
+import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ExportExtraColumn, ExportExtraRow, ExportFormatting, ExportFormattingType, ExportRequestShape } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
@@ -131,7 +131,7 @@ const getPickerDisplay = (value: string) => {
 
 export default function ExportFormattingPage() {
   const {
-    exportData,
+    effectiveExportData,
     updateExportFormatting,
     updateExportExtraColumns,
     updateExportExtraRows,
@@ -146,9 +146,9 @@ export default function ExportFormattingPage() {
   const [error, setError] = useState('');
   const [draft, setDraft] = useState<DraftRule>(createEmptyDraft);
 
-  const formattingRules = exportData.formatting || [];
-  const extraColumns = exportData.extraColumns || [];
-  const extraRows = exportData.extraRows || [];
+  const formattingRules = effectiveExportData.formatting || [];
+  const extraColumns = effectiveExportData.extraColumns || [];
+  const extraRows = effectiveExportData.extraRows || [];
 
   const clearAllExportLayoutEntries = () => {
     if (confirm('Are you sure you want to clear ALL export layout entries?')) {
@@ -162,7 +162,7 @@ export default function ExportFormattingPage() {
 
   const clearAllAndRegenerateExportLayoutEntries = () => {
     if (confirm('Are you sure you want to clear ALL export layout entries and regenerate them?')) {
-      updateExportConfig(generateExportLayoutConfig(shiftTypeData, dateData.groups));
+      updateExportConfig(undefined);
     }
   };
 
@@ -456,7 +456,7 @@ export default function ExportFormattingPage() {
       nextFormatting.push(newRule);
     }
     updateExportConfig({
-      ...exportData,
+      ...effectiveExportData,
       formatting: nextFormatting,
       extraColumns: nextExtraColumns,
       extraRows: nextExtraRows,
@@ -520,7 +520,7 @@ export default function ExportFormattingPage() {
       nextExtraColumns.push(newRule);
     }
     updateExportConfig({
-      ...exportData,
+      ...effectiveExportData,
       formatting: nextFormatting,
       extraColumns: nextExtraColumns,
       extraRows: nextExtraRows,
@@ -584,7 +584,7 @@ export default function ExportFormattingPage() {
       nextExtraRows.push(newRule);
     }
     updateExportConfig({
-      ...exportData,
+      ...effectiveExportData,
       formatting: nextFormatting,
       extraColumns: nextExtraColumns,
       extraRows: nextExtraRows,
