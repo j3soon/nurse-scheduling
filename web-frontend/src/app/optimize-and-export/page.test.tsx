@@ -19,8 +19,9 @@
 
 // This test is mostly AI generated.
 
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
@@ -34,9 +35,34 @@ vi.mock('@/utils/yamlGenerator', () => ({
   generateYamlFromState: mockGenerateYamlFromState,
 }));
 
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+
+  listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+  url: string;
+  close = vi.fn();
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  emit(type: string, data: unknown) {
+    const event = new MessageEvent(type, {
+      data: typeof data === 'string' ? data : JSON.stringify(data),
+    });
+    this.listeners.get(type)?.forEach(listener => listener(event));
+  }
+}
+
 describe('OptimizeAndExportPage error handling', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    MockEventSource.instances = [];
     mockGenerateYamlFromState.mockReturnValue('apiVersion: alpha\ndescription: baseline\n');
     mockUseSchedulingData.mockReturnValue({
       apiVersionData: 'alpha',
@@ -194,5 +220,78 @@ describe('OptimizeAndExportPage error handling', () => {
     );
     expect(appendChildSpy).toHaveBeenCalled();
     expect(removeChildSpy).toHaveBeenCalled();
+  });
+
+  it('shows all received SSE event types in the optimization event log', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          status: 'ok',
+          version: 'alpha',
+          apiVersion: 'alpha',
+          appVersion: 'v-test',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_sse',
+          status: 'queued',
+          score: null,
+          solverStatus: null,
+          error: null,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_sse',
+            events: '/optimize/opt_sse/events',
+            xlsx: '/optimize/opt_sse/xlsx',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
+        headers: new Headers({
+          'Content-Disposition': 'attachment; filename=schedule.xlsx',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    const eventSource = MockEventSource.instances[0];
+    expect(eventSource.url).toBe('http://localhost:8000/optimize/opt_sse/events');
+    act(() => {
+      eventSource.emit('status', { status: 'running' });
+      eventSource.emit('progress', { bestScore: 12, solutionCount: 1 });
+      eventSource.emit('complete', {
+        jobId: 'opt_sse',
+        status: 'optimal',
+        score: 42,
+        solverStatus: 'OPTIMAL',
+        error: null,
+        xlsxReady: true,
+        links: {
+          status: '/optimize/opt_sse',
+          events: '/optimize/opt_sse/events',
+          xlsx: '/optimize/opt_sse/xlsx',
+        },
+      });
+    });
+
+    await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
+    expect(screen.getByText('status')).toBeInTheDocument();
+    expect(screen.getByText('progress')).toBeInTheDocument();
+    expect(screen.getByText('complete')).toBeInTheDocument();
+    expect(screen.getByText(/"bestScore":12/)).toBeInTheDocument();
+    expect(eventSource.close).toHaveBeenCalled();
   });
 });
