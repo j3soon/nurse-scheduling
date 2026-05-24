@@ -21,6 +21,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { FiHelpCircle, FiDownload, FiAlertCircle, FiCheckCircle, FiLoader } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
@@ -47,6 +48,10 @@ export default function OptimizeAndExportPage() {
   const [scheduleFilename, setScheduleFilename] = useState<string | null>(null);
   const [scheduleScore, setScheduleScore] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
+  const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
+  const isPeopleDataMissing = peopleData.items.length === 0;
+  const isShiftTypeDataMissing = shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0;
+  const isRequiredDataMissing = isDateDataMissing || isPeopleDataMissing || isShiftTypeDataMissing;
 
   const instructions = [
     "This page sends your current scheduling configuration to the optimization server",
@@ -73,6 +78,15 @@ export default function OptimizeAndExportPage() {
   const currentYaml = generateYamlFromState(filteredState);
 
   const handleOptimizeAndDownload = async () => {
+    if (isRequiredDataMissing) {
+      setErrorMessage(null);
+      setSuccessMessage(null);
+      setScheduleFilename(null);
+      setScheduleScore(null);
+      setScheduleStatus(null);
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -236,6 +250,38 @@ export default function OptimizeAndExportPage() {
         </div>
       )}
 
+      {isRequiredDataMissing && (
+        <div className="mb-6 text-center">
+          <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
+            {isDateDataMissing ? (
+              <>
+                Please set up your dates first by visiting the{' '}
+                <Link href="/dates" className="text-blue-600 hover:text-blue-800 underline">
+                  Dates
+                </Link>{' '}
+                tab.
+              </>
+            ) : isPeopleDataMissing ? (
+              <>
+                Please set up your people first by visiting the{' '}
+                <Link href="/people" className="text-blue-600 hover:text-blue-800 underline">
+                  People
+                </Link>{' '}
+                tab.
+              </>
+            ) : (
+              <>
+                Please set up your shift types first by visiting the{' '}
+                <Link href="/shift-types" className="text-blue-600 hover:text-blue-800 underline">
+                  Shift Types
+                </Link>{' '}
+                tab.
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Configuration Form */}
       <div className="bg-white shadow-md rounded-lg overflow-hidden mb-6">
         <div className="px-6 py-4 border-b border-gray-200">
@@ -301,9 +347,9 @@ export default function OptimizeAndExportPage() {
           <div className="flex justify-end">
             <button
               onClick={handleOptimizeAndDownload}
-              disabled={isLoading}
+              disabled={isLoading || isRequiredDataMissing}
               className={`flex items-center gap-2 px-6 py-2 font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
-                isLoading
+                isLoading || isRequiredDataMissing
                   ? 'bg-gray-400 cursor-not-allowed text-white'
                   : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500'
               }`}
