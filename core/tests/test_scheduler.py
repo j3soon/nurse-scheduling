@@ -68,6 +68,42 @@ def test_scheduler_rejects_invalid_avoid_solution_value():
         scheduler.schedule(content, avoid_solution=avoid_solution)
 
 
+@pytest.mark.parametrize(
+    ("stale_reference_yaml", "expected_message"),
+    [
+        (b"person: stale_nurse\n    date: 2025-01-01\n    shiftType: D", "Unknown person ID: stale_nurse"),
+        (b"person: n1\n    date: 2025-01-02\n    shiftType: D", "out of the range of start date and end date"),
+        (b"person: n1\n    date: 2025-01-01\n    shiftType: stale_shift", "Unknown shift type ID: stale_shift"),
+    ],
+)
+def test_scheduler_rejects_stale_preference_references_before_solving(stale_reference_yaml, expected_message):
+    content = (
+        b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift request
+    """
+        + stale_reference_yaml
+        + b"""
+    weight: 1
+"""
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        scheduler.schedule(content)
+
+
 def test_scheduler_feasible_status_and_date_group_member_parsing(monkeypatch):
     content = b"""
 apiVersion: alpha

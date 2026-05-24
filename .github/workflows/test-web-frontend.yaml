@@ -1,0 +1,66 @@
+name: Test Web Frontend
+
+on:
+  - push
+  - pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  test-web-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: cd web-frontend && bun install
+      - name: Run tests
+        run: cd web-frontend && bun run test
+      - name: Run tests with coverage
+        run: cd web-frontend && bun run test:coverage
+      - name: Upload frontend coverage to Codecov
+        if: github.event_name != 'pull_request'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./web-frontend/coverage/lcov.info
+          flags: web-frontend
+          name: web-frontend-vitest
+
+  test-web-frontend-e2e:
+    runs-on: ubuntu-latest
+    needs: test-web-frontend
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: cd web-frontend && bun install
+      - name: Install Playwright Chromium
+        run: cd web-frontend && bunx playwright install --with-deps chromium
+      - name: Run Playwright tests
+        run: cd web-frontend && bun run test:e2e
+      - name: Generate Playwright coverage report
+        if: github.event_name != 'pull_request'
+        run: cd web-frontend && bun run test:e2e:coverage -- e2e/date-range-cascade.spec.ts && bun run coverage:e2e:report
+      - name: Upload Playwright coverage to Codecov
+        if: github.event_name != 'pull_request'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./web-frontend/coverage-e2e/lcov.info
+          flags: web-frontend-e2e
+          name: web-frontend-playwright
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web-frontend/playwright-report
+            web-frontend/test-results
+          if-no-files-found: ignore

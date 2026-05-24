@@ -1,0 +1,28 @@
+coverage:
+  status:
+    project:
+      core:
+        flags:
+          - core
+        target: auto
+        threshold: 1%
+      web_frontend_components:
+        flags:
+          - web-frontend
+        target: 55%
+        threshold: 1%
+        paths:
+          - web-frontend/src/components
+      web_frontend_hooks:
+        flags:
+          - web-frontend
+        target: 70%
+        threshold: 1%
+        paths:
+          - web-frontend/src/hooks
+    patch:
+      default:
+        informational: true
+comment:
+  layout: "reach, diff, flags, files"
+  require_changes: true

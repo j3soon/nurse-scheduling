@@ -23,6 +23,7 @@ import os
 import sys
 from io import BytesIO
 
+import pytest
 from openpyxl import load_workbook
 
 # Add the project root to the Python path so imports will work when running directly
@@ -248,3 +249,183 @@ export:
     assert ws["B1"].value == "H-1"
     assert ws["B1"].fill.fgColor.rgb == "FFFEFCE8"
     assert ws["B3"].fill.fgColor.rgb == "00000000"
+
+
+@pytest.mark.parametrize(
+    ("formatting_yaml", "expected_message"),
+    [
+        (
+            b"""
+    - type: row
+      people: [stale_person]
+      backgroundColor: "#111111"
+""",
+            "Invalid person identifier 'stale_person'",
+        ),
+        (
+            b"""
+    - type: column
+      dates: ["2025-01-02"]
+      backgroundColor: "#111111"
+""",
+            "out of the range of start date and end date",
+        ),
+        (
+            b"""
+    - type: cell
+      people: [n1]
+      dates: ["2025-01-01"]
+      shiftTypes: [stale_shift]
+      backgroundColor: "#111111"
+""",
+            "Invalid shift type identifier 'stale_shift'",
+        ),
+    ],
+)
+def test_export_formatting_rejects_stale_references(formatting_yaml, expected_message):
+    yaml_content = (
+        b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+export:
+  formatting:
+"""
+        + formatting_yaml
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        schedule(yaml_content, prettify=True)
+
+
+@pytest.mark.parametrize(
+    ("extra_layout_yaml", "expected_message"),
+    [
+        (
+            b"""
+  extraColumns:
+    - type: count
+      header: Stale date
+      countDates: ["2025-01-02"]
+      countShiftTypes: [D]
+""",
+            "out of the range of start date and end date",
+        ),
+        (
+            b"""
+  extraColumns:
+    - type: count
+      header: Stale shift
+      countDates: ["2025-01-01"]
+      countShiftTypes: [stale_shift]
+""",
+            "Unknown shift type ID: stale_shift",
+        ),
+        (
+            b"""
+  extraRows:
+    - type: count
+      header: Stale person
+      countPeople: [stale_person]
+      countShiftTypes: [D]
+""",
+            "Unknown person ID: stale_person",
+        ),
+        (
+            b"""
+  extraRows:
+    - type: count
+      header: Stale row shift
+      countPeople: [n1]
+      countShiftTypes: [stale_shift]
+""",
+            "Unknown shift type ID: stale_shift",
+        ),
+    ],
+)
+def test_export_extra_layout_rejects_stale_references(extra_layout_yaml, expected_message):
+    yaml_content = (
+        b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+export:
+  formatting: []
+"""
+        + extra_layout_yaml
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        schedule(yaml_content, prettify=True)
+
+
+def test_export_xlsx_handles_unequal_trimmed_history_columns():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+      history: [N]
+    - id: n2
+      history: [A, D, N]
+shiftTypes:
+  items:
+    - id: A
+    - id: D
+    - id: N
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: N
+    requiredNumPeople: 0
+export:
+  formatting:
+    - type: history
+      people: [ALL]
+      backgroundColor: "#fefce8"
+    - type: history header
+      backgroundColor: "#bfdbfe"
+"""
+
+    df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, cell_export_info)
+
+    wb = load_workbook(output)
+    ws = wb.active
+
+    assert [ws["B1"].value, ws["C1"].value, ws["D1"].value] == ["H-3", "H-2", "H-1"]
+    assert [ws["B3"].value, ws["C3"].value, ws["D3"].value] == [None, None, "N"]
+    assert [ws["B4"].value, ws["C4"].value, ws["D4"].value] == ["A", "D", "N"]
+    assert ws["B1"].fill.fgColor.rgb == "FFBFDBFE"
+    assert ws["D3"].fill.fgColor.rgb == "FFFEFCE8"

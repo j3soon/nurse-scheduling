@@ -18,7 +18,15 @@
  */
 
 // A checkbox list that allows quick multi-selection by dragging the mouse.
-import { useEffect, useRef } from 'react';
+// Important interaction contract:
+// - A plain click behaves like a normal checkbox: it toggles on mouse up if the pointer never leaves the initial checkbox.
+// - Once the pointer leaves the initial checkbox, the gesture becomes drag-selection mode.
+// - Entering drag-selection mode immediately toggles the initial checkbox as the pointer leaves it.
+// - In drag-selection mode, toggles happen on mouse enter; mouse up only ends the gesture.
+// - Re-entering a checkbox during the same drag gesture toggles it again, so one checkbox may be toggled multiple times.
+// - Mouse up anywhere, including outside this component, ends the current gesture via the global mouseup listener.
+// - Native checkbox onChange is intentionally suppressed so all toggles follow the custom mouse gesture rules.
+import { useCallback, useEffect, useRef } from 'react';
 
 interface CheckboxItem {
   id: string;
@@ -54,6 +62,12 @@ export function CheckboxList({
     onToggle(id);
   };
 
+  const resetDragState = useCallback(() => {
+    isMultiSelectDragRef.current = false;
+    mouseDownCheckboxIdRef.current = '';
+    clearUserSelectDisabled();
+  }, []);
+
   const handleCheckboxMouseEnter = (id: string) => {
     mouseEnteredCheckboxIdRef.current = id;
     if (isMultiSelectDragRef.current) {
@@ -88,19 +102,13 @@ export function CheckboxList({
       // Normal checkbox click behavior
       handleToggle(id);
     }
-    // End multi-select drag
-    isMultiSelectDragRef.current = false;
-    mouseDownCheckboxIdRef.current = '';
-    clearUserSelectDisabled();
+    resetDragState();
   };
 
   // Add event listener for mouse up outside the component
   useEffect(() => {
     const handleGlobalMouseUp = () => {
-      // End multi-select drag
-      isMultiSelectDragRef.current = false;
-      mouseDownCheckboxIdRef.current = '';
-      clearUserSelectDisabled();
+      resetDragState();
     };
 
     window.addEventListener('mouseup', handleGlobalMouseUp);
@@ -109,7 +117,7 @@ export function CheckboxList({
       window.removeEventListener('mouseup', handleGlobalMouseUp);
       clearUserSelectDisabled();
     };
-  }, []);
+  }, [resetDragState]);
 
   return (
     <div className="space-y-2">
@@ -131,7 +139,7 @@ export function CheckboxList({
             <input
               type="checkbox"
               checked={selectedIds.includes(item.id)}
-              onChange={() => {}} // Prevent default onChange to handle it in mouseUp
+              onChange={() => {}} // Keep native checkbox changes disabled so gesture logic stays fully in mouse handlers.
               className="form-checkbox h-4 w-4 text-blue-600"
             />
             <span className="ml-2 text-sm text-gray-700">{item.id}</span>

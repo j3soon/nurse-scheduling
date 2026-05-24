@@ -20,7 +20,7 @@
 // The Save and Load page for Tab "10. Save and Load"
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { FiHelpCircle, FiDownload, FiSave, FiX, FiCopy, FiCheck, FiAlertCircle, FiUpload } from 'react-icons/fi';
 import yaml from 'js-yaml';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
@@ -48,6 +48,15 @@ export default function SaveAndLoadPage() {
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const copiedResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copiedResetTimeoutRef.current) {
+        clearTimeout(copiedResetTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const instructions = [
     "View the complete current state of your scheduling setup in YAML format",
@@ -89,7 +98,13 @@ export default function SaveAndLoadPage() {
     try {
       await navigator.clipboard.writeText(currentYaml);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copiedResetTimeoutRef.current) {
+        clearTimeout(copiedResetTimeoutRef.current);
+      }
+      copiedResetTimeoutRef.current = setTimeout(() => {
+        setCopied(false);
+        copiedResetTimeoutRef.current = null;
+      }, 2000);
     } catch (err) {
       console.error('Failed to copy to clipboard:', err);
     }

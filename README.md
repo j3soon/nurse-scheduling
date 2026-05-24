@@ -77,6 +77,21 @@ docker run --rm -it --gpus all --network=host \
   j3soon/nurse-scheduling:dev-cuopt
 ```
 
+or with X11 forwarding for running Playwright interactive mode in the container:
+
+```sh
+xhost +local:docker
+mkdir -p ~/docker/.codex
+docker run --rm -it --network=host \
+  -v $(pwd):/app \
+  -v ~/docker/.codex:/root/.codex \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  j3soon/nurse-scheduling:dev
+```
+
+> May need to run `rm -rf .next` in `web-frontend` to clear the Next.js cache when switching between host and Docker environments.
+
 ### Web Frontend
 
 ```sh
@@ -84,6 +99,51 @@ cd web-frontend
 bun install
 bun run dev
 ```
+
+Run frontend unit/component tests:
+
+```sh
+cd web-frontend
+bun run test
+```
+
+Run frontend coverage:
+
+```sh
+cd web-frontend
+bun run test:coverage
+```
+
+Run frontend browser integration tests:
+
+```sh
+cd web-frontend
+bunx playwright install-deps chromium
+bunx playwright install chromium
+bun run test:e2e
+# or in interactive UI mode:
+bun run test:e2e:ui
+```
+
+When using the repository `Dockerfile`, Chromium is preinstalled in the image at
+build time using the frontend's locked Playwright version. If you rebuild the
+image after Playwright version changes, `bun run test:e2e` and
+`bun run test:e2e:ui` should not require rerunning `bunx playwright install chromium`
+inside each new `docker run --rm` container.
+
+> For the interactive UI mode, you may need to run the tests multiple times to get it passed, as the test is currently somewhat flaky. This is due to the delay of page update and is planned to be fixed in the future.
+
+In GitHub Actions, frontend browser integration tests run after frontend unit/coverage tests. The workflow uploads Playwright reports as build artifacts so failed CI runs keep browser traces and reports for debugging.
+
+Generate a separate browser-flow coverage report from Playwright:
+
+```sh
+cd web-frontend
+bun run test:e2e:coverage
+bun run coverage:e2e:report
+```
+
+This writes a separate report under `web-frontend/coverage-e2e/` and does not replace the main Vitest coverage report under `web-frontend/coverage/`.
 
 For building static site, run:
 
@@ -99,7 +159,7 @@ cd web-frontend
 bun run lint -- --fix
 ```
 
-> `bun` can be replaced directly with `npm`.
+> `bun` can be replaced directly with `npm` for the basic Next.js workflow, but the documented project scripts assume Bun.
 
 ### Core
 
@@ -175,7 +235,7 @@ pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
 
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
 
-Note: The tests and code coverage are only for the core module. The web frontend is not covered by tests.
+Note: The frontend now has Vitest coverage plus Playwright browser integration tests. The root GitHub Actions badge currently still points at the core workflow.
 
 ### Web Backend
 
