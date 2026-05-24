@@ -865,6 +865,30 @@ export function useSchedulingData() {
     };
   };
 
+  const applyPeopleHistoryForIdDeletion = (
+    state: SchedulingState,
+    dataType: DataType,
+    deletedIds: string[]
+  ): SchedulingState => {
+    if (dataType !== DataType.SHIFT_TYPES || deletedIds.length === 0) return state;
+
+    const deletedIdSet = new Set(deletedIds);
+    return {
+      ...state,
+      people: {
+        ...state.people,
+        items: state.people.items.map(person => {
+          const history = person.history ?? [];
+          const lastDeletedIndex = history.findLastIndex(shiftTypeId => deletedIdSet.has(shiftTypeId));
+          return {
+            ...person,
+            history: lastDeletedIndex === -1 ? history : history.slice(lastDeletedIndex + 1)
+          };
+        })
+      }
+    };
+  };
+
   // Unified function to update preferences when an ID changes
   const applyPreferencesForIdChange = (
     state: SchedulingState,
@@ -1197,7 +1221,8 @@ export function useSchedulingData() {
     dataType: DataType,
     deletedIds: string[]
   ): SchedulingState => {
-    let nextState = applyPreferencesForIdDeletion(state, dataType, deletedIds);
+    let nextState = applyPeopleHistoryForIdDeletion(state, dataType, deletedIds);
+    nextState = applyPreferencesForIdDeletion(nextState, dataType, deletedIds);
     nextState = applyExportLayoutForIdDeletion(nextState, dataType, deletedIds);
     return nextState;
   };

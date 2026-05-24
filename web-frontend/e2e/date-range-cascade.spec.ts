@@ -72,7 +72,9 @@ test('shrinking the date range removes stale date references from downstream pag
 
   await page.goto('/dates');
   await expect(page.getByRole('heading', { name: 'Date Management' })).toBeVisible();
+  await expect(page.getByText('Duration: 2 days')).toBeVisible();
   await page.getByRole('button', { name: 'Set Date Range' }).click();
+  await page.locator('#startDate').fill('2026-05-01');
   await page.locator('#endDate').fill('2026-05-01');
   await page.getByRole('button', { name: 'Update' }).click();
   await expect(page.getByText('Duration: 1 days')).toBeVisible();
@@ -88,4 +90,48 @@ test('shrinking the date range removes stale date references from downstream pag
   await expect(page.getByText('date window count')).toBeVisible();
   await expect(page.getByText('Count Dates: 01')).toBeVisible();
   await expect(page.getByText('Count Dates: 01, 02')).toHaveCount(0);
+});
+
+test('shrinking the date range removes stale date references from export layout state', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Seed export formatting and count columns that reference both dates.
+   * 2. Shrink the date range to remove the second date.
+   * 3. Confirm Save and Load YAML keeps date 01 and drops date 02 from export layout.
+   */
+  await disableModalDialogs(page);
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'date export cascade seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-02' }, groups: [] },
+    people: { items: [{ id: 'P1', description: 'Primary nurse', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: {
+      formatting: [
+        { type: 'column', dates: ['01', '02'], backgroundColor: '#111111' },
+        { type: 'cell', people: ['P1'], dates: ['02'], shiftTypes: ['D'], backgroundColor: '#222222' },
+      ],
+      extraColumns: [
+        { type: 'count', header: 'Both days', countDates: ['01', '02'], countShiftTypes: ['D'] },
+        { type: 'count', header: 'Second day only', countDates: ['02'], countShiftTypes: ['D'] },
+      ],
+    },
+  });
+
+  await page.goto('/dates');
+  await expect(page.getByText('Duration: 2 days')).toBeVisible();
+  await page.getByRole('button', { name: 'Set Date Range' }).click();
+  await page.locator('#startDate').fill('2026-05-01');
+  await page.locator('#endDate').fill('2026-05-01');
+  await page.getByRole('button', { name: 'Update' }).click();
+  await expect(page.getByText('Duration: 1 days')).toBeVisible();
+
+  await page.goto('/save-and-load');
+  const yamlPreview = page.locator('pre');
+  await expect(yamlPreview).toContainText("dates: ['01']");
+  await expect(yamlPreview).toContainText("countDates: ['01']");
+  await expect(yamlPreview).not.toContainText("dates: ['02']");
+  await expect(yamlPreview).not.toContainText("countDates: ['02']");
+  await expect(yamlPreview).not.toContainText('Second day only');
 });

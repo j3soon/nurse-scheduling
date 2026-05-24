@@ -1209,6 +1209,197 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('replaces existing export extra rows and columns when loading sparse export YAML', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updateExportExtraColumns([
+        { type: 'count', header: 'Old column', countDates: ['ALL'], countShiftTypes: ['D'] },
+      ]);
+      result.current.updateExportExtraRows([
+        { type: 'count', header: 'Old row', countPeople: ['ALL'], countShiftTypes: ['D'] },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.extraColumns).toHaveLength(1);
+      expect(result.current.exportData?.extraRows).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'sparse export replacement',
+        dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+        people: { items: [{ id: 'P1', description: '', history: [] }], groups: [], history: [] },
+        shiftTypes: { items: [{ id: 'D', description: '' }], groups: [] },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: { formatting: [] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.descriptionData).toBe('sparse export replacement');
+      expect(result.current.exportData).toEqual({ formatting: [] });
+    });
+  });
+
+  it('cascades entity deletion through export layout rules and extra count rows', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-05-01', endDate: '2026-05-02' },
+          items: [{ id: '01', description: '' }, { id: '02', description: '' }],
+          groups: [],
+        },
+        people: {
+          items: [
+            { id: 'P1', description: '', history: [] },
+            { id: 'P2', description: '', history: [] },
+          ],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }, { id: 'N', description: '' }],
+          groups: [],
+        },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [
+            { type: 'row', people: ['P1', 'P2'], backgroundColor: '#111111' },
+            { type: 'column', dates: ['01', '02'], backgroundColor: '#222222' },
+            { type: 'cell', people: ['P1'], dates: ['02'], shiftTypes: ['N'], backgroundColor: '#333333' },
+            { type: 'history header', backgroundColor: '#444444' },
+          ],
+          extraColumns: [
+            { type: 'count', header: 'N on second day', countDates: ['02'], countShiftTypes: ['N'] },
+          ],
+          extraRows: [
+            { type: 'count', header: 'P1 nights', countPeople: ['P1'], countShiftTypes: ['N'] },
+          ],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.formatting).toHaveLength(4);
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.PEOPLE, result.current.peopleData, 'P1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.formatting).toEqual([
+        { type: 'row', people: ['P2'], backgroundColor: '#111111' },
+        { type: 'column', dates: ['01', '02'], backgroundColor: '#222222' },
+        { type: 'history header', backgroundColor: '#444444' },
+      ]);
+      expect(result.current.exportData?.extraRows).toEqual([]);
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'N');
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.formatting).toEqual([
+        { type: 'row', people: ['P2'], backgroundColor: '#111111' },
+        { type: 'column', dates: ['01', '02'], backgroundColor: '#222222' },
+        { type: 'history header', backgroundColor: '#444444' },
+      ]);
+      expect(result.current.exportData?.extraColumns).toEqual([]);
+      expect(result.current.exportData?.extraRows).toEqual([]);
+    });
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date('2026-05-01T12:00:00.000Z'),
+        endDate: new Date('2026-05-01T12:00:00.000Z'),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.formatting).toEqual([
+        { type: 'row', people: ['P2'], backgroundColor: '#111111' },
+        { type: 'column', dates: ['01'], backgroundColor: '#222222' },
+        { type: 'history header', backgroundColor: '#444444' },
+      ]);
+    });
+  });
+
+  it('renames people, date groups, and shift types inside export layout state', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-05-01', endDate: '2026-05-01' },
+          items: [{ id: '01', description: '' }],
+          groups: [{ id: 'Weekend Team', members: ['01'], description: '' }],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }],
+          groups: [],
+        },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [
+            { type: 'row', people: ['P1'], backgroundColor: '#111111' },
+            { type: 'column', dates: ['Weekend Team'], backgroundColor: '#222222' },
+            { type: 'cell', people: ['P1'], dates: ['Weekend Team'], shiftTypes: ['D'], backgroundColor: '#333333' },
+          ],
+          extraColumns: [
+            { type: 'count', header: 'Day group count', countDates: ['Weekend Team'], countShiftTypes: ['D'] },
+          ],
+          extraRows: [
+            { type: 'count', header: 'Person day count', countPeople: ['P1'], countShiftTypes: ['D'] },
+          ],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.formatting).toHaveLength(3);
+    });
+
+    act(() => {
+      result.current.updateItem(DataType.PEOPLE, result.current.peopleData, 'P1', 'P1X');
+      result.current.updateGroup(DataType.DATES, result.current.dateData, 'Weekend Team', 'Weekend Crew');
+      result.current.updateItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'D', 'DX');
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.formatting).toEqual([
+        { type: 'row', people: ['P1X'], backgroundColor: '#111111' },
+        { type: 'column', dates: ['Weekend Crew'], backgroundColor: '#222222' },
+        {
+          type: 'cell',
+          people: ['P1X'],
+          dates: ['Weekend Crew'],
+          shiftTypes: ['DX'],
+          backgroundColor: '#333333',
+        },
+      ]);
+      expect(result.current.exportData?.extraColumns).toEqual([
+        { type: 'count', header: 'Day group count', countDates: ['Weekend Crew'], countShiftTypes: ['DX'] },
+      ]);
+      expect(result.current.exportData?.extraRows).toEqual([
+        { type: 'count', header: 'Person day count', countPeople: ['P1X'], countShiftTypes: ['DX'] },
+      ]);
+    });
+  });
+
   it('logs and skips sorting checks for invalid SHIFT_REQUEST person/shiftType shapes', async () => {
     const { result } = renderHook(() => useSchedulingData());
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -1610,12 +1801,16 @@ describe('useSchedulingData', () => {
           groups: [],
         },
         people: {
-          items: [{ id: 'P1', description: '', history: ['D'] }],
+          items: [{ id: 'P1', description: '', history: ['A', 'D', 'N'] }],
           groups: [],
           history: [],
         },
         shiftTypes: {
-          items: [{ id: 'D', description: 'Day' }],
+          items: [
+            { id: 'A', description: 'Admin' },
+            { id: 'D', description: 'Day' },
+            { id: 'N', description: 'Night' },
+          ],
           groups: [],
         },
         preferences: [
@@ -1661,7 +1856,7 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       const person = result.current.peopleData.items.find(item => item.id === 'P1');
-      expect(person?.history).toContain('DX');
+      expect(person?.history).toEqual(['A', 'DX', 'N']);
       expect(result.current.preferences.some(pref => JSON.stringify(pref).includes('"D"'))).toBe(false);
       expect(result.current.preferences.some(pref => JSON.stringify(pref).includes('"DX"'))).toBe(true);
     });
@@ -1672,8 +1867,7 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       const person = result.current.peopleData.items.find(item => item.id === 'P1');
-      // History renaming is supported, but history deletion is currently not cascaded.
-      expect(person?.history).toEqual(['DX']);
+      expect(person?.history).toEqual(['N']);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);

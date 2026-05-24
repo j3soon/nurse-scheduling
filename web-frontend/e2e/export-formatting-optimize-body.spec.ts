@@ -51,6 +51,8 @@ test('export formatting rules affect the YAML sent to optimize and export', asyn
   await page.getByTitle('Enter background color in hex').fill('#00ff00');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.getByText('Background: #00ff00')).toBeVisible();
+  await page.goto('/save-and-load');
+  await expect(page.locator('pre')).toContainText('00ff00');
 
   let submittedBody = '';
   await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {

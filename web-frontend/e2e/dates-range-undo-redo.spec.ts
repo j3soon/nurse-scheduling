@@ -47,9 +47,12 @@ test('shrinking the date range persists across navigation and updates downstream
   await expect(page.getByTitle('Click to update preferences for P1 on date 03')).toBeVisible();
 
   await page.goto('/dates');
+  await expect(page.getByText('Duration: 3 days')).toBeVisible();
   await page.getByRole('button', { name: 'Set Date Range' }).click();
+  await page.locator('#startDate').fill('2026-05-01');
   await page.locator('#endDate').fill('2026-05-02');
   await page.getByRole('button', { name: /Apply|Update/ }).click();
+  await expect(page.getByText('Duration: 2 days')).toBeVisible();
 
   await page.goto('/shift-requests');
   await expect(page.getByTitle('Click to update preferences for P1 on date 01')).toBeVisible();

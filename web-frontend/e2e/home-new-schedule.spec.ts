@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs } from './helpers';
+import { disableModalDialogs, seedSchedulingState } from './helpers';
 
 test('new schedule resets the app to the default seeded state from the home page flow', async ({ page }) => {
   /*
@@ -48,4 +48,41 @@ test('new schedule resets the app to the default seeded state from the home page
   await expect(page.getByText('1. D', { exact: true })).toBeVisible();
   await expect(page.getByText('2. D+', { exact: true })).toBeVisible();
   await expect(page.getByTitle('Day', { exact: true }).first()).toBeVisible();
+});
+
+test('new schedule reset is undoable from downstream pages', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Seed a distinctive schedule, then reset through the New Schedule flow.
+   * 2. Confirm the seeded person disappeared and defaults are visible.
+   * 3. Undo from a downstream page and confirm the seeded state returns.
+   * 4. Redo and confirm the default reset state returns again.
+  */
+  await disableModalDialogs(page);
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'undoable new schedule seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: { items: [{ id: 'P9', description: 'Undoable nurse', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'ZX', description: 'Undoable shift' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New Schedule' }).click();
+  await page.getByRole('button', { name: 'Reset Data' }).click();
+
+  await page.goto('/people');
+  await expect(page.getByText('1. Person 1', { exact: true })).toBeVisible();
+  await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
+
+  await page.getByRole('heading', { name: 'People Management', exact: true }).click();
+  await page.keyboard.press('Control+z');
+  await expect(page.getByText('1. P9', { exact: true })).toBeVisible();
+  await expect(page.getByText('1. Person 1', { exact: true })).toHaveCount(0);
+
+  await page.keyboard.press('Control+y');
+  await expect(page.getByText('1. Person 1', { exact: true })).toBeVisible();
+  await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
 });

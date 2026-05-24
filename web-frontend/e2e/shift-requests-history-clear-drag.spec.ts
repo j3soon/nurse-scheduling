@@ -71,3 +71,57 @@ test('quick-add clear-mode drag clears multiple history cells across one gesture
   await expect(currentHistory.getByText(/H-1:\s*N/)).toHaveCount(0);
   await expect(page.getByText('No history entries defined yet. Click on any history cell in the matrix above to add entries.')).toBeVisible();
 });
+
+test('quick-add clear-mode drag respects padded history columns on shorter rows', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Seed two people with different history lengths.
+   * 2. Drag through the shorter row's padded clickable column and its H-1 cell.
+   * 3. Confirm only the shorter row's actual history entry is cleared.
+   */
+  await disableModalDialogs(page);
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'history clear padded row seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: {
+      items: [
+        { id: 'P1', description: 'Long history nurse', history: ['D', 'N', 'E'] },
+        { id: 'P2', description: 'Short history nurse', history: ['D'] },
+      ],
+      groups: [],
+      history: [],
+    },
+    shiftTypes: {
+      items: [
+        { id: 'D', description: 'Day' },
+        { id: 'N', description: 'Night' },
+        { id: 'E', description: 'Evening' },
+      ],
+      groups: [],
+    },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+
+  await page.goto('/shift-requests');
+  const currentHistory = page.locator('div').filter({ has: page.getByRole('heading', { name: 'Current People History' }) }).first();
+  await expect(currentHistory.getByText(/Person: P1/)).toBeVisible();
+  await expect(currentHistory.getByText(/H-3:\s*D/)).toBeVisible();
+  await expect(currentHistory.getByText(/Person: P2/)).toBeVisible();
+  await expect(currentHistory.getByText(/H-1:\s*D/)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Quick Add Preference' }).click();
+  const shorterHistoryRow = page.getByRole('row', { name: /2\. P2/ });
+  const paddedClickableCell = shorterHistoryRow.locator('td[title="Click or drag to set history position H-2 to clear"]');
+  const existingHistoryCell = shorterHistoryRow.locator('td[title="Click or drag to set history position H-1 to clear"]');
+
+  await paddedClickableCell.hover();
+  await page.mouse.down();
+  await existingHistoryCell.hover();
+  await page.mouse.up();
+
+  await expect(currentHistory.getByText(/Person: P1/)).toBeVisible();
+  await expect(currentHistory.getByText(/H-3:\s*D/)).toBeVisible();
+  await expect(currentHistory.getByText(/Person: P2/)).toHaveCount(0);
+});

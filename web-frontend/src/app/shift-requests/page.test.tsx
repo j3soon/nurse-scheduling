@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ShiftRequestsPage from '@/app/shift-requests/page';
 
@@ -431,6 +431,57 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     expect(addPersonHistory).not.toHaveBeenCalled();
     expect(updatePersonHistory).toHaveBeenCalledTimes(1);
     expect(updatePersonHistory).toHaveBeenCalledWith('Person 1', 1, undefined, { replaceLatestHistoryEntry: false });
+  });
+
+  it('maps clear-mode drag columns through leading padding for shorter history rows', async () => {
+    const user = userEvent.setup();
+    const updatePersonHistory = vi.fn();
+
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '01', description: 'Jan 1' }],
+        groups: [{ id: 'ALL_DATES', members: ['01'], description: '' }],
+      },
+      peopleData: {
+        items: [
+          { id: 'Person 1', description: '', history: ['D', 'N', 'E'] },
+          { id: 'Person 2', description: '', history: ['D'] },
+        ],
+        groups: [{ id: 'ALL_PEOPLE', members: ['Person 1', 'Person 2'], description: '' }],
+        history: [],
+      },
+      shiftTypeData: {
+        items: [
+          { id: 'D', description: 'Day' },
+          { id: 'N', description: 'Night' },
+          { id: 'E', description: 'Evening' },
+        ],
+        groups: [{ id: 'ALL_SHIFT_TYPES', members: ['D', 'N', 'E'], description: '' }],
+      },
+      getPreferencesByType: vi.fn(() => []),
+      updatePreferencesByType,
+      addPersonHistory: vi.fn(),
+      updatePersonHistory,
+      reorderItems,
+    });
+
+    render(<ShiftRequestsPage />);
+
+    await user.click(screen.getByRole('button', { name: /quick add preference/i }));
+    const shorterHistoryRow = screen.getByRole('row', { name: /2\. Person 2/ });
+    const paddedClickableCell = within(shorterHistoryRow).getByTitle('Click or drag to set history position H-2 to clear');
+    const existingHistoryCell = within(shorterHistoryRow).getByTitle('Click or drag to set history position H-1 to clear');
+
+    fireEvent.mouseDown(paddedClickableCell, { button: 0 });
+    fireEvent.mouseEnter(existingHistoryCell);
+    fireEvent.mouseUp(existingHistoryCell, { button: 0 });
+
+    expect(updatePersonHistory).toHaveBeenCalledTimes(1);
+    expect(updatePersonHistory).toHaveBeenCalledWith('Person 2', 0, undefined, { replaceLatestHistoryEntry: false });
   });
 
   it('parses whitespace-padded CSV values for shift requests', async () => {
