@@ -50,43 +50,43 @@ test('export formatting reorder and edit can be undone and redone independently'
     preferences: [{ type: 'at most one shift per day' }],
     export: {
       formatting: [
-        { type: 'row', targets: ['P1'], backgroundColor: '#111111' },
-        { type: 'column', targets: ['01'], backgroundColor: '#222222' },
+        { type: 'row', people: ['P1'], backgroundColor: '#111111' },
+        { type: 'column', dates: ['01'], backgroundColor: '#222222' },
       ],
     },
   });
 
-  await page.goto('/export-formatting');
+  await page.goto('/export-layout');
   const cards = page.locator('[draggable="true"]');
   await expect(cards).toHaveCount(2);
-  await expect(cards.nth(0)).toContainText('Targets: P1');
-  await expect(cards.nth(1)).toContainText('Targets: 01');
+  await expect(cards.nth(0)).toContainText('People: P1');
+  await expect(cards.nth(1)).toContainText('Dates: 01');
 
   await cards.nth(1).dragTo(cards.nth(0));
-  await expect(cards.nth(0)).toContainText('Targets: 01');
-  await expect(cards.nth(1)).toContainText('Targets: P1');
+  await expect(cards.nth(0)).toContainText('Dates: 01');
+  await expect(cards.nth(1)).toContainText('People: P1');
 
   await cards.nth(0).getByRole('button', { name: 'Edit' }).click();
   await page.getByTitle('Enter bottom border color in hex').fill('#333333');
   await page.getByRole('button', { name: 'Update', exact: true }).click();
-  await expect(cards.nth(0)).toContainText('Targets: 01');
+  await expect(cards.nth(0)).toContainText('Dates: 01');
   await expect(cards.nth(0)).toContainText('Bottom Border: #333333');
 
-  await page.getByRole('heading', { name: 'Export Formatting', exact: true }).click();
+  await page.getByRole('heading', { name: 'Export Layout', exact: true }).click();
   await page.keyboard.press('Control+z');
-  await expect(cards.nth(0)).toContainText('Targets: 01');
+  await expect(cards.nth(0)).toContainText('Dates: 01');
   await expect(cards.nth(0)).not.toContainText('Bottom Border: #333333');
-  await expect(cards.nth(1)).toContainText('Targets: P1');
+  await expect(cards.nth(1)).toContainText('People: P1');
 
   await page.keyboard.press('Control+z');
-  await expect(cards.nth(0)).toContainText('Targets: P1');
-  await expect(cards.nth(1)).toContainText('Targets: 01');
+  await expect(cards.nth(0)).toContainText('People: P1');
+  await expect(cards.nth(1)).toContainText('Dates: 01');
 
   await page.keyboard.press('Control+y');
-  await expect(cards.nth(0)).toContainText('Targets: 01');
-  await expect(cards.nth(1)).toContainText('Targets: P1');
+  await expect(cards.nth(0)).toContainText('Dates: 01');
+  await expect(cards.nth(1)).toContainText('People: P1');
 
   await page.keyboard.press('Control+y');
-  await expect(cards.nth(0)).toContainText('Targets: 01');
+  await expect(cards.nth(0)).toContainText('Dates: 01');
   await expect(cards.nth(0)).toContainText('Bottom Border: #333333');
 });

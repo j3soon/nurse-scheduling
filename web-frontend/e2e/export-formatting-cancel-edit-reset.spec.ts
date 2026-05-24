@@ -22,7 +22,7 @@
 import { expect, test } from './test';
 import { disableModalDialogs, seedSchedulingState } from './helpers';
 
-test('canceling export-formatting edits restores persisted rule values on reopen', async ({ page }) => {
+test('canceling export layout style edits restores persisted rule values on reopen', async ({ page }) => {
   /*
    * Steps:
    * 1. Confirm the original seeded formatting rule is visible.
@@ -41,10 +41,12 @@ test('canceling export-formatting edits restores persisted rule values on reopen
     export: { formatting: [] },
   });
 
-  await page.goto('/export-formatting');
-  await page.getByRole('button', { name: 'Add Formatting Rule' }).click();
-  await page.selectOption('select', 'cell');
-  await page.getByText('D', { exact: true }).click();
+  await page.goto('/export-layout');
+  await page.getByRole('button', { name: 'Add Export Rule' }).click();
+  await page.locator('select').nth(1).selectOption('cell');
+  await page.getByRole('checkbox', { name: 'P1', exact: true }).check();
+  await page.getByRole('checkbox', { name: '01', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'D', exact: true }).check();
   await page.getByTitle('Enter background color in hex').fill('#00ff00');
   await page.getByTitle('Enter bottom border color in hex').fill('#0000ff');
   await page.getByRole('button', { name: 'Add', exact: true }).click();

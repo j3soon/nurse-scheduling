@@ -14,6 +14,8 @@
   - `bun run dev`: run local dev server.
   - `bun run build`: production build.
   - `bun run lint -- --fix`: run ESLint with fixes.
+  - `bun run test`: run frontend unit/component tests.
+  - `bun run test:e2e`: run Playwright browser integration tests.
 - Core (from `core/`):
   - `uv venv --python 3.12 && source .venv/bin/activate`: create/activate venv.
   - `uv pip install -r requirements.txt`: install Python deps.
@@ -30,8 +32,9 @@
 - Keep file endings clean: no trailing spaces; newline at end of file.
 
 ## Testing Guidelines
-- Framework: `pytest` for core and backend tests.
+- Frameworks: `pytest` for core and backend tests; Vitest and Playwright for frontend tests.
 - Main suites: `core/tests/test_solver_ortools_cp_sat.py`, `core/tests/test_solver_pulp_cbc.py`, `core/tests/test_schedule_ortools_cp_sat.py`, `core/tests/test_schedule_pulp_cbc.py`, `core/tests/test_serve.py`.
+- Frontend validation should include `bun run test` for unit/component coverage and `bun run test:e2e` for browser integration coverage when checking the full app.
 - Add new scheduling cases as fixture pairs in `core/tests/testcases/**` (typically `.yaml` input with matching `.csv` or `.txt` expected output).
 - Run affected tests locally before opening a PR, and run Ruff on touched core files.
 

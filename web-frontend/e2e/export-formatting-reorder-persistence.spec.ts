@@ -50,32 +50,32 @@ test('export formatting drag reorder persists after navigation', async ({ page }
     export: { formatting: [] },
   });
 
-  await page.goto('/export-formatting');
-  await page.getByRole('button', { name: 'Add Formatting Rule' }).click();
-  await page.selectOption('select', 'row');
+  await page.goto('/export-layout');
+  await page.getByRole('button', { name: 'Add Export Rule' }).click();
+  await page.locator('select').nth(1).selectOption('row');
   await page.getByRole('checkbox', { name: 'P1', exact: true }).check();
   await page.getByTitle('Enter background color in hex').fill('#111111');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
 
-  await page.getByRole('button', { name: 'Add Formatting Rule' }).click();
-  await page.selectOption('select', 'column');
+  await page.getByRole('button', { name: 'Add Export Rule' }).click();
+  await page.locator('select').nth(1).selectOption('column');
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByTitle('Enter background color in hex').fill('#222222');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
 
   const cards = page.locator('[draggable="true"]');
   await expect(cards).toHaveCount(2);
-  await expect(cards.nth(0)).toContainText('Targets: P1');
-  await expect(cards.nth(1)).toContainText('Targets: 01');
+  await expect(cards.nth(0)).toContainText('People: P1');
+  await expect(cards.nth(1)).toContainText('Dates: 01');
 
   await cards.nth(1).dragTo(cards.nth(0));
-  await expect(cards.nth(0)).toContainText('Targets: 01');
-  await expect(cards.nth(1)).toContainText('Targets: P1');
+  await expect(cards.nth(0)).toContainText('Dates: 01');
+  await expect(cards.nth(1)).toContainText('People: P1');
 
   await page.goto('/people');
   await expect(page.getByRole('heading', { name: 'People Management', exact: true })).toBeVisible();
-  await page.goto('/export-formatting');
+  await page.goto('/export-layout');
   const persistedCards = page.locator('[draggable="true"]');
-  await expect(persistedCards.nth(0)).toContainText('Targets: 01');
-  await expect(persistedCards.nth(1)).toContainText('Targets: P1');
+  await expect(persistedCards.nth(0)).toContainText('Dates: 01');
+  await expect(persistedCards.nth(1)).toContainText('People: P1');
 });

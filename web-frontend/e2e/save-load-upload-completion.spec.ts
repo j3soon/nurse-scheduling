@@ -26,7 +26,7 @@ test('save-load upload waits for completion dialogs before downstream state is a
   /*
    * Steps:
    * 1. Capture a valid YAML snapshot from a seeded state, then reset the app and confirm the original state is gone.
-   * 2. Upload that YAML through the real save/load control and wait for the completion dialogs.
+   * 2. Upload that YAML through the real save/load control and wait for the completion dialog.
    * 3. Verify the restored state only after the upload-completion path has fired.
    */
   const dialogs: string[] = [];
@@ -74,9 +74,8 @@ test('save-load upload waits for completion dialogs before downstream state is a
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
 
-  await expect.poll(() => dialogs.length).toBe(2);
-  expect(dialogs[0]).toContain('does not contain app version information');
-  expect(dialogs[1]).toContain('YAML file loaded successfully!');
+  await expect.poll(() => dialogs.length).toBe(1);
+  expect(dialogs[0]).toContain('YAML file loaded successfully!');
 
   await page.goto('/people');
   await expect(page.getByTitle('Team Alpha', { exact: true })).toBeVisible();

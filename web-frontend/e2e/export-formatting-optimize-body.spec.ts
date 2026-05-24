@@ -41,11 +41,13 @@ test('export formatting rules affect the YAML sent to optimize and export', asyn
     export: { formatting: [] },
   });
 
-  await page.goto('/export-formatting');
-  await expect(page.getByText('No formatting rules defined yet. Click "Add Formatting Rule" to get started.')).toBeVisible();
-  await page.getByRole('button', { name: 'Add Formatting Rule' }).click();
-  await page.selectOption('select', 'cell');
-  await page.getByText('D', { exact: true }).click();
+  await page.goto('/export-layout');
+  await expect(page.getByText('No style rules defined yet. Click "Add Export Rule" to get started.')).toBeVisible();
+  await page.getByRole('button', { name: 'Add Export Rule' }).click();
+  await page.locator('select').nth(1).selectOption('cell');
+  await page.getByRole('checkbox', { name: 'P1', exact: true }).check();
+  await page.getByRole('checkbox', { name: '01', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'D', exact: true }).check();
   await page.getByTitle('Enter background color in hex').fill('#00ff00');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.getByText('Background: #00ff00')).toBeVisible();
@@ -67,6 +69,6 @@ test('export formatting rules affect the YAML sent to optimize and export', asyn
   expect(submittedBody).toContain('formatting');
   expect(submittedBody).toContain('backgroundColor');
   expect(submittedBody).toContain('00ff00');
-  expect(submittedBody).toContain('targets');
+  expect(submittedBody).toContain('shiftTypes');
   expect(submittedBody).toContain('D');
 });

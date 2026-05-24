@@ -44,6 +44,7 @@ interface HistoryState {
 }
 
 const STORAGE_KEY = 'nurse-scheduling-data';
+const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
 const MAX_HISTORY_SIZE = 50;
 
 // Constants for infinity value handling in localStorage
@@ -491,7 +492,7 @@ function loadStateFromStorage(): HistoryState {
   if (typeof window === 'undefined') return createDefaultHistoryState();
 
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(getStorageKey());
 
     if (!stored) return createDefaultHistoryState();
 
@@ -548,10 +549,17 @@ function saveStateToStorage(historyState: HistoryState): void {
 
     // Replace infinity values with safe placeholders before JSON.stringify
     const safeHistoryState = replaceInfinityValues(historyStateToStore);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeHistoryState));
+    localStorage.setItem(getStorageKey(), JSON.stringify(safeHistoryState));
   } catch (error) {
     console.error('Failed to save data to localStorage:', error);
   }
+}
+
+function getStorageKey(): string {
+  if (typeof window === 'undefined') return STORAGE_KEY;
+
+  const workerNamespace = (window as unknown as { [WORKER_NAMESPACE_KEY]?: string })[WORKER_NAMESPACE_KEY];
+  return workerNamespace ? `${STORAGE_KEY}__${workerNamespace}` : STORAGE_KEY;
 }
 
 function addToHistory(

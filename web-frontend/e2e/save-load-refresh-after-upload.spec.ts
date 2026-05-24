@@ -26,7 +26,7 @@ test('save-load YAML preview reflects uploaded state after a page refresh', asyn
   /*
    * Steps:
    * 1. Capture a valid YAML snapshot from a seeded state, then reset and confirm the preview no longer shows that state.
-   * 2. Upload the YAML back through save/load and wait for the upload-completion dialogs.
+   * 2. Upload the YAML back through save/load and wait for the upload-completion dialog.
    * 3. Refresh the page and confirm the YAML preview now matches the uploaded state.
    */
   const dialogs: string[] = [];
@@ -73,7 +73,8 @@ test('save-load YAML preview reflects uploaded state after a page refresh', asyn
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
 
-  await expect.poll(() => dialogs.length).toBe(2);
+  await expect.poll(() => dialogs.length).toBe(1);
+  expect(dialogs[0]).toContain('YAML file loaded successfully!');
   await page.reload();
   await expect(page.locator('pre')).toContainText('Team Alpha');
 });

@@ -51,17 +51,19 @@ test('export formatting rules can be added, edited, and deleted through the page
     export: { formatting: [] },
   });
 
-  await page.goto('/export-formatting');
-  await expect(page.getByRole('heading', { name: 'Export Formatting' })).toBeVisible();
-  await expect(page.getByText('No formatting rules defined yet. Click "Add Formatting Rule" to get started.')).toBeVisible();
+  await page.goto('/export-layout');
+  await expect(page.getByRole('heading', { name: 'Export Layout' })).toBeVisible();
+  await expect(page.getByText('No style rules defined yet. Click "Add Export Rule" to get started.')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Add Formatting Rule' }).click();
-  await page.selectOption('select', 'cell');
-  await page.getByText('D', { exact: true }).click();
+  await page.getByRole('button', { name: 'Add Export Rule' }).click();
+  await page.locator('select').nth(1).selectOption('cell');
+  await page.getByRole('checkbox', { name: 'P1', exact: true }).check();
+  await page.getByRole('checkbox', { name: '01', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'D', exact: true }).check();
   await page.getByTitle('Enter background color in hex').fill('#00ff00');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
 
-  await expect(page.getByText('Targets: D')).toBeVisible();
+  await expect(page.getByText('Shift Types: D')).toBeVisible();
   await expect(page.getByText('Background: #00ff00')).toBeVisible();
 
   await page.getByRole('button', { name: 'Edit' }).click();
@@ -72,5 +74,5 @@ test('export formatting rules can be added, edited, and deleted through the page
   await expect(page.getByText('Bottom Border: #ff0000')).toBeVisible();
 
   await page.getByRole('button', { name: 'Delete' }).click();
-  await expect(page.getByText('No formatting rules defined yet. Click "Add Formatting Rule" to get started.')).toBeVisible();
+  await expect(page.getByText('No style rules defined yet. Click "Add Export Rule" to get started.')).toBeVisible();
 });
