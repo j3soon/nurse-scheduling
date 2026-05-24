@@ -2,7 +2,7 @@
 
 [![tests](https://img.shields.io/github/actions/workflow/status/j3soon/nurse-scheduling/test-core.yaml?label=tests)](https://github.com/j3soon/nurse-scheduling/actions/workflows/test-core.yaml)
 [![Netlify Status](https://api.netlify.com/api/v1/badges/8ec5c5da-89e1-41e5-87b3-133ce1007783/deploy-status)](https://nursescheduling.org/)
-[![codecov](https://codecov.io/github/j3soon/nurse-scheduling/graph/badge.svg?token=DPOvtAW1k2)](https://codecov.io/github/j3soon/nurse-scheduling)
+[![codecov](https://codecov.io/github/j3soon/nurse-scheduling/branch/dev/graph/badge.svg?token=DPOvtAW1k2)](https://codecov.io/github/j3soon/nurse-scheduling)
 [![docs](https://img.shields.io/badge/docs-pre--release-blue?logo=googledocs)](https://nursescheduling.org/docs/)
 
 A flexible web application designed to streamline and automate nurse scheduling, suitable for a wide range of diverse and complex real-world requirements.
