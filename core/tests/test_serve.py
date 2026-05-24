@@ -58,6 +58,18 @@ class TestServerHealth:
         assert isinstance(json_data["appVersion"], str)
         assert json_data["appVersion"]
 
+    def test_server_health(self):
+        """Check if the health endpoint returns server status metadata."""
+        response = client.get("/health")
+        assert response.status_code == 200
+        json_data = response.json()
+        assert json_data["status"] == "ok"
+        assert json_data["version"] == "alpha"
+        assert json_data["apiVersion"] == "alpha"
+        assert isinstance(json_data["appVersion"], str)
+        assert json_data["appVersion"]
+        assert "time" not in json_data
+
 
 class TestValidRequests:
     """Test valid optimization requests."""
@@ -258,6 +270,24 @@ class TestEdgeCases:
 
 class TestServeInternals:
     """Test serve module internal helper behavior."""
+
+    def test_get_app_version_allows_repository_with_different_owner(self, monkeypatch):
+        seen = {}
+
+        def fake_check_output(cmd, stderr, text):
+            seen["cmd"] = cmd
+            seen["stderr"] = stderr
+            seen["text"] = text
+            return "v1.2.3-dirty\n"
+
+        monkeypatch.setattr("nurse_scheduling.serve.subprocess.check_output", fake_check_output)
+
+        from nurse_scheduling.serve import _get_app_version
+
+        assert _get_app_version() == "v1.2.3-dirty"
+        assert seen["cmd"][:4] == ["git", "-c", "safe.directory=/app", "-C"]
+        assert seen["cmd"][5:] == ["describe", "--tags", "--always", "--dirty"]
+        assert seen["text"] is True
 
     def test_should_enable_sentry_disabled_by_env(self, monkeypatch):
         monkeypatch.setenv("DISABLE_SENTRY", "1")

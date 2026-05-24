@@ -20,10 +20,34 @@
 // The Optimize and Export page for Tab "11. Optimize and Export"
 'use client';
 
-import { useState } from 'react';
-import { FiHelpCircle, FiDownload, FiAlertCircle, FiCheckCircle, FiLoader } from 'react-icons/fi';
+import { useCallback, useEffect, useState } from 'react';
+import { FiHelpCircle, FiDownload, FiAlertCircle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
+
+type ServerHealthStatus = 'checking' | 'online' | 'offline';
+
+interface ServerHealthResponse {
+  status: string;
+  version: string;
+  apiVersion?: string;
+  appVersion: string;
+}
+
+function normalizeEndpoint(endpoint: string): string {
+  return endpoint.trim().replace(/\/+$/, '');
+}
+
+function formatCheckedTime(date: Date | null): string {
+  if (!date) {
+    return 'Never';
+  }
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
 
 export default function OptimizeAndExportPage() {
   const {
@@ -47,6 +71,9 @@ export default function OptimizeAndExportPage() {
   const [scheduleFilename, setScheduleFilename] = useState<string | null>(null);
   const [scheduleScore, setScheduleScore] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
+  const [serverHealthStatus, setServerHealthStatus] = useState<ServerHealthStatus>('checking');
+  const [lastHealthCheckedAt, setLastHealthCheckedAt] = useState<Date | null>(null);
+  const [serverHealth, setServerHealth] = useState<ServerHealthResponse | null>(null);
 
   const instructions = [
     "This page sends your current scheduling configuration to the optimization server",
@@ -72,6 +99,59 @@ export default function OptimizeAndExportPage() {
   // Convert current state to YAML
   const currentYaml = generateYamlFromState(filteredState);
 
+  const checkServerHealth = useCallback(async () => {
+    const endpoint = normalizeEndpoint(apiEndpoint);
+
+    if (!endpoint) {
+      setServerHealthStatus('offline');
+      setServerHealth(null);
+      setLastHealthCheckedAt(new Date());
+      return;
+    }
+
+    setServerHealthStatus(currentStatus => currentStatus === 'online' ? 'online' : 'checking');
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+
+    try {
+      const response = await fetch(`${endpoint}/health`, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Health check failed with status ${response.status}`);
+      }
+
+      const health = await response.json() as ServerHealthResponse;
+      if (health.status !== 'ok') {
+        throw new Error(`Unexpected health status: ${health.status}`);
+      }
+
+      setServerHealthStatus('online');
+      setServerHealth(health);
+    } catch {
+      setServerHealthStatus('offline');
+      setServerHealth(null);
+    } finally {
+      window.clearTimeout(timeoutId);
+      setLastHealthCheckedAt(new Date());
+    }
+  }, [apiEndpoint]);
+
+  useEffect(() => {
+    void checkServerHealth();
+    const intervalId = window.setInterval(() => {
+      void checkServerHealth();
+    }, 30000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [checkServerHealth]);
+
   const handleOptimizeAndDownload = async () => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -94,7 +174,7 @@ export default function OptimizeAndExportPage() {
       }
 
       // Send request to FastAPI server
-      const response = await fetch(`${apiEndpoint}/optimize-and-export-xlsx`, {
+      const response = await fetch(`${normalizeEndpoint(apiEndpoint)}/optimize-and-export-xlsx`, {
         method: 'POST',
         body: formData,
       });
@@ -258,6 +338,47 @@ export default function OptimizeAndExportPage() {
             <p className="mt-1 text-sm text-gray-500">
               URL of the backend scheduling server
             </p>
+          </div>
+
+          {/* Server Health */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <span
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${
+                  serverHealthStatus === 'online'
+                    ? 'bg-green-100 text-green-700'
+                    : serverHealthStatus === 'offline'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-gray-100 text-gray-600'
+                }`}
+                title="Server status"
+              >
+                {serverHealthStatus === 'offline' ? (
+                  <FiWifiOff className="h-5 w-5" />
+                ) : serverHealthStatus === 'checking' ? (
+                  <FiLoader className="h-5 w-5 animate-spin" />
+                ) : (
+                  <FiWifi className="h-5 w-5" />
+                )}
+              </span>
+              <div>
+                <p className="text-sm font-medium text-gray-800">
+                  Server: {serverHealthStatus === 'online' ? 'Online' : serverHealthStatus === 'offline' ? 'Offline' : 'Checking'}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Last checked: {formatCheckedTime(lastHealthCheckedAt)}
+                  {serverHealth ? ` · API version: ${serverHealth.apiVersion ?? serverHealth.version} · App version: ${serverHealth.appVersion}` : ''}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void checkServerHealth()}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              <FiRefreshCw className="h-4 w-4" />
+              Check now
+            </button>
           </div>
 
           {/* Prettify Option */}

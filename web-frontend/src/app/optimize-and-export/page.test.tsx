@@ -94,4 +94,21 @@ describe('OptimizeAndExportPage error handling', () => {
 
     await expect(screen.findByText('Server error (500): {bad json')).resolves.toBeInTheDocument();
   });
+
+  it('shows backend health status from the health endpoint', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: 'ok',
+        version: 'alpha',
+        apiVersion: 'alpha',
+        appVersion: 'v-test',
+      }),
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.getByText(/API version: alpha · App version: v-test/)).toBeInTheDocument();
+  });
 });

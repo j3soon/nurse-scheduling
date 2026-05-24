@@ -23,6 +23,7 @@ import subprocess
 import sys
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from typing import Optional
 from fastapi.responses import StreamingResponse
@@ -32,9 +33,20 @@ from . import scheduler, exporter
 
 
 def _get_app_version() -> str:
+    repo_root = Path(__file__).resolve().parents[2]
     try:
         return subprocess.check_output(
-            ["git", "describe", "--tags", "--always", "--dirty"],
+            [
+                "git",
+                "-c",
+                f"safe.directory={repo_root}",
+                "-C",
+                str(repo_root),
+                "describe",
+                "--tags",
+                "--always",
+                "--dirty",
+            ],
             stderr=subprocess.DEVNULL,
             text=True,
         ).strip()
@@ -114,6 +126,16 @@ async def root():
     return {
         "message": title,
         "version": version,
+        "appVersion": app_version,
+    }
+
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "version": version,
+        "apiVersion": version,
         "appVersion": app_version,
     }
 
