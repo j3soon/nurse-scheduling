@@ -28,6 +28,7 @@ from typing import Optional
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
+from ruamel.yaml import YAMLError
 from . import scheduler, exporter
 
 
@@ -177,6 +178,10 @@ async def optimize_and_export_xlsx(
         # User-supplied scheduling data failed schema validation -> HTTP 400
         logging.error(f"Invalid scheduling data: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Invalid scheduling data: {str(e)}")
+    except YAMLError as e:
+        # User-supplied YAML failed to parse -> HTTP 400 (not an internal server error)
+        logging.warning(f"Invalid YAML: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
     except Exception as e:
         # TODO(security): Returning the error message to the client may be a security risk
         logging.error(f"Error during optimization: {str(e)}")
