@@ -84,3 +84,67 @@ test('editing YAML applies renamed entities through the real save flow', async (
   await expect(page.getByTitle('Team Omega', { exact: true })).toBeVisible();
   await expect(page.getByTitle('Team Alpha', { exact: true })).toHaveCount(0);
 });
+
+test('editing sparse export YAML replaces old formatting and extra layout entries', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Seed export formatting, extra rows, and extra columns.
+   * 2. Replace the YAML with a sparse export object through the real editor.
+   * 3. Confirm the previous export extras are gone from the preview.
+   */
+  await disableModalDialogs(page);
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'sparse export edit seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: { items: [{ id: 'P1', description: 'Primary nurse', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: {
+      formatting: [{ type: 'row', people: ['P1'], backgroundColor: '#111111' }],
+      extraColumns: [{ type: 'count', header: 'Old column', countDates: ['01'], countShiftTypes: ['D'] }],
+      extraRows: [{ type: 'count', header: 'Old row', countPeople: ['P1'], countShiftTypes: ['D'] }],
+    },
+  });
+
+  await page.goto('/save-and-load');
+  await expect(page.locator('pre')).toContainText('Old column');
+  await expect(page.locator('pre')).toContainText('Old row');
+
+  await page.getByRole('button', { name: 'Edit YAML' }).click();
+  await page.locator('textarea').fill(`
+apiVersion: test
+description: sparse export replacement
+dates:
+  range:
+    startDate: '2026-05-01'
+    endDate: '2026-05-01'
+  groups: []
+people:
+  items:
+    - id: P1
+      description: Primary nurse
+      history: []
+  groups: []
+shiftTypes:
+  items:
+    - id: D
+      description: Day
+  groups: []
+preferences:
+  - type: at most one shift per day
+export:
+  formatting:
+    - type: history header
+      backgroundColor: '#222222'
+`);
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+  const yamlPreview = page.locator('pre');
+  await expect(yamlPreview).toContainText('sparse export replacement');
+  await expect(yamlPreview).toContainText('type: history header');
+  await expect(yamlPreview).not.toContainText('Old column');
+  await expect(yamlPreview).not.toContainText('Old row');
+  await expect(yamlPreview).not.toContainText('extraColumns');
+  await expect(yamlPreview).not.toContainText('extraRows');
+});

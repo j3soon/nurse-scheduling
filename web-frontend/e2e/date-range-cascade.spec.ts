@@ -135,3 +135,43 @@ test('shrinking the date range removes stale date references from export layout 
   await expect(yamlPreview).not.toContainText("countDates: ['02']");
   await expect(yamlPreview).not.toContainText('Second day only');
 });
+
+test('date identifier format changes remove stale export layout references', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Seed same-month date IDs referenced from export layout.
+   * 2. Change the range to cross a month boundary, which changes generated date IDs.
+   * 3. Confirm old export layout references are removed from Save and Load YAML.
+   */
+  await disableModalDialogs(page);
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'date id transition export seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-02' }, groups: [] },
+    people: { items: [{ id: 'P1', description: 'Primary nurse', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: {
+      formatting: [
+        { type: 'column', dates: ['01', '02'], backgroundColor: '#111111' },
+        { type: 'cell', people: ['P1'], dates: ['01'], shiftTypes: ['D'], backgroundColor: '#222222' },
+      ],
+      extraColumns: [
+        { type: 'count', header: 'Old dates', countDates: ['01', '02'], countShiftTypes: ['D'] },
+      ],
+    },
+  });
+
+  await page.goto('/dates');
+  await page.getByRole('button', { name: 'Set Date Range' }).click();
+  await page.locator('#startDate').fill('2026-05-31');
+  await page.locator('#endDate').fill('2026-06-01');
+  await page.getByRole('button', { name: 'Update' }).click();
+  await expect(page.getByText('Duration: 2 days')).toBeVisible();
+
+  await page.goto('/save-and-load');
+  const yamlPreview = page.locator('pre');
+  await expect(yamlPreview).not.toContainText("dates: ['01'");
+  await expect(yamlPreview).not.toContainText('countDates:');
+  await expect(yamlPreview).not.toContainText('Old dates');
+});

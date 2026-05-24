@@ -68,10 +68,13 @@ test('people upload undo and redo preserve existing descriptions and history aft
     buffer: Buffer.from('P2\nP1\nP3\n', 'utf8'),
   });
   await expect.poll(() => dialogs.length).toBe(1);
+  await expect(page.getByText('3. P3', { exact: true })).toBeVisible();
 
   await page.getByRole('heading', { name: 'People Management', exact: true }).click();
   await page.keyboard.press('Control+z');
+  await expect(page.getByText('1. P1', { exact: true })).toBeVisible();
   await page.keyboard.press('Control+y');
+  await expect(page.getByText('2. P1', { exact: true })).toBeVisible();
 
   await expect(page.getByText('1. P2', { exact: true })).toBeVisible();
   await expect(page.getByText('2. P1', { exact: true })).toBeVisible();
@@ -87,4 +90,62 @@ test('people upload undo and redo preserve existing descriptions and history aft
   await expect(currentHistory.getByText(/H-1:\s*N/)).toBeVisible();
   await expect(currentHistory.getByText(/Person: P1/)).toBeVisible();
   await expect(currentHistory.getByText(/H-1:\s*D/)).toBeVisible();
+});
+
+test('people upload followed by shift-type deletion leaves no stale history IDs', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Seed history, then upload a reordered people list.
+   * 2. Confirm the uploaded order is active.
+   * 3. Delete the referenced shift type and confirm saved YAML has no stale history IDs.
+   */
+  const dialogs: string[] = [];
+  page.on('dialog', async dialog => {
+    dialogs.push(dialog.message());
+    await dialog.accept();
+  });
+
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'people upload then shift delete seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: {
+      items: [
+        { id: 'P1', description: 'Primary nurse', history: ['D'] },
+        { id: 'P2', description: 'Secondary nurse', history: ['N'] },
+      ],
+      groups: [],
+      history: [],
+    },
+    shiftTypes: {
+      items: [
+        { id: 'D', description: 'Day' },
+        { id: 'N', description: 'Night' },
+      ],
+      groups: [],
+    },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+
+  await page.goto('/people');
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'people.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('P2\nP1\nP3\n', 'utf8'),
+  });
+  await expect.poll(() => dialogs.length).toBe(1);
+
+  await page.getByRole('heading', { name: 'People Management', exact: true }).click();
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+y');
+
+  await page.goto('/shift-types');
+  const shiftTypesTable = page.getByRole('heading', { name: 'Shift Types', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  await shiftTypesTable.locator('tr').filter({ has: page.getByText('1. D', { exact: true }) }).getByRole('button', { name: 'Delete' }).click();
+
+  await page.goto('/save-and-load');
+  const yamlPreview = page.locator('pre');
+  await expect(yamlPreview).toContainText('id: P1');
+  await expect(yamlPreview).not.toContainText('history: [D]');
 });

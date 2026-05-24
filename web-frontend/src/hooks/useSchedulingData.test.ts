@@ -2917,4 +2917,383 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('deleting a repeated shift type from history keeps only newer contiguous history', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, items: [{ id: '01', description: '' }], groups: [] },
+        people: {
+          items: [{ id: 'P1', description: '', history: ['D', 'N', 'D', 'A'] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }, { id: 'N', description: '' }, { id: 'A', description: '' }],
+          groups: [],
+        },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'D');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A']);
+    });
+  });
+
+  it('deleting an unrelated shift type leaves people history unchanged', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, items: [{ id: '01', description: '' }], groups: [] },
+        people: {
+          items: [{ id: 'P1', description: '', history: ['D', 'N'] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }, { id: 'N', description: '' }, { id: 'A', description: '' }],
+          groups: [],
+        },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'A');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['D', 'N']);
+    });
+  });
+
+  it('deleting multiple shift types trims history through repeated public deletions', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, items: [{ id: '01', description: '' }], groups: [] },
+        people: {
+          items: [{ id: 'P1', description: '', history: ['A', 'D', 'N', 'E'] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [
+            { id: 'A', description: '' },
+            { id: 'D', description: '' },
+            { id: 'N', description: '' },
+            { id: 'E', description: '' },
+          ],
+          groups: [],
+        },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'D');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N', 'E']);
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'N');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['E']);
+    });
+  });
+
+  it('undoes and redoes shift-type deletion history trimming exactly', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, items: [{ id: '01', description: '' }], groups: [] },
+        people: {
+          items: [{ id: 'P1', description: '', history: ['A', 'D', 'N'] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'A', description: '' }, { id: 'D', description: '' }, { id: 'N', description: '' }],
+          groups: [],
+        },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'D');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N']);
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', 'D', 'N']);
+    });
+
+    act(() => {
+      result.current.redo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N']);
+    });
+  });
+
+  it('renames repeated shift-type history entries and export layout references', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, items: [{ id: '01', description: '' }], groups: [] },
+        people: {
+          items: [{ id: 'P1', description: '', history: ['D', 'N', 'D'] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }, { id: 'N', description: '' }],
+          groups: [],
+        },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [{ type: 'cell', people: ['P1'], dates: ['01'], shiftTypes: ['D'], backgroundColor: '#111111' }],
+          extraColumns: [{ type: 'count', header: 'D count', countDates: ['01'], countShiftTypes: ['D'] }],
+          extraRows: [{ type: 'count', header: 'P1 D', countPeople: ['P1'], countShiftTypes: ['D'] }],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.updateItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'D', 'DX');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['DX', 'N', 'DX']);
+      expect(result.current.exportData?.formatting?.[0]).toMatchObject({ shiftTypes: ['DX'] });
+      expect(result.current.exportData?.extraColumns?.[0].countShiftTypes).toEqual(['DX']);
+      expect(result.current.exportData?.extraRows?.[0].countShiftTypes).toEqual(['DX']);
+    });
+  });
+
+  it('removes person references across export formatting, extra rows, and extra columns together', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, items: [{ id: '01', description: '' }], groups: [] },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }, { id: 'P2', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: { items: [{ id: 'D', description: '' }], groups: [] },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [
+            { type: 'row', people: ['P1', 'P2'], backgroundColor: '#111111' },
+            { type: 'people header', people: ['P1'], backgroundColor: '#222222' },
+          ],
+          extraColumns: [{ type: 'count', header: 'D count', countDates: ['01'], countShiftTypes: ['D'] }],
+          extraRows: [
+            { type: 'count', header: 'Both people', countPeople: ['P1', 'P2'], countShiftTypes: ['D'] },
+            { type: 'count', header: 'P1 only', countPeople: ['P1'], countShiftTypes: ['D'] },
+          ],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.PEOPLE, result.current.peopleData, 'P1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.formatting).toEqual([
+        { type: 'row', people: ['P2'], backgroundColor: '#111111' },
+      ]);
+      expect(result.current.exportData?.extraColumns).toEqual([
+        { type: 'count', header: 'D count', countDates: ['01'], countShiftTypes: ['D'] },
+      ]);
+      expect(result.current.exportData?.extraRows).toEqual([
+        { type: 'count', header: 'Both people', countPeople: ['P2'], countShiftTypes: ['D'] },
+      ]);
+    });
+  });
+
+  it('removes stale export formatting rules when a date range shrinks', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-09-01', endDate: '2026-09-02' },
+          items: [{ id: '01', description: '' }, { id: '02', description: '' }],
+          groups: [],
+        },
+        people: { items: [{ id: 'P1', description: '', history: [] }], groups: [], history: [] },
+        shiftTypes: { items: [{ id: 'D', description: '' }], groups: [] },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [
+            { type: 'column', dates: ['01', '02'], backgroundColor: '#111111' },
+            { type: 'date header', dates: ['02'], backgroundColor: '#222222' },
+          ],
+          extraColumns: [
+            { type: 'count', header: 'Both days', countDates: ['01', '02'], countShiftTypes: ['D'] },
+            { type: 'count', header: 'Second day', countDates: ['02'], countShiftTypes: ['D'] },
+          ],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date('2026-09-01T12:00:00.000Z'),
+        endDate: new Date('2026-09-01T12:00:00.000Z'),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData?.formatting).toEqual([
+        { type: 'column', dates: ['01'], backgroundColor: '#111111' },
+      ]);
+      expect(result.current.exportData?.extraColumns).toEqual([
+        { type: 'count', header: 'Both days', countDates: ['01'], countShiftTypes: ['D'] },
+      ]);
+    });
+  });
+
+  it('drops export date references during date identifier format transitions', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-05-01', endDate: '2026-05-02' },
+          items: [{ id: '01', description: '' }, { id: '02', description: '' }],
+          groups: [],
+        },
+        people: { items: [{ id: 'P1', description: '', history: [] }], groups: [], history: [] },
+        shiftTypes: { items: [{ id: 'D', description: '' }], groups: [] },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [{ type: 'column', dates: ['01', '02'], backgroundColor: '#111111' }],
+          extraColumns: [{ type: 'count', header: 'Old dates', countDates: ['01', '02'], countShiftTypes: ['D'] }],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date('2026-05-31T12:00:00.000Z'),
+        endDate: new Date('2026-06-01T12:00:00.000Z'),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(expect.arrayContaining(['05-31', '06-01']));
+      expect(result.current.exportData?.formatting).toEqual([]);
+      expect(result.current.exportData?.extraColumns).toEqual([]);
+    });
+  });
+
+  it('replaces formatting and extra layout arrays when loading sparse export YAML', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'full export',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, items: [{ id: '01', description: '' }], groups: [] },
+        people: { items: [{ id: 'P1', description: '', history: [] }], groups: [], history: [] },
+        shiftTypes: { items: [{ id: 'D', description: '' }], groups: [] },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [{ type: 'row', people: ['P1'], backgroundColor: '#111111' }],
+          extraColumns: [{ type: 'count', header: 'Old column', countDates: ['01'], countShiftTypes: ['D'] }],
+          extraRows: [{ type: 'count', header: 'Old row', countPeople: ['P1'], countShiftTypes: ['D'] }],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'sparse export',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, groups: [] },
+        people: { items: [{ id: 'P1', description: '', history: [] }], groups: [], history: [] },
+        shiftTypes: { items: [{ id: 'D', description: '' }], groups: [] },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [{ type: 'history header', backgroundColor: '#222222' }],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.exportData).toEqual({
+        formatting: [{ type: 'history header', backgroundColor: '#222222' }],
+      });
+    });
+  });
+
+  it('new schedule clears loaded export layout and people history back to defaults', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'custom state',
+        dates: { range: { startDate: '2026-09-01', endDate: '2026-09-01' }, items: [{ id: '01', description: '' }], groups: [] },
+        people: { items: [{ id: 'P1', description: '', history: ['D'] }], groups: [], history: [] },
+        shiftTypes: { items: [{ id: 'D', description: '' }], groups: [] },
+        preferences: [{ type: 'at most one shift per day' }],
+        export: {
+          formatting: [{ type: 'row', people: ['P1'], backgroundColor: '#111111' }],
+          extraColumns: [{ type: 'count', header: 'D count', countDates: ['01'], countShiftTypes: ['D'] }],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.createNewState();
+    });
+
+    await waitFor(() => {
+      expect(result.current.descriptionData).toBe('');
+      expect(result.current.peopleData.items[0].history).toEqual([]);
+      expect(result.current.exportData).toBeUndefined();
+    });
+  });
+
 });

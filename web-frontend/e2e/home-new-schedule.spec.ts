@@ -86,3 +86,39 @@ test('new schedule reset is undoable from downstream pages', async ({ page }) =>
   await expect(page.getByText('1. Person 1', { exact: true })).toBeVisible();
   await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
 });
+
+test('new schedule reset clears custom people history and export layout', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Seed custom history and export layout.
+   * 2. Reset through the New Schedule flow.
+   * 3. Confirm the saved YAML no longer contains the custom history or export extras.
+   */
+  await disableModalDialogs(page);
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'new schedule clears history export seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: { items: [{ id: 'P1', description: 'Primary nurse', history: ['D'] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: {
+      formatting: [{ type: 'row', people: ['P1'], backgroundColor: '#111111' }],
+      extraColumns: [{ type: 'count', header: 'Custom count', countDates: ['01'], countShiftTypes: ['D'] }],
+    },
+  });
+
+  await page.goto('/save-and-load');
+  await expect(page.locator('pre')).toContainText('history: [D]');
+  await expect(page.locator('pre')).toContainText('Custom count');
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New Schedule' }).click();
+  await page.getByRole('button', { name: 'Reset Data' }).click();
+
+  await page.goto('/save-and-load');
+  const yamlPreview = page.locator('pre');
+  await expect(yamlPreview).not.toContainText('Primary nurse');
+  await expect(yamlPreview).not.toContainText('history: [D]');
+  await expect(yamlPreview).not.toContainText('Custom count');
+});
