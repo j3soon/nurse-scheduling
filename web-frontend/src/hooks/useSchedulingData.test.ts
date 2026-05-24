@@ -174,6 +174,71 @@ describe('useSchedulingData', () => {
     expect(errorSpy).toHaveBeenCalledWith('Failed to save data to localStorage:', expect.any(Error));
   });
 
+  it('undoes and redoes date identifier format transitions across month and year boundaries', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date('2026-05-01'),
+        endDate: new Date('2026-05-02'),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['01', '02']);
+    });
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date('2026-05-31'),
+        endDate: new Date('2026-06-01'),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['05-31', '06-01']);
+    });
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date('2026-12-31'),
+        endDate: new Date('2027-01-01'),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['2026-12-31', '2027-01-01']);
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['05-31', '06-01']);
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['01', '02']);
+    });
+
+    act(() => {
+      result.current.redo();
+    });
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['05-31', '06-01']);
+    });
+
+    act(() => {
+      result.current.redo();
+    });
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['2026-12-31', '2027-01-01']);
+    });
+  });
+
   it('imports and replaces Taiwan holiday groups when explicitly requested on a supported range', async () => {
     const { result } = renderHook(() => useSchedulingData());
 
@@ -298,6 +363,55 @@ describe('useSchedulingData', () => {
       );
       expect(result.current.dateData.groups.find(group => group.id === TAIWAN_FREEDAY_GROUP_ID)).toEqual(
         expect.objectContaining({ members: [] }),
+      );
+    });
+  });
+
+  it('undoes and redoes supported Taiwan holiday imports as one visible range change', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updateDateRange(
+        {
+          startDate: new Date('2026-05-01'),
+          endDate: new Date('2026-05-04'),
+        },
+        { importTaiwanHolidays: true },
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_WORKDAY_GROUP_ID)).toEqual(
+        expect.objectContaining({ members: ['04'] }),
+      );
+      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_FREEDAY_GROUP_ID)).toEqual(
+        expect.objectContaining({ members: ['01', '02', '03'] }),
+      );
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_WORKDAY_GROUP_ID)).toEqual(
+        expect.objectContaining({ members: [] }),
+      );
+      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_FREEDAY_GROUP_ID)).toEqual(
+        expect.objectContaining({ members: [] }),
+      );
+    });
+
+    act(() => {
+      result.current.redo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_WORKDAY_GROUP_ID)).toEqual(
+        expect.objectContaining({ members: ['04'] }),
+      );
+      expect(result.current.dateData.groups.find(group => group.id === TAIWAN_FREEDAY_GROUP_ID)).toEqual(
+        expect.objectContaining({ members: ['01', '02', '03'] }),
       );
     });
   });
@@ -442,6 +556,72 @@ describe('useSchedulingData', () => {
     await waitFor(() => {
       const person = result.current.peopleData.items.find(item => item.id === 'Person 1');
       expect(person?.history).toEqual([]);
+    });
+  });
+
+  it('truncates redo history after undo and a new mixed replacement mutation chain', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updatePreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST, [
+        {
+          type: SHIFT_REQUEST,
+          person: ['Person 1'],
+          date: ['01'],
+          shiftType: ['D'],
+          weight: 1,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(result.current.getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST)).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.updatePreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST, [
+        {
+          type: SHIFT_REQUEST,
+          person: ['Person 1'],
+          date: ['01'],
+          shiftType: ['N'],
+          weight: 2,
+        },
+      ], { replaceLatestHistoryEntry: true });
+    });
+
+    await waitFor(() => {
+      const requests = result.current.getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].shiftType).toEqual(['N']);
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST)).toHaveLength(0);
+    });
+
+    act(() => {
+      result.current.addPersonHistory('Person 1', 'D');
+      result.current.updatePersonHistory('Person 1', 0, 'N', { replaceLatestHistoryEntry: true });
+    });
+
+    await waitFor(() => {
+      const person = result.current.peopleData.items.find(item => item.id === 'Person 1');
+      expect(person?.history).toEqual(['N']);
+    });
+
+    act(() => {
+      result.current.redo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST)).toHaveLength(0);
+      const person = result.current.peopleData.items.find(item => item.id === 'Person 1');
+      expect(person?.history).toEqual(['N']);
     });
   });
 
@@ -1191,6 +1371,58 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('undoes and redoes across a loadFromYaml to createNewState boundary', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'loaded state',
+        people: {
+          items: [{ id: 'Uploaded Person', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: { items: [{ id: 'X', description: 'Extra' }], groups: [] },
+        preferences: [{ type: SHIFT_REQUEST, person: ['Uploaded Person'], date: ['ALL'], shiftType: ['X'], weight: 1 }],
+        export: { formatting: [] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.descriptionData).toBe('loaded state');
+      expect(result.current.peopleData.items.some(item => item.id === 'Uploaded Person')).toBe(true);
+    });
+
+    act(() => {
+      result.current.createNewState();
+    });
+
+    await waitFor(() => {
+      expect(result.current.descriptionData).toBe('');
+      expect(result.current.peopleData.items.some(item => item.id === 'Uploaded Person')).toBe(false);
+      expect(result.current.peopleData.items.some(item => item.id === 'Person 1')).toBe(true);
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.descriptionData).toBe('loaded state');
+      expect(result.current.peopleData.items.some(item => item.id === 'Uploaded Person')).toBe(true);
+    });
+
+    act(() => {
+      result.current.redo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.descriptionData).toBe('');
+      expect(result.current.peopleData.items.some(item => item.id === 'Uploaded Person')).toBe(false);
+    });
+  });
+
   it('reorders people groups and preserves the new order', async () => {
     const { result } = renderHook(() => useSchedulingData());
 
@@ -1270,6 +1502,80 @@ describe('useSchedulingData', () => {
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_COUNT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_AFFINITY)).toBe(false);
+    });
+  });
+
+  it('undoes and redoes grouped delete cascades across dependent preferences', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'group cascade undo redo',
+        dates: {
+          range: { startDate: '2026-10-01', endDate: '2026-10-01' },
+          items: [{ id: '01', description: 'Date 1' }],
+          groups: [{ id: 'DATES_G', members: ['01'], description: '' }],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }, { id: 'P2', description: '', history: [] }],
+          groups: [{ id: 'G1', members: ['P1', 'P2'], description: '' }],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [{ id: 'SHIFT_G', members: ['D'], description: '' }],
+        },
+        preferences: [
+          { type: SHIFT_REQUEST, person: ['G1'], date: ['DATES_G'], shiftType: ['SHIFT_G'], weight: 1 },
+          { type: SHIFT_TYPE_SUCCESSIONS, person: ['G1'], pattern: ['SHIFT_G'], weight: 2 },
+          {
+            type: SHIFT_COUNT,
+            person: ['G1'],
+            countDates: ['DATES_G'],
+            countShiftTypes: ['SHIFT_G'],
+            expression: 'x >= T',
+            target: 1,
+            weight: 3,
+          },
+          {
+            type: SHIFT_AFFINITY,
+            date: ['DATES_G'],
+            people1: ['G1'],
+            people2: ['P2'],
+            shiftTypes: ['SHIFT_G'],
+            weight: 4,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteGroup(DataType.PEOPLE, result.current.peopleData, 'G1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.groups.some(group => group.id === 'G1')).toBe(false);
+      expect(result.current.preferences.some(pref => JSON.stringify(pref).includes('"G1"'))).toBe(false);
+    });
+
+    act(() => {
+      result.current.undo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.groups.some(group => group.id === 'G1')).toBe(true);
+      expect(result.current.preferences.some(pref => JSON.stringify(pref).includes('"G1"'))).toBe(true);
+    });
+
+    act(() => {
+      result.current.redo();
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.groups.some(group => group.id === 'G1')).toBe(false);
+      expect(result.current.preferences.some(pref => JSON.stringify(pref).includes('"G1"'))).toBe(false);
     });
   });
 

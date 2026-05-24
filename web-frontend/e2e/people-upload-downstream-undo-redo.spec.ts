@@ -62,6 +62,8 @@ test('people bulk upload updates downstream routes and can be undone and redone'
   await expect(page.getByTitle('Click to update preferences for P3 on date 01')).toHaveCount(0);
 
   await page.goto('/people');
+  await expect(page.getByText('1. P1', { exact: true })).toBeVisible();
+  await expect(page.getByText('2. P2', { exact: true })).toBeVisible();
   await page.locator('input[type="file"]').setInputFiles({
     name: 'people.txt',
     mimeType: 'text/plain',

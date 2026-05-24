@@ -429,8 +429,8 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     fireEvent.mouseUp(secondHistoryCell, { button: 0 });
 
     expect(addPersonHistory).not.toHaveBeenCalled();
-    expect(updatePersonHistory).toHaveBeenNthCalledWith(1, 'Person 1', 0, undefined, { replaceLatestHistoryEntry: false });
-    expect(updatePersonHistory).toHaveBeenNthCalledWith(2, 'Person 1', 1, undefined, { replaceLatestHistoryEntry: true });
+    expect(updatePersonHistory).toHaveBeenCalledTimes(1);
+    expect(updatePersonHistory).toHaveBeenCalledWith('Person 1', 1, undefined, { replaceLatestHistoryEntry: false });
   });
 
   it('parses whitespace-padded CSV values for shift requests', async () => {

@@ -22,7 +22,7 @@
 import { expect, test } from './test';
 import { disableModalDialogs, seedSchedulingState } from './helpers';
 
-test.fail('quick-add clear-mode drag clears multiple history cells across one gesture', async ({ page }) => {
+test('quick-add clear-mode drag clears multiple history cells across one gesture', async ({ page }) => {
   /*
    * Steps:
    * 1. Confirm the seeded history summary starts with two entries.
@@ -32,9 +32,9 @@ test.fail('quick-add clear-mode drag clears multiple history cells across one ge
    *
    * Note:
    * Use locator hover plus page.mouse.down/up here, not raw page.mouse
-   * coordinate drags. The request-cell drag tests are stable with this pattern.
-   * This history variant still flakes even with locator-driven hover, so keep
-   * it as an expected-failure repro for the app-side history drag gap.
+   * coordinate drags. Raw coordinate drags were flaky in Playwright for this
+   * table, while locator-driven hover reliably exercises the intended browser
+   * event path.
    */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {

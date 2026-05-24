@@ -58,7 +58,7 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
   await page.goto('/people');
   await expect(page.getByText('1. P1', { exact: true })).toBeVisible();
   await page.goto('/shift-types');
-  await expect(page.getByText('D', { exact: true })).toBeVisible();
+  await expect(page.getByText('1. D', { exact: true })).toBeVisible();
 
   await page.goto('/save-and-load');
   await page.locator('input[type="file"]').setInputFiles({
@@ -72,8 +72,8 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
   await expect(page.getByText('1. P9', { exact: true })).toBeVisible();
   await expect(page.getByText('P1', { exact: true })).toHaveCount(0);
   await page.goto('/shift-types');
-  await expect(page.getByText('ZX', { exact: true })).toBeVisible();
-  await expect(page.getByText('D', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('1. ZX', { exact: true })).toBeVisible();
+  await expect(page.getByText('1. D', { exact: true })).toHaveCount(0);
 
   await page.getByRole('heading', { name: 'Shift Type Management', exact: true }).click();
   await page.keyboard.press('Control+z');
@@ -82,8 +82,8 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
   await expect(page.getByText('1. P1', { exact: true })).toBeVisible();
   await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
   await page.goto('/shift-types');
-  await expect(page.getByText('D', { exact: true })).toBeVisible();
-  await expect(page.getByText('ZX', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('1. D', { exact: true })).toBeVisible();
+  await expect(page.getByText('1. ZX', { exact: true })).toHaveCount(0);
 
   await page.getByRole('heading', { name: 'Shift Type Management', exact: true }).click();
   await page.keyboard.press('Control+y');
@@ -92,6 +92,6 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
   await expect(page.getByText('1. P9', { exact: true })).toBeVisible();
   await expect(page.getByText('P1', { exact: true })).toHaveCount(0);
   await page.goto('/shift-types');
-  await expect(page.getByText('ZX', { exact: true })).toBeVisible();
-  await expect(page.getByText('D', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('1. ZX', { exact: true })).toBeVisible();
+  await expect(page.getByText('1. D', { exact: true })).toHaveCount(0);
 });

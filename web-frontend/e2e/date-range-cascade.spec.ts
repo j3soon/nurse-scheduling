@@ -75,6 +75,7 @@ test('shrinking the date range removes stale date references from downstream pag
   await page.getByRole('button', { name: 'Set Date Range' }).click();
   await page.locator('#endDate').fill('2026-05-01');
   await page.getByRole('button', { name: 'Update' }).click();
+  await expect(page.getByText('Duration: 1 days')).toBeVisible();
 
   await page.goto('/shift-requests');
   await expect(page.getByRole('heading', { name: 'Shift Requests', exact: true })).toBeVisible();

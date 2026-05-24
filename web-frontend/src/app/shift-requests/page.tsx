@@ -20,7 +20,7 @@
 // The shift requests management page for Tab "5. Shift Requests"
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiEdit2, FiAlertCircle, FiUpload, FiTrash2 } from 'react-icons/fi';
 import UploadButton from '@/components/UploadButton';
@@ -117,10 +117,32 @@ export default function ShiftRequestsPage() {
   const dragCellTypeRef = useRef<SelectedCellType | null>(null);
   // Prevents re-applying the same cell when the pointer re-enters it during one gesture.
   const visitedDragCellsRef = useRef(new Set<string>());
+  // History clear-mode drag is applied on mouse-up so the matrix columns do not
+  // shift underneath the pointer after the first cleared history slot.
+  const pendingHistoryClearDragRef = useRef(new Map<string, number>());
+  // Snapshot the shared history column count at drag start. The live value can
+  // change after a clear shortens the longest history row.
+  const dragHistoryColumnsCountRef = useRef(0);
+
+  const flushPendingHistoryClearDrag = useCallback(() => {
+    if (pendingHistoryClearDragRef.current.size === 0) {
+      return;
+    }
+
+    let replaceLatestHistoryEntry = false;
+    for (const [personId, maxPosition] of pendingHistoryClearDragRef.current.entries()) {
+      updatePersonHistory(personId, maxPosition, undefined, { replaceLatestHistoryEntry });
+      replaceLatestHistoryEntry = true;
+    }
+
+    pendingHistoryClearDragRef.current.clear();
+  }, [updatePersonHistory]);
 
   // Add event listener for mouse up outside the component to end drag selection
   useEffect(() => {
+    const pendingHistoryClearDrag = pendingHistoryClearDragRef.current;
     const handleGlobalMouseUp = () => {
+      flushPendingHistoryClearDrag();
       // End multi-select drag
       isMultiSelectDragRef.current = false;
       dragCellTypeRef.current = null;
@@ -133,10 +155,11 @@ export default function ShiftRequestsPage() {
     // Cleanup event listener
     return () => {
       window.removeEventListener('mouseup', handleGlobalMouseUp);
+      pendingHistoryClearDrag.clear();
       document.documentElement.style.userSelect = '';
       document.body.style.userSelect = '';
     };
-  }, []);
+  }, [flushPendingHistoryClearDrag]);
 
   // Function to sync scroll position between main and sticky containers
   // All sticky elements sync bidirectionally with each other
@@ -1041,6 +1064,36 @@ export default function ShiftRequestsPage() {
     if (selectedCellType === SelectedCellType.PREFERENCE) {
       applyPreferenceCellEdit(personId, identifier as string, replaceLatestHistoryEntry);
     } else if (selectedCellType === SelectedCellType.HISTORY) {
+      if (addFormData.shiftTypes.length === 0) {
+        // Defer history clear-mode drag until mouseup. Clearing a history slot
+        // changes the row's history offset, so applying each hovered cell
+        // immediately can shift columns under the active pointer gesture.
+        const person = peopleData.items.find(p => p.id === personId);
+        if (!person) {
+          console.error(`Person ${personId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
+          return;
+        }
+
+        // The history grid has a shared column count based on the longest
+        // person.history row, plus one empty column for adding a newer entry.
+        // Shorter rows render leading empty padding columns to align their
+        // actual history entries to the right. The offset is that padding width,
+        // so subtracting it from the rendered column index recovers the
+        // underlying person.history array position for the clear operation.
+        const offset = dragHistoryColumnsCountRef.current - person.history!.length;
+        if (identifier as number >= offset) {
+          const position = (identifier as number) - offset;
+          const existingMaxPosition = pendingHistoryClearDragRef.current.get(personId);
+          pendingHistoryClearDragRef.current.set(
+            personId,
+            // existingMaxPosition is the deepest clear target already queued for
+            // this person in the current drag. Clearing a later position also
+            // removes earlier entries, so one max target is enough.
+            existingMaxPosition === undefined ? position : Math.max(existingMaxPosition, position)
+          );
+        }
+        return;
+      }
       applyHistoryCellEdit(personId, identifier as number, replaceLatestHistoryEntry);
     }
   };
@@ -1056,6 +1109,8 @@ export default function ShiftRequestsPage() {
     isMultiSelectDragRef.current = true;
     dragCellTypeRef.current = selectedCellType;
     visitedDragCellsRef.current.clear();
+    pendingHistoryClearDragRef.current.clear();
+    dragHistoryColumnsCountRef.current = historyColumnsCount;
     if (isAddMode) {
       handleDraggedCell(selectedCellType, personId, identifier);
     }
@@ -1066,6 +1121,7 @@ export default function ShiftRequestsPage() {
   const handleCellMouseUp = (event: React.MouseEvent) => {
     if (event.button !== 0) return;
 
+    flushPendingHistoryClearDrag();
     // End multi-select drag
     isMultiSelectDragRef.current = false;
     dragCellTypeRef.current = null;
