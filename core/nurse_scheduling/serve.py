@@ -21,14 +21,21 @@ import logging
 import os
 import subprocess
 import sys
-from datetime import datetime
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
 from io import BytesIO
+import json
 from pathlib import Path
+from typing import Any, Optional
+
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
-from typing import Optional
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import ValidationError
+
 from . import scheduler, exporter
 
 
@@ -97,6 +104,243 @@ version = "alpha"
 
 app = FastAPI(title=title, version=version)
 
+
+class OptimizeJobStatus(str, Enum):
+    """Lifecycle status for asynchronous optimization jobs."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    OPTIMAL = "optimal"
+    FEASIBLE = "feasible"
+    INFEASIBLE = "infeasible"
+    FAILED = "failed"
+
+
+@dataclass
+class OptimizeJob:
+    """In-memory state for one optimization job."""
+
+    id: str
+    status: OptimizeJobStatus
+    created_at: datetime
+    input_name: str
+    solver: str
+    prettify: bool | None
+    timeout: int | None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    score: int | None = None
+    solver_status: str | None = None
+    error: str | None = None
+    xlsx_bytes: bytes | None = None
+    xlsx_filename: str | None = None
+    events: list[dict[str, Any]] = field(default_factory=list)
+    condition: threading.Condition = field(default_factory=threading.Condition)
+
+
+OPTIMIZE_JOB_TTL_SECONDS = 30 * 60
+OPTIMIZE_MAX_WORKERS = 1
+_optimize_jobs: dict[str, OptimizeJob] = {}
+_optimize_jobs_lock = threading.Lock()
+_optimize_executor = ThreadPoolExecutor(max_workers=OPTIMIZE_MAX_WORKERS)
+
+
+def _is_terminal_job_status(status: OptimizeJobStatus) -> bool:
+    return status in {
+        OptimizeJobStatus.OPTIMAL,
+        OptimizeJobStatus.FEASIBLE,
+        OptimizeJobStatus.INFEASIBLE,
+        OptimizeJobStatus.FAILED,
+    }
+
+
+def _publish_job_event(job: OptimizeJob, event: str, data: dict[str, Any]) -> None:
+    with job.condition:
+        job.events.append({"event": event, "data": data})
+        job.condition.notify_all()
+
+
+def _cleanup_expired_optimize_jobs(now: datetime | None = None) -> list[str]:
+    now = now or datetime.now()
+    cutoff = now - timedelta(seconds=OPTIMIZE_JOB_TTL_SECONDS)
+    with _optimize_jobs_lock:
+        expired_job_ids = [
+            job_id for job_id, job in _optimize_jobs.items() if job.finished_at is not None and job.finished_at < cutoff
+        ]
+        for job_id in expired_job_ids:
+            del _optimize_jobs[job_id]
+    return expired_job_ids
+
+
+def _get_optimize_job(job_id: str) -> OptimizeJob:
+    _cleanup_expired_optimize_jobs()
+    with _optimize_jobs_lock:
+        job = _optimize_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Optimization job not found")
+    return job
+
+
+def _create_optimize_job(input_name: str, solver: str, prettify: bool | None, timeout: int | None) -> OptimizeJob:
+    _cleanup_expired_optimize_jobs()
+    with _optimize_jobs_lock:
+        while True:
+            job_id = f"opt_{uuid.uuid4().hex}"
+            if job_id not in _optimize_jobs:
+                break
+
+        job = OptimizeJob(
+            id=job_id,
+            status=OptimizeJobStatus.QUEUED,
+            created_at=datetime.now(),
+            input_name=input_name,
+            solver=solver,
+            prettify=prettify,
+            timeout=timeout,
+        )
+        _optimize_jobs[job.id] = job
+    _publish_job_event(job, "status", {"status": job.status.value})
+    return job
+
+
+def _update_optimize_job(job_id: str, **updates) -> OptimizeJob:
+    with _optimize_jobs_lock:
+        job = _optimize_jobs[job_id]
+        for key, value in updates.items():
+            setattr(job, key, value)
+    return job
+
+
+def _optimize_job_response(job: OptimizeJob) -> dict[str, Any]:
+    return {
+        "jobId": job.id,
+        "status": job.status.value,
+        "inputName": job.input_name,
+        "solver": job.solver,
+        "prettify": job.prettify,
+        "timeout": job.timeout,
+        "score": job.score,
+        "solverStatus": job.solver_status,
+        "error": job.error,
+        "xlsxReady": job.xlsx_bytes is not None,
+        "links": {
+            "status": f"/optimize/{job.id}",
+            "events": f"/optimize/{job.id}/events",
+            "xlsx": f"/optimize/{job.id}/xlsx",
+        },
+    }
+
+
+async def _read_optimization_input(
+    file: UploadFile | None,
+    yaml_content: str | None,
+) -> tuple[bytes, str]:
+    if file is None and yaml_content is None:
+        raise HTTPException(status_code=400, detail="Either 'file' or 'yaml_content' must be provided")
+
+    if file is not None and yaml_content is not None:
+        raise HTTPException(status_code=400, detail="Provide either 'file' or 'yaml_content', not both")
+
+    if file is not None:
+        if not file.filename.endswith((".yaml", ".yml")):
+            raise HTTPException(status_code=400, detail="Invalid file type. Please upload a YAML file (.yaml or .yml)")
+        return await file.read(), file.filename
+
+    return yaml_content.encode("utf-8"), f"nurse-scheduling-{datetime.now().strftime('%Y%m%d%H%M%S')}.yaml"
+
+
+def _final_status_from_solver_status(solver_status: str) -> OptimizeJobStatus:
+    if solver_status == "OPTIMAL":
+        return OptimizeJobStatus.OPTIMAL
+    if solver_status == "FEASIBLE":
+        return OptimizeJobStatus.FEASIBLE
+    if solver_status == "INFEASIBLE":
+        return OptimizeJobStatus.INFEASIBLE
+    return OptimizeJobStatus.FAILED
+
+
+def _run_optimize_job(job_id: str, content: bytes) -> None:
+    job = _update_optimize_job(job_id, status=OptimizeJobStatus.RUNNING, started_at=datetime.now())
+    _publish_job_event(job, "status", {"status": OptimizeJobStatus.RUNNING.value})
+
+    try:
+        df, _solution, score, solver_status, cell_export_info = scheduler.schedule(
+            file_content=content,
+            prettify=job.prettify,
+            timeout=job.timeout,
+            solver=job.solver,
+        )
+
+        if df is None:
+            job = _update_optimize_job(
+                job_id,
+                status=OptimizeJobStatus.INFEASIBLE,
+                solver_status=solver_status,
+                finished_at=datetime.now(),
+            )
+            _publish_job_event(job, "complete", _optimize_job_response(job))
+            return
+
+        output_buffer = BytesIO()
+        exporter.export_to_excel(df, output_buffer, cell_export_info)
+        output_filename = f"{job.input_name.rsplit('.', 1)[0]}.xlsx"
+        final_status = _final_status_from_solver_status(str(solver_status))
+        job = _update_optimize_job(
+            job_id,
+            status=final_status,
+            score=score,
+            solver_status=str(solver_status),
+            finished_at=datetime.now(),
+            xlsx_bytes=output_buffer.getvalue(),
+            xlsx_filename=output_filename,
+        )
+        _publish_job_event(job, "complete", _optimize_job_response(job))
+    except Exception as e:
+        logging.error("Error during optimization job %s: %s", job_id, str(e))
+        job = _update_optimize_job(
+            job_id,
+            status=OptimizeJobStatus.FAILED,
+            error=str(e),
+            finished_at=datetime.now(),
+        )
+        _publish_job_event(job, "error", _optimize_job_response(job))
+
+
+def _format_sse_event(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _stream_optimize_job_events(job: OptimizeJob):
+    event_index = 0
+    while True:
+        heartbeat = False
+        with job.condition:
+            while event_index >= len(job.events) and not _is_terminal_job_status(job.status):
+                job.condition.wait(timeout=15)
+                if event_index >= len(job.events):
+                    heartbeat = True
+                    break
+
+            if heartbeat:
+                event = None
+            elif event_index < len(job.events):
+                event = job.events[event_index]
+                event_index += 1
+            elif _is_terminal_job_status(job.status):
+                event = {"event": "complete", "data": _optimize_job_response(job)}
+                event_index += 1
+            else:
+                event = None
+
+        if event is None:
+            yield ": keepalive\n\n"
+            continue
+
+        yield _format_sse_event(event["event"], event["data"])
+        if event["event"] in {"complete", "error"}:
+            return
+
+
 # Regex to match allowed origins:
 # - http://localhost:3000, http://127.0.0.1:3000 (for Next.js local development)
 # - https://*.nursescheduling.org (including nursescheduling.org itself)
@@ -140,93 +384,87 @@ async def health():
     }
 
 
-# TODO: Check args
-@app.post("/optimize-and-export-xlsx")
-async def optimize_and_export_xlsx(
+@app.post("/optimize", status_code=202)
+async def create_optimize_job(
     file: Optional[UploadFile] = File(None, description="YAML file with scheduling data"),
     yaml_content: Optional[str] = Form(None, description="YAML content as a string"),
     prettify: Optional[bool] = Form(None, description="Enable prettier output formatting"),
     timeout: Optional[int] = Form(None, description="Max execution time in seconds"),
     solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc, pulp/cuopt)"),
 ):
-    """
-    Optimize a nurse schedule from a YAML file or YAML string, and return an XLSX file.
+    content, input_name = await _read_optimization_input(file, yaml_content)
+    job = _create_optimize_job(input_name=input_name, solver=solver, prettify=prettify, timeout=timeout)
+    _optimize_executor.submit(_run_optimize_job, job.id, content)
+    return _optimize_job_response(job)
 
-    Either `file` or `yaml_content` must be provided (not both).
-    """
-    # Validate that exactly one input method is provided
-    if file is None and yaml_content is None:
-        raise HTTPException(status_code=400, detail="Either 'file' or 'yaml_content' must be provided")
 
-    if file is not None and yaml_content is not None:
-        raise HTTPException(status_code=400, detail="Provide either 'file' or 'yaml_content', not both")
+@app.get("/optimize/{job_id}")
+async def get_optimize_job(job_id: str):
+    job = _get_optimize_job(job_id)
+    return _optimize_job_response(job)
 
-    # Read content from file or use provided yaml_content
-    if file is not None:
-        # Validate that the uploaded file is a YAML file (sanity check, not for security)
-        if not file.filename.endswith((".yaml", ".yml")):
-            raise HTTPException(status_code=400, detail="Invalid file type. Please upload a YAML file (.yaml or .yml)")
-        content = await file.read()
-        input_name = file.filename
-    else:
-        # Use yaml_content string directly
-        content = yaml_content.encode("utf-8")
-        input_name = f"nurse-scheduling-{datetime.now().strftime('%Y%m%d%H%M%S')}.yaml"
 
-    logging.info("Processing schedule optimization...")
-    logging.info(f"Input: {input_name}")
-    logging.info(
-        "Prettify: %s, Timeout: %s, Solver: selector=%s",
-        prettify,
-        timeout,
-        solver,
-    )
-
-    try:
-        # Run the scheduler with file content directly
-        # TODO(security): May need to add security checks to prevent injection attacks or misuse
-        df, solution, score, status, cell_export_info = scheduler.schedule(
-            file_content=content,
-            prettify=prettify,
-            timeout=timeout,
-            solver=solver,
-        )
-    except NotImplementedError as e:
-        # User input error: unsupported apiVersion or other unsupported scenario feature.
-        logging.warning(f"Unsupported request: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Unsupported API version: {str(e)}")
-    except ValidationError as e:
-        # User-supplied scheduling data failed schema validation -> HTTP 400
-        logging.error(f"Invalid scheduling data: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Invalid scheduling data: {str(e)}")
-    except Exception as e:
-        # TODO(security): Returning the error message to the client may be a security risk
-        logging.error(f"Error during optimization: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error during optimization: {str(e)}")
-
-    if df is None:
-        raise HTTPException(status_code=400, detail="No solution found. The constraints may be too restrictive.")
-
-    # Export to Excel in memory
-    output_buffer = BytesIO()
-    exporter.export_to_excel(df, output_buffer, cell_export_info)
-
-    logging.info(f"Optimization complete. Score: {score}, Status: {status}")
-
-    # Generate output filename
-    base_filename = input_name.rsplit(".", 1)[0]
-    output_filename = f"{base_filename}.xlsx"
-
-    # Return the file from memory
+@app.get("/optimize/{job_id}/events")
+async def stream_optimize_job_events(job_id: str):
+    job = _get_optimize_job(job_id)
     return StreamingResponse(
-        output_buffer,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _stream_optimize_job_events(job),
+        media_type="text/event-stream",
         headers={
-            "Content-Disposition": f"attachment; filename={output_filename}",
-            "X-Schedule-Score": str(score),
-            "X-Schedule-Status": str(status),
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/optimize/{job_id}/xlsx")
+async def download_optimize_job_xlsx(job_id: str):
+    job = _get_optimize_job(job_id)
+    if job.xlsx_bytes is None:
+        if _is_terminal_job_status(job.status):
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": "No feasible solution is available.",
+                    "status": job.status.value,
+                },
+            )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Result is not ready yet.",
+                "status": job.status.value,
+            },
+        )
+
+    return StreamingResponse(
+        BytesIO(job.xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename={job.xlsx_filename}",
+            "X-Schedule-Score": str(job.score),
+            "X-Schedule-Status": str(job.solver_status),
+        },
+    )
+
+
+@app.delete("/optimize/{job_id}")
+async def delete_optimize_job(job_id: str):
+    _cleanup_expired_optimize_jobs()
+    with _optimize_jobs_lock:
+        job = _optimize_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Optimization job not found")
+        if not _is_terminal_job_status(job.status):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Cannot delete a running optimization job.",
+                    "status": job.status.value,
+                },
+            )
+        del _optimize_jobs[job_id]
+    return {"deleted": True, "jobId": job_id}
 
 
 if __name__ == "__main__":

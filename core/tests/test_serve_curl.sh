@@ -21,18 +21,17 @@ echo ""
 
 echo "--------------------------------"
 echo "Valid YAML file upload"
-curl -X POST "$BASE_URL/optimize-and-export-xlsx" \
+JOB_RESPONSE=$(curl -s -X POST "$BASE_URL/optimize" \
     -F "file=@$TEST_DIR/01_1nurse_1shift_1day.yaml" \
-    -o "$OUTPUT_DIR/01_1nurse_1shift_1day.xlsx" \
-    -w "\nHTTP Status: %{http_code}\n" \
-    -D "$OUTPUT_DIR/headers_test2.txt"
+    -w "\nHTTP Status: %{http_code}\n")
+echo "$JOB_RESPONSE"
 echo ""
 
 echo "--------------------------------"
 echo "YAML content as string"
 YAML_CONTENT=$(cat "$TEST_DIR/01_1nurse_1shift_1day.yaml")
-curl -X POST "$BASE_URL/optimize-and-export-xlsx" \
+JOB_RESPONSE=$(curl -s -X POST "$BASE_URL/optimize" \
     -F "yaml_content=$YAML_CONTENT" \
-    -o "$OUTPUT_DIR/01_1nurse_1shift_1day_from_string.xlsx" \
-    -w "\nHTTP Status: %{http_code}\n"
+    -w "\nHTTP Status: %{http_code}\n")
+echo "$JOB_RESPONSE"
 echo ""

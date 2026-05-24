@@ -23,7 +23,9 @@
 
 import os
 import sys
+import time
 import types
+from datetime import datetime, timedelta
 
 # Add the project root to the Python path so imports will work when running directly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,6 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
+
+import nurse_scheduling.serve as serve
 from nurse_scheduling.serve import app
 
 # Test client
@@ -40,6 +44,17 @@ client = TestClient(app)
 TEST_DIR = Path(__file__).parent / "testcases" / "basics"
 VALID_YAML_FILE = TEST_DIR / "01_1nurse_1shift_1day.yaml"
 ERROR_YAML_FILE = TEST_DIR / "01_1nurse_1shift_1day_extra_parameter_error.txt"
+
+
+def wait_for_job_status(job_id: str, *statuses: str) -> dict:
+    for _ in range(100):
+        response = client.get(f"/optimize/{job_id}")
+        assert response.status_code == 200
+        data = response.json()
+        if data["status"] in statuses:
+            return data
+        time.sleep(0.01)
+    pytest.fail(f"Job {job_id} did not reach one of the expected statuses: {statuses}")
 
 
 class TestServerHealth:
@@ -71,201 +86,217 @@ class TestServerHealth:
         assert "time" not in json_data
 
 
-class TestValidRequests:
-    """Test valid optimization requests."""
+class TestOptimizeJobs:
+    """Test asynchronous optimization job endpoints."""
 
-    def test_valid_yaml_file_upload(self):
-        """Valid YAML file upload."""
+    @pytest.fixture(autouse=True)
+    def clear_optimize_jobs(self):
+        with serve._optimize_jobs_lock:
+            serve._optimize_jobs.clear()
+        yield
+        with serve._optimize_jobs_lock:
+            serve._optimize_jobs.clear()
+
+    @pytest.fixture
+    def fake_successful_scheduler(self, monkeypatch):
+        def fake_schedule(*args, **kwargs):
+            return "fake_df", {}, 42, "OPTIMAL", None
+
+        def fake_export_to_excel(df, output_buffer, cell_export_info):
+            assert df == "fake_df"
+            assert cell_export_info is None
+            output_buffer.write(b"fake xlsx bytes")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+        monkeypatch.setattr(serve.exporter, "export_to_excel", fake_export_to_excel)
+
+    def test_optimize_job_lifecycle_and_xlsx_download(self, fake_successful_scheduler):
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+
+        assert response.status_code == 202
+        created = response.json()
+        job_id = created["jobId"]
+        assert job_id.startswith("opt_")
+        assert created["status"] in {"queued", "running", "optimal"}
+        assert created["links"]["events"] == f"/optimize/{job_id}/events"
+
+        completed = wait_for_job_status(job_id, "optimal")
+        assert completed["score"] == 42
+        assert completed["solverStatus"] == "OPTIMAL"
+        assert completed["xlsxReady"] is True
+
+        download = client.get(f"/optimize/{job_id}/xlsx")
+        assert download.status_code == 200
+        assert download.content == b"fake xlsx bytes"
+        assert download.headers["X-Schedule-Score"] == "42"
+        assert download.headers["X-Schedule-Status"] == "OPTIMAL"
+
+    def test_optimize_job_accepts_file_upload_and_options(self, fake_successful_scheduler):
         with open(VALID_YAML_FILE, "rb") as f:
             response = client.post(
-                "/optimize-and-export-xlsx", files={"file": ("01_1nurse_1shift_1day.yaml", f, "application/x-yaml")}
-            )
-
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        assert "Content-Disposition" in response.headers
-        assert "attachment; filename=01_1nurse_1shift_1day.xlsx" in response.headers["Content-Disposition"]
-
-        # Check custom headers
-        assert "X-Schedule-Score" in response.headers
-        assert response.headers["X-Schedule-Score"] == "0"
-        assert "X-Schedule-Status" in response.headers
-        assert response.headers["X-Schedule-Status"] == "OPTIMAL"
-
-        # Verify XLSX content is not empty
-        assert len(response.content) > 0
-
-    def test_yaml_content_as_string(self):
-        """YAML content as string."""
-        with open(VALID_YAML_FILE, "r") as f:
-            yaml_content = f.read()
-
-        response = client.post("/optimize-and-export-xlsx", data={"yaml_content": yaml_content})
-
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        assert "Content-Disposition" in response.headers
-        assert "attachment; filename=nurse-scheduling-" in response.headers["Content-Disposition"]
-
-        # Check custom headers
-        assert "X-Schedule-Score" in response.headers
-        assert response.headers["X-Schedule-Score"] == "0"
-        assert "X-Schedule-Status" in response.headers
-        assert response.headers["X-Schedule-Status"] == "OPTIMAL"
-
-        # Verify XLSX content is not empty
-        assert len(response.content) > 0
-
-    def test_valid_yaml_with_optional_parameters(self):
-        """Valid YAML with optional parameters (prettify=true, timeout=60)."""
-        with open(VALID_YAML_FILE, "rb") as f:
-            response = client.post(
-                "/optimize-and-export-xlsx",
+                "/optimize",
                 files={"file": ("01_1nurse_1shift_1day.yaml", f, "application/x-yaml")},
-                data={"prettify": "true", "timeout": "60"},
+                data={"prettify": "true", "timeout": "60", "solver": "pulp/cbc"},
             )
 
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        assert "Content-Disposition" in response.headers
-        assert "attachment; filename=01_1nurse_1shift_1day.xlsx" in response.headers["Content-Disposition"]
+        assert response.status_code == 202
+        created = response.json()
+        assert created["inputName"] == "01_1nurse_1shift_1day.yaml"
+        assert created["prettify"] is True
+        assert created["timeout"] == 60
+        assert created["solver"] == "pulp/cbc"
 
-        # Check custom headers
-        assert "X-Schedule-Score" in response.headers
-        assert response.headers["X-Schedule-Score"] == "0"
-        assert "X-Schedule-Status" in response.headers
-        assert response.headers["X-Schedule-Status"] == "OPTIMAL"
+        completed = wait_for_job_status(created["jobId"], "optimal")
+        assert completed["xlsxReady"] is True
 
-        # Verify XLSX content is not empty
-        assert len(response.content) > 0
+    def test_optimize_job_streams_lifecycle_events(self, fake_successful_scheduler):
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "optimal")
 
+        with client.stream("GET", f"/optimize/{job_id}/events") as stream_response:
+            assert stream_response.status_code == 200
+            body = stream_response.read().decode("utf-8")
 
-class TestErrorCases:
-    """Test error cases and validation."""
+        assert "event: status" in body
+        assert '"status": "queued"' in body
+        assert "event: complete" in body
+        assert '"status": "optimal"' in body
+        assert '"score": 42' in body
 
-    def test_both_file_and_yaml_content_provided(self):
-        """Error case - both file and yaml_content provided."""
-        with open(VALID_YAML_FILE, "rb") as f:
-            yaml_content = f.read().decode("utf-8")
-            f.seek(0)  # Reset file pointer
+    def test_optimize_job_allows_multiple_sse_connections(self, fake_successful_scheduler):
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "optimal")
 
-            response = client.post(
-                "/optimize-and-export-xlsx",
-                files={"file": ("01_1nurse_1shift_1day.yaml", f, "application/x-yaml")},
-                data={"yaml_content": yaml_content},
-            )
+        with client.stream("GET", f"/optimize/{job_id}/events") as first_stream:
+            first_body = first_stream.read().decode("utf-8")
+        with client.stream("GET", f"/optimize/{job_id}/events") as second_stream:
+            second_body = second_stream.read().decode("utf-8")
+
+        assert "event: complete" in first_body
+        assert "event: complete" in second_body
+        assert '"jobId": "' + job_id + '"' in first_body
+        assert '"jobId": "' + job_id + '"' in second_body
+
+    def test_optimize_job_delete_removes_completed_job(self, fake_successful_scheduler):
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "optimal")
+
+        delete_response = client.delete(f"/optimize/{job_id}")
+
+        assert delete_response.status_code == 200
+        assert delete_response.json() == {"deleted": True, "jobId": job_id}
+        assert client.get(f"/optimize/{job_id}").status_code == 404
+
+    def test_optimize_job_expiration_removes_finished_jobs(self):
+        job = serve._create_optimize_job(
+            input_name="expired.yaml",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout=1,
+        )
+        serve._update_optimize_job(
+            job.id,
+            status=serve.OptimizeJobStatus.OPTIMAL,
+            finished_at=datetime.now() - timedelta(seconds=serve.OPTIMIZE_JOB_TTL_SECONDS + 1),
+        )
+
+        response = client.get(f"/optimize/{job.id}")
+
+        assert response.status_code == 404
+
+    def test_optimize_job_retries_generated_id_collision(self, monkeypatch):
+        generated_ids = iter(
+            [
+                types.SimpleNamespace(hex="collision"),
+                types.SimpleNamespace(hex="fresh"),
+            ]
+        )
+        monkeypatch.setattr(serve.uuid, "uuid4", lambda: next(generated_ids))
+        existing_job = serve.OptimizeJob(
+            id="opt_collision",
+            status=serve.OptimizeJobStatus.QUEUED,
+            created_at=datetime.now(),
+            input_name="existing.yaml",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout=None,
+        )
+        with serve._optimize_jobs_lock:
+            serve._optimize_jobs[existing_job.id] = existing_job
+
+        job = serve._create_optimize_job(
+            input_name="new.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+
+        assert job.id == "opt_fresh"
+        assert "opt_collision" in serve._optimize_jobs
+        assert serve._optimize_jobs["opt_fresh"] is job
+
+    def test_optimize_executor_runs_one_job_at_a_time(self):
+        assert serve.OPTIMIZE_MAX_WORKERS == 1
+
+    def test_optimize_job_rejects_missing_input(self):
+        response = client.post("/optimize")
 
         assert response.status_code == 400
-        assert "detail" in response.json()
-        assert "not both" in response.json()["detail"].lower()
-
-    def test_neither_file_nor_yaml_content_provided(self):
-        """Error case - neither file nor yaml_content provided."""
-        response = client.post("/optimize-and-export-xlsx")
-
-        assert response.status_code == 400
-        assert "detail" in response.json()
         assert "must be provided" in response.json()["detail"].lower()
 
-    def test_invalid_file_type(self):
-        """Error case - invalid file type."""
+    def test_optimize_job_rejects_both_file_and_yaml_content(self):
+        with open(VALID_YAML_FILE, "rb") as f:
+            response = client.post(
+                "/optimize",
+                files={"file": ("01_1nurse_1shift_1day.yaml", f, "application/x-yaml")},
+                data={"yaml_content": "apiVersion: alpha\n"},
+            )
+
+        assert response.status_code == 400
+        assert "not both" in response.json()["detail"].lower()
+
+    def test_optimize_job_rejects_invalid_file_type(self):
         with open(ERROR_YAML_FILE, "rb") as f:
             response = client.post(
-                "/optimize-and-export-xlsx",
+                "/optimize",
                 files={"file": ("01_1nurse_1shift_1day_extra_parameter_error.txt", f, "text/plain")},
             )
 
         assert response.status_code == 400
-        assert "detail" in response.json()
         assert "invalid file type" in response.json()["detail"].lower()
 
-    def test_yaml_with_extra_parameters(self):
-        """Error case - YAML with extra parameters."""
-        with open(ERROR_YAML_FILE, "r") as f:
-            error_yaml_content = f.read()
+    def test_optimize_job_records_scheduler_failure(self, monkeypatch):
+        def fake_schedule(*args, **kwargs):
+            raise ValueError("bad scheduling data")
 
-        response = client.post("/optimize-and-export-xlsx", data={"yaml_content": error_yaml_content})
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
 
-        assert response.status_code == 500
-        assert "detail" in response.json()
-        assert "error" in response.json()["detail"].lower()
+        response = client.post("/optimize", data={"yaml_content": "bad: input\n"})
+        job_id = response.json()["jobId"]
 
+        completed = wait_for_job_status(job_id, "failed")
+        assert completed["error"] == "bad scheduling data"
+        assert completed["xlsxReady"] is False
 
-class TestMultipleValidScenarios:
-    """Test multiple valid YAML scenarios to ensure robustness."""
+    def test_optimize_job_records_no_solution(self, monkeypatch):
+        def fake_schedule(*args, **kwargs):
+            return None, None, None, "INFEASIBLE", None
 
-    @pytest.mark.parametrize(
-        "yaml_file",
-        [
-            "01_1nurse_1shift_1day.yaml",
-            "02_3nurses_1shift_1day.yaml",
-            "02_4nurses_3shifts_3days.yaml",
-            "03_4nurses_3shifts_7days.yaml",
-        ],
-    )
-    def test_various_valid_yaml_files(self, yaml_file):
-        """Test various valid YAML files to ensure they all work."""
-        yaml_path = TEST_DIR / yaml_file
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
 
-        if not yaml_path.exists():
-            pytest.skip(f"Test file {yaml_file} not found")
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
 
-        with open(yaml_path, "rb") as f:
-            response = client.post("/optimize-and-export-xlsx", files={"file": (yaml_file, f, "application/x-yaml")})
+        completed = wait_for_job_status(job_id, "infeasible")
+        assert completed["solverStatus"] == "INFEASIBLE"
+        assert completed["xlsxReady"] is False
 
-        # Should return 200 or handle gracefully
-        assert response.status_code == 200
-
-        if response.status_code == 200:
-            assert (
-                response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            assert len(response.content) > 0
-
-
-class TestEdgeCases:
-    """Test edge cases and boundary conditions."""
-
-    def test_empty_yaml_content(self):
-        """Test with empty YAML content."""
-        response = client.post("/optimize-and-export-xlsx", data={"yaml_content": ""})
-
-        # Should return an error for empty content
-        assert response.status_code == 400
-
-    def test_invalid_yaml_syntax(self):
-        """Test with invalid YAML syntax."""
-        invalid_yaml = "this is not: valid: yaml: syntax:"
-
-        response = client.post("/optimize-and-export-xlsx", data={"yaml_content": invalid_yaml})
-
-        # Should return an error for invalid YAML
-        assert response.status_code == 500
-        assert "detail" in response.json()
-
-    def test_timeout_parameter_values(self):
-        """Test different timeout parameter values."""
-        with open(VALID_YAML_FILE, "rb") as f:
-            response = client.post(
-                "/optimize-and-export-xlsx",
-                files={"file": ("01_1nurse_1shift_1day.yaml", f, "application/x-yaml")},
-                data={"timeout": "1"},  # Very short timeout
-            )
-
-        # Should either succeed quickly or handle timeout gracefully
-        assert response.status_code == 200
-
-    def test_prettify_parameter_false(self):
-        """Test prettify parameter set to false."""
-        with open(VALID_YAML_FILE, "rb") as f:
-            response = client.post(
-                "/optimize-and-export-xlsx",
-                files={"file": ("01_1nurse_1shift_1day.yaml", f, "application/x-yaml")},
-                data={"prettify": "false"},
-            )
-
-        assert response.status_code == 200
-        assert len(response.content) > 0
+        download = client.get(f"/optimize/{job_id}/xlsx")
+        assert download.status_code == 404
+        assert download.json()["detail"]["status"] == "infeasible"
 
 
 class TestServeInternals:
@@ -315,25 +346,6 @@ class TestServeInternals:
         from nurse_scheduling.serve import _should_enable_sentry
 
         assert _should_enable_sentry() is True
-
-
-class TestNoSolutionResponse:
-    """Test endpoint response when scheduler finds no solution."""
-
-    def test_no_solution_returns_400(self, monkeypatch):
-        def fake_schedule(*args, **kwargs):
-            return None, None, None, "INFEASIBLE", None
-
-        monkeypatch.setattr("nurse_scheduling.serve.scheduler.schedule", fake_schedule)
-
-        with open(VALID_YAML_FILE, "rb") as f:
-            response = client.post(
-                "/optimize-and-export-xlsx",
-                files={"file": ("01_1nurse_1shift_1day.yaml", f, "application/x-yaml")},
-            )
-
-        assert response.status_code == 400
-        assert "No solution found" in response.json()["detail"]
 
 
 if __name__ == "__main__":

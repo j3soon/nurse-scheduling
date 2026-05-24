@@ -34,8 +34,56 @@ interface ServerHealthResponse {
   appVersion: string;
 }
 
+interface OptimizeJobResponse {
+  jobId: string;
+  status: string;
+  score: number | null;
+  solverStatus: string | null;
+  error: string | null;
+  xlsxReady: boolean;
+  links: {
+    status: string;
+    events: string;
+    xlsx: string;
+  };
+}
+
+const TERMINAL_JOB_STATUSES = new Set(['optimal', 'feasible', 'infeasible', 'failed']);
+
 function normalizeEndpoint(endpoint: string): string {
   return endpoint.trim().replace(/\/+$/, '');
+}
+
+function buildApiUrl(endpoint: string, path: string): string {
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+  return `${normalizeEndpoint(endpoint)}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function getFilenameFromContentDisposition(contentDisposition: string | null): string {
+  if (!contentDisposition) {
+    return 'output.xlsx';
+  }
+
+  const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+  return filenameMatch ? filenameMatch[1] : 'output.xlsx';
+}
+
+async function getErrorDetail(response: Response): Promise<string> {
+  const errorText = await response.text();
+  try {
+    const errorJson = JSON.parse(errorText);
+    if (typeof errorJson.detail === 'string') {
+      return errorJson.detail;
+    }
+    if (errorJson.detail !== undefined) {
+      return JSON.stringify(errorJson.detail);
+    }
+  } catch {
+    return errorText;
+  }
+  return errorText;
 }
 
 function formatCheckedTime(date: Date | null): string {
@@ -71,6 +119,7 @@ export default function OptimizeAndExportPage() {
   const [scheduleFilename, setScheduleFilename] = useState<string | null>(null);
   const [scheduleScore, setScheduleScore] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [serverHealthStatus, setServerHealthStatus] = useState<ServerHealthStatus>('checking');
   const [lastHealthCheckedAt, setLastHealthCheckedAt] = useState<Date | null>(null);
   const [serverHealth, setServerHealth] = useState<ServerHealthResponse | null>(null);
@@ -152,6 +201,73 @@ export default function OptimizeAndExportPage() {
     };
   }, [checkServerHealth]);
 
+  const getOptimizeJobStatus = useCallback(async (job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
+    const response = await fetch(buildApiUrl(apiEndpoint, job.links.status), {
+      method: 'GET',
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server error (${response.status}): ${await getErrorDetail(response)}`);
+    }
+
+    return await response.json() as OptimizeJobResponse;
+  }, [apiEndpoint]);
+
+  const waitForOptimizeJob = useCallback((job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
+    if (TERMINAL_JOB_STATUSES.has(job.status)) {
+      return Promise.resolve(job);
+    }
+
+    if (typeof EventSource !== 'undefined') {
+      return new Promise((resolve, reject) => {
+        const eventSource = new EventSource(buildApiUrl(apiEndpoint, job.links.events));
+
+        eventSource.addEventListener('status', (event) => {
+          const updatedJob = JSON.parse(event.data) as Partial<OptimizeJobResponse>;
+          if (updatedJob.status) {
+            setScheduleStatus(updatedJob.status);
+          }
+        });
+
+        eventSource.addEventListener('complete', (event) => {
+          eventSource.close();
+          const completedJob = JSON.parse(event.data) as OptimizeJobResponse;
+          resolve(completedJob);
+        });
+
+        eventSource.addEventListener('error', (event) => {
+          eventSource.close();
+          if ('data' in event && typeof event.data === 'string' && event.data) {
+            reject(new Error((JSON.parse(event.data) as OptimizeJobResponse).error ?? 'Optimization failed'));
+          } else {
+            reject(new Error('Optimization event stream failed'));
+          }
+        });
+      });
+    }
+
+    return new Promise((resolve, reject) => {
+      const poll = async () => {
+        try {
+          const updatedJob = await getOptimizeJobStatus(job);
+          setScheduleStatus(updatedJob.status);
+
+          if (TERMINAL_JOB_STATUSES.has(updatedJob.status)) {
+            resolve(updatedJob);
+            return;
+          }
+
+          window.setTimeout(() => void poll(), 1000);
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      void poll();
+    });
+  }, [apiEndpoint, getOptimizeJobStatus]);
+
   const handleOptimizeAndDownload = async () => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -159,6 +275,7 @@ export default function OptimizeAndExportPage() {
     setScheduleFilename(null);
     setScheduleScore(null);
     setScheduleStatus(null);
+    setCurrentJobId(null);
 
     try {
       // Prepare form data
@@ -173,56 +290,62 @@ export default function OptimizeAndExportPage() {
         formData.append('timeout', String(timeoutArg));
       }
 
-      // Send request to FastAPI server
-      const response = await fetch(`${normalizeEndpoint(apiEndpoint)}/optimize-and-export-xlsx`, {
+      const createResponse = await fetch(`${normalizeEndpoint(apiEndpoint)}/optimize`, {
         method: 'POST',
         body: formData,
       });
 
-      if (!response.ok) {
-        // Try to parse error message from response
-        const errorText = await response.text();
-        let errorDetail = 'Unknown error';
-        try {
-          const errorJson = JSON.parse(errorText);
-          errorDetail = errorJson.detail || errorText;
-        } catch {
-          errorDetail = errorText;
-        }
-        throw new Error(`Server error (${response.status}): ${errorDetail}`);
+      if (!createResponse.ok) {
+        throw new Error(`Server error (${createResponse.status}): ${await getErrorDetail(createResponse)}`);
       }
 
-      // Extract custom headers with score and status
-      const score = response.headers.get('X-Schedule-Score');
-      const status = response.headers.get('X-Schedule-Status');
+      const createdJob = await createResponse.json() as OptimizeJobResponse;
+      setCurrentJobId(createdJob.jobId);
+      setScheduleStatus(createdJob.status);
 
-      if (score) setScheduleScore(score);
-      if (status) setScheduleStatus(status);
+      const completedJob = await waitForOptimizeJob(createdJob);
+      setScheduleStatus(completedJob.status);
+
+      if (completedJob.score !== null) {
+        setScheduleScore(String(completedJob.score));
+      }
+      if (completedJob.solverStatus) {
+        setScheduleStatus(completedJob.solverStatus);
+      }
+
+      if (completedJob.error) {
+        throw new Error(completedJob.error);
+      }
+      if (!completedJob.xlsxReady) {
+        throw new Error(`No downloadable schedule is available. Job status: ${completedJob.status}`);
+      }
+
+      const xlsxResponse = await fetch(buildApiUrl(apiEndpoint, completedJob.links.xlsx), {
+        method: 'GET',
+      });
+
+      if (!xlsxResponse.ok) {
+        throw new Error(`Server error (${xlsxResponse.status}): ${await getErrorDetail(xlsxResponse)}`);
+      }
 
       // Get the blob data (XLSX file)
-      const blob = await response.blob();
+      const blob = await xlsxResponse.blob();
 
       // Create download link
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-
-      // Extract filename from Content-Disposition header or use default
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = `output.xlsx`;
-
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
+      const filename = getFilenameFromContentDisposition(xlsxResponse.headers.get('Content-Disposition'));
 
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+
+      void fetch(buildApiUrl(apiEndpoint, `/optimize/${completedJob.jobId}`), {
+        method: 'DELETE',
+      });
 
       setScheduleFilename(filename);
       setSuccessMessage('Schedule optimized and downloaded successfully!');
@@ -310,6 +433,25 @@ export default function OptimizeAndExportPage() {
           )}
           {scheduleStatus && (
             <p className="text-sm text-green-700">
+              <strong>Status:</strong> {scheduleStatus}
+            </p>
+          )}
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h3 className="text-lg font-medium text-blue-800 mb-2 flex items-center gap-2">
+            <FiLoader className="h-5 w-5 animate-spin" />
+            Optimization Running
+          </h3>
+          {currentJobId && (
+            <p className="text-sm text-blue-700">
+              <strong>Job:</strong> {currentJobId}
+            </p>
+          )}
+          {scheduleStatus && (
+            <p className="text-sm text-blue-700">
               <strong>Status:</strong> {scheduleStatus}
             </p>
           )}
