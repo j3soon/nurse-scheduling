@@ -127,7 +127,7 @@ export default function Home() {
       </div>
 
       {/* Build Selector Dropdown */}
-      <div ref={dropdownRef} className="fixed bottom-4 right-4 z-20">
+      <div ref={dropdownRef} className="fixed bottom-20 right-8 z-20">
         <button
           onClick={() => setIsDropdownOpen(!isDropdownOpen)}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-full shadow-sm hover:shadow"
