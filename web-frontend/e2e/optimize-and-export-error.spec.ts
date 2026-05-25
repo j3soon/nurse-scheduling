@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizationJobFlow, seedSchedulingState } from './helpers';
 
 test('optimize and export renders backend errors without a stale success state', async ({ page }) => {
   /*
@@ -50,14 +50,9 @@ test('optimize and export renders backend errors without a stale success state',
     export: { formatting: [] },
   });
 
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    await route.fulfill({
-      status: 500,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ detail: 'solver unavailable' }),
-    });
+  await mockOptimizationJobFlow(page, {
+    createStatus: 500,
+    createBody: { detail: 'solver unavailable' },
   });
 
   await page.goto('/optimize-and-export');
@@ -68,6 +63,6 @@ test('optimize and export renders backend errors without a stale success state',
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
 
   await expect(page.getByRole('heading', { name: 'Error', exact: true })).toBeVisible();
-  await expect(page.getByText('Server error (500): solver unavailable')).toBeVisible();
+  await expect(page.getByText('Server error (500): solver unavailable', { exact: true })).toBeVisible();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
 });

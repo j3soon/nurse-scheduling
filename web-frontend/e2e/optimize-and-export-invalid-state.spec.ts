@@ -46,18 +46,8 @@ test('optimize and export surfaces backend validation errors for invalid upstrea
   });
   await setDateRange(page);
 
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    await route.fulfill({
-      status: 422,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ detail: 'No people or dates configured' }),
-    });
-  });
-
   await page.goto('/optimize-and-export');
   await expect(page.getByRole('heading', { name: 'Optimize and Export', exact: true })).toBeVisible();
-  await expect(page.getByText('No people or dates configured')).toHaveCount(0);
-
-  await page.getByRole('button', { name: 'Optimize and Download' }).click();
-  await expect(page.getByText('No people or dates configured')).toBeVisible();
+  await expect(page.getByText('Please set up your dates first')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
 });

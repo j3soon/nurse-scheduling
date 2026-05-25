@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizationJobFlow, seedSchedulingState } from './helpers';
 
 test('renaming shift types and shift type groups updates downstream references', async ({ page }) => {
   /*
@@ -218,13 +218,10 @@ test('optimize payload reflects trimmed people history after shift-type deletion
   await shiftTypesTable.locator('tr').filter({ has: page.getByText('2. D', { exact: true }) }).getByRole('button', { name: 'Delete' }).click();
 
   let submittedBody = '';
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBody = (await route.request().postData()) ?? '';
-    await route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: 'fake-xlsx',
-    });
+  await mockOptimizationJobFlow(page, {
+    onCreateJob: async request => {
+      submittedBody = (await request.postData()) ?? '';
+    },
   });
 
   await page.goto('/optimize-and-export');

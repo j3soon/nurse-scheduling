@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { Page } from '@playwright/test';
+import { Page, Request } from '@playwright/test';
 
 const STORAGE_KEY = 'nurse-scheduling-data';
 const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
@@ -85,4 +85,68 @@ export async function setDateRange(
   await page.locator('#startDate').fill(startDate);
   await page.locator('#endDate').fill(endDate);
   await page.getByRole('button', { name: /Apply|Update/ }).click();
+}
+
+type MockOptimizationJobFlowOptions = {
+  onCreateJob?: (request: Request) => Promise<void> | void;
+  createStatus?: number;
+  createBody?: unknown;
+  filename?: string;
+  resultBody?: string;
+  score?: string;
+  status?: string;
+};
+
+export async function mockOptimizationJobFlow(page: Page, options: MockOptimizationJobFlowOptions = {}) {
+  let jobCount = 0;
+  const filename = options.filename ?? 'output.xlsx';
+  const score = options.score ?? '0';
+  const status = options.status ?? 'OPTIMAL';
+
+  await page.route('http://localhost:8000/optimization-jobs', async route => {
+    await options.onCreateJob?.(route.request());
+
+    if (options.createStatus && options.createStatus >= 400) {
+      await route.fulfill({
+        status: options.createStatus,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options.createBody ?? { detail: 'Optimization failed' }),
+      });
+      return;
+    }
+
+    jobCount += 1;
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: `test-job-${jobCount}` }),
+    });
+  });
+
+  await page.route(/http:\/\/localhost:8000\/optimization-jobs\/[^/]+\/events$/, async route => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      },
+      body: [
+        'event: phase\ndata: {"type":"phase","code":"loading_scenario","message":"Loading scenario","progress":0.1}\n\n',
+        `event: completed\ndata: {"type":"completed","code":"completed","message":"Optimization completed","progress":1,"score":${score}}\n\n`,
+      ].join(''),
+    });
+  });
+
+  await page.route(/http:\/\/localhost:8000\/optimization-jobs\/[^/]+\/result$/, async route => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'X-Schedule-Score': score,
+        'X-Schedule-Status': status,
+      },
+      body: options.resultBody ?? 'fake-xlsx',
+    });
+  });
 }

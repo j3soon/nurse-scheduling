@@ -48,7 +48,7 @@ test('optimize and export works against a real local HTTP server instead of Play
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': '*',
         'Access-Control-Expose-Headers': 'Content-Disposition, X-Schedule-Score, X-Schedule-Status',
       });
@@ -56,26 +56,48 @@ test('optimize and export works against a real local HTTP server instead of Play
       return;
     }
 
-    if (req.method !== 'POST' || req.url !== '/optimize-and-export-xlsx') {
-      res.writeHead(404).end('Not Found');
+    if (req.method === 'POST' && req.url === '/optimization-jobs') {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      submittedBody = Buffer.concat(chunks).toString('utf8');
+
+      res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({ job_id: 'http-test-job' }));
       return;
     }
 
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    if (req.method === 'GET' && req.url === '/optimization-jobs/http-test-job/events') {
+      res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      });
+      res.end(
+        'event: completed\n'
+        + 'data: {"type":"completed","code":"completed","message":"Optimization completed","progress":1,"score":99}\n\n'
+      );
+      return;
     }
-    submittedBody = Buffer.concat(chunks).toString('utf8');
 
-    res.writeHead(200, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Expose-Headers': 'Content-Disposition, X-Schedule-Score, X-Schedule-Status',
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': 'attachment; filename="schedule-http.xlsx"',
-      'X-Schedule-Score': '99',
-      'X-Schedule-Status': 'OPTIMAL',
-    });
-    res.end('fake-xlsx');
+    if (req.method === 'GET' && req.url === '/optimization-jobs/http-test-job/result') {
+      res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': 'Content-Disposition, X-Schedule-Score, X-Schedule-Status',
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': 'attachment; filename="schedule-http.xlsx"',
+        'X-Schedule-Score': '99',
+        'X-Schedule-Status': 'OPTIMAL',
+      });
+      res.end('fake-xlsx');
+      return;
+    }
+
+    res.writeHead(404).end('Not Found');
   });
 
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

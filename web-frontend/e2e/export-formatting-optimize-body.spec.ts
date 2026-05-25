@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizationJobFlow, seedSchedulingState } from './helpers';
 
 test('export formatting rules affect the YAML sent to optimize and export', async ({ page }) => {
   /*
@@ -55,13 +55,10 @@ test('export formatting rules affect the YAML sent to optimize and export', asyn
   await expect(page.locator('pre')).toContainText('00ff00');
 
   let submittedBody = '';
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBody = (await route.request().postData()) ?? '';
-    await route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: 'fake-xlsx',
-    });
+  await mockOptimizationJobFlow(page, {
+    onCreateJob: async request => {
+      submittedBody = (await request.postData()) ?? '';
+    },
   });
 
   await page.goto('/optimize-and-export');

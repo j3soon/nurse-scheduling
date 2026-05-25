@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, setDateRange } from './helpers';
+import { disableModalDialogs, setDateRange, mockOptimizationJobFlow, seedSchedulingState } from './helpers';
 
 test('a repeated optimize run after upstream edits submits updated yaml_content', async ({ page }) => {
   /*
@@ -31,19 +31,23 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
    * 4. Confirm the second request body reflects the edit and differs from the first.
    */
   await disableModalDialogs(page);
-  await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await seedSchedulingState(page, {
+    apiVersion: 'alpha',
+    description: 'repeat optimize seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: { items: [{ id: 'Person 1', description: '', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+
   await setDateRange(page);
 
   const bodies: string[] = [];
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    bodies.push((await route.request().postData()) ?? '');
-    await route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: `fake-xlsx-${bodies.length}`,
-    });
+  await mockOptimizationJobFlow(page, {
+    onCreateJob: async request => {
+      bodies.push((await request.postData()) ?? '');
+    },
   });
 
   await page.goto('/optimize-and-export');

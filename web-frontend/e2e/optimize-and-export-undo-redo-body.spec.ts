@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, setDateRange } from './helpers';
+import { disableModalDialogs, setDateRange, mockOptimizationJobFlow, seedSchedulingState } from './helpers';
 
 test('optimize request body follows undo and redo of upstream edits', async ({ page }) => {
   /*
@@ -30,9 +30,15 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
    * 3. Redo the edit and optimize again, confirming the request body includes the new person.
    */
   await disableModalDialogs(page);
-  await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await seedSchedulingState(page, {
+    apiVersion: 'alpha',
+    description: 'undo redo optimize seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: { items: [{ id: 'Person 1', description: '', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
   await setDateRange(page);
 
   await page.goto('/people');
@@ -42,13 +48,10 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
   await expect(page.getByText('Undo Redo Nurse', { exact: true })).toBeVisible();
 
   const submittedBodies: string[] = [];
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBodies.push((await route.request().postData()) ?? '');
-    await route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: 'fake-xlsx',
-    });
+  await mockOptimizationJobFlow(page, {
+    onCreateJob: async request => {
+      submittedBodies.push((await request.postData()) ?? '');
+    },
   });
 
   await page.getByRole('heading', { name: 'People Management', exact: true }).click();
