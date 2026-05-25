@@ -24,9 +24,7 @@ from nurse_scheduling.progress import ProgressEvent
 
 
 VALID_YAML_FILE = Path(__file__).parent / "testcases" / "basics" / "01_1nurse_1shift_1day.yaml"
-VALID_PREFS_YAML_FILE = (
-    Path(__file__).parent / "testcases" / "basics" / "01_1nurse_1shift_1day_all_prefs.yaml"
-)
+VALID_PREFS_YAML_FILE = Path(__file__).parent / "testcases" / "basics" / "01_1nurse_1shift_1day_all_prefs.yaml"
 
 
 def test_schedule_emits_phase_progress_events():

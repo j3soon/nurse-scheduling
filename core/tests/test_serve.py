@@ -203,7 +203,10 @@ class TestOptimizationJobs:
 
         result_response = client.get(f"/optimization-jobs/{job_id}/result")
         assert result_response.status_code == 200
-        assert result_response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        assert (
+            result_response.headers["content-type"]
+            == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
         assert result_response.headers["X-Schedule-Score"] == "0"
         assert result_response.headers["X-Schedule-Status"] == "OPTIMAL"
         assert len(result_response.content) > 0

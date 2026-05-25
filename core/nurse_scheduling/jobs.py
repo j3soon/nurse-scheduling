@@ -75,13 +75,15 @@ class OptimizationJob:
             self.score = score
             self.solver_status = solver_status
             self.updated_at = datetime.now(UTC)
-        self.emit(ProgressEvent(
-            type="completed",
-            code="completed",
-            message="Optimization completed",
-            progress=1.0,
-            score=score,
-        ))
+        self.emit(
+            ProgressEvent(
+                type="completed",
+                code="completed",
+                message="Optimization completed",
+                progress=1.0,
+                score=score,
+            )
+        )
 
     def fail(self, message: str) -> None:
         with self.lock:

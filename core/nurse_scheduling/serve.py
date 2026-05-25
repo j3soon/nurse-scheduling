@@ -226,13 +226,15 @@ def run_optimization_job(
 
     def emit(event: ProgressEvent) -> None:
         if event.type == "completed":
-            job.emit(ProgressEvent(
-                type="phase",
-                code="schedule_completed",
-                message="Schedule solved; preparing result file",
-                progress=0.98,
-                score=event.score,
-            ))
+            job.emit(
+                ProgressEvent(
+                    type="phase",
+                    code="schedule_completed",
+                    message="Schedule solved; preparing result file",
+                    progress=0.98,
+                    score=event.score,
+                )
+            )
             return
         job.emit(event)
 
