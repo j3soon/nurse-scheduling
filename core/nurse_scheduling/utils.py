@@ -49,6 +49,15 @@ def add_objective(ctx, weight, expression):
 def _parse_single_date(date: str, date_range: DateRange) -> datetime.date:
     startdate, enddate = date_range.startDate, date_range.endDate
     error_details = f"- Start date: {startdate}\n- End date: {enddate}\n"
+    # If the value looks like an identifier (not date-like), give a clearer error
+    # that names the unknown ID. This catches cases where a rule references a
+    # date-group ID (e.g. 'FREEDAY') that was never registered in map_did_d.
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_-]*$", date):
+        raise ValueError(
+            f"Unknown date identifier '{date}'. It is not a date in the format "
+            f"YYYY-MM-DD, MM-DD, or D, and it is not a known date keyword, "
+            f"weekday, or date-group ID.\n{error_details}"
+        )
     if match := re.match(r"^\d{1,2}$", date):
         if startdate.year != enddate.year or startdate.month != enddate.month:
             raise ValueError(

@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import logging
 from io import BytesIO, StringIO
 from copy import copy
 
@@ -92,8 +93,21 @@ def _build_custom_export_style_info(
                 target_people.update(ctx.map_pid_p[target])
 
         if rule.type in ("column", "date header", "cell"):
+            skip_rule = False
             for target in rule.dates:
-                target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
+                try:
+                    target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
+                except ValueError as exc:
+                    logging.warning(
+                        "Skipping export formatting rule with type '%s' because date target '%s' is unknown: %s",
+                        rule.type,
+                        target,
+                        exc,
+                    )
+                    skip_rule = True
+                    break
+            if skip_rule:
+                continue
 
         if rule.type == "cell":
             for target in rule.shiftTypes:
@@ -326,8 +340,20 @@ def _build_cell_annotation_rules(ctx: Context):
                     f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
                 )
             target_people.update(ctx.map_pid_p[target])
+        skip_rule = False
         for target in rule.dates:
-            target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
+            try:
+                target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
+            except ValueError as exc:
+                logging.warning(
+                    "Skipping cell-annotation export formatting rule because date target '%s' is unknown: %s",
+                    target,
+                    exc,
+                )
+                skip_rule = True
+                break
+        if skip_rule:
+            continue
         for target in rule.shiftTypes:
             if target not in ctx.map_sid_s:
                 raise ValueError(f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'")
@@ -583,8 +609,18 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         extra_col_start = n_leading_cols + n_history_cols + len(ctx.dates.items) + 1
         for rule_idx, rule in enumerate(extra_column_rules):
             col_idx = extra_col_start + rule_idx
-            count_dates = utils.parse_dates(rule.countDates, ctx.map_did_d, ctx.dates.range)
-            count_shift_types = utils.parse_sids(rule.countShiftTypes, ctx.map_sid_s)
+            try:
+                count_dates = utils.parse_dates(rule.countDates, ctx.map_did_d, ctx.dates.range)
+                count_shift_types = utils.parse_sids(rule.countShiftTypes, ctx.map_sid_s)
+            except ValueError as exc:
+                logging.warning(
+                    "Skipping extra column rule '%s' because it references unknown identifiers (countDates=%s, countShiftTypes=%s): %s",
+                    getattr(rule, "header", ""),
+                    rule.countDates,
+                    rule.countShiftTypes,
+                    exc,
+                )
+                continue
             df.iloc[1, col_idx] = rule.header
             for p in range(len(ctx.people.items)):
                 df.iloc[n_leading_rows + p, col_idx] = _count_extra_column_for_person(
@@ -597,8 +633,18 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         extra_row_start = n_leading_rows + len(ctx.people.items) + n_trailing_rows + 1
         for rule_idx, rule in enumerate(extra_row_rules):
             row_idx = extra_row_start + rule_idx
-            count_people = utils.parse_pids(rule.countPeople, ctx.map_pid_p)
-            count_shift_types = utils.parse_sids(rule.countShiftTypes, ctx.map_sid_s)
+            try:
+                count_people = utils.parse_pids(rule.countPeople, ctx.map_pid_p)
+                count_shift_types = utils.parse_sids(rule.countShiftTypes, ctx.map_sid_s)
+            except ValueError as exc:
+                logging.warning(
+                    "Skipping extra row rule '%s' because it references unknown identifiers (countPeople=%s, countShiftTypes=%s): %s",
+                    getattr(rule, "header", ""),
+                    rule.countPeople,
+                    rule.countShiftTypes,
+                    exc,
+                )
+                continue
             df.iloc[row_idx, 0] = rule.header
             for d in range(len(ctx.dates.items)):
                 df.iloc[row_idx, n_leading_cols + n_history_cols + d] = _count_extra_row_for_date(
