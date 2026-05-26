@@ -35,6 +35,10 @@ vi.mock('@/utils/yamlGenerator', () => ({
   generateYamlFromState: mockGenerateYamlFromState,
 }));
 
+vi.mock('@/utils/version', () => ({
+  CURRENT_APP_VERSION: 'frontend-test',
+}));
+
 class MockEventSource {
   static instances: MockEventSource[] = [];
 
@@ -120,6 +124,16 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Server error (500): {bad json')).resolves.toBeInTheDocument();
+    expect(screen.queryByText(/check that your frontend and backend versions match/i)).not.toBeInTheDocument();
+  });
+
+  it('does not show generic version compatibility guidance', () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => undefined));
+
+    render(<OptimizeAndExportPage />);
+
+    expect(screen.queryByText(/this project is in active development/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/check that your frontend and backend versions match/i)).not.toBeInTheDocument();
   });
 
   it('shows backend health status from the health endpoint', async () => {
@@ -136,7 +150,49 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
-    expect(screen.getByText(/API version: alpha · App version: v-test/)).toBeInTheDocument();
+    expect(screen.getByText(/API version: alpha · Frontend version: frontend-test · Backend version: v-test/)).toBeInTheDocument();
+  });
+
+  it('warns when frontend and backend versions differ', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: 'ok',
+        version: 'alpha',
+        apiVersion: 'alpha',
+        appVersion: 'backend-test',
+      }),
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText(/frontend and backend versions do not match/i)).resolves.toBeInTheDocument();
+  });
+
+  it('does not warn when frontend and backend versions match', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: 'ok',
+        version: 'alpha',
+        apiVersion: 'alpha',
+        appVersion: 'frontend-test',
+      }),
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.queryByText(/frontend and backend versions do not match/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a backend check failure message', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network failed'));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
+    expect(screen.getByText(/backend is not responding at the configured endpoint/i)).toBeInTheDocument();
   });
 
   it('creates an optimization job, downloads the XLSX, and deletes the job', async () => {

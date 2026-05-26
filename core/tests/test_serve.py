@@ -278,7 +278,9 @@ class TestOptimizeJobs:
         job_id = response.json()["jobId"]
 
         completed = wait_for_job_status(job_id, "failed")
-        assert completed["error"] == "bad scheduling data"
+        assert "bad scheduling data" in completed["error"]
+        assert serve.UNEXPECTED_ERROR_VERSION_ADVICE in completed["error"]
+        assert "Older YAML may not work after breaking changes" in completed["error"]
         assert completed["xlsxReady"] is False
 
     def test_optimize_job_records_no_solution(self, monkeypatch):

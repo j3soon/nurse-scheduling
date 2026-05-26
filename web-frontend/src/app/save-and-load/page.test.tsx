@@ -146,6 +146,8 @@ describe('SaveAndLoadPage', () => {
     await user.click(screen.getByRole('button', { name: /save/i }));
 
     expect(confirm).toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Older YAML may not work after breaking changes'));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('If nothing breaks, you can continue.'));
     expect(loadFromYaml).not.toHaveBeenCalled();
   });
 

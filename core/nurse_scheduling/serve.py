@@ -140,6 +140,10 @@ class OptimizeJob:
 
 OPTIMIZE_JOB_TTL_SECONDS = 30 * 60
 OPTIMIZE_MAX_WORKERS = 1
+UNEXPECTED_ERROR_VERSION_ADVICE = (
+    "If this error was unexpected, check that your frontend and backend versions match. "
+    "Older YAML may not work after breaking changes, though we try to preserve compatibility."
+)
 _optimize_jobs: dict[str, OptimizeJob] = {}
 _optimize_jobs_lock = threading.Lock()
 _optimize_executor = ThreadPoolExecutor(max_workers=OPTIMIZE_MAX_WORKERS)
@@ -259,6 +263,10 @@ def _final_status_from_solver_status(solver_status: str) -> OptimizeJobStatus:
     return OptimizeJobStatus.FAILED
 
 
+def _format_unexpected_error(error: Exception) -> str:
+    return f"{error}\n\n{UNEXPECTED_ERROR_VERSION_ADVICE}"
+
+
 def _run_optimize_job(job_id: str, content: bytes) -> None:
     job = _update_optimize_job(job_id, status=OptimizeJobStatus.RUNNING, started_at=datetime.now())
     _publish_job_event(job, "status", {"status": OptimizeJobStatus.RUNNING.value})
@@ -300,7 +308,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         job = _update_optimize_job(
             job_id,
             status=OptimizeJobStatus.FAILED,
-            error=str(e),
+            error=_format_unexpected_error(e),
             finished_at=datetime.now(),
         )
         _publish_job_event(job, "error", _optimize_job_response(job))

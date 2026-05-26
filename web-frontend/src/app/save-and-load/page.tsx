@@ -132,7 +132,7 @@ export default function SaveAndLoadPage() {
     }
 
     if (fileVersion !== CURRENT_APP_VERSION) {
-      return `App version mismatch detected!\n\nFile app version: ${fileVersion}\nCurrent app version: ${CURRENT_APP_VERSION}\n\nThe file may not be fully compatible with this version of the application.`;
+      return `App version mismatch detected.\n\nFile app version: ${fileVersion}\nCurrent app version: ${CURRENT_APP_VERSION}\n\nOlder YAML may not work after breaking changes, though we try to preserve compatibility. If nothing breaks, you can continue.`;
     }
 
     return null;
