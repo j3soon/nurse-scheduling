@@ -211,13 +211,25 @@ class TestOptimizationJobs:
         assert result_response.headers["X-Schedule-Status"] == "OPTIMAL"
         assert len(result_response.content) > 0
 
+        status_response = client.get(f"/optimization-jobs/{job_id}/status")
+        assert status_response.status_code == 200
+        assert status_response.json()["status"] == "completed"
+        assert status_response.json()["solver_status"] == "OPTIMAL"
+
+        with client.stream("GET", f"/optimization-jobs/{job_id}/events") as late_event_response:
+            assert late_event_response.status_code == 200
+            late_event_body = "".join(late_event_response.iter_text())
+        assert "event: completed" in late_event_body
+
     def test_unknown_job_returns_404(self):
         """Unknown job IDs should return 404."""
         event_response = client.get("/optimization-jobs/not-found/events")
         result_response = client.get("/optimization-jobs/not-found/result")
+        status_response = client.get("/optimization-jobs/not-found/status")
 
         assert event_response.status_code == 404
         assert result_response.status_code == 404
+        assert status_response.status_code == 404
 
     def test_failed_job_streams_failed_event(self):
         """Invalid YAML should produce a failed SSE event."""
@@ -239,6 +251,10 @@ class TestOptimizationJobs:
 
         result_response = client.get(f"/optimization-jobs/{job_id}/result")
         assert result_response.status_code == 400
+
+        status_response = client.get(f"/optimization-jobs/{job_id}/status")
+        assert status_response.status_code == 200
+        assert status_response.json()["status"] == "failed"
 
 
 class TestMultipleValidScenarios:

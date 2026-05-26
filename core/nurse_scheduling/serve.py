@@ -24,14 +24,13 @@ import subprocess
 import sys
 from datetime import datetime
 from io import BytesIO
-from queue import Empty
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
 from typing import Optional
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 from . import scheduler, exporter
-from .jobs import OptimizationJobManager, format_sse
+from .jobs import JobLimitError, OptimizationJobManager, format_sse
 from .progress import ProgressEvent
 
 
@@ -90,6 +89,7 @@ version = "alpha"
 app = FastAPI(title=title, version=version)
 
 job_manager = OptimizationJobManager()
+MAX_OPTIMIZATION_YAML_BYTES = 2 * 1024 * 1024
 
 # Regex to match allowed origins:
 # - http://localhost:3000, http://127.0.0.1:3000 (for Next.js local development)
@@ -274,11 +274,17 @@ async def create_optimization_job(
     timeout: Optional[int] = Form(None, description="Max execution time in seconds"),
     solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc, pulp/cuopt)"),
 ):
-    job = job_manager.create()
+    content = yaml_content.encode("utf-8")
+    if len(content) > MAX_OPTIMIZATION_YAML_BYTES:
+        raise HTTPException(status_code=413, detail="Scheduling YAML is too large")
+    try:
+        job = job_manager.create()
+    except JobLimitError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     background_tasks.add_task(
         run_optimization_job,
         job.id,
-        yaml_content.encode("utf-8"),
+        content,
         prettify,
         timeout,
         solver,
@@ -293,18 +299,20 @@ async def stream_optimization_events(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
+        offset = 0
         while True:
-            try:
-                event = await asyncio.to_thread(job.events.get, True, 0.5)
-            except Empty:
-                if job.status in ("completed", "failed") and job.events.empty():
-                    break
-                yield ": ping\n\n"
-                continue
+            offset, events = job.events_after(offset)
+            for event in events:
+                yield format_sse(event)
+                if event.type in ("completed", "failed"):
+                    return
 
-            yield format_sse(event)
-            if event.type in ("completed", "failed"):
-                break
+            if job.status in ("completed", "failed"):
+                return
+
+            notified = await asyncio.to_thread(_wait_for_job_event, job)
+            if not notified:
+                yield ": ping\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -315,6 +323,20 @@ async def stream_optimization_events(job_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _wait_for_job_event(job) -> bool:
+    """Wait briefly for a job event; return False for keep-alive timeouts."""
+    with job.condition:
+        return job.condition.wait(timeout=0.5)
+
+
+@app.get("/optimization-jobs/{job_id}/status")
+async def get_optimization_status(job_id: str):
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.snapshot()
 
 
 @app.get("/optimization-jobs/{job_id}/result")

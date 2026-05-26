@@ -95,6 +95,7 @@ type MockOptimizationJobFlowOptions = {
   resultBody?: string;
   score?: string;
   status?: string;
+  jobStatus?: 'running' | 'completed' | 'failed';
 };
 
 export async function mockOptimizationJobFlow(page: Page, options: MockOptimizationJobFlowOptions = {}) {
@@ -102,6 +103,7 @@ export async function mockOptimizationJobFlow(page: Page, options: MockOptimizat
   const filename = options.filename ?? 'output.xlsx';
   const score = options.score ?? '0';
   const status = options.status ?? 'OPTIMAL';
+  const jobStatus = options.jobStatus ?? 'completed';
 
   await page.route('http://localhost:8000/optimization-jobs', async route => {
     await options.onCreateJob?.(route.request());
@@ -147,6 +149,20 @@ export async function mockOptimizationJobFlow(page: Page, options: MockOptimizat
         'X-Schedule-Status': status,
       },
       body: options.resultBody ?? 'fake-xlsx',
+    });
+  });
+
+  await page.route(/http:\/\/localhost:8000\/optimization-jobs\/[^/]+\/status$/, async route => {
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: jobStatus,
+        score,
+        solver_status: status,
+        error: jobStatus === 'failed' ? 'Optimization failed' : null,
+        filename,
+      }),
     });
   });
 }

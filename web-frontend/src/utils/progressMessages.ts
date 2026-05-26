@@ -28,19 +28,19 @@ export type ProgressEvent = {
 };
 
 const PROGRESS_MESSAGES: Record<string, string> = {
-  loading_scenario: '載入排班設定檔...',
-  parsing_data: '解析設定資料...',
-  initializing_solver: '初始化求解器...',
-  creating_shift_variables: '建立排班變數...',
-  creating_off_variables: '建立休假變數...',
-  creating_lookup_maps: '建立快速查詢索引...',
-  adding_preferences: '載入偏好與限制條件...',
-  solving: '開始求解...',
-  solution_found: '找到更好解',
-  exporting: '準備排班結果...',
-  schedule_completed: '排班完成，正在產生 Excel...',
-  completed: '優化完成！',
-  failed: '優化失敗',
+  loading_scenario: 'Loading schedule configuration...',
+  parsing_data: 'Parsing schedule data...',
+  initializing_solver: 'Initializing solver...',
+  creating_shift_variables: 'Creating shift variables...',
+  creating_off_variables: 'Creating off variables...',
+  creating_lookup_maps: 'Creating lookup indexes...',
+  adding_preferences: 'Adding preferences and constraints...',
+  solving: 'Solving schedule...',
+  solution_found: 'Found an improved solution',
+  exporting: 'Preparing schedule output...',
+  schedule_completed: 'Schedule solved; generating Excel...',
+  completed: 'Optimization completed.',
+  failed: 'Optimization failed',
 };
 
 export function formatProgressMessage(event: ProgressEvent): string {
@@ -48,15 +48,15 @@ export function formatProgressMessage(event: ProgressEvent): string {
 
   if (event.type === 'solution') {
     const details = [
-      event.score !== undefined ? `分數 ${event.score}` : null,
-      event.solution_count !== undefined ? `第 ${event.solution_count} 個解` : null,
-      event.elapsed_seconds !== undefined ? `耗時 ${event.elapsed_seconds.toFixed(1)} 秒` : null,
+      event.score !== undefined ? `score ${event.score}` : null,
+      event.solution_count !== undefined ? `solution ${event.solution_count}` : null,
+      event.elapsed_seconds !== undefined ? `${event.elapsed_seconds.toFixed(1)}s elapsed` : null,
     ].filter(Boolean);
-    return details.length > 0 ? `${label}：${details.join('，')}` : label;
+    return details.length > 0 ? `${label}: ${details.join(', ')}` : label;
   }
 
   if (event.type === 'failed') {
-    return `${label}：${event.message}`;
+    return `${label}: ${event.message}`;
   }
 
   return label;

@@ -17,18 +17,25 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 import json
-from queue import Empty, Full, Queue
-from threading import Lock
+from threading import Condition, Lock
 from uuid import uuid4
 
 from .progress import ProgressEvent
 
 
 JOB_TTL = timedelta(minutes=30)
+MAX_EVENTS_PER_JOB = 1000
+MAX_JOBS = 32
+MAX_RUNNING_JOBS = 2
 TERMINAL_STATUSES = {"completed", "failed"}
+
+
+class JobLimitError(RuntimeError):
+    """Raised when the in-memory job manager cannot accept another job."""
 
 
 @dataclass
@@ -37,7 +44,8 @@ class OptimizationJob:
 
     id: str
     status: str = "running"
-    events: Queue[ProgressEvent] = field(default_factory=lambda: Queue(maxsize=1000))
+    events: deque[tuple[int, ProgressEvent]] = field(default_factory=lambda: deque(maxlen=MAX_EVENTS_PER_JOB))
+    next_event_index: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     filename: str | None = None
@@ -45,20 +53,36 @@ class OptimizationJob:
     score: int | float | None = None
     solver_status: str | None = None
     error: str | None = None
-    lock: Lock = field(default_factory=Lock, repr=False)
+    condition: Condition = field(default_factory=Condition, repr=False)
+
+    def snapshot(self) -> dict[str, object]:
+        """Return public job status metadata."""
+        with self.condition:
+            return {
+                "job_id": self.id,
+                "status": self.status,
+                "score": self.score,
+                "solver_status": self.solver_status,
+                "error": self.error,
+                "filename": self.filename,
+            }
 
     def emit(self, event: ProgressEvent) -> None:
-        """Queue a progress event, preserving terminal events when possible."""
-        try:
-            self.events.put_nowait(event)
-        except Full:
-            if event.type not in ("completed", "failed"):
-                return
-            try:
-                self.events.get_nowait()
-            except Empty:
-                pass
-            self.events.put_nowait(event)
+        """Append a progress event and notify stream subscribers."""
+        with self.condition:
+            self.events.append((self.next_event_index, event))
+            self.next_event_index += 1
+            self.updated_at = datetime.now(UTC)
+            self.condition.notify_all()
+
+    def events_after(self, offset: int) -> tuple[int, list[ProgressEvent]]:
+        """Return available events at or after a monotonic stream offset."""
+        with self.condition:
+            next_event_index = self.next_event_index
+            events = [event for index, event in self.events if index >= offset]
+        if offset < 0:
+            offset = 0
+        return next_event_index, events
 
     def complete(
         self,
@@ -68,29 +92,33 @@ class OptimizationJob:
         score: int | float,
         solver_status: str,
     ) -> None:
-        with self.lock:
+        event = ProgressEvent(
+            type="completed",
+            code="completed",
+            message="Optimization completed",
+            progress=1.0,
+            score=score,
+        )
+        with self.condition:
             self.status = "completed"
             self.filename = filename
             self.xlsx_bytes = xlsx_bytes
             self.score = score
             self.solver_status = solver_status
             self.updated_at = datetime.now(UTC)
-        self.emit(
-            ProgressEvent(
-                type="completed",
-                code="completed",
-                message="Optimization completed",
-                progress=1.0,
-                score=score,
-            )
-        )
+            self.events.append((self.next_event_index, event))
+            self.next_event_index += 1
+            self.condition.notify_all()
 
     def fail(self, message: str) -> None:
-        with self.lock:
+        event = ProgressEvent(type="failed", code="failed", message=message)
+        with self.condition:
             self.status = "failed"
             self.error = message
             self.updated_at = datetime.now(UTC)
-        self.emit(ProgressEvent(type="failed", code="failed", message=message))
+            self.events.append((self.next_event_index, event))
+            self.next_event_index += 1
+            self.condition.notify_all()
 
 
 class OptimizationJobManager:
@@ -102,8 +130,13 @@ class OptimizationJobManager:
 
     def create(self) -> OptimizationJob:
         self.cleanup()
-        job = OptimizationJob(id=str(uuid4()))
         with self._lock:
+            running_jobs = sum(1 for job in self._jobs.values() if job.status == "running")
+            if running_jobs >= MAX_RUNNING_JOBS:
+                raise JobLimitError("Too many optimization jobs are already running")
+            if len(self._jobs) >= MAX_JOBS:
+                raise JobLimitError("Too many optimization jobs are retained")
+            job = OptimizationJob(id=str(uuid4()))
             self._jobs[job.id] = job
         return job
 

@@ -27,6 +27,11 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { formatProgressMessage, type ProgressEvent } from '@/utils/progressMessages';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 
+type JobStatusResponse = {
+  status: 'running' | 'completed' | 'failed';
+  error?: string | null;
+};
+
 export default function OptimizeAndExportPage() {
   const {
     apiVersionData,
@@ -93,6 +98,14 @@ export default function OptimizeAndExportPage() {
     setProgressLogs((logs) => [...logs, line].slice(-100));
   };
 
+  const parseProgressEvent = (data: string): ProgressEvent | null => {
+    try {
+      return JSON.parse(data) as ProgressEvent;
+    } catch {
+      return null;
+    }
+  };
+
   const downloadJobResult = async (jobId: string) => {
     const response = await fetch(`${apiEndpoint}/optimization-jobs/${jobId}/result`);
 
@@ -132,6 +145,24 @@ export default function OptimizeAndExportPage() {
     setSuccessMessage('Schedule optimized and downloaded successfully!');
   };
 
+  const checkJobAfterDisconnect = async (jobId: string) => {
+    appendProgressLog('Progress connection was interrupted; checking job status...');
+    const response = await fetch(`${apiEndpoint}/optimization-jobs/${jobId}/status`);
+    if (!response.ok) {
+      throw new Error('Connection to the optimization server was interrupted');
+    }
+    const status = await response.json() as JobStatusResponse;
+    if (status.status === 'completed') {
+      await downloadJobResult(jobId);
+      setIsTaskFinished(true);
+      return;
+    }
+    if (status.status === 'failed') {
+      throw new Error(status.error || 'Optimization failed');
+    }
+    throw new Error('Connection to the optimization server was interrupted while the job was still running');
+  };
+
   const handleOptimizeAndDownload = async () => {
     if (isRequiredDataMissing) {
       setErrorMessage(null);
@@ -148,7 +179,7 @@ export default function OptimizeAndExportPage() {
     setScheduleFilename(null);
     setScheduleScore(null);
     setScheduleStatus(null);
-    setProgressLogs(['正在啟動優化任務...']);
+    setProgressLogs(['Starting optimization job...']);
     setProgressValue(null);
     setIsTaskFinished(false);
     eventSourceRef.current?.close();
@@ -186,7 +217,7 @@ export default function OptimizeAndExportPage() {
       }
 
       const { job_id: jobId } = await response.json();
-      appendProgressLog(`任務已建立：${jobId.slice(0, 8)}`);
+      appendProgressLog(`Job created: ${jobId.slice(0, 8)}`);
 
       const eventSource = new EventSource(`${apiEndpoint}/optimization-jobs/${jobId}/events`);
       eventSourceRef.current = eventSource;
@@ -196,7 +227,11 @@ export default function OptimizeAndExportPage() {
         if (typeof data !== 'string') {
           return;
         }
-        const event = JSON.parse(data) as ProgressEvent;
+        const event = parseProgressEvent(data);
+        if (event === null) {
+          appendProgressLog('Received an invalid progress event.');
+          return;
+        }
         appendProgressLog(formatProgressMessage(event));
         if (event.progress !== undefined) {
           setProgressValue(event.progress);
@@ -212,7 +247,7 @@ export default function OptimizeAndExportPage() {
           void downloadJobResult(jobId)
             .catch((error) => {
               const message = error instanceof Error ? error.message : 'Failed to download schedule';
-              appendProgressLog(`下載失敗：${message}`);
+              appendProgressLog(`Download failed: ${message}`);
               setErrorMessage(message);
             })
             .finally(() => {
@@ -236,15 +271,23 @@ export default function OptimizeAndExportPage() {
       eventSource.onerror = () => {
         eventSource.close();
         eventSourceRef.current = null;
-        appendProgressLog('後端連線中斷，請確認排班伺服器是否仍在執行。');
-        setErrorMessage('Connection to the optimization server was interrupted');
-        setIsLoading(false);
+        void checkJobAfterDisconnect(jobId)
+          .catch((error) => {
+            const message = error instanceof Error
+              ? error.message
+              : 'Connection to the optimization server was interrupted';
+            appendProgressLog(message);
+            setErrorMessage(message);
+          })
+          .finally(() => {
+            setIsLoading(false);
+          });
       };
     } catch (error) {
       const message = error instanceof Error
         ? error.message
         : 'An unexpected error occurred during optimization';
-      appendProgressLog(`啟動失敗：${message}`);
+      appendProgressLog(`Startup failed: ${message}`);
       setErrorMessage(message);
       setIsLoading(false);
     }
@@ -451,11 +494,11 @@ export default function OptimizeAndExportPage() {
       {(isLoading || isTaskFinished || progressLogs.length > 0) && (
         <div className="mb-6 bg-gray-900 text-green-300 rounded-lg shadow-md overflow-hidden">
           <div className="px-6 py-4 bg-gray-800 flex items-center justify-between gap-4">
-            <h3 className="text-lg font-semibold">即時優化日誌</h3>
+            <h3 className="text-lg font-semibold">Optimization Progress</h3>
             {isLoading ? (
               <FiLoader className="animate-spin h-5 w-5 flex-shrink-0" />
             ) : isTaskFinished ? (
-              <span className="text-sm font-semibold text-green-300">已完成</span>
+              <span className="text-sm font-semibold text-green-300">Finished</span>
             ) : null}
           </div>
           {progressValue !== null && (

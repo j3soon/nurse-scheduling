@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 
@@ -33,6 +33,32 @@ vi.mock('@/hooks/useSchedulingData', () => ({
 vi.mock('@/utils/yamlGenerator', () => ({
   generateYamlFromState: mockGenerateYamlFromState,
 }));
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+  onerror: (() => void) | null = null;
+  url: string;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  close() {
+    return undefined;
+  }
+
+  emit(type: string, data: string) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener({ data } as MessageEvent);
+    }
+  }
+}
 
 const createSchedulingData = (overrides = {}) => ({
   apiVersionData: 'alpha',
@@ -56,6 +82,8 @@ describe('OptimizeAndExportPage error handling', () => {
     mockGenerateYamlFromState.mockReturnValue('apiVersion: alpha\ndescription: baseline\n');
     mockUseSchedulingData.mockReturnValue(createSchedulingData());
     vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('EventSource', MockEventSource);
+    MockEventSource.instances = [];
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
   });
@@ -100,6 +128,37 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Server error (500): {bad json')).resolves.toBeInTheDocument();
+  });
+
+  it('ignores malformed progress events without leaving the task stuck', async () => {
+    const user = userEvent.setup();
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ job_id: 'job-1' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({
+          'Content-Disposition': 'attachment; filename="schedule.xlsx"',
+          'X-Schedule-Score': '0',
+          'X-Schedule-Status': 'OPTIMAL',
+        }),
+        blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    MockEventSource.instances[0].emit('phase', '{bad json');
+    await expect(screen.findByText('Received an invalid progress event.')).resolves.toBeInTheDocument();
+
+    MockEventSource.instances[0].emit(
+      'completed',
+      '{"type":"completed","code":"completed","message":"Optimization completed","progress":1,"score":0}'
+    );
+    await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
   });
 
   it('forbids sending and instructs users to set dates when date data is empty', async () => {
