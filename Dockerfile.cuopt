@@ -1,8 +1,5 @@
 # Ref: https://docs.nvidia.com/cuopt/user-guide/latest/cuopt-server/quick-start.html#container-from-docker-hub
-# TODO: Currently using nightly release due to upstream issue.
-# After next stable release, change the base image to `nvidia/cuopt:latest-cuda13.0-py3.13`
-# Ref: https://github.com/NVIDIA/cuopt/issues/960
-FROM nvidia/cuopt:26.4.0a-cuda13.0-py3.13
+FROM nvidia/cuopt:26.4.0-cuda13.0-py3.13
 
 WORKDIR /app
 
@@ -18,7 +15,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY core/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/codex/Dockerfile
 # Install Codex CLI
