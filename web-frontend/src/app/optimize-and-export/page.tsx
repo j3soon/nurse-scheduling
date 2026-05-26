@@ -54,7 +54,7 @@ export default function OptimizeAndExportPage() {
   const [scheduleFilename, setScheduleFilename] = useState<string | null>(null);
   const [scheduleScore, setScheduleScore] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
-  const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate;
+  const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
   const isShiftTypeDataMissing = shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0;
   const isRequiredDataMissing = isDateDataMissing || isPeopleDataMissing || isShiftTypeDataMissing;
