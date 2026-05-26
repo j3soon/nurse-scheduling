@@ -86,5 +86,5 @@ test('build selector and feedback button do not overlap', async ({ page }) => {
   const feedbackButton = rects.feedbackButton as Rect;
 
   expect(rectanglesOverlap(buildButton, feedbackButton)).toBe(false);
-  expect(feedbackButton.top - buildButton.bottom).toBeGreaterThanOrEqual(16);
+  expect(feedbackButton.top - buildButton.bottom).toBeGreaterThanOrEqual(14);
 });

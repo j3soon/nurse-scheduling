@@ -74,3 +74,15 @@ export async function disableModalDialogs(page: Page) {
     await dialog.accept();
   });
 }
+
+export async function setDateRange(
+  page: Page,
+  startDate = '2026-05-01',
+  endDate = '2026-05-01',
+) {
+  await page.goto('/dates');
+  await page.getByRole('button', { name: 'Set Date Range' }).click();
+  await page.locator('#startDate').fill(startDate);
+  await page.locator('#endDate').fill(endDate);
+  await page.getByRole('button', { name: /Apply|Update/ }).click();
+}

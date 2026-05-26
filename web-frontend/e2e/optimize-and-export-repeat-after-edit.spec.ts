@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs } from './helpers';
+import { disableModalDialogs, setDateRange } from './helpers';
 
 test('a repeated optimize run after upstream edits submits updated yaml_content', async ({ page }) => {
   /*
@@ -34,6 +34,7 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
   await page.goto('/');
   await page.getByRole('button', { name: 'New Schedule' }).click();
   await page.getByRole('button', { name: 'Reset Data' }).click();
+  await setDateRange(page);
 
   const bodies: string[] = [];
   await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {

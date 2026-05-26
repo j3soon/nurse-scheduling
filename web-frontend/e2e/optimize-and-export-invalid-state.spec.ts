@@ -20,12 +20,12 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedSchedulingState, setDateRange } from './helpers';
 
 test('optimize and export surfaces backend validation errors for invalid upstream state', async ({ page }) => {
   /*
    * Steps:
-   * 1. Seed an intentionally incomplete schedule and confirm the optimize page starts with no error.
+   * 1. Seed a schedule that requires a manual date range and confirm the optimize page starts with no error.
    * 2. Mock the backend to return a validation-style error for that payload.
    * 3. Trigger optimize through the real form.
    * 4. Confirm the backend validation message is rendered to the user.
@@ -35,11 +35,16 @@ test('optimize and export surfaces backend validation errors for invalid upstrea
     apiVersion: 'test',
     description: 'invalid optimize state',
     dates: { range: {}, groups: [] },
-    people: { items: [], groups: [], history: [] },
-    shiftTypes: { items: [], groups: [] },
+    people: {
+      items: [{ id: 'P1', description: 'Primary nurse', history: [] }],
+      groups: [],
+      history: [],
+    },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
     preferences: [],
     export: { formatting: [] },
   });
+  await setDateRange(page);
 
   await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
     await route.fulfill({

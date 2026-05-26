@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs } from './helpers';
+import { disableModalDialogs, setDateRange } from './helpers';
 
 test('optimize request body follows undo and redo of upstream edits', async ({ page }) => {
   /*
@@ -33,6 +33,7 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
   await page.goto('/');
   await page.getByRole('button', { name: 'New Schedule' }).click();
   await page.getByRole('button', { name: 'Reset Data' }).click();
+  await setDateRange(page);
 
   await page.goto('/people');
   await page.getByRole('button', { name: 'Add Person' }).click();
