@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs } from './helpers';
+import { disableModalDialogs, setDateRange } from './helpers';
 
 test('optimize request body stays on persisted state after an upstream edit is canceled', async ({ page }) => {
   /*
@@ -34,6 +34,7 @@ test('optimize request body stays on persisted state after an upstream edit is c
   await page.goto('/');
   await page.getByRole('button', { name: 'New Schedule' }).click();
   await page.getByRole('button', { name: 'Reset Data' }).click();
+  await setDateRange(page);
 
   await page.goto('/people');
   const peopleTable = page.getByRole('heading', { name: 'People', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');

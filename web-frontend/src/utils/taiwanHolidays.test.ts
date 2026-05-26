@@ -81,6 +81,24 @@ describe('taiwanHolidays', () => {
     })).toEqual([]);
   });
 
+  it('returns the correct Taiwan holiday entries for the whole month of February 2025', () => {
+    expect(getTaiwanHolidayEntriesInRange({
+      startDate: new Date('2025-02-01'),
+      endDate: new Date('2025-02-28'),
+    })).toEqual([
+      {
+        date: '2025-02-08',
+        reason: '補行上班 (2025-01-27 小年夜)',
+        isFreeday: false,
+      },
+      {
+        date: '2025-02-28',
+        reason: '和平紀念日',
+        isFreeday: true,
+      },
+    ]);
+  });
+
   it('builds WORKDAY and FREEDAY groups from supported date items', () => {
     const groups = buildTaiwanHolidayGroups(
       [

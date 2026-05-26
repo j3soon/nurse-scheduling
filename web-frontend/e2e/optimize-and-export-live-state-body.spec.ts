@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs } from './helpers';
+import { disableModalDialogs, setDateRange } from './helpers';
 
 test('optimize request body reflects live page edits without going through Save and Load edit mode', async ({ page }) => {
   /*
@@ -34,6 +34,7 @@ test('optimize request body reflects live page edits without going through Save 
   await page.goto('/');
   await page.getByRole('button', { name: 'New Schedule' }).click();
   await page.getByRole('button', { name: 'Reset Data' }).click();
+  await setDateRange(page);
 
   await page.goto('/people');
   const peopleTable = page.getByRole('heading', { name: 'People', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');

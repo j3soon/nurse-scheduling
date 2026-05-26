@@ -31,6 +31,7 @@ import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
+import { OFF } from '@/utils/keywords';
 
 interface ShiftTypeRequirementForm {
   description: string;
@@ -240,6 +241,19 @@ export default function ShiftTypeRequirementsPage() {
     }));
   };
 
+  const shiftTypeRequirementOptions = [
+    ...shiftTypeData.items
+      .filter(shiftType => shiftType.id !== OFF)
+      .map(shiftType => ({
+        id: shiftType.id,
+        description: shiftType.description
+      })),
+    ...shiftTypeData.groups.map(group => ({
+      id: group.id,
+      description: group.description
+    }))
+  ];
+
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
@@ -309,7 +323,7 @@ export default function ShiftTypeRequirementsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Shift Types *
                 </label>
-                {shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0 ? (
+                {shiftTypeRequirementOptions.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
                     No shift types available. Please set up shift types in the{' '}
                     <Link href="/shift-types" className="text-blue-600 hover:text-blue-800 underline">
@@ -319,16 +333,7 @@ export default function ShiftTypeRequirementsPage() {
                   </div>
                 ) : (
                   <CheckboxList
-                    items={[
-                      ...shiftTypeData.items.map(shiftType => ({
-                        id: shiftType.id,
-                        description: shiftType.description
-                      })),
-                      ...shiftTypeData.groups.map(group => ({
-                        id: group.id,
-                        description: group.description
-                      }))
-                    ]}
+                    items={shiftTypeRequirementOptions}
                     selectedIds={formData.shift_type}
                     onToggle={(id) => handleArrayFieldToggle('shift_type', id)}
                     label=""

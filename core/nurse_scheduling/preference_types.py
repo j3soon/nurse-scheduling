@@ -44,6 +44,12 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
     ss = utils.parse_sids(preference.shiftType, ctx.map_sid_s)
     if len(ss) == 0:
         raise ValueError(f"Non-empty shift types are required, but got {preference.shiftType}")
+    if constants.OFF_sid in ss:
+        raise ValueError(
+            "'OFF' is not allowed in shift type requirement preferences. "
+            "To specify a zero-shift day, define an ALL shift type for that date "
+            "with requiredNumPeople set to 0."
+        )
     for d in ds:
         for s in ss:
             # Get the set of people who can work this shift
