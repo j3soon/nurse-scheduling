@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 
@@ -151,13 +151,17 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
 
-    MockEventSource.instances[0].emit('phase', '{bad json');
-    await expect(screen.findByText('Received an invalid progress event.')).resolves.toBeInTheDocument();
+    act(() => {
+      MockEventSource.instances[0].emit('phase', '{bad json');
+    });
+    await expect(screen.findByText(/Received an invalid progress event\./)).resolves.toBeInTheDocument();
 
-    MockEventSource.instances[0].emit(
-      'completed',
-      '{"type":"completed","code":"completed","message":"Optimization completed","progress":1,"score":0}'
-    );
+    act(() => {
+      MockEventSource.instances[0].emit(
+        'completed',
+        '{"type":"completed","code":"completed","message":"Optimization completed","progress":1,"score":0}'
+      );
+    });
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
   });
 

@@ -29,7 +29,7 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
    * 2. Edit the People page state.
    * 3. Run optimize again.
    * 4. Confirm the second request body reflects the edit and differs from the first.
-   */
+  */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {
     apiVersion: 'alpha',
@@ -40,7 +40,6 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
     preferences: [{ type: 'at most one shift per day' }],
     export: { formatting: [] },
   });
-
   await setDateRange(page);
 
   const bodies: string[] = [];

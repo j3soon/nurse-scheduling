@@ -29,7 +29,7 @@ test('optimize request body reflects live page edits without going through Save 
    * 2. Rename the person directly from the People page.
    * 3. Trigger optimize with a mocked backend.
    * 4. Confirm yaml_content contains the renamed person and not the original one.
-   */
+  */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {
     apiVersion: 'alpha',

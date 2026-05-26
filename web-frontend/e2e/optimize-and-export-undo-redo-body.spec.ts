@@ -28,7 +28,7 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
    * 1. Reset to the default schedule and add a new person upstream.
    * 2. Undo that edit and optimize once, confirming the request body excludes the new person.
    * 3. Redo the edit and optimize again, confirming the request body includes the new person.
-   */
+  */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {
     apiVersion: 'alpha',

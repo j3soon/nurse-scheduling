@@ -29,7 +29,7 @@ test('optimize request body stays on persisted state after an upstream edit is c
    * 2. Start an edit on the People page, change the ID, then cancel.
    * 3. Optimize with a mocked backend.
    * 4. Confirm yaml_content still contains the persisted original person and not the canceled draft.
-   */
+  */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {
     apiVersion: 'alpha',
