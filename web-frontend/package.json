@@ -37,7 +37,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitest/coverage-v8": "^4.1.7",
-    "eslint": "^10.4.0",
+    "eslint": "^9.39.4",
     "eslint-config-next": "16.2.6",
     "jsdom": "^29.1.1",
     "monocart-coverage-reports": "^2.12.11",
