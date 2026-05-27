@@ -8,13 +8,14 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     gnupg \
+    iputils-ping \
     jq \
     ripgrep \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
 COPY core/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/codex/Dockerfile
 # Install Codex CLI
@@ -23,6 +24,11 @@ RUN apt-get update && apt-get install -y \
     nodejs \
     && rm -rf /var/lib/apt/lists/*
 RUN npm install -g @openai/codex
+
+# Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/opencode/Dockerfile
+# Install OpenCode CLI
+RUN curl -fsSL https://opencode.ai/install | bash
+ENV PATH="/root/.opencode/bin:${PATH}"
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install | bash
