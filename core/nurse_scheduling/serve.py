@@ -177,6 +177,13 @@ async def optimize_and_export_xlsx(
         # User-supplied scheduling data failed schema validation -> HTTP 400
         logging.error(f"Invalid scheduling data: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Invalid scheduling data: {str(e)}")
+    except ValueError as e:
+        # User-supplied scheduling data violated a domain-level validation
+        # (e.g. positive weight on a squared-deviation shift count objective).
+        # Surface as HTTP 400 rather than letting it fall through to the
+        # generic Exception handler (which would log error and return 500).
+        logging.warning(f"Invalid scheduling input: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid scheduling input: {str(e)}")
     except Exception as e:
         # TODO(security): Returning the error message to the client may be a security risk
         logging.error(f"Error during optimization: {str(e)}")
