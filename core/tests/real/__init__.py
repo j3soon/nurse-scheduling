@@ -1,4 +1,4 @@
-"""Bounded-time smoke test for the real-world OR-Tools scheduling scenario."""
+"""Opt-in real-world scheduling smoke tests."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -16,11 +16,3 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-# This test is mostly AI generated.
-
-from .schedule_real_helper import run_real_schedule_smoke_test
-
-
-def test_real_schedule_ortools_finds_feasible_solution_within_fixed_budget():
-    run_real_schedule_smoke_test("ortools/cp-sat")

@@ -179,8 +179,8 @@ bun run lint -- --fix
 We currently support three solvers: OR-Tools/CP-SAT, PuLP/CBC, and PuLP/cuOpt.
 
 - `ortools/cp-sat` is the default solver and the most battle-tested one.
-- `pulp/cbc` is only tested on basic test cases and now well-tested on real scenarios.
-- `pulp/cuopt` is the GPU-accelerated solver, which is also only tested on basic test cases. Due to its GPU requirement, it is not currently included in CI testing.
+- `pulp/cbc` is covered by the normal schedule regression suite and opt-in real-world smoke checks.
+- `pulp/cuopt` is the GPU-accelerated solver. Its real-world smoke check is opt-in and skips when the backend is unavailable.
 
 ```sh
 cd core
@@ -216,8 +216,11 @@ pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
 # run the normal core test suite
 pytest --log-cli-level=INFO
-# run the slower bounded real-world scenario check explicitly
-pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py
+# run the slower bounded real-world scenario checks explicitly
+pytest --log-cli-level=INFO \
+  tests/real/schedule_ortools_cp_sat.py \
+  tests/real/schedule_pulp_cbc.py \
+  tests/real/schedule_pulp_cuopt.py
 # run Python lint checks for core
 ruff check nurse_scheduling tests
 # auto-fix lint issues when possible

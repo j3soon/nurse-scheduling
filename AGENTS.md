@@ -21,7 +21,7 @@
   - `uv pip install -r requirements.txt`: install Python deps.
   - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver ortools/cp-sat|pulp/cbc`: run scheduler CLI.
   - `pytest --log-cli-level=INFO`: run the normal core test suite.
-  - `pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py`: explicitly run the slower bounded real-world scenario check.
+  - `pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: explicitly run the slower bounded real-world scenario checks.
   - `pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run primary solver/schedule suites.
   - `ruff check nurse_scheduling tests`: lint core Python code.
   - `ruff format nurse_scheduling tests`: format core Python code.
