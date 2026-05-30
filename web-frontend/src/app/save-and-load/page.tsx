@@ -29,6 +29,7 @@ import UploadButton from '@/components/UploadButton';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import { anonymizePeopleInState } from '@/utils/anonymizeSchedulingState';
+import { getMissingPreferredScatterDateGroups, randomizeConcreteDateShiftRequests } from '@/utils/randomizeShiftRequests';
 
 export default function SaveAndLoadPage() {
   const {
@@ -50,6 +51,7 @@ export default function SaveAndLoadPage() {
   const [copied, setCopied] = useState(false);
   const [anonymizePeopleItems, setAnonymizePeopleItems] = useState(true);
   const [anonymizePeopleGroups, setAnonymizePeopleGroups] = useState(false);
+  const [scatterShiftRequests, setScatterShiftRequests] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const copiedResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -84,6 +86,7 @@ export default function SaveAndLoadPage() {
 
   // Convert current state to YAML with custom flow style for leaf arrays
   const currentYaml = generateYamlFromState(filteredState);
+  const missingPreferredScatterDateGroups = getMissingPreferredScatterDateGroups(dateData.groups);
 
   const downloadYaml = (yamlContent: string, filenameSuffix = '') => {
     const blob = new Blob([yamlContent], { type: 'application/x-yaml' });
@@ -102,11 +105,18 @@ export default function SaveAndLoadPage() {
   };
 
   const handleDownloadAnonymized = () => {
-    const anonymizedState = anonymizePeopleInState(filteredState, {
-      anonymizePeopleItems,
-      anonymizePeopleGroups
-    });
-    downloadYaml(generateYamlFromState(anonymizedState), '-anonymized');
+    try {
+      const exportState = scatterShiftRequests
+        ? randomizeConcreteDateShiftRequests(filteredState, dateData.items, dateData.groups)
+        : filteredState;
+      const anonymizedState = anonymizePeopleInState(exportState, {
+        anonymizePeopleItems,
+        anonymizePeopleGroups
+      });
+      downloadYaml(generateYamlFromState(anonymizedState), '-anonymized');
+    } catch (error) {
+      alert(`Unable to randomize shift requests: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const handleCopyToClipboard = async () => {
@@ -325,15 +335,33 @@ export default function SaveAndLoadPage() {
               />
               Replace people group IDs
             </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={scatterShiftRequests}
+                onChange={(e) => setScatterShiftRequests(e.target.checked)}
+                className="h-4 w-4"
+              />
+              Scatter shift requests (developer only)
+            </label>
           </div>
           <button
             onClick={handleDownloadAnonymized}
-            disabled={!anonymizePeopleItems && !anonymizePeopleGroups}
+            disabled={!anonymizePeopleItems && !anonymizePeopleGroups && !scatterShiftRequests}
             className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 bg-gray-700 text-white hover:bg-gray-800 focus:ring-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FiDownload className="h-4 w-4" />
             Download Anonymized
           </button>
+          <p className="text-sm text-gray-600">
+            Developer only: scattering preserves preferred WORKDAY/FREEDAY counts and consecutive runs. Date-group requests are unchanged.
+          </p>
+          {scatterShiftRequests && missingPreferredScatterDateGroups.length > 0 && (
+            <p className="text-sm text-amber-700">
+              Warning: {missingPreferredScatterDateGroups.join(' and ')} {missingPreferredScatterDateGroups.length === 1 ? 'group is' : 'groups are'} missing.
+              Scattering will fall back to WEEKDAY and WEEKEND groups.
+            </p>
+          )}
         </div>
       </details>
 
