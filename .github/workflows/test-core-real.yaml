@@ -1,0 +1,27 @@
+name: Test Core Real Scenario
+
+on:
+  - push
+  - pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  test-core-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: cd core && python -m pip install -r requirements.txt
+      - name: Test bounded real-world scenario
+        run: cd core && pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py

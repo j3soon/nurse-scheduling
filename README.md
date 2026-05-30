@@ -214,8 +214,10 @@ pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
 pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
-# run the full core test suite
+# run the normal core test suite
 pytest --log-cli-level=INFO
+# run the slower bounded real-world scenario check explicitly
+pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py
 # run Python lint checks for core
 ruff check nurse_scheduling tests
 # auto-fix lint issues when possible
@@ -247,6 +249,10 @@ pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
 ```
 
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
+
+The checks under `core/tests/real/` intentionally omit pytest's `test_` filename prefix so they are not included in the
+normal core suite. They solve larger real-world scenarios with fixed optimization budgets and run in the separate
+`test-core-real.yaml` GitHub Actions workflow.
 
 Note: The frontend now has Vitest coverage plus Playwright browser integration tests. The root GitHub Actions badge currently still points at the core workflow.
 
