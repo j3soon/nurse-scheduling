@@ -53,6 +53,26 @@ class ORToolsSolver(SolverInterface):
         """Add a boolean OR constraint."""
         self.model.AddBoolOr(literals)
 
+    def create_bool_and_var(self, name: str, literals: List[Any]) -> Any:
+        """Create a boolean variable equivalent to the AND of the literals."""
+        var = self.new_bool_var(name)
+        if not literals:
+            self.add_constraint(var == 1)
+            return var
+        # Encode both directions of:
+        #   var <=> AND(literals)
+        #
+        # The enforced AND below provides:
+        #   var => AND(literals)
+        #
+        # It is not sufficient by itself: when every literal is true, var
+        # could still remain false. The OR constraint adds the reverse:
+        #   OR(NOT literal_1, ..., NOT literal_n, var)
+        # which forces var to true when no literal is false.
+        self.model.AddBoolAnd(literals).OnlyEnforceIf(var)
+        self.model.AddBoolOr([self.negate(literal) for literal in literals] + [var])
+        return var
+
     def set_objective(self, expression, maximize: bool = True) -> None:
         """Set the objective function."""
         self.objective_expr = expression

@@ -249,6 +249,33 @@ def test_create_bool_var_with_constraint_rejects_unknown_operator():
         solver.create_bool_var_with_constraint("cmp", x, "BAD", 0, (0, 1))
 
 
+@pytest.mark.parametrize(("x_value", "z_value"), [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_create_bool_and_var_matches_truth_table_with_negated_literal(x_value: int, z_value: int):
+    solver = ORToolsSolver()
+    x = solver.new_bool_var("x")
+    z = solver.new_bool_var("z")
+    y = solver.create_bool_and_var("and", [x, solver.negate(z)])
+    solver.add_constraint(x == x_value)
+    solver.add_constraint(z == z_value)
+    solver.set_objective(0, maximize=True)
+
+    status = solver.solve()
+
+    assert status == SolverStatus.OPTIMAL
+    assert int(solver.get_value(y)) == int(bool(x_value) and not bool(z_value))
+
+
+def test_create_bool_and_var_empty_literals_is_true():
+    solver = ORToolsSolver()
+    y = solver.create_bool_and_var("and", [])
+    solver.set_objective(0, maximize=True)
+
+    status = solver.solve()
+
+    assert status == SolverStatus.OPTIMAL
+    assert int(solver.get_value(y)) == 1
+
+
 def test_solution_callback_logs_progress(caplog):
     solver = ORToolsSolver()
     x = solver.new_int_var(0, 1, "x")

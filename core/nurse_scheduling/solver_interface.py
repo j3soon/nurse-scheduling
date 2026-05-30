@@ -125,6 +125,20 @@ class SolverInterface(ABC):
         pass
 
     @abstractmethod
+    def create_bool_and_var(self, name: str, literals: List[Any]) -> Any:
+        """
+        Create a boolean variable equivalent to the AND of the literals.
+
+        Args:
+            name: Variable name.
+            literals: List of boolean variables or their negations.
+
+        Returns:
+            A solver-specific boolean variable.
+        """
+        pass
+
+    @abstractmethod
     def set_objective(self, expression, maximize: bool = True) -> None:
         """
         Set the objective function.

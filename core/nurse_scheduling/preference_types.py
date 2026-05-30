@@ -175,8 +175,11 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
 
     def _pattern_element_match_expr(d, p, pattern_element):
         if pattern_element == constants.ALL:
-            return ctx.solver.negate(ctx.offs[(d, p)])
-        return sum(ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for s in pattern_element)
+            return ctx.solver.negate(ctx.offs[(d, p)]), True
+        matches = [ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for s in pattern_element]
+        if len(matches) == 1:
+            return matches[0], True
+        return sum(matches), False
 
     for p in ps:
         for d_begin in range(ctx.n_days - len(flattened_pattern) + 1):
@@ -221,9 +224,10 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                     ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))
                     continue
 
-                actual_n_matched = sum(
+                pattern_element_matches = [
                     _pattern_element_match_expr(d_begin + i, p, pattern[i]) for i in range(target_n_matched)
-                )
+                ]
+                actual_n_matched = sum(match_expr for match_expr, _is_literal in pattern_element_matches)
                 weight = preference.weight
 
                 if weight == -math.inf:
@@ -235,13 +239,24 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
 
                 # Construct: is_match = all pattern elements match.
                 is_match_var_name = f"{unique_var_prefix}_is_match"
-                ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_with_constraint(
-                    is_match_var_name,
-                    actual_n_matched,
-                    constants.Operator.EQ,
-                    target_n_matched,
-                    (0, target_n_matched),
-                )
+                # PuLP's linear AND encoding has one constraint per literal plus
+                # one reverse constraint. Keep longer patterns on the compact
+                # generic equality encoding to avoid increasing model size.
+                if len(pattern_element_matches) <= 3 and all(
+                    is_literal for _match_expr, is_literal in pattern_element_matches
+                ):
+                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_and_var(
+                        is_match_var_name,
+                        [match_expr for match_expr, _is_literal in pattern_element_matches],
+                    )
+                else:
+                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_with_constraint(
+                        is_match_var_name,
+                        actual_n_matched,
+                        constants.Operator.EQ,
+                        target_n_matched,
+                        (0, target_n_matched),
+                    )
 
                 utils.add_objective(ctx, weight, is_match)
                 ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))

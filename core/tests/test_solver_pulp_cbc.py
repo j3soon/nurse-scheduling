@@ -245,6 +245,33 @@ def test_create_bool_var_with_constraint_rejects_range_exceeding_inferred_bounds
         solver.create_bool_var_with_constraint("bad_range", x, Operator.EQ, 2, (-1, 5))
 
 
+@pytest.mark.parametrize(("x_value", "z_value"), [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_create_bool_and_var_matches_truth_table_with_negated_literal(x_value: int, z_value: int):
+    solver = PuLPSolver()
+    x = solver.new_bool_var("x")
+    z = solver.new_bool_var("z")
+    y = solver.create_bool_and_var("and", [x, solver.negate(z)])
+    solver.add_constraint(x == x_value, name="fix_x")
+    solver.add_constraint(z == z_value, name="fix_z")
+    solver.set_objective(0, maximize=True)
+
+    status = solver.solve()
+
+    assert status == SolverStatus.OPTIMAL
+    assert round(solver.get_value(y)) == int(bool(x_value) and not bool(z_value))
+
+
+def test_create_bool_and_var_empty_literals_is_true():
+    solver = PuLPSolver()
+    y = solver.create_bool_and_var("and", [])
+    solver.set_objective(0, maximize=True)
+
+    status = solver.solve()
+
+    assert status == SolverStatus.OPTIMAL
+    assert round(solver.get_value(y)) == 1
+
+
 def test_infer_expr_bounds_rejects_unbounded_variable():
     solver = PuLPSolver()
     unbounded = pulp.LpVariable("x_unbounded", lowBound=0, cat=pulp.LpInteger)

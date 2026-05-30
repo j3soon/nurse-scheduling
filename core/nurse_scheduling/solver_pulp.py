@@ -197,6 +197,32 @@ class BasePuLPSolver(SolverInterface):
 
         self.add_constraint(expr_sum >= 1, name=self.unique_constraint_name("bool_or"))
 
+    def create_bool_and_var(self, name: str, literals: List[Any]) -> Any:
+        """Create a boolean variable equivalent to the AND of the literals."""
+        var = self.new_bool_var(name)
+        if not literals:
+            self.add_constraint(var == 1, name=self.unique_constraint_name("bool_and_empty"))
+            return var
+        # Encode both directions of:
+        #   var <=> AND(literals)
+        #
+        # Each upper bound provides:
+        #   var <= literal_i
+        # so var can be 1 only if every literal is 1.
+        #
+        # The lower bound provides the reverse direction:
+        #   var >= sum(literals) - n + 1
+        # Its right-hand side is 1 only when every literal is 1, forcing var
+        # to 1 in that case. If any literal is 0, the upper bounds force var
+        # to 0. This also works with affine negations such as (1 - off_var).
+        for literal in literals:
+            self.add_constraint(var <= literal, name=self.unique_constraint_name("bool_and_imp"))
+        self.add_constraint(
+            var >= sum(literals) - len(literals) + 1,
+            name=self.unique_constraint_name("bool_and_reverse"),
+        )
+        return var
+
     def set_objective(self, expression, maximize: bool = True) -> None:
         """Set the objective function."""
         self.objective_expr = expression
