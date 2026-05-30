@@ -41,6 +41,45 @@ def _create_cli_progress_callback():
     return print_progress
 
 
+def _create_cli_model_build_stats_callback():
+    """Create a CLI printer for model-build instrumentation events."""
+
+    header_printed = False
+
+    def print_model_build_stats(payload):
+        nonlocal header_printed
+        if not header_printed:
+            print(
+                "[+] NURSE-SCHEDULING MODEL BUILD STATS",
+                "step",
+                "elapsed_s",
+                "vars_added",
+                "constraints_added",
+                "total_vars",
+                "total_constraints",
+                sep="\t",
+                flush=True,
+            )
+            header_printed = True
+
+        step = payload.step
+        if payload.preferenceType is not None:
+            step = f"{payload.step}[{payload.preferenceIndex}: {payload.preferenceType}]"
+        print(
+            "[+] NURSE-SCHEDULING MODEL BUILD STATS",
+            step,
+            f"{payload.elapsedSeconds:.6f}",
+            payload.variablesAdded,
+            payload.constraintsAdded,
+            payload.totalVariables,
+            payload.totalConstraints,
+            sep="\t",
+            flush=True,
+        )
+
+    return print_model_build_stats
+
+
 def main():
     parser = argparse.ArgumentParser(description="Nurse Scheduling Tool")
     parser.add_argument("input_file_path", help="Path to the input file")
@@ -65,6 +104,11 @@ def main():
         default="ortools/cp-sat",
         choices=["ortools/cp-sat", "pulp/cbc", "pulp/cuopt"],
         help="Solver selector (e.g., 'ortools/cp-sat', 'pulp/cbc', or 'pulp/cuopt').",
+    )
+    parser.add_argument(
+        "--show-model-build-stats",
+        action="store_true",
+        help="Print model-build timing and variable/constraint deltas for each build step.",
     )
     args = parser.parse_args()
     filepath = args.input_file_path
@@ -110,6 +154,7 @@ def main():
         timeout=args.timeout,
         solver=solver,
         progress_callback=_create_cli_progress_callback(),
+        model_build_stats_callback=(_create_cli_model_build_stats_callback() if args.show_model_build_stats else None),
     )
 
     if df is None:

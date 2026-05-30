@@ -140,7 +140,7 @@ class SolverInterface(ABC):
         self,
         timeout: Union[int, None] = None,
         deterministic: bool = False,
-        solution_callback=None,
+        solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
     ) -> SolverStatus:
         """
@@ -149,7 +149,8 @@ class SolverInterface(ABC):
         Args:
             timeout: Maximum time in seconds (None for no limit).
             deterministic: If True, use deterministic solving.
-            solution_callback: Optional callback for intermediate solutions.
+            solution_callback: Optional app-level callback receiving the registered
+                solver-specific callback for each intermediate solution.
             progress_callback: Optional callback for normalized solver progress events.
 
         Returns:
@@ -265,6 +266,7 @@ class SolverInterface(ABC):
     def create_solution_callback(
         self,
         objective_var: Any = None,
+        solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
     ) -> Any:
         """
@@ -272,6 +274,8 @@ class SolverInterface(ABC):
 
         Args:
             objective_var: The objective variable to track (optional, solver-specific).
+            solution_callback: Optional app-level callback receiving the registered
+                solver-specific callback for each intermediate solution.
             progress_callback: Optional callback for normalized solver progress events.
 
         Returns:

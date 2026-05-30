@@ -27,6 +27,7 @@ from .constants import ALL, OFF, OFF_sid, Operator, MAP_DATE_KEYWORD_TO_FILTER, 
 from .context import Context
 from .utils import parse_dates
 from .loader import load_data
+from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
 from .solver_interface import SolverProgress, SolverStatus
 
 
@@ -38,6 +39,7 @@ def schedule(
     timeout: int | None = None,
     solver: str = "ortools/cp-sat",
     progress_callback: Callable[[SolverProgress], None] | None = None,
+    model_build_stats_callback: Callable[[ModelBuildStats], None] | None = None,
 ):
     logging.info("Loading scenario from file content...")
     scenario = load_data(file_content)
@@ -124,6 +126,7 @@ def schedule(
         raise ValueError(f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}")
 
     logging.info("Creating shift variables...")
+    step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
     # In the following code, we always use the convention of (d, s, p)
     # to represent the index of (day, shift_type, person).
@@ -133,8 +136,16 @@ def schedule(
             for p in range(ctx.n_people):
                 var_name = f"shift_d{d}_s{s}_p{p}"
                 ctx.model_vars[var_name] = ctx.shifts[(d, s, p)] = ctx.solver.new_bool_var(var_name)
+    emit_model_build_stats(
+        model_build_stats_callback,
+        ctx,
+        "create_shift_variables",
+        step_started_at,
+        start_counts,
+    )
 
     if avoid_solution is not None:
+        step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
         avoid_solution_vars = []
         logging.info("Avoiding solution...")
         for d, s, p in ctx.shifts:
@@ -146,8 +157,16 @@ def schedule(
                 raise ValueError(f"Invalid value: {avoid_solution[(d, s, p)]}")
         # Add constraint that at least one variable must be different from the solution to avoid
         ctx.solver.add_bool_or(avoid_solution_vars)
+        emit_model_build_stats(
+            model_build_stats_callback,
+            ctx,
+            "avoid_solution",
+            step_started_at,
+            start_counts,
+        )
 
     logging.info("Creating off variables...")
+    step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     for d in range(ctx.n_days):
         for p in range(ctx.n_people):
             dp_shifts_sum = sum(ctx.shifts[(d, s, p)] for s in range(ctx.n_shift_types))
@@ -159,8 +178,16 @@ def schedule(
                 0,
                 (0, ctx.n_shift_types),  # we do not assume "at most one shift per day" here
             )
+    emit_model_build_stats(
+        model_build_stats_callback,
+        ctx,
+        "create_off_variables",
+        step_started_at,
+        start_counts,
+    )
 
     logging.info("Creating maps for faster lookup...")
+    step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     ctx.map_ds_p = {
         (d, s): {p for p in range(ctx.n_people) if (d, s, p) in ctx.shifts}
         for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types))
@@ -189,26 +216,42 @@ def schedule(
         }
         for p in range(ctx.n_people)
     }
+    emit_model_build_stats(
+        model_build_stats_callback,
+        ctx,
+        "create_lookup_maps",
+        step_started_at,
+        start_counts,
+    )
 
     logging.info("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
     for i, preference in enumerate(ctx.preferences):
+        step_started_at, start_counts = start_model_build_step(
+            model_build_stats_callback,
+            ctx,
+        )
         preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference, i)
+        emit_model_build_stats(
+            model_build_stats_callback,
+            ctx,
+            "add_preference",
+            step_started_at,
+            start_counts,
+            preference_index=i,
+            preference_type=preference.type,
+        )
 
     # Define objective (i.e., soft constraints)
     ctx.solver.set_objective(ctx.objective, maximize=True)
 
     logging.info("Initializing solver...")
 
-    # Create solution callback for tracking intermediate solutions
-    solution_callback = ctx.solver.create_solution_callback(ctx.objective, progress_callback=progress_callback)
-
     logging.info("Solving and showing partial results...")
     status = ctx.solver.solve(
         timeout=timeout,
         deterministic=deterministic,
-        solution_callback=solution_callback,
         progress_callback=progress_callback,
     )
 

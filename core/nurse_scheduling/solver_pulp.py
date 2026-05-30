@@ -218,7 +218,7 @@ class BasePuLPSolver(SolverInterface):
         self,
         timeout: Union[int, None] = None,
         deterministic: bool = False,
-        solution_callback=None,
+        solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
     ) -> SolverStatus:
         """Solve the model using PuLP."""
@@ -623,6 +623,7 @@ class BasePuLPSolver(SolverInterface):
     def create_solution_callback(
         self,
         objective_var: Any = None,
+        solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
     ) -> Any:
         """

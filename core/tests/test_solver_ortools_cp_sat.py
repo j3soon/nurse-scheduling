@@ -285,10 +285,40 @@ def test_solve_progress_callback_uses_solution_callback():
     assert events[-1].currentBestScore == 1
 
 
-def test_solve_rejects_solution_callback_and_progress_callback_together():
+def test_solve_allows_solution_callback_and_progress_callback_together():
     solver = ORToolsSolver()
     x = solver.new_bool_var("x")
+    solver.add_constraint(x == 1)
     solver.set_objective(x, maximize=True)
+    progress_events = []
+    solution_events = []
 
-    with pytest.raises(ValueError, match="either solution_callback or progress_callback"):
-        solver.solve(solution_callback=object(), progress_callback=lambda _payload: None)
+    def count_solution(callback):
+        solution_events.append(int(callback.Value(x)))
+
+    status = solver.solve(solution_callback=count_solution, progress_callback=progress_events.append)
+
+    assert status == SolverStatus.OPTIMAL
+    assert progress_events
+    assert solution_events == [1]
+    assert progress_events[-1].currentBestScore == 1
+
+
+def test_solve_always_registers_internal_solution_callback():
+    solver = ORToolsSolver()
+
+    class DummyCpSolver:
+        def __init__(self):
+            self.callback = None
+
+        def Solve(self, model, callback=None):
+            self.callback = callback
+            return cp_model.OPTIMAL
+
+    dummy_solver = DummyCpSolver()
+    solver.solver = dummy_solver
+
+    status = solver.solve()
+
+    assert status == SolverStatus.OPTIMAL
+    assert isinstance(dummy_solver.callback, cp_model.CpSolverSolutionCallback)

@@ -78,12 +78,14 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
 
     seen = {}
 
-    def fake_schedule(file_content, prettify, timeout, solver):
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
         seen["schedule_args"] = {
             "file_content": file_content,
             "prettify": prettify,
             "timeout": timeout,
             "solver": solver,
+            "progress_callback": progress_callback,
+            "model_build_stats_callback": model_build_stats_callback,
         }
         return "fake_df", {"solution": True}, 123, "OPTIMAL", {"styles": {}, "comments": {}}
 
@@ -114,7 +116,10 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
         "prettify": False,
         "timeout": 7,
         "solver": "pulp/cbc",
+        "progress_callback": seen["schedule_args"]["progress_callback"],
+        "model_build_stats_callback": None,
     }
+    assert callable(seen["schedule_args"]["progress_callback"])
     assert seen["export_df"] == "fake_df"
     assert output_file.read_bytes() == b"csv-bytes"
     out = capsys.readouterr().out
@@ -127,7 +132,7 @@ def test_cli_no_solution_exits_zero(tmp_path, monkeypatch, capsys):
     input_file = tmp_path / "input.yaml"
     input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
 
-    def fake_schedule(file_content, prettify, timeout, solver):
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
         return None, None, None, "INFEASIBLE", {}
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
@@ -147,7 +152,7 @@ def test_cli_writes_xlsx_output(tmp_path, monkeypatch, capsys):
     output_file = tmp_path / "result.xlsx"
     seen = {}
 
-    def fake_schedule(file_content, prettify, timeout, solver):
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
         return "df", {}, 0, "OPTIMAL", {"styles": {(1, 1): {"backgroundColor": "#ffffff"}}, "comments": {}}
 
     def fake_export_to_excel(df, buffer, cell_export_info):
@@ -167,3 +172,46 @@ def test_cli_writes_xlsx_output(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert f"Results saved to {output_file}" in out
     assert "Status: OPTIMAL" in out
+
+
+def test_cli_show_model_build_stats_prints_scheduler_events(tmp_path, monkeypatch, capsys):
+    input_file = tmp_path / "input.yaml"
+    input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
+
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
+        assert model_build_stats_callback is not None
+        model_build_stats_callback(
+            cli.scheduler.ModelBuildStats(
+                step="create_shift_variables",
+                elapsedSeconds=0.123456,
+                variablesAdded=3,
+                constraintsAdded=0,
+                totalVariables=3,
+                totalConstraints=0,
+            )
+        )
+        model_build_stats_callback(
+            cli.scheduler.ModelBuildStats(
+                step="add_preference",
+                elapsedSeconds=0.5,
+                variablesAdded=2,
+                constraintsAdded=4,
+                totalVariables=5,
+                totalConstraints=4,
+                preferenceIndex=1,
+                preferenceType="shift request",
+            )
+        )
+        return None, None, None, "INFEASIBLE", {}
+
+    monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
+    monkeypatch.setattr(sys, "argv", ["nurse-scheduling", str(input_file), "--show-model-build-stats"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert exc_info.value.code == 0
+    out = capsys.readouterr().out
+    assert "step\telapsed_s\tvars_added\tconstraints_added\ttotal_vars\ttotal_constraints" in out
+    assert "create_shift_variables\t0.123456\t3\t0\t3\t0" in out
+    assert "add_preference[1: shift request]\t0.500000\t2\t4\t5\t4" in out
