@@ -303,7 +303,10 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 # i.e., min(weight * (actual_n_shifts - T) ** 2), for all p,
                 # where actual_n_shifts = sum_{(d, s)}(shifts[(d, s, p)])
                 # Create a variable to represent the deviation from target
-                max_abs_diff = max(total_shifts - T, T)
+                # - x in [0, max_x]
+                # - x - T in [0 - T, max_x - T]
+                # - abs(x - T) in [0, max(|0 - T|, |max_x - T|)]
+                max_abs_diff = max(abs(0 - T), abs(max_x - T))
                 abs_diff_var_name = f"{unique_var_prefix}_abs_diff"
                 ctx.model_vars[abs_diff_var_name] = abs_diff = ctx.solver.new_int_var(
                     0,
