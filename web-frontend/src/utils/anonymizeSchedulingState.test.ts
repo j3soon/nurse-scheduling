@@ -17,6 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+// This test is mostly AI generated.
+
 import type { SchedulingState } from '@/hooks/useSchedulingData';
 import { anonymizePeopleInState } from '@/utils/anonymizeSchedulingState';
 

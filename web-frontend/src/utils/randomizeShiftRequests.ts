@@ -17,6 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+// This code is mostly AI generated.
+
 // Developer utility for scattering concrete-date shift requests in exported scheduling snapshots.
 import { SHIFT_REQUEST } from '@/types/scheduling';
 import type { Group, Item, ShiftRequestPreference } from '@/types/scheduling';

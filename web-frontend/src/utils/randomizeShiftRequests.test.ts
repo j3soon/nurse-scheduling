@@ -15,7 +15,9 @@
  *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
+  */
+
+// This test is mostly AI generated.
 
 import type { SchedulingState } from '@/hooks/useSchedulingData';
 import type { ShiftRequestPreference } from '@/types/scheduling';
