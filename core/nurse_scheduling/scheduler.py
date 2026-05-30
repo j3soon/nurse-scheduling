@@ -190,6 +190,8 @@ def schedule(
 
     logging.info("Creating maps for faster lookup...")
     step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
+    # TODO: All shift combinations exist, so these membership checks can be removed
+    # if model-build overhead becomes significant.
     ctx.map_ds_p = {
         (d, s): {p for p in range(ctx.n_people) if (d, s, p) in ctx.shifts}
         for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types))

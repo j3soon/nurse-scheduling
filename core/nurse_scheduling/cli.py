@@ -23,6 +23,7 @@ import logging
 import os.path
 from io import BytesIO
 from . import scheduler, exporter
+from .model_build_stats import ModelBuildStatsSummary
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
@@ -39,45 +40,6 @@ def _create_cli_progress_callback():
         )
 
     return print_progress
-
-
-def _create_cli_model_build_stats_callback():
-    """Create a CLI printer for model-build instrumentation events."""
-
-    header_printed = False
-
-    def print_model_build_stats(payload):
-        nonlocal header_printed
-        if not header_printed:
-            print(
-                "[+] NURSE-SCHEDULING MODEL BUILD STATS",
-                "step",
-                "elapsed_s",
-                "vars_added",
-                "constraints_added",
-                "total_vars",
-                "total_constraints",
-                sep="\t",
-                flush=True,
-            )
-            header_printed = True
-
-        step = payload.step
-        if payload.preferenceType is not None:
-            step = f"{payload.step}[{payload.preferenceIndex}: {payload.preferenceType}]"
-        print(
-            "[+] NURSE-SCHEDULING MODEL BUILD STATS",
-            step,
-            f"{payload.elapsedSeconds:.6f}",
-            payload.variablesAdded,
-            payload.constraintsAdded,
-            payload.totalVariables,
-            payload.totalConstraints,
-            sep="\t",
-            flush=True,
-        )
-
-    return print_model_build_stats
 
 
 def main():
@@ -148,14 +110,19 @@ def main():
     with open(filepath, "rb") as f:
         file_content = f.read()
 
-    df, solution, score, status, cell_export_info = scheduler.schedule(
-        file_content,
-        prettify=prettify,
-        timeout=args.timeout,
-        solver=solver,
-        progress_callback=_create_cli_progress_callback(),
-        model_build_stats_callback=(_create_cli_model_build_stats_callback() if args.show_model_build_stats else None),
-    )
+    model_build_stats_callback = ModelBuildStatsSummary() if args.show_model_build_stats else None
+    try:
+        df, solution, score, status, cell_export_info = scheduler.schedule(
+            file_content,
+            prettify=prettify,
+            timeout=args.timeout,
+            solver=solver,
+            progress_callback=None if args.show_model_build_stats else _create_cli_progress_callback(),
+            model_build_stats_callback=model_build_stats_callback,
+        )
+    finally:
+        if model_build_stats_callback is not None:
+            model_build_stats_callback.print_summary()
 
     if df is None:
         print("No solution found")
@@ -174,6 +141,9 @@ def main():
             f.write(buffer.getvalue())
 
         print(f"Results saved to {output_path}")
+        print(f"Score: {score}")
+        print(f"Status: {status}")
+    elif args.show_model_build_stats:
         print(f"Score: {score}")
         print(f"Status: {status}")
     else:

@@ -22,6 +22,7 @@
   - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver ortools/cp-sat|pulp/cbc`: run scheduler CLI.
   - `pytest --log-cli-level=INFO`: run the normal core test suite.
   - `pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: explicitly run the slower bounded real-world scenario checks.
+  - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact model-build statistics for real testcase checking and benchmarking.
   - `pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run primary solver/schedule suites.
   - `ruff check nurse_scheduling tests`: lint core Python code.
   - `ruff format nurse_scheduling tests`: format core Python code.
@@ -36,6 +37,7 @@
 - Frameworks: `pytest` for core and backend tests; Vitest and Playwright for frontend tests.
 - Main suites: `core/tests/test_solver_ortools_cp_sat.py`, `core/tests/test_solver_pulp_cbc.py`, `core/tests/test_schedule_ortools_cp_sat.py`, `core/tests/test_schedule_pulp_cbc.py`, `core/tests/test_serve.py`.
 - Real-world checks under `core/tests/real/` intentionally omit pytest's `test_` filename prefix. Do not include them in normal test commands; run them explicitly when validating real-case optimization behavior.
+- Use `--show-model-build-stats` with real testcases when checking or benchmarking model-building optimizations. It emits a compact aggregated summary and suppresses the full schedule output.
 - Frontend validation should include `bun run test` for unit/component coverage and `bun run test:e2e` for browser integration coverage when checking the full app.
 - Add new scheduling cases as fixture pairs in `core/tests/testcases/**` (typically `.yaml` input with matching `.csv` or `.txt` expected output).
 - Run affected tests locally before opening a PR, and run Ruff on touched core files.

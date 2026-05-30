@@ -179,6 +179,7 @@ def test_cli_show_model_build_stats_prints_scheduler_events(tmp_path, monkeypatc
     input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
 
     def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
+        assert progress_callback is None
         assert model_build_stats_callback is not None
         model_build_stats_callback(
             cli.scheduler.ModelBuildStats(
@@ -202,16 +203,33 @@ def test_cli_show_model_build_stats_prints_scheduler_events(tmp_path, monkeypatc
                 preferenceType="shift request",
             )
         )
-        return None, None, None, "INFEASIBLE", {}
+        model_build_stats_callback(
+            cli.scheduler.ModelBuildStats(
+                step="add_preference",
+                elapsedSeconds=0.25,
+                variablesAdded=1,
+                constraintsAdded=2,
+                totalVariables=6,
+                totalConstraints=6,
+                preferenceIndex=2,
+                preferenceType="shift request",
+            )
+        )
+        assert capsys.readouterr().out == ""
+        return "large dataframe", {"large": "solution"}, 123, "FEASIBLE", {}
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
     monkeypatch.setattr(sys, "argv", ["nurse-scheduling", str(input_file), "--show-model-build-stats"])
 
-    with pytest.raises(SystemExit) as exc_info:
-        cli.main()
-
-    assert exc_info.value.code == 0
+    cli.main()
     out = capsys.readouterr().out
-    assert "step\telapsed_s\tvars_added\tconstraints_added\ttotal_vars\ttotal_constraints" in out
-    assert "create_shift_variables\t0.123456\t3\t0\t3\t0" in out
-    assert "add_preference[1: shift request]\t0.500000\t2\t4\t5\t4" in out
+    assert (
+        "MODEL_BUILD_STATS\tstep\tcount\telapsed_seconds\tvariables_added\tconstraints_added"
+        "\ttotal_variables\ttotal_constraints"
+    ) in out
+    assert "create_shift_variables\t1\t0.123456\t3\t0\t3\t0" in out
+    assert "pref:shift request\t2\t0.750000\t3\t6\t6\t6" in out
+    assert "large dataframe" not in out
+    assert "large" not in out
+    assert "Score: 123" in out
+    assert "Status: FEASIBLE" in out

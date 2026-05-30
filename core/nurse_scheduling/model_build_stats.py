@@ -21,6 +21,7 @@
 
 import logging
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -53,6 +54,57 @@ class ModelBuildStats:
             "preferenceIndex": self.preferenceIndex,
             "preferenceType": self.preferenceType,
         }
+
+
+@dataclass
+class _ModelBuildStatsSummaryRow:
+    """Aggregated model-build statistics for one summary step."""
+
+    count: int = 0
+    elapsed_seconds: float = 0.0
+    variables_added: int = 0
+    constraints_added: int = 0
+    total_variables: int = 0
+    total_constraints: int = 0
+
+
+class ModelBuildStatsSummary:
+    """Buffer model-build events and print a compact summary."""
+
+    def __init__(self):
+        self.rows = OrderedDict()
+
+    def __call__(self, payload: ModelBuildStats) -> None:
+        step = payload.step
+        if payload.preferenceType is not None:
+            step = f"pref:{payload.preferenceType}"
+        row = self.rows.setdefault(step, _ModelBuildStatsSummaryRow())
+        row.count += 1
+        row.elapsed_seconds += payload.elapsedSeconds
+        row.variables_added += payload.variablesAdded
+        row.constraints_added += payload.constraintsAdded
+        row.total_variables = payload.totalVariables
+        row.total_constraints = payload.totalConstraints
+
+    def print_summary(self) -> None:
+        """Print buffered stats as dense tab-separated rows."""
+        if not self.rows:
+            return
+        print(
+            "MODEL_BUILD_STATS\tstep\tcount\telapsed_seconds\tvariables_added\tconstraints_added"
+            "\ttotal_variables\ttotal_constraints"
+        )
+        for step, row in self.rows.items():
+            print(
+                step,
+                row.count,
+                f"{row.elapsed_seconds:.6f}",
+                row.variables_added,
+                row.constraints_added,
+                row.total_variables,
+                row.total_constraints,
+                sep="\t",
+            )
 
 
 def get_model_entity_counts(ctx: Context) -> tuple[int, int]:
