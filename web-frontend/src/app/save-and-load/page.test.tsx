@@ -211,7 +211,7 @@ describe('SaveAndLoadPage', () => {
     });
     await user.click(screen.getByRole('button', { name: /save/i }));
     await user.click(screen.getByRole('button', { name: /cancel/i }));
-    await user.click(screen.getByRole('button', { name: /download/i }));
+    await user.click(screen.getByRole('button', { name: /^download$/i }));
 
     const blob = createSpy.mock.calls[0]?.[0] as Blob;
     expect(await blob.text()).toBe('apiVersion: alpha\ndescription: baseline\n');
@@ -262,7 +262,7 @@ describe('SaveAndLoadPage', () => {
       expect(writeText).toHaveBeenCalledWith('apiVersion: alpha\ndescription: baseline\n');
     });
 
-    await user.click(screen.getByRole('button', { name: /download/i }));
+    await user.click(screen.getByRole('button', { name: /^download$/i }));
     const blob = createSpy.mock.calls.at(-1)?.[0] as Blob;
     expect(await blob.text()).toBe('apiVersion: alpha\ndescription: baseline\n');
   });
@@ -314,7 +314,7 @@ describe('SaveAndLoadPage', () => {
       expect(writeText).toHaveBeenCalledWith('apiVersion: alpha\ndescription: uploaded state\n');
     });
 
-    await user.click(screen.getByRole('button', { name: /download/i }));
+    await user.click(screen.getByRole('button', { name: /^download$/i }));
     const blob = createSpy.mock.calls.at(-1)?.[0] as Blob;
     expect(await blob.text()).toBe('apiVersion: alpha\ndescription: uploaded state\n');
   });
@@ -363,7 +363,7 @@ describe('SaveAndLoadPage', () => {
 
     render(<SaveAndLoadPage />);
 
-    await user.click(screen.getByRole('button', { name: /download/i }));
+    await user.click(screen.getByRole('button', { name: /^download$/i }));
 
     expect(createSpy).toHaveBeenCalled();
     expect(revokeSpy).toHaveBeenCalledWith('blob:mock-url');
@@ -388,7 +388,7 @@ describe('SaveAndLoadPage', () => {
 
     render(<SaveAndLoadPage />);
 
-    await user.click(screen.getByRole('button', { name: /download/i }));
+    await user.click(screen.getByRole('button', { name: /^download$/i }));
 
     const appendedAnchor = appendSpy.mock.calls
       .map(([node]) => node)

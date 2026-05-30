@@ -19,7 +19,6 @@
 
 # This test is mostly AI generated.
 
-import glob
 import logging
 import os
 import sys
@@ -34,7 +33,7 @@ import pytest
 from openpyxl import load_workbook
 from pydantic import ValidationError
 
-from .schedule_test_helper import CONTINUE_ON_ERROR, IGNORE_TESTS, TESTCASES_DIR
+from .schedule_test_helper import CONTINUE_ON_ERROR, IGNORE_TESTS, TESTCASES_DIR, get_regression_testcases
 
 WRITE_XLSX_GOLDEN = os.getenv("WRITE_XLSX_GOLDEN") == "1"
 
@@ -132,7 +131,7 @@ def _get_golden_xlsx_path(filepath: str, prettify: bool) -> str:
 
 
 def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
-    tests = glob.glob(f"{TESTCASES_DIR}/**/*.yaml", recursive=True)
+    tests = get_regression_testcases()
     total_tests = len(tests)
     error_count = 0
 
