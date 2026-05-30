@@ -139,6 +139,16 @@ class SolverInterface(ABC):
         pass
 
     @abstractmethod
+    def should_use_bool_and_var(self, n_literals: int) -> bool:
+        """
+        Return True when create_bool_and_var is preferred for a literal-only AND of this size.
+
+        This lets model-building code avoid backend-specific checks while still
+        accounting for native Boolean backends versus linear encodings.
+        """
+        pass
+
+    @abstractmethod
     def set_objective(self, expression, maximize: bool = True) -> None:
         """
         Set the objective function.

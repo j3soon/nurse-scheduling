@@ -239,12 +239,8 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
 
                 # Construct: is_match = all pattern elements match.
                 is_match_var_name = f"{unique_var_prefix}_is_match"
-                # PuLP's linear AND encoding has one constraint per literal plus
-                # one reverse constraint. Keep longer patterns on the compact
-                # generic equality encoding to avoid increasing model size.
-                if len(pattern_element_matches) <= 3 and all(
-                    is_literal for _match_expr, is_literal in pattern_element_matches
-                ):
+                is_literal_pattern = all(is_literal for _match_expr, is_literal in pattern_element_matches)
+                if is_literal_pattern and ctx.solver.should_use_bool_and_var(len(pattern_element_matches)):
                     ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_and_var(
                         is_match_var_name,
                         [match_expr for match_expr, _is_literal in pattern_element_matches],

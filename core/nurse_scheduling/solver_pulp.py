@@ -223,6 +223,10 @@ class BasePuLPSolver(SolverInterface):
         )
         return var
 
+    def should_use_bool_and_var(self, n_literals: int) -> bool:
+        """Return True only while PuLP's linear AND encoding stays compact."""
+        return n_literals <= 3
+
     def set_objective(self, expression, maximize: bool = True) -> None:
         """Set the objective function."""
         self.objective_expr = expression

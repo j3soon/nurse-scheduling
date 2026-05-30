@@ -272,6 +272,14 @@ def test_create_bool_and_var_empty_literals_is_true():
     assert round(solver.get_value(y)) == 1
 
 
+def test_should_use_bool_and_var_only_for_compact_literal_counts():
+    solver = PuLPSolver()
+
+    assert solver.should_use_bool_and_var(1)
+    assert solver.should_use_bool_and_var(3)
+    assert not solver.should_use_bool_and_var(4)
+
+
 def test_infer_expr_bounds_rejects_unbounded_variable():
     solver = PuLPSolver()
     unbounded = pulp.LpVariable("x_unbounded", lowBound=0, cat=pulp.LpInteger)

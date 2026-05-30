@@ -276,6 +276,14 @@ def test_create_bool_and_var_empty_literals_is_true():
     assert int(solver.get_value(y)) == 1
 
 
+def test_should_use_bool_and_var_for_any_literal_count():
+    solver = ORToolsSolver()
+
+    assert solver.should_use_bool_and_var(1)
+    assert solver.should_use_bool_and_var(3)
+    assert solver.should_use_bool_and_var(10)
+
+
 def test_solution_callback_logs_progress(caplog):
     solver = ORToolsSolver()
     x = solver.new_int_var(0, 1, "x")

@@ -73,6 +73,10 @@ class ORToolsSolver(SolverInterface):
         self.model.AddBoolOr([self.negate(literal) for literal in literals] + [var])
         return var
 
+    def should_use_bool_and_var(self, n_literals: int) -> bool:
+        """Return True because OR-Tools has native Boolean AND constraints."""
+        return True
+
     def set_objective(self, expression, maximize: bool = True) -> None:
         """Set the objective function."""
         self.objective_expr = expression
