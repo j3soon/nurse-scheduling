@@ -252,7 +252,8 @@ def test_create_bool_var_with_constraint_rejects_unknown_operator():
 def test_solution_callback_logs_progress(caplog):
     solver = ORToolsSolver()
     x = solver.new_int_var(0, 1, "x")
-    callback = solver.create_solution_callback(x)
+    events = []
+    callback = solver.create_solution_callback(x, progress_callback=events.append)
 
     callback.Value = lambda _var: 7
     callback.start_time = 0.0
@@ -263,3 +264,31 @@ def test_solution_callback_logs_progress(caplog):
     assert "# of (best) solutions found: 1" in caplog.text
     assert "current score: 7" in caplog.text
     assert "elapsed time:" in caplog.text
+    assert events[0].source == "ortools/cp-sat:solution-callback"
+    assert events[0].currentBestScore == 7
+    assert events[0].elapsedSeconds >= 0
+
+
+def test_solve_progress_callback_uses_solution_callback():
+    solver = ORToolsSolver()
+    x = solver.new_bool_var("x")
+    solver.add_constraint(x == 1)
+    solver.set_objective(x, maximize=True)
+    events = []
+
+    status = solver.solve(progress_callback=events.append)
+
+    assert status == SolverStatus.OPTIMAL
+    assert int(solver.get_value(x)) == 1
+    assert events
+    assert all(event.source == "ortools/cp-sat:solution-callback" for event in events)
+    assert events[-1].currentBestScore == 1
+
+
+def test_solve_rejects_solution_callback_and_progress_callback_together():
+    solver = ORToolsSolver()
+    x = solver.new_bool_var("x")
+    solver.set_objective(x, maximize=True)
+
+    with pytest.raises(ValueError, match="either solution_callback or progress_callback"):
+        solver.solve(solution_callback=object(), progress_callback=lambda _payload: None)

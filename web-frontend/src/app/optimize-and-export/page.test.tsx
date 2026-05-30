@@ -334,7 +334,11 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(eventSource.url).toBe('http://localhost:8000/optimize/opt_sse/events');
     act(() => {
       eventSource.emit('status', { status: 'running' });
-      eventSource.emit('progress', { bestScore: 12, solutionCount: 1 });
+    eventSource.emit('progress', {
+      source: 'ortools/cp-sat:solution-callback',
+      currentBestScore: 12,
+      elapsedSeconds: 0.1,
+    });
       eventSource.emit('complete', {
         jobId: 'opt_sse',
         status: 'optimal',
@@ -354,7 +358,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('status')).toBeInTheDocument();
     expect(screen.getByText('progress')).toBeInTheDocument();
     expect(screen.getByText('complete')).toBeInTheDocument();
-    expect(screen.getByText(/"bestScore":12/)).toBeInTheDocument();
+    expect(screen.getByText(/"currentBestScore":12/)).toBeInTheDocument();
     expect(eventSource.close).toHaveBeenCalled();
   });
 

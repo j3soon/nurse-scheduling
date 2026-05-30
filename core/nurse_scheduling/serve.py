@@ -37,6 +37,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import scheduler, exporter
+from .solver_interface import SolverProgress
 
 
 def _get_app_version() -> str:
@@ -272,11 +273,18 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
     _publish_job_event(job, "status", {"status": OptimizeJobStatus.RUNNING.value})
 
     try:
+
+        def publish_progress(payload: SolverProgress) -> None:
+            current_job = _get_optimize_job(job_id)
+            _update_optimize_job(job_id, score=payload.currentBestScore)
+            _publish_job_event(current_job, "progress", payload.to_dict())
+
         df, _solution, score, solver_status, cell_export_info = scheduler.schedule(
             file_content=content,
             prettify=job.prettify,
             timeout=job.timeout,
             solver=job.solver,
+            progress_callback=publish_progress,
         )
 
         if df is None:

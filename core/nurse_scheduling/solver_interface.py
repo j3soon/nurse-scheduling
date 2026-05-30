@@ -18,7 +18,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
+from collections.abc import Callable
 from typing import Any, Dict, List, Tuple, Union
 
 from .constants import Operator
@@ -35,6 +37,31 @@ class SolverStatus(Enum):
     INFEASIBLE = "INFEASIBLE"
     MODEL_INVALID = "MODEL_INVALID"
     UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class SolverProgress:
+    """Normalized solver progress payload."""
+
+    source: str
+    currentBestScore: int
+    elapsedSeconds: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the API payload for this progress update."""
+        return {
+            "source": self.source,
+            "currentBestScore": self.currentBestScore,
+            "elapsedSeconds": self.elapsedSeconds,
+        }
+
+
+def assert_int_score(value: Any, *, label: str = "score", integer_tolerance: float = 1e-6) -> int:
+    """Assert a solver score is integral and return it as an int."""
+    value_f = float(value)
+    rounded = round(value_f)
+    assert abs(value_f - rounded) <= integer_tolerance, f"{label} should be an integer, but got {value}."
+    return int(rounded)
 
 
 class SolverInterface(ABC):
@@ -110,7 +137,11 @@ class SolverInterface(ABC):
 
     @abstractmethod
     def solve(
-        self, timeout: Union[int, None] = None, deterministic: bool = False, solution_callback=None
+        self,
+        timeout: Union[int, None] = None,
+        deterministic: bool = False,
+        solution_callback=None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
     ) -> SolverStatus:
         """
         Solve the model.
@@ -119,6 +150,7 @@ class SolverInterface(ABC):
             timeout: Maximum time in seconds (None for no limit).
             deterministic: If True, use deterministic solving.
             solution_callback: Optional callback for intermediate solutions.
+            progress_callback: Optional callback for normalized solver progress events.
 
         Returns:
             The solver status.
@@ -230,12 +262,17 @@ class SolverInterface(ABC):
         pass
 
     @abstractmethod
-    def create_solution_callback(self, objective_var: Any = None) -> Any:
+    def create_solution_callback(
+        self,
+        objective_var: Any = None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
+    ) -> Any:
         """
         Create a solution callback for tracking intermediate solutions during solving.
 
         Args:
             objective_var: The objective variable to track (optional, solver-specific).
+            progress_callback: Optional callback for normalized solver progress events.
 
         Returns:
             A solver-specific solution callback object, or None if not supported.

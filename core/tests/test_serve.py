@@ -35,6 +35,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import nurse_scheduling.serve as serve
+from nurse_scheduling.solver_interface import SolverProgress
 from nurse_scheduling.serve import app
 
 # Test client
@@ -163,6 +164,31 @@ class TestOptimizeJobs:
         assert "event: complete" in body
         assert '"status": "optimal"' in body
         assert '"score": 42' in body
+
+    def test_optimize_job_streams_progress_events(self, monkeypatch):
+        def fake_schedule(*args, **kwargs):
+            kwargs["progress_callback"](
+                SolverProgress(source="pulp/cbc:solver-log:incumbent", currentBestScore=7, elapsedSeconds=0.1)
+            )
+            return "fake_df", {}, 42, "OPTIMAL", None
+
+        def fake_export_to_excel(df, output_buffer, cell_export_info):
+            output_buffer.write(b"fake xlsx bytes")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+        monkeypatch.setattr(serve.exporter, "export_to_excel", fake_export_to_excel)
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "optimal")
+
+        with client.stream("GET", f"/optimize/{job_id}/events") as stream_response:
+            assert stream_response.status_code == 200
+            body = stream_response.read().decode("utf-8")
+
+        assert "event: progress" in body
+        assert '"source": "pulp/cbc:solver-log:incumbent"' in body
+        assert '"currentBestScore": 7' in body
 
     def test_optimize_job_allows_multiple_sse_connections(self, fake_successful_scheduler):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})

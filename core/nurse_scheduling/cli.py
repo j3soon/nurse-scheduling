@@ -28,6 +28,19 @@ from . import scheduler, exporter
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
 
 
+def _create_cli_progress_callback():
+    """Create a CLI progress printer for solver best-score updates."""
+
+    def print_progress(payload):
+        print(
+            "[+] NURSE-SCHEDULING PROGRESS "
+            f"(score={payload.currentBestScore}, source={payload.source}, elapsed={payload.elapsedSeconds}s)",
+            flush=True,
+        )
+
+    return print_progress
+
+
 def main():
     parser = argparse.ArgumentParser(description="Nurse Scheduling Tool")
     parser.add_argument("input_file_path", help="Path to the input file")
@@ -96,6 +109,7 @@ def main():
         prettify=prettify,
         timeout=args.timeout,
         solver=solver,
+        progress_callback=_create_cli_progress_callback(),
     )
 
     if df is None:

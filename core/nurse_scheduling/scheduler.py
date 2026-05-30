@@ -19,6 +19,7 @@
 
 import itertools
 import logging
+from collections.abc import Callable
 from datetime import timedelta
 
 from . import exporter, preference_types
@@ -26,7 +27,7 @@ from .constants import ALL, OFF, OFF_sid, Operator, MAP_DATE_KEYWORD_TO_FILTER, 
 from .context import Context
 from .utils import parse_dates
 from .loader import load_data
-from .solver_interface import SolverStatus
+from .solver_interface import SolverProgress, SolverStatus
 
 
 def schedule(
@@ -36,6 +37,7 @@ def schedule(
     prettify=False,
     timeout: int | None = None,
     solver: str = "ortools/cp-sat",
+    progress_callback: Callable[[SolverProgress], None] | None = None,
 ):
     logging.info("Loading scenario from file content...")
     scenario = load_data(file_content)
@@ -200,10 +202,15 @@ def schedule(
     logging.info("Initializing solver...")
 
     # Create solution callback for tracking intermediate solutions
-    solution_callback = ctx.solver.create_solution_callback(ctx.objective)
+    solution_callback = ctx.solver.create_solution_callback(ctx.objective, progress_callback=progress_callback)
 
     logging.info("Solving and showing partial results...")
-    status = ctx.solver.solve(timeout=timeout, deterministic=deterministic, solution_callback=solution_callback)
+    status = ctx.solver.solve(
+        timeout=timeout,
+        deterministic=deterministic,
+        solution_callback=solution_callback,
+        progress_callback=progress_callback,
+    )
 
     # Get status name
     ctx.solver_status = ctx.solver.get_status_name()

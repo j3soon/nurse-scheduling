@@ -18,11 +18,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
+from collections.abc import Callable
 from typing import Any, Dict, List, Tuple, Union
 from ortools.sat.python import cp_model
 
 from .constants import Operator
-from .solver_interface import SolverInterface, SolverStatus
+from .solver_interface import SolverInterface, SolverProgress, SolverStatus, assert_int_score
 
 
 class ORToolsSolver(SolverInterface):
@@ -62,9 +63,16 @@ class ORToolsSolver(SolverInterface):
             self.model.Minimize(expression)
 
     def solve(
-        self, timeout: Union[int, None] = None, deterministic: bool = False, solution_callback=None
+        self,
+        timeout: Union[int, None] = None,
+        deterministic: bool = False,
+        solution_callback=None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
     ) -> SolverStatus:
         """Solve the model using OR-Tools."""
+        if solution_callback is not None and progress_callback is not None:
+            raise ValueError("Provide either solution_callback or progress_callback, not both.")
+
         if deterministic:
             logging.info("Configuring deterministic solver...")
             self.solver.parameters.random_seed = 0
@@ -83,6 +91,12 @@ class ORToolsSolver(SolverInterface):
                     "Unable to set solver timeout parameter (%s); proceeding without time limit",
                     exc,
                 )
+
+        if solution_callback is None and progress_callback is not None and self.objective_expr is not None:
+            solution_callback = self.create_solution_callback(
+                self.objective_expr,
+                progress_callback=progress_callback,
+            )
 
         # Solve with or without callback
         if solution_callback is not None:
@@ -169,29 +183,50 @@ class ORToolsSolver(SolverInterface):
         """Get the generic solver status name."""
         return self.solver_status.value
 
-    def create_solution_callback(self, objective_var: Any = None) -> Any:
+    def create_solution_callback(
+        self,
+        objective_var: Any = None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
+    ) -> Any:
         """Create a solution callback for tracking intermediate solutions."""
         import time
+
+        maximize = self.maximize
 
         class PartialSolutionPrinter(cp_model.CpSolverSolutionCallback):
             """Print intermediate solutions."""
 
-            def __init__(self, objective_var):
+            def __init__(self, objective_var, progress_callback):
                 cp_model.CpSolverSolutionCallback.__init__(self)
                 self.n_solutions = 0
-                self.best_score = float("-inf")
+                self.best_score = float("-inf") if maximize else float("inf")
                 self.start_time = time.time()
                 self.objective_var = objective_var
+                self.progress_callback = progress_callback
 
             def on_solution_callback(self):
-                current_score = self.Value(self.objective_var)
+                current_score = assert_int_score(
+                    self.Value(self.objective_var),
+                    label="OR-Tools progress score",
+                )
                 elapsed_time = time.time() - self.start_time
                 self.n_solutions += 1
-                if current_score > self.best_score:
+                if (maximize and current_score > self.best_score) or (not maximize and current_score < self.best_score):
                     self.best_score = current_score
                     self.n_solutions = 1
                 logging.info(f"# of (best) solutions found: {self.n_solutions}")
                 logging.info(f"current score: {current_score}")
                 logging.info(f"elapsed time: {elapsed_time:.2f}s")
+                if self.progress_callback is not None:
+                    try:
+                        self.progress_callback(
+                            SolverProgress(
+                                source="ortools/cp-sat:solution-callback",
+                                currentBestScore=current_score,
+                                elapsedSeconds=round(elapsed_time, 3),
+                            )
+                        )
+                    except Exception:
+                        logging.exception("Progress callback failed")
 
-        return PartialSolutionPrinter(objective_var)
+        return PartialSolutionPrinter(objective_var, progress_callback)
