@@ -34,6 +34,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from nurse_scheduling import exporter, schedule
 
 
+@pytest.mark.parametrize(
+    ("shift_types", "values", "weight", "expected"),
+    [
+        ([0, 1], {"D": 1, "E": 0, "OFF": 0}, 5, True),
+        ([0, 1], {"D": 1, "E": 0, "OFF": 0}, -5, False),
+        ([0, 1], {"D": 0, "E": 0, "OFF": 1}, -5, True),
+        ([exporter.constants.OFF_sid], {"D": 0, "E": 0, "OFF": 1}, 5, True),
+        ([exporter.constants.OFF_sid], {"D": 1, "E": 0, "OFF": 0}, -5, True),
+    ],
+)
+def test_shift_request_satisfaction_uses_any_requested_state_then_weight_sign(shift_types, values, weight, expected):
+    ctx = SimpleNamespace(
+        solver=SimpleNamespace(get_value=lambda var: values[var]),
+        shifts={(0, 0, 0): "D", (0, 1, 0): "E"},
+        offs={(0, 0): "OFF"},
+    )
+    pref = SimpleNamespace(weight=weight)
+
+    assert exporter._is_shift_request_satisfied(ctx, pref, d=0, p=0, shift_types=shift_types) is expected
+
+
 def test_export_to_csv_writes_utf8_bom():
     df = pd.DataFrame([["A", "B"], ["C", "D"]])
     output = BytesIO()
@@ -342,6 +363,54 @@ export:
 
     assert str(styled_df.data.iloc[2, 1]) == " [all:D, E]"
     assert cell_export_info["comments"] == {(3, 2): ["Total matched absolute weight: 5"]}
+
+
+def test_export_annotation_marks_assigned_negative_shift_type_group_as_unsatisfied():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: DayOrEvening
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+  - type: shift type requirement
+    shiftType: E
+    requiredNumPeople: 0
+  - type: shift request
+    person: n1
+    date: ["2025-01-01"]
+    shiftType: DayOrEvening
+    weight: -5
+export:
+  formatting:
+    - type: cell
+      appendText: " [unsatisfied]"
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL]
+      when:
+        preference:
+          types: ["shift request"]
+          satisfied: false
+"""
+
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+
+    assert str(styled_df.data.iloc[2, 1]) == "D [unsatisfied]"
 
 
 def test_export_annotation_rejects_reversed_weight_range():
