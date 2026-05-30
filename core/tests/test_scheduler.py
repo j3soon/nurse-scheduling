@@ -195,7 +195,8 @@ def test_scheduler_model_build_stats_callback_reports_build_steps(monkeypatch):
     ]
     assert events[0].variablesAdded == 1
     assert events[1].variablesAdded == 1
-    assert events[1].constraintsAdded > 0
+    assert events[1].constraintsAdded == 1
+    assert events[3].constraintsAdded == 0
     assert events[-1].totalVariables >= events[-1].variablesAdded
     assert isinstance(events[-1].to_dict(), dict)
 

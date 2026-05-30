@@ -23,7 +23,7 @@ from collections.abc import Callable
 from datetime import timedelta
 
 from . import exporter, preference_types
-from .constants import ALL, OFF, OFF_sid, Operator, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
+from .constants import ALL, OFF, OFF_sid, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
 from .context import Context
 from .utils import parse_dates
 from .loader import load_data
@@ -171,13 +171,15 @@ def schedule(
         for p in range(ctx.n_people):
             dp_shifts_sum = sum(ctx.shifts[(d, s, p)] for s in range(ctx.n_shift_types))
             var_name = f"off_d{d}_p{p}"
-            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ctx.solver.create_bool_var_with_constraint(
-                var_name,
-                dp_shifts_sum,
-                Operator.EQ,
-                0,
-                (0, ctx.n_shift_types),  # we do not assume "at most one shift per day" here
-            )
+            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ctx.solver.new_bool_var(var_name)
+            # This defines OFF and enforces at most one shift per person per day.
+            # Previously, OFF was defined separately as:
+            #   ctx.solver.create_bool_var_with_constraint(
+            #       var_name, dp_shifts_sum, Operator.EQ, 0, (0, ctx.n_shift_types)
+            #   )
+            # and the at-most-one preference added:
+            #   dp_shifts_sum <= 1
+            ctx.solver.add_constraint(ctx.offs[(d, p)] + dp_shifts_sum == 1)
     emit_model_build_stats(
         model_build_stats_callback,
         ctx,

@@ -92,10 +92,10 @@ def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preferen
     # For all people, for all days, only work at most one shift.
     # Note that a shift in day `d` can be represented as `s` instead of (d, s).
     # i.e., sum_{s}(shifts[(d, s, p)]) <= 1, for all (d, p)
-    for (d, p), ss in ctx.map_dp_s.items():
-        actual_n_shifts = sum(ctx.shifts[(d, s, p)] for s in ss)
-        maximum_n_shifts = 1
-        ctx.solver.add_constraint(actual_n_shifts <= maximum_n_shifts)
+    #
+    # This constraint is encoded while creating off variables:
+    #   offs[(d, p)] + sum_{s}(shifts[(d, s, p)]) == 1
+    pass
 
 
 def shift_request(ctx: Context, preference: models.ShiftRequestPreference, preference_idx):
