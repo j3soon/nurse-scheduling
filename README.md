@@ -56,24 +56,32 @@ docker build -f Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 CPU solver:
 
 ```sh
-# persist Codex auth/config across containers
+# persist Codex/OpenCode auth/config across containers
 mkdir -p ~/docker/.codex
-# mount project files and Codex config
+mkdir -p ~/docker/opencode/.config/opencode
+mkdir -p ~/docker/opencode/.local/share/opencode
+# mount project files and Codex/OpenCode config
 docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
+  -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
+  -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   j3soon/nurse-scheduling:dev
 ```
 
 GPU solver:
 
 ```sh
-# persist Codex auth/config across containers
+# persist Codex/OpenCode auth/config across containers
 mkdir -p ~/docker/.codex
-# mount project files and Codex config
+mkdir -p ~/docker/opencode/.config/opencode
+mkdir -p ~/docker/opencode/.local/share/opencode
+# mount project files and Codex/OpenCode config
 docker run --rm -it --gpus all --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
+  -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
+  -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   j3soon/nurse-scheduling:dev-cuopt
 ```
 
@@ -82,9 +90,14 @@ or with X11 forwarding for running Playwright interactive mode in the container:
 ```sh
 xhost +local:docker
 mkdir -p ~/docker/.codex
+mkdir -p ~/docker/opencode/.config/opencode
+mkdir -p ~/docker/opencode/.local/share/opencode
+# mount project files and Codex/OpenCode config, and forward X11 display
 docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
+  -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
+  -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   -e DISPLAY=$DISPLAY \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   j3soon/nurse-scheduling:dev

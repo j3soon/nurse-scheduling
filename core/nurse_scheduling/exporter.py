@@ -720,18 +720,32 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
         comment_info = cell_export_info.get("comments") or {}
         style_info = cell_export_info.get("styles") or {}
 
-    # Add configured notes/comments to cells if comment_info is provided.
+    # Put notes in a separate sheet so many annotations remain readable without
+    # overlapping native Excel comment popups.
     if comment_info:
-        from openpyxl.comments import Comment
+        notes_ws = wb.create_sheet("Notes")
+        notes_ws.append(["Cell", "Schedule Value", "Note"])
+        notes_ws.freeze_panes = "A2"
+        notes_ws.auto_filter.ref = "A1:C1"
+        notes_ws.column_dimensions["A"].width = 14
+        notes_ws.column_dimensions["B"].width = 24
+        notes_ws.column_dimensions["C"].width = 80
+
+        schedule_sheet_name = ws.title.replace("'", "''")
+        notes_sheet_name = notes_ws.title.replace("'", "''")
 
         for (row, col), notes in comment_info.items():
             cell = ws.cell(row=row, column=col)
             if not all(isinstance(note, str) for note in notes):
                 raise ValueError("cell_export_info comments must be lists of strings")
-            note_text = "\n".join(notes)
-
-            comment = Comment(note_text, "Nurse Scheduling System")
-            cell.comment = comment
+            first_note_row = notes_ws.max_row + 1
+            for note in notes:
+                notes_ws.append([cell.coordinate, cell.value, note])
+                note_cell = notes_ws.cell(row=notes_ws.max_row, column=1)
+                note_cell.hyperlink = f"#'{schedule_sheet_name}'!{cell.coordinate}"
+                note_cell.style = "Hyperlink"
+            if notes:
+                cell.hyperlink = f"#'{notes_sheet_name}'!A{first_note_row}"
 
     # Apply custom export formatting styles.
     if style_info:

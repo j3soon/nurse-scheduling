@@ -73,6 +73,7 @@ def test_export_to_excel_applies_style_and_font_contrast():
 
     wb = load_workbook(output)
     ws = wb.active
+    assert wb.sheetnames == ["Sheet1"]
     assert ws["A1"].fill.fgColor.rgb == "FF111111"
     assert ws["A1"].font.color is not None
     assert ws["A1"].font.color.rgb == "FFFFFFFF"
@@ -87,7 +88,7 @@ def test_export_to_excel_applies_style_and_font_contrast():
     assert ws["B1"].border.right.style == "medium"
 
 
-def test_prettify_generates_comment_info_for_unmet_single_style_requests():
+def test_prettify_exports_notes_sheet_for_unmet_single_style_requests():
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -144,9 +145,43 @@ export:
     wb = load_workbook(output)
     ws = wb.active
     row, col = first_target_cell
-    comment = ws.cell(row=row, column=col).comment
-    assert comment is not None
-    assert "Weight of unmet single-style request: 10" in comment.text
+    schedule_cell = ws.cell(row=row, column=col)
+    notes_ws = wb["Notes"]
+    assert schedule_cell.comment is None
+    assert schedule_cell.hyperlink is not None
+    assert schedule_cell.hyperlink.target == "#'Notes'!A2"
+    assert schedule_cell.fill.fill_type is None
+    assert notes_ws.freeze_panes == "A2"
+    assert notes_ws.auto_filter.ref == "A1:C1"
+    assert [cell.value for cell in notes_ws[1]] == ["Cell", "Schedule Value", "Note"]
+    assert notes_ws["A2"].value == schedule_cell.coordinate
+    assert notes_ws["A2"].hyperlink is not None
+    assert notes_ws["A2"].hyperlink.target == f"#'{ws.title}'!{schedule_cell.coordinate}"
+    assert notes_ws["C2"].value == "Weight of unmet single-style request: 10"
+
+
+def test_export_to_excel_writes_each_note_as_a_separate_notes_sheet_row():
+    df = pd.DataFrame([["annotated"]])
+    output = BytesIO()
+
+    exporter.export_to_excel(df, output, {"comments": {(1, 1): ["first", "second"]}, "styles": {}})
+
+    wb = load_workbook(output)
+    ws = wb.active
+    notes_ws = wb["Notes"]
+    assert ws["A1"].comment is None
+    assert ws["A1"].hyperlink is not None
+    assert ws["A1"].hyperlink.target == "#'Notes'!A2"
+    assert ws["A1"].fill.fill_type is None
+    assert list(notes_ws.values) == [
+        ("Cell", "Schedule Value", "Note"),
+        ("A1", "annotated", "first"),
+        ("A1", "annotated", "second"),
+    ]
+    assert notes_ws["A2"].hyperlink is not None
+    assert notes_ws["A2"].hyperlink.target == "#'Sheet1'!A1"
+    assert notes_ws["A3"].hyperlink is not None
+    assert notes_ws["A3"].hyperlink.target == "#'Sheet1'!A1"
 
 
 def test_export_annotations_expand_compacted_shift_request_dates_before_matching_shape():

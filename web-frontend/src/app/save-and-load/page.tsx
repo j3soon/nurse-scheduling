@@ -28,6 +28,8 @@ import ToggleButton from '@/components/ToggleButton';
 import UploadButton from '@/components/UploadButton';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
+import { anonymizePeopleInState } from '@/utils/anonymizeSchedulingState';
+import { getMissingPreferredScatterDateGroups, randomizeConcreteDateShiftRequests } from '@/utils/randomizeShiftRequests';
 
 export default function SaveAndLoadPage() {
   const {
@@ -47,6 +49,9 @@ export default function SaveAndLoadPage() {
   const [editedYaml, setEditedYaml] = useState('');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [anonymizePeopleItems, setAnonymizePeopleItems] = useState(true);
+  const [anonymizePeopleGroups, setAnonymizePeopleGroups] = useState(false);
+  const [scatterShiftRequests, setScatterShiftRequests] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const copiedResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -81,17 +86,37 @@ export default function SaveAndLoadPage() {
 
   // Convert current state to YAML with custom flow style for leaf arrays
   const currentYaml = generateYamlFromState(filteredState);
+  const missingPreferredScatterDateGroups = getMissingPreferredScatterDateGroups(dateData.groups);
 
-  const handleDownload = () => {
-    const blob = new Blob([currentYaml], { type: 'application/x-yaml' });
+  const downloadYaml = (yamlContent: string, filenameSuffix = '') => {
+    const blob = new Blob([yamlContent], { type: 'application/x-yaml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `nurse-scheduling-${new Date().toISOString().split('T')[0]}.yaml`;
+    a.download = `nurse-scheduling${filenameSuffix}-${new Date().toISOString().split('T')[0]}.yaml`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownload = () => {
+    downloadYaml(currentYaml);
+  };
+
+  const handleDownloadAnonymized = () => {
+    try {
+      const exportState = scatterShiftRequests
+        ? randomizeConcreteDateShiftRequests(filteredState, dateData.items, dateData.groups)
+        : filteredState;
+      const anonymizedState = anonymizePeopleInState(exportState, {
+        anonymizePeopleItems,
+        anonymizePeopleGroups
+      });
+      downloadYaml(generateYamlFromState(anonymizedState), '-anonymized');
+    } catch (error) {
+      alert(`Unable to randomize shift requests: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const handleCopyToClipboard = async () => {
@@ -281,6 +306,64 @@ export default function SaveAndLoadPage() {
           </p>
         </div>
       </div>
+
+      <details className="mb-6 bg-gray-50 border border-gray-200 rounded-lg p-4">
+        <summary className="cursor-pointer text-lg font-medium text-gray-800">
+          Anonymize YAML
+        </summary>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-gray-600">
+            Download a temporary YAML snapshot with selected people identifiers replaced. Your current schedule is not modified.
+            Free-text descriptions are not changed.
+          </p>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={anonymizePeopleItems}
+                onChange={(e) => setAnonymizePeopleItems(e.target.checked)}
+                className="h-4 w-4"
+              />
+              Replace people item IDs
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={anonymizePeopleGroups}
+                onChange={(e) => setAnonymizePeopleGroups(e.target.checked)}
+                className="h-4 w-4"
+              />
+              Replace people group IDs
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={scatterShiftRequests}
+                onChange={(e) => setScatterShiftRequests(e.target.checked)}
+                className="h-4 w-4"
+              />
+              Scatter shift requests (developer only)
+            </label>
+          </div>
+          <button
+            onClick={handleDownloadAnonymized}
+            disabled={!anonymizePeopleItems && !anonymizePeopleGroups && !scatterShiftRequests}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 bg-gray-700 text-white hover:bg-gray-800 focus:ring-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <FiDownload className="h-4 w-4" />
+            Download Anonymized
+          </button>
+          <p className="text-sm text-gray-600">
+            Developer only: scattering preserves preferred WORKDAY/FREEDAY counts and consecutive runs. Date-group requests are unchanged.
+          </p>
+          {scatterShiftRequests && missingPreferredScatterDateGroups.length > 0 && (
+            <p className="text-sm text-amber-700">
+              Warning: {missingPreferredScatterDateGroups.join(' and ')} {missingPreferredScatterDateGroups.length === 1 ? 'group is' : 'groups are'} missing.
+              Scattering will fall back to WEEKDAY and WEEKEND groups.
+            </p>
+          )}
+        </div>
+      </details>
 
       {/* YAML Display/Editor */}
       <div className="bg-white shadow-md rounded-lg overflow-hidden">

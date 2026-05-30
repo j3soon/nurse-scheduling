@@ -36,12 +36,22 @@ CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
 TESTCASES_DIR = f"{CURRENT_DIR}/testcases"
 
 IGNORE_TESTS = []
+EXCLUDED_TESTCASE_DIRS = {"real"}
 WRITE_TO_CSV = False
 CONTINUE_ON_ERROR = True  # False
 
 
-def run_schedule_regression_test(solver: str) -> None:
+def get_regression_testcases() -> list[str]:
     tests = glob.glob(f"{TESTCASES_DIR}/**/*.yaml", recursive=True)
+    return [
+        filepath
+        for filepath in tests
+        if os.path.relpath(filepath, TESTCASES_DIR).split(os.sep, maxsplit=1)[0] not in EXCLUDED_TESTCASE_DIRS
+    ]
+
+
+def run_schedule_regression_test(solver: str) -> None:
+    tests = get_regression_testcases()
     total_tests = len(tests)
     error_count = 0
     failed_cases: list[str] = []
