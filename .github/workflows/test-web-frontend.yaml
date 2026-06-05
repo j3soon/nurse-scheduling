@@ -42,11 +42,10 @@ jobs:
         run: cd web-frontend && bun install
       - name: Install Playwright Chromium
         run: cd web-frontend && bunx playwright install --with-deps chromium
-      - name: Run Playwright tests
-        run: cd web-frontend && bun run test:e2e
+      - name: Run Playwright tests with coverage
+        run: cd web-frontend && bun run test:e2e:coverage
       - name: Generate Playwright coverage report
-        if: github.event_name != 'pull_request'
-        run: cd web-frontend && bun run test:e2e:coverage -- e2e/date-range-cascade.spec.ts && bun run coverage:e2e:report
+        run: cd web-frontend && bun run coverage:e2e:report
       - name: Upload Playwright coverage to Codecov
         if: github.event_name != 'pull_request'
         uses: codecov/codecov-action@v4
