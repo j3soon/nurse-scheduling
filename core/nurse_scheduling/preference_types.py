@@ -240,6 +240,17 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                 # Construct: is_match = all pattern elements match.
                 is_match_var_name = f"{unique_var_prefix}_is_match"
                 is_literal_pattern = all(is_literal for _match_expr, is_literal in pattern_element_matches)
+                if weight < 0 and is_literal_pattern:
+                    # For negative soft successions, is_match only needs to
+                    # mark a violation. If every literal matches, the right
+                    # side becomes 1 and forces is_match to 1. Otherwise, the
+                    # constraint allows is_match to remain 0, and the negative
+                    # objective weight makes 0 strictly preferred.
+                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.new_bool_var(is_match_var_name)
+                    ctx.solver.add_constraint(is_match >= actual_n_matched - target_n_matched + 1)
+                    utils.add_objective(ctx, weight, is_match)
+                    ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 0))
+                    continue
                 if is_literal_pattern and ctx.solver.should_use_bool_and_var(len(pattern_element_matches)):
                     ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_and_var(
                         is_match_var_name,
