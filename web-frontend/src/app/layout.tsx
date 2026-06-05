@@ -18,7 +18,7 @@
  */
 
 // The layout for the entire app
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import Navigation from "@/components/Navigation";
 import AppVersionText from "@/components/AppVersionText";
@@ -41,6 +41,10 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.svg",
   },
+};
+
+export const viewport: Viewport = {
+  colorScheme: "light",
 };
 
 export default function RootLayout({

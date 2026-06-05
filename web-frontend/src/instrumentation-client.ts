@@ -14,7 +14,7 @@ if (!isSentryDisabled) {
     integrations: [
       Sentry.replayIntegration(),
       Sentry.feedbackIntegration({
-        colorScheme: "system",
+        colorScheme: "light",
         enableScreenshot: true,
         isNameRequired: true,
         isEmailRequired: true,
