@@ -268,6 +268,31 @@ def _format_unexpected_error(error: Exception) -> str:
     return f"{error}\n\n{UNEXPECTED_ERROR_VERSION_ADVICE}"
 
 
+def _capture_optimize_exception(job: OptimizeJob, content: bytes, error: Exception) -> None:
+    if not _should_enable_sentry():
+        return
+
+    import sentry_sdk
+
+    # Ref: https://docs.sentry.io/platforms/python/enriching-events/scopes/
+    with sentry_sdk.new_scope() as scope:
+        scope.set_context(
+            "schedule_state",
+            {
+                "attached": True,
+                "input_name": job.input_name,
+                "job_id": job.id,
+                "size_bytes": len(content),
+            },
+        )
+        scope.add_attachment(
+            bytes=content,
+            filename=job.input_name,
+            content_type="application/x-yaml",
+        )
+        sentry_sdk.capture_exception(error)
+
+
 def _run_optimize_job(job_id: str, content: bytes) -> None:
     job = _update_optimize_job(job_id, status=OptimizeJobStatus.RUNNING, started_at=datetime.now())
     _publish_job_event(job, "status", {"status": OptimizeJobStatus.RUNNING.value})
@@ -313,6 +338,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         _publish_job_event(job, "complete", _optimize_job_response(job))
     except Exception as e:
         logging.error("Error during optimization job %s: %s", job_id, str(e))
+        _capture_optimize_exception(job, content, e)
         job = _update_optimize_job(
             job_id,
             status=OptimizeJobStatus.FAILED,

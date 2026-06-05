@@ -27,7 +27,12 @@ const sentryMocks = vi.hoisted(() => ({
   setTag: vi.fn(),
 }));
 
+const schedulingStateMocks = vi.hoisted(() => ({
+  getLatestSchedulingYamlForSentry: vi.fn(),
+}));
+
 vi.mock('@sentry/nextjs', () => sentryMocks);
+vi.mock('@/utils/sentrySchedulingState', () => schedulingStateMocks);
 
 describe('instrumentation-client', () => {
   beforeEach(() => {
@@ -47,5 +52,36 @@ describe('instrumentation-client', () => {
         isNameRequired: true,
       }),
     );
+  });
+
+  it('attaches the latest scheduling YAML before sending browser events', async () => {
+    schedulingStateMocks.getLatestSchedulingYamlForSentry.mockReturnValue('apiVersion: test\n');
+
+    await import('./instrumentation-client');
+
+    const sentryOptions = sentryMocks.init.mock.calls[0][0];
+    const event = {};
+    const hint = {};
+
+    const processedEvent = sentryOptions.beforeSend(event, hint);
+
+    expect(processedEvent).toBe(event);
+    expect(hint).toEqual({
+      attachments: [
+        {
+          filename: 'nurse-scheduling-state.yaml',
+          data: 'apiVersion: test\n',
+          contentType: 'application/x-yaml',
+        },
+      ],
+    });
+    expect(event).toEqual({
+      contexts: {
+        scheduling_state: {
+          attached: true,
+          sizeBytes: 17,
+        },
+      },
+    });
   });
 });

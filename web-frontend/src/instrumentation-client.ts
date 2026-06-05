@@ -3,6 +3,7 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
+import { getLatestSchedulingYamlForSentry } from "@/utils/sentrySchedulingState";
 
 const isSentryDisabled = process.env.NEXT_PUBLIC_DISABLE_SENTRY === "1";
 
@@ -37,6 +38,33 @@ if (!isSentryDisabled) {
     // Enable sending user PII (Personally Identifiable Information)
     // https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/#sendDefaultPii
     sendDefaultPii: true,
+
+    // Ref: https://docs.sentry.io/platforms/javascript/enriching-events/attachments/#add-or-modify-attachments-before-sending
+    beforeSend(event, hint) {
+      const yaml = getLatestSchedulingYamlForSentry();
+
+      if (yaml) {
+        hint.attachments = [
+          ...(hint.attachments ?? []),
+          {
+            filename: "nurse-scheduling-state.yaml",
+            data: yaml,
+            contentType: "application/x-yaml",
+          },
+        ];
+
+        // Ref: https://docs.sentry.io/platforms/react-native/tracing/instrumentation/custom-instrumentation/#adding-attributes-to-all-spans
+        event.contexts = {
+          ...event.contexts,
+          scheduling_state: {
+            attached: true,
+            sizeBytes: new Blob([yaml]).size,
+          },
+        };
+      }
+
+      return event;
+    },
   });
 }
 
