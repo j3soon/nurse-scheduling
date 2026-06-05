@@ -75,6 +75,119 @@ export async function disableModalDialogs(page: Page) {
   });
 }
 
+type MockOptimizeAndExportOptions = {
+  status?: number;
+  errorDetail?: string;
+  filename?: string;
+  score?: number;
+  solverStatus?: string;
+  xlsxReady?: boolean;
+  body?: string;
+  onSubmit?: (body: string) => void;
+};
+
+export async function mockOptimizeAndExport(
+  page: Page,
+  {
+    status = 200,
+    errorDetail = 'solver unavailable',
+    filename,
+    score = 99,
+    solverStatus = 'OPTIMAL',
+    xlsxReady = true,
+    body = 'fake-xlsx',
+    onSubmit,
+  }: MockOptimizeAndExportOptions = {},
+) {
+  const jobId = 'e2e-job';
+
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'EventSource', {
+      configurable: true,
+      value: undefined,
+    });
+  });
+
+  await page.route('http://localhost:8000/optimize', async route => {
+    const request = route.request();
+
+    if (request.method() !== 'POST') {
+      await route.fallback();
+      return;
+    }
+
+    onSubmit?.((await request.postData()) ?? '');
+
+    if (status >= 400) {
+      await route.fulfill({
+        status,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ detail: errorDetail }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId,
+        status: 'queued',
+        score: null,
+        solverStatus: null,
+        error: null,
+        xlsxReady: false,
+        links: {
+          status: `/optimize/${jobId}`,
+          events: `/optimize/${jobId}/events`,
+          xlsx: `/optimize/${jobId}/xlsx`,
+        },
+      }),
+    });
+  });
+
+  await page.route(`http://localhost:8000/optimize/${jobId}`, async route => {
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({ status: 204 });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId,
+        status: xlsxReady ? 'optimal' : 'infeasible',
+        score,
+        solverStatus,
+        error: null,
+        xlsxReady,
+        links: {
+          status: `/optimize/${jobId}`,
+          events: `/optimize/${jobId}/events`,
+          xlsx: `/optimize/${jobId}/xlsx`,
+        },
+      }),
+    });
+  });
+
+  await page.route(`http://localhost:8000/optimize/${jobId}/xlsx`, async route => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
+
+    if (filename) {
+      headers['Content-Disposition'] = `attachment; filename="${filename}"`;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers,
+      body,
+    });
+  });
+}
+
 export async function setDateRange(
   page: Page,
   startDate = '2026-05-01',

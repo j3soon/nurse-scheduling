@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState, setDateRange } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState, setDateRange } from './helpers';
 
 test('optimize and export surfaces backend validation errors for invalid upstream state', async ({ page }) => {
   /*
@@ -46,13 +46,7 @@ test('optimize and export surfaces backend validation errors for invalid upstrea
   });
   await setDateRange(page);
 
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    await route.fulfill({
-      status: 422,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ detail: 'No people or dates configured' }),
-    });
-  });
+  await mockOptimizeAndExport(page, { status: 422, errorDetail: 'No people or dates configured' });
 
   await page.goto('/optimize-and-export');
   await expect(page.getByRole('heading', { name: 'Optimize and Export', exact: true })).toBeVisible();

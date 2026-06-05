@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
 
 test('optimize and export sends the modified prettify and timeout options', async ({ page }) => {
   /*
@@ -51,20 +51,11 @@ test('optimize and export sends the modified prettify and timeout options', asyn
     export: { formatting: [] },
   });
 
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBody = (await route.request().postData()) ?? '';
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      },
-      body: 'fake-xlsx',
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
   await expect(page.getByRole('heading', { name: 'Optimize and Export', exact: true })).toBeVisible();
-  const prettifyCheckbox = page.getByLabel('Enable Prettify');
+  const prettifyCheckbox = page.getByLabel('Prettify XLSX');
   const timeoutInput = page.locator('input[type="number"]').first();
   await expect(prettifyCheckbox).toBeChecked();
   await expect(timeoutInput).toHaveValue('300');

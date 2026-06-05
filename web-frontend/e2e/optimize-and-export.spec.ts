@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
 
 test('optimize and export submits YAML to the backend and renders success metadata', async ({ page }) => {
   /*
@@ -51,16 +51,7 @@ test('optimize and export submits YAML to the backend and renders success metada
     export: { formatting: [] },
   });
 
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBody = (await route.request().postData()) ?? '';
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      },
-      body: 'fake-xlsx',
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
   await expect(page.getByRole('heading', { name: 'Optimize and Export', exact: true })).toBeVisible();
@@ -69,7 +60,7 @@ test('optimize and export submits YAML to the backend and renders success metada
 
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
-  await expect(page.getByText('File: output.xlsx')).toBeVisible();
+  await expect(page.getByText('output.xlsx')).toBeVisible();
   expect(submittedBody).toContain('yaml_content');
   expect(submittedBody).toContain('apiVersion: test');
   expect(submittedBody).toContain('prettify');

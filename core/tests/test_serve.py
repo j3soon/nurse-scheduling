@@ -343,8 +343,16 @@ class TestServeInternals:
 
         from nurse_scheduling.serve import _get_app_version
 
+        repo_root = Path(serve.__file__).resolve().parents[2]
+
         assert _get_app_version() == "v1.2.3-dirty"
-        assert seen["cmd"][:4] == ["git", "-c", "safe.directory=/app", "-C"]
+        assert seen["cmd"][:5] == [
+            "git",
+            "-c",
+            f"safe.directory={repo_root}",
+            "-C",
+            str(repo_root),
+        ]
         assert seen["cmd"][5:] == ["describe", "--tags", "--always", "--dirty"]
         assert seen["text"] is True
 

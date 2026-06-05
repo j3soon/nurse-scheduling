@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, setDateRange } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, setDateRange } from './helpers';
 
 test('optimize request body reflects live page edits without going through Save and Load edit mode', async ({ page }) => {
   /*
@@ -45,14 +45,7 @@ test('optimize request body reflects live page edits without going through Save 
   await expect(peopleTable.getByText('1. Person Prime', { exact: true })).toBeVisible();
 
   let submittedBody = '';
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBody = (await route.request().postData()) ?? '';
-    await route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: 'fake-xlsx',
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
   const downloadPromise = page.waitForEvent('download');

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, setDateRange } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, setDateRange } from './helpers';
 
 test('optimize request body follows undo and redo of upstream edits', async ({ page }) => {
   /*
@@ -42,14 +42,7 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
   await expect(page.getByText('Undo Redo Nurse', { exact: true })).toBeVisible();
 
   const submittedBodies: string[] = [];
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBodies.push((await route.request().postData()) ?? '');
-    await route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: 'fake-xlsx',
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBodies.push(body); } });
 
   await page.getByRole('heading', { name: 'People Management', exact: true }).click();
   await page.keyboard.press('Control+z');

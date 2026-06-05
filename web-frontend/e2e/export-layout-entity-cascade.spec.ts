@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
 
 test('export layout references cascade through entity rename, delete, undo, and redo', async ({ page }) => {
   /*
@@ -223,14 +223,7 @@ test('optimize payload stays free of stale IDs after delete cascade', async ({ p
   await shiftTypesTable.locator('tr').filter({ has: page.getByText('2. N', { exact: true }) }).getByRole('button', { name: 'Delete' }).click();
 
   let submittedBody = '';
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBody = (await route.request().postData()) ?? '';
-    await route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: 'fake-xlsx',
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();

@@ -48,32 +48,94 @@ test('optimize and export works against a real local HTTP server instead of Play
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': '*',
-        'Access-Control-Expose-Headers': 'Content-Disposition, X-Schedule-Score, X-Schedule-Status',
+        'Access-Control-Expose-Headers': 'Content-Disposition',
       });
       res.end();
       return;
     }
 
-    if (req.method !== 'POST' || req.url !== '/optimize-and-export-xlsx') {
+    if (req.method === 'GET' && req.url === '/health') {
+      res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({
+        status: 'ok',
+        version: 'alpha',
+        apiVersion: 'alpha',
+        appVersion: 'v-test',
+      }));
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/optimize') {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      submittedBody = Buffer.concat(chunks).toString('utf8');
+
+      res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({
+        jobId: 'http-job',
+        status: 'queued',
+        score: null,
+        solverStatus: null,
+        error: null,
+        xlsxReady: false,
+        links: {
+          status: '/optimize/http-job',
+          events: '/optimize/http-job/events',
+          xlsx: '/optimize/http-job/xlsx',
+        },
+      }));
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/optimize/http-job') {
+      res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({
+        jobId: 'http-job',
+        status: 'optimal',
+        score: 99,
+        solverStatus: 'OPTIMAL',
+        error: null,
+        xlsxReady: true,
+        links: {
+          status: '/optimize/http-job',
+          events: '/optimize/http-job/events',
+          xlsx: '/optimize/http-job/xlsx',
+        },
+      }));
+      return;
+    }
+
+    if (req.method === 'DELETE' && req.url === '/optimize/http-job') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end();
+      return;
+    }
+
+    if (req.method !== 'GET' || req.url !== '/optimize/http-job/xlsx') {
       res.writeHead(404).end('Not Found');
       return;
     }
 
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    submittedBody = Buffer.concat(chunks).toString('utf8');
-
     res.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Expose-Headers': 'Content-Disposition, X-Schedule-Score, X-Schedule-Status',
+      'Access-Control-Expose-Headers': 'Content-Disposition',
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': 'attachment; filename="schedule-http.xlsx"',
-      'X-Schedule-Score': '99',
-      'X-Schedule-Status': 'OPTIMAL',
     });
     res.end('fake-xlsx');
   });
@@ -82,6 +144,13 @@ test('optimize and export works against a real local HTTP server instead of Play
   const port = (server.address() as AddressInfo).port;
 
   try {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'EventSource', {
+        configurable: true,
+        value: undefined,
+      });
+    });
+
     await page.goto('/optimize-and-export');
     await expect(page.getByRole('heading', { name: 'Optimize and Export', exact: true })).toBeVisible();
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
@@ -91,9 +160,9 @@ test('optimize and export works against a real local HTTP server instead of Play
     await page.getByRole('button', { name: 'Optimize and Download' }).click();
 
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
-    await expect(page.getByText('File: schedule-http.xlsx')).toBeVisible();
-    await expect(page.getByText('Score: 99')).toBeVisible();
-    await expect(page.getByText('Status: OPTIMAL')).toBeVisible();
+    await expect(page.getByText('schedule-http.xlsx')).toBeVisible();
+    await expect(page.getByText('99')).toBeVisible();
+    await expect(page.getByText('OPTIMAL')).toBeVisible();
     expect(submittedBody).toContain('yaml_content');
     expect(submittedBody).toContain('apiVersion: test');
     expect(submittedBody).toContain('description: http server optimize seed');
