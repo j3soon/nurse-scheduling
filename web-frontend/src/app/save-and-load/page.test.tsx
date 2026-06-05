@@ -236,6 +236,41 @@ describe('SaveAndLoadPage', () => {
     expect(alert).not.toHaveBeenCalledWith('YAML file loaded successfully!');
   });
 
+  it('warns when uploaded YAML app version ends with dirty even if the base version matches', async () => {
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    render(<SaveAndLoadPage />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'dirty.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('dirty.yaml', 'apiVersion: alpha\ndescription: dirty-upload\nappVersion: unknown-dirty\n');
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Dirty app version detected.'));
+    });
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('development build with uncommitted changes'));
+    expect(loadFromYaml).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalledWith('YAML file loaded successfully!');
+  });
+
+  it('uses the normal mismatch warning when dirty is not the app version suffix', async () => {
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    render(<SaveAndLoadPage />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['ignored'], 'dirty-middle.yaml', { type: 'application/x-yaml' });
+    fileContentsByName.set('dirty-middle.yaml', 'apiVersion: alpha\ndescription: dirty-middle\nappVersion: v0.0.1-dirty-extra\n');
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('App version mismatch detected.'));
+    });
+    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('Dirty app version detected.'));
+    expect(loadFromYaml).not.toHaveBeenCalled();
+  });
+
   it('keeps the current preview, copy, and download state after upload confirmation is cancelled', async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);

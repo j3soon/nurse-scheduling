@@ -156,6 +156,10 @@ export default function SaveAndLoadPage() {
       return `The loaded file does not contain app version information. It may have been created with an older version of the application. Current app version: ${CURRENT_APP_VERSION}`;
     }
 
+    if (fileVersion.endsWith('-dirty')) {
+      return `Dirty app version detected.\n\nFile app version: ${fileVersion}\nCurrent app version: ${CURRENT_APP_VERSION}\n\nThis YAML was created by a development build with uncommitted changes. It may not match a reproducible application version. If nothing breaks, you can continue.`;
+    }
+
     if (fileVersion !== CURRENT_APP_VERSION) {
       return `App version mismatch detected.\n\nFile app version: ${fileVersion}\nCurrent app version: ${CURRENT_APP_VERSION}\n\nOlder YAML may not work after breaking changes, though we try to preserve compatibility. If nothing breaks, you can continue.`;
     }
