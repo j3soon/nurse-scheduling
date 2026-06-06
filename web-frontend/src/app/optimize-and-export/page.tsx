@@ -42,6 +42,7 @@ interface ServerHealthResponse {
 interface OptimizeJobResponse {
   jobId: string;
   status: string;
+  queuePosition?: number | null;
   score: number | null;
   solverStatus: string | null;
   error: string | null;
@@ -171,6 +172,16 @@ function formatElapsedSeconds(value: number): string {
   const minutes = Math.floor(value / 60);
   const seconds = Math.round(value % 60);
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+}
+
+function formatRunStatus(status: string | null, queuePosition?: number | null): string {
+  if (!status) {
+    return 'Idle';
+  }
+  if (status.toLowerCase() === 'queued' && queuePosition !== undefined && queuePosition !== null) {
+    return `Queued, position ${queuePosition}`;
+  }
+  return status;
 }
 
 function formatProgressSummary(data: OptimizeProgressEvent): string {
@@ -382,6 +393,7 @@ export default function OptimizeAndExportPage() {
       const poll = async () => {
         try {
           const updatedJob = await getOptimizeJobStatus(job);
+          setCurrentJob(updatedJob);
           setScheduleStatus(updatedJob.status);
 
           if (TERMINAL_JOB_STATUSES.has(updatedJob.status)) {
@@ -415,6 +427,7 @@ export default function OptimizeAndExportPage() {
           if (updatedJob.status) {
             setScheduleStatus(updatedJob.status);
           }
+          setCurrentJob(currentJob => currentJob ? { ...currentJob, ...updatedJob } : currentJob);
         });
 
         eventSource.addEventListener('progress', (event) => {
@@ -452,14 +465,13 @@ export default function OptimizeAndExportPage() {
         });
 
         eventSource.addEventListener('error', (event) => {
-          eventSource.close();
           if ('data' in event && typeof event.data === 'string' && event.data) {
+            eventSource.close();
             const parsedData = parseSseEventData(event as MessageEvent);
             appendSseEvent('error', parsedData);
             reject(new Error((parsedData as OptimizeJobResponse).error ?? 'Optimization failed'));
           } else {
-            appendSseEvent('error', 'Optimization event stream failed');
-            void pollOptimizeJob(job).then(resolve, reject);
+            appendSseEvent('error', 'Optimization event stream disconnected; waiting to reconnect');
           }
         });
       });
@@ -627,7 +639,11 @@ export default function OptimizeAndExportPage() {
       ? 'border-red-200 bg-red-50 text-red-700'
       : 'border-gray-200 bg-gray-50 text-gray-600';
 
-  const runStatus = scheduleStatus ?? (isLoading ? 'Starting' : 'Idle');
+  const runStatus = scheduleStatus
+    ? formatRunStatus(scheduleStatus, currentJob?.queuePosition)
+    : isLoading
+      ? 'Starting'
+      : 'Idle';
   const runStatusClasses = isLoading
     ? 'bg-blue-50 text-blue-700 ring-blue-200'
     : errorMessage
@@ -859,6 +875,12 @@ export default function OptimizeAndExportPage() {
             <div className="text-sm text-gray-600">
               {!currentJobId ? (
                 <p>No optimization has been started.</p>
+              ) : isLoading && scheduleStatus === 'queued' ? (
+                <p>
+                  {currentJob?.queuePosition
+                    ? `Waiting in optimization queue at position ${currentJob.queuePosition}.`
+                    : 'Waiting in optimization queue.'}
+                </p>
               ) : isLoading && !incumbentResult ? (
                 <p>Waiting for first feasible solution...</p>
               ) : incumbentResult ? (

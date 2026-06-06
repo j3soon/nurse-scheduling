@@ -515,7 +515,53 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(eventSource.close).toHaveBeenCalled();
   });
 
-  it('recovers from a dropped SSE stream by polling job status', async () => {
+  it('shows queued position updates received through SSE', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(healthyResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_queued',
+          status: 'queued',
+          queuePosition: 3,
+          score: null,
+          solverStatus: null,
+          error: null,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_queued',
+            events: '/optimize/opt_queued/events',
+            xlsx: '/optimize/opt_queued/xlsx',
+          },
+        }),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    expect(screen.getByText('Queued, position 3')).toBeInTheDocument();
+    expect(screen.getByText('Waiting in optimization queue at position 3.')).toBeInTheDocument();
+
+    act(() => {
+      MockEventSource.instances[0].emit('status', { status: 'queued', queuePosition: 2 });
+    });
+
+    expect(screen.getByText('Queued, position 2')).toBeInTheDocument();
+    expect(screen.getByText('Waiting in optimization queue at position 2.')).toBeInTheDocument();
+
+    act(() => {
+      MockEventSource.instances[0].emit('status', { status: 'running', queuePosition: null });
+    });
+
+    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for first feasible solution...')).toBeInTheDocument();
+  });
+
+  it('keeps a dropped SSE stream open for automatic reconnection', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
     const appendChildSpy = vi.spyOn(document.body, 'appendChild');
@@ -549,22 +595,6 @@ describe('OptimizeAndExportPage error handling', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_sse_drop',
-          status: 'optimal',
-          score: 77,
-          solverStatus: 'OPTIMAL',
-          error: null,
-          xlsxReady: true,
-          links: {
-            status: '/optimize/opt_sse_drop',
-            events: '/optimize/opt_sse_drop/events',
-            xlsx: '/optimize/opt_sse_drop/xlsx',
-          },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
         blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
         headers: new Headers({
           'Content-Disposition': 'attachment; filename=recovered.xlsx',
@@ -584,13 +614,27 @@ describe('OptimizeAndExportPage error handling', () => {
       });
     });
 
+    expect(screen.getByText('Optimization event stream disconnected; waiting to reconnect')).toBeInTheDocument();
+    expect(MockEventSource.instances[0].close).not.toHaveBeenCalled();
+
+    act(() => {
+      MockEventSource.instances[0].emit('complete', {
+        jobId: 'opt_sse_drop',
+        status: 'optimal',
+        score: 77,
+        solverStatus: 'OPTIMAL',
+        error: null,
+        xlsxReady: true,
+        links: {
+          status: '/optimize/opt_sse_drop',
+          events: '/optimize/opt_sse_drop/events',
+          xlsx: '/optimize/opt_sse_drop/xlsx',
+        },
+      });
+    });
+
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
-    expect(screen.getByText('Optimization event stream failed')).toBeInTheDocument();
     expect(screen.getByText('recovered.xlsx')).toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/optimize/opt_sse_drop',
-      expect.objectContaining({ method: 'GET' })
-    );
     expect(appendChildSpy).toHaveBeenCalled();
     expect(removeChildSpy).toHaveBeenCalled();
     expect(MockEventSource.instances[0].close).toHaveBeenCalled();

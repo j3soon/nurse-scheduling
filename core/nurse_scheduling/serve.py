@@ -43,12 +43,16 @@ from .jobs import (
     _get_optimize_job,
     _is_job_stop_requested,
     _is_terminal_job_status,
+    _job_status_event_data,
     _optimize_job_response,
     _optimize_jobs,
     _optimize_jobs_lock,
     _publish_job_event,
+    _refresh_queue_positions,
+    _register_sse_connection,
     _request_optimize_job_stop,
     _solver_supports_job_stop,
+    _unregister_sse_connection,
     _update_optimize_job,
     utc_now,
 )
@@ -98,6 +102,7 @@ app = FastAPI(title=title, version=version)
 
 # Ref: https://fastapi.tiangolo.com/tutorial/handling-errors/#override-request-validation-exceptions
 
+
 @app.exception_handler(RequestValidationError)
 async def sentry_request_validation_exception_handler(
     request: Request,
@@ -123,6 +128,9 @@ MAX_OPTIMIZATION_TIMEOUT_SECONDS = 60 * 60
 OPTIMIZE_MAX_PENDING_JOBS = optimize_jobs_state.OPTIMIZE_MAX_PENDING_JOBS
 OPTIMIZE_MAX_RETAINED_JOBS = optimize_jobs_state.OPTIMIZE_MAX_RETAINED_JOBS
 OPTIMIZE_JOB_TTL_SECONDS = optimize_jobs_state.OPTIMIZE_JOB_TTL_SECONDS
+OPTIMIZE_SSE_KEEPALIVE_SECONDS = optimize_jobs_state.OPTIMIZE_SSE_KEEPALIVE_SECONDS
+OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS
+OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS
 OPTIMIZE_MAX_WORKERS = 1
 UNEXPECTED_ERROR_VERSION_ADVICE = (
     "If this error was unexpected, check that your frontend and backend versions match. "
@@ -130,6 +138,7 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
 )
 _optimize_executor = ThreadPoolExecutor(max_workers=OPTIMIZE_MAX_WORKERS)
 uuid = optimize_jobs_state.uuid
+_cancel_abandoned_optimize_jobs = optimize_jobs_state._cancel_abandoned_optimize_jobs
 
 
 async def _read_optimization_input(
@@ -181,19 +190,27 @@ def _format_unexpected_error(error: Exception) -> str:
     return f"{error}\n\n{UNEXPECTED_ERROR_VERSION_ADVICE}"
 
 
+def _job_cancellation_error(job: OptimizeJob) -> str:
+    return job.error or "Optimization cancelled."
+
+
 def _run_optimize_job(job_id: str, content: bytes) -> None:
-    if _get_optimize_job(job_id).cancel_requested:
+    current_job = _get_optimize_job(job_id)
+    if current_job.cancel_requested:
+        if _is_terminal_job_status(current_job.status):
+            return
         job = _update_optimize_job(
             job_id,
             status=OptimizeJobStatus.CANCELLED,
-            error="Optimization cancelled.",
+            error=_job_cancellation_error(current_job),
             finished_at=utc_now(),
         )
         _publish_job_event(job, "complete", _optimize_job_response(job))
+        _refresh_queue_positions()
         return
 
     job = _update_optimize_job(job_id, status=OptimizeJobStatus.RUNNING, started_at=utc_now())
-    _publish_job_event(job, "status", {"status": OptimizeJobStatus.RUNNING.value})
+    _refresh_queue_positions()
 
     try:
 
@@ -220,14 +237,16 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             should_stop=should_stop,
         )
 
-        if _get_optimize_job(job_id).cancel_requested:
+        current_job = _get_optimize_job(job_id)
+        if current_job.cancel_requested:
             job = _update_optimize_job(
                 job_id,
                 status=OptimizeJobStatus.CANCELLED,
-                error="Optimization cancelled.",
+                error=_job_cancellation_error(current_job),
                 finished_at=utc_now(),
             )
             _publish_job_event(job, "complete", _optimize_job_response(job))
+            _refresh_queue_positions()
             return
 
         if df is None:
@@ -238,6 +257,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
                 finished_at=utc_now(),
             )
             _publish_job_event(job, "complete", _optimize_job_response(job))
+            _refresh_queue_positions()
             return
 
         output_buffer = BytesIO()
@@ -254,6 +274,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             xlsx_filename=output_filename,
         )
         _publish_job_event(job, "complete", _optimize_job_response(job))
+        _refresh_queue_positions()
     except Exception as e:
         logging.error("Error during optimization job %s: %s", job_id, str(e))
         capture_optimize_exception(job, content, e)
@@ -264,6 +285,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             finished_at=utc_now(),
         )
         _publish_job_event(job, "error", _optimize_job_response(job))
+        _refresh_queue_positions()
 
 
 def _format_sse_event(event: str, data: dict[str, Any]) -> str:
@@ -272,33 +294,37 @@ def _format_sse_event(event: str, data: dict[str, Any]) -> str:
 
 def _stream_optimize_job_events(job: OptimizeJob):
     event_index = 0
-    while True:
-        heartbeat = False
-        with job.condition:
-            while event_index >= len(job.events) and not _is_terminal_job_status(job.status):
-                job.condition.wait(timeout=15)
-                if event_index >= len(job.events):
-                    heartbeat = True
-                    break
+    _register_sse_connection(job)
+    try:
+        while True:
+            heartbeat = False
+            with job.condition:
+                while event_index >= len(job.events) and not _is_terminal_job_status(job.status):
+                    job.condition.wait(timeout=OPTIMIZE_SSE_KEEPALIVE_SECONDS)
+                    if event_index >= len(job.events):
+                        heartbeat = True
+                        break
 
-            if heartbeat:
-                event = None
-            elif event_index < len(job.events):
-                event = job.events[event_index]
-                event_index += 1
-            elif _is_terminal_job_status(job.status):
-                event = {"event": "complete", "data": _optimize_job_response(job)}
-                event_index += 1
-            else:
-                event = None
+                if heartbeat:
+                    event = None
+                elif event_index < len(job.events):
+                    event = job.events[event_index]
+                    event_index += 1
+                elif _is_terminal_job_status(job.status):
+                    event = {"event": "complete", "data": _optimize_job_response(job)}
+                    event_index += 1
+                else:
+                    event = None
 
-        if event is None:
-            yield ": keepalive\n\n"
-            continue
+            if event is None:
+                yield ": keepalive\n\n"
+                continue
 
-        yield _format_sse_event(event["event"], event["data"])
-        if event["event"] in {"complete", "error"}:
-            return
+            yield _format_sse_event(event["event"], event["data"])
+            if event["event"] in {"complete", "error"}:
+                return
+    finally:
+        _unregister_sse_connection(job)
 
 
 # Regex to match allowed origins:
@@ -387,7 +413,9 @@ async def cancel_optimize_job(job_id: str):
 @app.post("/optimize/{job_id}/finish-now")
 async def finish_optimize_job_now(job_id: str):
     job = _request_optimize_job_stop(job_id, finish_now=True)
-    _publish_job_event(job, "status", {"status": job.status.value, "finishNowRequested": True})
+    event_data = _job_status_event_data(job)
+    event_data["finishNowRequested"] = True
+    _publish_job_event(job, "status", event_data)
     return _optimize_job_response(job)
 
 

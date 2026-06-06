@@ -17,7 +17,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import os
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -62,11 +64,26 @@ class OptimizeJob:
     xlsx_filename: str | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     condition: threading.Condition = field(default_factory=threading.Condition)
+    queue_position: int | None = None
+    active_sse_connections: int = 0
+    has_had_sse_connection: bool = False
+    last_sse_disconnected_at: datetime | None = None
+    client_abandoned: bool = False
+
+
+def _positive_environment_integer(name: str, default: int) -> int:
+    value = int(os.getenv(name, default))
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
 
 
 OPTIMIZE_JOB_TTL_SECONDS = 30 * 60
 OPTIMIZE_MAX_PENDING_JOBS = 8
 OPTIMIZE_MAX_RETAINED_JOBS = 32
+OPTIMIZE_SSE_KEEPALIVE_SECONDS = _positive_environment_integer("OPTIMIZE_SSE_KEEPALIVE_SECONDS", 10)
+OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS = _positive_environment_integer("OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS", 45)
+OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS = _positive_environment_integer("OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS", 5)
 _optimize_jobs: dict[str, OptimizeJob] = {}
 _optimize_jobs_lock = threading.Lock()
 
@@ -94,6 +111,31 @@ def _publish_job_event(job: OptimizeJob, event: str, data: dict[str, Any]) -> No
     with job.condition:
         job.events.append({"event": event, "data": data})
         job.condition.notify_all()
+
+
+def _job_status_event_data(job: OptimizeJob) -> dict[str, Any]:
+    return {
+        "status": job.status.value,
+        "queuePosition": job.queue_position,
+    }
+
+
+def _refresh_queue_positions() -> None:
+    changed_jobs: list[OptimizeJob] = []
+    with _optimize_jobs_lock:
+        queued_jobs = sorted(
+            (job for job in _optimize_jobs.values() if job.status == OptimizeJobStatus.QUEUED),
+            key=lambda job: job.created_at,
+        )
+        positions = {job.id: index for index, job in enumerate(queued_jobs, start=1)}
+        for job in _optimize_jobs.values():
+            new_position = positions.get(job.id)
+            if job.queue_position != new_position:
+                job.queue_position = new_position
+                changed_jobs.append(job)
+
+    for job in changed_jobs:
+        _publish_job_event(job, "status", _job_status_event_data(job))
 
 
 def _cleanup_expired_optimize_jobs(now: datetime | None = None) -> list[str]:
@@ -156,7 +198,7 @@ def _create_optimize_job(input_name: str, solver: str, prettify: bool | None, ti
             timeout=timeout,
         )
         _optimize_jobs[job.id] = job
-    _publish_job_event(job, "status", {"status": job.status.value})
+    _refresh_queue_positions()
     return job
 
 
@@ -174,6 +216,7 @@ def _is_job_stop_requested(job_id: str) -> bool:
 
 
 def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
+    complete_immediately = False
     with _optimize_jobs_lock:
         job = _optimize_jobs.get(job_id)
         if job is None:
@@ -186,7 +229,7 @@ def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
                     "status": job.status.value,
                 },
             )
-        if not _solver_supports_job_stop(job.solver):
+        if job.status != OptimizeJobStatus.QUEUED and not _solver_supports_job_stop(job.solver):
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -197,18 +240,82 @@ def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
             )
         if finish_now:
             job.finish_now_requested = True
+        elif job.status == OptimizeJobStatus.QUEUED:
+            job.cancel_requested = True
+            job.status = OptimizeJobStatus.CANCELLED
+            job.error = "Optimization cancelled."
+            job.finished_at = utc_now()
+            complete_immediately = True
         else:
             job.cancel_requested = True
             job.status = OptimizeJobStatus.CANCELLING
-    if not finish_now:
-        _publish_job_event(job, "status", {"status": job.status.value})
+    if complete_immediately:
+        _refresh_queue_positions()
+        _publish_job_event(job, "complete", _optimize_job_response(job))
+    elif not finish_now:
+        _publish_job_event(job, "status", _job_status_event_data(job))
     return job
+
+
+def _register_sse_connection(job: OptimizeJob) -> None:
+    with _optimize_jobs_lock:
+        job.active_sse_connections += 1
+        job.has_had_sse_connection = True
+        job.last_sse_disconnected_at = None
+
+
+def _unregister_sse_connection(job: OptimizeJob) -> None:
+    with _optimize_jobs_lock:
+        job.active_sse_connections = max(0, job.active_sse_connections - 1)
+        if job.active_sse_connections == 0 and not _is_terminal_job_status(job.status):
+            job.last_sse_disconnected_at = utc_now()
+
+
+def _cancel_abandoned_optimize_jobs(now: datetime | None = None) -> list[str]:
+    now = now or utc_now()
+    cutoff = now - timedelta(seconds=OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS)
+    abandoned_jobs: list[OptimizeJob] = []
+    with _optimize_jobs_lock:
+        for job in _optimize_jobs.values():
+            if (
+                not _is_terminal_job_status(job.status)
+                and job.has_had_sse_connection
+                and job.active_sse_connections == 0
+                and job.last_sse_disconnected_at is not None
+                and job.last_sse_disconnected_at <= cutoff
+            ):
+                job.client_abandoned = True
+                job.cancel_requested = True
+                job.error = "Optimization cancelled because the client disconnected."
+                if job.status == OptimizeJobStatus.QUEUED:
+                    job.status = OptimizeJobStatus.CANCELLED
+                    job.finished_at = now
+                else:
+                    job.status = OptimizeJobStatus.CANCELLING
+                job.last_sse_disconnected_at = None
+                abandoned_jobs.append(job)
+
+    if abandoned_jobs:
+        _refresh_queue_positions()
+    for job in abandoned_jobs:
+        if _is_terminal_job_status(job.status):
+            _publish_job_event(job, "complete", _optimize_job_response(job))
+        else:
+            _publish_job_event(job, "status", _job_status_event_data(job))
+    return [job.id for job in abandoned_jobs]
+
+
+def _run_client_liveness_watchdog() -> None:
+    while True:
+        time.sleep(OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS)
+        _cancel_abandoned_optimize_jobs()
 
 
 def _optimize_job_response(job: OptimizeJob) -> dict[str, Any]:
     return {
         "jobId": job.id,
         "status": job.status.value,
+        "queuePosition": job.queue_position,
         "inputName": job.input_name,
         "solver": job.solver,
         "prettify": job.prettify,
@@ -218,6 +325,7 @@ def _optimize_job_response(job: OptimizeJob) -> dict[str, Any]:
         "error": job.error,
         "cancelRequested": job.cancel_requested,
         "finishNowRequested": job.finish_now_requested,
+        "clientAbandoned": job.client_abandoned,
         "xlsxReady": job.xlsx_bytes is not None,
         "links": {
             "status": f"/optimize/{job.id}",
@@ -225,3 +333,10 @@ def _optimize_job_response(job: OptimizeJob) -> dict[str, Any]:
             "xlsx": f"/optimize/{job.id}/xlsx",
         },
     }
+
+
+if OPTIMIZE_SSE_KEEPALIVE_SECONDS >= OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS:
+    raise ValueError("OPTIMIZE_SSE_KEEPALIVE_SECONDS must be less than OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS")
+if OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS > OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS:
+    raise ValueError("OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS must not exceed OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS")
+threading.Thread(target=_run_client_liveness_watchdog, name="optimize-client-liveness", daemon=True).start()

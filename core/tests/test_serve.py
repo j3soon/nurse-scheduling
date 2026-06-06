@@ -417,6 +417,137 @@ class TestOptimizeJobs:
     def test_optimize_executor_runs_one_job_at_a_time(self):
         assert serve.OPTIMIZE_MAX_WORKERS == 1
 
+    def test_optimize_jobs_report_and_publish_updated_queue_positions(self):
+        first = serve._create_optimize_job(
+            input_name="first.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+        second = serve._create_optimize_job(
+            input_name="second.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+
+        assert serve._optimize_job_response(first)["queuePosition"] == 1
+        assert serve._optimize_job_response(second)["queuePosition"] == 2
+
+        serve._update_optimize_job(first.id, status=serve.OptimizeJobStatus.RUNNING)
+        serve._refresh_queue_positions()
+
+        assert serve._optimize_job_response(first)["queuePosition"] is None
+        assert serve._optimize_job_response(second)["queuePosition"] == 1
+        assert second.events[-1] == {
+            "event": "status",
+            "data": {"status": "queued", "queuePosition": 1},
+        }
+
+    def test_optimize_job_cancels_queued_job_immediately_for_any_solver(self):
+        first = serve._create_optimize_job(
+            input_name="first.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+        second = serve._create_optimize_job(
+            input_name="second.yaml",
+            solver="pulp/cbc",
+            prettify=True,
+            timeout=60,
+        )
+
+        response = client.post(f"/optimize/{first.id}/cancel")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "cancelled"
+        assert response.json()["queuePosition"] is None
+        assert serve._optimize_job_response(second)["queuePosition"] == 1
+
+    def test_sse_connection_tracks_disconnect_lease(self):
+        job = serve._create_optimize_job(
+            input_name="stream.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+        stream = serve._stream_optimize_job_events(job)
+
+        assert next(stream).startswith("event: status")
+        assert job.active_sse_connections == 1
+        assert job.has_had_sse_connection is True
+
+        stream.close()
+
+        assert job.active_sse_connections == 0
+        assert job.last_sse_disconnected_at is not None
+
+    def test_abandoned_sse_job_is_cancelled_after_grace_period(self):
+        job = serve._create_optimize_job(
+            input_name="abandoned.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+        serve._register_sse_connection(job)
+        serve._unregister_sse_connection(job)
+        disconnected_at = job.last_sse_disconnected_at
+        assert disconnected_at is not None
+
+        abandoned = serve._cancel_abandoned_optimize_jobs(
+            disconnected_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS)
+        )
+
+        assert abandoned == [job.id]
+        response = serve._optimize_job_response(job)
+        assert response["status"] == "cancelled"
+        assert response["clientAbandoned"] is True
+        assert response["error"] == "Optimization cancelled because the client disconnected."
+
+    def test_sse_reconnect_prevents_abandoned_job_cancellation(self):
+        job = serve._create_optimize_job(
+            input_name="reconnected.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+        serve._register_sse_connection(job)
+        serve._unregister_sse_connection(job)
+        disconnected_at = job.last_sse_disconnected_at
+        assert disconnected_at is not None
+        serve._register_sse_connection(job)
+
+        abandoned = serve._cancel_abandoned_optimize_jobs(
+            disconnected_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS)
+        )
+
+        assert abandoned == []
+        assert job.status == serve.OptimizeJobStatus.QUEUED
+        assert job.client_abandoned is False
+
+    def test_abandoned_running_job_requests_stop_even_for_non_interruptible_solver(self):
+        job = serve._create_optimize_job(
+            input_name="running.yaml",
+            solver="pulp/cbc",
+            prettify=True,
+            timeout=60,
+        )
+        serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
+        serve._refresh_queue_positions()
+        serve._register_sse_connection(job)
+        serve._unregister_sse_connection(job)
+        disconnected_at = job.last_sse_disconnected_at
+        assert disconnected_at is not None
+
+        serve._cancel_abandoned_optimize_jobs(
+            disconnected_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS)
+        )
+
+        assert job.status == serve.OptimizeJobStatus.CANCELLING
+        assert job.cancel_requested is True
+        assert job.client_abandoned is True
+
     def test_optimize_job_rejects_when_pending_queue_is_full(self):
         pending_jobs = [
             serve._create_optimize_job(
