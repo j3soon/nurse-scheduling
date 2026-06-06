@@ -698,7 +698,7 @@ export default function OptimizeAndExportPage() {
       )}
 
       <div className="mb-6 grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]">
-        <section className="order-2 rounded-lg border border-gray-200 bg-white xl:order-1">
+        <section className="rounded-lg border border-gray-200 bg-white">
           <div className="border-b border-gray-200 px-5 py-4">
             <h2 className="text-base font-semibold text-gray-900">Configuration</h2>
             <p className="mt-0.5 text-sm text-gray-600">Solver and connection settings.</p>
@@ -834,7 +834,7 @@ export default function OptimizeAndExportPage() {
           </div>
         </section>
 
-        <section className="order-1 rounded-lg border border-gray-200 bg-white xl:order-2">
+        <section className="rounded-lg border border-gray-200 bg-white">
           <div className="border-b border-gray-200 px-5 py-4">
             <h2 className="text-base font-semibold text-gray-900">Live Result</h2>
             <p className="mt-0.5 text-sm text-gray-600">Current job, incumbent score, and downloadable file.</p>
