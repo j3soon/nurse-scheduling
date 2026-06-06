@@ -25,7 +25,7 @@ import os
 import sys
 import time
 import types
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 # Add the project root to the Python path so imports will work when running directly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -305,7 +305,7 @@ class TestOptimizeJobs:
         serve._update_optimize_job(
             job.id,
             status=serve.OptimizeJobStatus.OPTIMAL,
-            finished_at=datetime.now() - timedelta(seconds=serve.OPTIMIZE_JOB_TTL_SECONDS + 1),
+            finished_at=datetime.now(UTC) - timedelta(seconds=serve.OPTIMIZE_JOB_TTL_SECONDS + 1),
         )
 
         response = client.get(f"/optimize/{job.id}")
@@ -323,7 +323,7 @@ class TestOptimizeJobs:
         existing_job = serve.OptimizeJob(
             id="opt_collision",
             status=serve.OptimizeJobStatus.QUEUED,
-            created_at=datetime.now(),
+            created_at=datetime.now(UTC),
             input_name="existing.yaml",
             solver="ortools/cp-sat",
             prettify=False,
