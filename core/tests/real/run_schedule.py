@@ -60,18 +60,20 @@ def main() -> int:
     cli_args = sys.argv[2:]
     file_content = _add_critical_request_formatting_rules(input_path.read_bytes())
 
-    with tempfile.NamedTemporaryFile(prefix="nurse-scheduling-real-", suffix=".yaml", delete=False) as temp_file:
-        temp_file.write(file_content)
-        temp_path = Path(temp_file.name)
-
+    temp_path = None
     try:
+        with tempfile.NamedTemporaryFile(prefix="nurse-scheduling-real-", suffix=".yaml", delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(file_content)
+
         completed_process = subprocess.run(
             [sys.executable, "-m", "nurse_scheduling.cli", str(temp_path), *cli_args],
             check=False,
         )
         return completed_process.returncode
     finally:
-        temp_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

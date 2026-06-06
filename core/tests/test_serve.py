@@ -361,6 +361,54 @@ class TestOptimizeJobs:
         assert '"jobId": "' + job_id + '"' in first_body
         assert '"jobId": "' + job_id + '"' in second_body
 
+    def test_optimize_job_failed_fallback_streams_error_event(self):
+        job = serve._create_optimize_job(
+            input_name="failed.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+        serve._update_optimize_job(
+            job.id,
+            status=serve.OptimizeJobStatus.FAILED,
+            error="solver failed",
+            finished_at=datetime.now(UTC),
+        )
+        job.events.clear()
+
+        body = "".join(serve._stream_optimize_job_events(job))
+
+        assert "event: error" in body
+        assert "event: complete" not in body
+        assert '"status": "failed"' in body
+
+    def test_optimize_job_worker_tolerates_deletion_after_terminal_update(
+        self, fake_successful_scheduler, monkeypatch, caplog
+    ):
+        job = serve._create_optimize_job(
+            input_name="deleted.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+        original_publish_job_event = serve._publish_job_event
+
+        def delete_then_fail_publish(published_job, event, data):
+            if event == "complete":
+                with serve._optimize_jobs_lock:
+                    serve._optimize_jobs.pop(published_job.id)
+                raise RuntimeError("publish failed after deletion")
+            original_publish_job_event(published_job, event, data)
+
+        monkeypatch.setattr(serve, "_publish_job_event", delete_then_fail_publish)
+
+        serve._run_optimize_job(job.id, b"apiVersion: alpha\n")
+
+        assert job.id not in serve._optimize_jobs
+        assert (
+            f"[server:job] failed-after-deletion job_id={job.id} error=publish failed after deletion" in caplog.messages
+        )
+
     def test_optimize_job_delete_removes_completed_job(self, fake_successful_scheduler, caplog):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
         job_id = response.json()["jobId"]
@@ -508,6 +556,19 @@ class TestOptimizeJobs:
 
         assert response.status_code == 409
         assert response.json()["detail"]["status"] == "cancelled"
+
+    def test_optimize_job_update_rejects_unknown_fields(self):
+        job = serve._create_optimize_job(
+            input_name="invalid-update.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+
+        with pytest.raises(ValueError, match="Unknown optimization job fields: statuz"):
+            serve._update_optimize_job(job.id, statuz=serve.OptimizeJobStatus.RUNNING)
+
+        assert not hasattr(job, "statuz")
 
     def test_job_is_cancelled_after_client_heartbeat_timeout(self, caplog):
         job = serve._create_optimize_job(

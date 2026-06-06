@@ -53,6 +53,7 @@ from .jobs import (
     _request_optimize_job_stop,
     _solver_supports_job_stop,
     _update_optimize_job,
+    _update_optimize_job_if_present,
     utc_now,
 )
 from .solver_interface import (
@@ -303,12 +304,19 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         _log_job_completed(job)
     except Exception as e:
         capture_optimize_exception(job, content, e)
-        job = _update_optimize_job(
+        job = _update_optimize_job_if_present(
             job_id,
             status=OptimizeJobStatus.FAILED,
             error=_format_unexpected_error(e),
             finished_at=utc_now(),
         )
+        if job is None:
+            server_logger.warning(
+                "[server:job] failed-after-deletion job_id=%s error=%s",
+                job_id,
+                str(e),
+            )
+            return
         _publish_job_event(job, "error", _optimize_job_response(job))
         _refresh_queue_positions()
         duration_seconds = (job.finished_at - (job.started_at or job.created_at)).total_seconds()
@@ -341,7 +349,8 @@ def _stream_optimize_job_events(job: OptimizeJob):
                 event = job.events[event_index]
                 event_index += 1
             elif _is_terminal_job_status(job.status):
-                event = {"event": "complete", "data": _optimize_job_response(job)}
+                terminal_event = "error" if job.status == OptimizeJobStatus.FAILED else "complete"
+                event = {"event": terminal_event, "data": _optimize_job_response(job)}
                 event_index += 1
             else:
                 event = None

@@ -22,7 +22,7 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
@@ -71,6 +71,9 @@ class OptimizeJob:
     queue_position: int | None = None
     last_client_heartbeat_at: datetime | None = None
     client_heartbeat_expired: bool = False
+
+
+_OPTIMIZE_JOB_FIELD_NAMES = frozenset(field.name for field in fields(OptimizeJob))
 
 
 def _positive_environment_integer(name: str, default: int) -> int:
@@ -250,8 +253,27 @@ def _create_optimize_job(input_name: str, solver: str, prettify: bool | None, ti
 
 
 def _update_optimize_job(job_id: str, **updates) -> OptimizeJob:
+    unknown_fields = updates.keys() - _OPTIMIZE_JOB_FIELD_NAMES
+    if unknown_fields:
+        raise ValueError(f"Unknown optimization job fields: {', '.join(sorted(unknown_fields))}")
+
     with _optimize_jobs_lock:
         job = _optimize_jobs[job_id]
+        for key, value in updates.items():
+            setattr(job, key, value)
+    return job
+
+
+def _update_optimize_job_if_present(job_id: str, **updates) -> OptimizeJob | None:
+    """Update a job if it has not been deleted by a concurrent request."""
+    unknown_fields = updates.keys() - _OPTIMIZE_JOB_FIELD_NAMES
+    if unknown_fields:
+        raise ValueError(f"Unknown optimization job fields: {', '.join(sorted(unknown_fields))}")
+
+    with _optimize_jobs_lock:
+        job = _optimize_jobs.get(job_id)
+        if job is None:
+            return None
         for key, value in updates.items():
             setattr(job, key, value)
     return job

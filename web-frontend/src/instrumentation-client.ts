@@ -58,6 +58,7 @@ if (!isSentryDisabled) {
           ...event.contexts,
           scheduling_state: {
             attached: true,
+            peopleIdsAnonymized: true,
             sizeBytes: new Blob([yaml]).size,
           },
         };

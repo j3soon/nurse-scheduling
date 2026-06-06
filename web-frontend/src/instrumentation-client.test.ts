@@ -79,6 +79,7 @@ describe('instrumentation-client', () => {
       contexts: {
         scheduling_state: {
           attached: true,
+          peopleIdsAnonymized: true,
           sizeBytes: 17,
         },
       },
