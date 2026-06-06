@@ -121,6 +121,7 @@ class TestOptimizeJobs:
         assert created["status"] in {"queued", "running", "optimal"}
         assert created["timeout"] == serve.DEFAULT_OPTIMIZATION_TIMEOUT_SECONDS
         assert created["links"]["events"] == f"/optimize/{job_id}/events"
+        assert created["links"]["heartbeat"] == f"/optimize/{job_id}/heartbeat"
 
         completed = wait_for_job_status(job_id, "optimal")
         assert completed["score"] == 42
@@ -477,74 +478,80 @@ class TestOptimizeJobs:
             f"[server:job] completed job_id={first.id} status=cancelled " in message for message in caplog.messages
         )
 
-    def test_sse_connection_tracks_disconnect_lease(self, caplog):
+    def test_optimize_job_heartbeat_updates_client_liveness(self):
         job = serve._create_optimize_job(
-            input_name="stream.yaml",
+            input_name="heartbeat.yaml",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        stream = serve._stream_optimize_job_events(job)
+        initial_heartbeat = job.last_client_heartbeat_at
 
-        assert next(stream).startswith("event: status")
-        assert job.active_sse_connections == 1
-        assert job.has_had_sse_connection is True
+        response = client.post(f"/optimize/{job.id}/heartbeat")
 
-        stream.close()
+        assert response.status_code == 200
+        assert response.json() == {"jobId": job.id, "status": "queued"}
+        assert job.last_client_heartbeat_at is not None
+        assert initial_heartbeat is not None
+        assert job.last_client_heartbeat_at >= initial_heartbeat
 
-        assert job.active_sse_connections == 0
-        assert job.last_sse_disconnected_at is not None
-        assert f"[server:sse] connected job_id={job.id} status=queued active_connections=1" in caplog.messages
-        assert (
-            f"[server:sse] disconnected job_id={job.id} status=queued "
-            "active_connections=0 disconnect_grace_started=True" in caplog.messages
-        )
-
-    def test_abandoned_sse_job_is_cancelled_after_grace_period(self, caplog):
+    def test_optimize_job_heartbeat_rejects_terminal_job(self):
         job = serve._create_optimize_job(
-            input_name="abandoned.yaml",
+            input_name="finished.yaml",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        serve._register_sse_connection(job)
-        serve._unregister_sse_connection(job)
-        disconnected_at = job.last_sse_disconnected_at
-        assert disconnected_at is not None
+        serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.CANCELLED, finished_at=datetime.now(UTC))
 
-        abandoned = serve._cancel_abandoned_optimize_jobs(
-            disconnected_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS)
+        response = client.post(f"/optimize/{job.id}/heartbeat")
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["status"] == "cancelled"
+
+    def test_job_is_cancelled_after_client_heartbeat_timeout(self, caplog):
+        job = serve._create_optimize_job(
+            input_name="expired-heartbeat.yaml",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout=60,
+        )
+        last_heartbeat_at = job.last_client_heartbeat_at
+        assert last_heartbeat_at is not None
+
+        expired = serve._cancel_jobs_with_expired_heartbeats(
+            last_heartbeat_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS)
         )
 
-        assert abandoned == [job.id]
+        assert expired == [job.id]
         response = serve._optimize_job_response(job)
         assert response["status"] == "cancelled"
-        assert response["clientAbandoned"] is True
-        assert response["error"] == "Optimization cancelled because the client disconnected."
-        assert f"[server:job] abandoned job_id={job.id} status=cancelled action=cancel-requested" in caplog.messages
+        assert response["clientHeartbeatExpired"] is True
+        assert response["error"] == "Optimization cancelled because the client heartbeat expired."
+        assert (
+            f"[server:job] heartbeat-expired job_id={job.id} status=cancelled action=cancel-requested"
+            in caplog.messages
+        )
 
-    def test_sse_reconnect_prevents_abandoned_job_cancellation(self):
+    def test_recent_client_heartbeat_prevents_job_cancellation(self):
         job = serve._create_optimize_job(
-            input_name="reconnected.yaml",
+            input_name="alive.yaml",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        serve._register_sse_connection(job)
-        serve._unregister_sse_connection(job)
-        disconnected_at = job.last_sse_disconnected_at
-        assert disconnected_at is not None
-        serve._register_sse_connection(job)
+        heartbeat_at = job.created_at + timedelta(seconds=30)
+        serve._record_client_heartbeat(job.id, heartbeat_at)
 
-        abandoned = serve._cancel_abandoned_optimize_jobs(
-            disconnected_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS)
+        expired = serve._cancel_jobs_with_expired_heartbeats(
+            job.created_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS)
         )
 
-        assert abandoned == []
+        assert expired == []
         assert job.status == serve.OptimizeJobStatus.QUEUED
-        assert job.client_abandoned is False
+        assert job.client_heartbeat_expired is False
 
-    def test_abandoned_running_job_requests_stop_even_for_non_interruptible_solver(self):
+    def test_expired_heartbeat_requests_running_job_stop_even_for_non_interruptible_solver(self):
         job = serve._create_optimize_job(
             input_name="running.yaml",
             solver="pulp/cbc",
@@ -553,18 +560,16 @@ class TestOptimizeJobs:
         )
         serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
         serve._refresh_queue_positions()
-        serve._register_sse_connection(job)
-        serve._unregister_sse_connection(job)
-        disconnected_at = job.last_sse_disconnected_at
-        assert disconnected_at is not None
+        last_heartbeat_at = job.last_client_heartbeat_at
+        assert last_heartbeat_at is not None
 
-        serve._cancel_abandoned_optimize_jobs(
-            disconnected_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS)
+        serve._cancel_jobs_with_expired_heartbeats(
+            last_heartbeat_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS)
         )
 
         assert job.status == serve.OptimizeJobStatus.CANCELLING
         assert job.cancel_requested is True
-        assert job.client_abandoned is True
+        assert job.client_heartbeat_expired is True
 
     def test_optimize_job_rejects_when_pending_queue_is_full(self, caplog):
         pending_jobs = [

@@ -52,6 +52,7 @@ interface OptimizeJobResponse {
   links: {
     status: string;
     events: string;
+    heartbeat?: string;
     xlsx: string;
   };
 }
@@ -75,6 +76,7 @@ interface OptimizePhaseEvent {
 }
 
 const TERMINAL_JOB_STATUSES = new Set(['optimal', 'feasible', 'infeasible', 'cancelled', 'failed']);
+const OPTIMIZE_CLIENT_HEARTBEAT_INTERVAL_MS = 10_000;
 
 function normalizeEndpoint(endpoint: string): string {
   return endpoint.trim().replace(/\/+$/, '');
@@ -374,6 +376,27 @@ export default function OptimizeAndExportPage() {
       window.clearInterval(intervalId);
     };
   }, [checkServerHealth]);
+
+  useEffect(() => {
+    if (!currentJobId || !isJobActive) {
+      return;
+    }
+
+    const sendHeartbeat = () => {
+      const heartbeatPath = currentJob?.links.heartbeat ?? `/optimize/${currentJobId}/heartbeat`;
+      void fetch(buildApiUrl(apiEndpoint, heartbeatPath), {
+        method: 'POST',
+        cache: 'no-store',
+      }).catch(() => {
+        // The backend watchdog decides whether missed heartbeats should cancel the job.
+      });
+    };
+    const intervalId = window.setInterval(sendHeartbeat, OPTIMIZE_CLIENT_HEARTBEAT_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [apiEndpoint, currentJob?.links.heartbeat, currentJobId, isJobActive]);
 
   const getOptimizeJobStatus = useCallback(async (job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
     const response = await fetch(buildApiUrl(apiEndpoint, job.links.status), {

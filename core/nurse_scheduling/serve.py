@@ -48,11 +48,10 @@ from .jobs import (
     _optimize_jobs,
     _optimize_jobs_lock,
     _publish_job_event,
+    _record_client_heartbeat,
     _refresh_queue_positions,
-    _register_sse_connection,
     _request_optimize_job_stop,
     _solver_supports_job_stop,
-    _unregister_sse_connection,
     _update_optimize_job,
     utc_now,
 )
@@ -132,7 +131,7 @@ OPTIMIZE_MAX_PENDING_JOBS = optimize_jobs_state.OPTIMIZE_MAX_PENDING_JOBS
 OPTIMIZE_MAX_RETAINED_JOBS = optimize_jobs_state.OPTIMIZE_MAX_RETAINED_JOBS
 OPTIMIZE_JOB_TTL_SECONDS = optimize_jobs_state.OPTIMIZE_JOB_TTL_SECONDS
 OPTIMIZE_SSE_KEEPALIVE_SECONDS = optimize_jobs_state.OPTIMIZE_SSE_KEEPALIVE_SECONDS
-OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_DISCONNECT_GRACE_SECONDS
+OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS
 OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS
 OPTIMIZE_MAX_WORKERS = 1
 UNEXPECTED_ERROR_VERSION_ADVICE = (
@@ -141,7 +140,7 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
 )
 _optimize_executor = ThreadPoolExecutor(max_workers=OPTIMIZE_MAX_WORKERS)
 uuid = optimize_jobs_state.uuid
-_cancel_abandoned_optimize_jobs = optimize_jobs_state._cancel_abandoned_optimize_jobs
+_cancel_jobs_with_expired_heartbeats = optimize_jobs_state._cancel_jobs_with_expired_heartbeats
 
 
 async def _read_optimization_input(
@@ -327,50 +326,33 @@ def _format_sse_event(event: str, data: dict[str, Any]) -> str:
 
 def _stream_optimize_job_events(job: OptimizeJob):
     event_index = 0
-    _register_sse_connection(job)
-    server_logger.info(
-        "[server:sse] connected job_id=%s status=%s active_connections=%s",
-        job.id,
-        job.status.value,
-        job.active_sse_connections,
-    )
-    try:
-        while True:
-            heartbeat = False
-            with job.condition:
-                while event_index >= len(job.events) and not _is_terminal_job_status(job.status):
-                    job.condition.wait(timeout=OPTIMIZE_SSE_KEEPALIVE_SECONDS)
-                    if event_index >= len(job.events):
-                        heartbeat = True
-                        break
+    while True:
+        heartbeat = False
+        with job.condition:
+            while event_index >= len(job.events) and not _is_terminal_job_status(job.status):
+                job.condition.wait(timeout=OPTIMIZE_SSE_KEEPALIVE_SECONDS)
+                if event_index >= len(job.events):
+                    heartbeat = True
+                    break
 
-                if heartbeat:
-                    event = None
-                elif event_index < len(job.events):
-                    event = job.events[event_index]
-                    event_index += 1
-                elif _is_terminal_job_status(job.status):
-                    event = {"event": "complete", "data": _optimize_job_response(job)}
-                    event_index += 1
-                else:
-                    event = None
+            if heartbeat:
+                event = None
+            elif event_index < len(job.events):
+                event = job.events[event_index]
+                event_index += 1
+            elif _is_terminal_job_status(job.status):
+                event = {"event": "complete", "data": _optimize_job_response(job)}
+                event_index += 1
+            else:
+                event = None
 
-            if event is None:
-                yield ": keepalive\n\n"
-                continue
+        if event is None:
+            yield ": keepalive\n\n"
+            continue
 
-            yield _format_sse_event(event["event"], event["data"])
-            if event["event"] in {"complete", "error"}:
-                return
-    finally:
-        _unregister_sse_connection(job)
-        server_logger.info(
-            "[server:sse] disconnected job_id=%s status=%s active_connections=%s disconnect_grace_started=%s",
-            job.id,
-            job.status.value,
-            job.active_sse_connections,
-            job.last_sse_disconnected_at is not None,
-        )
+        yield _format_sse_event(event["event"], event["data"])
+        if event["event"] in {"complete", "error"}:
+            return
 
 
 # Regex to match allowed origins:
@@ -448,6 +430,12 @@ async def stream_optimize_job_events(job_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/optimize/{job_id}/heartbeat")
+async def heartbeat_optimize_job(job_id: str):
+    job = _record_client_heartbeat(job_id)
+    return {"jobId": job.id, "status": job.status.value}
 
 
 @app.post("/optimize/{job_id}/cancel")

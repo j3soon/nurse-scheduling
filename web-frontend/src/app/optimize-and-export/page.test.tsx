@@ -561,6 +561,49 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('Waiting for first feasible solution...')).toBeInTheDocument();
   });
 
+  it('sends heartbeats while an optimization job is active', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(healthyResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_heartbeat',
+          status: 'queued',
+          queuePosition: 1,
+          score: null,
+          solverStatus: null,
+          error: null,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_heartbeat',
+            events: '/optimize/opt_heartbeat/events',
+            xlsx: '/optimize/opt_heartbeat/xlsx',
+          },
+        }),
+      })
+      .mockResolvedValue({ ok: true });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    const heartbeatCallback = setIntervalSpy.mock.calls.find(([, delay]) => delay === 10_000)?.[0];
+    expect(heartbeatCallback).toBeDefined();
+
+    act(() => {
+      (heartbeatCallback as TimerHandler)();
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/optimize/opt_heartbeat/heartbeat',
+      expect.objectContaining({ method: 'POST', cache: 'no-store' })
+    );
+  });
+
   it('keeps a dropped SSE stream open for automatic reconnection', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
