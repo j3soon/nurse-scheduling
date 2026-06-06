@@ -108,6 +108,27 @@ export async function mockOptimizeAndExport(
     });
   });
 
+  await page.route('http://localhost:8000/health', async route => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        status: 'ok',
+        version: 'test',
+        apiVersion: 'test',
+        appVersion: 'test',
+      }),
+    });
+  });
+
   await page.route('http://localhost:8000/optimize', async route => {
     const request = route.request();
 
