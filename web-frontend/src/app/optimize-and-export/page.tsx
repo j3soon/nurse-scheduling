@@ -67,6 +67,10 @@ interface OptimizeProgressEvent {
   commentCount?: number | null;
 }
 
+interface OptimizePhaseEvent {
+  message?: string;
+}
+
 const TERMINAL_JOB_STATUSES = new Set(['optimal', 'feasible', 'infeasible', 'cancelled', 'failed']);
 
 function normalizeEndpoint(endpoint: string): string {
@@ -148,6 +152,10 @@ function isProgressEventData(data: unknown): data is OptimizeProgressEvent {
   return typeof data === 'object' && data !== null && 'currentBestScore' in data;
 }
 
+function isPhaseEventData(data: unknown): data is OptimizePhaseEvent {
+  return typeof data === 'object' && data !== null && 'message' in data;
+}
+
 function formatScore(score: number): string {
   return new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 2,
@@ -189,6 +197,9 @@ function getEventBadgeClasses(type: string): string {
   }
   if (type === 'progress') {
     return 'bg-blue-50 text-blue-700 ring-blue-200';
+  }
+  if (type === 'phase') {
+    return 'bg-amber-50 text-amber-700 ring-amber-200';
   }
   return 'bg-gray-100 text-gray-700 ring-gray-200';
 }
@@ -402,6 +413,11 @@ export default function OptimizeAndExportPage() {
               }]);
             }
           }
+        });
+
+        eventSource.addEventListener('phase', (event) => {
+          const parsedData = parseSseEventData(event);
+          appendSseEvent('phase', parsedData);
         });
 
         eventSource.addEventListener('complete', (event) => {
@@ -930,7 +946,10 @@ export default function OptimizeAndExportPage() {
                     {isProgressEventData(event.data) && (
                       <p className="font-semibold text-gray-900">{formatProgressSummary(event.data)}</p>
                     )}
-                    <details className={isProgressEventData(event.data) ? 'mt-2' : ''}>
+                    {event.type === 'phase' && isPhaseEventData(event.data) && event.data.message && (
+                      <p className="font-semibold text-gray-900">{event.data.message}</p>
+                    )}
+                    <details className={isProgressEventData(event.data) || event.type === 'phase' ? 'mt-2' : ''}>
                       <summary className="cursor-pointer text-gray-500">Raw event data</summary>
                       <pre className="mt-2 whitespace-pre-wrap break-words">{formatSseEventData(event.data)}</pre>
                     </details>

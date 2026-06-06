@@ -361,6 +361,12 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(eventSource.url).toBe('http://localhost:8000/optimize/opt_sse/events');
     act(() => {
       eventSource.emit('status', { status: 'running' });
+      eventSource.emit('phase', {
+        source: 'scheduler:phase',
+        code: 'creating_shift_variables',
+        message: 'Creating shift variables',
+        elapsedSeconds: 0.12,
+      });
       eventSource.emit('progress', {
         source: 'ortools/cp-sat:solution-callback',
         currentBestScore: 12000,
@@ -397,6 +403,8 @@ describe('OptimizeAndExportPage error handling', () => {
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
     expect(screen.getByText('status')).toBeInTheDocument();
+    expect(screen.getByText('phase')).toBeInTheDocument();
+    expect(screen.getAllByText('Creating shift variables').length).toBeGreaterThan(0);
     expect(screen.getAllByText('progress')).toHaveLength(2);
     expect(screen.getByText('complete')).toBeInTheDocument();
     expect(screen.getAllByText(/Comments: 5/).length).toBeGreaterThan(0);
