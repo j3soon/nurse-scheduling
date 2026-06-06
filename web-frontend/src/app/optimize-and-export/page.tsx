@@ -25,6 +25,8 @@ import Link from 'next/link';
 import { FiDownload, FiAlertCircle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity } from 'react-icons/fi';
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { anonymizePeopleInStateWithMapping } from '@/utils/anonymizeSchedulingState';
+import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 
@@ -218,6 +220,7 @@ export default function OptimizeAndExportPage() {
 
   const [apiEndpoint, setApiEndpoint] = useState(process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8000');
   const [prettifyArg, setPrettifyArg] = useState(true);
+  const [anonymizePeople, setAnonymizePeople] = useState(true);
   const [timeoutArg, setTimeoutArg] = useState<number>(300);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -265,9 +268,6 @@ export default function OptimizeAndExportPage() {
     preferences,
     export: effectiveExportData
   });
-
-  // Convert current state to YAML
-  const currentYaml = generateYamlFromState(filteredState);
 
   const clearSavedDownload = useCallback(() => {
     if (savedDownloadUrlRef.current) {
@@ -496,9 +496,16 @@ export default function OptimizeAndExportPage() {
     setSseEvents([]);
 
     try {
+      const anonymizationResult = anonymizePeople
+        ? anonymizePeopleInStateWithMapping(filteredState, {
+            anonymizePeopleItems: true,
+            anonymizePeopleGroups: false,
+          })
+        : null;
+
       // Prepare form data
       const formData = new FormData();
-      formData.append('yaml_content', currentYaml);
+      formData.append('yaml_content', generateYamlFromState(anonymizationResult?.state ?? filteredState));
 
       if (prettifyArg !== null && prettifyArg !== undefined) {
         formData.append('prettify', String(prettifyArg));
@@ -549,7 +556,14 @@ export default function OptimizeAndExportPage() {
       }
 
       // Get the blob data (XLSX file)
-      const blob = await xlsxResponse.blob();
+      const downloadedBlob = await xlsxResponse.blob();
+      const blob = anonymizationResult
+        ? await restorePeopleIdsInXlsx(
+            downloadedBlob,
+            anonymizationResult.originalIdByAnonymizedId,
+            anonymizationResult.state.people.items.length
+          )
+        : downloadedBlob;
 
       const url = URL.createObjectURL(blob);
       const filename = getFilenameFromContentDisposition(xlsxResponse.headers.get('Content-Disposition'));
@@ -701,6 +715,19 @@ export default function OptimizeAndExportPage() {
                 <span>
                   <span className="block text-sm font-medium text-gray-800">Prettify XLSX</span>
                   <span className="mt-1 block text-xs text-gray-500">Apply formatting to the generated workbook.</span>
+                </span>
+              </label>
+
+              <label className="flex min-h-20 cursor-pointer items-start gap-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+                <input
+                  type="checkbox"
+                  checked={anonymizePeople}
+                  onChange={(e) => setAnonymizePeople(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                />
+                <span>
+                  <span className="block text-sm font-medium text-gray-800">Anonymize people IDs</span>
+                  <span className="mt-1 block text-xs text-gray-500">Anonymize before sending to the backend, then restore in the workbook afterward.</span>
                 </span>
               </label>
 

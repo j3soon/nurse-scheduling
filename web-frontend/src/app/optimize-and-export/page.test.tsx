@@ -26,6 +26,7 @@ import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 const mockGenerateYamlFromState = vi.hoisted(() => vi.fn());
+const mockRestorePeopleIdsInXlsx = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useSchedulingData', () => ({
   useSchedulingData: mockUseSchedulingData,
@@ -33,6 +34,10 @@ vi.mock('@/hooks/useSchedulingData', () => ({
 
 vi.mock('@/utils/yamlGenerator', () => ({
   generateYamlFromState: mockGenerateYamlFromState,
+}));
+
+vi.mock('@/utils/restorePeopleIdsInXlsx', () => ({
+  restorePeopleIdsInXlsx: mockRestorePeopleIdsInXlsx,
 }));
 
 vi.mock('@/utils/version', () => ({
@@ -94,6 +99,8 @@ describe('OptimizeAndExportPage error handling', () => {
     vi.restoreAllMocks();
     MockEventSource.instances = [];
     mockGenerateYamlFromState.mockReturnValue('apiVersion: alpha\ndescription: baseline\n');
+    mockRestorePeopleIdsInXlsx.mockClear();
+    mockRestorePeopleIdsInXlsx.mockImplementation(async blob => blob);
     mockUseSchedulingData.mockReturnValue(createSchedulingData());
     vi.stubGlobal('fetch', vi.fn());
     vi.stubGlobal('EventSource', undefined);
@@ -310,6 +317,100 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /download again/i }));
     expect(appendChildSpy).toHaveBeenCalledTimes(appendCallCount + 1);
     expect(removeChildSpy).toHaveBeenCalledTimes(removeCallCount + 1);
+  });
+
+  it('anonymizes people by default and restores their IDs in the XLSX', async () => {
+    const user = userEvent.setup();
+    const xlsxBlob = new Blob(['xlsx']);
+    mockUseSchedulingData.mockReturnValue(createSchedulingData({
+      peopleData: { items: [{ id: 'Alice', description: '', history: [] }], groups: [], history: [] },
+    }));
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(healthyResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_anonymous',
+          status: 'optimal',
+          score: 1,
+          solverStatus: 'OPTIMAL',
+          error: null,
+          xlsxReady: true,
+          links: {
+            status: '/optimize/opt_anonymous',
+            events: '/optimize/opt_anonymous/events',
+            xlsx: '/optimize/opt_anonymous/xlsx',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(xlsxBlob),
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({ ok: true });
+
+    render(<OptimizeAndExportPage />);
+    expect(screen.getByRole('checkbox', { name: /anonymize people ids/i })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await screen.findByText('Schedule optimized and downloaded successfully!');
+
+    expect(mockGenerateYamlFromState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        people: expect.objectContaining({
+          items: [expect.objectContaining({ id: 'P1' })],
+        }),
+      })
+    );
+    expect(mockRestorePeopleIdsInXlsx).toHaveBeenCalledWith(xlsxBlob, new Map([['P1', 'Alice']]), 1);
+  });
+
+  it('sends and downloads original people IDs when anonymization is disabled', async () => {
+    const user = userEvent.setup();
+    const xlsxBlob = new Blob(['xlsx']);
+    mockUseSchedulingData.mockReturnValue(createSchedulingData({
+      peopleData: { items: [{ id: 'Alice', description: '', history: [] }], groups: [], history: [] },
+    }));
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(healthyResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_named',
+          status: 'optimal',
+          score: 1,
+          solverStatus: 'OPTIMAL',
+          error: null,
+          xlsxReady: true,
+          links: {
+            status: '/optimize/opt_named',
+            events: '/optimize/opt_named/events',
+            xlsx: '/optimize/opt_named/xlsx',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(xlsxBlob),
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({ ok: true });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('checkbox', { name: /anonymize people ids/i }));
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await screen.findByText('Schedule optimized and downloaded successfully!');
+
+    expect(mockGenerateYamlFromState).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        people: expect.objectContaining({
+          items: [expect.objectContaining({ id: 'Alice' })],
+        }),
+      })
+    );
+    expect(mockRestorePeopleIdsInXlsx).not.toHaveBeenCalled();
   });
 
   it('shows all received SSE event types in the optimization event log', async () => {

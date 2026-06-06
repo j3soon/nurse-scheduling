@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import type { SchedulingState } from '@/hooks/useSchedulingData';
-import { anonymizePeopleInState } from '@/utils/anonymizeSchedulingState';
+import { anonymizePeopleInState, anonymizePeopleInStateWithMapping } from '@/utils/anonymizeSchedulingState';
 
 const state: SchedulingState = {
   apiVersion: 'alpha',
@@ -81,5 +81,17 @@ describe('anonymizePeopleInState', () => {
     expect(result.preferences[4]).toMatchObject({ people2: ['G1'] });
     expect(result.export?.formatting?.[0]).toMatchObject({ people: ['ALL', 'Alice', 'G1'] });
     expect(result.export?.extraRows?.[0]).toMatchObject({ countPeople: ['ALL', 'Bob', 'G1'] });
+  });
+
+  it('returns a reverse mapping for restoring anonymized IDs', () => {
+    const result = anonymizePeopleInStateWithMapping(state, {
+      anonymizePeopleItems: true,
+      anonymizePeopleGroups: false
+    });
+
+    expect(result.originalIdByAnonymizedId).toEqual(new Map([
+      ['P1', 'Alice'],
+      ['P2', 'Bob']
+    ]));
   });
 });
