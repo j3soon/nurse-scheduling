@@ -22,7 +22,7 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedSchedulingState, setDateRange } from './helpers';
 
 test('optimize and export works against a real local HTTP server instead of Playwright route mocking', async ({ page }) => {
   /*
@@ -42,6 +42,7 @@ test('optimize and export works against a real local HTTP server instead of Play
     preferences: [{ type: 'at most one shift per day' }],
     export: { formatting: [] },
   });
+  await setDateRange(page);
 
   let submittedBody = '';
   const server = createServer(async (req, res) => {
@@ -154,9 +155,10 @@ test('optimize and export works against a real local HTTP server instead of Play
     await page.goto('/optimize-and-export');
     await expect(page.getByRole('heading', { name: 'Optimize and Export', exact: true })).toBeVisible();
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
-    await expect(page.locator('pre')).toContainText('http server optimize seed');
+    await expect(page.getByText('Current YAML Preview')).toHaveCount(0);
 
     await page.getByPlaceholder('http://localhost:8000').fill(`http://127.0.0.1:${port}`);
+    await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
     await page.getByRole('button', { name: 'Optimize and Download' }).click();
 
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
@@ -164,8 +166,7 @@ test('optimize and export works against a real local HTTP server instead of Play
     await expect(page.getByText('99')).toBeVisible();
     await expect(page.getByText('OPTIMAL')).toBeVisible();
     expect(submittedBody).toContain('yaml_content');
-    expect(submittedBody).toContain('apiVersion: test');
-    expect(submittedBody).toContain('description: http server optimize seed');
+    expect(submittedBody).toContain('2026-05-01');
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
   }

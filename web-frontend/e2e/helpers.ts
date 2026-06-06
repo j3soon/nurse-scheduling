@@ -83,6 +83,7 @@ type MockOptimizeAndExportOptions = {
   solverStatus?: string;
   xlsxReady?: boolean;
   body?: string;
+  disableEventSource?: boolean;
   onSubmit?: (body: string) => void;
 };
 
@@ -96,17 +97,20 @@ export async function mockOptimizeAndExport(
     solverStatus = 'OPTIMAL',
     xlsxReady = true,
     body = 'fake-xlsx',
+    disableEventSource = true,
     onSubmit,
   }: MockOptimizeAndExportOptions = {},
 ) {
   const jobId = 'e2e-job';
 
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'EventSource', {
-      configurable: true,
-      value: undefined,
+  if (disableEventSource) {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'EventSource', {
+        configurable: true,
+        value: undefined,
+      });
     });
-  });
+  }
 
   await page.route('http://localhost:8000/health', async route => {
     if (route.request().method() !== 'GET') {

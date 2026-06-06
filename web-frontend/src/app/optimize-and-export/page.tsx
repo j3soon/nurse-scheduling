@@ -679,17 +679,6 @@ export default function OptimizeAndExportPage() {
         </div>
       )}
 
-      <details open className="mb-6 rounded-lg border border-gray-200 bg-white">
-        <summary className="cursor-pointer border-b border-gray-200 px-5 py-4 text-sm font-semibold text-gray-900">
-          Current YAML Preview
-        </summary>
-        <div className="px-5 py-4">
-          <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-gray-50 p-4 text-xs text-gray-800">
-            {currentYaml}
-          </pre>
-        </div>
-      </details>
-
       <div className="mb-6 grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]">
         <section className="order-2 rounded-lg border border-gray-200 bg-white xl:order-1">
           <div className="border-b border-gray-200 px-5 py-4">
