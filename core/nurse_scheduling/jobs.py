@@ -65,6 +65,8 @@ class OptimizeJob:
 
 
 OPTIMIZE_JOB_TTL_SECONDS = 30 * 60
+OPTIMIZE_MAX_PENDING_JOBS = 8
+OPTIMIZE_MAX_RETAINED_JOBS = 32
 _optimize_jobs: dict[str, OptimizeJob] = {}
 _optimize_jobs_lock = threading.Lock()
 
@@ -106,6 +108,26 @@ def _cleanup_expired_optimize_jobs(now: datetime | None = None) -> list[str]:
     return expired_job_ids
 
 
+def _enforce_optimize_job_limits() -> None:
+    pending_jobs = [job for job in _optimize_jobs.values() if not _is_terminal_job_status(job.status)]
+    if len(pending_jobs) >= OPTIMIZE_MAX_PENDING_JOBS:
+        raise HTTPException(status_code=429, detail="Too many optimization jobs are already queued or running")
+
+    if len(_optimize_jobs) < OPTIMIZE_MAX_RETAINED_JOBS:
+        return
+
+    terminal_jobs = sorted(
+        (job for job in _optimize_jobs.values() if _is_terminal_job_status(job.status)),
+        key=lambda job: job.finished_at or job.created_at,
+    )
+    while len(_optimize_jobs) >= OPTIMIZE_MAX_RETAINED_JOBS and terminal_jobs:
+        expired_job = terminal_jobs.pop(0)
+        del _optimize_jobs[expired_job.id]
+
+    if len(_optimize_jobs) >= OPTIMIZE_MAX_RETAINED_JOBS:
+        raise HTTPException(status_code=429, detail="Too many optimization jobs are retained")
+
+
 def _get_optimize_job(job_id: str) -> OptimizeJob:
     _cleanup_expired_optimize_jobs()
     with _optimize_jobs_lock:
@@ -118,6 +140,7 @@ def _get_optimize_job(job_id: str) -> OptimizeJob:
 def _create_optimize_job(input_name: str, solver: str, prettify: bool | None, timeout: int | None) -> OptimizeJob:
     _cleanup_expired_optimize_jobs()
     with _optimize_jobs_lock:
+        _enforce_optimize_job_limits()
         while True:
             job_id = f"opt_{uuid.uuid4().hex}"
             if job_id not in _optimize_jobs:

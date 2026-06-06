@@ -50,7 +50,6 @@ from .jobs import (
     _solver_supports_job_stop,
     _update_optimize_job,
     utc_now,
-    OPTIMIZE_JOB_TTL_SECONDS,
 )
 from .solver_interface import SolverProgress, serialize_solver_progress
 
@@ -121,6 +120,12 @@ version = "alpha"
 app = FastAPI(title=title, version=version)
 
 
+MAX_OPTIMIZATION_YAML_BYTES = 2 * 1024 * 1024
+DEFAULT_OPTIMIZATION_TIMEOUT_SECONDS = 5 * 60
+MAX_OPTIMIZATION_TIMEOUT_SECONDS = 60 * 60
+OPTIMIZE_MAX_PENDING_JOBS = optimize_jobs_state.OPTIMIZE_MAX_PENDING_JOBS
+OPTIMIZE_MAX_RETAINED_JOBS = optimize_jobs_state.OPTIMIZE_MAX_RETAINED_JOBS
+OPTIMIZE_JOB_TTL_SECONDS = optimize_jobs_state.OPTIMIZE_JOB_TTL_SECONDS
 OPTIMIZE_MAX_WORKERS = 1
 UNEXPECTED_ERROR_VERSION_ADVICE = (
     "If this error was unexpected, check that your frontend and backend versions match. "
@@ -143,9 +148,26 @@ async def _read_optimization_input(
     if file is not None:
         if not file.filename.endswith((".yaml", ".yml")):
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload a YAML file (.yaml or .yml)")
-        return await file.read(), file.filename
+        content = await file.read()
+        input_name = file.filename
+    else:
+        content = yaml_content.encode("utf-8")
+        input_name = f"nurse-scheduling-{datetime.now().strftime('%Y%m%d%H%M%S')}.yaml"
 
-    return yaml_content.encode("utf-8"), f"nurse-scheduling-{datetime.now().strftime('%Y%m%d%H%M%S')}.yaml"
+    if len(content) > MAX_OPTIMIZATION_YAML_BYTES:
+        raise HTTPException(status_code=413, detail="Scheduling YAML is too large")
+    return content, input_name
+
+
+def _normalize_optimization_timeout(timeout: int | None) -> int:
+    if timeout is None:
+        return DEFAULT_OPTIMIZATION_TIMEOUT_SECONDS
+    if timeout > MAX_OPTIMIZATION_TIMEOUT_SECONDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Optimization timeout must be at most {MAX_OPTIMIZATION_TIMEOUT_SECONDS} seconds",
+        )
+    return timeout
 
 
 def _final_status_from_solver_status(solver_status: str) -> OptimizeJobStatus:
@@ -356,6 +378,7 @@ async def create_optimize_job(
     solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc, pulp/cuopt)"),
 ):
     content, input_name = await _read_optimization_input(file, yaml_content)
+    timeout = _normalize_optimization_timeout(timeout)
     job = _create_optimize_job(input_name=input_name, solver=solver, prettify=prettify, timeout=timeout)
     _optimize_executor.submit(_run_optimize_job, job.id, content)
     return _optimize_job_response(job)

@@ -119,6 +119,7 @@ class TestOptimizeJobs:
         job_id = created["jobId"]
         assert job_id.startswith("opt_")
         assert created["status"] in {"queued", "running", "optimal"}
+        assert created["timeout"] == serve.DEFAULT_OPTIMIZATION_TIMEOUT_SECONDS
         assert created["links"]["events"] == f"/optimize/{job_id}/events"
 
         completed = wait_for_job_status(job_id, "optimal")
@@ -322,12 +323,13 @@ class TestOptimizeJobs:
         monkeypatch.setattr(serve.uuid, "uuid4", lambda: next(generated_ids))
         existing_job = serve.OptimizeJob(
             id="opt_collision",
-            status=serve.OptimizeJobStatus.QUEUED,
+            status=serve.OptimizeJobStatus.OPTIMAL,
             created_at=datetime.now(UTC),
             input_name="existing.yaml",
             solver="ortools/cp-sat",
             prettify=False,
             timeout=None,
+            finished_at=datetime.now(UTC),
         )
         with serve._optimize_jobs_lock:
             serve._optimize_jobs[existing_job.id] = existing_job
@@ -345,6 +347,45 @@ class TestOptimizeJobs:
 
     def test_optimize_executor_runs_one_job_at_a_time(self):
         assert serve.OPTIMIZE_MAX_WORKERS == 1
+
+    def test_optimize_job_rejects_when_pending_queue_is_full(self):
+        pending_jobs = [
+            serve._create_optimize_job(
+                input_name=f"pending-{index}.yaml",
+                solver="ortools/cp-sat",
+                prettify=True,
+                timeout=60,
+            )
+            for index in range(serve.OPTIMIZE_MAX_PENDING_JOBS)
+        ]
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+
+        assert response.status_code == 429
+        assert "queued or running" in response.json()["detail"]
+        assert all(serve._get_optimize_job(job.id) is job for job in pending_jobs)
+
+    def test_optimize_job_prunes_oldest_retained_terminal_job(self, fake_successful_scheduler):
+        now = datetime.now(UTC)
+        with serve._optimize_jobs_lock:
+            for index in range(serve.OPTIMIZE_MAX_RETAINED_JOBS):
+                job = serve.OptimizeJob(
+                    id=f"opt_retained_{index}",
+                    status=serve.OptimizeJobStatus.OPTIMAL,
+                    created_at=now - timedelta(seconds=serve.OPTIMIZE_MAX_RETAINED_JOBS - index),
+                    input_name=f"retained-{index}.yaml",
+                    solver="ortools/cp-sat",
+                    prettify=True,
+                    timeout=60,
+                    finished_at=now - timedelta(seconds=serve.OPTIMIZE_MAX_RETAINED_JOBS - index),
+                )
+                serve._optimize_jobs[job.id] = job
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+
+        assert response.status_code == 202
+        assert "opt_retained_0" not in serve._optimize_jobs
+        assert len(serve._optimize_jobs) == serve.OPTIMIZE_MAX_RETAINED_JOBS
 
     def test_optimize_job_rejects_missing_input(self):
         response = client.post("/optimize")
@@ -372,6 +413,39 @@ class TestOptimizeJobs:
 
         assert response.status_code == 400
         assert "invalid file type" in response.json()["detail"].lower()
+
+    def test_optimize_job_rejects_oversized_yaml_content(self):
+        response = client.post("/optimize", data={"yaml_content": "a" * (serve.MAX_OPTIMIZATION_YAML_BYTES + 1)})
+
+        assert response.status_code == 413
+        assert "too large" in response.json()["detail"].lower()
+
+    def test_optimize_job_rejects_oversized_file_upload(self):
+        response = client.post(
+            "/optimize",
+            files={
+                "file": (
+                    "large.yaml",
+                    b"a" * (serve.MAX_OPTIMIZATION_YAML_BYTES + 1),
+                    "application/x-yaml",
+                )
+            },
+        )
+
+        assert response.status_code == 413
+        assert "too large" in response.json()["detail"].lower()
+
+    def test_optimize_job_rejects_timeout_over_one_hour(self):
+        response = client.post(
+            "/optimize",
+            data={
+                "yaml_content": "apiVersion: alpha\n",
+                "timeout": str(serve.MAX_OPTIMIZATION_TIMEOUT_SECONDS + 1),
+            },
+        )
+
+        assert response.status_code == 400
+        assert str(serve.MAX_OPTIMIZATION_TIMEOUT_SECONDS) in response.json()["detail"]
 
     def test_optimize_job_records_scheduler_failure(self, monkeypatch):
         def fake_schedule(*args, **kwargs):
