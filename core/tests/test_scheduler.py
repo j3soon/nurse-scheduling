@@ -21,6 +21,7 @@
 
 import os
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -231,6 +232,76 @@ def test_scheduler_passes_progress_callback_without_creating_solution_callback(m
 
     assert seen["solution_callback"] is None
     assert seen["progress_callback"] is not None
+
+
+def test_scheduler_ortools_progress_includes_solution_index():
+    events = []
+
+    _df, _solution, _score, status_name, _cell_export_info = scheduler.schedule(
+        (TEST_DIR / "01_1nurse_1shift_1day_all_prefs.yaml").read_bytes(),
+        progress_callback=events.append,
+    )
+
+    assert status_name == "OPTIMAL"
+    assert events
+    assert all(event.source == "ortools/cp-sat:solution-callback" for event in events)
+    assert all(event.df is None for event in events)
+    assert all(event.cell_export_info is None for event in events)
+    assert all(isinstance(event.solutionIndex, int) for event in events)
+
+
+def test_scheduler_ortools_prettify_progress_includes_export_info():
+    events = []
+    yaml_content = textwrap.dedent(
+        """
+        apiVersion: alpha
+        dates:
+          range:
+            startDate: 2023-08-18
+            endDate: 2023-08-18
+        people:
+          items:
+            - id: n1
+        shiftTypes:
+          items:
+            - id: D
+        preferences:
+          - type: at most one shift per day
+          - type: shift type requirement
+            shiftType: D
+            requiredNumPeople: 1
+          - type: shift request
+            person: n1
+            date: "2023-08-18"
+            shiftType: D
+            weight: -10
+        export:
+          formatting:
+            - type: cell
+              people: [ALL]
+              dates: [ALL]
+              shiftTypes: [ALL, OFF]
+              when:
+                preference:
+                  types: ["shift request"]
+                  satisfied: false
+                  weightRange: [-.inf, .inf]
+              note:
+                text: "Unsatisfied request: {shiftType}, weight={weight}"
+        """
+    ).encode()
+
+    _df, _solution, _score, status_name, _cell_export_info = scheduler.schedule(
+        yaml_content,
+        prettify=True,
+        progress_callback=events.append,
+    )
+
+    assert status_name == "OPTIMAL"
+    assert events
+    assert all(event.df is not None for event in events)
+    assert all(event.cell_export_info is not None for event in events)
+    assert all(sum(len(notes) for notes in event.cell_export_info["comments"].values()) == 1 for event in events)
 
 
 def test_scheduler_unknown_status_raises(monkeypatch):

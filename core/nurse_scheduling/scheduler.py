@@ -17,8 +17,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import itertools
 import logging
+import itertools
+from dataclasses import replace
 from collections.abc import Callable
 from datetime import timedelta
 
@@ -252,11 +253,20 @@ def schedule(
 
     logging.info("Initializing solver...")
 
+    if prettify and progress_callback is not None:
+
+        def progress_callback_with_export(payload: SolverProgress) -> None:
+            df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=True)
+            progress_callback(replace(payload, df=df, cell_export_info=cell_export_info))
+
+    else:
+        progress_callback_with_export = progress_callback
+
     logging.info("Solving and showing partial results...")
     status = ctx.solver.solve(
         timeout=timeout,
         deterministic=deterministic,
-        progress_callback=progress_callback,
+        progress_callback=progress_callback_with_export,
     )
 
     # Get status name

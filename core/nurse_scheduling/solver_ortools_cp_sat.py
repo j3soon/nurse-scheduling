@@ -36,6 +36,7 @@ class ORToolsSolver(SolverInterface):
         self.solver: cp_model.CpSolver = cp_model.CpSolver()
         self.status = None
         self.solver_status = SolverStatus.UNKNOWN
+        self._active_solution_callback = None
 
     def new_bool_var(self, name: str) -> cp_model.IntVar:
         """Create a new boolean variable."""
@@ -136,10 +137,18 @@ class ORToolsSolver(SolverInterface):
 
     def get_value(self, var: Any) -> Union[int, float]:
         """Get the value of a variable in the solution."""
+        if self._active_solution_callback is not None:
+            # During CP-SAT solution callbacks, incumbent values are exposed
+            # through the callback object rather than the final CpSolver.
+            return self._active_solution_callback.Value(var)
         return self.solver.Value(var)
 
     def get_objective_value(self) -> int:
         """Get the objective value of the solution."""
+        if self._active_solution_callback is not None:
+            # Keep objective reads consistent with get_value() while exporting
+            # intermediate incumbent solutions for progress reporting.
+            return self._active_solution_callback.Value(self.objective_expr)
         return self.solver.Value(self.objective_expr)
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -209,6 +218,7 @@ class ORToolsSolver(SolverInterface):
         import time
 
         maximize = self.maximize
+        solver = self
 
         class PartialSolutionPrinter(cp_model.CpSolverSolutionCallback):
             """Print intermediate solutions."""
@@ -221,37 +231,46 @@ class ORToolsSolver(SolverInterface):
                 self.objective_var = objective_var
                 self.solution_callback = solution_callback
                 self.progress_callback = progress_callback
+                self.solution_index = 0
 
             def on_solution_callback(self):
-                if self.objective_var is not None and self.progress_callback is not None:
-                    current_score = assert_int_score(
-                        self.Value(self.objective_var),
-                        label="OR-Tools progress score",
-                    )
-                    elapsed_time = time.time() - self.start_time
-                    self.n_solutions += 1
-                    if (maximize and current_score > self.best_score) or (
-                        not maximize and current_score < self.best_score
-                    ):
-                        self.best_score = current_score
-                        self.n_solutions = 1
-                    logging.info(f"# of (best) solutions found: {self.n_solutions}")
-                    logging.info(f"current score: {current_score}")
-                    logging.info(f"elapsed time: {elapsed_time:.2f}s")
-                    try:
-                        self.progress_callback(
-                            SolverProgress(
-                                source="ortools/cp-sat:solution-callback",
-                                currentBestScore=current_score,
-                                elapsedSeconds=round(elapsed_time, 3),
-                            )
+                # Make the current incumbent visible through SolverInterface
+                # while progress callbacks inspect or export it.
+                solver._active_solution_callback = self
+                try:
+                    self.solution_index += 1
+                    if self.objective_var is not None and self.progress_callback is not None:
+                        current_score = assert_int_score(
+                            self.Value(self.objective_var),
+                            label="OR-Tools progress score",
                         )
-                    except Exception:
-                        logging.exception("Progress callback failed")
-                if self.solution_callback is not None:
-                    try:
-                        self.solution_callback(self)
-                    except Exception:
-                        logging.exception("Solution callback failed")
+                        elapsed_time = time.time() - self.start_time
+                        self.n_solutions += 1
+                        if (maximize and current_score > self.best_score) or (
+                            not maximize and current_score < self.best_score
+                        ):
+                            self.best_score = current_score
+                            self.n_solutions = 1
+                        logging.info(f"# of (best) solutions found: {self.n_solutions}")
+                        logging.info(f"current score: {current_score}")
+                        logging.info(f"elapsed time: {elapsed_time:.2f}s")
+                        try:
+                            self.progress_callback(
+                                SolverProgress(
+                                    source="ortools/cp-sat:solution-callback",
+                                    currentBestScore=current_score,
+                                    elapsedSeconds=round(elapsed_time, 3),
+                                    solutionIndex=self.solution_index,
+                                )
+                            )
+                        except Exception:
+                            logging.exception("Progress callback failed")
+                    if self.solution_callback is not None:
+                        try:
+                            self.solution_callback(self)
+                        except Exception:
+                            logging.exception("Solution callback failed")
+                finally:
+                    solver._active_solution_callback = None
 
         return PartialSolutionPrinter(objective_var, solution_callback, progress_callback)

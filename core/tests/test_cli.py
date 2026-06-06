@@ -21,6 +21,7 @@
 
 import os
 import sys
+import json
 
 import pytest
 
@@ -28,6 +29,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import cli
+from nurse_scheduling.solver_interface import SolverProgress
 
 
 def test_cli_missing_input_file_exits_with_error(tmp_path, monkeypatch, capsys):
@@ -128,6 +130,78 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
     assert "Status: OPTIMAL" in out
 
 
+def test_cli_writes_progress_jsonl_output(tmp_path, monkeypatch, capsys):
+    input_file = tmp_path / "input.yaml"
+    input_file.write_bytes(b"fake input payload")
+    progress_file = tmp_path / "progress.jsonl"
+
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
+        progress_callback(
+            SolverProgress(
+                source="ortools/cp-sat:solution-callback",
+                currentBestScore=12,
+                elapsedSeconds=0.25,
+                solutionIndex=1,
+                cell_export_info={"comments": {(1, 2): ["a", "b"]}, "styles": {}},
+            )
+        )
+        return "fake_df", {"solution": True}, 12, "OPTIMAL", {"comments": {(1, 2): ["a", "b", "c"]}, "styles": {}}
+
+    monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nurse-scheduling",
+            str(input_file),
+            "--prettify",
+            "--progress-output",
+            str(progress_file),
+        ],
+    )
+
+    cli.main()
+
+    progress_events = [json.loads(line) for line in progress_file.read_text(encoding="utf-8").splitlines()]
+    assert progress_events[0] == {
+        "currentBestScore": 12,
+        "elapsedSeconds": 0.25,
+        "commentCount": 2,
+        "solutionIndex": 1,
+        "source": "ortools/cp-sat:solution-callback",
+    }
+    assert progress_events[1]["source"] == "cli:final-result"
+    assert progress_events[1]["currentBestScore"] == 12
+    assert progress_events[1]["commentCount"] == 3
+    assert progress_events[1]["solutionIndex"] is None
+    assert progress_events[1]["elapsedSeconds"] >= 0
+    assert "comments=3" in capsys.readouterr().out
+
+
+def test_cli_rejects_progress_jsonl_without_prettify(tmp_path, monkeypatch, capsys):
+    input_file = tmp_path / "input.yaml"
+    input_file.write_bytes(b"fake input payload")
+    progress_file = tmp_path / "progress.jsonl"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nurse-scheduling",
+            str(input_file),
+            "--progress-output",
+            str(progress_file),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert exc_info.value.code == 1
+    assert "Error: --progress-output requires --prettify" in capsys.readouterr().out
+    assert not progress_file.exists()
+
+
 def test_cli_no_solution_exits_zero(tmp_path, monkeypatch, capsys):
     input_file = tmp_path / "input.yaml"
     input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
@@ -172,6 +246,21 @@ def test_cli_writes_xlsx_output(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert f"Results saved to {output_file}" in out
     assert "Status: OPTIMAL" in out
+
+
+def test_cli_prints_final_comments_from_export_comments(tmp_path, monkeypatch, capsys):
+    input_file = tmp_path / "input.yaml"
+    input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
+
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
+        return "df", {}, 0, "OPTIMAL", {"styles": {}, "comments": {(1, 2): ["first", "second"], (3, 4): ["third"]}}
+
+    monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
+    monkeypatch.setattr(sys, "argv", ["nurse-scheduling", str(input_file)])
+
+    cli.main()
+
+    assert "Comments: 3" in capsys.readouterr().out
 
 
 def test_cli_show_model_build_stats_prints_scheduler_events(tmp_path, monkeypatch, capsys):

@@ -200,6 +200,8 @@ python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 # run CLI with prettify and verbose
 python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
+# record solver progress as JSON Lines for later plotting
+python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --verbose --prettify --timeout 180 --progress-output progress.jsonl
 ```
 
 Run tests:

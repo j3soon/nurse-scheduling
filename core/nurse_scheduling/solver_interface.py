@@ -46,6 +46,9 @@ class SolverProgress:
     source: str
     currentBestScore: int
     elapsedSeconds: float
+    solutionIndex: int | None = None
+    df: Any | None = None
+    cell_export_info: Any | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the API payload for this progress update."""
@@ -53,6 +56,7 @@ class SolverProgress:
             "source": self.source,
             "currentBestScore": self.currentBestScore,
             "elapsedSeconds": self.elapsedSeconds,
+            "solutionIndex": self.solutionIndex,
         }
 
 
