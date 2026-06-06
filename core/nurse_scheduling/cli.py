@@ -26,7 +26,7 @@ import time
 from io import BytesIO
 from . import scheduler, exporter
 from .model_build_stats import ModelBuildStatsSummary
-from .solver_interface import SolverProgress
+from .solver_interface import SolverProgress, count_export_comments, serialize_solver_progress
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
@@ -36,8 +36,7 @@ def _create_cli_progress_callback(progress_output_file=None, print_to_stdout: bo
     """Create a CLI progress printer for solver best-score updates."""
 
     def print_progress(payload):
-        progress_payload = payload.to_dict()
-        progress_payload["commentCount"] = _count_export_comments(payload.cell_export_info)
+        progress_payload = serialize_solver_progress(payload, include_export_summary=True)
         if progress_output_file is not None:
             progress_output_file.write(json.dumps(progress_payload, sort_keys=True) + "\n")
             progress_output_file.flush()
@@ -53,16 +52,6 @@ def _create_cli_progress_callback(progress_output_file=None, print_to_stdout: bo
             )
 
     return print_progress
-
-
-def _count_export_comments(cell_export_info) -> int | None:
-    """Count reported export-rule notes from in-memory cell export metadata."""
-    if not isinstance(cell_export_info, dict):
-        return None
-    comments = cell_export_info.get("comments")
-    if not isinstance(comments, dict):
-        return None
-    return sum(len(notes) for notes in comments.values())
 
 
 def main():
@@ -196,17 +185,17 @@ def main():
         print(f"Results saved to {output_path}")
         print(f"Score: {score}")
         print(f"Status: {status}")
-        comment_count = _count_export_comments(cell_export_info)
+        comment_count = count_export_comments(cell_export_info)
         if comment_count is not None:
             print(f"Comments: {comment_count}")
     elif args.show_model_build_stats:
         print(f"Score: {score}")
         print(f"Status: {status}")
-        comment_count = _count_export_comments(cell_export_info)
+        comment_count = count_export_comments(cell_export_info)
         if comment_count is not None:
             print(f"Comments: {comment_count}")
     else:
-        comment_count = _count_export_comments(cell_export_info)
+        comment_count = count_export_comments(cell_export_info)
         if comment_count is not None:
             print(f"Comments: {comment_count}")
         print(df, solution, score, status)

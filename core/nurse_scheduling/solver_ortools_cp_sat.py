@@ -93,6 +93,7 @@ class ORToolsSolver(SolverInterface):
         deterministic: bool = False,
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> SolverStatus:
         """Solve the model using OR-Tools."""
         if deterministic:
@@ -118,6 +119,7 @@ class ORToolsSolver(SolverInterface):
             self.objective_expr,
             solution_callback=solution_callback,
             progress_callback=progress_callback,
+            should_stop=should_stop,
         )
         self.status = self.solver.Solve(self.model, internal_solution_callback)
 
@@ -213,6 +215,7 @@ class ORToolsSolver(SolverInterface):
         objective_var: Any = None,
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> Any:
         """Create a solution callback for tracking intermediate solutions."""
         import time
@@ -223,7 +226,7 @@ class ORToolsSolver(SolverInterface):
         class PartialSolutionPrinter(cp_model.CpSolverSolutionCallback):
             """Print intermediate solutions."""
 
-            def __init__(self, objective_var, solution_callback, progress_callback):
+            def __init__(self, objective_var, solution_callback, progress_callback, should_stop):
                 cp_model.CpSolverSolutionCallback.__init__(self)
                 self.n_solutions = 0
                 self.best_score = float("-inf") if maximize else float("inf")
@@ -231,6 +234,7 @@ class ORToolsSolver(SolverInterface):
                 self.objective_var = objective_var
                 self.solution_callback = solution_callback
                 self.progress_callback = progress_callback
+                self.should_stop = should_stop
                 self.solution_index = 0
 
             def on_solution_callback(self):
@@ -270,7 +274,9 @@ class ORToolsSolver(SolverInterface):
                             self.solution_callback(self)
                         except Exception:
                             logging.exception("Solution callback failed")
+                    if self.should_stop is not None and self.should_stop():
+                        self.StopSearch()
                 finally:
                     solver._active_solution_callback = None
 
-        return PartialSolutionPrinter(objective_var, solution_callback, progress_callback)
+        return PartialSolutionPrinter(objective_var, solution_callback, progress_callback, should_stop)

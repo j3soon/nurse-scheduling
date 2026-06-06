@@ -40,6 +40,7 @@ def schedule(
     timeout: int | None = None,
     solver: str = "ortools/cp-sat",
     progress_callback: Callable[[SolverProgress], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
     model_build_stats_callback: Callable[[ModelBuildStats], None] | None = None,
 ):
     logging.info("Loading scenario from file content...")
@@ -267,6 +268,7 @@ def schedule(
         timeout=timeout,
         deterministic=deterministic,
         progress_callback=progress_callback_with_export,
+        should_stop=should_stop,
     )
 
     # Get status name

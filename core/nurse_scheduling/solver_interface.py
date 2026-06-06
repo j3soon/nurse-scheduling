@@ -52,12 +52,34 @@ class SolverProgress:
 
     def to_dict(self) -> dict[str, Any]:
         """Return the API payload for this progress update."""
-        return {
-            "source": self.source,
-            "currentBestScore": self.currentBestScore,
-            "elapsedSeconds": self.elapsedSeconds,
-            "solutionIndex": self.solutionIndex,
-        }
+        return serialize_solver_progress(self)
+
+
+def count_export_comments(cell_export_info: Any) -> int | None:
+    """Count reported export-rule notes from in-memory cell export metadata."""
+    if not isinstance(cell_export_info, dict):
+        return None
+    comments = cell_export_info.get("comments")
+    if not isinstance(comments, dict):
+        return None
+    return sum(len(notes) for notes in comments.values())
+
+
+def serialize_solver_progress(
+    payload: SolverProgress,
+    *,
+    include_export_summary: bool = False,
+) -> dict[str, Any]:
+    """Return the wire payload for a solver progress update."""
+    progress_payload = {
+        "source": payload.source,
+        "currentBestScore": payload.currentBestScore,
+        "elapsedSeconds": payload.elapsedSeconds,
+        "solutionIndex": payload.solutionIndex,
+    }
+    if include_export_summary:
+        progress_payload["commentCount"] = count_export_comments(payload.cell_export_info)
+    return progress_payload
 
 
 def assert_int_score(value: Any, *, label: str = "score", integer_tolerance: float = 1e-6) -> int:
@@ -170,6 +192,7 @@ class SolverInterface(ABC):
         deterministic: bool = False,
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> SolverStatus:
         """
         Solve the model.
@@ -180,6 +203,7 @@ class SolverInterface(ABC):
             solution_callback: Optional app-level callback receiving the registered
                 solver-specific callback for each intermediate solution.
             progress_callback: Optional callback for normalized solver progress events.
+            should_stop: Optional callback returning True when solving should stop early.
 
         Returns:
             The solver status.
@@ -296,6 +320,7 @@ class SolverInterface(ABC):
         objective_var: Any = None,
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> Any:
         """
         Create a solution callback for tracking intermediate solutions during solving.
@@ -305,6 +330,7 @@ class SolverInterface(ABC):
             solution_callback: Optional app-level callback receiving the registered
                 solver-specific callback for each intermediate solution.
             progress_callback: Optional callback for normalized solver progress events.
+            should_stop: Optional callback returning True when solving should stop early.
 
         Returns:
             A solver-specific solution callback object, or None if not supported.

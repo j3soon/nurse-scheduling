@@ -250,6 +250,7 @@ class BasePuLPSolver(SolverInterface):
         deterministic: bool = False,
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> SolverStatus:
         """Solve the model using PuLP."""
         start_time = time.time()
@@ -261,6 +262,8 @@ class BasePuLPSolver(SolverInterface):
         # Note: PuLP doesn't support solution callbacks in the same way as OR-Tools
         if solution_callback is not None:
             logging.warning("Solution callbacks are not fully supported with PuLP solver")
+        if should_stop is not None:
+            raise NotImplementedError("PuLP solvers do not support cooperative stop callbacks.")
 
         # Solve the model.
         # `msg=1` means verbose solve mode.
@@ -655,6 +658,7 @@ class BasePuLPSolver(SolverInterface):
         objective_var: Any = None,
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> Any:
         """
         Create a solution callback for tracking intermediate solutions.

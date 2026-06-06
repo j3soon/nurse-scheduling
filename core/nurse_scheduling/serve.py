@@ -37,7 +37,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import scheduler, exporter
-from .solver_interface import SolverProgress
+from .solver_interface import SolverProgress, serialize_solver_progress
 
 
 def _get_app_version() -> str:
@@ -111,9 +111,11 @@ class OptimizeJobStatus(str, Enum):
 
     QUEUED = "queued"
     RUNNING = "running"
+    CANCELLING = "cancelling"
     OPTIMAL = "optimal"
     FEASIBLE = "feasible"
     INFEASIBLE = "infeasible"
+    CANCELLED = "cancelled"
     FAILED = "failed"
 
 
@@ -133,6 +135,8 @@ class OptimizeJob:
     score: int | None = None
     solver_status: str | None = None
     error: str | None = None
+    cancel_requested: bool = False
+    finish_now_requested: bool = False
     xlsx_bytes: bytes | None = None
     xlsx_filename: str | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -155,8 +159,13 @@ def _is_terminal_job_status(status: OptimizeJobStatus) -> bool:
         OptimizeJobStatus.OPTIMAL,
         OptimizeJobStatus.FEASIBLE,
         OptimizeJobStatus.INFEASIBLE,
+        OptimizeJobStatus.CANCELLED,
         OptimizeJobStatus.FAILED,
     }
+
+
+def _solver_supports_job_stop(solver: str) -> bool:
+    return solver == "ortools/cp-sat"
 
 
 def _publish_job_event(job: OptimizeJob, event: str, data: dict[str, Any]) -> None:
@@ -216,6 +225,43 @@ def _update_optimize_job(job_id: str, **updates) -> OptimizeJob:
     return job
 
 
+def _is_job_stop_requested(job_id: str) -> bool:
+    job = _get_optimize_job(job_id)
+    return job.cancel_requested or job.finish_now_requested
+
+
+def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
+    with _optimize_jobs_lock:
+        job = _optimize_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Optimization job not found")
+        if _is_terminal_job_status(job.status):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Optimization job has already finished.",
+                    "status": job.status.value,
+                },
+            )
+        if not _solver_supports_job_stop(job.solver):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "This solver does not support cancelling or finishing early.",
+                    "solver": job.solver,
+                    "status": job.status.value,
+                },
+            )
+        if finish_now:
+            job.finish_now_requested = True
+        else:
+            job.cancel_requested = True
+            job.status = OptimizeJobStatus.CANCELLING
+    if not finish_now:
+        _publish_job_event(job, "status", {"status": job.status.value})
+    return job
+
+
 def _optimize_job_response(job: OptimizeJob) -> dict[str, Any]:
     return {
         "jobId": job.id,
@@ -227,6 +273,8 @@ def _optimize_job_response(job: OptimizeJob) -> dict[str, Any]:
         "score": job.score,
         "solverStatus": job.solver_status,
         "error": job.error,
+        "cancelRequested": job.cancel_requested,
+        "finishNowRequested": job.finish_now_requested,
         "xlsxReady": job.xlsx_bytes is not None,
         "links": {
             "status": f"/optimize/{job.id}",
@@ -294,6 +342,16 @@ def _capture_optimize_exception(job: OptimizeJob, content: bytes, error: Excepti
 
 
 def _run_optimize_job(job_id: str, content: bytes) -> None:
+    if _get_optimize_job(job_id).cancel_requested:
+        job = _update_optimize_job(
+            job_id,
+            status=OptimizeJobStatus.CANCELLED,
+            error="Optimization cancelled.",
+            finished_at=datetime.now(),
+        )
+        _publish_job_event(job, "complete", _optimize_job_response(job))
+        return
+
     job = _update_optimize_job(job_id, status=OptimizeJobStatus.RUNNING, started_at=datetime.now())
     _publish_job_event(job, "status", {"status": OptimizeJobStatus.RUNNING.value})
 
@@ -302,7 +360,13 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         def publish_progress(payload: SolverProgress) -> None:
             current_job = _get_optimize_job(job_id)
             _update_optimize_job(job_id, score=payload.currentBestScore)
-            _publish_job_event(current_job, "progress", payload.to_dict())
+            _publish_job_event(current_job, "progress", serialize_solver_progress(payload, include_export_summary=True))
+
+        should_stop = None
+        if _solver_supports_job_stop(job.solver):
+
+            def should_stop() -> bool:
+                return _is_job_stop_requested(job_id)
 
         df, _solution, score, solver_status, cell_export_info = scheduler.schedule(
             file_content=content,
@@ -310,7 +374,18 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             timeout=job.timeout,
             solver=job.solver,
             progress_callback=publish_progress,
+            should_stop=should_stop,
         )
+
+        if _get_optimize_job(job_id).cancel_requested:
+            job = _update_optimize_job(
+                job_id,
+                status=OptimizeJobStatus.CANCELLED,
+                error="Optimization cancelled.",
+                finished_at=datetime.now(),
+            )
+            _publish_job_event(job, "complete", _optimize_job_response(job))
+            return
 
         if df is None:
             job = _update_optimize_job(
@@ -457,6 +532,19 @@ async def stream_optimize_job_events(job_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/optimize/{job_id}/cancel")
+async def cancel_optimize_job(job_id: str):
+    job = _request_optimize_job_stop(job_id, finish_now=False)
+    return _optimize_job_response(job)
+
+
+@app.post("/optimize/{job_id}/finish-now")
+async def finish_optimize_job_now(job_id: str):
+    job = _request_optimize_job_stop(job_id, finish_now=True)
+    _publish_job_event(job, "status", {"status": job.status.value, "finishNowRequested": True})
+    return _optimize_job_response(job)
 
 
 @app.get("/optimize/{job_id}/xlsx")

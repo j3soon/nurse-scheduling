@@ -334,11 +334,13 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(eventSource.url).toBe('http://localhost:8000/optimize/opt_sse/events');
     act(() => {
       eventSource.emit('status', { status: 'running' });
-    eventSource.emit('progress', {
-      source: 'ortools/cp-sat:solution-callback',
-      currentBestScore: 12,
-      elapsedSeconds: 0.1,
-    });
+      eventSource.emit('progress', {
+        source: 'ortools/cp-sat:solution-callback',
+        currentBestScore: 12,
+        elapsedSeconds: 0.1,
+        solutionIndex: 2,
+        commentCount: 5,
+      });
       eventSource.emit('complete', {
         jobId: 'opt_sse',
         status: 'optimal',
@@ -358,8 +360,207 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('status')).toBeInTheDocument();
     expect(screen.getByText('progress')).toBeInTheDocument();
     expect(screen.getByText('complete')).toBeInTheDocument();
+    expect(screen.getByText(/Comments: 5/)).toBeInTheDocument();
     expect(screen.getByText(/"currentBestScore":12/)).toBeInTheDocument();
     expect(eventSource.close).toHaveBeenCalled();
+  });
+
+  it('can request current results or cancel an active SSE job', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          status: 'ok',
+          version: 'alpha',
+          apiVersion: 'alpha',
+          appVersion: 'v-test',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_control',
+          status: 'queued',
+          score: null,
+          solverStatus: null,
+          error: null,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_control',
+            events: '/optimize/opt_control/events',
+            xlsx: '/optimize/opt_control/xlsx',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_control',
+          status: 'running',
+          score: null,
+          solverStatus: null,
+          error: null,
+          finishNowRequested: true,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_control',
+            events: '/optimize/opt_control/events',
+            xlsx: '/optimize/opt_control/xlsx',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_control',
+          status: 'cancelling',
+          score: null,
+          solverStatus: null,
+          error: null,
+          cancelRequested: true,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_control',
+            events: '/optimize/opt_control/events',
+            xlsx: '/optimize/opt_control/xlsx',
+          },
+        }),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    act(() => {
+      MockEventSource.instances[0].emit('status', { status: 'running' });
+    });
+
+    await user.click(screen.getByRole('button', { name: /get results now/i }));
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/optimize/opt_control/finish-now',
+      expect.objectContaining({ method: 'POST' })
+    );
+
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/optimize/opt_control/cancel',
+      expect.objectContaining({ method: 'POST' })
+    );
+
+    act(() => {
+      MockEventSource.instances[0].emit('complete', {
+        jobId: 'opt_control',
+        status: 'cancelled',
+        score: null,
+        solverStatus: null,
+        error: 'Optimization cancelled.',
+        xlsxReady: false,
+        links: {
+          status: '/optimize/opt_control',
+          events: '/optimize/opt_control/events',
+          xlsx: '/optimize/opt_control/xlsx',
+        },
+      });
+    });
+
+    await expect(screen.findByText('Optimization cancelled.')).resolves.toBeInTheDocument();
+  });
+
+  it('keeps the optimization event log pinned to bottom when new events arrive at bottom', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          status: 'ok',
+          version: 'alpha',
+          apiVersion: 'alpha',
+          appVersion: 'v-test',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_scroll',
+          status: 'queued',
+          score: null,
+          solverStatus: null,
+          error: null,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_scroll',
+            events: '/optimize/opt_scroll/events',
+            xlsx: '/optimize/opt_scroll/xlsx',
+          },
+        }),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    const eventLog = screen.getByTestId('optimization-events-log');
+    Object.defineProperty(eventLog, 'clientHeight', { configurable: true, value: 100 });
+    Object.defineProperty(eventLog, 'scrollHeight', { configurable: true, value: 100 });
+    eventLog.scrollTop = 0;
+
+    act(() => {
+      MockEventSource.instances[0].emit('status', { status: 'running' });
+    });
+
+    expect(eventLog.scrollTop).toBe(100);
+  });
+
+  it('does not move the optimization event log when new events arrive while scrolled up', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          status: 'ok',
+          version: 'alpha',
+          apiVersion: 'alpha',
+          appVersion: 'v-test',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_scroll',
+          status: 'queued',
+          score: null,
+          solverStatus: null,
+          error: null,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_scroll',
+            events: '/optimize/opt_scroll/events',
+            xlsx: '/optimize/opt_scroll/xlsx',
+          },
+        }),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    const eventLog = screen.getByTestId('optimization-events-log');
+    Object.defineProperty(eventLog, 'clientHeight', { configurable: true, value: 100 });
+    Object.defineProperty(eventLog, 'scrollHeight', { configurable: true, value: 300 });
+    eventLog.scrollTop = 50;
+
+    act(() => {
+      MockEventSource.instances[0].emit('status', { status: 'running' });
+    });
+
+    expect(eventLog.scrollTop).toBe(50);
   });
 
   it('forbids sending and instructs users to set dates when date data is empty', async () => {

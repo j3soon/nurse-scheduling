@@ -168,7 +168,12 @@ class TestOptimizeJobs:
     def test_optimize_job_streams_progress_events(self, monkeypatch):
         def fake_schedule(*args, **kwargs):
             kwargs["progress_callback"](
-                SolverProgress(source="pulp/cbc:solver-log:incumbent", currentBestScore=7, elapsedSeconds=0.1)
+                SolverProgress(
+                    source="pulp/cbc:solver-log:incumbent",
+                    currentBestScore=7,
+                    elapsedSeconds=0.1,
+                    cell_export_info={"comments": {(1, 2): ["a", "b"]}},
+                )
             )
             return "fake_df", {}, 42, "OPTIMAL", None
 
@@ -189,6 +194,80 @@ class TestOptimizeJobs:
         assert "event: progress" in body
         assert '"source": "pulp/cbc:solver-log:incumbent"' in body
         assert '"currentBestScore": 7' in body
+        assert '"commentCount": 2' in body
+
+    def test_optimize_job_cancel_requests_running_job_stop(self, monkeypatch):
+        solve_started = False
+
+        def fake_schedule(*args, **kwargs):
+            nonlocal solve_started
+            solve_started = True
+            wait_for_stop = kwargs["should_stop"]
+            for _ in range(100):
+                if wait_for_stop():
+                    return "fake_df", {}, 7, "FEASIBLE", None
+                time.sleep(0.01)
+            pytest.fail("cancel request was not observed")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "running")
+
+        cancel_response = client.post(f"/optimize/{job_id}/cancel")
+
+        assert cancel_response.status_code == 200
+        assert cancel_response.json()["status"] == "cancelling"
+        completed = wait_for_job_status(job_id, "cancelled")
+        assert solve_started
+        assert completed["error"] == "Optimization cancelled."
+        assert completed["xlsxReady"] is False
+
+    def test_optimize_job_finish_now_requests_best_available_result(self, monkeypatch):
+        def fake_schedule(*args, **kwargs):
+            wait_for_stop = kwargs["should_stop"]
+            for _ in range(100):
+                if wait_for_stop():
+                    return "fake_df", {}, 7, "FEASIBLE", None
+                time.sleep(0.01)
+            pytest.fail("finish-now request was not observed")
+
+        def fake_export_to_excel(df, output_buffer, cell_export_info):
+            output_buffer.write(b"fake xlsx bytes")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+        monkeypatch.setattr(serve.exporter, "export_to_excel", fake_export_to_excel)
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "running")
+
+        finish_response = client.post(f"/optimize/{job_id}/finish-now")
+
+        assert finish_response.status_code == 200
+        assert finish_response.json()["finishNowRequested"] is True
+        completed = wait_for_job_status(job_id, "feasible")
+        assert completed["score"] == 7
+        assert completed["xlsxReady"] is True
+
+    def test_optimize_job_control_rejects_solver_without_stop_support(self):
+        job = serve._create_optimize_job(
+            input_name="pulp.yaml",
+            solver="pulp/cbc",
+            prettify=True,
+            timeout=60,
+        )
+        serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
+
+        cancel_response = client.post(f"/optimize/{job.id}/cancel")
+        finish_response = client.post(f"/optimize/{job.id}/finish-now")
+
+        assert cancel_response.status_code == 409
+        assert cancel_response.json()["detail"]["solver"] == "pulp/cbc"
+        assert "does not support" in cancel_response.json()["detail"]["message"]
+        assert finish_response.status_code == 409
+        assert finish_response.json()["detail"]["solver"] == "pulp/cbc"
 
     def test_optimize_job_allows_multiple_sse_connections(self, fake_successful_scheduler):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})

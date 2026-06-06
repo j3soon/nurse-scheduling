@@ -20,9 +20,6 @@ dates:
     - id: After 4
       members: ['04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30']
       description: 這週某班的人，4 號後 (含) 不能支援別的班
-    - id: ALL_
-      members: ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30']
-      description: ''
   items: []
 people:
   items:
@@ -556,12 +553,12 @@ preferences:
     weight: -1000000000
   - type: shift request
     person: [P1]
-    date: [ALL_]
+    date: [ALL]
     shiftType: [D]
     weight: -.inf
   - type: shift request
     person: [P1]
-    date: [ALL_]
+    date: [ALL]
     shiftType: [D+]
     weight: -.inf
   - type: shift request

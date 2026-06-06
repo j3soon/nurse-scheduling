@@ -135,6 +135,16 @@ def test_pulp_cbc_solve_replays_solver_output_and_emits_final_progress(capsys):
     assert any(event.source == "pulp/cbc:final-result" and event.currentBestScore == 1 for event in events)
 
 
+def test_pulp_solve_rejects_should_stop():
+    solver = PuLPSolver()
+    x = solver.new_bool_var("x")
+    solver.add_constraint(x == 1, name="fix_x")
+    solver.set_objective(x, maximize=True)
+
+    with pytest.raises(NotImplementedError, match="do not support cooperative stop callbacks"):
+        solver.solve(should_stop=lambda: False)
+
+
 def test_pulp_cuopt_solve_emits_final_progress(capsys):
     cuopt_available = hasattr(pulp, "CUOPT") and bool(pulp.CUOPT(msg=False).available())
     if not cuopt_available:

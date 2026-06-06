@@ -206,9 +206,17 @@ def test_scheduler_passes_progress_callback_without_creating_solution_callback(m
     content = _load_valid_yaml_bytes()
     seen = {}
 
-    def fake_solve(_self, timeout=None, deterministic=False, solution_callback=None, progress_callback=None):
+    def fake_solve(
+        _self,
+        timeout=None,
+        deterministic=False,
+        solution_callback=None,
+        progress_callback=None,
+        should_stop=None,
+    ):
         seen["solution_callback"] = solution_callback
         seen["progress_callback"] = progress_callback
+        seen["should_stop"] = should_stop
         return SolverStatus.FEASIBLE
 
     monkeypatch.setattr("nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.solve", fake_solve)
