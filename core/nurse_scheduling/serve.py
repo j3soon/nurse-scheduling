@@ -18,9 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
-import os
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from io import BytesIO
@@ -28,9 +26,12 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import scheduler, exporter
 from . import jobs as optimize_jobs_state
@@ -57,6 +58,7 @@ from .solver_interface import (
     serialize_schedule_phase_progress,
     serialize_solver_progress,
 )
+from .sentry import capture_invalid_request, capture_optimize_exception, init_sentry
 
 
 def _get_app_version() -> str:
@@ -81,40 +83,10 @@ def _get_app_version() -> str:
         return "v0.0.0-unknown"
 
 
-def _should_enable_sentry() -> bool:
-    if os.getenv("DISABLE_SENTRY"):
-        return False
-    # Avoid sending errors from local/unit test runs by default.
-    if "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules:
-        return False
-    return True
-
-
 app_version = _get_app_version()
 
 
-if _should_enable_sentry():
-    import sentry_sdk
-
-    sentry_sdk.init(
-        dsn="https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
-        release=os.getenv("SENTRY_RELEASE", f"nurse-scheduling@{app_version}"),
-        # Add data like request headers and IP for users, if applicable;
-        # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
-        send_default_pii=True,
-        # Set traces_sample_rate to 1.0 to capture 100%
-        # of transactions for tracing.
-        traces_sample_rate=1.0,
-        # To collect profiles for all profile sessions,
-        # set `profile_session_sample_rate` to 1.0.
-        profile_session_sample_rate=1.0,
-        # Profiles will be automatically collected while
-        # there is an active span.
-        profile_lifecycle="trace",
-        # Enable logs to be sent to Sentry
-        enable_logs=True,
-    )
-    sentry_sdk.set_tag("app", "backend")
+init_sentry(app_version)
 
 # Configure logging to verbose level 1 (verbose levels defined in CLI)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -123,6 +95,26 @@ title = "Nurse Scheduling API"
 version = "alpha"
 
 app = FastAPI(title=title, version=version)
+
+# Ref: https://fastapi.tiangolo.com/tutorial/handling-errors/#override-request-validation-exceptions
+
+@app.exception_handler(RequestValidationError)
+async def sentry_request_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    capture_invalid_request(request, 422, exc.errors())
+    return await request_validation_exception_handler(request, exc)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def sentry_http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+):
+    if 400 <= exc.status_code < 500:
+        capture_invalid_request(request, exc.status_code, exc.detail)
+    return await http_exception_handler(request, exc)
 
 
 MAX_OPTIMIZATION_YAML_BYTES = 2 * 1024 * 1024
@@ -187,31 +179,6 @@ def _final_status_from_solver_status(solver_status: str) -> OptimizeJobStatus:
 
 def _format_unexpected_error(error: Exception) -> str:
     return f"{error}\n\n{UNEXPECTED_ERROR_VERSION_ADVICE}"
-
-
-def _capture_optimize_exception(job: OptimizeJob, content: bytes, error: Exception) -> None:
-    if not _should_enable_sentry():
-        return
-
-    import sentry_sdk
-
-    # Ref: https://docs.sentry.io/platforms/python/enriching-events/scopes/
-    with sentry_sdk.new_scope() as scope:
-        scope.set_context(
-            "schedule_state",
-            {
-                "attached": True,
-                "input_name": job.input_name,
-                "job_id": job.id,
-                "size_bytes": len(content),
-            },
-        )
-        scope.add_attachment(
-            bytes=content,
-            filename=job.input_name,
-            content_type="application/x-yaml",
-        )
-        sentry_sdk.capture_exception(error)
 
 
 def _run_optimize_job(job_id: str, content: bytes) -> None:
@@ -289,7 +256,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         _publish_job_event(job, "complete", _optimize_job_response(job))
     except Exception as e:
         logging.error("Error during optimization job %s: %s", job_id, str(e))
-        _capture_optimize_exception(job, content, e)
+        capture_optimize_exception(job, content, e)
         job = _update_optimize_job(
             job_id,
             status=OptimizeJobStatus.FAILED,

@@ -516,6 +516,47 @@ class TestOptimizeJobs:
         assert response.status_code == 400
         assert str(serve.MAX_OPTIMIZATION_TIMEOUT_SECONDS) in response.json()["detail"]
 
+    def test_optimize_job_invalid_http_request_is_captured(self, monkeypatch):
+        captured = []
+
+        def fake_capture_invalid_request(request, status_code, detail):
+            captured.append((request.url.path, status_code, detail))
+
+        monkeypatch.setattr(serve, "capture_invalid_request", fake_capture_invalid_request)
+
+        response = client.post("/optimize")
+
+        assert response.status_code == 400
+        assert captured == [
+            (
+                "/optimize",
+                400,
+                "Either 'file' or 'yaml_content' must be provided",
+            )
+        ]
+
+    def test_optimize_job_request_validation_error_is_captured(self, monkeypatch):
+        captured = []
+
+        def fake_capture_invalid_request(request, status_code, detail):
+            captured.append((request.url.path, status_code, detail))
+
+        monkeypatch.setattr(serve, "capture_invalid_request", fake_capture_invalid_request)
+
+        response = client.post(
+            "/optimize",
+            data={
+                "yaml_content": "apiVersion: alpha\n",
+                "timeout": "not-an-int",
+            },
+        )
+
+        assert response.status_code == 422
+        assert len(captured) == 1
+        assert captured[0][0] == "/optimize"
+        assert captured[0][1] == 422
+        assert captured[0][2][0]["loc"] == ("body", "timeout")
+
     def test_optimize_job_records_scheduler_failure(self, monkeypatch):
         def fake_schedule(*args, **kwargs):
             raise ValueError("bad scheduling data")
@@ -581,10 +622,10 @@ class TestServeInternals:
     def test_should_enable_sentry_disabled_by_env(self, monkeypatch):
         monkeypatch.setenv("DISABLE_SENTRY", "1")
         monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-        monkeypatch.setattr("nurse_scheduling.serve.sys", types.SimpleNamespace(modules={}))
+        monkeypatch.setattr("nurse_scheduling.sentry.sys", types.SimpleNamespace(modules={}))
 
         assert app is not None
-        from nurse_scheduling.serve import _should_enable_sentry
+        from nurse_scheduling.sentry import _should_enable_sentry
 
         assert _should_enable_sentry() is False
 
@@ -592,16 +633,16 @@ class TestServeInternals:
         monkeypatch.delenv("DISABLE_SENTRY", raising=False)
         monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_serve.py::fake")
 
-        from nurse_scheduling.serve import _should_enable_sentry
+        from nurse_scheduling.sentry import _should_enable_sentry
 
         assert _should_enable_sentry() is False
 
     def test_should_enable_sentry_true_when_not_disabled(self, monkeypatch):
         monkeypatch.delenv("DISABLE_SENTRY", raising=False)
         monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-        monkeypatch.setattr("nurse_scheduling.serve.sys", types.SimpleNamespace(modules={}))
+        monkeypatch.setattr("nurse_scheduling.sentry.sys", types.SimpleNamespace(modules={}))
 
-        from nurse_scheduling.serve import _should_enable_sentry
+        from nurse_scheduling.sentry import _should_enable_sentry
 
         assert _should_enable_sentry() is True
 
