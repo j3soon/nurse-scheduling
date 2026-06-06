@@ -414,6 +414,87 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(eventSource.close).toHaveBeenCalled();
   });
 
+  it('recovers from a dropped SSE stream by polling job status', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+    const appendChildSpy = vi.spyOn(document.body, 'appendChild');
+    const removeChildSpy = vi.spyOn(document.body, 'removeChild');
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          status: 'ok',
+          version: 'alpha',
+          apiVersion: 'alpha',
+          appVersion: 'v-test',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_sse_drop',
+          status: 'queued',
+          score: null,
+          solverStatus: null,
+          error: null,
+          xlsxReady: false,
+          links: {
+            status: '/optimize/opt_sse_drop',
+            events: '/optimize/opt_sse_drop/events',
+            xlsx: '/optimize/opt_sse_drop/xlsx',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          jobId: 'opt_sse_drop',
+          status: 'optimal',
+          score: 77,
+          solverStatus: 'OPTIMAL',
+          error: null,
+          xlsxReady: true,
+          links: {
+            status: '/optimize/opt_sse_drop',
+            events: '/optimize/opt_sse_drop/events',
+            xlsx: '/optimize/opt_sse_drop/xlsx',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
+        headers: new Headers({
+          'Content-Disposition': 'attachment; filename=recovered.xlsx',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    act(() => {
+      MockEventSource.instances[0].listeners.get('error')?.forEach(listener => {
+        listener(new Event('error') as MessageEvent);
+      });
+    });
+
+    await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
+    expect(screen.getByText('Optimization event stream failed')).toBeInTheDocument();
+    expect(screen.getByText('recovered.xlsx')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/optimize/opt_sse_drop',
+      expect.objectContaining({ method: 'GET' })
+    );
+    expect(appendChildSpy).toHaveBeenCalled();
+    expect(removeChildSpy).toHaveBeenCalled();
+    expect(MockEventSource.instances[0].close).toHaveBeenCalled();
+  });
+
   it('can request current results or cancel an active SSE job', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);

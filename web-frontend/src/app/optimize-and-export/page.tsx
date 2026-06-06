@@ -377,6 +377,28 @@ export default function OptimizeAndExportPage() {
     return await response.json() as OptimizeJobResponse;
   }, [apiEndpoint]);
 
+  const pollOptimizeJob = useCallback((job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
+    return new Promise((resolve, reject) => {
+      const poll = async () => {
+        try {
+          const updatedJob = await getOptimizeJobStatus(job);
+          setScheduleStatus(updatedJob.status);
+
+          if (TERMINAL_JOB_STATUSES.has(updatedJob.status)) {
+            resolve(updatedJob);
+            return;
+          }
+
+          window.setTimeout(() => void poll(), 1000);
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      void poll();
+    });
+  }, [getOptimizeJobStatus]);
+
   const waitForOptimizeJob = useCallback((job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
     if (TERMINAL_JOB_STATUSES.has(job.status)) {
       return Promise.resolve(job);
@@ -437,32 +459,14 @@ export default function OptimizeAndExportPage() {
             reject(new Error((parsedData as OptimizeJobResponse).error ?? 'Optimization failed'));
           } else {
             appendSseEvent('error', 'Optimization event stream failed');
-            reject(new Error('Optimization event stream failed'));
+            void pollOptimizeJob(job).then(resolve, reject);
           }
         });
       });
     }
 
-    return new Promise((resolve, reject) => {
-      const poll = async () => {
-        try {
-          const updatedJob = await getOptimizeJobStatus(job);
-          setScheduleStatus(updatedJob.status);
-
-          if (TERMINAL_JOB_STATUSES.has(updatedJob.status)) {
-            resolve(updatedJob);
-            return;
-          }
-
-          window.setTimeout(() => void poll(), 1000);
-        } catch (error) {
-          reject(error);
-        }
-      };
-
-      void poll();
-    });
-  }, [apiEndpoint, appendSseEvent, getOptimizeJobStatus]);
+    return pollOptimizeJob(job);
+  }, [apiEndpoint, appendSseEvent, pollOptimizeJob]);
 
   const handleOptimizeAndDownload = async () => {
     if (isRequiredDataMissing) {
