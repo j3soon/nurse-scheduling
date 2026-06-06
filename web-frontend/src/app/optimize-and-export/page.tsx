@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { FiDownload, FiAlertCircle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity } from 'react-icons/fi';
+import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import { CURRENT_APP_VERSION } from '@/utils/version';
@@ -147,8 +148,14 @@ function isProgressEventData(data: unknown): data is OptimizeProgressEvent {
   return typeof data === 'object' && data !== null && 'currentBestScore' in data;
 }
 
+function formatScore(score: number): string {
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+  }).format(score);
+}
+
 function formatProgressSummary(data: OptimizeProgressEvent): string {
-  const parts = [`Score: ${data.currentBestScore}`];
+  const parts = [`Score: ${typeof data.currentBestScore === 'number' ? formatScore(data.currentBestScore) : 'N/A'}`];
   if (data.commentCount !== undefined && data.commentCount !== null) {
     parts.push(`Comments: ${data.commentCount}`);
   }
@@ -195,12 +202,12 @@ export default function OptimizeAndExportPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [scheduleFilename, setScheduleFilename] = useState<string | null>(null);
-  const [scheduleScore, setScheduleScore] = useState<string | null>(null);
+  const [scheduleScore, setScheduleScore] = useState<number | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [currentJob, setCurrentJob] = useState<OptimizeJobResponse | null>(null);
   const [incumbentResult, setIncumbentResult] = useState<OptimizeProgressEvent | null>(null);
+  const [progressPoints, setProgressPoints] = useState<OptimizationProgressPoint[]>([]);
   const [savedDownload, setSavedDownload] = useState<{ url: string; filename: string } | null>(null);
   const [sseEvents, setSseEvents] = useState<SseEventLogEntry[]>([]);
   const [serverHealthStatus, setServerHealthStatus] = useState<ServerHealthStatus>('checking');
@@ -367,7 +374,18 @@ export default function OptimizeAndExportPage() {
           appendSseEvent('progress', parsedData);
           if (isProgressEventData(parsedData)) {
             setIncumbentResult(parsedData);
-            setScheduleScore(String(parsedData.currentBestScore));
+            if (typeof parsedData.currentBestScore === 'number') {
+              setScheduleScore(parsedData.currentBestScore);
+            }
+            if (typeof parsedData.currentBestScore === 'number' && typeof parsedData.elapsedSeconds === 'number') {
+              setProgressPoints(currentPoints => [...currentPoints, {
+                currentBestScore: parsedData.currentBestScore as number,
+                elapsedSeconds: parsedData.elapsedSeconds as number,
+                commentCount: parsedData.commentCount,
+                solutionIndex: parsedData.solutionIndex,
+                source: parsedData.source,
+              }]);
+            }
           }
         });
 
@@ -419,12 +437,12 @@ export default function OptimizeAndExportPage() {
     if (isRequiredDataMissing) {
       setErrorMessage(null);
       setSuccessMessage(null);
-      setScheduleFilename(null);
       setScheduleScore(null);
       setScheduleStatus(null);
       setCurrentJobId(null);
       setCurrentJob(null);
       setIncumbentResult(null);
+      setProgressPoints([]);
       clearSavedDownload();
       setSseEvents([]);
       return;
@@ -433,12 +451,12 @@ export default function OptimizeAndExportPage() {
     setIsLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
-    setScheduleFilename(null);
     setScheduleScore(null);
     setScheduleStatus(null);
     setCurrentJobId(null);
     setCurrentJob(null);
     setIncumbentResult(null);
+    setProgressPoints([]);
     clearSavedDownload();
     setSseEvents([]);
 
@@ -474,7 +492,7 @@ export default function OptimizeAndExportPage() {
       setScheduleStatus(completedJob.status);
 
       if (completedJob.score !== null) {
-        setScheduleScore(String(completedJob.score));
+        setScheduleScore(completedJob.score);
       }
       if (completedJob.solverStatus) {
         setScheduleStatus(completedJob.solverStatus);
@@ -508,7 +526,6 @@ export default function OptimizeAndExportPage() {
         method: 'DELETE',
       });
 
-      setScheduleFilename(filename);
       setSuccessMessage('Schedule optimized and downloaded successfully!');
     } catch (error) {
       console.error('Error during optimization:', error);
@@ -580,9 +597,9 @@ export default function OptimizeAndExportPage() {
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-3 shadow-sm lg:min-w-[520px]">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className={`inline-flex w-fit items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium ${serverStatusClasses}`}>
+        <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-3 shadow-sm sm:flex-row sm:items-center lg:min-w-[520px]">
+          <div className={`inline-flex min-w-0 flex-1 items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium ${serverStatusClasses}`}>
+            <span className="shrink-0">
               {serverHealthStatus === 'offline' ? (
                 <FiWifiOff className="h-4 w-4" />
               ) : serverHealthStatus === 'checking' ? (
@@ -590,18 +607,17 @@ export default function OptimizeAndExportPage() {
               ) : (
                 <FiWifi className="h-4 w-4" />
               )}
-              <span>Server: {serverHealthStatus === 'online' ? 'Online' : serverHealthStatus === 'offline' ? 'Offline' : 'Checking'}</span>
-            </div>
-            <div className={`inline-flex w-fit items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold ring-1 ${runStatusClasses}`}>
-              {isLoading ? <FiLoader className="h-4 w-4 animate-spin" /> : successMessage ? <FiCheckCircle className="h-4 w-4" /> : errorMessage ? <FiAlertCircle className="h-4 w-4" /> : <FiActivity className="h-4 w-4" />}
-              <span>Run: {runStatus}</span>
-            </div>
+            </span>
+            <span className="min-w-0">
+              <span className="block">Server: {serverHealthStatus === 'online' ? 'Online' : serverHealthStatus === 'offline' ? 'Offline' : 'Checking'}</span>
+              <span className="block text-xs font-normal opacity-80">Last checked: {formatCheckedTime(lastHealthCheckedAt)}</span>
+            </span>
           </div>
 
           <button
             onClick={handleOptimizeAndDownload}
             disabled={isLoading || isRequiredDataMissing}
-            className={`inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+            className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
               isLoading || isRequiredDataMissing
                 ? 'bg-gray-400 cursor-not-allowed text-white'
                 : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500'
@@ -655,13 +671,13 @@ export default function OptimizeAndExportPage() {
       )}
 
       <div className="mb-6 grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]">
-        <div className="space-y-6">
-          <section className="rounded-lg border border-gray-200 bg-white">
-            <div className="border-b border-gray-200 px-5 py-4">
-              <h2 className="text-base font-semibold text-gray-900">Run Controls</h2>
-              <p className="mt-0.5 text-sm text-gray-600">Solver options applied to the next optimization run.</p>
-            </div>
-            <div className="grid gap-4 p-5 md:grid-cols-2">
+        <section className="rounded-lg border border-gray-200 bg-white">
+          <div className="border-b border-gray-200 px-5 py-4">
+            <h2 className="text-base font-semibold text-gray-900">Configuration</h2>
+            <p className="mt-0.5 text-sm text-gray-600">Solver and connection settings.</p>
+          </div>
+          <div className="space-y-5 p-5">
+            <div className="grid gap-4 md:grid-cols-2">
               <label className="flex min-h-20 cursor-pointer items-start gap-3 rounded-md border border-gray-200 bg-gray-50 p-3">
                 <input
                   type="checkbox"
@@ -693,18 +709,12 @@ export default function OptimizeAndExportPage() {
                 </div>
               </div>
             </div>
-          </section>
 
-          <section className="rounded-lg border border-gray-200 bg-white">
-            <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
-              <div>
-                <h2 className="text-base font-semibold text-gray-900">Backend Settings</h2>
-                <p className="mt-0.5 text-sm text-gray-600">Connection target and version compatibility.</p>
-              </div>
-              <span className="shrink-0 text-xs text-gray-500">Last checked: {formatCheckedTime(lastHealthCheckedAt)}</span>
-            </div>
-            <div className="space-y-4 p-5">
-              <div>
+            <details open className="rounded-md border border-gray-200 bg-gray-50">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-gray-700">
+                Backend settings
+              </summary>
+              <div className="space-y-4 border-t border-gray-200 p-3">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   API Endpoint
                 </label>
@@ -730,32 +740,32 @@ export default function OptimizeAndExportPage() {
                     Check Backend
                   </button>
                 </div>
-              </div>
 
-              {serverHealth && (
-                <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                  <p>
-                    API version: {serverHealth.apiVersion ?? serverHealth.version} · Frontend version: {CURRENT_APP_VERSION} · Backend version: {serverHealth.appVersion}
-                  </p>
-                  {hasVersionMismatch && (
-                    <p className="mt-1 font-medium text-amber-700">
-                      Frontend and backend versions do not match. If nothing breaks, you can continue.
+                {serverHealth && (
+                  <div className="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
+                    <p>
+                      API version: {serverHealth.apiVersion ?? serverHealth.version} · Frontend version: {CURRENT_APP_VERSION} · Backend version: {serverHealth.appVersion}
                     </p>
-                  )}
-                </div>
-              )}
-
-              {serverHealthStatus === 'offline' && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  <div className="flex gap-2">
-                    <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>Backend is not responding at the configured endpoint.</span>
+                    {hasVersionMismatch && (
+                      <p className="mt-1 font-medium text-amber-700">
+                        Frontend and backend versions do not match. If nothing breaks, you can continue.
+                      </p>
+                    )}
                   </div>
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
+                )}
+
+                {serverHealthStatus === 'offline' && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    <div className="flex gap-2">
+                      <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>Backend is not responding at the configured endpoint.</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </details>
+          </div>
+        </section>
 
         <section className="rounded-lg border border-gray-200 bg-white">
           <div className="border-b border-gray-200 px-5 py-4">
@@ -763,97 +773,81 @@ export default function OptimizeAndExportPage() {
             <p className="mt-0.5 text-sm text-gray-600">Current job, incumbent score, and downloadable file.</p>
           </div>
           <div className="space-y-4 p-5">
-            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <p className="text-xs font-medium uppercase text-gray-500">Incumbent Score</p>
-                  <p className="mt-1 text-4xl font-bold text-gray-900">{scheduleScore ?? '—'}</p>
-                </div>
-                <span className={`inline-flex w-fit items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold ring-1 ${runStatusClasses}`}>
-                  {isLoading ? <FiLoader className="h-4 w-4 animate-spin" /> : successMessage ? <FiCheckCircle className="h-4 w-4" /> : errorMessage ? <FiAlertCircle className="h-4 w-4" /> : <FiActivity className="h-4 w-4" />}
-                  {runStatus}
-                </span>
-              </div>
-              <div className="mt-3 text-sm text-gray-600">
-                {!currentJobId ? (
-                  <p>No optimization has been started.</p>
-                ) : isLoading && !incumbentResult ? (
-                  <p>Waiting for first feasible solution...</p>
-                ) : scheduleFilename ? (
-                  <p>Download ready.</p>
-                ) : (
-                  <p>Best known solution is shown while the backend continues searching.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-md border border-gray-200 bg-white p-3">
-                <p className="text-xs font-medium uppercase text-gray-500">Job ID</p>
-                <p className="mt-1 break-all text-sm font-semibold text-gray-900">{currentJobId ?? 'None'}</p>
-              </div>
-              <div className="rounded-md border border-gray-200 bg-white p-3">
-                <p className="text-xs font-medium uppercase text-gray-500">Elapsed</p>
-                <p className="mt-1 text-sm font-semibold text-gray-900">
-                  {incumbentResult?.elapsedSeconds !== undefined ? `${incumbentResult.elapsedSeconds}s` : '—'}
+            <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs font-medium uppercase text-gray-500">Incumbent Score</p>
+                <p className="mt-1 text-4xl font-bold text-gray-900">
+                  {scheduleScore !== null ? formatScore(scheduleScore) : '—'}
                 </p>
               </div>
-              <div className="rounded-md border border-gray-200 bg-white p-3">
-                <p className="text-xs font-medium uppercase text-gray-500">Comments</p>
-                <p className="mt-1 text-sm font-semibold text-gray-900">{incumbentResult?.commentCount ?? '—'}</p>
-              </div>
-              <div className="rounded-md border border-gray-200 bg-white p-3">
-                <p className="text-xs font-medium uppercase text-gray-500">Solution</p>
-                <p className="mt-1 text-sm font-semibold text-gray-900">
-                  {incumbentResult?.solutionIndex !== undefined && incumbentResult.solutionIndex !== null ? `#${incumbentResult.solutionIndex}` : '—'}
-                </p>
-              </div>
-              <div className="rounded-md border border-gray-200 bg-white p-3">
-                <p className="text-xs font-medium uppercase text-gray-500">Source</p>
-                <p className="mt-1 break-all text-sm font-semibold text-gray-900">{incumbentResult?.source ?? '—'}</p>
-              </div>
-              <div className="rounded-md border border-gray-200 bg-white p-3">
-                <p className="text-xs font-medium uppercase text-gray-500">File</p>
-                <p className={`mt-1 break-all text-sm font-semibold ${scheduleFilename ? 'text-gray-900' : 'text-gray-400'}`}>{scheduleFilename ?? 'Not ready'}</p>
-              </div>
+              <span className={`inline-flex w-fit items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold ring-1 ${runStatusClasses}`}>
+                {isLoading ? <FiLoader className="h-4 w-4 animate-spin" /> : successMessage ? <FiCheckCircle className="h-4 w-4" /> : errorMessage ? <FiAlertCircle className="h-4 w-4" /> : <FiActivity className="h-4 w-4" />}
+                {runStatus}
+              </span>
             </div>
 
-            {savedDownload && (
-              <button
-                type="button"
-                onClick={handleDownloadAgain}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-green-300 bg-white px-3 py-2 text-sm font-medium text-green-700 transition-colors hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-              >
-                <FiDownload className="h-4 w-4" />
-                Download Again
-              </button>
+            <div className="text-sm text-gray-600">
+              {!currentJobId ? (
+                <p>No optimization has been started.</p>
+              ) : isLoading && !incumbentResult ? (
+                <p>Waiting for first feasible solution...</p>
+              ) : incumbentResult ? (
+                <p>
+                  {incumbentResult.solutionIndex !== undefined && incumbentResult.solutionIndex !== null ? `Solution #${incumbentResult.solutionIndex}` : 'Incumbent'}
+                  {' · '}
+                  {incumbentResult.elapsedSeconds !== undefined ? `${incumbentResult.elapsedSeconds}s` : 'time unavailable'}
+                  {' · '}
+                  {incumbentResult.commentCount !== undefined && incumbentResult.commentCount !== null ? `${incumbentResult.commentCount} comments` : 'comments unavailable'}
+                  {incumbentResult.source ? ` · ${incumbentResult.source}` : ''}
+                </p>
+              ) : (
+                <p>Job {currentJobId}</p>
+              )}
+              {currentJobId && <p className="mt-1 break-all text-xs text-gray-400">Job ID: {currentJobId}</p>}
+            </div>
+
+            {progressPoints.length >= 2 && (
+              <OptimizationProgressChart points={progressPoints} isActive={isJobActive} />
             )}
 
-            {isJobActive && (
-              <div className="rounded-md border border-blue-200 bg-blue-50 p-3">
-                <p className="mb-2 text-xs font-medium uppercase text-blue-700">Active Job Controls</p>
-                <div className="grid gap-2 sm:grid-cols-2">
+            {(savedDownload || isJobActive) && (
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {savedDownload && (
                   <button
                     type="button"
-                    onClick={() => void requestJobControl('finish-now')}
-                    disabled={Boolean(currentJob?.finishNowRequested) || isCancelling}
-                    title="Finish with the current incumbent result"
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400"
+                    onClick={handleDownloadAgain}
+                    className="inline-flex flex-1 items-center justify-center gap-2 rounded-md border border-green-300 bg-white px-3 py-2 text-sm font-medium text-green-700 transition-colors hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
                   >
                     <FiDownload className="h-4 w-4" />
-                    Get Results Now
+                    Download Again
+                    <span className="truncate text-xs font-normal text-green-600">{savedDownload.filename}</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void requestJobControl('cancel')}
-                    disabled={isCancelling}
-                    title="Stop the active optimization job"
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400"
-                  >
-                    <FiAlertCircle className="h-4 w-4" />
-                    {isCancelling ? 'Cancelling...' : 'Cancel'}
-                  </button>
-                </div>
+                )}
+
+                {isJobActive && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void requestJobControl('finish-now')}
+                      disabled={Boolean(currentJob?.finishNowRequested) || isCancelling}
+                      title="Finish with the current incumbent result"
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400"
+                    >
+                      <FiDownload className="h-4 w-4" />
+                      Get Results Now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void requestJobControl('cancel')}
+                      disabled={isCancelling}
+                      title="Stop the active optimization job"
+                      className="inline-flex items-center justify-center gap-2 rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400"
+                    >
+                      <FiAlertCircle className="h-4 w-4" />
+                      {isCancelling ? 'Cancelling...' : 'Cancel'}
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
@@ -882,7 +876,6 @@ export default function OptimizeAndExportPage() {
         <div className="flex items-center gap-2 border-b border-gray-200 px-5 py-4">
           <FiActivity className="h-4 w-4 text-gray-500" />
           <h2 className="text-base font-semibold text-gray-900">Optimization Events</h2>
-          <span className="ml-auto rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">{sseEvents.length}</span>
         </div>
         <div ref={eventLogRef} data-testid="optimization-events-log" className="max-h-[28rem] overflow-auto bg-gray-50">
           {sseEvents.length === 0 ? (

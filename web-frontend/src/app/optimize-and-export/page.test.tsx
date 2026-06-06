@@ -238,7 +238,7 @@ describe('OptimizeAndExportPage error handling', () => {
         json: vi.fn().mockResolvedValue({
           jobId: 'opt_test',
           status: 'optimal',
-          score: 42,
+          score: 42000,
           solverStatus: 'OPTIMAL',
           error: null,
           xlsxReady: true,
@@ -265,7 +265,7 @@ describe('OptimizeAndExportPage error handling', () => {
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
     expect(screen.getByText('schedule.xlsx')).toBeInTheDocument();
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42,000')).toBeInTheDocument();
     expect(screen.getByText('OPTIMAL')).toBeInTheDocument();
 
     expect(fetch).toHaveBeenCalledWith('http://localhost:8000/optimize', expect.objectContaining({ method: 'POST' }));
@@ -342,10 +342,22 @@ describe('OptimizeAndExportPage error handling', () => {
       eventSource.emit('status', { status: 'running' });
       eventSource.emit('progress', {
         source: 'ortools/cp-sat:solution-callback',
-        currentBestScore: 12,
+        currentBestScore: 12000,
         elapsedSeconds: 0.1,
         solutionIndex: 2,
         commentCount: 5,
+      });
+    });
+
+    expect(screen.queryByRole('img', { name: /optimization progress chart/i })).not.toBeInTheDocument();
+
+    act(() => {
+      eventSource.emit('progress', {
+        source: 'ortools/cp-sat:solution-callback',
+        currentBestScore: 10,
+        elapsedSeconds: 0.2,
+        solutionIndex: 3,
+        commentCount: 3,
       });
       eventSource.emit('complete', {
         jobId: 'opt_sse',
@@ -364,10 +376,12 @@ describe('OptimizeAndExportPage error handling', () => {
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
     expect(screen.getByText('status')).toBeInTheDocument();
-    expect(screen.getByText('progress')).toBeInTheDocument();
+    expect(screen.getAllByText('progress')).toHaveLength(2);
     expect(screen.getByText('complete')).toBeInTheDocument();
-    expect(screen.getByText(/Comments: 5/)).toBeInTheDocument();
-    expect(screen.getByText(/"currentBestScore":12/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Comments: 5/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Score: 12,000/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/"currentBestScore":12000/)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /optimization progress chart/i })).toBeInTheDocument();
     expect(eventSource.close).toHaveBeenCalled();
   });
 
