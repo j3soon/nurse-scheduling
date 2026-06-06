@@ -283,6 +283,12 @@ describe('OptimizeAndExportPage error handling', () => {
     );
     expect(appendChildSpy).toHaveBeenCalled();
     expect(removeChildSpy).toHaveBeenCalled();
+
+    const appendCallCount = appendChildSpy.mock.calls.length;
+    const removeCallCount = removeChildSpy.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: /download again/i }));
+    expect(appendChildSpy).toHaveBeenCalledTimes(appendCallCount + 1);
+    expect(removeChildSpy).toHaveBeenCalledTimes(removeCallCount + 1);
   });
 
   it('shows all received SSE event types in the optimization event log', async () => {
