@@ -79,6 +79,16 @@ const createSchedulingData = (overrides = {}) => ({
   ...overrides,
 });
 
+const healthyResponse = () => ({
+  ok: true,
+  json: vi.fn().mockResolvedValue({
+    status: 'ok',
+    version: 'alpha',
+    apiVersion: 'alpha',
+    appVersion: 'frontend-test',
+  }),
+});
+
 describe('OptimizeAndExportPage error handling', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -93,13 +103,16 @@ describe('OptimizeAndExportPage error handling', () => {
 
   it('surfaces raw non-JSON error bodies from the backend', async () => {
     const user = userEvent.setup();
-    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: false,
-      status: 503,
-      text: vi.fn().mockResolvedValue('service unavailable'),
-    });
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(healthyResponse())
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: vi.fn().mockResolvedValue('service unavailable'),
+      });
 
     render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Server error (503): service unavailable')).resolves.toBeInTheDocument();
@@ -107,13 +120,16 @@ describe('OptimizeAndExportPage error handling', () => {
 
   it('falls back to the raw JSON text when the backend error body has no detail field', async () => {
     const user = userEvent.setup();
-    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: false,
-      status: 422,
-      text: vi.fn().mockResolvedValue(JSON.stringify({ error: 'validation failed' })),
-    });
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(healthyResponse())
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ error: 'validation failed' })),
+      });
 
     render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Server error (422): {"error":"validation failed"}')).resolves.toBeInTheDocument();
@@ -121,13 +137,16 @@ describe('OptimizeAndExportPage error handling', () => {
 
   it('keeps showing the raw response text when JSON parsing itself fails', async () => {
     const user = userEvent.setup();
-    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: false,
-      status: 500,
-      text: vi.fn().mockResolvedValue('{bad json'),
-    });
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(healthyResponse())
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: vi.fn().mockResolvedValue('{bad json'),
+      });
 
     render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Server error (500): {bad json')).resolves.toBeInTheDocument();
@@ -200,6 +219,8 @@ describe('OptimizeAndExportPage error handling', () => {
 
     await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
     expect(screen.getByText(/backend is not responding at the configured endpoint/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+    expect(screen.getByText(/backend unavailable/i)).toBeInTheDocument();
   });
 
   it('creates an optimization job, downloads the XLSX, and deletes the job', async () => {

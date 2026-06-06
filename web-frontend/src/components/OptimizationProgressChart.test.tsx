@@ -47,6 +47,7 @@ vi.mock('recharts', () => ({
   Line: ({ name, type, dot }: { name: string; type: string; dot: unknown }) => (
     <div data-testid={`${name.toLowerCase()}-line`} data-type={type} data-dots={dot === false ? 'hidden' : 'shown'} />
   ),
+  ReferenceDot: ({ 'aria-label': ariaLabel }: { 'aria-label': string }) => <div aria-label={ariaLabel} />,
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Tooltip: ({ content }: { content: (props: unknown) => ReactNode }) => (
     <>
@@ -98,10 +99,24 @@ describe('OptimizationProgressChart', () => {
     expect(screen.getAllByTestId('composed-chart')[0]).toHaveStyle({ userSelect: 'none', outline: 'none' });
     expect(screen.getByTestId('score-line')).toHaveAttribute('data-type', 'stepAfter');
     expect(screen.getByTestId('comments-line')).toHaveAttribute('data-type', 'stepAfter');
+    expect(screen.getByLabelText('Latest score')).toBeInTheDocument();
+    expect(screen.getByLabelText('Latest comments')).toBeInTheDocument();
+    expect(screen.getByText(/higher scores are better/i)).toBeInTheDocument();
     expect(screen.getByText('0.5s elapsed')).toBeInTheDocument();
     expect(screen.getByText('12,000')).toBeInTheDocument();
     expect(screen.getByText('#2')).toBeInTheDocument();
     expect(screen.getByText('ortools/cp-sat:solution-callback')).toBeInTheDocument();
+  });
+
+  it('can hide comments while keeping elapsed time visible on the score chart', async () => {
+    const user = userEvent.setup();
+    render(<OptimizationProgressChart points={points} />);
+
+    await user.click(screen.getByRole('button', { name: 'Hide comments' }));
+
+    expect(screen.queryByTestId('comments-line')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show comments' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('elapsed-axis')).toBeInTheDocument();
   });
 
   it('keeps the elapsed-time domain end live while active', () => {

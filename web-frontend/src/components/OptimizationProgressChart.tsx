@@ -26,6 +26,7 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -173,6 +174,7 @@ export default function OptimizationProgressChart({
   const latestElapsedSeconds = points.at(-1)?.elapsedSeconds ?? 0;
   const [liveElapsedSeconds, setLiveElapsedSeconds] = useState(latestElapsedSeconds);
   const [rangePreset, setRangePreset] = useState<RangePreset>('full');
+  const [showComments, setShowComments] = useState(true);
 
   useEffect(() => {
     if (!isActive) {
@@ -204,16 +206,25 @@ export default function OptimizationProgressChart({
   ];
   const visiblePointCount = range.endIndex - range.startIndex + 1;
   const showDots = visiblePointCount <= DOT_LIMIT;
+  const latestPoint = points.at(-1);
 
   return (
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-gradient-to-b from-white to-gray-50/70 shadow-sm" data-testid="optimization-progress-chart">
-      <div className="border-b border-gray-100 px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
         <div>
           <h3 className="text-sm font-semibold text-gray-900">Incumbent Progress</h3>
           <p className="mt-0.5 text-xs text-gray-500">
-            Hover to inspect a solution. Choose a range to focus on recent progress.
+            Higher scores are better. Hover to inspect a solution.
           </p>
         </div>
+        <button
+          type="button"
+          aria-pressed={showComments}
+          onClick={() => setShowComments(current => !current)}
+          className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50"
+        >
+          {showComments ? 'Hide comments' : 'Show comments'}
+        </button>
       </div>
 
       <div
@@ -243,7 +254,12 @@ export default function OptimizationProgressChart({
                 type="number"
                 domain={xDomain}
                 allowDataOverflow
-                hide
+                hide={showComments}
+                tickFormatter={formatElapsedSeconds}
+                tick={{ fill: '#6b7280', fontSize: 11 }}
+                tickLine={false}
+                axisLine={{ stroke: '#d1d5db' }}
+                minTickGap={48}
               />
               <YAxis
                 domain={['auto', 'auto']}
@@ -253,6 +269,7 @@ export default function OptimizationProgressChart({
                 tickLine={false}
                 axisLine={false}
                 width={68}
+                label={{ value: 'Score', angle: -90, position: 'insideLeft', fill: SCORE_COLOR, fontSize: 11 }}
               />
               <Tooltip
                 content={OptimizationProgressTooltip}
@@ -269,11 +286,22 @@ export default function OptimizationProgressChart({
                 activeDot={{ r: 6, fill: SCORE_COLOR, stroke: '#ffffff', strokeWidth: 2 }}
                 isAnimationActive={false}
               />
+              {latestPoint && (
+                <ReferenceDot
+                  x={latestPoint.elapsedSeconds}
+                  y={latestPoint.currentBestScore}
+                  r={6}
+                  fill={SCORE_COLOR}
+                  stroke="#ffffff"
+                  strokeWidth={2}
+                  aria-label="Latest score"
+                />
+              )}
             </ComposedChart>
           </ResponsiveContainer>
         </div>
 
-        <div className="border-t border-gray-100 pt-2">
+        {showComments && <div className="border-t border-gray-100 pt-2">
           <p className="px-2 text-xs font-semibold text-amber-700">Comments</p>
           <div style={{ height: COMMENT_CHART_HEIGHT }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -307,6 +335,7 @@ export default function OptimizationProgressChart({
                   tickLine={false}
                   axisLine={false}
                   width={68}
+                  label={{ value: 'Comments', angle: -90, position: 'insideLeft', fill: COMMENT_COLOR, fontSize: 11 }}
                 />
                 <Tooltip
                   content={() => null}
@@ -324,10 +353,21 @@ export default function OptimizationProgressChart({
                   activeDot={{ r: 5.5, fill: COMMENT_COLOR, stroke: '#ffffff', strokeWidth: 2 }}
                   isAnimationActive={false}
                 />
+                {latestPoint && typeof latestPoint.commentCount === 'number' && (
+                  <ReferenceDot
+                    x={latestPoint.elapsedSeconds}
+                    y={latestPoint.commentCount}
+                    r={5.5}
+                    fill={COMMENT_COLOR}
+                    stroke="#ffffff"
+                    strokeWidth={2}
+                    aria-label="Latest comments"
+                  />
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </div>}
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5 border-t border-gray-100 bg-white/70 px-4 py-2">
