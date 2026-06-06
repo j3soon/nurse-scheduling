@@ -22,7 +22,7 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState, setDateRange } from './helpers';
+import { createMockXlsxBuffer, disableModalDialogs, seedSchedulingState, setDateRange } from './helpers';
 
 test('optimize and export works against a real local HTTP server instead of Playwright route mocking', async ({ page }) => {
   /*
@@ -45,6 +45,7 @@ test('optimize and export works against a real local HTTP server instead of Play
   await setDateRange(page);
 
   let submittedBody = '';
+  const xlsxBody = await createMockXlsxBuffer();
   const server = createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
@@ -138,7 +139,7 @@ test('optimize and export works against a real local HTTP server instead of Play
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': 'attachment; filename="schedule-http.xlsx"',
     });
-    res.end('fake-xlsx');
+    res.end(xlsxBody);
   });
 
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

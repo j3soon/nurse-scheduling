@@ -40,6 +40,7 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
   await mockOptimizeAndExport(page, { onSubmit: body => { bodies.push(body); } });
 
   await page.goto('/optimize-and-export');
+  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
   let downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await downloadPromise;
@@ -52,6 +53,7 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
   await page.getByRole('button', { name: 'Update' }).click();
 
   await page.goto('/optimize-and-export');
+  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
   downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await downloadPromise;

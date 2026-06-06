@@ -48,6 +48,7 @@ test('optimize request body reflects live page edits without going through Save 
   await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
+  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await downloadPromise;

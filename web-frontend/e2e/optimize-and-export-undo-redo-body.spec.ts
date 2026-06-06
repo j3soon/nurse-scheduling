@@ -49,6 +49,7 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
   await expect(page.getByText('Undo Redo Nurse', { exact: true })).toHaveCount(0);
 
   await page.goto('/optimize-and-export');
+  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
   const firstDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await firstDownload;
@@ -59,6 +60,7 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
   await expect(page.getByText('Undo Redo Nurse', { exact: true })).toBeVisible();
 
   await page.goto('/optimize-and-export');
+  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
   const secondDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await secondDownload;

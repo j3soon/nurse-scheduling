@@ -159,6 +159,7 @@ test('optimize and export renders backend phase SSE messages in the event log', 
 
   await downloadPromise;
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
-  await expect(page.getByText('phase', { exact: true })).toBeVisible();
-  await expect(page.getByText('Creating shift variables', { exact: true }).first()).toBeVisible();
+  const eventLog = page.getByTestId('optimization-events-log');
+  await expect(eventLog).toContainText('phase');
+  await expect(eventLog).toContainText('Creating shift variables');
 });

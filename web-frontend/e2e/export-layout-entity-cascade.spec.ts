@@ -226,6 +226,7 @@ test('optimize payload stays free of stale IDs after delete cascade', async ({ p
   await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
+  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
 

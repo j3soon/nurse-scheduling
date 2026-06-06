@@ -20,6 +20,7 @@
 // This test is mostly AI generated.
 
 import { Page } from '@playwright/test';
+import ExcelJS from 'exceljs';
 
 const STORAGE_KEY = 'nurse-scheduling-data';
 const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
@@ -82,10 +83,26 @@ type MockOptimizeAndExportOptions = {
   score?: number;
   solverStatus?: string;
   xlsxReady?: boolean;
-  body?: string;
+  body?: Buffer;
   disableEventSource?: boolean;
   onSubmit?: (body: string) => void;
 };
+
+export async function createMockXlsxBuffer(): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Schedule');
+
+  worksheet.getCell('A1').value = 'Nurse Scheduling';
+  worksheet.getCell('A2').value = 'Generated for browser tests';
+  worksheet.getCell('A3').value = 'P1';
+  worksheet.getCell('B3').value = 'D';
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  if (buffer instanceof ArrayBuffer) {
+    return Buffer.from(buffer);
+  }
+  return Buffer.from(buffer);
+}
 
 export async function mockOptimizeAndExport(
   page: Page,
@@ -96,12 +113,13 @@ export async function mockOptimizeAndExport(
     score = 99,
     solverStatus = 'OPTIMAL',
     xlsxReady = true,
-    body = 'fake-xlsx',
+    body,
     disableEventSource = true,
     onSubmit,
   }: MockOptimizeAndExportOptions = {},
 ) {
   const jobId = 'e2e-job';
+  const xlsxBody = body ?? (await createMockXlsxBuffer());
 
   if (disableEventSource) {
     await page.addInitScript(() => {
@@ -208,7 +226,7 @@ export async function mockOptimizeAndExport(
     await route.fulfill({
       status: 200,
       headers,
-      body,
+      body: xlsxBody,
     });
   });
 }
