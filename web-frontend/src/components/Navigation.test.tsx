@@ -22,6 +22,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Navigation from '@/components/Navigation';
+import { setTabSwitchWarningActive } from '@/utils/unsavedEditingState';
 
 const mockPush = vi.hoisted(() => vi.fn());
 const mockUsePathname = vi.hoisted(() => vi.fn());
@@ -37,6 +38,8 @@ describe('Navigation', () => {
     mockPush.mockReset();
     mockUsePathname.mockReturnValue('/people');
     vi.spyOn(window, 'scrollBy').mockImplementation(() => undefined);
+    setTabSwitchWarningActive(false);
+    vi.stubGlobal('confirm', vi.fn(() => true));
   });
 
   it('navigates when a tab button is clicked', async () => {
@@ -92,6 +95,19 @@ describe('Navigation', () => {
     await user.click(screen.getByRole('button', { name: '2. People' }));
     fireEvent.keyDown(document, { key: '5', ctrlKey: true });
 
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('asks before navigating away when the YAML editor has unsaved changes', async () => {
+    const user = userEvent.setup();
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    setTabSwitchWarningActive(true);
+
+    render(<Navigation />);
+
+    await user.click(screen.getByRole('button', { name: '5. Shift Requests' }));
+
+    expect(confirm).toHaveBeenCalledWith('You have unsaved edits. Leave this page without saving?');
     expect(mockPush).not.toHaveBeenCalled();
   });
 

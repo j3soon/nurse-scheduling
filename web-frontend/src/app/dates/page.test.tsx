@@ -22,11 +22,19 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DatePage from '@/app/dates/page';
+import Navigation from '@/components/Navigation';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockPush = vi.hoisted(() => vi.fn());
+const mockUsePathname = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useSchedulingData', () => ({
   useSchedulingData: mockUseSchedulingData,
+}));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mockPush }),
+  usePathname: () => mockUsePathname(),
 }));
 
 vi.mock('@/components/ItemGroupEditorPage', () => ({
@@ -52,7 +60,10 @@ describe('DatePage', () => {
   const updateDateRange = vi.fn();
 
   beforeEach(() => {
+    mockPush.mockReset();
+    mockUsePathname.mockReturnValue('/dates');
     updateDateRange.mockReset();
+    vi.stubGlobal('confirm', vi.fn(() => true));
     mockUseSchedulingData.mockReturnValue({
       dateData: {
         range: {
@@ -256,5 +267,20 @@ describe('DatePage', () => {
 
     expect(screen.queryByText(/Selected dates do not represent a full month/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Taiwan holiday import does not include Labor Day on May 1/)).not.toBeInTheDocument();
+  });
+
+  it('warns before switching tabs while the date range draft is open', async () => {
+    const user = userEvent.setup();
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    render(<DatePage />);
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    render(<Navigation />);
+
+    await user.click(screen.getByRole('button', { name: '2. People' }));
+
+    expect(confirm).toHaveBeenCalledWith('You have unsaved edits. Leave this page without saving?');
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });

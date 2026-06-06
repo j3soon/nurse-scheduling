@@ -31,6 +31,7 @@ import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 interface ShiftAffinityForm {
   description: string;
@@ -67,6 +68,7 @@ export default function ShiftAffinitiesPage() {
     weight: 1
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
+  useTabSwitchWarning(isFormVisible);
 
   const instructions = [
     "Define shift affinity preferences to encourage or discourage people working together",

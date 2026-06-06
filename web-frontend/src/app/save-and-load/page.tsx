@@ -30,6 +30,7 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import { anonymizePeopleInState } from '@/utils/anonymizeSchedulingState';
 import { getMissingPreferredScatterDateGroups, randomizeConcreteDateShiftRequests } from '@/utils/randomizeShiftRequests';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 export default function SaveAndLoadPage() {
   const {
@@ -62,6 +63,7 @@ export default function SaveAndLoadPage() {
       }
     };
   }, []);
+  useTabSwitchWarning(isEditing);
 
   const instructions = [
     "View the complete current state of your scheduling setup in YAML format",

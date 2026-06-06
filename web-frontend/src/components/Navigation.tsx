@@ -22,6 +22,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect } from 'react';
+import { hasTabSwitchWarningActive } from '@/utils/unsavedEditingState';
 
 const TABS = [
   { name: '0. Home', path: '/' },
@@ -47,6 +48,11 @@ export default function Navigation() {
     if (index < 0 || index >= TABS.length || index === currentTabIndex) {
       return;
     }
+
+    if (hasTabSwitchWarningActive() && !confirm('You have unsaved edits. Leave this page without saving?')) {
+      return;
+    }
+
     router.push(TABS[index].path);
   }, [currentTabIndex, router]);
 

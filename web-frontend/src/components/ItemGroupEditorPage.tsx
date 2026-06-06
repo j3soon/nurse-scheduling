@@ -31,6 +31,7 @@ import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { Mode } from '@/constants/modes';
 import { Item, Group, DataType } from '@/types/scheduling';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 const getLabels = (dataType: DataType) => {
   switch (dataType) {
@@ -99,6 +100,7 @@ export default function ItemGroupEditorPage({
 }: ItemGroupEditorPageProps) {
 
   const { itemLabel, itemLabelPlural } = getLabels(dataType);
+  useTabSwitchWarning(mode === Mode.ADDING || mode === Mode.EDITING || mode === Mode.INLINE_EDITING);
 
   const [draft, setDraft] = useState<{
     id: string;

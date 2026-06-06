@@ -33,6 +33,7 @@ import {
   includesUnimportedTaiwanLaborDay,
   isTaiwanHolidayRangeSupported,
 } from '@/utils/taiwanHolidays';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 export default function DatePage() {
   const {
@@ -79,6 +80,7 @@ export default function DatePage() {
     () => isTaiwanHolidayRangeSupported(draft),
     [draft]
   );
+  useTabSwitchWarning(mode === Mode.DATE_RANGE_EDITING);
 
   // Helper function to check if date range represents a full month
   const isFullMonth = (startDate?: Date, endDate?: Date): boolean => {

@@ -31,6 +31,7 @@ import { DraggableCardList } from '@/components/DraggableCardList';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor' | 'fontColor';
@@ -145,6 +146,7 @@ export default function ExportFormattingPage() {
   const [editingTarget, setEditingTarget] = useState<EditingTarget | null>(null);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState<DraftRule>(createEmptyDraft);
+  useTabSwitchWarning(isFormVisible);
 
   const formattingRules = effectiveExportData.formatting || [];
   const extraColumns = effectiveExportData.extraColumns || [];
@@ -228,6 +230,8 @@ export default function ExportFormattingPage() {
 
   const handleStartEditStyle = (index: number) => {
     const rule = formattingRules[index];
+    const weightRange = 'when' in rule ? rule.when?.preference.weightRange : undefined;
+    const hasValidWeightRange = Array.isArray(weightRange) && weightRange.length === 2;
     setDraft({
       ...createEmptyDraft(),
       description: rule.description || '',
@@ -244,14 +248,14 @@ export default function ExportFormattingPage() {
       satisfied: 'when' in rule && rule.when?.preference.satisfied !== undefined
         ? String(rule.when.preference.satisfied) as 'true' | 'false'
         : '',
-      weightRangeMin: 'when' in rule && rule.when?.preference.weightRange?.[0] !== undefined ? rule.when.preference.weightRange[0] : '',
-      weightRangeMax: 'when' in rule && rule.when?.preference.weightRange?.[1] !== undefined ? rule.when.preference.weightRange[1] : '',
+      weightRangeMin: hasValidWeightRange ? weightRange[0] ?? '' : '',
+      weightRangeMax: hasValidWeightRange ? weightRange[1] ?? '' : '',
       appendText: 'appendText' in rule ? rule.appendText || '' : '',
       noteText: 'note' in rule ? rule.note?.text || '' : '',
     });
+    setError(weightRange !== undefined && !hasValidWeightRange ? 'Weight Range must contain exactly two values' : '');
     setEditingTarget({ kind: 'style', index });
     setIsFormVisible(true);
-    setError('');
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
@@ -329,7 +333,7 @@ export default function ExportFormattingPage() {
     return true;
   };
 
-  const parseOptionalWeightRange = (): number[] | undefined | null => {
+  const parseOptionalWeightRange = (): [number, number] | undefined | null => {
     const minInput = String(draft.weightRangeMin).trim();
     const maxInput = String(draft.weightRangeMax).trim();
     if (!minInput && !maxInput) {
