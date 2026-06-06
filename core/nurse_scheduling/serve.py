@@ -92,8 +92,11 @@ app_version = _get_app_version()
 
 init_sentry(app_version)
 
-# Configure logging to verbose level 1 (verbose levels defined in CLI)
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+# Keep API output focused on server behavior. Solver progress is delivered to
+# clients through job events and remains available from the CLI's verbose logs.
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+server_logger = logging.getLogger("nurse_scheduling.server")
+server_logger.setLevel(logging.INFO)
 
 title = "Nurse Scheduling API"
 version = "alpha"
@@ -194,6 +197,19 @@ def _job_cancellation_error(job: OptimizeJob) -> str:
     return job.error or "Optimization cancelled."
 
 
+def _log_job_completed(job: OptimizeJob) -> None:
+    started_at = job.started_at or job.created_at
+    finished_at = job.finished_at or utc_now()
+    duration_seconds = (finished_at - started_at).total_seconds()
+    server_logger.info(
+        "[server:job] completed job_id=%s status=%s score=%s duration_seconds=%.3f",
+        job.id,
+        job.status.value,
+        job.score,
+        duration_seconds,
+    )
+
+
 def _run_optimize_job(job_id: str, content: bytes) -> None:
     current_job = _get_optimize_job(job_id)
     if current_job.cancel_requested:
@@ -207,10 +223,18 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         )
         _publish_job_event(job, "complete", _optimize_job_response(job))
         _refresh_queue_positions()
+        _log_job_completed(job)
         return
 
     job = _update_optimize_job(job_id, status=OptimizeJobStatus.RUNNING, started_at=utc_now())
     _refresh_queue_positions()
+    queue_wait_seconds = (job.started_at - job.created_at).total_seconds()
+    server_logger.info(
+        "[server:job] started job_id=%s solver=%s queue_wait_seconds=%.3f",
+        job.id,
+        job.solver,
+        queue_wait_seconds,
+    )
 
     try:
 
@@ -247,6 +271,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             )
             _publish_job_event(job, "complete", _optimize_job_response(job))
             _refresh_queue_positions()
+            _log_job_completed(job)
             return
 
         if df is None:
@@ -258,6 +283,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             )
             _publish_job_event(job, "complete", _optimize_job_response(job))
             _refresh_queue_positions()
+            _log_job_completed(job)
             return
 
         output_buffer = BytesIO()
@@ -275,8 +301,8 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         )
         _publish_job_event(job, "complete", _optimize_job_response(job))
         _refresh_queue_positions()
+        _log_job_completed(job)
     except Exception as e:
-        logging.error("Error during optimization job %s: %s", job_id, str(e))
         capture_optimize_exception(job, content, e)
         job = _update_optimize_job(
             job_id,
@@ -286,6 +312,13 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         )
         _publish_job_event(job, "error", _optimize_job_response(job))
         _refresh_queue_positions()
+        duration_seconds = (job.finished_at - (job.started_at or job.created_at)).total_seconds()
+        server_logger.error(
+            "[server:job] failed job_id=%s error=%s duration_seconds=%.3f",
+            job.id,
+            str(e),
+            duration_seconds,
+        )
 
 
 def _format_sse_event(event: str, data: dict[str, Any]) -> str:
@@ -295,6 +328,12 @@ def _format_sse_event(event: str, data: dict[str, Any]) -> str:
 def _stream_optimize_job_events(job: OptimizeJob):
     event_index = 0
     _register_sse_connection(job)
+    server_logger.info(
+        "[server:sse] connected job_id=%s status=%s active_connections=%s",
+        job.id,
+        job.status.value,
+        job.active_sse_connections,
+    )
     try:
         while True:
             heartbeat = False
@@ -325,6 +364,13 @@ def _stream_optimize_job_events(job: OptimizeJob):
                 return
     finally:
         _unregister_sse_connection(job)
+        server_logger.info(
+            "[server:sse] disconnected job_id=%s status=%s active_connections=%s disconnect_grace_started=%s",
+            job.id,
+            job.status.value,
+            job.active_sse_connections,
+            job.last_sse_disconnected_at is not None,
+        )
 
 
 # Regex to match allowed origins:
@@ -466,6 +512,7 @@ async def delete_optimize_job(job_id: str):
                 },
             )
         del _optimize_jobs[job_id]
+    server_logger.info("[server:job] deleted job_id=%s status=%s", job.id, job.status.value)
     return {"deleted": True, "jobId": job_id}
 
 

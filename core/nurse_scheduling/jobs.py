@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import logging
 import os
 import threading
 import time
@@ -27,6 +28,9 @@ from enum import Enum
 from typing import Any
 
 from fastapi import HTTPException
+
+
+server_logger = logging.getLogger("nurse_scheduling.server")
 
 
 class OptimizeJobStatus(str, Enum):
@@ -120,6 +124,18 @@ def _job_status_event_data(job: OptimizeJob) -> dict[str, Any]:
     }
 
 
+def _log_terminal_job(job: OptimizeJob) -> None:
+    finished_at = job.finished_at or utc_now()
+    started_at = job.started_at or job.created_at
+    server_logger.info(
+        "[server:job] completed job_id=%s status=%s score=%s duration_seconds=%.3f",
+        job.id,
+        job.status.value,
+        job.score,
+        (finished_at - started_at).total_seconds(),
+    )
+
+
 def _refresh_queue_positions() -> None:
     changed_jobs: list[OptimizeJob] = []
     with _optimize_jobs_lock:
@@ -141,18 +157,30 @@ def _refresh_queue_positions() -> None:
 def _cleanup_expired_optimize_jobs(now: datetime | None = None) -> list[str]:
     now = now or utc_now()
     cutoff = now - timedelta(seconds=OPTIMIZE_JOB_TTL_SECONDS)
+    expired_jobs: list[OptimizeJob] = []
     with _optimize_jobs_lock:
-        expired_job_ids = [
-            job_id for job_id, job in _optimize_jobs.items() if job.finished_at is not None and job.finished_at < cutoff
+        expired_jobs = [
+            job for job in _optimize_jobs.values() if job.finished_at is not None and job.finished_at < cutoff
         ]
-        for job_id in expired_job_ids:
-            del _optimize_jobs[job_id]
-    return expired_job_ids
+        for job in expired_jobs:
+            del _optimize_jobs[job.id]
+    for job in expired_jobs:
+        server_logger.info(
+            "[server:job] expired job_id=%s status=%s reason=ttl",
+            job.id,
+            job.status.value,
+        )
+    return [job.id for job in expired_jobs]
 
 
 def _enforce_optimize_job_limits() -> None:
     pending_jobs = [job for job in _optimize_jobs.values() if not _is_terminal_job_status(job.status)]
     if len(pending_jobs) >= OPTIMIZE_MAX_PENDING_JOBS:
+        server_logger.warning(
+            "[server:queue] rejected reason=pending_limit pending_jobs=%s limit=%s",
+            len(pending_jobs),
+            OPTIMIZE_MAX_PENDING_JOBS,
+        )
         raise HTTPException(status_code=429, detail="Too many optimization jobs are already queued or running")
 
     if len(_optimize_jobs) < OPTIMIZE_MAX_RETAINED_JOBS:
@@ -165,8 +193,18 @@ def _enforce_optimize_job_limits() -> None:
     while len(_optimize_jobs) >= OPTIMIZE_MAX_RETAINED_JOBS and terminal_jobs:
         expired_job = terminal_jobs.pop(0)
         del _optimize_jobs[expired_job.id]
+        server_logger.info(
+            "[server:job] expired job_id=%s status=%s reason=retention_limit",
+            expired_job.id,
+            expired_job.status.value,
+        )
 
     if len(_optimize_jobs) >= OPTIMIZE_MAX_RETAINED_JOBS:
+        server_logger.warning(
+            "[server:queue] rejected reason=retained_limit retained_jobs=%s limit=%s",
+            len(_optimize_jobs),
+            OPTIMIZE_MAX_RETAINED_JOBS,
+        )
         raise HTTPException(status_code=429, detail="Too many optimization jobs are retained")
 
 
@@ -199,6 +237,14 @@ def _create_optimize_job(input_name: str, solver: str, prettify: bool | None, ti
         )
         _optimize_jobs[job.id] = job
     _refresh_queue_positions()
+    server_logger.info(
+        "[server:job] queued job_id=%s solver=%s timeout=%s input_name=%s queue_position=%s",
+        job.id,
+        job.solver,
+        job.timeout,
+        job.input_name,
+        job.queue_position,
+    )
     return job
 
 
@@ -249,9 +295,16 @@ def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
         else:
             job.cancel_requested = True
             job.status = OptimizeJobStatus.CANCELLING
+    server_logger.info(
+        "[server:job] %s job_id=%s status=%s",
+        "finish-now-requested" if finish_now else "cancel-requested",
+        job.id,
+        job.status.value,
+    )
     if complete_immediately:
         _refresh_queue_positions()
         _publish_job_event(job, "complete", _optimize_job_response(job))
+        _log_terminal_job(job)
     elif not finish_now:
         _publish_job_event(job, "status", _job_status_event_data(job))
     return job
@@ -298,8 +351,14 @@ def _cancel_abandoned_optimize_jobs(now: datetime | None = None) -> list[str]:
     if abandoned_jobs:
         _refresh_queue_positions()
     for job in abandoned_jobs:
+        server_logger.warning(
+            "[server:job] abandoned job_id=%s status=%s action=cancel-requested",
+            job.id,
+            job.status.value,
+        )
         if _is_terminal_job_status(job.status):
             _publish_job_event(job, "complete", _optimize_job_response(job))
+            _log_terminal_job(job)
         else:
             _publish_job_event(job, "status", _job_status_event_data(job))
     return [job.id for job in abandoned_jobs]

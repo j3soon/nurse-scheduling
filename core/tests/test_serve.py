@@ -111,7 +111,7 @@ class TestOptimizeJobs:
         monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
         monkeypatch.setattr(serve.exporter, "export_to_excel", fake_export_to_excel)
 
-    def test_optimize_job_lifecycle_and_xlsx_download(self, fake_successful_scheduler):
+    def test_optimize_job_lifecycle_and_xlsx_download(self, fake_successful_scheduler, caplog):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
 
         assert response.status_code == 202
@@ -132,6 +132,11 @@ class TestOptimizeJobs:
         assert download.content == b"fake xlsx bytes"
         assert download.headers["X-Schedule-Score"] == "42"
         assert download.headers["X-Schedule-Status"] == "OPTIMAL"
+        assert any(f"[server:job] queued job_id={job_id} " in message for message in caplog.messages)
+        assert any(f"[server:job] started job_id={job_id} " in message for message in caplog.messages)
+        assert any(
+            f"[server:job] completed job_id={job_id} status=optimal score=42 " in message for message in caplog.messages
+        )
 
     def test_optimize_job_accepts_file_upload_and_options(self, fake_successful_scheduler):
         with open(VALID_YAML_FILE, "rb") as f:
@@ -294,7 +299,7 @@ class TestOptimizeJobs:
         assert completed["error"] == "Optimization cancelled."
         assert completed["xlsxReady"] is False
 
-    def test_optimize_job_finish_now_requests_best_available_result(self, monkeypatch):
+    def test_optimize_job_finish_now_requests_best_available_result(self, monkeypatch, caplog):
         def fake_schedule(*args, **kwargs):
             wait_for_stop = kwargs["should_stop"]
             for _ in range(100):
@@ -320,6 +325,7 @@ class TestOptimizeJobs:
         completed = wait_for_job_status(job_id, "feasible")
         assert completed["score"] == 7
         assert completed["xlsxReady"] is True
+        assert f"[server:job] finish-now-requested job_id={job_id} status=running" in caplog.messages
 
     def test_optimize_job_control_rejects_solver_without_stop_support(self):
         job = serve._create_optimize_job(
@@ -354,7 +360,7 @@ class TestOptimizeJobs:
         assert '"jobId": "' + job_id + '"' in first_body
         assert '"jobId": "' + job_id + '"' in second_body
 
-    def test_optimize_job_delete_removes_completed_job(self, fake_successful_scheduler):
+    def test_optimize_job_delete_removes_completed_job(self, fake_successful_scheduler, caplog):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
         job_id = response.json()["jobId"]
         wait_for_job_status(job_id, "optimal")
@@ -364,8 +370,9 @@ class TestOptimizeJobs:
         assert delete_response.status_code == 200
         assert delete_response.json() == {"deleted": True, "jobId": job_id}
         assert client.get(f"/optimize/{job_id}").status_code == 404
+        assert f"[server:job] deleted job_id={job_id} status=optimal" in caplog.messages
 
-    def test_optimize_job_expiration_removes_finished_jobs(self):
+    def test_optimize_job_expiration_removes_finished_jobs(self, caplog):
         job = serve._create_optimize_job(
             input_name="expired.yaml",
             solver="ortools/cp-sat",
@@ -381,6 +388,7 @@ class TestOptimizeJobs:
         response = client.get(f"/optimize/{job.id}")
 
         assert response.status_code == 404
+        assert f"[server:job] expired job_id={job.id} status=optimal reason=ttl" in caplog.messages
 
     def test_optimize_job_retries_generated_id_collision(self, monkeypatch):
         generated_ids = iter(
@@ -444,7 +452,7 @@ class TestOptimizeJobs:
             "data": {"status": "queued", "queuePosition": 1},
         }
 
-    def test_optimize_job_cancels_queued_job_immediately_for_any_solver(self):
+    def test_optimize_job_cancels_queued_job_immediately_for_any_solver(self, caplog):
         first = serve._create_optimize_job(
             input_name="first.yaml",
             solver="ortools/cp-sat",
@@ -464,8 +472,12 @@ class TestOptimizeJobs:
         assert response.json()["status"] == "cancelled"
         assert response.json()["queuePosition"] is None
         assert serve._optimize_job_response(second)["queuePosition"] == 1
+        assert f"[server:job] cancel-requested job_id={first.id} status=cancelled" in caplog.messages
+        assert any(
+            f"[server:job] completed job_id={first.id} status=cancelled " in message for message in caplog.messages
+        )
 
-    def test_sse_connection_tracks_disconnect_lease(self):
+    def test_sse_connection_tracks_disconnect_lease(self, caplog):
         job = serve._create_optimize_job(
             input_name="stream.yaml",
             solver="ortools/cp-sat",
@@ -482,8 +494,13 @@ class TestOptimizeJobs:
 
         assert job.active_sse_connections == 0
         assert job.last_sse_disconnected_at is not None
+        assert f"[server:sse] connected job_id={job.id} status=queued active_connections=1" in caplog.messages
+        assert (
+            f"[server:sse] disconnected job_id={job.id} status=queued "
+            "active_connections=0 disconnect_grace_started=True" in caplog.messages
+        )
 
-    def test_abandoned_sse_job_is_cancelled_after_grace_period(self):
+    def test_abandoned_sse_job_is_cancelled_after_grace_period(self, caplog):
         job = serve._create_optimize_job(
             input_name="abandoned.yaml",
             solver="ortools/cp-sat",
@@ -504,6 +521,7 @@ class TestOptimizeJobs:
         assert response["status"] == "cancelled"
         assert response["clientAbandoned"] is True
         assert response["error"] == "Optimization cancelled because the client disconnected."
+        assert f"[server:job] abandoned job_id={job.id} status=cancelled action=cancel-requested" in caplog.messages
 
     def test_sse_reconnect_prevents_abandoned_job_cancellation(self):
         job = serve._create_optimize_job(
@@ -548,7 +566,7 @@ class TestOptimizeJobs:
         assert job.cancel_requested is True
         assert job.client_abandoned is True
 
-    def test_optimize_job_rejects_when_pending_queue_is_full(self):
+    def test_optimize_job_rejects_when_pending_queue_is_full(self, caplog):
         pending_jobs = [
             serve._create_optimize_job(
                 input_name=f"pending-{index}.yaml",
@@ -564,6 +582,10 @@ class TestOptimizeJobs:
         assert response.status_code == 429
         assert "queued or running" in response.json()["detail"]
         assert all(serve._get_optimize_job(job.id) is job for job in pending_jobs)
+        assert (
+            f"[server:queue] rejected reason=pending_limit pending_jobs={serve.OPTIMIZE_MAX_PENDING_JOBS} "
+            f"limit={serve.OPTIMIZE_MAX_PENDING_JOBS}" in caplog.messages
+        )
 
     def test_optimize_job_prunes_oldest_retained_terminal_job(self, fake_successful_scheduler):
         now = datetime.now(UTC)
@@ -688,7 +710,7 @@ class TestOptimizeJobs:
         assert captured[0][1] == 422
         assert captured[0][2][0]["loc"] == ("body", "timeout")
 
-    def test_optimize_job_records_scheduler_failure(self, monkeypatch):
+    def test_optimize_job_records_scheduler_failure(self, monkeypatch, caplog):
         def fake_schedule(*args, **kwargs):
             raise ValueError("bad scheduling data")
 
@@ -702,6 +724,9 @@ class TestOptimizeJobs:
         assert serve.UNEXPECTED_ERROR_VERSION_ADVICE in completed["error"]
         assert "Older YAML may not work after breaking changes" in completed["error"]
         assert completed["xlsxReady"] is False
+        assert any(
+            f"[server:job] failed job_id={job_id} error=bad scheduling data " in message for message in caplog.messages
+        )
 
     def test_optimize_job_records_no_solution(self, monkeypatch):
         def fake_schedule(*args, **kwargs):
