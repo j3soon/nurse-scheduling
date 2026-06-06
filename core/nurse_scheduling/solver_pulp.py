@@ -253,7 +253,7 @@ class BasePuLPSolver(SolverInterface):
         should_stop: Callable[[], bool] | None = None,
     ) -> SolverStatus:
         """Solve the model using PuLP."""
-        start_time = time.time()
+        start_time = time.monotonic()
 
         # Note: PuLP doesn't have built-in support for deterministic solving across all solvers
         if deterministic:
@@ -320,7 +320,7 @@ class BasePuLPSolver(SolverInterface):
                     )
 
             self.status = self.model.solve(self.solver)
-            self.solve_time = time.time() - start_time
+            self.solve_time = time.monotonic() - start_time
         finally:
             stop_log_tail.set()
             log_tail_thread.join(timeout=5)

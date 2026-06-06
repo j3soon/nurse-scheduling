@@ -71,5 +71,5 @@ class PuLPCuOptSolver(BasePuLPSolver):
         return SolverProgress(
             source=f"pulp/cuopt:solver-log:{source}",
             currentBestScore=assert_int_score(raw_objective, label="PuLP/cuOpt progress score"),
-            elapsedSeconds=round(time.time() - start_time, 3),
+            elapsedSeconds=round(time.monotonic() - start_time, 3),
         )

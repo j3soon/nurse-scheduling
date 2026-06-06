@@ -51,7 +51,12 @@ from .jobs import (
     _update_optimize_job,
     utc_now,
 )
-from .solver_interface import SolverProgress, serialize_solver_progress
+from .solver_interface import (
+    SchedulePhaseProgress,
+    ScheduleProgress,
+    serialize_schedule_phase_progress,
+    serialize_solver_progress,
+)
 
 
 def _get_app_version() -> str:
@@ -225,8 +230,11 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
 
     try:
 
-        def publish_progress(payload: SolverProgress) -> None:
+        def publish_progress(payload: ScheduleProgress) -> None:
             current_job = _get_optimize_job(job_id)
+            if isinstance(payload, SchedulePhaseProgress):
+                _publish_job_event(current_job, "phase", serialize_schedule_phase_progress(payload))
+                return
             _update_optimize_job(job_id, score=payload.currentBestScore)
             _publish_job_event(current_job, "progress", serialize_solver_progress(payload, include_export_summary=True))
 

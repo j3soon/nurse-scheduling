@@ -35,7 +35,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import nurse_scheduling.serve as serve
-from nurse_scheduling.solver_interface import SolverProgress
+from nurse_scheduling.solver_interface import SchedulePhaseProgress, SolverProgress
 from nurse_scheduling.serve import app
 
 # Test client
@@ -196,6 +196,75 @@ class TestOptimizeJobs:
         assert '"source": "pulp/cbc:solver-log:incumbent"' in body
         assert '"currentBestScore": 7' in body
         assert '"commentCount": 2' in body
+
+    def test_optimize_job_streams_phase_events(self, monkeypatch):
+        def fake_schedule(*args, **kwargs):
+            kwargs["progress_callback"](
+                SchedulePhaseProgress(
+                    source="scheduler:phase",
+                    code="loading_scenario",
+                    message="Loading schedule configuration",
+                    elapsedSeconds=0.001,
+                )
+            )
+            return "fake_df", {}, 42, "OPTIMAL", None
+
+        def fake_export_to_excel(df, output_buffer, cell_export_info):
+            output_buffer.write(b"fake xlsx bytes")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+        monkeypatch.setattr(serve.exporter, "export_to_excel", fake_export_to_excel)
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "optimal")
+
+        with client.stream("GET", f"/optimize/{job_id}/events") as stream_response:
+            assert stream_response.status_code == 200
+            body = stream_response.read().decode("utf-8")
+
+        assert "event: phase" in body
+        assert '"source": "scheduler:phase"' in body
+        assert '"code": "loading_scenario"' in body
+        assert '"message": "Loading schedule configuration"' in body
+        assert '"progress"' not in body
+
+    def test_optimize_job_streams_phase_before_solver_progress(self, monkeypatch):
+        def fake_schedule(*args, **kwargs):
+            kwargs["progress_callback"](
+                SchedulePhaseProgress(
+                    source="scheduler:phase",
+                    code="solving",
+                    message="Solving schedule",
+                    elapsedSeconds=0.1,
+                )
+            )
+            kwargs["progress_callback"](
+                SolverProgress(
+                    source="pulp/cbc:solver-log:incumbent",
+                    currentBestScore=7,
+                    elapsedSeconds=0.2,
+                )
+            )
+            return "fake_df", {}, 42, "OPTIMAL", None
+
+        def fake_export_to_excel(df, output_buffer, cell_export_info):
+            output_buffer.write(b"fake xlsx bytes")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+        monkeypatch.setattr(serve.exporter, "export_to_excel", fake_export_to_excel)
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "optimal")
+
+        with client.stream("GET", f"/optimize/{job_id}/events") as stream_response:
+            assert stream_response.status_code == 200
+            body = stream_response.read().decode("utf-8")
+
+        assert body.index("event: phase") < body.index("event: progress")
+        assert '"code": "solving"' in body
+        assert '"currentBestScore": 7' in body
 
     def test_optimize_job_cancel_requests_running_job_stop(self, monkeypatch):
         solve_started = False

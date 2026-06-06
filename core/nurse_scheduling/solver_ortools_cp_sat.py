@@ -230,7 +230,7 @@ class ORToolsSolver(SolverInterface):
                 cp_model.CpSolverSolutionCallback.__init__(self)
                 self.n_solutions = 0
                 self.best_score = float("-inf") if maximize else float("inf")
-                self.start_time = time.time()
+                self.start_time = time.monotonic()
                 self.objective_var = objective_var
                 self.solution_callback = solution_callback
                 self.progress_callback = progress_callback
@@ -248,7 +248,7 @@ class ORToolsSolver(SolverInterface):
                             self.Value(self.objective_var),
                             label="OR-Tools progress score",
                         )
-                        elapsed_time = time.time() - self.start_time
+                        elapsed_time = time.monotonic() - self.start_time
                         self.n_solutions += 1
                         if (maximize and current_score > self.best_score) or (
                             not maximize and current_score < self.best_score

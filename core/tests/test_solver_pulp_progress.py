@@ -67,7 +67,7 @@ def test_pulp_cbc_progress_parser_converts_maximize_integer_solution_sign(line, 
     solver = PuLPSolver()
     solver.set_objective(0, maximize=True)
 
-    payload = solver._parse_solver_log_progress(line, start_time=time.time())
+    payload = solver._parse_solver_log_progress(line, start_time=time.monotonic())
 
     assert payload is not None
     assert payload.source == f"pulp/cbc:solver-log:{source}"
@@ -79,7 +79,9 @@ def test_pulp_cbc_progress_parser_keeps_final_objective_sign():
     solver = PuLPSolver()
     solver.set_objective(0, maximize=True)
 
-    payload = solver._parse_solver_log_progress("Objective value:                21.00000000", start_time=time.time())
+    payload = solver._parse_solver_log_progress(
+        "Objective value:                21.00000000", start_time=time.monotonic()
+    )
 
     assert payload is not None
     assert payload.source == "pulp/cbc:solver-log:final-objective"
@@ -113,7 +115,7 @@ def test_pulp_cuopt_progress_parser_reads_documented_objective_lines(line, sourc
     solver = PuLPCuOptSolver()
     solver.set_objective(0, maximize=True)
 
-    payload = solver._parse_solver_log_progress(line, start_time=time.time())
+    payload = solver._parse_solver_log_progress(line, start_time=time.monotonic())
 
     assert payload is not None
     assert payload.source == f"pulp/cuopt:solver-log:{source}"

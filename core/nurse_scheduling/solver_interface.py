@@ -55,6 +55,23 @@ class SolverProgress:
         return serialize_solver_progress(self)
 
 
+@dataclass(frozen=True)
+class SchedulePhaseProgress:
+    """Scheduler phase progress payload."""
+
+    source: str
+    code: str
+    message: str
+    elapsedSeconds: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the API payload for this progress update."""
+        return serialize_schedule_phase_progress(self)
+
+
+ScheduleProgress = SolverProgress | SchedulePhaseProgress
+
+
 def count_export_comments(cell_export_info: Any) -> int | None:
     """Count reported export-rule notes from in-memory cell export metadata."""
     if not isinstance(cell_export_info, dict):
@@ -80,6 +97,16 @@ def serialize_solver_progress(
     if include_export_summary:
         progress_payload["commentCount"] = count_export_comments(payload.cell_export_info)
     return progress_payload
+
+
+def serialize_schedule_phase_progress(payload: SchedulePhaseProgress) -> dict[str, Any]:
+    """Return the wire payload for a scheduler phase progress update."""
+    return {
+        "source": payload.source,
+        "code": payload.code,
+        "message": payload.message,
+        "elapsedSeconds": payload.elapsedSeconds,
+    }
 
 
 def assert_int_score(value: Any, *, label: str = "score", integer_tolerance: float = 1e-6) -> int:

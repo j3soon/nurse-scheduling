@@ -26,7 +26,13 @@ import time
 from io import BytesIO
 from . import scheduler, exporter
 from .model_build_stats import ModelBuildStatsSummary
-from .solver_interface import SolverProgress, count_export_comments, serialize_solver_progress
+from .solver_interface import (
+    SchedulePhaseProgress,
+    SolverProgress,
+    count_export_comments,
+    serialize_schedule_phase_progress,
+    serialize_solver_progress,
+)
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
@@ -36,6 +42,13 @@ def _create_cli_progress_callback(progress_output_file=None, print_to_stdout: bo
     """Create a CLI progress printer for solver best-score updates."""
 
     def print_progress(payload):
+        if isinstance(payload, SchedulePhaseProgress):
+            progress_payload = serialize_schedule_phase_progress(payload)
+            if progress_output_file is not None:
+                progress_output_file.write(json.dumps(progress_payload, sort_keys=True) + "\n")
+                progress_output_file.flush()
+            return
+
         progress_payload = serialize_solver_progress(payload, include_export_summary=True)
         if progress_output_file is not None:
             progress_output_file.write(json.dumps(progress_payload, sort_keys=True) + "\n")
@@ -132,7 +145,7 @@ def main():
 
     model_build_stats_callback = ModelBuildStatsSummary() if args.show_model_build_stats else None
     progress_output_file = None
-    solve_started_at = time.time()
+    solve_started_at = time.monotonic()
     try:
         if args.progress_output:
             progress_output_file = open(args.progress_output, "w", encoding="utf-8")
@@ -155,7 +168,7 @@ def main():
                 SolverProgress(
                     source="cli:final-result",
                     currentBestScore=score,
-                    elapsedSeconds=round(time.time() - solve_started_at, 3),
+                    elapsedSeconds=round(time.monotonic() - solve_started_at, 3),
                     df=df,
                     cell_export_info=cell_export_info,
                 )

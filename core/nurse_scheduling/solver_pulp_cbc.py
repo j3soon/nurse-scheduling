@@ -73,5 +73,5 @@ class PuLPSolver(BasePuLPSolver):
         return SolverProgress(
             source=f"pulp/cbc:solver-log:{source}",
             currentBestScore=self._score_from_solver_log_objective(raw_objective, source=source),
-            elapsedSeconds=round(time.time() - start_time, 3),
+            elapsedSeconds=round(time.monotonic() - start_time, 3),
         )

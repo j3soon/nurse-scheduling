@@ -19,6 +19,7 @@
 
 import logging
 import itertools
+import time
 from dataclasses import replace
 from collections.abc import Callable
 from datetime import timedelta
@@ -29,7 +30,25 @@ from .context import Context
 from .utils import parse_dates
 from .loader import load_data
 from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
-from .solver_interface import SolverProgress, SolverStatus
+from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
+
+
+def _emit_phase_progress(
+    progress_callback: Callable[[ScheduleProgress], None] | None,
+    code: str,
+    message: str,
+    started_at: float,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        SchedulePhaseProgress(
+            source="scheduler:phase",
+            code=code,
+            message=message,
+            elapsedSeconds=round(time.monotonic() - started_at, 3),
+        )
+    )
 
 
 def schedule(
@@ -39,13 +58,21 @@ def schedule(
     prettify=False,
     timeout: int | None = None,
     solver: str = "ortools/cp-sat",
-    progress_callback: Callable[[SolverProgress], None] | None = None,
+    progress_callback: Callable[[ScheduleProgress], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     model_build_stats_callback: Callable[[ModelBuildStats], None] | None = None,
 ):
+    progress_started_at = time.monotonic()
+    _emit_phase_progress(
+        progress_callback,
+        "loading_scenario",
+        "Loading schedule configuration",
+        progress_started_at,
+    )
     logging.info("Loading scenario from file content...")
     scenario = load_data(file_content)
 
+    _emit_phase_progress(progress_callback, "parsing_data", "Parsing schedule data", progress_started_at)
     logging.info("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
@@ -104,6 +131,7 @@ def schedule(
                 date_indices.update(parse_dates(member, ctx.map_did_d, ctx.dates.range))
         ctx.map_did_d[group.id] = sorted(set(date_indices))
 
+    _emit_phase_progress(progress_callback, "initializing_solver", "Initializing solver model", progress_started_at)
     logging.info("Initializing solver model...")
 
     solver_backend, solver_engine = solver.lower().split("/", maxsplit=1)
@@ -127,6 +155,7 @@ def schedule(
     else:
         raise ValueError(f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}")
 
+    _emit_phase_progress(progress_callback, "creating_shift_variables", "Creating shift variables", progress_started_at)
     logging.info("Creating shift variables...")
     step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
@@ -167,6 +196,7 @@ def schedule(
             start_counts,
         )
 
+    _emit_phase_progress(progress_callback, "creating_off_variables", "Creating off variables", progress_started_at)
     logging.info("Creating off variables...")
     step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     for d in range(ctx.n_days):
@@ -190,6 +220,7 @@ def schedule(
         start_counts,
     )
 
+    _emit_phase_progress(progress_callback, "creating_lookup_maps", "Creating lookup indexes", progress_started_at)
     logging.info("Creating maps for faster lookup...")
     step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     # TODO: All shift combinations exist, so these membership checks can be removed
@@ -230,6 +261,12 @@ def schedule(
         start_counts,
     )
 
+    _emit_phase_progress(
+        progress_callback,
+        "adding_preferences",
+        "Adding preferences and constraints",
+        progress_started_at,
+    )
     logging.info("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
@@ -256,13 +293,17 @@ def schedule(
 
     if prettify and progress_callback is not None:
 
-        def progress_callback_with_export(payload: SolverProgress) -> None:
+        def progress_callback_with_export(payload: ScheduleProgress) -> None:
+            if isinstance(payload, SchedulePhaseProgress):
+                progress_callback(payload)
+                return
             df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=True)
             progress_callback(replace(payload, df=df, cell_export_info=cell_export_info))
 
     else:
         progress_callback_with_export = progress_callback
 
+    _emit_phase_progress(progress_callback, "solving", "Solving schedule", progress_started_at)
     logging.info("Solving and showing partial results...")
     status = ctx.solver.solve(
         timeout=timeout,
@@ -314,6 +355,7 @@ def schedule(
     if not found:
         return None, None, None, ctx.solver_status, None
 
+    _emit_phase_progress(progress_callback, "exporting", "Preparing schedule output", progress_started_at)
     df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=prettify)
     solution = {}
     for d, s, p in ctx.shifts:

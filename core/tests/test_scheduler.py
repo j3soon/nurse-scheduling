@@ -30,7 +30,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import scheduler
-from nurse_scheduling.solver_interface import SolverStatus
+from nurse_scheduling.solver_interface import SchedulePhaseProgress, SolverProgress, SolverStatus
 
 TEST_DIR = Path(__file__).parent / "testcases" / "basics"
 VALID_YAML_PATH = TEST_DIR / "01_1nurse_1shift_1day.yaml"
@@ -242,6 +242,30 @@ def test_scheduler_passes_progress_callback_without_creating_solution_callback(m
     assert seen["progress_callback"] is not None
 
 
+def test_scheduler_emits_phase_progress_events():
+    events = []
+
+    _df, _solution, score, status_name, _cell_export_info = scheduler.schedule(
+        _load_valid_yaml_bytes(),
+        progress_callback=events.append,
+    )
+
+    assert score == 0
+    assert status_name == "OPTIMAL"
+    phase_codes = [event.code for event in events if isinstance(event, SchedulePhaseProgress)]
+    assert phase_codes == [
+        "loading_scenario",
+        "parsing_data",
+        "initializing_solver",
+        "creating_shift_variables",
+        "creating_off_variables",
+        "creating_lookup_maps",
+        "adding_preferences",
+        "solving",
+        "exporting",
+    ]
+
+
 def test_scheduler_ortools_progress_includes_solution_index():
     events = []
 
@@ -251,11 +275,12 @@ def test_scheduler_ortools_progress_includes_solution_index():
     )
 
     assert status_name == "OPTIMAL"
-    assert events
-    assert all(event.source == "ortools/cp-sat:solution-callback" for event in events)
-    assert all(event.df is None for event in events)
-    assert all(event.cell_export_info is None for event in events)
-    assert all(isinstance(event.solutionIndex, int) for event in events)
+    solver_events = [event for event in events if isinstance(event, SolverProgress)]
+    assert solver_events
+    assert all(event.source == "ortools/cp-sat:solution-callback" for event in solver_events)
+    assert all(event.df is None for event in solver_events)
+    assert all(event.cell_export_info is None for event in solver_events)
+    assert all(isinstance(event.solutionIndex, int) for event in solver_events)
 
 
 def test_scheduler_ortools_prettify_progress_includes_export_info():
@@ -306,10 +331,11 @@ def test_scheduler_ortools_prettify_progress_includes_export_info():
     )
 
     assert status_name == "OPTIMAL"
-    assert events
-    assert all(event.df is not None for event in events)
-    assert all(event.cell_export_info is not None for event in events)
-    assert all(sum(len(notes) for notes in event.cell_export_info["comments"].values()) == 1 for event in events)
+    solver_events = [event for event in events if isinstance(event, SolverProgress)]
+    assert solver_events
+    assert all(event.df is not None for event in solver_events)
+    assert all(event.cell_export_info is not None for event in solver_events)
+    assert all(sum(len(notes) for notes in event.cell_export_info["comments"].values()) == 1 for event in solver_events)
 
 
 def test_scheduler_unknown_status_raises(monkeypatch):
