@@ -23,7 +23,6 @@
 
 import { useId, useState, useEffect } from 'react';
 import {
-  Brush,
   CartesianGrid,
   ComposedChart,
   Line,
@@ -53,8 +52,7 @@ type RangePreset =
   | 'last-minute'
   | 'last-ten-minutes'
   | 'last-10'
-  | 'last-50'
-  | 'custom';
+  | 'last-50';
 
 const SCORE_CHART_HEIGHT = 250;
 const COMMENT_CHART_HEIGHT = 170;
@@ -175,7 +173,6 @@ export default function OptimizationProgressChart({
   const latestElapsedSeconds = points.at(-1)?.elapsedSeconds ?? 0;
   const [liveElapsedSeconds, setLiveElapsedSeconds] = useState(latestElapsedSeconds);
   const [rangePreset, setRangePreset] = useState<RangePreset>('full');
-  const [customRange, setCustomRange] = useState({ startIndex: 0, endIndex: points.length - 1 });
 
   useEffect(() => {
     if (!isActive) {
@@ -192,21 +189,21 @@ export default function OptimizationProgressChart({
     };
   }, [isActive, latestElapsedSeconds]);
 
-  const range = rangePreset === 'custom'
-    ? {
-        startIndex: Math.min(customRange.startIndex, Math.max(points.length - 1, 0)),
-        endIndex: Math.min(customRange.endIndex, Math.max(points.length - 1, 0)),
-      }
-    : {
-        startIndex: getRangeStartIndex(points, rangePreset),
-        endIndex: Math.max(points.length - 1, 0),
-      };
+  const latestPointIndex = Math.max(points.length - 1, 0);
+  const range = {
+    startIndex: getRangeStartIndex(points, rangePreset),
+    endIndex: latestPointIndex,
+  };
   const fullDomainMax = Math.max(isActive ? liveElapsedSeconds : latestElapsedSeconds, latestElapsedSeconds, 1);
+  const requestedDomainMin = rangePreset === 'full' ? 0 : points[range.startIndex]?.elapsedSeconds ?? 0;
+  const requestedDomainMax = fullDomainMax;
+  const minimumDomainSpan = Math.max(requestedDomainMax * 0.01, 0.1);
   const xDomain: [number, number] = [
-    rangePreset === 'full' ? 0 : points[range.startIndex]?.elapsedSeconds ?? 0,
-    rangePreset === 'full' ? fullDomainMax : points[range.endIndex]?.elapsedSeconds ?? fullDomainMax,
+    Math.min(requestedDomainMin, requestedDomainMax - minimumDomainSpan),
+    requestedDomainMax,
   ];
-  const showDots = points.length <= DOT_LIMIT;
+  const visiblePointCount = range.endIndex - range.startIndex + 1;
+  const showDots = visiblePointCount <= DOT_LIMIT;
 
   return (
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-gradient-to-b from-white to-gray-50/70 shadow-sm" data-testid="optimization-progress-chart">
@@ -214,12 +211,17 @@ export default function OptimizationProgressChart({
         <div>
           <h3 className="text-sm font-semibold text-gray-900">Incumbent Progress</h3>
           <p className="mt-0.5 text-xs text-gray-500">
-            Hover to inspect a solution. Drag the overview handles to zoom.
+            Hover to inspect a solution. Choose a range to focus on recent progress.
           </p>
         </div>
       </div>
 
-      <div role="img" aria-label="Optimization progress chart" className="px-2 pt-3">
+      <div
+        role="img"
+        aria-label="Optimization progress chart"
+        className="select-none px-2 pt-3 outline-none [&_.recharts-wrapper]:select-none [&_.recharts-wrapper]:outline-none [&_svg]:select-none [&_svg]:outline-none [&_text]:select-none"
+        onMouseDown={event => event.preventDefault()}
+      >
         <div className="flex items-center justify-between px-2">
           <p className="text-xs font-semibold text-blue-700">Score</p>
           {!showDots && <p className="text-[11px] text-gray-400">Points hidden · hover to inspect</p>}
@@ -230,6 +232,9 @@ export default function OptimizationProgressChart({
               data={points}
               syncId={syncId}
               syncMethod="value"
+              accessibilityLayer={false}
+              className="select-none outline-none focus:outline-none"
+              style={{ userSelect: 'none', outline: 'none' }}
               margin={{ top: 8, right: 12, bottom: 0, left: 4 }}
             >
               <CartesianGrid vertical={false} stroke="#e5e7eb" strokeDasharray="3 5" />
@@ -276,6 +281,9 @@ export default function OptimizationProgressChart({
                 data={points}
                 syncId={syncId}
                 syncMethod="value"
+                accessibilityLayer={false}
+                className="select-none outline-none focus:outline-none"
+                style={{ userSelect: 'none', outline: 'none' }}
                 margin={{ top: 8, right: 12, bottom: 0, left: 4 }}
               >
                 <CartesianGrid vertical={false} stroke="#e5e7eb" strokeDasharray="3 5" />
@@ -315,20 +323,6 @@ export default function OptimizationProgressChart({
                   dot={showDots ? { r: 3, fill: COMMENT_COLOR, stroke: '#ffffff', strokeWidth: 2 } : false}
                   activeDot={{ r: 5.5, fill: COMMENT_COLOR, stroke: '#ffffff', strokeWidth: 2 }}
                   isAnimationActive={false}
-                />
-                <Brush
-                  dataKey="elapsedSeconds"
-                  startIndex={range.startIndex}
-                  endIndex={range.endIndex}
-                  onChange={nextRange => {
-                    setCustomRange(nextRange);
-                    setRangePreset('custom');
-                  }}
-                  tickFormatter={formatElapsedSeconds}
-                  height={28}
-                  travellerWidth={8}
-                  stroke="#94a3b8"
-                  fill="#f8fafc"
                 />
               </ComposedChart>
             </ResponsiveContainer>

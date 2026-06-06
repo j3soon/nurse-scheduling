@@ -18,16 +18,32 @@
  */
 
 import type { ReactNode } from 'react';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import OptimizationProgressChart from './OptimizationProgressChart';
 
 vi.mock('recharts', () => ({
-  Brush: ({ startIndex, endIndex }: { startIndex: number; endIndex: number }) => (
-    <div data-testid="range-brush" data-start-index={startIndex} data-end-index={endIndex} />
-  ),
   CartesianGrid: () => null,
-  ComposedChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  ComposedChart: ({
+    accessibilityLayer,
+    children,
+    className,
+    style,
+  }: {
+    accessibilityLayer: boolean;
+    children: ReactNode;
+    className: string;
+    style: { userSelect: string; outline: string };
+  }) => (
+    <div
+      data-testid="composed-chart"
+      data-accessibility-layer={accessibilityLayer}
+      className={className}
+      style={style}
+    >
+      {children}
+    </div>
+  ),
   Line: ({ name, type, dot }: { name: string; type: string; dot: unknown }) => (
     <div data-testid={`${name.toLowerCase()}-line`} data-type={type} data-dots={dot === false ? 'hidden' : 'shown'} />
   ),
@@ -76,16 +92,19 @@ describe('OptimizationProgressChart', () => {
     render(<OptimizationProgressChart points={points} />);
 
     expect(screen.getByRole('img', { name: /optimization progress chart/i })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /optimization progress chart/i })).toHaveClass('select-none', 'outline-none');
+    expect(screen.getAllByTestId('composed-chart')).toHaveLength(2);
+    expect(screen.getAllByTestId('composed-chart')[0]).toHaveAttribute('data-accessibility-layer', 'false');
+    expect(screen.getAllByTestId('composed-chart')[0]).toHaveStyle({ userSelect: 'none', outline: 'none' });
     expect(screen.getByTestId('score-line')).toHaveAttribute('data-type', 'stepAfter');
     expect(screen.getByTestId('comments-line')).toHaveAttribute('data-type', 'stepAfter');
     expect(screen.getByText('0.5s elapsed')).toBeInTheDocument();
     expect(screen.getByText('12,000')).toBeInTheDocument();
     expect(screen.getByText('#2')).toBeInTheDocument();
     expect(screen.getByText('ortools/cp-sat:solution-callback')).toBeInTheDocument();
-    expect(screen.getByTestId('range-brush')).toHaveAttribute('data-start-index', '0');
   });
 
-  it('expands the elapsed-time domain while active', () => {
+  it('keeps the elapsed-time domain end live while active', () => {
     vi.useFakeTimers();
     vi.spyOn(performance, 'now')
       .mockReturnValueOnce(1000)
@@ -100,6 +119,22 @@ describe('OptimizationProgressChart', () => {
 
     expect(Number(screen.getByTestId('elapsed-axis').getAttribute('data-domain-max'))).toBeGreaterThan(2);
     vi.useRealTimers();
+  });
+
+  it('keeps a finite x-axis span when a range contains only the latest point', () => {
+    render(<OptimizationProgressChart points={[
+      { currentBestScore: 12, elapsedSeconds: 1, commentCount: 4 },
+      { currentBestScore: 9, elapsedSeconds: 120, commentCount: 2 },
+    ]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Last 1 min' }));
+
+    const domainMin = Number(screen.getByTestId('elapsed-axis').getAttribute('data-domain-min'));
+    const domainMax = Number(screen.getByTestId('elapsed-axis').getAttribute('data-domain-max'));
+    expect(Number.isFinite(domainMin)).toBe(true);
+    expect(Number.isFinite(domainMax)).toBe(true);
+    expect(domainMin).toBeLessThan(domainMax);
+    expect(domainMax).toBe(120);
   });
 
   it('changes the plot domain for selected ranges and hides routine dots for dense histories', async () => {
@@ -123,12 +158,13 @@ describe('OptimizationProgressChart', () => {
     expect(screen.queryByRole('button', { name: 'Last 100' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Last 10' }));
-    expect(screen.getByTestId('range-brush')).toHaveAttribute('data-start-index', '21');
     expect(screen.getByTestId('elapsed-axis')).toHaveAttribute('data-domain-min', '21');
     expect(screen.getByTestId('elapsed-axis')).toHaveAttribute('data-domain-max', '30');
+    expect(screen.getByTestId('score-line')).toHaveAttribute('data-dots', 'shown');
+    expect(screen.getByTestId('comments-line')).toHaveAttribute('data-dots', 'shown');
 
     await user.click(screen.getByRole('button', { name: 'Last 50' }));
-    expect(screen.getByTestId('range-brush')).toHaveAttribute('data-start-index', '0');
     expect(screen.getByTestId('elapsed-axis')).toHaveAttribute('data-domain-min', '0');
+    expect(screen.getByTestId('score-line')).toHaveAttribute('data-dots', 'hidden');
   });
 });
