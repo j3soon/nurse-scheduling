@@ -23,33 +23,44 @@ import { useEffect } from 'react';
 
 const TAB_SWITCH_WARNING_KEY = 'nurse-scheduling-tab-switch-warning-active';
 
-export function setTabSwitchWarningActive(isActive: boolean): void {
+function getTabSwitchWarningCount(): number {
+  if (typeof window === 'undefined') return 0;
+
+  const count = parseInt(window.sessionStorage.getItem(TAB_SWITCH_WARNING_KEY) ?? '0', 10);
+  return Number.isNaN(count) ? 0 : Math.max(0, count);
+}
+
+export function incrementTabSwitchWarningActive(): void {
   if (typeof window === 'undefined') return;
 
-  if (isActive) {
-    window.sessionStorage.setItem(TAB_SWITCH_WARNING_KEY, 'true');
-  } else {
+  window.sessionStorage.setItem(TAB_SWITCH_WARNING_KEY, String(getTabSwitchWarningCount() + 1));
+}
+
+export function decrementTabSwitchWarningActive(): void {
+  if (typeof window === 'undefined') return;
+
+  const count = getTabSwitchWarningCount();
+  if (count <= 1) {
     window.sessionStorage.removeItem(TAB_SWITCH_WARNING_KEY);
+  } else {
+    window.sessionStorage.setItem(TAB_SWITCH_WARNING_KEY, String(count - 1));
   }
 }
 
 export function hasTabSwitchWarningActive(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.sessionStorage.getItem(TAB_SWITCH_WARNING_KEY) === 'true';
+  return getTabSwitchWarningCount() > 0;
 }
 
 export function useTabSwitchWarning(isActive: boolean): void {
   useEffect(() => {
-    setTabSwitchWarningActive(isActive);
+    if (!isActive) return;
+
+    incrementTabSwitchWarningActive();
 
     return () => {
-      setTabSwitchWarningActive(false);
+      decrementTabSwitchWarningActive();
     };
   }, [isActive]);
-}
-
-export function setSaveAndLoadEditingWarningActive(isActive: boolean): void {
-  setTabSwitchWarningActive(isActive);
 }
 
 export function hasSaveAndLoadEditingWarningActive(): boolean {
