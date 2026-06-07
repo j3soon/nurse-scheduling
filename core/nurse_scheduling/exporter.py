@@ -476,9 +476,9 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     for d, date in enumerate(ctx.dates.items):
         col_idx = n_leading_cols + n_history_cols + d
         if ctx.dates.items[0].year != ctx.dates.items[-1].year:
-            df.iloc[0, col_idx] = date.strftime("%Y/%-m/%-d")
+            df.iloc[0, col_idx] = f"{date.year}/{date.month}/{date.day}"
         elif ctx.dates.items[0].month != ctx.dates.items[-1].month:
-            df.iloc[0, col_idx] = date.strftime("%-m/%-d")
+            df.iloc[0, col_idx] = f"{date.month}/{date.day}"
         else:
             df.iloc[0, col_idx] = date.day
         df.iloc[1, col_idx] = date.strftime("%a")
