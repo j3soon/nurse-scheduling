@@ -24,6 +24,7 @@ from pathlib import Path
 
 import nurse_scheduling
 from ruamel.yaml import YAML
+from nurse_scheduling.solver_interface import SolverProgress
 
 
 REAL_TESTCASE = Path(__file__).parents[1] / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
@@ -71,22 +72,41 @@ def _add_critical_request_formatting_rules(file_content: bytes) -> bytes:
     return output.getvalue()
 
 
+def _critical_request_notes(cell_export_info) -> list[str]:
+    if not isinstance(cell_export_info, dict):
+        return []
+    comments = cell_export_info.get("comments")
+    if not isinstance(comments, dict):
+        return []
+    return [note for notes in comments.values() for note in notes if note.startswith(CRITICAL_REQUEST_NOTE_PREFIX)]
+
+
 def run_real_schedule_smoke_test(solver: str):
     file_content = _add_critical_request_formatting_rules(REAL_TESTCASE.read_bytes())
+    stop_after_zero_critical_notes = False
+
+    def track_critical_notes(payload):
+        nonlocal stop_after_zero_critical_notes
+        comments = (
+            payload.cell_export_info.get("comments")
+            if isinstance(payload, SolverProgress) and isinstance(payload.cell_export_info, dict)
+            else None
+        )
+        if isinstance(comments, dict):
+            stop_after_zero_critical_notes = not _critical_request_notes(payload.cell_export_info)
+
+    supports_progress_stop = solver == "ortools/cp-sat"
 
     df, solution, score, status, cell_export_info = nurse_scheduling.schedule(
         file_content,
         prettify=True,
         solver=solver,
-        timeout=SMOKE_TEST_TIMEOUT_SECONDS,
+        timeout=None if supports_progress_stop else SMOKE_TEST_TIMEOUT_SECONDS,
+        progress_callback=track_critical_notes if supports_progress_stop else None,
+        should_stop=(lambda: stop_after_zero_critical_notes) if supports_progress_stop else None,
     )
 
-    critical_notes = [
-        note
-        for notes in cell_export_info["comments"].values()
-        for note in notes
-        if note.startswith(CRITICAL_REQUEST_NOTE_PREFIX)
-    ]
+    critical_notes = _critical_request_notes(cell_export_info)
 
     assert status in {"FEASIBLE", "OPTIMAL"}
     assert df is not None

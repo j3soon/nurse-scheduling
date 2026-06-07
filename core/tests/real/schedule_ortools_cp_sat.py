@@ -1,4 +1,4 @@
-"""Bounded-time smoke test for the real-world OR-Tools scheduling scenario."""
+"""Progress-target smoke test for the real-world OR-Tools scheduling scenario."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -22,5 +22,5 @@
 from .schedule_real_helper import run_real_schedule_smoke_test
 
 
-def test_real_schedule_ortools_finds_feasible_solution_within_fixed_budget():
+def test_real_schedule_ortools_finds_solution_without_critical_violations():
     run_real_schedule_smoke_test("ortools/cp-sat")
