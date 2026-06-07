@@ -18,7 +18,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
+from collections.abc import Callable
 from typing import Any, Dict, List, Tuple, Union
 
 from .constants import Operator
@@ -35,6 +37,84 @@ class SolverStatus(Enum):
     INFEASIBLE = "INFEASIBLE"
     MODEL_INVALID = "MODEL_INVALID"
     UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class SolverProgress:
+    """Normalized solver progress payload."""
+
+    source: str
+    currentBestScore: int
+    elapsedSeconds: float
+    solutionIndex: int | None = None
+    df: Any | None = None
+    cell_export_info: Any | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the API payload for this progress update."""
+        return serialize_solver_progress(self)
+
+
+@dataclass(frozen=True)
+class SchedulePhaseProgress:
+    """Scheduler phase progress payload."""
+
+    source: str
+    code: str
+    message: str
+    elapsedSeconds: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the API payload for this progress update."""
+        return serialize_schedule_phase_progress(self)
+
+
+ScheduleProgress = SolverProgress | SchedulePhaseProgress
+
+
+def count_export_comments(cell_export_info: Any) -> int | None:
+    """Count reported export-rule notes from in-memory cell export metadata."""
+    if not isinstance(cell_export_info, dict):
+        return None
+    comments = cell_export_info.get("comments")
+    if not isinstance(comments, dict):
+        return None
+    return sum(len(notes) for notes in comments.values())
+
+
+def serialize_solver_progress(
+    payload: SolverProgress,
+    *,
+    include_export_summary: bool = False,
+) -> dict[str, Any]:
+    """Return the wire payload for a solver progress update."""
+    progress_payload = {
+        "source": payload.source,
+        "currentBestScore": payload.currentBestScore,
+        "elapsedSeconds": payload.elapsedSeconds,
+        "solutionIndex": payload.solutionIndex,
+    }
+    if include_export_summary:
+        progress_payload["commentCount"] = count_export_comments(payload.cell_export_info)
+    return progress_payload
+
+
+def serialize_schedule_phase_progress(payload: SchedulePhaseProgress) -> dict[str, Any]:
+    """Return the wire payload for a scheduler phase progress update."""
+    return {
+        "source": payload.source,
+        "code": payload.code,
+        "message": payload.message,
+        "elapsedSeconds": payload.elapsedSeconds,
+    }
+
+
+def assert_int_score(value: Any, *, label: str = "score", integer_tolerance: float = 1e-6) -> int:
+    """Assert a solver score is integral and return it as an int."""
+    value_f = float(value)
+    rounded = round(value_f)
+    assert abs(value_f - rounded) <= integer_tolerance, f"{label} should be an integer, but got {value}."
+    return int(rounded)
 
 
 class SolverInterface(ABC):
@@ -98,6 +178,30 @@ class SolverInterface(ABC):
         pass
 
     @abstractmethod
+    def create_bool_and_var(self, name: str, literals: List[Any]) -> Any:
+        """
+        Create a boolean variable equivalent to the AND of the literals.
+
+        Args:
+            name: Variable name.
+            literals: List of boolean variables or their negations.
+
+        Returns:
+            A solver-specific boolean variable.
+        """
+        pass
+
+    @abstractmethod
+    def should_use_bool_and_var(self, n_literals: int) -> bool:
+        """
+        Return True when create_bool_and_var is preferred for a literal-only AND of this size.
+
+        This lets model-building code avoid backend-specific checks while still
+        accounting for native Boolean backends versus linear encodings.
+        """
+        pass
+
+    @abstractmethod
     def set_objective(self, expression, maximize: bool = True) -> None:
         """
         Set the objective function.
@@ -110,7 +214,12 @@ class SolverInterface(ABC):
 
     @abstractmethod
     def solve(
-        self, timeout: Union[int, None] = None, deterministic: bool = False, solution_callback=None
+        self,
+        timeout: Union[int, None] = None,
+        deterministic: bool = False,
+        solution_callback: Callable[[Any], None] | None = None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> SolverStatus:
         """
         Solve the model.
@@ -118,7 +227,10 @@ class SolverInterface(ABC):
         Args:
             timeout: Maximum time in seconds (None for no limit).
             deterministic: If True, use deterministic solving.
-            solution_callback: Optional callback for intermediate solutions.
+            solution_callback: Optional app-level callback receiving the registered
+                solver-specific callback for each intermediate solution.
+            progress_callback: Optional callback for normalized solver progress events.
+            should_stop: Optional callback returning True when solving should stop early.
 
         Returns:
             The solver status.
@@ -230,12 +342,22 @@ class SolverInterface(ABC):
         pass
 
     @abstractmethod
-    def create_solution_callback(self, objective_var: Any = None) -> Any:
+    def create_solution_callback(
+        self,
+        objective_var: Any = None,
+        solution_callback: Callable[[Any], None] | None = None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> Any:
         """
         Create a solution callback for tracking intermediate solutions during solving.
 
         Args:
             objective_var: The objective variable to track (optional, solver-specific).
+            solution_callback: Optional app-level callback receiving the registered
+                solver-specific callback for each intermediate solution.
+            progress_callback: Optional callback for normalized solver progress events.
+            should_stop: Optional callback returning True when solving should stop early.
 
         Returns:
             A solver-specific solution callback object, or None if not supported.

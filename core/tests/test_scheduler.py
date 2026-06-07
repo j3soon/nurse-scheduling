@@ -21,6 +21,7 @@
 
 import os
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import scheduler
-from nurse_scheduling.solver_interface import SolverStatus
+from nurse_scheduling.solver_interface import SchedulePhaseProgress, SolverProgress, SolverStatus
 
 TEST_DIR = Path(__file__).parent / "testcases" / "basics"
 VALID_YAML_PATH = TEST_DIR / "01_1nurse_1shift_1day.yaml"
@@ -152,6 +153,189 @@ preferences:
     assert isinstance(solution, dict)
     assert score == 0
     assert status_name == "FEASIBLE"
+
+
+def test_scheduler_model_build_stats_callback_reports_build_steps(monkeypatch):
+    content = _load_valid_yaml_bytes()
+    events = []
+
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.solve", lambda *args, **kwargs: SolverStatus.FEASIBLE
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_status_name", lambda *args, **kwargs: "FEASIBLE"
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_statistics", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_objective_value", lambda *args, **kwargs: 0
+    )
+
+    def fake_get_value(_self, var):
+        name = var.Name() if hasattr(var, "Name") else ""
+        return 1 if name.startswith("off_") else 0
+
+    monkeypatch.setattr("nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_value", fake_get_value)
+
+    _df, _solution, _score, status_name, _cell_export_info = scheduler.schedule(
+        content,
+        model_build_stats_callback=events.append,
+    )
+
+    assert status_name == "FEASIBLE"
+    assert [event.step for event in events[:3]] == [
+        "create_shift_variables",
+        "create_off_variables",
+        "create_lookup_maps",
+    ]
+    assert [event.step for event in events[3:]] == ["add_preference", "add_preference"]
+    assert [event.preferenceType for event in events[3:]] == [
+        "at most one shift per day",
+        "shift type requirement",
+    ]
+    assert events[0].variablesAdded == 1
+    assert events[1].variablesAdded == 1
+    assert events[1].constraintsAdded == 1
+    assert events[3].constraintsAdded == 0
+    assert events[-1].totalVariables >= events[-1].variablesAdded
+    assert isinstance(events[-1].to_dict(), dict)
+
+
+def test_scheduler_passes_progress_callback_without_creating_solution_callback(monkeypatch):
+    content = _load_valid_yaml_bytes()
+    seen = {}
+
+    def fake_solve(
+        _self,
+        timeout=None,
+        deterministic=False,
+        solution_callback=None,
+        progress_callback=None,
+        should_stop=None,
+    ):
+        seen["solution_callback"] = solution_callback
+        seen["progress_callback"] = progress_callback
+        seen["should_stop"] = should_stop
+        return SolverStatus.FEASIBLE
+
+    monkeypatch.setattr("nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.solve", fake_solve)
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_status_name", lambda *args, **kwargs: "FEASIBLE"
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_statistics", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_objective_value", lambda *args, **kwargs: 0
+    )
+
+    def fake_get_value(_self, var):
+        name = var.Name() if hasattr(var, "Name") else ""
+        return 1 if name.startswith("off_") else 0
+
+    monkeypatch.setattr("nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_value", fake_get_value)
+
+    scheduler.schedule(content, progress_callback=lambda _payload: None)
+
+    assert seen["solution_callback"] is None
+    assert seen["progress_callback"] is not None
+
+
+def test_scheduler_emits_phase_progress_events():
+    events = []
+
+    _df, _solution, score, status_name, _cell_export_info = scheduler.schedule(
+        _load_valid_yaml_bytes(),
+        progress_callback=events.append,
+    )
+
+    assert score == 0
+    assert status_name == "OPTIMAL"
+    phase_codes = [event.code for event in events if isinstance(event, SchedulePhaseProgress)]
+    assert phase_codes == [
+        "loading_scenario",
+        "parsing_data",
+        "initializing_solver",
+        "creating_shift_variables",
+        "creating_off_variables",
+        "creating_lookup_maps",
+        "adding_preferences",
+        "solving",
+        "exporting",
+    ]
+
+
+def test_scheduler_ortools_progress_includes_solution_index():
+    events = []
+
+    _df, _solution, _score, status_name, _cell_export_info = scheduler.schedule(
+        (TEST_DIR / "01_1nurse_1shift_1day_all_prefs.yaml").read_bytes(),
+        progress_callback=events.append,
+    )
+
+    assert status_name == "OPTIMAL"
+    solver_events = [event for event in events if isinstance(event, SolverProgress)]
+    assert solver_events
+    assert all(event.source == "ortools/cp-sat:solution-callback" for event in solver_events)
+    assert all(event.df is None for event in solver_events)
+    assert all(event.cell_export_info is None for event in solver_events)
+    assert all(isinstance(event.solutionIndex, int) for event in solver_events)
+
+
+def test_scheduler_ortools_prettify_progress_includes_export_info():
+    events = []
+    yaml_content = textwrap.dedent(
+        """
+        apiVersion: alpha
+        dates:
+          range:
+            startDate: 2023-08-18
+            endDate: 2023-08-18
+        people:
+          items:
+            - id: n1
+        shiftTypes:
+          items:
+            - id: D
+        preferences:
+          - type: at most one shift per day
+          - type: shift type requirement
+            shiftType: D
+            requiredNumPeople: 1
+          - type: shift request
+            person: n1
+            date: "2023-08-18"
+            shiftType: D
+            weight: -10
+        export:
+          formatting:
+            - type: cell
+              people: [ALL]
+              dates: [ALL]
+              shiftTypes: [ALL, OFF]
+              when:
+                preference:
+                  types: ["shift request"]
+                  satisfied: false
+                  weightRange: [-.inf, .inf]
+              note:
+                text: "Unsatisfied request: {shiftType}, weight={weight}"
+        """
+    ).encode()
+
+    _df, _solution, _score, status_name, _cell_export_info = scheduler.schedule(
+        yaml_content,
+        prettify=True,
+        progress_callback=events.append,
+    )
+
+    assert status_name == "OPTIMAL"
+    solver_events = [event for event in events if isinstance(event, SolverProgress)]
+    assert solver_events
+    assert all(event.df is not None for event in solver_events)
+    assert all(event.cell_export_info is not None for event in solver_events)
+    assert all(sum(len(notes) for notes in event.cell_export_info["comments"].values()) == 1 for event in solver_events)
 
 
 def test_scheduler_unknown_status_raises(monkeypatch):

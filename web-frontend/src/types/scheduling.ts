@@ -38,7 +38,7 @@ export interface ExportPreferenceCondition {
   types: ['shift request'];
   requestShape?: ExportRequestShape[];
   satisfied?: boolean;
-  weightRange?: number[];
+  weightRange?: [number, number];
 }
 
 export interface ExportFormattingCondition {

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
 
 test('repeated optimize runs submit twice and keep a single success summary visible', async ({ page }) => {
   /*
@@ -42,16 +42,7 @@ test('repeated optimize runs submit twice and keep a single success summary visi
   });
 
   let callCount = 0;
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    callCount += 1;
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      },
-      body: callCount === 1 ? 'first-xlsx' : 'second-xlsx',
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: () => { callCount += 1; } });
 
   await page.goto('/optimize-and-export');
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
@@ -60,13 +51,12 @@ test('repeated optimize runs submit twice and keep a single success summary visi
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await firstDownloadPromise;
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
-  await expect(page.getByText('File: output.xlsx')).toBeVisible();
+  await expect(page.getByText('output.xlsx')).toBeVisible();
 
   const secondDownloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await secondDownloadPromise;
   await expect.poll(() => callCount).toBe(2);
-  await expect(page.getByRole('heading', { name: 'Success', exact: true })).toHaveCount(1);
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(1);
-  await expect(page.getByText('File: output.xlsx')).toHaveCount(1);
+  await expect(page.getByText('output.xlsx')).toHaveCount(1);
 });

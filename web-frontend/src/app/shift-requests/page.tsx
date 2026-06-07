@@ -34,6 +34,7 @@ import WeightInput from '@/components/WeightInput';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { dateStrToDate } from '@/utils/dateParsing';
 import { DataType } from '@/types/scheduling';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 export default function ShiftRequestsPage() {
   const {
@@ -105,6 +106,7 @@ export default function ShiftRequestsPage() {
   const [quickAddHeight, setQuickAddHeight] = useState(0);
   const quickAddRef = useRef<HTMLDivElement>(null);
   const stickyQuickAddRef = useRef<HTMLDivElement>(null);
+  useTabSwitchWarning(editorState.isOpen || historyEditState.isOpen);
   // TODO(perf): The multi-select drag feature is now lagging, unsure why.
 
   enum SelectedCellType {

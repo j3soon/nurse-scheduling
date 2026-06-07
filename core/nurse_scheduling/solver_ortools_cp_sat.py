@@ -18,11 +18,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
+from collections.abc import Callable
 from typing import Any, Dict, List, Tuple, Union
 from ortools.sat.python import cp_model
 
 from .constants import Operator
-from .solver_interface import SolverInterface, SolverStatus
+from .solver_interface import SolverInterface, SolverProgress, SolverStatus, assert_int_score
 
 
 class ORToolsSolver(SolverInterface):
@@ -35,6 +36,7 @@ class ORToolsSolver(SolverInterface):
         self.solver: cp_model.CpSolver = cp_model.CpSolver()
         self.status = None
         self.solver_status = SolverStatus.UNKNOWN
+        self._active_solution_callback = None
 
     def new_bool_var(self, name: str) -> cp_model.IntVar:
         """Create a new boolean variable."""
@@ -52,6 +54,30 @@ class ORToolsSolver(SolverInterface):
         """Add a boolean OR constraint."""
         self.model.AddBoolOr(literals)
 
+    def create_bool_and_var(self, name: str, literals: List[Any]) -> Any:
+        """Create a boolean variable equivalent to the AND of the literals."""
+        var = self.new_bool_var(name)
+        if not literals:
+            self.add_constraint(var == 1)
+            return var
+        # Encode both directions of:
+        #   var <=> AND(literals)
+        #
+        # The enforced AND below provides:
+        #   var => AND(literals)
+        #
+        # It is not sufficient by itself: when every literal is true, var
+        # could still remain false. The OR constraint adds the reverse:
+        #   OR(NOT literal_1, ..., NOT literal_n, var)
+        # which forces var to true when no literal is false.
+        self.model.AddBoolAnd(literals).OnlyEnforceIf(var)
+        self.model.AddBoolOr([self.negate(literal) for literal in literals] + [var])
+        return var
+
+    def should_use_bool_and_var(self, n_literals: int) -> bool:
+        """Return True because OR-Tools has native Boolean AND constraints."""
+        return True
+
     def set_objective(self, expression, maximize: bool = True) -> None:
         """Set the objective function."""
         self.objective_expr = expression
@@ -62,7 +88,12 @@ class ORToolsSolver(SolverInterface):
             self.model.Minimize(expression)
 
     def solve(
-        self, timeout: Union[int, None] = None, deterministic: bool = False, solution_callback=None
+        self,
+        timeout: Union[int, None] = None,
+        deterministic: bool = False,
+        solution_callback: Callable[[Any], None] | None = None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> SolverStatus:
         """Solve the model using OR-Tools."""
         if deterministic:
@@ -84,11 +115,13 @@ class ORToolsSolver(SolverInterface):
                     exc,
                 )
 
-        # Solve with or without callback
-        if solution_callback is not None:
-            self.status = self.solver.Solve(self.model, solution_callback)
-        else:
-            self.status = self.solver.Solve(self.model)
+        internal_solution_callback = self.create_solution_callback(
+            self.objective_expr,
+            solution_callback=solution_callback,
+            progress_callback=progress_callback,
+            should_stop=should_stop,
+        )
+        self.status = self.solver.Solve(self.model, internal_solution_callback)
 
         # Convert OR-Tools status to our enum
         if self.status == cp_model.OPTIMAL:
@@ -106,10 +139,18 @@ class ORToolsSolver(SolverInterface):
 
     def get_value(self, var: Any) -> Union[int, float]:
         """Get the value of a variable in the solution."""
+        if self._active_solution_callback is not None:
+            # During CP-SAT solution callbacks, incumbent values are exposed
+            # through the callback object rather than the final CpSolver.
+            return self._active_solution_callback.Value(var)
         return self.solver.Value(var)
 
     def get_objective_value(self) -> int:
         """Get the objective value of the solution."""
+        if self._active_solution_callback is not None:
+            # Keep objective reads consistent with get_value() while exporting
+            # intermediate incumbent solutions for progress reporting.
+            return self._active_solution_callback.Value(self.objective_expr)
         return self.solver.Value(self.objective_expr)
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -169,29 +210,73 @@ class ORToolsSolver(SolverInterface):
         """Get the generic solver status name."""
         return self.solver_status.value
 
-    def create_solution_callback(self, objective_var: Any = None) -> Any:
+    def create_solution_callback(
+        self,
+        objective_var: Any = None,
+        solution_callback: Callable[[Any], None] | None = None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> Any:
         """Create a solution callback for tracking intermediate solutions."""
         import time
+
+        maximize = self.maximize
+        solver = self
 
         class PartialSolutionPrinter(cp_model.CpSolverSolutionCallback):
             """Print intermediate solutions."""
 
-            def __init__(self, objective_var):
+            def __init__(self, objective_var, solution_callback, progress_callback, should_stop):
                 cp_model.CpSolverSolutionCallback.__init__(self)
                 self.n_solutions = 0
-                self.best_score = float("-inf")
-                self.start_time = time.time()
+                self.best_score = float("-inf") if maximize else float("inf")
+                self.start_time = time.monotonic()
                 self.objective_var = objective_var
+                self.solution_callback = solution_callback
+                self.progress_callback = progress_callback
+                self.should_stop = should_stop
+                self.solution_index = 0
 
             def on_solution_callback(self):
-                current_score = self.Value(self.objective_var)
-                elapsed_time = time.time() - self.start_time
-                self.n_solutions += 1
-                if current_score > self.best_score:
-                    self.best_score = current_score
-                    self.n_solutions = 1
-                logging.info(f"# of (best) solutions found: {self.n_solutions}")
-                logging.info(f"current score: {current_score}")
-                logging.info(f"elapsed time: {elapsed_time:.2f}s")
+                # Make the current incumbent visible through SolverInterface
+                # while progress callbacks inspect or export it.
+                solver._active_solution_callback = self
+                try:
+                    self.solution_index += 1
+                    if self.objective_var is not None and self.progress_callback is not None:
+                        current_score = assert_int_score(
+                            self.Value(self.objective_var),
+                            label="OR-Tools progress score",
+                        )
+                        elapsed_time = time.monotonic() - self.start_time
+                        self.n_solutions += 1
+                        if (maximize and current_score > self.best_score) or (
+                            not maximize and current_score < self.best_score
+                        ):
+                            self.best_score = current_score
+                            self.n_solutions = 1
+                        logging.info(f"# of (best) solutions found: {self.n_solutions}")
+                        logging.info(f"current score: {current_score}")
+                        logging.info(f"elapsed time: {elapsed_time:.2f}s")
+                        try:
+                            self.progress_callback(
+                                SolverProgress(
+                                    source="ortools/cp-sat:solution-callback",
+                                    currentBestScore=current_score,
+                                    elapsedSeconds=round(elapsed_time, 3),
+                                    solutionIndex=self.solution_index,
+                                )
+                            )
+                        except Exception:
+                            logging.exception("Progress callback failed")
+                    if self.solution_callback is not None:
+                        try:
+                            self.solution_callback(self)
+                        except Exception:
+                            logging.exception("Solution callback failed")
+                    if self.should_stop is not None and self.should_stop():
+                        self.StopSearch()
+                finally:
+                    solver._active_solution_callback = None
 
-        return PartialSolutionPrinter(objective_var)
+        return PartialSolutionPrinter(objective_var, solution_callback, progress_callback, should_stop)

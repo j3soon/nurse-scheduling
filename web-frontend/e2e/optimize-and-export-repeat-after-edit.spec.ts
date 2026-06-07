@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, setDateRange } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, setDateRange } from './helpers';
 
 test('a repeated optimize run after upstream edits submits updated yaml_content', async ({ page }) => {
   /*
@@ -37,16 +37,10 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
   await setDateRange(page);
 
   const bodies: string[] = [];
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    bodies.push((await route.request().postData()) ?? '');
-    await route.fulfill({
-      status: 200,
-      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-      body: `fake-xlsx-${bodies.length}`,
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: body => { bodies.push(body); } });
 
   await page.goto('/optimize-and-export');
+  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
   let downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await downloadPromise;
@@ -59,6 +53,7 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
   await page.getByRole('button', { name: 'Update' }).click();
 
   await page.goto('/optimize-and-export');
+  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
   downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await downloadPromise;

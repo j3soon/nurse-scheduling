@@ -32,6 +32,7 @@ import { RemovableTag } from '@/components/RemovableTag';
 import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 interface ShiftTypeSuccessionForm {
   description: string;
@@ -68,6 +69,7 @@ export default function ShiftTypeSuccessionsPage() {
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverGap, setDragOverGap] = useState<number | null>(null);
+  useTabSwitchWarning(isFormVisible);
 
   const instructions = [
     "Define shift type succession preferences (e.g., \"Forbid Evening -> Day succession\")",

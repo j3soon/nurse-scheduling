@@ -2,7 +2,7 @@
 
 [![tests](https://img.shields.io/github/actions/workflow/status/j3soon/nurse-scheduling/test-core.yaml?label=tests)](https://github.com/j3soon/nurse-scheduling/actions/workflows/test-core.yaml)
 [![Netlify Status](https://api.netlify.com/api/v1/badges/8ec5c5da-89e1-41e5-87b3-133ce1007783/deploy-status)](https://nursescheduling.org/)
-[![codecov](https://codecov.io/github/j3soon/nurse-scheduling/branch/dev/graph/badge.svg?token=DPOvtAW1k2)](https://codecov.io/github/j3soon/nurse-scheduling)
+[![codecov](https://codecov.io/github/j3soon/nurse-scheduling/branch/dev/graph/badge.svg)](https://codecov.io/github/j3soon/nurse-scheduling)
 [![docs](https://img.shields.io/badge/docs-pre--release-blue?logo=googledocs)](https://nursescheduling.org/docs/)
 
 A flexible web application designed to streamline and automate nurse scheduling, suitable for a wide range of diverse and complex real-world requirements.
@@ -179,8 +179,8 @@ bun run lint -- --fix
 We currently support three solvers: OR-Tools/CP-SAT, PuLP/CBC, and PuLP/cuOpt.
 
 - `ortools/cp-sat` is the default solver and the most battle-tested one.
-- `pulp/cbc` is only tested on basic test cases and now well-tested on real scenarios.
-- `pulp/cuopt` is the GPU-accelerated solver, which is also only tested on basic test cases. Due to its GPU requirement, it is not currently included in CI testing.
+- `pulp/cbc` is covered by the normal schedule regression suite and opt-in real-world smoke checks.
+- `pulp/cuopt` is the GPU-accelerated solver. Its real-world smoke check is opt-in and skips when the backend is unavailable.
 
 ```sh
 cd core
@@ -200,6 +200,8 @@ python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 # run CLI with prettify and verbose
 python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
+# record solver progress as JSON Lines for later plotting
+python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --verbose --prettify --timeout 180 --progress-output progress.jsonl
 ```
 
 Run tests:
@@ -214,8 +216,13 @@ pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
 pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
-# run the full core test suite
+# run the normal core test suite
 pytest --log-cli-level=INFO
+# run the slower bounded real-world scenario checks explicitly
+pytest --log-cli-level=INFO \
+  tests/real/schedule_ortools_cp_sat.py \
+  tests/real/schedule_pulp_cbc.py \
+  tests/real/schedule_pulp_cuopt.py
 # run Python lint checks for core
 ruff check nurse_scheduling tests
 # auto-fix lint issues when possible
@@ -247,6 +254,10 @@ pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
 ```
 
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
+
+The checks under `core/tests/real/` intentionally omit pytest's `test_` filename prefix so they are not included in the
+normal core suite. They solve larger real-world scenarios with fixed optimization budgets and run in the separate
+`test-core-real.yaml` GitHub Actions workflow.
 
 Note: The frontend now has Vitest coverage plus Playwright browser integration tests. The root GitHub Actions badge currently still points at the core workflow.
 

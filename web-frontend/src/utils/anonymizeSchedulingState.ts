@@ -33,6 +33,11 @@ export interface PeopleAnonymizationOptions {
   anonymizePeopleGroups: boolean;
 }
 
+export interface PeopleAnonymizationResult {
+  state: SchedulingState;
+  originalIdByAnonymizedId: Map<string, string>;
+}
+
 function buildIdMap(ids: string[], prefix: string, usedIds: Set<string>): Map<string, string> {
   const idMap = new Map<string, string>();
   let nextIndex = 1;
@@ -68,10 +73,10 @@ function anonymizePreference(pref: Preference, anonymizeIds: (ids: string[]) => 
   return pref;
 }
 
-export function anonymizePeopleInState(
+export function anonymizePeopleInStateWithMapping(
   state: SchedulingState,
   options: PeopleAnonymizationOptions
-): SchedulingState {
+): PeopleAnonymizationResult {
   const retainedIds = new Set<string>();
   if (!options.anonymizePeopleItems) {
     state.people.items.forEach(item => retainedIds.add(item.id));
@@ -90,7 +95,7 @@ export function anonymizePeopleInState(
   const anonymizeId = (id: string) => idMap.get(id) ?? id;
   const anonymizeIds = (ids: string[]) => ids.map(anonymizeId);
 
-  return {
+  const anonymizedState = {
     ...state,
     people: {
       ...state.people,
@@ -117,4 +122,18 @@ export function anonymizePeopleInState(
         }
       : {})
   };
+
+  return {
+    state: anonymizedState,
+    originalIdByAnonymizedId: new Map(
+      [...idMap].map(([originalId, anonymizedId]) => [anonymizedId, originalId])
+    )
+  };
+}
+
+export function anonymizePeopleInState(
+  state: SchedulingState,
+  options: PeopleAnonymizationOptions
+): SchedulingState {
+  return anonymizePeopleInStateWithMapping(state, options).state;
 }

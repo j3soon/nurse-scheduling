@@ -18,12 +18,17 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
+import sys
+import tempfile
+import threading
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 import pulp
 
 from .constants import Operator
-from .solver_interface import SolverInterface, SolverStatus
+from .solver_interface import SolverInterface, SolverProgress, SolverStatus
 
 
 class BasePuLPSolver(SolverInterface):
@@ -59,6 +64,61 @@ class BasePuLPSolver(SolverInterface):
         if objective_value is not None:
             return True
         return any(pulp.value(var) is not None for var in self.variables.values())
+
+    def _parse_solver_log_progress(self, line: str, start_time: float) -> SolverProgress | None:
+        """Parse a solver log line into a normalized progress payload when possible."""
+        return None
+
+    def _emit_progress(
+        self,
+        progress_callback: Callable[[SolverProgress], None] | None,
+        payload: SolverProgress,
+    ) -> None:
+        """Call the progress callback without letting callback failures break solving."""
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(payload)
+        except Exception:
+            logging.exception("Progress callback failed")
+
+    def _tail_solver_log(
+        self,
+        log_path: Path,
+        stop_event: threading.Event,
+        progress_callback: Callable[[SolverProgress], None] | None,
+        start_time: float,
+        replay_output: bool,
+    ) -> None:
+        """Replay solver log output to stdout and parse progress events from the same stream."""
+        position = 0
+
+        while True:
+            if log_path.exists():
+                with log_path.open("r", encoding="utf-8", errors="replace") as log_file:
+                    log_file.seek(position)
+                    lines = log_file.readlines()
+                    position = log_file.tell()
+
+                for line in lines:
+                    if replay_output:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                    payload = self._parse_solver_log_progress(line, start_time)
+                    if payload is None:
+                        continue
+                    self._emit_progress(progress_callback, payload)
+
+            if stop_event.is_set():
+                if not log_path.exists():
+                    return
+                with log_path.open("r", encoding="utf-8", errors="replace") as log_file:
+                    log_file.seek(position)
+                    if log_file.read() == "":
+                        return
+                continue
+
+            time.sleep(0.05)
 
     def _unique_name(self, base: str) -> str:
         """Return a model-unique name for variables/constraints."""
@@ -137,6 +197,36 @@ class BasePuLPSolver(SolverInterface):
 
         self.add_constraint(expr_sum >= 1, name=self.unique_constraint_name("bool_or"))
 
+    def create_bool_and_var(self, name: str, literals: List[Any]) -> Any:
+        """Create a boolean variable equivalent to the AND of the literals."""
+        var = self.new_bool_var(name)
+        if not literals:
+            self.add_constraint(var == 1, name=self.unique_constraint_name("bool_and_empty"))
+            return var
+        # Encode both directions of:
+        #   var <=> AND(literals)
+        #
+        # Each upper bound provides:
+        #   var <= literal_i
+        # so var can be 1 only if every literal is 1.
+        #
+        # The lower bound provides the reverse direction:
+        #   var >= sum(literals) - n + 1
+        # Its right-hand side is 1 only when every literal is 1, forcing var
+        # to 1 in that case. If any literal is 0, the upper bounds force var
+        # to 0. This also works with affine negations such as (1 - off_var).
+        for literal in literals:
+            self.add_constraint(var <= literal, name=self.unique_constraint_name("bool_and_imp"))
+        self.add_constraint(
+            var >= sum(literals) - len(literals) + 1,
+            name=self.unique_constraint_name("bool_and_reverse"),
+        )
+        return var
+
+    def should_use_bool_and_var(self, n_literals: int) -> bool:
+        """Return True only while PuLP's linear AND encoding stays compact."""
+        return n_literals <= 3
+
     def set_objective(self, expression, maximize: bool = True) -> None:
         """Set the objective function."""
         self.objective_expr = expression
@@ -155,10 +245,15 @@ class BasePuLPSolver(SolverInterface):
             self.model.setObjective(expression)
 
     def solve(
-        self, timeout: Union[int, None] = None, deterministic: bool = False, solution_callback=None
+        self,
+        timeout: Union[int, None] = None,
+        deterministic: bool = False,
+        solution_callback: Callable[[Any], None] | None = None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> SolverStatus:
         """Solve the model using PuLP."""
-        start_time = time.time()
+        start_time = time.monotonic()
 
         # Note: PuLP doesn't have built-in support for deterministic solving across all solvers
         if deterministic:
@@ -167,6 +262,8 @@ class BasePuLPSolver(SolverInterface):
         # Note: PuLP doesn't support solution callbacks in the same way as OR-Tools
         if solution_callback is not None:
             logging.warning("Solution callbacks are not fully supported with PuLP solver")
+        if should_stop is not None:
+            raise NotImplementedError("PuLP solvers do not support cooperative stop callbacks.")
 
         # Solve the model.
         # `msg=1` means verbose solve mode.
@@ -174,37 +271,63 @@ class BasePuLPSolver(SolverInterface):
         if timeout is not None:
             solver_kwargs["timeLimit"] = timeout
 
-        if self.engine == "cbc":
-            solver_options = []
-            if deterministic:
-                solver_options.append("randomS 0")
-                solver_options.append("threads 1")
-            if solver_options:
-                self.solver = pulp.PULP_CBC_CMD(options=solver_options, **solver_kwargs)
+        log_temp_file = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix=f"nurse-scheduling-pulp-{self.engine}-",
+            suffix=".log",
+            delete=False,
+        )
+        log_path = Path(log_temp_file.name)
+        log_temp_file.close()
+        solver_kwargs["logPath"] = str(log_path)
+        stop_log_tail = threading.Event()
+        log_tail_thread = threading.Thread(
+            target=self._tail_solver_log,
+            args=(log_path, stop_log_tail, progress_callback, start_time, self.engine == "cbc"),
+            daemon=True,
+        )
+        log_tail_thread.start()
+
+        try:
+            if self.engine == "cbc":
+                solver_kwargs["msg"] = 0
+                solver_options = []
+                if deterministic:
+                    solver_options.append("randomS 0")
+                    solver_options.append("threads 1")
+                if solver_options:
+                    self.solver = pulp.PULP_CBC_CMD(options=solver_options, **solver_kwargs)
+                else:
+                    self.solver = pulp.PULP_CBC_CMD(**solver_kwargs)
+            elif self.engine == "cuopt":
+                if not hasattr(pulp, "CUOPT"):
+                    raise RuntimeError(
+                        "PuLP cuOpt backend is unavailable: pulp.CUOPT is not present. "
+                        "Install a PuLP build/version with cuOpt support."
+                    )
+                if deterministic:
+                    logging.warning("Deterministic mode is not implemented for PuLP/cuOpt; ignoring.")
+                self.solver = pulp.CUOPT(**solver_kwargs)
             else:
-                self.solver = pulp.PULP_CBC_CMD(**solver_kwargs)
-        elif self.engine == "cuopt":
-            if not hasattr(pulp, "CUOPT"):
-                raise RuntimeError(
-                    "PuLP cuOpt backend is unavailable: pulp.CUOPT is not present. "
-                    "Install a PuLP build/version with cuOpt support."
-                )
-            if deterministic:
-                logging.warning("Deterministic mode is not implemented for PuLP/cuOpt; ignoring.")
-            self.solver = pulp.CUOPT(**solver_kwargs)
-        else:
-            raise ValueError(f"Unsupported PuLP solver engine: {self.engine!r}")
+                raise ValueError(f"Unsupported PuLP solver engine: {self.engine!r}")
 
-        if hasattr(self.solver, "available"):
-            available = self.solver.available()
-            if not available:
-                raise RuntimeError(
-                    f"PuLP/{self.engine} backend is not available in this environment. "
-                    "Ensure the required solver runtime is installed and configured."
-                )
+            if hasattr(self.solver, "available"):
+                available = self.solver.available()
+                if not available:
+                    raise RuntimeError(
+                        f"PuLP/{self.engine} backend is not available in this environment. "
+                        "Ensure the required solver runtime is installed and configured."
+                    )
 
-        self.status = self.model.solve(self.solver)
-        self.solve_time = time.time() - start_time
+            self.status = self.model.solve(self.solver)
+            self.solve_time = time.monotonic() - start_time
+        finally:
+            stop_log_tail.set()
+            log_tail_thread.join(timeout=5)
+            try:
+                log_path.unlink()
+            except FileNotFoundError:
+                pass
 
         # Convert PuLP status to our enum
         # Ref: https://www.coin-or.org/PuLP/constants.html
@@ -228,6 +351,16 @@ class BasePuLPSolver(SolverInterface):
             self.solver_status = SolverStatus.UNKNOWN
         else:
             self.solver_status = SolverStatus.UNKNOWN
+
+        if self.solver_status in {SolverStatus.OPTIMAL, SolverStatus.FEASIBLE}:
+            self._emit_progress(
+                progress_callback,
+                SolverProgress(
+                    source=f"pulp/{self.engine}:final-result",
+                    currentBestScore=self.get_objective_value(),
+                    elapsedSeconds=round(self.solve_time, 3),
+                ),
+            )
 
         return self.solver_status
 
@@ -520,7 +653,13 @@ class BasePuLPSolver(SolverInterface):
         """Get the generic solver status name."""
         return self.solver_status.value
 
-    def create_solution_callback(self, objective_var: Any = None) -> Any:
+    def create_solution_callback(
+        self,
+        objective_var: Any = None,
+        solution_callback: Callable[[Any], None] | None = None,
+        progress_callback: Callable[[SolverProgress], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> Any:
         """
         Create a solution callback for tracking intermediate solutions.
 

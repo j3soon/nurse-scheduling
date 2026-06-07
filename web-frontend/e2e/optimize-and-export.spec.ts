@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState, setDateRange } from './helpers';
 
 test('optimize and export submits YAML to the backend and renders success metadata', async ({ page }) => {
   /*
@@ -50,28 +50,116 @@ test('optimize and export submits YAML to the backend and renders success metada
     preferences: [{ type: 'at most one shift per day' }],
     export: { formatting: [] },
   });
+  await setDateRange(page);
 
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBody = (await route.request().postData()) ?? '';
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      },
-      body: 'fake-xlsx',
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
   await expect(page.getByRole('heading', { name: 'Optimize and Export', exact: true })).toBeVisible();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
-  await expect(page.locator('pre')).toContainText('apiVersion: test');
+  await expect(page.getByText('Current YAML Preview')).toHaveCount(0);
+  await expect(page.locator('pre')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
 
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
-  await expect(page.getByText('File: output.xlsx')).toBeVisible();
+  await expect(page.getByText('output.xlsx')).toBeVisible();
   expect(submittedBody).toContain('yaml_content');
-  expect(submittedBody).toContain('apiVersion: test');
+  expect(submittedBody).toContain('2026-05-01');
   expect(submittedBody).toContain('prettify');
   expect(submittedBody).toContain('timeout');
+});
+
+test('optimize and export renders backend phase SSE messages in the event log', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Seed a minimal valid schedule and install a browser EventSource test double.
+   * 2. Submit optimize through the real form while keeping EventSource enabled.
+   * 3. Emit a backend phase event followed by completion.
+   * 4. Confirm the page renders the backend phase message and completes the download.
+   */
+  await disableModalDialogs(page);
+  await page.addInitScript(() => {
+    class MockEventSource extends EventTarget {
+      url: string;
+
+      constructor(url: string) {
+        super();
+        this.url = url;
+        (window as unknown as { __lastEventSource?: MockEventSource }).__lastEventSource = this;
+      }
+
+      close() {}
+
+      emit(type: string, data: unknown) {
+        this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
+      }
+    }
+
+    Object.defineProperty(window, 'EventSource', {
+      configurable: true,
+      value: MockEventSource,
+    });
+  });
+
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'optimize sse seed',
+    dates: {
+      range: { startDate: '2026-05-01', endDate: '2026-05-01' },
+      groups: [],
+    },
+    people: {
+      items: [{ id: 'P1', description: 'Primary nurse', history: [] }],
+      groups: [],
+      history: [],
+    },
+    shiftTypes: {
+      items: [{ id: 'D', description: 'Day' }],
+      groups: [],
+    },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+  await setDateRange(page);
+
+  await mockOptimizeAndExport(page, { disableEventSource: false });
+
+  await page.goto('/optimize-and-export');
+  await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Optimize and Download' }).click();
+  await page.waitForFunction(() => Boolean((window as unknown as { __lastEventSource?: unknown }).__lastEventSource));
+
+  await page.evaluate(() => {
+    const eventSource = (window as unknown as {
+      __lastEventSource?: { emit: (type: string, data: unknown) => void };
+    }).__lastEventSource;
+
+    eventSource?.emit('phase', {
+      source: 'scheduler:phase',
+      code: 'creating_shift_variables',
+      message: 'Creating shift variables',
+      elapsedSeconds: 0.12,
+    });
+    eventSource?.emit('complete', {
+      jobId: 'e2e-job',
+      status: 'optimal',
+      score: 99,
+      solverStatus: 'OPTIMAL',
+      error: null,
+      xlsxReady: true,
+      links: {
+        status: '/optimize/e2e-job',
+        events: '/optimize/e2e-job/events',
+        xlsx: '/optimize/e2e-job/xlsx',
+      },
+    });
+  });
+
+  await downloadPromise;
+  await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
+  const eventLog = page.getByTestId('optimization-events-log');
+  await expect(eventLog).toContainText('phase');
+  await expect(eventLog).toContainText('Creating shift variables');
 });

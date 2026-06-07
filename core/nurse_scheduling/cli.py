@@ -19,13 +19,52 @@
 
 import sys
 import argparse
+import json
 import logging
 import os.path
+import time
 from io import BytesIO
 from . import scheduler, exporter
+from .model_build_stats import ModelBuildStatsSummary
+from .solver_interface import (
+    SchedulePhaseProgress,
+    SolverProgress,
+    count_export_comments,
+    serialize_schedule_phase_progress,
+    serialize_solver_progress,
+)
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
+
+
+def _create_cli_progress_callback(progress_output_file=None, print_to_stdout: bool = True):
+    """Create a CLI progress printer for solver best-score updates."""
+
+    def print_progress(payload):
+        if isinstance(payload, SchedulePhaseProgress):
+            progress_payload = serialize_schedule_phase_progress(payload)
+            if progress_output_file is not None:
+                progress_output_file.write(json.dumps(progress_payload, sort_keys=True) + "\n")
+                progress_output_file.flush()
+            return
+
+        progress_payload = serialize_solver_progress(payload, include_export_summary=True)
+        if progress_output_file is not None:
+            progress_output_file.write(json.dumps(progress_payload, sort_keys=True) + "\n")
+            progress_output_file.flush()
+        if print_to_stdout:
+            comment_text = ""
+            if progress_payload["commentCount"] is not None:
+                comment_text = f", comments={progress_payload['commentCount']}"
+            print(
+                "[+] NURSE-SCHEDULING PROGRESS "
+                f"(score={payload.currentBestScore}, "
+                f"source={payload.source}, elapsed={payload.elapsedSeconds}s{comment_text})",
+                flush=True,
+            )
+
+    return print_progress
 
 
 def main():
@@ -53,12 +92,25 @@ def main():
         choices=["ortools/cp-sat", "pulp/cbc", "pulp/cuopt"],
         help="Solver selector (e.g., 'ortools/cp-sat', 'pulp/cbc', or 'pulp/cuopt').",
     )
+    parser.add_argument(
+        "--show-model-build-stats",
+        action="store_true",
+        help="Print model-build timing and variable/constraint deltas for each build step.",
+    )
+    parser.add_argument(
+        "--progress-output",
+        help="Write solver progress events as JSON Lines for later plotting.",
+    )
     args = parser.parse_args()
     filepath = args.input_file_path
     output_path = args.output_path
     prettify = args.prettify
     verbose = args.verbose
     solver = args.solver
+
+    if args.progress_output and not prettify:
+        print("Error: --progress-output requires --prettify")
+        sys.exit(1)
 
     # Configure logging based on verbosity level
     if verbose >= 2:
@@ -91,12 +143,41 @@ def main():
     with open(filepath, "rb") as f:
         file_content = f.read()
 
-    df, solution, score, status, cell_export_info = scheduler.schedule(
-        file_content,
-        prettify=prettify,
-        timeout=args.timeout,
-        solver=solver,
-    )
+    model_build_stats_callback = ModelBuildStatsSummary() if args.show_model_build_stats else None
+    progress_output_file = None
+    solve_started_at = time.monotonic()
+    try:
+        if args.progress_output:
+            progress_output_file = open(args.progress_output, "w", encoding="utf-8")
+        progress_callback = None
+        if not args.show_model_build_stats or progress_output_file is not None:
+            progress_callback = _create_cli_progress_callback(
+                progress_output_file,
+                print_to_stdout=not args.show_model_build_stats,
+            )
+        df, solution, score, status, cell_export_info = scheduler.schedule(
+            file_content,
+            prettify=prettify,
+            timeout=args.timeout,
+            solver=solver,
+            progress_callback=progress_callback,
+            model_build_stats_callback=model_build_stats_callback,
+        )
+        if progress_output_file is not None and df is not None:
+            progress_callback(
+                SolverProgress(
+                    source="cli:final-result",
+                    currentBestScore=score,
+                    elapsedSeconds=round(time.monotonic() - solve_started_at, 3),
+                    df=df,
+                    cell_export_info=cell_export_info,
+                )
+            )
+    finally:
+        if progress_output_file is not None:
+            progress_output_file.close()
+        if model_build_stats_callback is not None:
+            model_build_stats_callback.print_summary()
 
     if df is None:
         print("No solution found")
@@ -117,7 +198,19 @@ def main():
         print(f"Results saved to {output_path}")
         print(f"Score: {score}")
         print(f"Status: {status}")
+        comment_count = count_export_comments(cell_export_info)
+        if comment_count is not None:
+            print(f"Comments: {comment_count}")
+    elif args.show_model_build_stats:
+        print(f"Score: {score}")
+        print(f"Status: {status}")
+        comment_count = count_export_comments(cell_export_info)
+        if comment_count is not None:
+            print(f"Comments: {comment_count}")
     else:
+        comment_count = count_export_comments(cell_export_info)
+        if comment_count is not None:
+            print(f"Comments: {comment_count}")
         print(df, solution, score, status)
 
 

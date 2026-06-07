@@ -31,6 +31,7 @@ import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 interface ShiftCountForm {
   description: string;
@@ -69,6 +70,7 @@ export default function ShiftCountsPage() {
     weight: -1
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
+  useTabSwitchWarning(isFormVisible);
 
   const instructions = [
     "Set up shift count rules for people (e.g., \"Working shifts should be close to the average\")",

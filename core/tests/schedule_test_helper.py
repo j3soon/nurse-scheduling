@@ -113,7 +113,7 @@ def run_schedule_regression_test(solver: str) -> None:
             continue
 
         if df is not None:
-            actual_csv = df.to_csv(index=False, header=False)
+            actual_csv = df.to_csv(index=False, header=False, lineterminator="\n")
         else:
             actual_csv = status
 

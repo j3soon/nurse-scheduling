@@ -250,7 +250,7 @@ describe('PeoplePage upload parsing', () => {
     expect(reorderItems).not.toHaveBeenCalled();
   });
 
-  it('limits uploaded people names to the first 1000 entries', () => {
+  it('warns and blocks uploads that exceed the maximum people count', () => {
     const reorderItems = vi.fn();
 
     mockUseSchedulingData.mockReturnValue({
@@ -273,10 +273,9 @@ describe('PeoplePage upload parsing', () => {
     render(<PeoplePage />);
     fireEvent.click(screen.getByRole('button', { name: /upload people/i }));
 
-    expect(reorderItems).toHaveBeenCalledTimes(1);
-    expect(reorderItems.mock.calls[0][2]).toHaveLength(1000);
+    expect(reorderItems).not.toHaveBeenCalled();
     expect(alertSpy).toHaveBeenCalledWith(
-      'Successfully uploaded 1000 people: 0 existing people reordered, 1000 new people added, 0 existing people moved to end.',
+      'Uploaded file contains 1005 people, which exceeds the maximum of 1000. Please split the file and upload fewer names at a time.',
     );
   });
 

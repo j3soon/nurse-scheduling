@@ -32,6 +32,7 @@ import { isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } f
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { OFF } from '@/utils/keywords';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 interface ShiftTypeRequirementForm {
   description: string;
@@ -70,6 +71,7 @@ export default function ShiftTypeRequirementsPage() {
     weight: -1
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
+  useTabSwitchWarning(isFormVisible);
 
   const instructions = [
     "Define requirements for specific shift types (e.g., \"Night shifts need 3 senior nurses\")",

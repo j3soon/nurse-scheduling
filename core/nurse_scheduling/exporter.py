@@ -395,6 +395,15 @@ def _iter_expanded_shift_request_targets(ctx: Context, pref):
         )
 
 
+def _is_shift_request_satisfied(ctx: Context, pref, *, d: int, p: int, shift_types: list[int]) -> bool:
+    """Return whether a cell-level shift request is satisfied by the solved schedule."""
+    requested_state_is_assigned = any(
+        ctx.solver.get_value(ctx.offs[(d, p)] if s == constants.OFF_sid else ctx.shifts[(d, s, p)]) == 1
+        for s in shift_types
+    )
+    return requested_state_is_assigned if pref.weight > 0 else not requested_state_is_assigned
+
+
 def _iter_matching_cell_preferences(
     ctx: Context,
     *,
@@ -403,7 +412,6 @@ def _iter_matching_cell_preferences(
     target_shift_types: set[int],
     condition,
 ):
-    solver = ctx.solver
     for pref in ctx.preferences:
         if pref.type != models.SHIFT_REQUEST:
             continue
@@ -425,9 +433,7 @@ def _iter_matching_cell_preferences(
                 for p in ps:
                     if p not in target_people:
                         continue
-                    target_value = 1 if pref.weight > 0 else 0
-                    vars = [ctx.offs[(d, p)] if s == constants.OFF_sid else ctx.shifts[(d, s, p)] for s in ss]
-                    satisfied = not all((solver.get_value(var) != target_value) for var in vars)
+                    satisfied = _is_shift_request_satisfied(ctx, pref, d=d, p=p, shift_types=ss)
                     if _export_preference_condition_matches(
                         ctx, condition, pref, request_shape=request_shape, satisfied=satisfied
                     ):
@@ -476,9 +482,9 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     for d, date in enumerate(ctx.dates.items):
         col_idx = n_leading_cols + n_history_cols + d
         if ctx.dates.items[0].year != ctx.dates.items[-1].year:
-            df.iloc[0, col_idx] = date.strftime("%Y/%-m/%-d")
+            df.iloc[0, col_idx] = f"{date.year}/{date.month}/{date.day}"
         elif ctx.dates.items[0].month != ctx.dates.items[-1].month:
-            df.iloc[0, col_idx] = date.strftime("%-m/%-d")
+            df.iloc[0, col_idx] = f"{date.month}/{date.day}"
         else:
             df.iloc[0, col_idx] = date.day
         df.iloc[1, col_idx] = date.strftime("%a")
@@ -808,7 +814,7 @@ def export_to_csv(df, output_buffer):
     """
     # Write CSV to a StringIO first to get text, then encode with BOM
     temp_buffer = StringIO()
-    df.to_csv(temp_buffer, index=False, header=False)
+    df.to_csv(temp_buffer, index=False, header=False, lineterminator="\n")
     temp_buffer.seek(0)
 
     # Encode with UTF-8 BOM and write to output buffer

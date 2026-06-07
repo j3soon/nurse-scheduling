@@ -21,6 +21,7 @@
 
 import os
 import sys
+import json
 
 import pytest
 
@@ -28,6 +29,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import cli
+from nurse_scheduling.solver_interface import SolverProgress
 
 
 def test_cli_missing_input_file_exits_with_error(tmp_path, monkeypatch, capsys):
@@ -78,12 +80,14 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
 
     seen = {}
 
-    def fake_schedule(file_content, prettify, timeout, solver):
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
         seen["schedule_args"] = {
             "file_content": file_content,
             "prettify": prettify,
             "timeout": timeout,
             "solver": solver,
+            "progress_callback": progress_callback,
+            "model_build_stats_callback": model_build_stats_callback,
         }
         return "fake_df", {"solution": True}, 123, "OPTIMAL", {"styles": {}, "comments": {}}
 
@@ -114,7 +118,10 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
         "prettify": False,
         "timeout": 7,
         "solver": "pulp/cbc",
+        "progress_callback": seen["schedule_args"]["progress_callback"],
+        "model_build_stats_callback": None,
     }
+    assert callable(seen["schedule_args"]["progress_callback"])
     assert seen["export_df"] == "fake_df"
     assert output_file.read_bytes() == b"csv-bytes"
     out = capsys.readouterr().out
@@ -123,11 +130,83 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
     assert "Status: OPTIMAL" in out
 
 
+def test_cli_writes_progress_jsonl_output(tmp_path, monkeypatch, capsys):
+    input_file = tmp_path / "input.yaml"
+    input_file.write_bytes(b"fake input payload")
+    progress_file = tmp_path / "progress.jsonl"
+
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
+        progress_callback(
+            SolverProgress(
+                source="ortools/cp-sat:solution-callback",
+                currentBestScore=12,
+                elapsedSeconds=0.25,
+                solutionIndex=1,
+                cell_export_info={"comments": {(1, 2): ["a", "b"]}, "styles": {}},
+            )
+        )
+        return "fake_df", {"solution": True}, 12, "OPTIMAL", {"comments": {(1, 2): ["a", "b", "c"]}, "styles": {}}
+
+    monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nurse-scheduling",
+            str(input_file),
+            "--prettify",
+            "--progress-output",
+            str(progress_file),
+        ],
+    )
+
+    cli.main()
+
+    progress_events = [json.loads(line) for line in progress_file.read_text(encoding="utf-8").splitlines()]
+    assert progress_events[0] == {
+        "currentBestScore": 12,
+        "elapsedSeconds": 0.25,
+        "commentCount": 2,
+        "solutionIndex": 1,
+        "source": "ortools/cp-sat:solution-callback",
+    }
+    assert progress_events[1]["source"] == "cli:final-result"
+    assert progress_events[1]["currentBestScore"] == 12
+    assert progress_events[1]["commentCount"] == 3
+    assert progress_events[1]["solutionIndex"] is None
+    assert progress_events[1]["elapsedSeconds"] >= 0
+    assert "comments=3" in capsys.readouterr().out
+
+
+def test_cli_rejects_progress_jsonl_without_prettify(tmp_path, monkeypatch, capsys):
+    input_file = tmp_path / "input.yaml"
+    input_file.write_bytes(b"fake input payload")
+    progress_file = tmp_path / "progress.jsonl"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nurse-scheduling",
+            str(input_file),
+            "--progress-output",
+            str(progress_file),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert exc_info.value.code == 1
+    assert "Error: --progress-output requires --prettify" in capsys.readouterr().out
+    assert not progress_file.exists()
+
+
 def test_cli_no_solution_exits_zero(tmp_path, monkeypatch, capsys):
     input_file = tmp_path / "input.yaml"
     input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
 
-    def fake_schedule(file_content, prettify, timeout, solver):
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
         return None, None, None, "INFEASIBLE", {}
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
@@ -147,7 +226,7 @@ def test_cli_writes_xlsx_output(tmp_path, monkeypatch, capsys):
     output_file = tmp_path / "result.xlsx"
     seen = {}
 
-    def fake_schedule(file_content, prettify, timeout, solver):
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
         return "df", {}, 0, "OPTIMAL", {"styles": {(1, 1): {"backgroundColor": "#ffffff"}}, "comments": {}}
 
     def fake_export_to_excel(df, buffer, cell_export_info):
@@ -167,3 +246,79 @@ def test_cli_writes_xlsx_output(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert f"Results saved to {output_file}" in out
     assert "Status: OPTIMAL" in out
+
+
+def test_cli_prints_final_comments_from_export_comments(tmp_path, monkeypatch, capsys):
+    input_file = tmp_path / "input.yaml"
+    input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
+
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
+        return "df", {}, 0, "OPTIMAL", {"styles": {}, "comments": {(1, 2): ["first", "second"], (3, 4): ["third"]}}
+
+    monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
+    monkeypatch.setattr(sys, "argv", ["nurse-scheduling", str(input_file)])
+
+    cli.main()
+
+    assert "Comments: 3" in capsys.readouterr().out
+
+
+def test_cli_show_model_build_stats_prints_scheduler_events(tmp_path, monkeypatch, capsys):
+    input_file = tmp_path / "input.yaml"
+    input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
+
+    def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
+        assert progress_callback is None
+        assert model_build_stats_callback is not None
+        model_build_stats_callback(
+            cli.scheduler.ModelBuildStats(
+                step="create_shift_variables",
+                elapsedSeconds=0.123456,
+                variablesAdded=3,
+                constraintsAdded=0,
+                totalVariables=3,
+                totalConstraints=0,
+            )
+        )
+        model_build_stats_callback(
+            cli.scheduler.ModelBuildStats(
+                step="add_preference",
+                elapsedSeconds=0.5,
+                variablesAdded=2,
+                constraintsAdded=4,
+                totalVariables=5,
+                totalConstraints=4,
+                preferenceIndex=1,
+                preferenceType="shift request",
+            )
+        )
+        model_build_stats_callback(
+            cli.scheduler.ModelBuildStats(
+                step="add_preference",
+                elapsedSeconds=0.25,
+                variablesAdded=1,
+                constraintsAdded=2,
+                totalVariables=6,
+                totalConstraints=6,
+                preferenceIndex=2,
+                preferenceType="shift request",
+            )
+        )
+        assert capsys.readouterr().out == ""
+        return "large dataframe", {"large": "solution"}, 123, "FEASIBLE", {}
+
+    monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
+    monkeypatch.setattr(sys, "argv", ["nurse-scheduling", str(input_file), "--show-model-build-stats"])
+
+    cli.main()
+    out = capsys.readouterr().out
+    assert (
+        "MODEL_BUILD_STATS\tstep\tcount\telapsed_seconds\tvariables_added\tconstraints_added"
+        "\ttotal_variables\ttotal_constraints"
+    ) in out
+    assert "create_shift_variables\t1\t0.123456\t3\t0\t3\t0" in out
+    assert "pref:shift request\t2\t0.750000\t3\t6\t6\t6" in out
+    assert "large dataframe" not in out
+    assert "large" not in out
+    assert "Score: 123" in out
+    assert "Status: FEASIBLE" in out

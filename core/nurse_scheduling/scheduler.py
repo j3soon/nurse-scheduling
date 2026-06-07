@@ -17,16 +17,38 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import itertools
 import logging
+import itertools
+import time
+from dataclasses import replace
+from collections.abc import Callable
 from datetime import timedelta
 
 from . import exporter, preference_types
-from .constants import ALL, OFF, OFF_sid, Operator, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
+from .constants import ALL, OFF, OFF_sid, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
 from .context import Context
 from .utils import parse_dates
 from .loader import load_data
-from .solver_interface import SolverStatus
+from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
+from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
+
+
+def _emit_phase_progress(
+    progress_callback: Callable[[ScheduleProgress], None] | None,
+    code: str,
+    message: str,
+    started_at: float,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        SchedulePhaseProgress(
+            source="scheduler:phase",
+            code=code,
+            message=message,
+            elapsedSeconds=round(time.monotonic() - started_at, 3),
+        )
+    )
 
 
 def schedule(
@@ -36,10 +58,21 @@ def schedule(
     prettify=False,
     timeout: int | None = None,
     solver: str = "ortools/cp-sat",
+    progress_callback: Callable[[ScheduleProgress], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    model_build_stats_callback: Callable[[ModelBuildStats], None] | None = None,
 ):
+    progress_started_at = time.monotonic()
+    _emit_phase_progress(
+        progress_callback,
+        "loading_scenario",
+        "Loading schedule configuration",
+        progress_started_at,
+    )
     logging.info("Loading scenario from file content...")
     scenario = load_data(file_content)
 
+    _emit_phase_progress(progress_callback, "parsing_data", "Parsing schedule data", progress_started_at)
     logging.info("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
@@ -98,6 +131,7 @@ def schedule(
                 date_indices.update(parse_dates(member, ctx.map_did_d, ctx.dates.range))
         ctx.map_did_d[group.id] = sorted(set(date_indices))
 
+    _emit_phase_progress(progress_callback, "initializing_solver", "Initializing solver model", progress_started_at)
     logging.info("Initializing solver model...")
 
     solver_backend, solver_engine = solver.lower().split("/", maxsplit=1)
@@ -121,7 +155,9 @@ def schedule(
     else:
         raise ValueError(f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}")
 
+    _emit_phase_progress(progress_callback, "creating_shift_variables", "Creating shift variables", progress_started_at)
     logging.info("Creating shift variables...")
+    step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
     # In the following code, we always use the convention of (d, s, p)
     # to represent the index of (day, shift_type, person).
@@ -131,8 +167,16 @@ def schedule(
             for p in range(ctx.n_people):
                 var_name = f"shift_d{d}_s{s}_p{p}"
                 ctx.model_vars[var_name] = ctx.shifts[(d, s, p)] = ctx.solver.new_bool_var(var_name)
+    emit_model_build_stats(
+        model_build_stats_callback,
+        ctx,
+        "create_shift_variables",
+        step_started_at,
+        start_counts,
+    )
 
     if avoid_solution is not None:
+        step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
         avoid_solution_vars = []
         logging.info("Avoiding solution...")
         for d, s, p in ctx.shifts:
@@ -144,21 +188,43 @@ def schedule(
                 raise ValueError(f"Invalid value: {avoid_solution[(d, s, p)]}")
         # Add constraint that at least one variable must be different from the solution to avoid
         ctx.solver.add_bool_or(avoid_solution_vars)
+        emit_model_build_stats(
+            model_build_stats_callback,
+            ctx,
+            "avoid_solution",
+            step_started_at,
+            start_counts,
+        )
 
+    _emit_phase_progress(progress_callback, "creating_off_variables", "Creating off variables", progress_started_at)
     logging.info("Creating off variables...")
+    step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     for d in range(ctx.n_days):
         for p in range(ctx.n_people):
             dp_shifts_sum = sum(ctx.shifts[(d, s, p)] for s in range(ctx.n_shift_types))
             var_name = f"off_d{d}_p{p}"
-            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ctx.solver.create_bool_var_with_constraint(
-                var_name,
-                dp_shifts_sum,
-                Operator.EQ,
-                0,
-                (0, ctx.n_shift_types),  # we do not assume "at most one shift per day" here
-            )
+            ctx.model_vars[var_name] = ctx.offs[(d, p)] = ctx.solver.new_bool_var(var_name)
+            # This defines OFF and enforces at most one shift per person per day.
+            # Previously, OFF was defined separately as:
+            #   ctx.solver.create_bool_var_with_constraint(
+            #       var_name, dp_shifts_sum, Operator.EQ, 0, (0, ctx.n_shift_types)
+            #   )
+            # and the at-most-one preference added:
+            #   dp_shifts_sum <= 1
+            ctx.solver.add_constraint(ctx.offs[(d, p)] + dp_shifts_sum == 1)
+    emit_model_build_stats(
+        model_build_stats_callback,
+        ctx,
+        "create_off_variables",
+        step_started_at,
+        start_counts,
+    )
 
+    _emit_phase_progress(progress_callback, "creating_lookup_maps", "Creating lookup indexes", progress_started_at)
     logging.info("Creating maps for faster lookup...")
+    step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
+    # TODO: All shift combinations exist, so these membership checks can be removed
+    # if model-build overhead becomes significant.
     ctx.map_ds_p = {
         (d, s): {p for p in range(ctx.n_people) if (d, s, p) in ctx.shifts}
         for (d, s) in itertools.product(range(ctx.n_days), range(ctx.n_shift_types))
@@ -187,23 +253,64 @@ def schedule(
         }
         for p in range(ctx.n_people)
     }
+    emit_model_build_stats(
+        model_build_stats_callback,
+        ctx,
+        "create_lookup_maps",
+        step_started_at,
+        start_counts,
+    )
 
+    _emit_phase_progress(
+        progress_callback,
+        "adding_preferences",
+        "Adding preferences and constraints",
+        progress_started_at,
+    )
     logging.info("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
     for i, preference in enumerate(ctx.preferences):
+        step_started_at, start_counts = start_model_build_step(
+            model_build_stats_callback,
+            ctx,
+        )
         preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](ctx, preference, i)
+        emit_model_build_stats(
+            model_build_stats_callback,
+            ctx,
+            "add_preference",
+            step_started_at,
+            start_counts,
+            preference_index=i,
+            preference_type=preference.type,
+        )
 
     # Define objective (i.e., soft constraints)
     ctx.solver.set_objective(ctx.objective, maximize=True)
 
     logging.info("Initializing solver...")
 
-    # Create solution callback for tracking intermediate solutions
-    solution_callback = ctx.solver.create_solution_callback(ctx.objective)
+    if prettify and progress_callback is not None:
 
+        def progress_callback_with_export(payload: ScheduleProgress) -> None:
+            if isinstance(payload, SchedulePhaseProgress):
+                progress_callback(payload)
+                return
+            df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=True)
+            progress_callback(replace(payload, df=df, cell_export_info=cell_export_info))
+
+    else:
+        progress_callback_with_export = progress_callback
+
+    _emit_phase_progress(progress_callback, "solving", "Solving schedule", progress_started_at)
     logging.info("Solving and showing partial results...")
-    status = ctx.solver.solve(timeout=timeout, deterministic=deterministic, solution_callback=solution_callback)
+    status = ctx.solver.solve(
+        timeout=timeout,
+        deterministic=deterministic,
+        progress_callback=progress_callback_with_export,
+        should_stop=should_stop,
+    )
 
     # Get status name
     ctx.solver_status = ctx.solver.get_status_name()
@@ -248,6 +355,7 @@ def schedule(
     if not found:
         return None, None, None, ctx.solver_status, None
 
+    _emit_phase_progress(progress_callback, "exporting", "Preparing schedule output", progress_started_at)
     df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=prettify)
     solution = {}
     for d, s, p in ctx.shifts:

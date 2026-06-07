@@ -20,6 +20,7 @@
 // This test is mostly AI generated.
 
 import { Page } from '@playwright/test';
+import ExcelJS from 'exceljs';
 
 const STORAGE_KEY = 'nurse-scheduling-data';
 const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
@@ -72,6 +73,161 @@ export async function seedSchedulingState(page: Page, state: StoredState) {
 export async function disableModalDialogs(page: Page) {
   page.on('dialog', async (dialog) => {
     await dialog.accept();
+  });
+}
+
+type MockOptimizeAndExportOptions = {
+  status?: number;
+  errorDetail?: string;
+  filename?: string;
+  score?: number;
+  solverStatus?: string;
+  xlsxReady?: boolean;
+  body?: Buffer;
+  disableEventSource?: boolean;
+  onSubmit?: (body: string) => void;
+};
+
+export async function createMockXlsxBuffer(): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Schedule');
+
+  worksheet.getCell('A1').value = 'Nurse Scheduling';
+  worksheet.getCell('A2').value = 'Generated for browser tests';
+  worksheet.getCell('A3').value = 'P1';
+  worksheet.getCell('B3').value = 'D';
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  if (buffer instanceof ArrayBuffer) {
+    return Buffer.from(buffer);
+  }
+  return Buffer.from(buffer);
+}
+
+export async function mockOptimizeAndExport(
+  page: Page,
+  {
+    status = 200,
+    errorDetail = 'solver unavailable',
+    filename,
+    score = 99,
+    solverStatus = 'OPTIMAL',
+    xlsxReady = true,
+    body,
+    disableEventSource = true,
+    onSubmit,
+  }: MockOptimizeAndExportOptions = {},
+) {
+  const jobId = 'e2e-job';
+  const xlsxBody = body ?? (await createMockXlsxBuffer());
+
+  if (disableEventSource) {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'EventSource', {
+        configurable: true,
+        value: undefined,
+      });
+    });
+  }
+
+  await page.route('http://localhost:8000/health', async route => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        status: 'ok',
+        version: 'test',
+        apiVersion: 'test',
+        appVersion: 'test',
+      }),
+    });
+  });
+
+  await page.route('http://localhost:8000/optimize', async route => {
+    const request = route.request();
+
+    if (request.method() !== 'POST') {
+      await route.fallback();
+      return;
+    }
+
+    onSubmit?.((await request.postData()) ?? '');
+
+    if (status >= 400) {
+      await route.fulfill({
+        status,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ detail: errorDetail }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId,
+        status: 'queued',
+        score: null,
+        solverStatus: null,
+        error: null,
+        xlsxReady: false,
+        links: {
+          status: `/optimize/${jobId}`,
+          events: `/optimize/${jobId}/events`,
+          xlsx: `/optimize/${jobId}/xlsx`,
+        },
+      }),
+    });
+  });
+
+  await page.route(`http://localhost:8000/optimize/${jobId}`, async route => {
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({ status: 204 });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobId,
+        status: xlsxReady ? 'optimal' : 'infeasible',
+        score,
+        solverStatus,
+        error: null,
+        xlsxReady,
+        links: {
+          status: `/optimize/${jobId}`,
+          events: `/optimize/${jobId}/events`,
+          xlsx: `/optimize/${jobId}/xlsx`,
+        },
+      }),
+    });
+  });
+
+  await page.route(`http://localhost:8000/optimize/${jobId}/xlsx`, async route => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
+
+    if (filename) {
+      headers['Content-Disposition'] = `attachment; filename="${filename}"`;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers,
+      body: xlsxBody,
+    });
   });
 }
 

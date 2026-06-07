@@ -249,10 +249,46 @@ def test_create_bool_var_with_constraint_rejects_unknown_operator():
         solver.create_bool_var_with_constraint("cmp", x, "BAD", 0, (0, 1))
 
 
+@pytest.mark.parametrize(("x_value", "z_value"), [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_create_bool_and_var_matches_truth_table_with_negated_literal(x_value: int, z_value: int):
+    solver = ORToolsSolver()
+    x = solver.new_bool_var("x")
+    z = solver.new_bool_var("z")
+    y = solver.create_bool_and_var("and", [x, solver.negate(z)])
+    solver.add_constraint(x == x_value)
+    solver.add_constraint(z == z_value)
+    solver.set_objective(0, maximize=True)
+
+    status = solver.solve()
+
+    assert status == SolverStatus.OPTIMAL
+    assert int(solver.get_value(y)) == int(bool(x_value) and not bool(z_value))
+
+
+def test_create_bool_and_var_empty_literals_is_true():
+    solver = ORToolsSolver()
+    y = solver.create_bool_and_var("and", [])
+    solver.set_objective(0, maximize=True)
+
+    status = solver.solve()
+
+    assert status == SolverStatus.OPTIMAL
+    assert int(solver.get_value(y)) == 1
+
+
+def test_should_use_bool_and_var_for_any_literal_count():
+    solver = ORToolsSolver()
+
+    assert solver.should_use_bool_and_var(1)
+    assert solver.should_use_bool_and_var(3)
+    assert solver.should_use_bool_and_var(10)
+
+
 def test_solution_callback_logs_progress(caplog):
     solver = ORToolsSolver()
     x = solver.new_int_var(0, 1, "x")
-    callback = solver.create_solution_callback(x)
+    events = []
+    callback = solver.create_solution_callback(x, progress_callback=events.append)
 
     callback.Value = lambda _var: 7
     callback.start_time = 0.0
@@ -263,3 +299,61 @@ def test_solution_callback_logs_progress(caplog):
     assert "# of (best) solutions found: 1" in caplog.text
     assert "current score: 7" in caplog.text
     assert "elapsed time:" in caplog.text
+    assert events[0].source == "ortools/cp-sat:solution-callback"
+    assert events[0].currentBestScore == 7
+    assert events[0].elapsedSeconds >= 0
+
+
+def test_solve_progress_callback_uses_solution_callback():
+    solver = ORToolsSolver()
+    x = solver.new_bool_var("x")
+    solver.add_constraint(x == 1)
+    solver.set_objective(x, maximize=True)
+    events = []
+
+    status = solver.solve(progress_callback=events.append)
+
+    assert status == SolverStatus.OPTIMAL
+    assert int(solver.get_value(x)) == 1
+    assert events
+    assert all(event.source == "ortools/cp-sat:solution-callback" for event in events)
+    assert events[-1].currentBestScore == 1
+
+
+def test_solve_allows_solution_callback_and_progress_callback_together():
+    solver = ORToolsSolver()
+    x = solver.new_bool_var("x")
+    solver.add_constraint(x == 1)
+    solver.set_objective(x, maximize=True)
+    progress_events = []
+    solution_events = []
+
+    def count_solution(callback):
+        solution_events.append(int(callback.Value(x)))
+
+    status = solver.solve(solution_callback=count_solution, progress_callback=progress_events.append)
+
+    assert status == SolverStatus.OPTIMAL
+    assert progress_events
+    assert solution_events == [1]
+    assert progress_events[-1].currentBestScore == 1
+
+
+def test_solve_always_registers_internal_solution_callback():
+    solver = ORToolsSolver()
+
+    class DummyCpSolver:
+        def __init__(self):
+            self.callback = None
+
+        def Solve(self, model, callback=None):
+            self.callback = callback
+            return cp_model.OPTIMAL
+
+    dummy_solver = DummyCpSolver()
+    solver.solver = dummy_solver
+
+    status = solver.solve()
+
+    assert status == SolverStatus.OPTIMAL
+    assert isinstance(dummy_solver.callback, cp_model.CpSolverSolutionCallback)

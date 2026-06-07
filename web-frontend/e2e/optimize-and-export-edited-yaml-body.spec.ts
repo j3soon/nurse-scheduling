@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
 
 test('optimize request body reflects YAML-edited state', async ({ page }) => {
   /*
@@ -55,16 +55,7 @@ test('optimize request body reflects YAML-edited state', async ({ page }) => {
   await expect(page.locator('pre')).toContainText('Team Omega');
 
   let submittedBody = '';
-  await page.route('http://localhost:8000/optimize-and-export-xlsx', async route => {
-    submittedBody = (await route.request().postData()) ?? '';
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      },
-      body: 'fake-xlsx',
-    });
-  });
+  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
   const downloadPromise = page.waitForEvent('download');

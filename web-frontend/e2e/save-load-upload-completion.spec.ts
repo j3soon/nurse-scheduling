@@ -74,8 +74,8 @@ test('save-load upload waits for completion dialogs before downstream state is a
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
 
-  await expect.poll(() => dialogs.length).toBe(1);
-  expect(dialogs[0]).toContain('YAML file loaded successfully!');
+  await expect.poll(() => dialogs.filter(message => message.includes('YAML file loaded successfully!')).length).toBe(1);
+  expect(dialogs.find(message => message.includes('YAML file loaded successfully!'))).toBeDefined();
 
   await page.goto('/people');
   await expect(page.getByTitle('Team Alpha', { exact: true })).toBeVisible();
