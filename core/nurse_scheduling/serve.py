@@ -171,10 +171,10 @@ async def _read_optimization_input(
 def _normalize_optimization_timeout(timeout: int | None) -> int:
     if timeout is None:
         return DEFAULT_OPTIMIZATION_TIMEOUT_SECONDS
-    if timeout > MAX_OPTIMIZATION_TIMEOUT_SECONDS:
+    if timeout <= 0 or timeout > MAX_OPTIMIZATION_TIMEOUT_SECONDS:
         raise HTTPException(
             status_code=400,
-            detail=f"Optimization timeout must be at most {MAX_OPTIMIZATION_TIMEOUT_SECONDS} seconds",
+            detail=f"Optimization timeout must be between 1 and {MAX_OPTIMIZATION_TIMEOUT_SECONDS} seconds",
         )
     return timeout
 

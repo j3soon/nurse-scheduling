@@ -735,6 +735,19 @@ class TestOptimizeJobs:
         assert response.status_code == 400
         assert str(serve.MAX_OPTIMIZATION_TIMEOUT_SECONDS) in response.json()["detail"]
 
+    @pytest.mark.parametrize("timeout", ["0", "-1"])
+    def test_optimize_job_rejects_non_positive_timeout(self, timeout):
+        response = client.post(
+            "/optimize",
+            data={
+                "yaml_content": "apiVersion: alpha\n",
+                "timeout": timeout,
+            },
+        )
+
+        assert response.status_code == 400
+        assert "between 1 and" in response.json()["detail"]
+
     def test_optimize_job_invalid_http_request_is_captured(self, monkeypatch):
         captured = []
 
