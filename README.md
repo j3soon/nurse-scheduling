@@ -33,10 +33,59 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 These are not hard requirements. If you know what you are doing, you can also use other tools to manage dependencies, such as [`nvm`/`npm`](https://nodejs.org/en/download) for Next.js, and `virtualenv` or `conda` for Python.
 
+### Quick Start
+
+Clone the repository:
+
 ```sh
 git clone https://github.com/j3soon/nurse-scheduling.git
 cd nurse-scheduling
 ```
+
+#### Linux (bash/zsh)
+
+Start frontend:
+
+```sh
+cd web-frontend
+bun install
+bun run dev
+```
+
+In a new terminal, start backend:
+
+```sh
+cd core
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -r requirements.txt
+fastapi dev nurse_scheduling/serve.py
+```
+
+#### Windows (PowerShell)
+
+Start frontend:
+
+```powershell
+cd web-frontend
+bun install
+bun run dev
+```
+
+In a new terminal, start backend:
+
+```powershell
+cd core
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+uv venv --python 3.12
+.venv\Scripts\Activate.ps1
+uv pip install -r requirements.txt
+fastapi dev nurse_scheduling\serve.py
+```
+
+### Linux Development and Docker
+
+The commands below are Linux-focused reference material for setup, testing, and Docker.
 
 For Linux only: to quickly set up all local environments (`core`, `web-frontend`, and `docs`) in one go, run:
 
@@ -106,6 +155,8 @@ docker run --rm -it --network=host \
 > May need to run `rm -rf .next` in `web-frontend` to clear the Next.js cache when switching between host and Docker environments.
 
 ### Web Frontend
+
+The commands below are tested on Linux only.
 
 ```sh
 cd web-frontend
@@ -263,6 +314,8 @@ Note: The frontend now has Vitest coverage plus Playwright browser integration t
 
 ### Web Backend
 
+The commands below are tested on Linux only.
+
 ```sh
 cd core/nurse_scheduling
 # development mode
@@ -285,6 +338,8 @@ fastapi run serve.py --port 8000 --workers 4
 -->
 
 ### Documentation
+
+The commands below are tested on Linux only.
 
 ```sh
 cd docs
