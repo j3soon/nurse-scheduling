@@ -279,6 +279,45 @@ def _update_optimize_job_if_present(job_id: str, **updates) -> OptimizeJob | Non
     return job
 
 
+def _finish_optimize_job(job_id: str, event: str, **updates) -> OptimizeJob:
+    job = _finish_optimize_job_if_present(job_id, event, **updates)
+    if job is None:
+        raise KeyError(job_id)
+    return job
+
+
+def _validate_terminal_job_update(event: str, updates: dict[str, Any]) -> None:
+    unknown_fields = updates.keys() - _OPTIMIZE_JOB_FIELD_NAMES
+    if unknown_fields:
+        raise ValueError(f"Unknown optimization job fields: {', '.join(sorted(unknown_fields))}")
+    status = updates.get("status")
+    if not isinstance(status, OptimizeJobStatus) or not _is_terminal_job_status(status):
+        raise ValueError("A terminal optimization job status is required")
+    if event not in {"complete", "error"}:
+        raise ValueError("A terminal optimization job event is required")
+
+
+def _finish_optimize_job_locked(job: OptimizeJob, event: str, updates: dict[str, Any]) -> None:
+    with job.condition:
+        for key, value in updates.items():
+            setattr(job, key, value)
+        job.queue_position = None
+        job.events.append({"event": event, "data": _optimize_job_response(job)})
+        job.condition.notify_all()
+
+
+def _finish_optimize_job_if_present(job_id: str, event: str, **updates) -> OptimizeJob | None:
+    """Atomically update a terminal job and publish its terminal event."""
+    _validate_terminal_job_update(event, updates)
+
+    with _optimize_jobs_lock:
+        job = _optimize_jobs.get(job_id)
+        if job is None:
+            return None
+        _finish_optimize_job_locked(job, event, updates)
+    return job
+
+
 def _is_job_stop_requested(job_id: str) -> bool:
     job = _get_optimize_job(job_id)
     return job.cancel_requested or job.finish_now_requested
@@ -286,6 +325,12 @@ def _is_job_stop_requested(job_id: str) -> bool:
 
 def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
     complete_immediately = False
+    terminal_updates = {
+        "status": OptimizeJobStatus.CANCELLED,
+        "cancel_requested": True,
+        "error": "Optimization cancelled.",
+        "finished_at": utc_now(),
+    }
     with _optimize_jobs_lock:
         job = _optimize_jobs.get(job_id)
         if job is None:
@@ -310,10 +355,7 @@ def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
         if finish_now:
             job.finish_now_requested = True
         elif job.status == OptimizeJobStatus.QUEUED:
-            job.cancel_requested = True
-            job.status = OptimizeJobStatus.CANCELLED
-            job.error = "Optimization cancelled."
-            job.finished_at = utc_now()
+            _finish_optimize_job_locked(job, "complete", terminal_updates)
             complete_immediately = True
         else:
             job.cancel_requested = True
@@ -326,7 +368,6 @@ def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
     )
     if complete_immediately:
         _refresh_queue_positions()
-        _publish_job_event(job, "complete", _optimize_job_response(job))
         _log_terminal_job(job)
     elif not finish_now:
         _publish_job_event(job, "status", _job_status_event_data(job))
@@ -365,8 +406,17 @@ def _cancel_jobs_with_expired_heartbeats(now: datetime | None = None) -> list[st
                 job.cancel_requested = True
                 job.error = "Optimization cancelled because the client heartbeat expired."
                 if job.status == OptimizeJobStatus.QUEUED:
-                    job.status = OptimizeJobStatus.CANCELLED
-                    job.finished_at = now
+                    _finish_optimize_job_locked(
+                        job,
+                        "complete",
+                        {
+                            "status": OptimizeJobStatus.CANCELLED,
+                            "cancel_requested": True,
+                            "client_heartbeat_expired": True,
+                            "error": job.error,
+                            "finished_at": now,
+                        },
+                    )
                 else:
                     job.status = OptimizeJobStatus.CANCELLING
                 expired_jobs.append(job)
@@ -380,7 +430,6 @@ def _cancel_jobs_with_expired_heartbeats(now: datetime | None = None) -> list[st
             job.status.value,
         )
         if _is_terminal_job_status(job.status):
-            _publish_job_event(job, "complete", _optimize_job_response(job))
             _log_terminal_job(job)
         else:
             _publish_job_event(job, "status", _job_status_event_data(job))

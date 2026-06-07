@@ -40,6 +40,8 @@ from .jobs import (
     OptimizeJobStatus,
     _cleanup_expired_optimize_jobs,
     _create_optimize_job,
+    _finish_optimize_job,
+    _finish_optimize_job_if_present,
     _get_optimize_job,
     _is_job_stop_requested,
     _is_terminal_job_status,
@@ -53,7 +55,6 @@ from .jobs import (
     _request_optimize_job_stop,
     _solver_supports_job_stop,
     _update_optimize_job,
-    _update_optimize_job_if_present,
     utc_now,
 )
 from .solver_interface import (
@@ -215,13 +216,13 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
     if current_job.cancel_requested:
         if _is_terminal_job_status(current_job.status):
             return
-        job = _update_optimize_job(
+        job = _finish_optimize_job(
             job_id,
+            "complete",
             status=OptimizeJobStatus.CANCELLED,
             error=_job_cancellation_error(current_job),
             finished_at=utc_now(),
         )
-        _publish_job_event(job, "complete", _optimize_job_response(job))
         _refresh_queue_positions()
         _log_job_completed(job)
         return
@@ -263,25 +264,25 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
 
         current_job = _get_optimize_job(job_id)
         if current_job.cancel_requested:
-            job = _update_optimize_job(
+            job = _finish_optimize_job(
                 job_id,
+                "complete",
                 status=OptimizeJobStatus.CANCELLED,
                 error=_job_cancellation_error(current_job),
                 finished_at=utc_now(),
             )
-            _publish_job_event(job, "complete", _optimize_job_response(job))
             _refresh_queue_positions()
             _log_job_completed(job)
             return
 
         if df is None:
-            job = _update_optimize_job(
+            job = _finish_optimize_job(
                 job_id,
+                "complete",
                 status=OptimizeJobStatus.INFEASIBLE,
                 solver_status=solver_status,
                 finished_at=utc_now(),
             )
-            _publish_job_event(job, "complete", _optimize_job_response(job))
             _refresh_queue_positions()
             _log_job_completed(job)
             return
@@ -290,8 +291,9 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         exporter.export_to_excel(df, output_buffer, cell_export_info)
         output_filename = f"{job.input_name.rsplit('.', 1)[0]}.xlsx"
         final_status = _final_status_from_solver_status(str(solver_status))
-        job = _update_optimize_job(
+        job = _finish_optimize_job(
             job_id,
+            "complete",
             status=final_status,
             score=score,
             solver_status=str(solver_status),
@@ -299,13 +301,13 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             xlsx_bytes=output_buffer.getvalue(),
             xlsx_filename=output_filename,
         )
-        _publish_job_event(job, "complete", _optimize_job_response(job))
         _refresh_queue_positions()
         _log_job_completed(job)
     except Exception as e:
         capture_optimize_exception(job, content, e)
-        job = _update_optimize_job_if_present(
+        job = _finish_optimize_job_if_present(
             job_id,
+            "error",
             status=OptimizeJobStatus.FAILED,
             error=_format_unexpected_error(e),
             finished_at=utc_now(),
@@ -317,7 +319,6 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
                 str(e),
             )
             return
-        _publish_job_event(job, "error", _optimize_job_response(job))
         _refresh_queue_positions()
         duration_seconds = (job.finished_at - (job.started_at or job.created_at)).total_seconds()
         server_logger.error(

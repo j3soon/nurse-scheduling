@@ -23,6 +23,7 @@
 
 import os
 import sys
+import threading
 import time
 import types
 from datetime import UTC, datetime, timedelta
@@ -382,32 +383,48 @@ class TestOptimizeJobs:
         assert "event: complete" not in body
         assert '"status": "failed"' in body
 
-    def test_optimize_job_worker_tolerates_deletion_after_terminal_update(
-        self, fake_successful_scheduler, monkeypatch, caplog
-    ):
+    def test_optimize_job_terminal_update_and_event_are_atomic(self, monkeypatch):
         job = serve._create_optimize_job(
-            input_name="deleted.yaml",
+            input_name="atomic.yaml",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        original_publish_job_event = serve._publish_job_event
+        serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
+        job.events.clear()
+        finish_locked = threading.Event()
+        original_finish_locked = serve.optimize_jobs_state._finish_optimize_job_locked
 
-        def delete_then_fail_publish(published_job, event, data):
-            if event == "complete":
-                with serve._optimize_jobs_lock:
-                    serve._optimize_jobs.pop(published_job.id)
-                raise RuntimeError("publish failed after deletion")
-            original_publish_job_event(published_job, event, data)
+        def finish_after_signalling_lock(finished_job, event, updates):
+            finish_locked.set()
+            original_finish_locked(finished_job, event, updates)
 
-        monkeypatch.setattr(serve, "_publish_job_event", delete_then_fail_publish)
+        monkeypatch.setattr(serve.optimize_jobs_state, "_finish_optimize_job_locked", finish_after_signalling_lock)
 
-        serve._run_optimize_job(job.id, b"apiVersion: alpha\n")
+        with job.condition:
+            finish_thread = threading.Thread(
+                target=serve._finish_optimize_job,
+                args=(job.id, "complete"),
+                kwargs={
+                    "status": serve.OptimizeJobStatus.OPTIMAL,
+                    "score": 42,
+                    "finished_at": datetime.now(UTC),
+                },
+            )
+            finish_thread.start()
 
-        assert job.id not in serve._optimize_jobs
-        assert (
-            f"[server:job] failed-after-deletion job_id={job.id} error=publish failed after deletion" in caplog.messages
-        )
+            assert finish_locked.wait(timeout=1)
+            assert finish_thread.is_alive()
+            assert job.status == serve.OptimizeJobStatus.RUNNING
+            assert job.events == []
+
+        finish_thread.join(timeout=1)
+
+        assert not finish_thread.is_alive()
+        assert job.status == serve.OptimizeJobStatus.OPTIMAL
+        assert job.events[0]["event"] == "complete"
+        assert job.events[0]["data"]["score"] == 42
+        assert "".join(serve._stream_optimize_job_events(job)).count("event: complete") == 1
 
     def test_optimize_job_delete_removes_completed_job(self, fake_successful_scheduler, caplog):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
