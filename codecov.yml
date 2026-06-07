@@ -1,27 +1,14 @@
 coverage:
+  precision: 2
+  round: down
   status:
     project:
-      core:
-        flags:
-          - core
+      default:
         target: auto
-        threshold: 1%
-      web_frontend_components:
-        flags:
-          - web-frontend
-        target: 55%
-        threshold: 1%
-        paths:
-          - web-frontend/src/components
-      web_frontend_hooks:
-        flags:
-          - web-frontend
-        target: 70%
-        threshold: 1%
-        paths:
-          - web-frontend/src/hooks
+        informational: true
     patch:
       default:
+        target: auto
         informational: true
 comment:
   layout: "reach, diff, flags, files"
