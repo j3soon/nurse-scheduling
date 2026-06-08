@@ -48,11 +48,8 @@ docker compose -f compose.backend.yml exec backend curl -fsS http://127.0.0.1:80
 
 ## Frontend
 
-Set the frontend build environment variable:
-
-```sh
-NEXT_PUBLIC_BACKEND_API_URL=https://api.nursescheduling.org
-```
+The frontend selects an available backend from its built-in candidate list at
+page load.
 
 The current backend keeps optimization jobs, SSE events, and XLSX outputs in
 process memory. Keep `uvicorn` at one worker and run one backend replica until
