@@ -282,6 +282,8 @@ export default function OptimizeAndExportPage() {
   const eventLogRef = useRef<HTMLDivElement | null>(null);
   const savedDownloadUrlRef = useRef<string | null>(null);
   const shouldScrollEventLogToBottomRef = useRef(true);
+  // The initial endpoint probe already sets health state; skip the debounce pass triggered when it completes.
+  const skipNextDebouncedHealthCheckRef = useRef(false);
   const hasVersionMismatch = Boolean(serverHealth && serverHealth.appVersion !== CURRENT_APP_VERSION);
   const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
@@ -401,6 +403,7 @@ export default function OptimizeAndExportPage() {
       setServerHealth(null);
     }
     setLastHealthCheckedAt(new Date());
+    skipNextDebouncedHealthCheckRef.current = true;
     setIsInitialServerChecking(false);
   }, []);
 
@@ -420,6 +423,10 @@ export default function OptimizeAndExportPage() {
 
   useEffect(() => {
     if (isInitialServerChecking) {
+      return;
+    }
+    if (skipNextDebouncedHealthCheckRef.current) {
+      skipNextDebouncedHealthCheckRef.current = false;
       return;
     }
     const endpoint = normalizeEndpoint(apiEndpoint);
