@@ -31,6 +31,12 @@ Check the API through Cloudflare:
 curl https://api.nursescheduling.org/health
 ```
 
+Run the public healthcheck test:
+
+```sh
+./deploy/test_public_healthcheck.sh
+```
+
 Check the backend directly from the VM:
 
 ```sh
