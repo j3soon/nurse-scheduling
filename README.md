@@ -97,9 +97,9 @@ For Docker-based development environment:
 
 ```sh
 # build image
-docker build -f Dockerfile -t j3soon/nurse-scheduling:dev .
+docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
 # or optionally with cuOpt
-docker build -f Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
+docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 ```
 
 CPU solver:
@@ -189,7 +189,7 @@ bun run test:e2e
 bun run test:e2e:ui
 ```
 
-When using the repository `Dockerfile`, Chromium is preinstalled in the image at
+When using the repository `docker/Dockerfile`, Chromium is preinstalled in the image at
 build time using the frontend's locked Playwright version. If you rebuild the
 image after Playwright version changes, `bun run test:e2e` and
 `bun run test:e2e:ui` should not require rerunning `bunx playwright install chromium`

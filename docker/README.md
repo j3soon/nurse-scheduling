@@ -17,11 +17,14 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 
 ## Start
 
+Run these commands from the `docker/` directory.
+
 The backend image clones the latest `dev` branch from GitHub during the Docker
 build. The checkout is expected to be clean, and the build reports an error if
 `git describe --tags --always --dirty` is empty or contains `dirty`.
 
 ```sh
+cd docker
 docker compose -f compose.backend.yml up -d --build
 ```
 
@@ -34,7 +37,7 @@ curl https://api.nursescheduling.org/health
 Run the public healthcheck test:
 
 ```sh
-./deploy/test_public_healthcheck.sh
+./test_public_healthcheck.sh
 ```
 
 Check the backend directly from the VM:
