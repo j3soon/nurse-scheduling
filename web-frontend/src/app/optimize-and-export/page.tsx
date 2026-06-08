@@ -278,12 +278,12 @@ export default function OptimizeAndExportPage() {
   const [serverHealthStatus, setServerHealthStatus] = useState<ServerHealthStatus>('checking');
   const [lastHealthCheckedAt, setLastHealthCheckedAt] = useState<Date | null>(null);
   const [serverHealth, setServerHealth] = useState<ServerHealthResponse | null>(null);
-  const [isInitialServerChecking, setIsInitialServerChecking] = useState(true);
+  const [isInitialServerChecking, setIsInitialServerChecking] = useState(false);
   const eventLogRef = useRef<HTMLDivElement | null>(null);
   const savedDownloadUrlRef = useRef<string | null>(null);
   const shouldScrollEventLogToBottomRef = useRef(true);
   // The initial endpoint probe already sets health state; skip the debounce pass triggered when it completes.
-  const skipNextDebouncedHealthCheckRef = useRef(false);
+  const skipNextDebouncedHealthCheckRef = useRef(true);
   const hasVersionMismatch = Boolean(serverHealth && serverHealth.appVersion !== CURRENT_APP_VERSION);
   const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
