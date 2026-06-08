@@ -19,6 +19,7 @@
 
 import logging
 import subprocess
+from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from io import BytesIO
@@ -102,7 +103,14 @@ server_logger.setLevel(logging.INFO)
 title = "Nurse Scheduling API"
 version = "alpha"
 
-app = FastAPI(title=title, version=version)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    server_logger.info("[server:start] title=%s api_version=%s app_version=%s", title, version, app_version)
+    yield
+
+
+app = FastAPI(title=title, version=version, lifespan=lifespan)
 
 # Ref: https://fastapi.tiangolo.com/tutorial/handling-errors/#override-request-validation-exceptions
 

@@ -28,16 +28,21 @@ vi.mock('recharts', () => ({
     accessibilityLayer,
     children,
     className,
+    data,
     style,
   }: {
     accessibilityLayer: boolean;
     children: ReactNode;
     className: string;
+    data: Array<{ currentBestScore: number; elapsedSeconds: number }>;
     style: { userSelect: string; outline: string };
   }) => (
     <div
       data-testid="composed-chart"
       data-accessibility-layer={accessibilityLayer}
+      data-point-count={data.length}
+      data-first-elapsed={data[0]?.elapsedSeconds}
+      data-first-score={data[0]?.currentBestScore}
       className={className}
       style={style}
     >
@@ -175,6 +180,9 @@ describe('OptimizationProgressChart', () => {
     await user.click(screen.getByRole('button', { name: 'Last 10' }));
     expect(screen.getByTestId('elapsed-axis')).toHaveAttribute('data-domain-min', '21');
     expect(screen.getByTestId('elapsed-axis')).toHaveAttribute('data-domain-max', '30');
+    expect(screen.getAllByTestId('composed-chart')[0]).toHaveAttribute('data-point-count', '10');
+    expect(screen.getAllByTestId('composed-chart')[0]).toHaveAttribute('data-first-elapsed', '21');
+    expect(screen.getAllByTestId('composed-chart')[0]).toHaveAttribute('data-first-score', '979');
     expect(screen.getByTestId('score-line')).toHaveAttribute('data-dots', 'shown');
     expect(screen.getByTestId('comments-line')).toHaveAttribute('data-dots', 'shown');
 
