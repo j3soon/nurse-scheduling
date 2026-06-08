@@ -18,6 +18,11 @@ RUN version="$(git describe --tags --always --dirty)" \
     && test -n "$version" \
     && case "$version" in *dirty*) echo "ERROR: backend image version is dirty: $version" >&2; exit 1 ;; esac
 
+RUN useradd -m -u 1000 user \
+    && chown -R user:user /app/nurse-scheduling
+
+USER user
+
 EXPOSE 8000
 
 CMD ["uvicorn", "nurse_scheduling.serve:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
