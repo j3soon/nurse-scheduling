@@ -205,6 +205,7 @@ export default function OptimizationProgressChart({
     requestedDomainMax,
   ];
   const visiblePointCount = range.endIndex - range.startIndex + 1;
+  const visiblePoints = points.slice(range.startIndex, range.endIndex + 1);
   const showDots = visiblePointCount <= DOT_LIMIT;
   const latestPoint = points.at(-1);
 
@@ -240,7 +241,7 @@ export default function OptimizationProgressChart({
         <div style={{ height: SCORE_CHART_HEIGHT }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={points}
+              data={visiblePoints}
               syncId={syncId}
               syncMethod="value"
               accessibilityLayer={false}
@@ -306,7 +307,7 @@ export default function OptimizationProgressChart({
           <div style={{ height: COMMENT_CHART_HEIGHT }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
-                data={points}
+                data={visiblePoints}
                 syncId={syncId}
                 syncMethod="value"
                 accessibilityLayer={false}
