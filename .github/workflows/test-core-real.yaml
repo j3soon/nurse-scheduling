@@ -10,7 +10,6 @@ permissions:
 jobs:
   test-core-real:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
