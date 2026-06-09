@@ -24,5 +24,7 @@ if [[ ! -d "$BACKEND_DIR" ]]; then
   exit 1
 fi
 
-cd "$BACKEND_DIR"
-exec fastapi dev serve.py
+# cd "$BACKEND_DIR"
+# exec fastapi dev serve.py
+cd "$CORE_DIR"
+exec uvicorn nurse_scheduling.serve:app --reload --no-access-log

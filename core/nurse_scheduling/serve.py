@@ -96,7 +96,11 @@ init_sentry(app_version)
 
 # Keep API output focused on server behavior. Solver progress is delivered to
 # clients through job events and remains available from the CLI's verbose logs.
-logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 server_logger = logging.getLogger("nurse_scheduling.server")
 server_logger.setLevel(logging.INFO)
 
@@ -525,4 +529,4 @@ async def delete_optimize_job(job_id: str):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False)

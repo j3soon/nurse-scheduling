@@ -115,6 +115,8 @@ docker run --rm -it --network=host \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v /etc/localtime:/etc/localtime:ro \
+  -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev
 ```
 
@@ -131,6 +133,8 @@ docker run --rm -it --gpus all --network=host \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v /etc/localtime:/etc/localtime:ro \
+  -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev-cuopt
 ```
 
@@ -147,6 +151,8 @@ docker run --rm -it --network=host \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v /etc/localtime:/etc/localtime:ro \
+  -v /etc/timezone:/etc/timezone:ro \
   -e DISPLAY=$DISPLAY \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   j3soon/nurse-scheduling:dev
