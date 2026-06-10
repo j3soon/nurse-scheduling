@@ -77,10 +77,13 @@ interface OptimizePhaseEvent {
 
 const TERMINAL_JOB_STATUSES = new Set(['optimal', 'feasible', 'infeasible', 'cancelled', 'failed']);
 const OPTIMIZE_CLIENT_HEARTBEAT_INTERVAL_MS = 10_000;
-const BACKEND_API_CANDIDATES = [
-  'http://localhost:8000',
-  'https://api.nursescheduling.org',
-];
+const LOCAL_BACKEND_API_URL = 'http://localhost:8000';
+const PRODUCTION_BACKEND_API_URL = 'https://api.nursescheduling.org';
+const SHOULD_DISABLE_PRODUCTION_BACKEND_API = process.env.NODE_ENV === 'test'
+  || process.env.NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API === '1';
+const BACKEND_API_CANDIDATES = SHOULD_DISABLE_PRODUCTION_BACKEND_API
+  ? [LOCAL_BACKEND_API_URL]
+  : [LOCAL_BACKEND_API_URL, PRODUCTION_BACKEND_API_URL];
 const INITIAL_BACKEND_API_URL = BACKEND_API_CANDIDATES[0];
 
 function normalizeEndpoint(endpoint: string): string {

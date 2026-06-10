@@ -43,6 +43,7 @@ export default defineConfig({
       DISABLE_SENTRY: '1',
       E2E_COVERAGE: process.env.E2E_COVERAGE ?? '0',
       NEXT_PUBLIC_DISABLE_SENTRY: '1',
+      NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API: '1',
     },
     url: 'http://127.0.0.1:3000',
     reuseExistingServer: !process.env.CI,

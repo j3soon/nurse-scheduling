@@ -45,7 +45,7 @@ vi.mock('@/utils/version', () => ({
 }));
 
 const LOCAL_API_URL = 'http://localhost:8000';
-const HOSTED_API_URL = 'https://api.nursescheduling.org';
+const PRODUCTION_API_URL = 'https://api.nursescheduling.org';
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -104,16 +104,7 @@ const healthyResponse = (overrides: Partial<{
 });
 
 const queueInitialLocalSelection = (fetchMock: ReturnType<typeof vi.fn>) => {
-  fetchMock
-    .mockResolvedValueOnce(healthyResponse())
-    .mockResolvedValueOnce(healthyResponse());
-  return fetchMock;
-};
-
-const queueInitialHostedSelection = (fetchMock: ReturnType<typeof vi.fn>) => {
-  fetchMock
-    .mockRejectedValueOnce(new Error('local backend unavailable'))
-    .mockResolvedValueOnce(healthyResponse());
+  fetchMock.mockResolvedValueOnce(healthyResponse());
   return fetchMock;
 };
 
@@ -234,66 +225,28 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.queryByText(versionDetails)).not.toBeInTheDocument();
   });
 
-  it('falls back to the hosted backend when localhost is unavailable', async () => {
-    const user = userEvent.setup();
-    queueInitialHostedSelection(fetch as unknown as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_hosted',
-          status: 'optimal',
-          score: 11,
-          solverStatus: 'OPTIMAL',
-          error: null,
-          xlsxReady: true,
-          links: {
-            status: '/optimize/opt_hosted',
-            events: '/optimize/opt_hosted/events',
-            xlsx: '/optimize/opt_hosted/xlsx',
-          },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
-        headers: new Headers({
-          'Content-Disposition': 'attachment; filename=hosted.xlsx',
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-      });
+  it('does not fall back to the production backend during tests', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('local backend unavailable'));
 
     render(<OptimizeAndExportPage />);
 
-    await expect(screen.findByDisplayValue(HOSTED_API_URL)).resolves.toBeInTheDocument();
-    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await expect(screen.findByDisplayValue(LOCAL_API_URL)).resolves.toBeInTheDocument();
+    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
 
-    await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(`${LOCAL_API_URL}/health`, expect.objectContaining({ method: 'GET' }));
-    expect(fetch).toHaveBeenCalledWith(`${HOSTED_API_URL}/health`, expect.objectContaining({ method: 'GET' }));
-    expect(fetch).toHaveBeenCalledWith(`${HOSTED_API_URL}/optimize`, expect.objectContaining({ method: 'POST' }));
-    expect(fetch).toHaveBeenCalledWith(
-      `${HOSTED_API_URL}/optimize/opt_hosted/xlsx`,
-      expect.objectContaining({ method: 'GET' })
-    );
-    expect(fetch).toHaveBeenCalledWith(
-      `${HOSTED_API_URL}/optimize/opt_hosted`,
-      expect.objectContaining({ method: 'DELETE' })
-    );
+    expect(fetch).not.toHaveBeenCalledWith(`${PRODUCTION_API_URL}/health`, expect.anything());
   });
 
-  it('prioritizes an online backend with a matching app version over an earlier mismatched candidate', async () => {
-    (fetch as unknown as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(healthyResponse({ appVersion: 'backend-test' }))
-      .mockResolvedValueOnce(healthyResponse());
+  it('shows the local backend version mismatch without probing production during tests', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(healthyResponse({ appVersion: 'backend-test' }));
 
     render(<OptimizeAndExportPage />);
 
-    await expect(screen.findByDisplayValue(HOSTED_API_URL)).resolves.toBeInTheDocument();
+    await expect(screen.findByDisplayValue(LOCAL_API_URL)).resolves.toBeInTheDocument();
     await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
-    expect(screen.queryByText(/frontend and backend versions do not match/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/frontend and backend versions do not match/i)).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalledWith(`${PRODUCTION_API_URL}/health`, expect.anything());
   });
 
   it('offers default backend candidates while allowing custom endpoint input', async () => {
@@ -306,7 +259,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(endpointInput).toHaveAttribute('list', 'backend-api-candidates');
     const candidateValues = Array.from(document.querySelectorAll('#backend-api-candidates option'))
       .map(option => option.getAttribute('value'));
-    expect(candidateValues).toEqual([LOCAL_API_URL, HOSTED_API_URL]);
+    expect(candidateValues).toEqual([LOCAL_API_URL]);
 
     await user.clear(endpointInput);
     await user.type(endpointInput, 'https://backend.example.test');
@@ -346,7 +299,7 @@ describe('OptimizeAndExportPage error handling', () => {
   it('disables endpoint editing while initial backend selection is pending', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
-      if (url === `${LOCAL_API_URL}/health` || url === `${HOSTED_API_URL}/health`) {
+      if (url === `${LOCAL_API_URL}/health`) {
         return new Promise((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => {
             reject(new DOMException('The operation was aborted.', 'AbortError'));
@@ -766,7 +719,7 @@ describe('OptimizeAndExportPage error handling', () => {
     vi.stubGlobal('EventSource', MockEventSource);
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    queueInitialHostedSelection(fetchMock)
+    queueInitialLocalSelection(fetchMock)
       .mockResolvedValueOnce({
         ok: true,
         json: vi.fn().mockResolvedValue({
@@ -787,13 +740,13 @@ describe('OptimizeAndExportPage error handling', () => {
       .mockResolvedValue({ ok: true });
 
     render(<OptimizeAndExportPage />);
-    await expect(screen.findByDisplayValue(HOSTED_API_URL)).resolves.toBeInTheDocument();
+    await expect(screen.findByDisplayValue(LOCAL_API_URL)).resolves.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
 
-    expect(MockEventSource.instances[0].url).toBe(`${HOSTED_API_URL}/optimize/opt_active/events`);
+    expect(MockEventSource.instances[0].url).toBe(`${LOCAL_API_URL}/optimize/opt_active/events`);
 
-    const endpointInput = screen.getByDisplayValue(HOSTED_API_URL);
+    const endpointInput = screen.getByDisplayValue(LOCAL_API_URL);
     expect(endpointInput).toBeDisabled();
 
     const heartbeatCallback = setIntervalSpy.mock.calls.find(([, delay]) => delay === 10_000)?.[0];
@@ -804,7 +757,7 @@ describe('OptimizeAndExportPage error handling', () => {
     });
 
     expect(fetch).toHaveBeenCalledWith(
-      `${HOSTED_API_URL}/optimize/opt_active/heartbeat`,
+      `${LOCAL_API_URL}/optimize/opt_active/heartbeat`,
       expect.objectContaining({ method: 'POST', cache: 'no-store' })
     );
   });

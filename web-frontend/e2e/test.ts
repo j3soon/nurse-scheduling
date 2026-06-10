@@ -35,6 +35,10 @@ const test = base.extend({
       window.__PLAYWRIGHT_WORKER_NAMESPACE__ = workerNamespace;
     }, `worker-${testInfo.workerIndex}`);
 
+    await page.route(/^https?:\/\/api\.nursescheduling\.org\/.*/, async route => {
+      await route.abort('blockedbyclient');
+    });
+
     if (isCoverageEnabled) {
       await page.coverage.startJSCoverage({
         resetOnNavigation: false,
