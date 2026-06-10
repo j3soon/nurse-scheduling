@@ -336,6 +336,18 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.queryByPlaceholderText('Enter person ID')).not.toBeInTheDocument();
   });
 
+  it('toggles group add form off when clicking the same add button twice', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    await user.click(screen.getByRole('button', { name: /add group/i }));
+    expect(screen.getByPlaceholderText('Enter group ID')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /add group/i }));
+    expect(screen.queryByPlaceholderText('Enter group ID')).not.toBeInTheDocument();
+  });
+
   it('does not open inline editor on read-only or auto-generated rows', async () => {
     const user = userEvent.setup();
 
@@ -454,6 +466,60 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.getByText('0 members')).toBeInTheDocument();
   });
 
+  it('updates item group membership through the edit form checkboxes', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [{ id: 'Person 1', description: '', history: [] }],
+          groups: [
+            { id: 'Team A', members: ['Person 1'], description: '' },
+            { id: 'Team B', members: [], description: '' },
+          ],
+          history: [],
+        }}
+      />,
+    );
+
+    const personRow = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
+    await user.click(within(personRow).getByRole('button', { name: /edit/i }));
+    await user.click(screen.getByLabelText('Team A'));
+    await user.click(screen.getByLabelText('Team B'));
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(screen.getByText('1 group')).toBeInTheDocument();
+    expect(screen.queryByTitle('Remove "Team A"')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Remove "Team B"')).toBeInTheDocument();
+  });
+
+  it('updates group members through the edit form checkboxes', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [
+            { id: 'Person 1', description: '', history: [] },
+            { id: 'Person 2', description: '', history: [] },
+          ],
+          groups: [{ id: 'Team A', members: ['Person 1'], description: '' }],
+          history: [],
+        }}
+      />,
+    );
+
+    const groupRow = screen.getByTitle('Team A').closest('tr') as HTMLTableRowElement;
+    await user.click(within(groupRow).getByRole('button', { name: /edit/i }));
+    await user.click(screen.getByLabelText('Person 1'));
+    await user.click(screen.getByLabelText('Person 2'));
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(screen.getByText('1 member')).toBeInTheDocument();
+    expect(screen.queryByTitle('Remove "Person 1"')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Remove "Person 2"')).toBeInTheDocument();
+  });
+
   it('shows inline validation error for reserved group ID edits', async () => {
     const user = userEvent.setup();
 
@@ -473,6 +539,46 @@ describe('ItemGroupEditorPage', () => {
     await user.type(input, 'ALL');
     fireEvent.keyDown(input, { key: 'Enter' });
 
+    expect(input).toHaveClass('border-red-500');
+  });
+
+  it('shows inline validation error for empty item ID edits', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    await user.dblClick(screen.getByText('1. Person 1'));
+    const input = screen.getByDisplayValue('Person 1');
+    await user.clear(input);
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(input).toHaveValue('');
+    expect(input).toHaveClass('border-red-500');
+  });
+
+  it('shows inline validation error for duplicate group ID edits', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [{ id: 'Person 1', description: '', history: [] }],
+          groups: [
+            { id: 'Team A', members: ['Person 1'], description: '' },
+            { id: 'Team B', members: [], description: '' },
+          ],
+          history: [],
+        }}
+      />,
+    );
+
+    await user.dblClick(screen.getByTitle('Team A'));
+    const input = screen.getByDisplayValue('Team A');
+    await user.clear(input);
+    await user.type(input, 'Team B');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(screen.getByDisplayValue('Team B')).toBeInTheDocument();
     expect(input).toHaveClass('border-red-500');
   });
 
@@ -572,6 +678,21 @@ describe('ItemGroupEditorPage', () => {
 
     expect(screen.getByText('Updated description')).toBeInTheDocument();
     expect(screen.queryByDisplayValue('Updated description')).not.toBeInTheDocument();
+  });
+
+  it('saves group inline description edits on Enter and clears inline mode', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    await user.dblClick(screen.getByText('Initial team'));
+    const input = screen.getByDisplayValue('Initial team');
+    await user.clear(input);
+    await user.type(input, 'Updated team description');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(screen.getByText('Updated team description')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Updated team description')).not.toBeInTheDocument();
   });
 
   it('keeps inline duplicate-ID errors until Escape cancels the inline edit', async () => {
