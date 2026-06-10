@@ -267,9 +267,7 @@ class ShiftCountPreference(BasePreference):
     countShiftTypes: str | list[str]  # Single shift type ID or list
     countShiftTypeCoefficients: list[tuple[str, int]] | None = None
     expression: str | list[str]  # Single mathematical expression or list of mathematical expressions
-    target: (int | str) | list[
-        int | str
-    ]  # Single target value (int or special constant names) or list of target values
+    target: int | list[int]  # Single target value or list of target values
     weight: int | float = Field(default=-1)  # For float can only be .inf or -.inf
 
     @field_validator("weight")

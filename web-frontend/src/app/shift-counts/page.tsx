@@ -24,7 +24,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftCountPreference, ShiftCountTypeCoefficient, SHIFT_COUNT, SUPPORTED_EXPRESSIONS, SUPPORTED_SPECIAL_TARGETS } from '@/types/scheduling';
+import { ShiftCountPreference, ShiftCountTypeCoefficient, SHIFT_COUNT, SUPPORTED_EXPRESSIONS } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
@@ -94,7 +94,7 @@ export default function ShiftCountsPage() {
     "Select which dates to count shifts for",
     "Select which shift types to count",
     "Choose a mathematical expression to evaluate (e.g., 'x >= T' means count should be at least the target)",
-    "Set the target value (number) or use special constants like 'floor(AVG_SHIFTS_PER_PERSON)'",
+    "Set the numeric target value",
     "Set positive weight to encourage constraint matches and negative weight to discourage them",
     "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
   ];
@@ -178,8 +178,8 @@ export default function ShiftCountsPage() {
       newErrors.expression = 'Please select a valid expression';
     }
 
-    if (typeof formData.target === 'string' && !SUPPORTED_SPECIAL_TARGETS.includes(formData.target as typeof SUPPORTED_SPECIAL_TARGETS[number])) {
-      newErrors.target = 'Target must be a number or a supported special constant';
+    if (typeof formData.target !== 'number' || !Number.isInteger(formData.target) || formData.target < 0) {
+      newErrors.target = 'Target must be a non-negative integer';
     }
 
     if (!isValidWeightValue(formData.weight)) {
@@ -207,7 +207,7 @@ export default function ShiftCountsPage() {
       countShiftTypes: formData.count_shift_types,
       ...(countShiftTypeCoefficients.length > 0 ? { countShiftTypeCoefficients } : {}),
       expression: formData.expression,
-      target: formData.target as typeof SUPPORTED_SPECIAL_TARGETS[number] | number,
+      target: formData.target as number,
       weight: formData.weight as number
     };
 
@@ -535,20 +535,22 @@ export default function ShiftCountsPage() {
                     Target Value *
                   </label>
                   <input
-                    type="text"
+                    type="number"
+                    min="0"
+                    step="1"
                     value={formData.target}
                     onChange={(e) => {
                       const value = e.target.value;
                       setErrors(prev => ({ ...prev, target: '' }));
-                      if (SUPPORTED_SPECIAL_TARGETS.includes(value as typeof SUPPORTED_SPECIAL_TARGETS[number])) {
-                        setFormData(prev => ({ ...prev, target: value as typeof SUPPORTED_SPECIAL_TARGETS[number] }));
+                      if (value === '') {
+                        setFormData(prev => ({ ...prev, target: value }));
                       } else {
-                        const numValue = parseInt(value);
-                        if (!isNaN(numValue)) {
+                        const numValue = Number(value);
+                        if (Number.isInteger(numValue)) {
                           setFormData(prev => ({ ...prev, target: numValue }));
                         } else {
-                          setFormData(prev => ({ ...prev, target: value.toString() }));
-                          setErrors(prev => ({ ...prev, target: 'Target must be a number or a supported special constant' }));
+                          setFormData(prev => ({ ...prev, target: value }));
+                          setErrors(prev => ({ ...prev, target: 'Target must be a non-negative integer' }));
                         }
                       }
                     }}
@@ -557,7 +559,7 @@ export default function ShiftCountsPage() {
                         ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
                         : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
                     }`}
-                    placeholder="e.g., 5 or floor(AVG_SHIFTS_PER_PERSON)"
+                    placeholder="e.g., 5"
                   />
                   {errors.target && (
                     <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
@@ -565,9 +567,6 @@ export default function ShiftCountsPage() {
                       {errors.target}
                     </p>
                   )}
-                  <p className="mt-1 text-xs text-gray-500">
-                    Special constants: {SUPPORTED_SPECIAL_TARGETS.join(', ')}
-                  </p>
                 </div>
               </div>
 

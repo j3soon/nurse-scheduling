@@ -301,18 +301,11 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
     # Soft constraint
     # For specified people, dates, and shift types, penalize violations of the expression
     # The expression is evaluated as a mathematical formula where x is the actual evaluated value
-    # and T is the target value (can be a constant or special constant names)
+    # and T is the target value
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     c_ds = utils.parse_dates(preference.countDates, ctx.map_did_d, ctx.dates.range)
     c_ss = utils.parse_sids(preference.countShiftTypes, ctx.map_sid_s)
     coefficients = _parse_shift_count_coefficients(ctx, preference, c_ss)
-
-    # Calculate total preferred shifts across all shift type requirements.
-    total_shifts = 0
-    for pref in ctx.preferences:
-        if pref.type == models.SHIFT_TYPE_REQUIREMENT:
-            shift_types = utils.parse_sids(pref.shiftType, ctx.map_sid_s)
-            total_shifts += (pref.preferredNumPeople or pref.requiredNumPeople) * len(shift_types) * ctx.n_days
 
     expressions = utils.ensure_list(preference.expression)
     targets = utils.ensure_list(preference.target)
@@ -320,36 +313,11 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
         raise ValueError(f"Number of expressions ({len(expressions)}) must match number of targets ({len(targets)})")
     if len(expressions) == 0:
         raise ValueError("Expression must not be empty")
-    special_targets = {
-        "floor(AVG_SHIFTS_PER_PERSON)",
-        "ceil(AVG_SHIFTS_PER_PERSON)",
-        "round(AVG_SHIFTS_PER_PERSON)",
-    }
-    if any(target in special_targets for target in targets) and any(
-        coefficient != 1 for coefficient in coefficients.values()
-    ):
-        raise ValueError(
-            "Special average targets cannot be used with non-unit shift count coefficients. "
-            "Specify an explicit numeric target instead."
-        )
     weight = preference.weight
     for i in range(len(expressions)):
-        expression, target = expressions[i], targets[i]
-        if isinstance(target, int):
-            T = target
-            if T < 0:
-                raise ValueError(f"Target must be non-negative, but got {T}")
-        elif target == "floor(AVG_SHIFTS_PER_PERSON)":
-            T = math.floor(total_shifts / ctx.n_people)
-        elif target == "ceil(AVG_SHIFTS_PER_PERSON)":
-            T = math.ceil(total_shifts / ctx.n_people)
-        elif target == "round(AVG_SHIFTS_PER_PERSON)":
-            # Keep in mind the rounding behavior of Python
-            # Ref: https://stackoverflow.com/q/10825926
-            T = round(total_shifts / ctx.n_people)
-        else:
-            raise ValueError(f"Unsupported target: {target}")
-        assert isinstance(T, int)
+        expression, T = expressions[i], targets[i]
+        if T < 0:
+            raise ValueError(f"Target must be non-negative, but got {T}")
 
         for p in ps:
             unique_var_prefix = f"pref_{preference_idx}_p_{p}"
