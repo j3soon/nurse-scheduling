@@ -350,10 +350,8 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
 
             # TODO: Also Report value of `x`
 
-            # TODO: total_shifts may be a tighter bound, but the current bound
-            # will work even without considering each person can have one
-            # max shifts per day.
-            max_x = len(c_ds) * sum(coefficients.values())
+            # Each person can work at most one selected shift per day.
+            max_x = len(c_ds) * max(coefficients.values())
 
             SUPPORTED_EXPRESSIONS = ["|x - T|^2", "x >= T", "x <= T", "x > T", "x < T", "x = T"]
             # Evaluate the expression
