@@ -190,6 +190,108 @@ preferences:
         scheduler.schedule(yaml_content)
 
 
+def test_shift_count_accepts_shift_type_coefficients():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+    date: 2025-01-01
+  - type: shift type requirement
+    shiftType: A
+    requiredNumPeople: 1
+    date: 2025-01-02
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: [D, A]
+    countShiftTypeCoefficients:
+      - [D, 2]
+      - [A, 3]
+    expression: x = T
+    target: 5
+    weight: .inf
+"""
+    scheduler.schedule(yaml_content)
+
+
+def test_shift_count_rejects_invalid_shift_type_coefficients():
+    coefficient_not_selected_yaml = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: [D]
+    countShiftTypeCoefficients:
+      - [A, 2]
+    expression: x = T
+    target: 1
+    weight: .inf
+"""
+    with pytest.raises(ValueError, match="must reference a shift type in countShiftTypes"):
+        scheduler.schedule(coefficient_not_selected_yaml)
+
+    for invalid_coefficient in (0, -1):
+        invalid_coefficient_yaml = coefficient_not_selected_yaml.replace(
+            b"- [A, 2]", f"- [D, {invalid_coefficient}]".encode()
+        )
+        with pytest.raises(ValueError, match="must be at least 1"):
+            scheduler.schedule(invalid_coefficient_yaml)
+
+    duplicate_coefficient_yaml = coefficient_not_selected_yaml.replace(
+        b"""countShiftTypes: [D]
+    countShiftTypeCoefficients:
+      - [A, 2]""",
+        b"""countShiftTypes: [D, G]
+    countShiftTypeCoefficients:
+      - [D, 2]
+      - [G, 3]""",
+    ).replace(
+        b"""shiftTypes:
+  items:
+    - id: D
+    - id: A""",
+        b"""shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: G
+      members: [D, A]""",
+    )
+    with pytest.raises(ValueError, match="Duplicate shift count coefficient"):
+        scheduler.schedule(duplicate_coefficient_yaml)
+
+
 def test_shift_type_successions_rejects_history_all_and_group_ids():
     history_all_yaml = b"""
 apiVersion: alpha

@@ -27,6 +27,12 @@ import { AUTO_GENERATED_ITEMS, AUTO_GENERATED_GROUPS, isReservedKeyword, filterA
 import { setLatestSchedulingStateForSentry } from '@/utils/sentrySchedulingState';
 import { buildTaiwanHolidayGroups, isTaiwanHolidayRangeSupported } from '@/utils/taiwanHolidays';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
+import {
+  compareFirstIdByEntryOrder,
+  getOrderedEntries,
+  sortIdsByEntryOrder,
+  sortPairsByFirstIdEntryOrder,
+} from '@/utils/entityOrdering';
 
 export interface SchedulingState {
   apiVersion: string | number;
@@ -65,30 +71,6 @@ interface HistoryMutationOptions {
   replaceLatestHistoryEntry?: boolean;
 }
 
-function sortIdsByEntryOrder(ids: string[] | undefined, entries: { id: string }[]): string[] {
-  if (!Array.isArray(ids)) return [];
-
-  const entryOrder = new Map(entries.map((entry, index) => [entry.id, index]));
-  return [...ids].sort((a, b) => {
-    const orderA = entryOrder.get(a) ?? Number.MAX_SAFE_INTEGER;
-    const orderB = entryOrder.get(b) ?? Number.MAX_SAFE_INTEGER;
-    return orderA - orderB;
-  });
-}
-
-function getOrderedEntries(data: { items: { id: string }[]; groups: { id: string }[] }) {
-  return [...data.items, ...data.groups];
-}
-
-// These fields are arrays for schema consistency, but callers use this helper
-// only for preference fields that should contain exactly one ID.
-function compareFirstIdByEntryOrder(a: string[], b: string[], entries: { id: string }[]): number {
-  const entryOrder = new Map(entries.map((entry, index) => [entry.id, index]));
-  const orderA = entryOrder.get(a[0]) ?? Number.MAX_SAFE_INTEGER;
-  const orderB = entryOrder.get(b[0]) ?? Number.MAX_SAFE_INTEGER;
-  return orderA - orderB;
-}
-
 function normalizePreferenceOrder(pref: Preference, state: SchedulingState): Preference {
   const peopleEntries = getOrderedEntries(state.people);
   const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
@@ -123,6 +105,7 @@ function normalizePreferenceOrder(pref: Preference, state: SchedulingState): Pre
       person: sortIdsByEntryOrder(pref.person, peopleEntries),
       countDates: sortIdsByEntryOrder(pref.countDates, dateEntries),
       countShiftTypes: sortIdsByEntryOrder(pref.countShiftTypes, shiftTypeEntries),
+      countShiftTypeCoefficients: sortPairsByFirstIdEntryOrder(pref.countShiftTypeCoefficients, shiftTypeEntries),
     };
   }
   if (pref.type === SHIFT_AFFINITY) {
@@ -156,19 +139,20 @@ function sortShiftRequestsByEntityOrder(preferences: ShiftRequestPreference[], s
   });
 }
 
+// Normalize IDs within each preference, order shift requests by entities, then
+// group all preferences by type for stable saved/exported state.
 function normalizePreferencesOrder(preferences: Preference[], state: SchedulingState): Preference[] {
   const normalizedPreferences = preferences.map(pref => normalizePreferenceOrder(pref, state));
-  const shiftRequests = sortShiftRequestsByEntityOrder(
+  const sortedShiftRequests = sortShiftRequestsByEntityOrder(
     normalizedPreferences.filter((pref): pref is ShiftRequestPreference => pref.type === SHIFT_REQUEST),
     state
   );
-  let shiftRequestIndex = 0;
-  return sortPreferencesByType(normalizedPreferences.map(pref => {
-    if (pref.type !== SHIFT_REQUEST) return pref;
-    const sortedShiftRequest = shiftRequests[shiftRequestIndex];
-    shiftRequestIndex += 1;
-    return sortedShiftRequest;
-  }));
+  const otherPreferences = normalizedPreferences.filter(pref => pref.type !== SHIFT_REQUEST);
+
+  return sortPreferencesByType([
+    ...otherPreferences,
+    ...sortedShiftRequests,
+  ]);
 }
 
 function normalizeExportFormattingOrder(formatting: ExportFormatting[] | undefined, state: SchedulingState) {
@@ -1120,10 +1104,17 @@ export function useSchedulingData() {
           };
         } else if (pref.type === SHIFT_COUNT) {
           const fieldName = shiftCountFieldMap[dataType] as keyof ShiftCountPreference;
-          return {
+          const updatedPref: ShiftCountPreference = {
             ...pref,
             [fieldName]: ((pref as ShiftCountPreference)[fieldName] as string[]).map(id => id === oldId ? newId : id)
           };
+          if (dataType === DataType.SHIFT_TYPES && updatedPref.countShiftTypeCoefficients) {
+            updatedPref.countShiftTypeCoefficients = updatedPref.countShiftTypeCoefficients.map(([id, coefficient]) => [
+              id === oldId ? newId : id,
+              coefficient
+            ]);
+          }
+          return updatedPref;
         } else if (pref.type === SHIFT_AFFINITY) {
           const fieldNames = shiftAffinityFieldMap[dataType];
           const updatedPref = { ...pref } as ShiftAffinityPreference;
@@ -1210,10 +1201,16 @@ export function useSchedulingData() {
           };
         } else if (pref.type === SHIFT_COUNT) {
           const fieldName = shiftCountFieldMap[dataType] as keyof ShiftCountPreference;
-          return {
+          const updatedPref: ShiftCountPreference = {
             ...pref,
             [fieldName]: ((pref as ShiftCountPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
           };
+          if (dataType === DataType.SHIFT_TYPES && updatedPref.countShiftTypeCoefficients) {
+            updatedPref.countShiftTypeCoefficients = updatedPref.countShiftTypeCoefficients.filter(
+              ([id]) => !deletedIdsSet.has(id)
+            );
+          }
+          return updatedPref;
         } else if (pref.type === SHIFT_AFFINITY) {
           const fieldNames = shiftAffinityFieldMap[dataType];
           const updatedPref = { ...pref } as ShiftAffinityPreference;
@@ -1240,7 +1237,9 @@ export function useSchedulingData() {
           return (pref as ShiftTypeSuccessionsPreference).person.length > 0 &&
             (pref as ShiftTypeSuccessionsPreference).pattern.length > 0;
         } else if (pref.type === SHIFT_COUNT) {
-          return (pref as ShiftCountPreference).person.length > 0;
+          return (pref as ShiftCountPreference).person.length > 0 &&
+            (pref as ShiftCountPreference).countDates.length > 0 &&
+            (pref as ShiftCountPreference).countShiftTypes.length > 0;
         } else if (pref.type === SHIFT_AFFINITY) {
           return (pref as ShiftAffinityPreference).date.length > 0 &&
             (pref as ShiftAffinityPreference).people1.length > 0 &&
@@ -1831,6 +1830,12 @@ export function useSchedulingData() {
       }
       if ('countShiftTypes' in pref && pref.countShiftTypes) {
         convertArrayIdsToString(pref.countShiftTypes);
+      }
+      if (pref.type === SHIFT_COUNT && pref.countShiftTypeCoefficients) {
+        pref.countShiftTypeCoefficients = pref.countShiftTypeCoefficients.map(([id, coefficient]) => [
+          String(id),
+          coefficient
+        ]);
       }
       if ('people1' in pref && pref.people1) {
         convertArrayIdsToString(pref.people1);

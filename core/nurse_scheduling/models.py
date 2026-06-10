@@ -265,6 +265,7 @@ class ShiftCountPreference(BasePreference):
     person: (int | str) | List[int | str]  # Single person/group ID or list
     countDates: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
     countShiftTypes: str | List[str]  # Single shift type ID or list
+    countShiftTypeCoefficients: List[tuple[str, int]] | None = None
     expression: str | List[str]  # Single mathematical expression or list of mathematical expressions
     target: (int | str) | List[
         int | str

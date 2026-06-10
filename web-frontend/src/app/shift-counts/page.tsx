@@ -24,7 +24,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftCountPreference, SHIFT_COUNT, SUPPORTED_EXPRESSIONS, SUPPORTED_SPECIAL_TARGETS } from '@/types/scheduling';
+import { ShiftCountPreference, ShiftCountTypeCoefficient, SHIFT_COUNT, SUPPORTED_EXPRESSIONS, SUPPORTED_SPECIAL_TARGETS } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
@@ -33,15 +33,28 @@ import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
+import { sortIdsByEntryOrder } from '@/utils/entityOrdering';
 
 interface ShiftCountForm {
   description: string;
   person: string[];
   count_dates: string[];
   count_shift_types: string[];
+  count_shift_type_coefficients: ShiftCountTypeCoefficient[];
   expression: typeof SUPPORTED_EXPRESSIONS[number];
   target: number | string;
   weight: number | string;
+}
+
+function getCoefficientForShiftType(coefficients: ShiftCountTypeCoefficient[], shiftTypeId: string): number {
+  return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? 1;
+}
+
+function syncCoefficientPairs(
+  selectedShiftTypeIds: string[],
+  coefficients: ShiftCountTypeCoefficient[]
+): ShiftCountTypeCoefficient[] {
+  return selectedShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
 }
 
 export default function ShiftCountsPage() {
@@ -66,12 +79,14 @@ export default function ShiftCountsPage() {
     person: [],
     count_dates: [],
     count_shift_types: [],
+    count_shift_type_coefficients: [],
     expression: 'x >= T',
     target: 0,
     weight: -1
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   useTabSwitchWarning(isFormVisible);
+  const shiftTypeEntries = [...shiftTypeData.items, ...shiftTypeData.groups];
 
   const instructions = [
     "Set up shift count rules for people (e.g., \"Working shifts should be close to the average\")",
@@ -90,6 +105,7 @@ export default function ShiftCountsPage() {
       person: [],
       count_dates: [],
       count_shift_types: [],
+      count_shift_type_coefficients: [],
       expression: 'x >= T',
       target: 0,
       weight: -1
@@ -110,6 +126,10 @@ export default function ShiftCountsPage() {
       person: shiftCount.person,
       count_dates: shiftCount.countDates,
       count_shift_types: shiftCount.countShiftTypes,
+      count_shift_type_coefficients: syncCoefficientPairs(
+        shiftCount.countShiftTypes,
+        shiftCount.countShiftTypeCoefficients ?? []
+      ),
       expression: shiftCount.expression,
       target: shiftCount.target,
       weight: shiftCount.weight
@@ -147,6 +167,13 @@ export default function ShiftCountsPage() {
       newErrors.count_shift_types = 'At least one shift type must be selected';
     }
 
+    for (const [shiftTypeId, coefficient] of formData.count_shift_type_coefficients) {
+      if (!Number.isInteger(coefficient) || coefficient < 1) {
+        newErrors.count_shift_type_coefficients = `Coefficient for ${shiftTypeId} must be an integer of at least 1`;
+        break;
+      }
+    }
+
     if (!SUPPORTED_EXPRESSIONS.includes(formData.expression)) {
       newErrors.expression = 'Please select a valid expression';
     }
@@ -166,12 +193,19 @@ export default function ShiftCountsPage() {
   function handleSave() {
     if (!validateForm()) return;
 
+    const sortedCountShiftTypes = sortIdsByEntryOrder(formData.count_shift_types, shiftTypeEntries);
+    const countShiftTypeCoefficients = syncCoefficientPairs(
+      sortedCountShiftTypes,
+      formData.count_shift_type_coefficients
+    ).filter(([, coefficient]) => coefficient !== 1);
+
     const newShiftCount: ShiftCountPreference = {
       type: SHIFT_COUNT,
       description: formData.description,
       person: formData.person,
       countDates: formData.count_dates,
       countShiftTypes: formData.count_shift_types,
+      ...(countShiftTypeCoefficients.length > 0 ? { countShiftTypeCoefficients } : {}),
       expression: formData.expression,
       target: formData.target as typeof SUPPORTED_SPECIAL_TARGETS[number] | number,
       weight: formData.weight as number
@@ -227,7 +261,28 @@ export default function ShiftCountsPage() {
       ...prev,
       [field]: prev[field].includes(id)
         ? prev[field].filter(v => v !== id)
-        : [...prev[field], id]
+        : [...prev[field], id],
+      ...(field === 'count_shift_types' ? {
+        count_shift_type_coefficients: syncCoefficientPairs(
+          prev.count_shift_types.includes(id)
+            ? prev.count_shift_types.filter(v => v !== id)
+            : [...prev.count_shift_types, id],
+          prev.count_shift_type_coefficients
+        )
+      } : {})
+    }));
+  };
+
+  const setCoefficientForShiftType = (shiftTypeId: string, coefficient: number) => {
+    setFormData(prev => ({
+      ...prev,
+      count_shift_type_coefficients: syncCoefficientPairs(
+        prev.count_shift_types,
+        [
+          ...prev.count_shift_type_coefficients.filter(([id]) => id !== shiftTypeId),
+          [shiftTypeId, coefficient]
+        ]
+      )
     }));
   };
 
@@ -411,6 +466,43 @@ export default function ShiftCountsPage() {
                 )}
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Count Shift Type Coefficients
+                </label>
+
+                <div className="flex flex-wrap items-end">
+                  {formData.count_shift_types.length === 0 ? (
+                    <div className="text-sm text-gray-500 italic">
+                      Select count shift types to set coefficients.
+                    </div>
+                  ) : (
+                    sortIdsByEntryOrder(formData.count_shift_types, shiftTypeEntries).map(shiftTypeId => (
+                      <label key={shiftTypeId} className="block w-28">
+                        <span className="block truncate text-xs font-medium text-gray-600 mb-1" title={shiftTypeId}>{shiftTypeId}</span>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={getCoefficientForShiftType(formData.count_shift_type_coefficients, shiftTypeId)}
+                          onChange={(e) => {
+                            const nextValue = Number.parseInt(e.target.value, 10);
+                            setCoefficientForShiftType(shiftTypeId, Number.isNaN(nextValue) ? 1 : Math.max(1, nextValue));
+                          }}
+                          className="block w-24 px-3 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:border-blue-500 focus:ring-blue-200 focus:outline-none focus:ring-2 hover:border-gray-400"
+                        />
+                      </label>
+                    ))
+                  )}
+                </div>
+                {errors.count_shift_type_coefficients && (
+                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {errors.count_shift_type_coefficients}
+                  </p>
+                )}
+              </div>
+
               {/* Expression and Target */}
               <div className="flex gap-4">
                 <div className="flex-1">
@@ -539,6 +631,12 @@ export default function ShiftCountsPage() {
                 <span className="font-medium">Count Shift Types:</span>{' '}
                 {shiftCount.countShiftTypes.join(', ')}
               </div>
+              {shiftCount.countShiftTypeCoefficients && (
+                <div className="md:col-span-2 lg:col-span-3">
+                  <span className="font-medium">Coefficients:</span>{' '}
+                  {shiftCount.countShiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
+                </div>
+              )}
             </div>
           </>
         )}

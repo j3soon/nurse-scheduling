@@ -269,6 +269,34 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                 ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))
 
 
+def _parse_shift_count_coefficients(
+    ctx: Context, preference: models.ShiftCountPreference, c_ss: list[int]
+) -> dict[int, int]:
+    selected_shift_type_ids = set(utils.ensure_list(preference.countShiftTypes))
+    coefficients = dict.fromkeys(c_ss, 1)
+    coefficient_entries = preference.countShiftTypeCoefficients or []
+    coefficient_sids = set()
+
+    for shift_type_id, coefficient in coefficient_entries:
+        if shift_type_id not in selected_shift_type_ids:
+            raise ValueError(
+                f"Shift count coefficient for '{shift_type_id}' must reference a shift type in countShiftTypes."
+            )
+        if coefficient < 1:
+            raise ValueError(f"Shift count coefficient for '{shift_type_id}' must be at least 1.")
+
+        expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
+        duplicate_sids = coefficient_sids.intersection(expanded_sids)
+        if duplicate_sids:
+            raise ValueError(f"Duplicate shift count coefficient for '{shift_type_id}'.")
+        coefficient_sids.update(expanded_sids)
+
+        for s in expanded_sids:
+            coefficients[s] = coefficient
+
+    return coefficients
+
+
 def shift_count(ctx: Context, preference: models.ShiftCountPreference, preference_idx):
     # Soft constraint
     # For specified people, dates, and shift types, penalize violations of the expression
@@ -277,8 +305,9 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     c_ds = utils.parse_dates(preference.countDates, ctx.map_did_d, ctx.dates.range)
     c_ss = utils.parse_sids(preference.countShiftTypes, ctx.map_sid_s)
+    coefficients = _parse_shift_count_coefficients(ctx, preference, c_ss)
 
-    # Calculate total preferred shifts across all shift type requirements
+    # Calculate total preferred shifts across all shift type requirements.
     total_shifts = 0
     for pref in ctx.preferences:
         if pref.type == models.SHIFT_TYPE_REQUIREMENT:
@@ -313,19 +342,18 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
         for p in ps:
             unique_var_prefix = f"pref_{preference_idx}_p_{p}"
             # Calculate actual number of shifts for this person
-            if utils.is_ss_equivalent_to_all(c_ss, ctx.n_shift_types):
-                x = sum(ctx.shifts[(d, s, p)] for d in c_ds for s in c_ss)
-            else:
-                x = sum(
-                    ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for d in c_ds for s in c_ss
-                )
+            x = sum(
+                coefficients[s] * (ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)])
+                for d in c_ds
+                for s in c_ss
+            )
 
             # TODO: Also Report value of `x`
 
             # TODO: total_shifts may be a tighter bound, but the current bound
             # will work even without considering each person can have one
             # max shifts per day.
-            max_x = len(c_ds) * len(c_ss)
+            max_x = len(c_ds) * sum(coefficients.values())
 
             SUPPORTED_EXPRESSIONS = ["|x - T|^2", "x >= T", "x <= T", "x > T", "x < T", "x = T"]
             # Evaluate the expression

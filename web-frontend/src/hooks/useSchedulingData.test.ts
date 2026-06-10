@@ -2117,6 +2117,7 @@ describe('useSchedulingData', () => {
             person: ['P1'],
             countDates: ['01'],
             countShiftTypes: ['D'],
+            countShiftTypeCoefficients: [['D', 7]],
             expression: 'x >= T',
             target: 1,
             weight: 4,
@@ -2144,7 +2145,12 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       const person = result.current.peopleData.items.find(item => item.id === 'P1');
+      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
+        | { countShiftTypes: string[]; countShiftTypeCoefficients?: Array<[string, number]> }
+        | undefined;
       expect(person?.history).toEqual(['A', 'DX', 'N']);
+      expect(count?.countShiftTypes).toEqual(['DX']);
+      expect(count?.countShiftTypeCoefficients).toEqual([['DX', 7]]);
       expect(result.current.preferences.some(pref => JSON.stringify(pref).includes('"D"'))).toBe(false);
       expect(result.current.preferences.some(pref => JSON.stringify(pref).includes('"DX"'))).toBe(true);
     });
@@ -2159,7 +2165,7 @@ describe('useSchedulingData', () => {
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);
-      expect(result.current.preferences.some(pref => pref.type === SHIFT_COUNT)).toBe(true);
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_COUNT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_AFFINITY)).toBe(false);
     });
   });
@@ -2225,7 +2231,7 @@ describe('useSchedulingData', () => {
     await waitFor(() => {
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(true);
-      expect(result.current.preferences.some(pref => pref.type === SHIFT_COUNT)).toBe(true);
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_COUNT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_AFFINITY)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(true);
     });
@@ -2675,6 +2681,7 @@ describe('useSchedulingData', () => {
             minCount: 0,
             maxCount: 2,
             countShiftTypes: [10, 11],
+            countShiftTypeCoefficients: [[10, 2], [11, 3]],
             weight: 1,
           },
         ],
@@ -2687,7 +2694,7 @@ describe('useSchedulingData', () => {
         | { date: string[]; people1: string[]; people2: string[]; shiftTypes: string[] }
         | undefined;
       const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
-        | { person: string[]; countDates: string[]; countShiftTypes: string[] }
+        | { person: string[]; countDates: string[]; countShiftTypes: string[]; countShiftTypeCoefficients?: Array<[string, number]> }
         | undefined;
 
       expect(affinity).toEqual({
@@ -2701,6 +2708,7 @@ describe('useSchedulingData', () => {
       expect(count?.person).toEqual(['1']);
       expect(count?.countDates).toEqual(['01']);
       expect(count?.countShiftTypes).toEqual(['10', '11']);
+      expect(count?.countShiftTypeCoefficients).toEqual([['10', 2], ['11', 3]]);
     });
   });
 
@@ -2789,6 +2797,7 @@ describe('useSchedulingData', () => {
             person: ['P2'],
             countDates: ['01', '02'],
             countShiftTypes: ['D', 'N'],
+            countShiftTypeCoefficients: [['D', 2], ['N', 5]],
             expression: 'x >= T',
             target: 1,
             weight: 4,
@@ -2821,7 +2830,7 @@ describe('useSchedulingData', () => {
         | { pattern: string[] }
         | undefined;
       const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
-        | { countShiftTypes: string[] }
+        | { countShiftTypes: string[]; countShiftTypeCoefficients?: Array<[string, number]> }
         | undefined;
       const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as
         | { shiftTypes: string[] }
@@ -2832,6 +2841,7 @@ describe('useSchedulingData', () => {
       expect(requirement?.shiftType).toEqual(['DX']);
       expect(successions?.pattern).toEqual(['DX', 'N']);
       expect(count?.countShiftTypes).toEqual(['DX', 'N']);
+      expect(count?.countShiftTypeCoefficients).toEqual([['DX', 2], ['N', 5]]);
       expect(affinity?.shiftTypes).toEqual(['DX']);
       expect(person?.history).toEqual(['DX']);
       expect(result.current.preferences.some(pref => JSON.stringify(pref).includes('"D"'))).toBe(false);
@@ -3000,7 +3010,16 @@ describe('useSchedulingData', () => {
         preferences: [
           { type: SHIFT_REQUEST, person: ['P1'], date: ['01'], shiftType: ['DN'], weight: 1 },
           { type: SHIFT_TYPE_REQUIREMENT, date: ['01'], shiftType: ['DN'], qualifiedPeople: ['P1'], requiredNumPeople: 1, weight: 2 },
-          { type: SHIFT_COUNT, person: ['P1'], countDates: ['01'], countShiftTypes: ['DN'], expression: 'x >= T', target: 1, weight: 3 },
+          {
+            type: SHIFT_COUNT,
+            person: ['P1'],
+            countDates: ['01'],
+            countShiftTypes: ['DN'],
+            countShiftTypeCoefficients: [['DN', 4]],
+            expression: 'x >= T',
+            target: 1,
+            weight: 3
+          },
           { type: SHIFT_AFFINITY, date: ['01'], people1: ['P1'], people2: ['P1'], shiftTypes: ['DN'], weight: 4 },
         ],
         export: { formatting: [] },
@@ -3014,13 +3033,16 @@ describe('useSchedulingData', () => {
     await waitFor(() => {
       const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as { shiftType: string[] } | undefined;
       const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as { shiftType: string[] } | undefined;
-      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as { countShiftTypes: string[] } | undefined;
+      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
+        | { countShiftTypes: string[]; countShiftTypeCoefficients?: Array<[string, number]> }
+        | undefined;
       const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as { shiftTypes: string[] } | undefined;
 
       expect(result.current.shiftTypeData.groups.some(group => group.id === 'DAYNIGHT')).toBe(true);
       expect(request?.shiftType).toEqual(['DAYNIGHT']);
       expect(requirement?.shiftType).toEqual(['DAYNIGHT']);
       expect(count?.countShiftTypes).toEqual(['DAYNIGHT']);
+      expect(count?.countShiftTypeCoefficients).toEqual([['DAYNIGHT', 4]]);
       expect(affinity?.shiftTypes).toEqual(['DAYNIGHT']);
     });
   });

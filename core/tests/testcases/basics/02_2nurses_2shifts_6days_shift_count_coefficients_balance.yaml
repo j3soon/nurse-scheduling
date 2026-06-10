@@ -1,0 +1,53 @@
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-06
+people:
+  items:
+    - id: n1
+    - id: n2
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+    date: [1, 2, 3]
+  - type: shift type requirement
+    shiftType: A
+    requiredNumPeople: 1
+    date: [4, 5, 6]
+  - type: shift request
+    person: n1
+    date: [1, 2, 3]
+    shiftType: D
+    weight: 1
+  - type: shift request
+    person: n1
+    date: 4
+    shiftType: A
+    weight: 2
+  - type: shift request
+    person: n1
+    date: 5
+    shiftType: A
+    weight: 1
+  - type: shift request
+    person: n1
+    date: 6
+    shiftType: A
+    weight: 1
+  - type: shift count
+    person: ALL
+    countDates: ALL
+    countShiftTypes: [D, A]
+    countShiftTypeCoefficients:
+      - [D, 1]
+      - [A, 3]
+    expression: 'x = T'
+    target: 6
+    weight: 100
