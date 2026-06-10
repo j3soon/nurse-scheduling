@@ -65,6 +65,169 @@ interface HistoryMutationOptions {
   replaceLatestHistoryEntry?: boolean;
 }
 
+function sortIdsByEntryOrder(ids: string[] | undefined, entries: { id: string }[]): string[] {
+  if (!Array.isArray(ids)) return [];
+
+  const entryOrder = new Map(entries.map((entry, index) => [entry.id, index]));
+  return [...ids].sort((a, b) => {
+    const orderA = entryOrder.get(a) ?? Number.MAX_SAFE_INTEGER;
+    const orderB = entryOrder.get(b) ?? Number.MAX_SAFE_INTEGER;
+    return orderA - orderB;
+  });
+}
+
+function getOrderedEntries(data: { items: { id: string }[]; groups: { id: string }[] }) {
+  return [...data.items, ...data.groups];
+}
+
+// These fields are arrays for schema consistency, but callers use this helper
+// only for preference fields that should contain exactly one ID.
+function compareFirstIdByEntryOrder(a: string[], b: string[], entries: { id: string }[]): number {
+  const entryOrder = new Map(entries.map((entry, index) => [entry.id, index]));
+  const orderA = entryOrder.get(a[0]) ?? Number.MAX_SAFE_INTEGER;
+  const orderB = entryOrder.get(b[0]) ?? Number.MAX_SAFE_INTEGER;
+  return orderA - orderB;
+}
+
+function normalizePreferenceOrder(pref: Preference, state: SchedulingState): Preference {
+  const peopleEntries = getOrderedEntries(state.people);
+  const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
+  const dateEntries = getOrderedEntries(state.dates);
+
+  if (pref.type === SHIFT_TYPE_REQUIREMENT) {
+    return {
+      ...pref,
+      shiftType: sortIdsByEntryOrder(pref.shiftType, shiftTypeEntries),
+      qualifiedPeople: sortIdsByEntryOrder(pref.qualifiedPeople, peopleEntries),
+      date: sortIdsByEntryOrder(pref.date, dateEntries),
+    };
+  }
+  if (pref.type === SHIFT_REQUEST) {
+    return {
+      ...pref,
+      person: sortIdsByEntryOrder(pref.person, peopleEntries),
+      date: sortIdsByEntryOrder(pref.date, dateEntries),
+      shiftType: sortIdsByEntryOrder(pref.shiftType, shiftTypeEntries),
+    };
+  }
+  if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
+    return {
+      ...pref,
+      person: sortIdsByEntryOrder(pref.person, peopleEntries),
+      date: sortIdsByEntryOrder(pref.date, dateEntries),
+    };
+  }
+  if (pref.type === SHIFT_COUNT) {
+    return {
+      ...pref,
+      person: sortIdsByEntryOrder(pref.person, peopleEntries),
+      countDates: sortIdsByEntryOrder(pref.countDates, dateEntries),
+      countShiftTypes: sortIdsByEntryOrder(pref.countShiftTypes, shiftTypeEntries),
+    };
+  }
+  if (pref.type === SHIFT_AFFINITY) {
+    return {
+      ...pref,
+      date: sortIdsByEntryOrder(pref.date, dateEntries),
+      people1: sortIdsByEntryOrder(pref.people1, peopleEntries),
+      people2: sortIdsByEntryOrder(pref.people2, peopleEntries),
+      shiftTypes: sortIdsByEntryOrder(pref.shiftTypes, shiftTypeEntries),
+    };
+  }
+  return pref;
+}
+
+function sortPreferencesByType(preferences: Preference[]): Preference[] {
+  const typeOrder = [AT_MOST_ONE_SHIFT_PER_DAY, SHIFT_TYPE_REQUIREMENT, SHIFT_REQUEST, SHIFT_TYPE_SUCCESSIONS, SHIFT_COUNT, SHIFT_AFFINITY];
+  return [...preferences].sort((a, b) => typeOrder.indexOf(a.type) - typeOrder.indexOf(b.type));
+}
+
+function sortShiftRequestsByEntityOrder(preferences: ShiftRequestPreference[], state: SchedulingState): ShiftRequestPreference[] {
+  const peopleEntries = getOrderedEntries(state.people);
+  const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
+  // Sort requests by person, then shift type, then weight; request dates are
+  // normalized inside each request rather than used for list-level ordering.
+  return [...preferences].sort((a, b) => {
+    const personOrder = compareFirstIdByEntryOrder(a.person, b.person, peopleEntries);
+    if (personOrder !== 0) return personOrder;
+    const shiftTypeOrder = compareFirstIdByEntryOrder(a.shiftType, b.shiftType, shiftTypeEntries);
+    if (shiftTypeOrder !== 0) return shiftTypeOrder;
+    return a.weight - b.weight;
+  });
+}
+
+function normalizePreferencesOrder(preferences: Preference[], state: SchedulingState): Preference[] {
+  const normalizedPreferences = preferences.map(pref => normalizePreferenceOrder(pref, state));
+  const shiftRequests = sortShiftRequestsByEntityOrder(
+    normalizedPreferences.filter((pref): pref is ShiftRequestPreference => pref.type === SHIFT_REQUEST),
+    state
+  );
+  let shiftRequestIndex = 0;
+  return sortPreferencesByType(normalizedPreferences.map(pref => {
+    if (pref.type !== SHIFT_REQUEST) return pref;
+    const sortedShiftRequest = shiftRequests[shiftRequestIndex];
+    shiftRequestIndex += 1;
+    return sortedShiftRequest;
+  }));
+}
+
+function normalizeExportFormattingOrder(formatting: ExportFormatting[] | undefined, state: SchedulingState) {
+  if (!formatting) return formatting;
+
+  const peopleEntries = getOrderedEntries(state.people);
+  const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
+  const dateEntries = getOrderedEntries(state.dates);
+
+  return formatting.map(rule => {
+    let updatedRule = { ...rule };
+    if ('people' in updatedRule) {
+      updatedRule = { ...updatedRule, people: sortIdsByEntryOrder(updatedRule.people, peopleEntries) };
+    }
+    if ('dates' in updatedRule) {
+      updatedRule = { ...updatedRule, dates: sortIdsByEntryOrder(updatedRule.dates, dateEntries) };
+    }
+    if ('shiftTypes' in updatedRule) {
+      updatedRule = { ...updatedRule, shiftTypes: sortIdsByEntryOrder(updatedRule.shiftTypes, shiftTypeEntries) };
+    }
+    return updatedRule;
+  });
+}
+
+function normalizeExportExtraColumnsOrder(extraColumns: ExportExtraColumn[] | undefined, state: SchedulingState) {
+  if (!extraColumns) return extraColumns;
+
+  const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
+  const dateEntries = getOrderedEntries(state.dates);
+  return extraColumns.map(rule => ({
+    ...rule,
+    countShiftTypes: sortIdsByEntryOrder(rule.countShiftTypes, shiftTypeEntries),
+    countDates: sortIdsByEntryOrder(rule.countDates, dateEntries),
+  }));
+}
+
+function normalizeExportExtraRowsOrder(extraRows: ExportExtraRow[] | undefined, state: SchedulingState) {
+  if (!extraRows) return extraRows;
+
+  const peopleEntries = getOrderedEntries(state.people);
+  const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
+  return extraRows.map(rule => ({
+    ...rule,
+    countShiftTypes: sortIdsByEntryOrder(rule.countShiftTypes, shiftTypeEntries),
+    countPeople: sortIdsByEntryOrder(rule.countPeople, peopleEntries),
+  }));
+}
+
+function normalizeExportConfigOrder(exportConfig: ExportConfig | undefined, state: SchedulingState) {
+  if (!exportConfig) return exportConfig;
+
+  return {
+    ...exportConfig,
+    formatting: normalizeExportFormattingOrder(exportConfig.formatting, state),
+    extraColumns: normalizeExportExtraColumnsOrder(exportConfig.extraColumns, state),
+    extraRows: normalizeExportExtraRowsOrder(exportConfig.extraRows, state),
+  };
+}
+
 // Helper function to generate date items from a date range
 function _generateDateItems(startDate: Date, endDate: Date): Item[] {
   const dates: Item[] = [];
@@ -1504,7 +1667,7 @@ export function useSchedulingData() {
   ) => {
     updateState(prevState => ({
       ...prevState,
-      preferences: newPreferences
+      preferences: normalizePreferencesOrder(newPreferences, prevState)
     }), options);
   };
 
@@ -1515,24 +1678,9 @@ export function useSchedulingData() {
   ) => {
     const otherPreferences = historyState.state.preferences.filter(pref => pref.type !== type);
     if (type === SHIFT_REQUEST) {
-      const combinedPeopleEntries = [...historyState.state.people.groups, ...historyState.state.people.items];
-      const combinedShiftTypeEntries = [...historyState.state.shiftTypes.groups, ...historyState.state.shiftTypes.items];
-      const combinedDateEntries = [...historyState.state.dates.groups, ...historyState.state.dates.items];
+      const combinedDateEntries = getOrderedEntries(historyState.state.dates);
       // Sort preferences by person, shift type, weight.
-      (newPreferences as ShiftRequestPreference[]).sort((a, b) => {
-        // Sort based on peopleData person index
-        const peopleIndexA = combinedPeopleEntries.findIndex(p => p.id === a.person[0]);
-        const peopleIndexB = combinedPeopleEntries.findIndex(p => p.id === b.person[0]);
-        const personOrder = peopleIndexA - peopleIndexB;
-        if (personOrder !== 0) return personOrder;
-        // Sort based on shiftTypeData shift type index
-        const shiftTypeIndexA = combinedShiftTypeEntries.findIndex(p => p.id === a.shiftType[0]);
-        const shiftTypeIndexB = combinedShiftTypeEntries.findIndex(p => p.id === b.shiftType[0]);
-        const shiftTypeOrder = shiftTypeIndexA - shiftTypeIndexB;
-        if (shiftTypeOrder !== 0) return shiftTypeOrder;
-        // Sort based on weight
-        return a.weight - b.weight;
-      });
+      newPreferences = sortShiftRequestsByEntityOrder(newPreferences as ShiftRequestPreference[], historyState.state) as T[];
       // Sort each preference date array
       (newPreferences as ShiftRequestPreference[]).forEach(pref => {
         if (pref.person.length !== 1) {
@@ -1555,10 +1703,7 @@ export function useSchedulingData() {
       });
     }
     // Sort preferences by type after updating
-    const updatedPreferences = [...otherPreferences, ...newPreferences].sort((a, b) => {
-      const typeOrder = [AT_MOST_ONE_SHIFT_PER_DAY, SHIFT_TYPE_REQUIREMENT, SHIFT_REQUEST, SHIFT_TYPE_SUCCESSIONS, SHIFT_COUNT, SHIFT_AFFINITY];
-      return typeOrder.indexOf(a.type) - typeOrder.indexOf(b.type);
-    });
+    const updatedPreferences = normalizePreferencesOrder([...otherPreferences, ...newPreferences], historyState.state);
     updatePreferences(updatedPreferences, options);
   };
 
@@ -1567,7 +1712,7 @@ export function useSchedulingData() {
       ...prevState,
       export: {
         ...(prevState.export ?? generateExportLayoutConfig(prevState.shiftTypes, prevState.dates.groups)),
-        formatting
+        formatting: normalizeExportFormattingOrder(formatting, prevState)
       }
     }));
   };
@@ -1577,7 +1722,7 @@ export function useSchedulingData() {
       ...prevState,
       export: {
         ...(prevState.export ?? generateExportLayoutConfig(prevState.shiftTypes, prevState.dates.groups)),
-        extraColumns
+        extraColumns: normalizeExportExtraColumnsOrder(extraColumns, prevState)
       }
     }));
   };
@@ -1587,7 +1732,7 @@ export function useSchedulingData() {
       ...prevState,
       export: {
         ...(prevState.export ?? generateExportLayoutConfig(prevState.shiftTypes, prevState.dates.groups)),
-        extraRows
+        extraRows: normalizeExportExtraRowsOrder(extraRows, prevState)
       }
     }));
   };
@@ -1595,7 +1740,7 @@ export function useSchedulingData() {
   const updateExportConfig = (exportConfig?: ExportConfig) => {
     updateState(prevState => ({
       ...prevState,
-      export: exportConfig
+      export: normalizeExportConfigOrder(exportConfig, prevState)
     }));
   };
 
@@ -1716,6 +1861,8 @@ export function useSchedulingData() {
       convertArrayIdsToString(rule.countShiftTypes);
       convertArrayIdsToString(rule.countPeople);
     });
+    newState.preferences = normalizePreferencesOrder(newState.preferences, newState);
+    newState.export = normalizeExportConfigOrder(newState.export, newState);
 
     // Add to history and update state
     setHistoryState(prevHistoryState => {

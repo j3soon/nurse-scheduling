@@ -794,6 +794,13 @@ describe('useSchedulingData', () => {
           shiftType: ['D'],
           weight: 1,
         },
+        {
+          type: SHIFT_REQUEST,
+          person: ['Group 1'],
+          date: ['03', '01'],
+          shiftType: ['Day'],
+          weight: 1,
+        },
       ]);
     });
 
@@ -804,15 +811,177 @@ describe('useSchedulingData', () => {
         date: string[];
         weight: number;
       }>;
-      expect(requests).toHaveLength(3);
+      expect(requests).toHaveLength(4);
       expect(requests.map(req => [req.person[0], req.shiftType[0], req.weight])).toEqual([
         ['Person 1', 'D', 1],
         ['Person 1', 'D', 5],
         ['Person 2', 'N', 10],
+        ['Group 1', 'Day', 1],
       ]);
       expect(requests[0].date).toEqual(['02', '03']);
       expect(requests[1].date).toEqual(['01', '02']);
       expect(requests[2].date).toEqual(['01', '03']);
+      expect(requests[3].date).toEqual(['01', '03']);
+    });
+  });
+
+  it('sorts SHIFT_TYPE_REQUIREMENT arrays in updatePreferencesByType', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date(Date.UTC(2026, 2, 1, 12)),
+        endDate: new Date(Date.UTC(2026, 2, 3, 12)),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['01', '02', '03']);
+    });
+
+    act(() => {
+      result.current.updatePreferencesByType(SHIFT_TYPE_REQUIREMENT, [
+        {
+          type: SHIFT_TYPE_REQUIREMENT,
+          date: [ALL, '03', '01'],
+          shiftType: ['Night', 'E', 'D'],
+          qualifiedPeople: ['Group 1', 'Person 2', 'Person 1'],
+          requiredNumPeople: 1,
+          weight: -1,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as
+        | { date: string[]; shiftType: string[]; qualifiedPeople: string[] }
+        | undefined;
+      expect(requirement?.shiftType).toEqual(['D', 'E', 'Night']);
+      expect(requirement?.qualifiedPeople).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(requirement?.date).toEqual(['01', '03', ALL]);
+    });
+  });
+
+  it('sorts unordered arrays for remaining preference types in updatePreferencesByType', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date(Date.UTC(2026, 2, 1, 12)),
+        endDate: new Date(Date.UTC(2026, 2, 3, 12)),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['01', '02', '03']);
+    });
+
+    act(() => {
+      result.current.updatePreferencesByType(SHIFT_TYPE_SUCCESSIONS, [
+        {
+          type: SHIFT_TYPE_SUCCESSIONS,
+          person: ['Group 1', 'Person 2', 'Person 1'],
+          pattern: ['Night', 'D'],
+          date: [ALL, '03', '01'],
+          weight: -1,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(true);
+    });
+
+    act(() => {
+      result.current.updatePreferencesByType(SHIFT_COUNT, [
+        {
+          type: SHIFT_COUNT,
+          person: ['Group 1', 'Person 2', 'Person 1'],
+          countDates: [ALL, '03', '01'],
+          countShiftTypes: ['Night', 'E', 'D'],
+          expression: 'x >= T',
+          target: 1,
+          weight: -1,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_COUNT)).toBe(true);
+    });
+
+    act(() => {
+      result.current.updatePreferencesByType(SHIFT_AFFINITY, [
+        {
+          type: SHIFT_AFFINITY,
+          date: [ALL, '03', '01'],
+          people1: ['Group 1', 'Person 2', 'Person 1'],
+          people2: ['Group 2', 'Person 3', 'Person 1'],
+          shiftTypes: ['Night', 'E', 'D'],
+          weight: 1,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      const successions = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_SUCCESSIONS) as
+        | { person: string[]; pattern: string[]; date: string[] }
+        | undefined;
+      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
+        | { person: string[]; countDates: string[]; countShiftTypes: string[] }
+        | undefined;
+      const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as
+        | { date: string[]; people1: string[]; people2: string[]; shiftTypes: string[] }
+        | undefined;
+
+      expect(successions?.person).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(successions?.pattern).toEqual(['Night', 'D']);
+      expect(successions?.date).toEqual(['01', '03', ALL]);
+      expect(count?.person).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(count?.countDates).toEqual(['01', '03', ALL]);
+      expect(count?.countShiftTypes).toEqual(['D', 'E', 'Night']);
+      expect(affinity?.date).toEqual(['01', '03', ALL]);
+      expect(affinity?.people1).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(affinity?.people2).toEqual(['Person 1', 'Person 3', 'Group 2']);
+      expect(affinity?.shiftTypes).toEqual(['D', 'E', 'Night']);
+    });
+  });
+
+  it('sorts unordered arrays in direct updatePreferences calls', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date(Date.UTC(2026, 2, 1, 12)),
+        endDate: new Date(Date.UTC(2026, 2, 3, 12)),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['01', '02', '03']);
+    });
+
+    act(() => {
+      result.current.updatePreferences([
+        {
+          type: SHIFT_COUNT,
+          person: ['Group 1', 'Person 2', 'Person 1'],
+          countDates: [ALL, '03', '01'],
+          countShiftTypes: ['Night', 'E', 'D'],
+          expression: 'x >= T',
+          target: 1,
+          weight: -1,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
+        | { person: string[]; countDates: string[]; countShiftTypes: string[] }
+        | undefined;
+      expect(count?.person).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(count?.countDates).toEqual(['01', '03', ALL]);
+      expect(count?.countShiftTypes).toEqual(['D', 'E', 'Night']);
     });
   });
 
@@ -1172,6 +1341,125 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       expect(result.current.exportData.formatting).toBeUndefined();
+    });
+  });
+
+  it('sorts unordered export layout ID arrays without reordering rules', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date(Date.UTC(2026, 2, 1, 12)),
+        endDate: new Date(Date.UTC(2026, 2, 3, 12)),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['01', '02', '03']);
+    });
+
+    act(() => {
+      result.current.updateExportFormatting([
+        {
+          type: 'cell',
+          people: ['Group 1', 'Person 2', 'Person 1'],
+          dates: [ALL, '03', '01'],
+          shiftTypes: ['Night', 'E', 'D'],
+          backgroundColor: '#ffffff',
+        },
+        {
+          type: 'row',
+          people: ['Group 2', 'Person 3', 'Person 1'],
+          backgroundColor: '#eeeeee',
+        },
+      ]);
+      result.current.updateExportExtraColumns([
+        {
+          type: 'count',
+          header: 'Count',
+          countDates: [ALL, '03', '01'],
+          countShiftTypes: ['Night', 'E', 'D'],
+        },
+      ]);
+      result.current.updateExportExtraRows([
+        {
+          type: 'count',
+          header: 'People',
+          countPeople: ['Group 1', 'Person 2', 'Person 1'],
+          countShiftTypes: ['Night', 'E', 'D'],
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      const formatting = result.current.exportData?.formatting;
+      const cell = formatting?.[0] as
+        | { people: string[]; dates: string[]; shiftTypes: string[] }
+        | undefined;
+      const row = formatting?.[1] as
+        | { people: string[] }
+        | undefined;
+      expect(formatting?.map(rule => rule.type)).toEqual(['cell', 'row']);
+      expect(cell?.people).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(cell?.dates).toEqual(['01', '03', ALL]);
+      expect(cell?.shiftTypes).toEqual(['D', 'E', 'Night']);
+      expect(row?.people).toEqual(['Person 1', 'Person 3', 'Group 2']);
+      expect(result.current.exportData?.extraColumns?.[0].countDates).toEqual(['01', '03', ALL]);
+      expect(result.current.exportData?.extraColumns?.[0].countShiftTypes).toEqual(['D', 'E', 'Night']);
+      expect(result.current.exportData?.extraRows?.[0].countPeople).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(result.current.exportData?.extraRows?.[0].countShiftTypes).toEqual(['D', 'E', 'Night']);
+    });
+  });
+
+  it('sorts unordered export layout ID arrays in updateExportConfig', async () => {
+    const { result } = renderHook(() => useSchedulingData());
+
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date(Date.UTC(2026, 2, 1, 12)),
+        endDate: new Date(Date.UTC(2026, 2, 3, 12)),
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.dateData.items.map(item => item.id)).toEqual(['01', '02', '03']);
+    });
+
+    act(() => {
+      result.current.updateExportConfig({
+        formatting: [{
+          type: 'cell',
+          people: ['Group 1', 'Person 2', 'Person 1'],
+          dates: [ALL, '03', '01'],
+          shiftTypes: ['Night', 'E', 'D'],
+          backgroundColor: '#ffffff',
+        }],
+        extraColumns: [{
+          type: 'count',
+          header: 'Count',
+          countDates: [ALL, '03', '01'],
+          countShiftTypes: ['Night', 'E', 'D'],
+        }],
+        extraRows: [{
+          type: 'count',
+          header: 'People',
+          countPeople: ['Group 1', 'Person 2', 'Person 1'],
+          countShiftTypes: ['Night', 'E', 'D'],
+        }],
+      });
+    });
+
+    await waitFor(() => {
+      const cell = result.current.exportData?.formatting?.[0] as
+        | { people: string[]; dates: string[]; shiftTypes: string[] }
+        | undefined;
+      expect(cell?.people).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(cell?.dates).toEqual(['01', '03', ALL]);
+      expect(cell?.shiftTypes).toEqual(['D', 'E', 'Night']);
+      expect(result.current.exportData?.extraColumns?.[0].countDates).toEqual(['01', '03', ALL]);
+      expect(result.current.exportData?.extraColumns?.[0].countShiftTypes).toEqual(['D', 'E', 'Night']);
+      expect(result.current.exportData?.extraRows?.[0].countPeople).toEqual(['Person 1', 'Person 2', 'Group 1']);
+      expect(result.current.exportData?.extraRows?.[0].countShiftTypes).toEqual(['D', 'E', 'Night']);
     });
   });
 
