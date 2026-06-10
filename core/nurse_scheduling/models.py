@@ -20,7 +20,7 @@
 import datetime
 import math
 import re
-from typing import List, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from typing_extensions import Annotated, Self
@@ -47,7 +47,7 @@ class Person(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: int | str
     description: str | None = None
-    history: List[str] | None = None
+    history: list[str] | None = None
 
 
 class DateRange(BaseModel):
@@ -60,7 +60,7 @@ class PeopleGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     description: str | None = None
-    members: List[int | str]  # Can reference person IDs or other group IDs
+    members: list[int | str]  # Can reference person IDs or other group IDs
 
 
 class ShiftType(BaseModel):
@@ -73,33 +73,33 @@ class ShiftTypeGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     description: str | None = None
-    members: List[int | str]  # Can reference shift type IDs or other group IDs
+    members: list[int | str]  # Can reference shift type IDs or other group IDs
 
 
 class DateGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     description: str | None = None
-    members: List[int | str | datetime.date]  # Can reference date IDs, group IDs, or date objects
+    members: list[int | str | datetime.date]  # Can reference date IDs, group IDs, or date objects
 
 
 class PeopleContainer(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    items: List[Person]
-    groups: List[PeopleGroup] = Field(default_factory=list)
+    items: list[Person]
+    groups: list[PeopleGroup] = Field(default_factory=list)
 
 
 class ShiftTypesContainer(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    items: List[ShiftType]
-    groups: List[ShiftTypeGroup] = Field(default_factory=list)
+    items: list[ShiftType]
+    groups: list[ShiftTypeGroup] = Field(default_factory=list)
 
 
 class DateContainer(BaseModel):
     model_config = ConfigDict(extra="forbid")
     range: DateRange
-    items: List[datetime.date] = Field(default_factory=list)  # Automatically generated from range
-    groups: List[DateGroup] = Field(default_factory=list)
+    items: list[datetime.date] = Field(default_factory=list)  # Automatically generated from range
+    groups: list[DateGroup] = Field(default_factory=list)
 
 
 class BaseExportFormattingRule(BaseModel):
@@ -113,12 +113,12 @@ class BaseExportFormattingRule(BaseModel):
 
 class ExportPersonFormattingRule(BaseExportFormattingRule):
     type: Literal["row", "people header", "history"]
-    people: List[int | str]
+    people: list[int | str]
 
 
 class ExportDateFormattingRule(BaseExportFormattingRule):
     type: Literal["column", "date header"]
-    dates: List[int | str]
+    dates: list[int | str]
 
 
 class ExportHistoryHeaderFormattingRule(BaseExportFormattingRule):
@@ -127,9 +127,9 @@ class ExportHistoryHeaderFormattingRule(BaseExportFormattingRule):
 
 class ExportPreferenceCondition(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    types: List[Literal["shift request"]]
+    types: list[Literal["shift request"]]
     requestShape: (
-        List[
+        list[
             Literal[
                 "person-item-to-date-item",
                 "people-group-to-date-item",
@@ -141,7 +141,7 @@ class ExportPreferenceCondition(BaseModel):
         | None
     ) = None
     satisfied: bool | None = None
-    weightRange: List[int | float] | None = None
+    weightRange: list[int | float] | None = None
 
 
 class ExportFormattingCondition(BaseModel):
@@ -158,9 +158,9 @@ class ExportCellFormattingRule(BaseExportFormattingRule):
     type: Literal["cell"]
     appendText: str | None = None
     note: ExportFormattingNote | None = None
-    people: List[int | str]
-    dates: List[int | str]
-    shiftTypes: List[int | str]
+    people: list[int | str]
+    dates: list[int | str]
+    shiftTypes: list[int | str]
     when: ExportFormattingCondition | None = None
 
 
@@ -179,8 +179,8 @@ class ExportExtraColumn(BaseModel):
     rightBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     type: Annotated[str, Field(pattern=r"^count$")]
     header: str
-    countShiftTypes: List[int | str]
-    countDates: List[int | str]
+    countShiftTypes: list[int | str]
+    countDates: list[int | str]
 
 
 class ExportExtraRow(BaseModel):
@@ -189,15 +189,15 @@ class ExportExtraRow(BaseModel):
     bottomBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     type: Annotated[str, Field(pattern=r"^count$")]
     header: str
-    countShiftTypes: List[int | str]
-    countPeople: List[int | str]
+    countShiftTypes: list[int | str]
+    countPeople: list[int | str]
 
 
 class ExportConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    formatting: List[ExportFormattingRule] = Field(default_factory=list)
-    extraColumns: List[ExportExtraColumn] = Field(default_factory=list)
-    extraRows: List[ExportExtraRow] = Field(default_factory=list)
+    formatting: list[ExportFormattingRule] = Field(default_factory=list)
+    extraColumns: list[ExportExtraColumn] = Field(default_factory=list)
+    extraRows: list[ExportExtraRow] = Field(default_factory=list)
 
 
 class BasePreference(BaseModel):
@@ -209,9 +209,9 @@ class ShiftRequestPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_REQUEST}$")] = SHIFT_REQUEST
     description: str | None = None
-    person: (int | str) | List[int | str]  # Single person/group ID or list
-    date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
-    shiftType: str | List[str]  # Single shift type ID or list
+    person: (int | str) | list[int | str]  # Single person/group ID or list
+    date: (int | str | datetime.date) | list[int | str | datetime.date]  # Single date or list of dates
+    shiftType: str | list[str]  # Single shift type ID or list
     weight: int | float = Field(default=1)  # For float can only be .inf or -.inf
 
     @field_validator("weight")
@@ -224,9 +224,9 @@ class ShiftTypeSuccessionsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_TYPE_SUCCESSIONS}$")] = SHIFT_TYPE_SUCCESSIONS
     description: str | None = None
-    person: (int | str) | List[int | str]  # Single person/group ID or list
-    pattern: List[str | List[str]]  # List of shift type IDs or nested patterns
-    date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
+    person: (int | str) | list[int | str]  # Single person/group ID or list
+    pattern: list[str | list[str]]  # List of shift type IDs or nested patterns
+    date: (int | str | datetime.date) | list[int | str | datetime.date] | None = None  # Single date or list of dates
     weight: int | float = Field(default=1)  # For float can only be .inf or -.inf
 
     @field_validator("weight")
@@ -245,11 +245,11 @@ class ShiftTypeRequirementsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_TYPE_REQUIREMENT}$")] = SHIFT_TYPE_REQUIREMENT
     description: str | None = None
-    shiftType: str | List[str]  # Single shift type ID or list of shift type IDs
+    shiftType: str | list[str]  # Single shift type ID or list of shift type IDs
     requiredNumPeople: int
-    qualifiedPeople: (int | str) | List[int | str] | None = None  # Single person/group ID or list or None
+    qualifiedPeople: (int | str) | list[int | str] | None = None  # Single person/group ID or list or None
     preferredNumPeople: int | None = None  # Preferred number of people for each shift type
-    date: (int | str | datetime.date) | List[int | str | datetime.date] | None = None  # Single date or list of dates
+    date: (int | str | datetime.date) | list[int | str | datetime.date] | None = None  # Single date or list of dates
     weight: int | float = Field(default=-1)  # For float can only be .inf or -.inf
 
     @field_validator("weight")
@@ -262,12 +262,12 @@ class ShiftCountPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_COUNT}$")] = SHIFT_COUNT
     description: str | None = None
-    person: (int | str) | List[int | str]  # Single person/group ID or list
-    countDates: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
-    countShiftTypes: str | List[str]  # Single shift type ID or list
-    countShiftTypeCoefficients: List[tuple[str, int]] | None = None
-    expression: str | List[str]  # Single mathematical expression or list of mathematical expressions
-    target: (int | str) | List[
+    person: (int | str) | list[int | str]  # Single person/group ID or list
+    countDates: (int | str | datetime.date) | list[int | str | datetime.date]  # Single date or list of dates
+    countShiftTypes: str | list[str]  # Single shift type ID or list
+    countShiftTypeCoefficients: list[tuple[str, int]] | None = None
+    expression: str | list[str]  # Single mathematical expression or list of mathematical expressions
+    target: (int | str) | list[
         int | str
     ]  # Single target value (int or special constant names) or list of target values
     weight: int | float = Field(default=-1)  # For float can only be .inf or -.inf
@@ -282,10 +282,10 @@ class ShiftAffinityPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_AFFINITY}$")] = SHIFT_AFFINITY
     description: str | None = None
-    date: (int | str | datetime.date) | List[int | str | datetime.date]  # Single date or list of dates
-    people1: List[int | str | List[int | str]]  # First person ID list or nested
-    people2: List[int | str | List[int | str]]  # Second person ID list or nested
-    shiftTypes: List[str | List[str]]  # Shift type ID list or nested
+    date: (int | str | datetime.date) | list[int | str | datetime.date]  # Single date or list of dates
+    people1: list[int | str | list[int | str]]  # First person ID list or nested
+    people2: list[int | str | list[int | str]]  # Second person ID list or nested
+    shiftTypes: list[str | list[str]]  # Shift type ID list or nested
     weight: int | float = Field(default=1)  # For float can only be .inf or -.inf
 
     @field_validator("weight")
@@ -303,7 +303,7 @@ class NurseSchedulingData(BaseModel):
     country: str | None = None
     people: PeopleContainer
     shiftTypes: ShiftTypesContainer
-    preferences: List[
+    preferences: list[
         MaxOneShiftPerDayPreference
         | ShiftRequestPreference
         | ShiftTypeSuccessionsPreference
