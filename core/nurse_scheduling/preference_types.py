@@ -320,6 +320,18 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
         raise ValueError(f"Number of expressions ({len(expressions)}) must match number of targets ({len(targets)})")
     if len(expressions) == 0:
         raise ValueError("Expression must not be empty")
+    special_targets = {
+        "floor(AVG_SHIFTS_PER_PERSON)",
+        "ceil(AVG_SHIFTS_PER_PERSON)",
+        "round(AVG_SHIFTS_PER_PERSON)",
+    }
+    if any(target in special_targets for target in targets) and any(
+        coefficient != 1 for coefficient in coefficients.values()
+    ):
+        raise ValueError(
+            "Special average targets cannot be used with non-unit shift count coefficients. "
+            "Specify an explicit numeric target instead."
+        )
     weight = preference.weight
     for i in range(len(expressions)):
         expression, target = expressions[i], targets[i]

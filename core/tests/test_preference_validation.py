@@ -228,6 +228,41 @@ preferences:
     scheduler.schedule(yaml_content)
 
 
+def test_shift_count_rejects_special_target_with_non_unit_coefficients():
+    unit_coefficient_yaml = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: D
+    countShiftTypeCoefficients:
+      - [D, 1]
+    expression: x = T
+    target: round(AVG_SHIFTS_PER_PERSON)
+    weight: .inf
+"""
+    scheduler.schedule(unit_coefficient_yaml)
+
+    non_unit_coefficient_yaml = unit_coefficient_yaml.replace(b"- [D, 1]", b"- [D, 2]")
+    with pytest.raises(ValueError, match="Special average targets cannot be used with non-unit"):
+        scheduler.schedule(non_unit_coefficient_yaml)
+
+
 def test_shift_count_rejects_invalid_shift_type_coefficients():
     coefficient_not_selected_yaml = b"""
 apiVersion: alpha
