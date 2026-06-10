@@ -190,6 +190,33 @@ preferences:
         scheduler.schedule(yaml_content)
 
 
+def test_shift_count_rejects_empty_count_shift_types():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: []
+    expression: x = T
+    target: 0
+    weight: .inf
+"""
+    with pytest.raises(ValueError, match="Non-empty count shift types are required"):
+        scheduler.schedule(yaml_content)
+
+
 def test_shift_count_accepts_shift_type_coefficients():
     yaml_content = b"""
 apiVersion: alpha
