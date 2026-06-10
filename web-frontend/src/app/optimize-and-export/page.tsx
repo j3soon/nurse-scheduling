@@ -360,7 +360,6 @@ export default function OptimizeAndExportPage() {
     const normalizedEndpoint = normalizeEndpoint(endpoint);
 
     setServerHealthStatus('checking');
-    setServerHealth(null);
 
     const health = normalizedEndpoint ? await fetchServerHealth(normalizedEndpoint) : null;
     setServerHealthStatus(health ? 'online' : 'offline');

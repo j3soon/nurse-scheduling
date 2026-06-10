@@ -206,6 +206,34 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText(/API version: alpha · Frontend version: frontend-test · Backend version: v-test/)).toBeInTheDocument();
   });
 
+  it('keeps the previous backend version visible while a health check is pending and clears it when offline', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    queueInitialLocalSelection(fetchMock);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    const versionDetails = /API version: alpha · Frontend version: frontend-test · Backend version: frontend-test/;
+    expect(screen.getByText(versionDetails)).toBeInTheDocument();
+
+    let resolveHealthCheck: (response: { ok: boolean }) => void = () => undefined;
+    fetchMock.mockImplementationOnce(() => new Promise(resolve => {
+      resolveHealthCheck = resolve;
+    }));
+    await user.click(screen.getByRole('button', { name: /check backend/i }));
+
+    expect(screen.getByText('Server: Checking')).toBeInTheDocument();
+    expect(screen.getByText(versionDetails)).toBeInTheDocument();
+
+    act(() => {
+      resolveHealthCheck({ ok: false });
+    });
+
+    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
+    expect(screen.queryByText(versionDetails)).not.toBeInTheDocument();
+  });
+
   it('falls back to the hosted backend when localhost is unavailable', async () => {
     const user = userEvent.setup();
     queueInitialHostedSelection(fetch as unknown as ReturnType<typeof vi.fn>)
