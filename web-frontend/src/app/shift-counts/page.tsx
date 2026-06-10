@@ -32,6 +32,7 @@ import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberP
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
+import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
 interface ShiftCountForm {
   description: string;
@@ -201,7 +202,7 @@ export default function ShiftCountsPage() {
     if (!isFormVisible) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
         e.preventDefault();
         handleSave();
       } else if (e.key === 'Escape') {

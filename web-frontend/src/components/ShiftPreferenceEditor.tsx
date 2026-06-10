@@ -25,6 +25,7 @@ import { FiX, FiInfo } from 'react-icons/fi';
 import { Item } from '@/types/scheduling';
 import { getWeightDisplayLabel, getWeightColor, isValidWeightValue } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
+import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
 interface ShiftPreferenceEditorProps {
   isOpen: boolean;
@@ -107,7 +108,7 @@ export default function ShiftPreferenceEditor({
     if (!isOpen) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
         e.preventDefault();
         handleSave();
       } else if (e.key === 'Escape') {

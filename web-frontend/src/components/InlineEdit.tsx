@@ -19,6 +19,7 @@
 
 // A component for inline editing of a item value.
 import { useEffect, useRef } from 'react';
+import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
 interface InlineEditProps {
   value: string;
@@ -63,7 +64,7 @@ export function InlineEdit({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
       e.preventDefault();
       handleSave();
     } else if (e.key === 'Escape') {
