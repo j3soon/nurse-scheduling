@@ -172,4 +172,34 @@ describe('ShiftCountsPage', () => {
     expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['0', 0],
+    ['-1', -1],
+    ['-Infinity', -Infinity],
+  ])('allows squared-error expression with non-positive weight %s', async (weightInput, expectedWeight) => {
+    const user = userEvent.setup();
+    render(<ShiftCountsPage />);
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+    await user.selectOptions(screen.getByRole('combobox'), '|x - T|^2');
+    fireEvent.change(screen.getByPlaceholderText('e.g., -1, -10, ∞'), { target: { value: weightInput } });
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0].weight).toBe(expectedWeight);
+  });
+
+  it.each(['1', 'Infinity'])('rejects squared-error expression with positive weight %s', async (weightInput) => {
+    const user = userEvent.setup();
+    render(<ShiftCountsPage />);
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+    await user.selectOptions(screen.getByRole('combobox'), '|x - T|^2');
+    fireEvent.change(screen.getByPlaceholderText('e.g., -1, -10, ∞'), { target: { value: weightInput } });
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Weight must be non-positive for shift count with "|x - T|^2"')).toBeInTheDocument();
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
 });

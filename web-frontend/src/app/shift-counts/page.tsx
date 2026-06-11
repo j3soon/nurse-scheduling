@@ -35,7 +35,7 @@ import {
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
-import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
+import { isValidWeightValue, getWeightWithPositivePrefix, isWeightNonPositive } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
@@ -228,6 +228,11 @@ export default function ShiftCountsPage() {
 
     if (!isValidWeightValue(formData.weight)) {
       newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+    } else {
+      // Additional check for |x - T|^2 expression: weight must be non-positive
+      if (formData.expression === '|x - T|^2' && !isWeightNonPositive(formData.weight)) {
+        newErrors.weight = 'Weight must be non-positive for shift count with "|x - T|^2"';
+      }
     }
 
     setErrors(newErrors);

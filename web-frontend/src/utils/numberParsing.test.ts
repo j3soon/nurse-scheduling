@@ -24,6 +24,7 @@ import {
   getWeightDisplayLabel,
   isValidNumberValue,
   isValidWeightValue,
+  isWeightNonPositive,
   parseNumberValue,
   parseWeightValue,
 } from '@/utils/numberParsing';
@@ -73,5 +74,15 @@ describe('weight helpers', () => {
     expect(isValidWeightValue('oops')).toBe(false);
     expect(isValidNumberValue(10)).toBe(true);
     expect(isValidNumberValue(Infinity)).toBe(false);
+  });
+
+  it('identifies only valid non-positive weights', () => {
+    expect(isWeightNonPositive(-Infinity)).toBe(true);
+    expect(isWeightNonPositive(-1)).toBe(true);
+    expect(isWeightNonPositive(0)).toBe(true);
+    expect(isWeightNonPositive(1)).toBe(false);
+    expect(isWeightNonPositive(Infinity)).toBe(false);
+    expect(isWeightNonPositive(NaN)).toBe(false);
+    expect(isWeightNonPositive('invalid')).toBe(false);
   });
 });
