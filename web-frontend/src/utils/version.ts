@@ -120,11 +120,11 @@ export function compareVersionsDescending(a: string, b: string): number | null {
   }
 
   // Compare major, minor, patch (descending)
-  if (versionA.major !== versionB.major) return versionB.major - versionA.major;
-  if (versionA.minor !== versionB.minor) return versionB.minor - versionA.minor;
-  if (versionA.patch !== versionB.patch) return versionB.patch - versionA.patch;
+  if (versionA.major! !== versionB.major!) return versionB.major! - versionA.major!;
+  if (versionA.minor! !== versionB.minor!) return versionB.minor! - versionA.minor!;
+  if (versionA.patch! !== versionB.patch!) return versionB.patch! - versionA.patch!;
   if (versionA.commitsAfterTag !== versionB.commitsAfterTag) {
-    return versionB.commitsAfterTag - versionA.commitsAfterTag;
+    return versionB.commitsAfterTag! - versionA.commitsAfterTag!;
   }
 
   if (versionA.commitId?.toLowerCase() !== versionB.commitId?.toLowerCase()) {
