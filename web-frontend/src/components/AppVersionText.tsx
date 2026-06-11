@@ -18,50 +18,7 @@
  */
 
 import { GITHUB_REPO_URL } from '@/constants/urls';
-
-const HASH_PATTERN = /^[0-9a-fA-F]+$/;
-const TAGGED_COMMIT_PATTERN = /^(.+)(-\d+)-g([0-9a-fA-F]+)$/;
-
-type ParsedVersionParts = {
-  tag: string;
-  commitCount: string;
-  hash?: string;
-  dirtySuffix: string;
-  isHashOnly: boolean;
-};
-
-function parseVersionParts(version: string): ParsedVersionParts {
-  const dirtySuffix = version.endsWith('-dirty') ? '-dirty' : '';
-  const baseVersion = dirtySuffix ? version.slice(0, -dirtySuffix.length) : version;
-
-  if (HASH_PATTERN.test(baseVersion)) {
-    return {
-      tag: '',
-      commitCount: '',
-      hash: baseVersion,
-      dirtySuffix,
-      isHashOnly: true,
-    };
-  }
-
-  const taggedCommitMatch = baseVersion.match(TAGGED_COMMIT_PATTERN);
-  if (taggedCommitMatch) {
-    return {
-      tag: taggedCommitMatch[1],
-      commitCount: taggedCommitMatch[2],
-      hash: taggedCommitMatch[3],
-      dirtySuffix,
-      isHashOnly: false,
-    };
-  }
-
-  return {
-    tag: baseVersion,
-    commitCount: '',
-    dirtySuffix,
-    isHashOnly: false,
-  };
-}
+import { parseVersionParts } from '@/utils/version';
 
 type AppVersionTextProps = {
   version: string;
@@ -84,8 +41,11 @@ export default function AppVersionText({
   // - v0.1.0-dirty
   // - xxxxxxx
   // - xxxxxxx-dirty
-  // These are the only output types for "git describe --tags --always --dirty"
-  const { tag, commitCount, hash, dirtySuffix, isHashOnly } = parseVersionParts(version);
+  // These are the only output types for "git describe --tags --always --dirty" with vX.Y.Z tags.
+  const { major, minor, patch, commitsAfterTag, commitId, dirty } = parseVersionParts(version);
+  const tag = major !== null && minor !== null && patch !== null ? `v${major}.${minor}.${patch}` : '';
+  const isHashOnly = major === null && minor === null && patch === null;
+  const dirtySuffix = dirty ? '-dirty' : '';
 
   const tagNode = tag && versionHref ? (
     <a href={versionHref} target="_blank" rel="noopener noreferrer" className={versionClassName}>
@@ -97,11 +57,10 @@ export default function AppVersionText({
     null
   );
 
-  if (!hash) {
+  if (!commitId) {
     return (
       <>
-        {tagNode}
-        {commitCount}
+        {tagNode ?? version}
       </>
     );
   }
@@ -109,15 +68,14 @@ export default function AppVersionText({
   return (
     <>
       {tagNode}
-      {commitCount}
-      {!isHashOnly && '-g'}
+      {!isHashOnly && `-${commitsAfterTag}-g`}
       <a
-        href={`${GITHUB_REPO_URL}/tree/${hash}`}
+        href={`${GITHUB_REPO_URL}/tree/${commitId}`}
         target="_blank"
         rel="noopener noreferrer"
         className={commitClassName ?? versionClassName}
       >
-        {hash}
+        {commitId}
       </a>
       {dirtySuffix}
     </>

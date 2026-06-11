@@ -25,16 +25,21 @@ import VersionWarningBanner from '@/components/VersionWarningBanner';
 const mockFetchLatestTag = vi.hoisted(() => vi.fn());
 const mockCurrentVersion = vi.hoisted(() => ({ value: 'v1.0.0' }));
 
-vi.mock('@/utils/version', () => ({
-  get CURRENT_APP_VERSION() {
-    return mockCurrentVersion.value;
-  },
-  fetchLatestTag: mockFetchLatestTag,
-  getMajorMinor: (version: string) => {
-    const match = version.match(/^(v?\d+\.\d+)/);
-    return match ? match[1] : null;
-  },
-}));
+vi.mock('@/utils/version', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/version')>();
+
+  return {
+    ...actual,
+    get CURRENT_APP_VERSION() {
+      return mockCurrentVersion.value;
+    },
+    fetchLatestTag: mockFetchLatestTag,
+    getMajorMinor: (version: string) => {
+      const match = version.match(/^(v\d+\.\d+)/);
+      return match ? match[1] : null;
+    },
+  };
+});
 
 describe('VersionWarningBanner', () => {
   beforeEach(() => {

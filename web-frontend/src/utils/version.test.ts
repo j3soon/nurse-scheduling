@@ -24,7 +24,7 @@ import {
   fetchLatestTag,
   fetchReleaseBranches,
   getMajorMinor,
-  parseVersion,
+  parseVersionParts,
 } from '@/utils/version';
 
 describe('version utils', () => {
@@ -32,20 +32,74 @@ describe('version utils', () => {
     vi.restoreAllMocks();
   });
 
-  it('parses version strings and major/minor correctly', () => {
-    expect(parseVersion('v1.2.3')).toEqual({ major: 1, minor: 2, patch: 3 });
-    expect(parseVersion('2.5')).toEqual({ major: 2, minor: 5, patch: 0 });
-    expect(parseVersion('invalid')).toBeNull();
-
+  it('extracts major/minor from version strings', () => {
     expect(getMajorMinor('v1.2.3-4-gabcd')).toBe('v1.2');
-    expect(getMajorMinor('2.7.0')).toBe('2.7');
+    expect(getMajorMinor('2.7.0')).toBeNull();
     expect(getMajorMinor('invalid')).toBeNull();
+  });
+
+  it('parses git describe version parts for display and comparison', () => {
+    expect(parseVersionParts('v1.2.3-4-gAbC1234-dirty')).toEqual({
+      major: 1,
+      minor: 2,
+      patch: 3,
+      commitsAfterTag: 4,
+      commitId: 'AbC1234',
+      dirty: true,
+    });
+    expect(parseVersionParts('deadbeef')).toEqual({
+      major: null,
+      minor: null,
+      patch: null,
+      commitsAfterTag: 0,
+      commitId: 'deadbeef',
+      dirty: false,
+    });
+    expect(parseVersionParts('v1.2-4-gabcd')).toEqual({
+      major: null,
+      minor: null,
+      patch: null,
+      commitsAfterTag: 0,
+      commitId: null,
+      dirty: false,
+    });
   });
 
   it('compares versions in descending semver order', () => {
     expect(compareVersionsDescending('v2.0.0', 'v1.9.9')).toBeLessThan(0);
     expect(compareVersionsDescending('v1.2.0', 'v1.2.5')).toBeGreaterThan(0);
     expect(compareVersionsDescending('bad', 'v1.0.0')).toBeGreaterThan(0);
+  });
+
+  it('compares git describe versions by tag and commit distance', () => {
+    expect(compareVersionsDescending('v1.2.3-4-gabc1234', 'v1.2.3')).toBeLessThan(0);
+    expect(compareVersionsDescending('v1.2.3-4-gabc1234', 'v1.2.3-2-gdef5678')).toBeLessThan(0);
+    expect(compareVersionsDescending('v1.2.4', 'v1.2.3-10-gabc1234')).toBeLessThan(0);
+  });
+
+  it('treats dirty git describe versions as half a commit newer', () => {
+    expect(compareVersionsDescending('v1.2.3-dirty', 'v1.2.3')).toBeLessThan(0);
+    expect(compareVersionsDescending('v1.2.3-1-gabc1234', 'v1.2.3-dirty')).toBeLessThan(0);
+    expect(compareVersionsDescending('v1.2.3-4-gabc1234-dirty', 'v1.2.3-4-gabc1234')).toBeLessThan(0);
+    expect(compareVersionsDescending('v1.2.3-4-gabc1234-dirty', 'v1.2.3-2-gdef5678')).toBeLessThan(0);
+  });
+
+  it('uses commit ids to distinguish otherwise matching git describe versions', () => {
+    expect(compareVersionsDescending('v1.2.3-4-gabc1234', 'v1.2.3-4-gabc1234')).toBe(0);
+    expect(compareVersionsDescending('v1.2.3-4-gabc1234', 'v1.2.3-4-gABC1234')).toBe(0);
+    expect(compareVersionsDescending('v1.2.3-4-gabc1234', 'v1.2.3-4-gdef5678')).toBeNull();
+  });
+
+  it('sorts non git-describe fallback versions after tagged versions', () => {
+    expect(compareVersionsDescending('v0.0.0-unknown', 'v1.0.0')).toBeGreaterThan(0);
+    expect(compareVersionsDescending('v0.0.1-unknown', 'v0.0.0-unknown')).toBeNull();
+  });
+
+  it('sorts hash-only versions after tagged versions', () => {
+    expect(compareVersionsDescending('abc1234', 'v1.2.3-4-gabc1234')).toBeGreaterThan(0);
+    expect(compareVersionsDescending('abc1234', 'abc1234')).toBe(0);
+    expect(compareVersionsDescending('abc1234-dirty', 'abc1234')).toBeLessThan(0);
+    expect(compareVersionsDescending('abc1234-dirty', 'def5678')).toBeNull();
   });
 
   it('fetches latest tag sorted by semver', async () => {

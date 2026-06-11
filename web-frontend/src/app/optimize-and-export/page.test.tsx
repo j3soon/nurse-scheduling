@@ -27,6 +27,7 @@ import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 const mockGenerateYamlFromState = vi.hoisted(() => vi.fn());
 const mockRestorePeopleIdsInXlsx = vi.hoisted(() => vi.fn());
+const mockCurrentAppVersion = vi.hoisted(() => ({ value: 'frontend-test' }));
 
 vi.mock('@/hooks/useSchedulingData', () => ({
   useSchedulingData: mockUseSchedulingData,
@@ -41,7 +42,13 @@ vi.mock('@/utils/restorePeopleIdsInXlsx', () => ({
 }));
 
 vi.mock('@/utils/version', () => ({
-  CURRENT_APP_VERSION: 'frontend-test',
+  get CURRENT_APP_VERSION() {
+    return mockCurrentAppVersion.value;
+  },
+  compareVersionsDescending: vi.fn(() => 0),
+  parseVersionParts: (version: string) => ({
+    dirty: version.endsWith('-dirty'),
+  }),
 }));
 
 const LOCAL_API_URL = 'http://localhost:8000';
@@ -116,6 +123,7 @@ describe('OptimizeAndExportPage error handling', () => {
     mockRestorePeopleIdsInXlsx.mockClear();
     mockRestorePeopleIdsInXlsx.mockImplementation(async blob => blob);
     mockUseSchedulingData.mockReturnValue(createSchedulingData());
+    mockCurrentAppVersion.value = 'frontend-test';
     vi.stubGlobal('fetch', vi.fn());
     vi.stubGlobal('EventSource', undefined);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
@@ -225,6 +233,38 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.queryByText(versionDetails)).not.toBeInTheDocument();
   });
 
+  it('ignores an older failed health check after a newer check succeeds', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    queueInitialLocalSelection(fetchMock);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+
+    let resolveOlderHealthCheck: (response: { ok: boolean }) => void = () => undefined;
+    fetchMock
+      .mockImplementationOnce(() => new Promise(resolve => {
+        resolveOlderHealthCheck = resolve;
+      }))
+      .mockResolvedValueOnce(healthyResponse());
+
+    await user.click(screen.getByRole('button', { name: /check backend/i }));
+    expect(screen.getByText('Server: Checking')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /check backend/i }));
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+
+    act(() => {
+      resolveOlderHealthCheck({ ok: false });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Server: Online')).toBeInTheDocument();
+      expect(screen.queryByText('Server: Offline')).not.toBeInTheDocument();
+    });
+  });
+
   it('does not fall back to the production backend during tests', async () => {
     (fetch as unknown as ReturnType<typeof vi.fn>)
       .mockRejectedValueOnce(new Error('local backend unavailable'));
@@ -296,7 +336,7 @@ describe('OptimizeAndExportPage error handling', () => {
     await expect(screen.findByText('Server: Offline', {}, { timeout: 4000 })).resolves.toBeInTheDocument();
   });
 
-  it('disables endpoint editing while initial backend selection is pending', () => {
+  it('keeps endpoint controls available while initial backend selection is pending', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (url === `${LOCAL_API_URL}/health`) {
@@ -314,8 +354,42 @@ describe('OptimizeAndExportPage error handling', () => {
 
     expect(screen.getByText('Server: Checking')).toBeInTheDocument();
     expect(screen.getByText('Checking API endpoints...')).toBeInTheDocument();
-    expect(screen.getByDisplayValue(LOCAL_API_URL)).toBeDisabled();
-    expect(screen.getByRole('button', { name: /check backend/i })).toBeDisabled();
+    expect(screen.getByDisplayValue(LOCAL_API_URL)).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /check backend/i })).not.toBeDisabled();
+  });
+
+  it('does not overwrite a user-entered endpoint when background discovery finishes', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    let resolveDiscovery: (response: ReturnType<typeof healthyResponse>) => void = () => undefined;
+
+    fetchMock.mockImplementation((url: string) => {
+      if (url === `${LOCAL_API_URL}/health`) {
+        return new Promise(resolve => {
+          resolveDiscovery = resolve;
+        });
+      }
+      if (url === 'https://backend.example.test/health') {
+        return Promise.resolve(healthyResponse({ appVersion: 'custom-backend' }));
+      }
+
+      return Promise.reject(new Error(`Unexpected URL: ${url}`));
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    const endpointInput = screen.getByDisplayValue(LOCAL_API_URL);
+    await user.clear(endpointInput);
+    await user.type(endpointInput, 'https://backend.example.test');
+
+    act(() => {
+      resolveDiscovery(healthyResponse());
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Checking API endpoints...')).not.toBeInTheDocument();
+    });
+    expect(screen.getByDisplayValue('https://backend.example.test')).toBeInTheDocument();
   });
 
   it('warns when frontend and backend versions differ', async () => {
@@ -349,6 +423,23 @@ describe('OptimizeAndExportPage error handling', () => {
 
     await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
     expect(screen.queryByText(/frontend and backend versions do not match/i)).not.toBeInTheDocument();
+  });
+
+  it('warns when frontend and backend versions match but are dirty', async () => {
+    mockCurrentAppVersion.value = 'frontend-test-dirty';
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: 'ok',
+        version: 'alpha',
+        apiVersion: 'alpha',
+        appVersion: 'frontend-test-dirty',
+      }),
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText(/frontend and backend versions do not match/i)).resolves.toBeInTheDocument();
   });
 
   it('shows a backend check failure message', async () => {

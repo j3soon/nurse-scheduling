@@ -28,7 +28,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizePeopleInStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
-import { CURRENT_APP_VERSION } from '@/utils/version';
+import { compareVersionsDescending, CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
 
 type ServerHealthStatus = 'checking' | 'online' | 'offline';
 
@@ -37,6 +37,12 @@ interface ServerHealthResponse {
   version: string;
   apiVersion?: string;
   appVersion: string;
+}
+
+interface ServerHealthCheckResult {
+  endpoint: string;
+  index: number;
+  health: ServerHealthResponse;
 }
 
 interface OptimizeJobResponse {
@@ -77,6 +83,8 @@ interface OptimizePhaseEvent {
 
 const TERMINAL_JOB_STATUSES = new Set(['optimal', 'feasible', 'infeasible', 'cancelled', 'failed']);
 const OPTIMIZE_CLIENT_HEARTBEAT_INTERVAL_MS = 10_000;
+const HEALTH_CHECK_TIMEOUT_MS = 3000;
+const INITIAL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 const LOCAL_BACKEND_API_URL = 'http://localhost:8000';
 const PRODUCTION_BACKEND_API_URL = 'https://api.nursescheduling.org';
 const SHOULD_DISABLE_PRODUCTION_BACKEND_API = process.env.NODE_ENV === 'test'
@@ -85,6 +93,39 @@ const BACKEND_API_CANDIDATES = SHOULD_DISABLE_PRODUCTION_BACKEND_API
   ? [LOCAL_BACKEND_API_URL]
   : [LOCAL_BACKEND_API_URL, PRODUCTION_BACKEND_API_URL];
 const INITIAL_BACKEND_API_URL = BACKEND_API_CANDIDATES[0];
+
+function selectPreferredServer(results: ServerHealthCheckResult[]): ServerHealthCheckResult | undefined {
+  return [...results].sort((a, b) => {
+    const aIsProduction = a.endpoint === PRODUCTION_BACKEND_API_URL;
+    const bIsProduction = b.endpoint === PRODUCTION_BACKEND_API_URL;
+
+    if (aIsProduction !== bIsProduction) {
+      return aIsProduction ? -1 : 1;
+    }
+
+    const aVersionMatches = a.health.appVersion === CURRENT_APP_VERSION;
+    const bVersionMatches = b.health.appVersion === CURRENT_APP_VERSION;
+
+    if (aVersionMatches !== bVersionMatches) {
+      return aVersionMatches ? -1 : 1;
+    }
+
+    const versionComparison = compareVersionsDescending(a.health.appVersion, b.health.appVersion);
+    if (versionComparison !== null && versionComparison !== 0) {
+      return versionComparison;
+    }
+
+    return a.index - b.index;
+  })[0];
+}
+
+function isDirtyAppVersion(version: string): boolean {
+  return parseVersionParts(version).dirty;
+}
+
+function hasAppVersionMismatch(frontendVersion: string, backendVersion: string): boolean {
+  return frontendVersion !== backendVersion || isDirtyAppVersion(frontendVersion) || isDirtyAppVersion(backendVersion);
+}
 
 function normalizeEndpoint(endpoint: string): string {
   return endpoint.trim().replace(/\/+$/, '');
@@ -97,9 +138,9 @@ function buildApiUrl(endpoint: string, path: string): string {
   return `${normalizeEndpoint(endpoint)}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-async function fetchServerHealth(endpoint: string): Promise<ServerHealthResponse | null> {
+async function fetchServerHealth(endpoint: string, timeoutMs = HEALTH_CHECK_TIMEOUT_MS): Promise<ServerHealthResponse | null> {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${endpoint}/health`, {
@@ -281,13 +322,17 @@ export default function OptimizeAndExportPage() {
   const [serverHealthStatus, setServerHealthStatus] = useState<ServerHealthStatus>('checking');
   const [lastHealthCheckedAt, setLastHealthCheckedAt] = useState<Date | null>(null);
   const [serverHealth, setServerHealth] = useState<ServerHealthResponse | null>(null);
-  const [isInitialServerChecking, setIsInitialServerChecking] = useState(false);
+  const [isInitialServerChecking, setIsInitialServerChecking] = useState(true);
   const eventLogRef = useRef<HTMLDivElement | null>(null);
   const savedDownloadUrlRef = useRef<string | null>(null);
   const shouldScrollEventLogToBottomRef = useRef(true);
   // The initial endpoint probe already sets health state; skip the debounce pass triggered when it completes.
   const skipNextDebouncedHealthCheckRef = useRef(true);
-  const hasVersionMismatch = Boolean(serverHealth && serverHealth.appVersion !== CURRENT_APP_VERSION);
+  // Only the newest health check may update online/offline state.
+  const latestHealthCheckIdRef = useRef(0);
+  // Preserve user-entered endpoint text when background discovery finishes.
+  const endpointEditedDuringDiscoveryRef = useRef(false);
+  const hasVersionMismatch = Boolean(serverHealth && hasAppVersionMismatch(CURRENT_APP_VERSION, serverHealth.appVersion));
   const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
   const isShiftTypeDataMissing = shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0;
@@ -361,10 +406,16 @@ export default function OptimizeAndExportPage() {
 
   const runHealthCheck = useCallback(async (endpoint: string) => {
     const normalizedEndpoint = normalizeEndpoint(endpoint);
+    const healthCheckId = latestHealthCheckIdRef.current + 1;
+    latestHealthCheckIdRef.current = healthCheckId;
 
     setServerHealthStatus('checking');
 
     const health = normalizedEndpoint ? await fetchServerHealth(normalizedEndpoint) : null;
+    if (latestHealthCheckIdRef.current !== healthCheckId) {
+      return health;
+    }
+
     setServerHealthStatus(health ? 'online' : 'offline');
     setServerHealth(health);
     setLastHealthCheckedAt(new Date());
@@ -373,28 +424,33 @@ export default function OptimizeAndExportPage() {
   }, []);
 
   const selectInitialServer = useCallback(async () => {
+    const healthCheckId = latestHealthCheckIdRef.current + 1;
+    latestHealthCheckIdRef.current = healthCheckId;
+
     setIsInitialServerChecking(true);
     setServerHealthStatus('checking');
     setServerHealth(null);
 
     const healthChecks = BACKEND_API_CANDIDATES.map(async (endpoint, index) => {
-      const health = await fetchServerHealth(endpoint);
+      const health = await fetchServerHealth(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS);
       return { endpoint, index, health };
     });
 
     const results = await Promise.all(healthChecks);
-    const selected = results
-      .filter((result): result is { endpoint: string; index: number; health: ServerHealthResponse } => Boolean(result.health))
-      .sort((a, b) => {
-        const aVersionMatches = a.health.appVersion === CURRENT_APP_VERSION;
-        const bVersionMatches = b.health.appVersion === CURRENT_APP_VERSION;
+    const selected = selectPreferredServer(
+      results.filter((result): result is ServerHealthCheckResult => Boolean(result.health))
+    );
 
-        if (aVersionMatches !== bVersionMatches) {
-          return aVersionMatches ? -1 : 1;
-        }
+    if (latestHealthCheckIdRef.current !== healthCheckId) {
+      setIsInitialServerChecking(false);
+      return selected?.health ?? null;
+    }
 
-        return a.index - b.index;
-      })[0];
+    if (endpointEditedDuringDiscoveryRef.current) {
+      skipNextDebouncedHealthCheckRef.current = false;
+      setIsInitialServerChecking(false);
+      return selected?.health ?? null;
+    }
 
     if (selected) {
       setApiEndpoint(selected.endpoint);
@@ -407,6 +463,7 @@ export default function OptimizeAndExportPage() {
     setLastHealthCheckedAt(new Date());
     skipNextDebouncedHealthCheckRef.current = true;
     setIsInitialServerChecking(false);
+    return selected?.health ?? null;
   }, []);
 
   useEffect(() => {
@@ -414,6 +471,10 @@ export default function OptimizeAndExportPage() {
   }, [selectInitialServer]);
 
   useEffect(() => {
+    if (isInitialServerChecking) {
+      return;
+    }
+
     const intervalId = window.setInterval(() => {
       void runHealthCheck(apiEndpoint);
     }, 30000);
@@ -421,7 +482,7 @@ export default function OptimizeAndExportPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [apiEndpoint, runHealthCheck]);
+  }, [apiEndpoint, isInitialServerChecking, runHealthCheck]);
 
   useEffect(() => {
     if (isInitialServerChecking) {
@@ -872,8 +933,11 @@ export default function OptimizeAndExportPage() {
                     list="backend-api-candidates"
                     type="text"
                     value={apiEndpoint}
-                    disabled={isInitialServerChecking || isLoading}
+                    disabled={isLoading}
                     onChange={(e) => {
+                      if (isInitialServerChecking) {
+                        endpointEditedDuringDiscoveryRef.current = true;
+                      }
                       setApiEndpoint(e.target.value);
                       setServerHealthStatus('checking');
                       setServerHealth(null);
@@ -889,7 +953,7 @@ export default function OptimizeAndExportPage() {
                   <button
                     type="button"
                     onClick={() => void runHealthCheck(apiEndpoint)}
-                    disabled={isInitialServerChecking || isLoading}
+                    disabled={isLoading}
                     className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                   >
                     <FiRefreshCw className="h-4 w-4" />
