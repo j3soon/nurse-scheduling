@@ -11,9 +11,11 @@
     "start:e2e": "bunx serve@latest out -l 3000",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:affected": "../scripts/test_frontend_affected.sh",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:affected": "../scripts/test_frontend_e2e_affected.sh",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:coverage": "rm -rf .e2e-coverage coverage-e2e && E2E_COVERAGE=1 playwright test",
     "coverage:e2e:report": "node scripts/generate-e2e-coverage.mjs"
