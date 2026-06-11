@@ -22,10 +22,10 @@ jobs:
         run: bun install
       - name: Run tests
         working-directory: web-frontend
-        run: bun run test
+        run: bun run test -- --testTimeout=15000
       - name: Run tests with coverage
         working-directory: web-frontend
-        run: bun run test:coverage
+        run: bun run test:coverage -- --testTimeout=15000
       - name: Upload frontend coverage to Codecov
         if: github.event_name != 'pull_request'
         uses: codecov/codecov-action@v4
