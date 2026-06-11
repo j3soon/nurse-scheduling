@@ -154,6 +154,15 @@ describe('optimize backend server selection', () => {
   it('falls back to local when production is not a backend candidate', () => {
     expect(selectOfflineFallbackBackendApiUrl([LOCAL_API_URL])).toBe(LOCAL_API_URL);
   });
+
+  it('does not treat URLs containing the production hostname as production candidates', () => {
+    expect(selectOfflineFallbackBackendApiUrl([
+      LOCAL_API_URL,
+      'https://api.nursescheduling.org.example.test',
+      'https://example.test/https://api.nursescheduling.org',
+      'https://api.nursescheduling.org.example.test/https://api.nursescheduling.org',
+    ])).toBe(LOCAL_API_URL);
+  });
 });
 
 describe('OptimizeAndExportPage error handling', () => {
