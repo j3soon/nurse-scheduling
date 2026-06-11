@@ -53,7 +53,7 @@ test('shift type requirements can be edited and deleted through the page UI', as
       { type: 'at most one shift per day' },
       {
         type: 'shift type requirement',
-        description: 'coverage rule',
+        description: 'staffing rule',
         shiftType: ['D'],
         requiredNumPeople: 1,
         qualifiedPeople: ['P1'],
@@ -67,7 +67,7 @@ test('shift type requirements can be edited and deleted through the page UI', as
 
   await page.goto('/shift-type-requirements');
   await expect(page.getByRole('heading', { name: 'Shift Type Requirements', exact: true })).toBeVisible();
-  await expect(page.getByText('coverage rule')).toBeVisible();
+  await expect(page.getByText('staffing rule')).toBeVisible();
   await expect(page.getByText('Shift Types: D')).toBeVisible();
   await expect(page.getByText(/Required:\s*1/)).toBeVisible();
   await expect(page.getByText(/Preferred:\s*2/)).toBeVisible();

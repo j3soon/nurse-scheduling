@@ -45,6 +45,11 @@ interface ShiftTypeRequirementForm {
   weight: number | string;
 }
 
+function preferredNumPeopleDiffersFromRequired(formData: ShiftTypeRequirementForm): boolean {
+  return formData.preferred_num_people !== undefined
+    && formData.preferred_num_people !== formData.required_num_people;
+}
+
 export default function ShiftTypeRequirementsPage() {
   const {
     getPreferencesByType,
@@ -79,9 +84,9 @@ export default function ShiftTypeRequirementsPage() {
     "Select one or more shift types that this requirement applies to",
     "Set the required number of people for each instance of the shift type",
     "Optionally specify which people or groups are qualified for this requirement",
-    "Optionally set a preferred number of people (if different from required)",
+    "Optionally set a preferred number of people when extra staffing is useful",
     "Optionally specify specific dates this requirement applies to",
-    "Set weight to penalize unmet requirements (-1 is default, lower numbers = higher penalty)",
+    "Set weight only when the preferred number of people differs from the required number",
     "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
   ];
 
@@ -166,10 +171,12 @@ export default function ShiftTypeRequirementsPage() {
       }
     }
 
-    if (!isValidWeightValue(formData.weight)) {
-      newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
-    } else if (typeof formData.weight === 'number' && formData.weight > -1) {
-      newErrors.weight = 'Weight must be -1 or less (including -Infinity)';
+    if (preferredNumPeopleDiffersFromRequired(formData)) {
+      if (!isValidWeightValue(formData.weight)) {
+        newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+      } else if (typeof formData.weight === 'number' && formData.weight > -1) {
+        newErrors.weight = 'Weight must be -1 or less (including -Infinity)';
+      }
     }
 
     setErrors(newErrors);
@@ -179,15 +186,16 @@ export default function ShiftTypeRequirementsPage() {
   function handleSave() {
     if (!validateForm()) return;
 
+    const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
     const newRequirement: ShiftTypeRequirementsPreference = {
       type: SHIFT_TYPE_REQUIREMENT,
       description: formData.description,
       shiftType: formData.shift_type,
       requiredNumPeople: formData.required_num_people,
       qualifiedPeople: formData.qualified_people,
-      preferredNumPeople: formData.preferred_num_people,
+      preferredNumPeople: usesWeight ? formData.preferred_num_people : undefined,
       date: formData.date,
-      weight: formData.weight as number
+      weight: usesWeight ? formData.weight as number : -1
     };
 
     let newRequirements;
@@ -256,6 +264,7 @@ export default function ShiftTypeRequirementsPage() {
       description: group.description
     }))
   ];
+  const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -498,12 +507,23 @@ export default function ShiftTypeRequirementsPage() {
               </div>
 
               {/* Weight */}
-              <WeightInput
-                value={formData.weight}
-                onChange={(value) => setFormData(prev => ({ ...prev, weight: value }))}
-                error={errors.weight}
-                placeholder="e.g., -1, -10, ∞"
-              />
+              {usesWeight ? (
+                <WeightInput
+                  value={formData.weight}
+                  onChange={(value) => setFormData(prev => ({ ...prev, weight: value }))}
+                  error={errors.weight}
+                  placeholder="e.g., -1, -10, ∞"
+                />
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Weight (priority)
+                  </label>
+                  <div className="text-sm text-gray-500 italic">
+                    Weight is not needed when the preferred number of people equals the required number.
+                  </div>
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex justify-end gap-3 pt-4">
@@ -549,9 +569,11 @@ export default function ShiftTypeRequirementsPage() {
                   <span> (Preferred: {requirement.preferredNumPeople})</span>
                 )}
               </div>
-              <div>
-                <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
-              </div>
+              {requirement.preferredNumPeople !== undefined && requirement.preferredNumPeople !== requirement.requiredNumPeople && (
+                <div>
+                  <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
+                </div>
+              )}
               {requirement.qualifiedPeople && (
                 <div className="md:col-span-2 lg:col-span-3">
                   <span className="font-medium">Qualified:</span>{' '}
