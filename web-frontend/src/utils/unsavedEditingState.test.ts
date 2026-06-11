@@ -21,34 +21,33 @@
 
 import { renderHook } from '@testing-library/react';
 import {
+  clearTabSwitchWarningActive,
   hasTabSwitchWarningActive,
   useTabSwitchWarning,
 } from '@/utils/unsavedEditingState';
 
 describe('useTabSwitchWarning', () => {
   beforeEach(() => {
-    window.sessionStorage.clear();
+    clearTabSwitchWarningActive();
   });
 
-  it('keeps the warning active until every active hook is cleaned up', () => {
-    const first = renderHook(() => useTabSwitchWarning(true));
-    const second = renderHook(() => useTabSwitchWarning(true));
-
-    first.unmount();
-    expect(hasTabSwitchWarningActive()).toBe(true);
-
-    second.unmount();
-    expect(hasTabSwitchWarningActive()).toBe(false);
-  });
-
-  it('does not decrement the count for inactive hooks', () => {
+  it('sets the warning while active and clears it on cleanup', () => {
     const active = renderHook(() => useTabSwitchWarning(true));
-    const inactive = renderHook(() => useTabSwitchWarning(false));
 
-    inactive.unmount();
     expect(hasTabSwitchWarningActive()).toBe(true);
 
     active.unmount();
+    expect(hasTabSwitchWarningActive()).toBe(false);
+  });
+
+  it('clears the warning when rerendered inactive', () => {
+    const { rerender } = renderHook(({ isActive }) => useTabSwitchWarning(isActive), {
+      initialProps: { isActive: true },
+    });
+
+    expect(hasTabSwitchWarningActive()).toBe(true);
+
+    rerender({ isActive: false });
     expect(hasTabSwitchWarningActive()).toBe(false);
   });
 });

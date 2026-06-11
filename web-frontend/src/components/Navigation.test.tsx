@@ -22,7 +22,10 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Navigation from '@/components/Navigation';
-import { incrementTabSwitchWarningActive } from '@/utils/unsavedEditingState';
+import {
+  clearTabSwitchWarningActive,
+  setTabSwitchWarningActive,
+} from '@/utils/unsavedEditingState';
 
 const mockPush = vi.hoisted(() => vi.fn());
 const mockUsePathname = vi.hoisted(() => vi.fn());
@@ -38,7 +41,7 @@ describe('Navigation', () => {
     mockPush.mockReset();
     mockUsePathname.mockReturnValue('/people');
     vi.spyOn(window, 'scrollBy').mockImplementation(() => undefined);
-    window.sessionStorage.clear();
+    clearTabSwitchWarningActive();
     vi.stubGlobal('confirm', vi.fn(() => true));
   });
 
@@ -101,7 +104,7 @@ describe('Navigation', () => {
   it('asks before navigating away when the YAML editor has unsaved changes', async () => {
     const user = userEvent.setup();
     (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
-    incrementTabSwitchWarningActive();
+    setTabSwitchWarningActive();
 
     render(<Navigation />);
 

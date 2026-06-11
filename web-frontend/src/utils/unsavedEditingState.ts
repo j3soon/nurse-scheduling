@@ -18,49 +18,88 @@
  */
 
 // This code is mostly AI generated.
+'use client';
 
-import { useEffect } from 'react';
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react';
 
-const TAB_SWITCH_WARNING_KEY = 'nurse-scheduling-tab-switch-warning-active';
+type UnsavedEditingState = {
+  setTabSwitchWarningActive: () => void;
+  clearTabSwitchWarningActive: () => void;
+  hasTabSwitchWarningActive: () => boolean;
+};
 
-function getTabSwitchWarningCount(): number {
-  if (typeof window === 'undefined') return 0;
+let defaultTabSwitchWarningActive = false;
 
-  const count = parseInt(window.sessionStorage.getItem(TAB_SWITCH_WARNING_KEY) ?? '0', 10);
-  return Number.isNaN(count) ? 0 : Math.max(0, count);
+const defaultUnsavedEditingState: UnsavedEditingState = {
+  setTabSwitchWarningActive: () => {
+    defaultTabSwitchWarningActive = true;
+  },
+  clearTabSwitchWarningActive: () => {
+    defaultTabSwitchWarningActive = false;
+  },
+  hasTabSwitchWarningActive: () => defaultTabSwitchWarningActive,
+};
+
+const UnsavedEditingStateContext = createContext<UnsavedEditingState>(defaultUnsavedEditingState);
+
+function createUnsavedEditingState(): UnsavedEditingState {
+  let tabSwitchWarningActive = false;
+
+  return {
+    setTabSwitchWarningActive: () => {
+      tabSwitchWarningActive = true;
+    },
+    clearTabSwitchWarningActive: () => {
+      tabSwitchWarningActive = false;
+    },
+    hasTabSwitchWarningActive: () => tabSwitchWarningActive,
+  };
 }
 
-export function incrementTabSwitchWarningActive(): void {
-  if (typeof window === 'undefined') return;
+export function UnsavedEditingStateProvider({ children }: { children: ReactNode }) {
+  const [value] = useState(createUnsavedEditingState);
 
-  window.sessionStorage.setItem(TAB_SWITCH_WARNING_KEY, String(getTabSwitchWarningCount() + 1));
+  return createElement(UnsavedEditingStateContext.Provider, { value }, children);
 }
 
-export function decrementTabSwitchWarningActive(): void {
-  if (typeof window === 'undefined') return;
-
-  const count = getTabSwitchWarningCount();
-  if (count <= 1) {
-    window.sessionStorage.removeItem(TAB_SWITCH_WARNING_KEY);
-  } else {
-    window.sessionStorage.setItem(TAB_SWITCH_WARNING_KEY, String(count - 1));
-  }
+export function setTabSwitchWarningActive(): void {
+  defaultUnsavedEditingState.setTabSwitchWarningActive();
 }
 
-export function hasTabSwitchWarningActive(): boolean {
-  return getTabSwitchWarningCount() > 0;
+export function clearTabSwitchWarningActive(): void {
+  defaultUnsavedEditingState.clearTabSwitchWarningActive();
+}
+
+export function useUnsavedEditingState(): UnsavedEditingState {
+  return useContext(UnsavedEditingStateContext);
 }
 
 export function useTabSwitchWarning(isActive: boolean): void {
+  const {
+    setTabSwitchWarningActive: setActive,
+    clearTabSwitchWarningActive: clearActive,
+  } = useUnsavedEditingState();
+
   useEffect(() => {
     if (!isActive) return;
 
-    incrementTabSwitchWarningActive();
+    setActive();
 
     return () => {
-      decrementTabSwitchWarningActive();
+      clearActive();
     };
-  }, [isActive]);
+  }, [clearActive, isActive, setActive]);
+}
+
+export function hasTabSwitchWarningActive(): boolean {
+  return defaultUnsavedEditingState.hasTabSwitchWarningActive();
 }
 
 export function hasSaveAndLoadEditingWarningActive(): boolean {

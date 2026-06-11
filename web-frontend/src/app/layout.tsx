@@ -23,6 +23,7 @@ import Script from "next/script";
 import Navigation from "@/components/Navigation";
 import AppVersionText from "@/components/AppVersionText";
 import VersionWarningBanner from "@/components/VersionWarningBanner";
+import { UnsavedEditingStateProvider } from "@/utils/unsavedEditingState";
 import { CURRENT_APP_VERSION } from "@/utils/version";
 import {
   GITHUB_REPO_URL,
@@ -69,31 +70,33 @@ export default function RootLayout({
             gtag('config', '${process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID}');
           `}
         </Script>
-        <VersionWarningBanner />
-        <Navigation />
-        <main style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}>
-          {children}
-        </main>
-        <footer style={{ textAlign: 'center', padding: '1.5rem', marginTop: '2rem', fontSize: '0.875rem', color: 'gray' }}>
-          <div>
-            <a href={GITHUB_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Copyright ©</a>{' '}
-            <a href={GITHUB_CODE_FREQUENCY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">2023-{new Date().getFullYear()}</a>{' '}
-            <a href={GITHUB_AUTHOR_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Johnson Sun</a> &{' '}
-            <a href={GITHUB_ACKNOWLEDGMENTS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.
-          </div>
-          <div>
-            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Nurse Scheduling Project</a>{' '}
-            <AppVersionText
-              version={CURRENT_APP_VERSION}
-              versionHref={GITHUB_TAGS_URL}
-              versionClassName="footer-link"
-              commitClassName="footer-link"
-            />
-            .{' '}
-            Licensed under{' '}
-            <a href={AGPL_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">AGPL-3.0</a>.
-          </div>
-        </footer>
+        <UnsavedEditingStateProvider>
+          <VersionWarningBanner />
+          <Navigation />
+          <main style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}>
+            {children}
+          </main>
+          <footer style={{ textAlign: 'center', padding: '1.5rem', marginTop: '2rem', fontSize: '0.875rem', color: 'gray' }}>
+            <div>
+              <a href={GITHUB_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Copyright ©</a>{' '}
+              <a href={GITHUB_CODE_FREQUENCY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">2023-{new Date().getFullYear()}</a>{' '}
+              <a href={GITHUB_AUTHOR_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Johnson Sun</a> &{' '}
+              <a href={GITHUB_ACKNOWLEDGMENTS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.
+            </div>
+            <div>
+              <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Nurse Scheduling Project</a>{' '}
+              <AppVersionText
+                version={CURRENT_APP_VERSION}
+                versionHref={GITHUB_TAGS_URL}
+                versionClassName="footer-link"
+                commitClassName="footer-link"
+              />
+              .{' '}
+              Licensed under{' '}
+              <a href={AGPL_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">AGPL-3.0</a>.
+            </div>
+          </footer>
+        </UnsavedEditingStateProvider>
       </body>
     </html>
   );

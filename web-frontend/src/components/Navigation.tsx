@@ -22,7 +22,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect } from 'react';
-import { hasTabSwitchWarningActive } from '@/utils/unsavedEditingState';
+import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
 const TABS = [
   { name: '0. Home', path: '/' },
@@ -43,6 +43,7 @@ export default function Navigation() {
   const router = useRouter();
   const pathname = usePathname();
   const currentTabIndex = TABS.findIndex(tab => tab.path === pathname);
+  const { hasTabSwitchWarningActive } = useUnsavedEditingState();
 
   const navigateToTab = useCallback((index: number) => {
     if (index < 0 || index >= TABS.length || index === currentTabIndex) {
@@ -54,7 +55,7 @@ export default function Navigation() {
     }
 
     router.push(TABS[index].path);
-  }, [currentTabIndex, router]);
+  }, [currentTabIndex, hasTabSwitchWarningActive, router]);
 
   const navigatePrevious = useCallback(() => navigateToTab(currentTabIndex - 1), [currentTabIndex, navigateToTab]);
   const navigateNext = useCallback(() => navigateToTab(currentTabIndex + 1), [currentTabIndex, navigateToTab]);
