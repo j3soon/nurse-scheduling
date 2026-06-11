@@ -1,0 +1,175 @@
+/*
+ * This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+ *
+ * Copyright (C) 2023-2026 Johnson Sun
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+// This test is mostly AI generated.
+
+import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import ShiftCountsPage from '@/app/shift-counts/page';
+
+const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+
+vi.mock('@/hooks/useSchedulingData', () => ({
+  useSchedulingData: mockUseSchedulingData,
+}));
+
+describe('ShiftCountsPage', () => {
+  const updatePreferencesByType = vi.fn();
+
+  async function fillRequiredFieldsAndSelectShiftTypes(
+    user: ReturnType<typeof userEvent.setup>,
+    shiftTypeIds: string[]
+  ) {
+    await user.click(screen.getByRole('button', { name: /add shift count/i }));
+    await user.click(screen.getByRole('checkbox', { name: 'P1' }));
+    await user.click(screen.getByRole('checkbox', { name: '2026-01-01' }));
+    for (const shiftTypeId of shiftTypeIds) {
+      await user.click(screen.getByRole('checkbox', { name: shiftTypeId }));
+    }
+  }
+
+  function setCoefficient(shiftTypeId: string, coefficient: number) {
+    const input = screen.getByRole('spinbutton', { name: shiftTypeId });
+    fireEvent.change(input, { target: { value: coefficient.toString() } });
+  }
+
+  beforeEach(() => {
+    updatePreferencesByType.mockReset();
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '2026-01-01', description: 'Jan 1' }],
+        groups: [],
+      },
+      peopleData: {
+        items: [{ id: 'P1', description: 'Person 1', history: [] }],
+        groups: [],
+      },
+      shiftTypeData: {
+        items: [
+          { id: 'D', description: 'Day' },
+          { id: 'N', description: 'Night' },
+        ],
+        groups: [{ id: 'WORK', members: ['D', 'N'], description: 'Working shifts' }],
+      },
+      getPreferencesByType: vi.fn(() => []),
+      updatePreferencesByType,
+    });
+  });
+
+  it('blocks overlapping coefficients for a shift type and a group containing it', async () => {
+    const user = userEvent.setup();
+    render(<ShiftCountsPage />);
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
+    setCoefficient('D', 2);
+    setCoefficient('WORK', 3);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Shift type coefficients overlap: D, WORK include D')).toBeInTheDocument();
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
+  it('allows overlapping selected shift types when their default coefficients are omitted', async () => {
+    const user = userEvent.setup();
+    render(<ShiftCountsPage />);
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0]).not.toHaveProperty('countShiftTypeCoefficients');
+  });
+
+  it('allows overlapping selected shift types when only one has a non-default coefficient', async () => {
+    const user = userEvent.setup();
+    render(<ShiftCountsPage />);
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
+    setCoefficient('WORK', 3);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0].countShiftTypeCoefficients).toEqual([['WORK', 3]]);
+  });
+
+  it('allows non-overlapping non-default coefficients', async () => {
+    const user = userEvent.setup();
+    render(<ShiftCountsPage />);
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
+    setCoefficient('D', 2);
+    setCoefficient('N', 3);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0].countShiftTypeCoefficients).toEqual([
+      ['D', 2],
+      ['N', 3],
+    ]);
+  });
+
+  it('shows an invalid coefficient error before checking coefficient overlap', async () => {
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '2026-01-01', description: 'Jan 1' }],
+        groups: [],
+      },
+      peopleData: {
+        items: [{ id: 'P1', description: 'Person 1', history: [] }],
+        groups: [],
+      },
+      shiftTypeData: {
+        items: [
+          { id: 'D', description: 'Day' },
+          { id: 'N', description: 'Night' },
+        ],
+        groups: [{ id: 'WORK', members: ['D', 'N'], description: 'Working shifts' }],
+      },
+      getPreferencesByType: vi.fn(() => [{
+        type: 'shift count',
+        person: ['P1'],
+        countDates: ['2026-01-01'],
+        countShiftTypes: ['D', 'WORK'],
+        countShiftTypeCoefficients: [['D', 0], ['WORK', 3]],
+        expression: 'x >= T',
+        target: 0,
+        weight: -1,
+      }]),
+      updatePreferencesByType,
+    });
+    const user = userEvent.setup();
+    render(<ShiftCountsPage />);
+
+    await user.click(screen.getByRole('button', { name: /edit/i }));
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
+    expect(screen.queryByText(/Shift type coefficients overlap/)).not.toBeInTheDocument();
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
+});

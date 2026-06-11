@@ -32,6 +32,7 @@ import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
+import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor' | 'fontColor';
@@ -616,7 +617,7 @@ export default function ExportFormattingPage() {
     if (!isFormVisible) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
         e.preventDefault();
         handleSave();
       } else if (e.key === 'Escape') {

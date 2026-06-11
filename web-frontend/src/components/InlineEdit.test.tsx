@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { InlineEdit } from '@/components/InlineEdit';
 
@@ -76,6 +76,24 @@ describe('InlineEdit', () => {
     await user.keyboard('{Enter}');
 
     expect(onSave).toHaveBeenCalledWith('Nurse C');
+  });
+
+  it('does not save when Enter is pressed during IME composition', () => {
+    const onSave = vi.fn();
+
+    render(
+      <InlineEdit
+        value="Nurse B"
+        isEditing={true}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByRole('textbox');
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it('cancels on Escape', async () => {

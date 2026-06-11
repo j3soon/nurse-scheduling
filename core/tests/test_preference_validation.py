@@ -88,7 +88,7 @@ preferences:
         scheduler.schedule(yaml_content)
 
 
-def test_shift_count_rejects_negative_and_unsupported_target():
+def test_shift_count_rejects_negative_and_non_numeric_target():
     negative_target_yaml = b"""
 apiVersion: alpha
 dates:
@@ -117,9 +117,9 @@ preferences:
     with pytest.raises(ValueError, match="Target must be non-negative"):
         scheduler.schedule(negative_target_yaml)
 
-    unsupported_target_yaml = negative_target_yaml.replace(b"target: -1", b"target: AVG_SHIFTS_PER_PERSON")
-    with pytest.raises(ValueError, match="Unsupported target"):
-        scheduler.schedule(unsupported_target_yaml)
+    non_numeric_target_yaml = negative_target_yaml.replace(b"target: -1", b"target: AVG_SHIFTS_PER_PERSON")
+    with pytest.raises(ValueError, match="validation error"):
+        scheduler.schedule(non_numeric_target_yaml)
 
 
 def test_shift_count_rejects_invalid_weights_and_expression_for_squared_error():
@@ -188,6 +188,135 @@ preferences:
 """
     with pytest.raises(ValueError, match="Expression must not be empty"):
         scheduler.schedule(yaml_content)
+
+
+def test_shift_count_rejects_empty_count_shift_types():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: []
+    expression: x = T
+    target: 0
+    weight: .inf
+"""
+    with pytest.raises(ValueError, match="Non-empty count shift types are required"):
+        scheduler.schedule(yaml_content)
+
+
+def test_shift_count_accepts_shift_type_coefficients():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+    date: 2025-01-01
+  - type: shift type requirement
+    shiftType: A
+    requiredNumPeople: 1
+    date: 2025-01-02
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: [D, A]
+    countShiftTypeCoefficients:
+      - [D, 2]
+      - [A, 3]
+    expression: x = T
+    target: 5
+    weight: .inf
+"""
+    scheduler.schedule(yaml_content)
+
+
+def test_shift_count_rejects_invalid_shift_type_coefficients():
+    coefficient_not_selected_yaml = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: [D]
+    countShiftTypeCoefficients:
+      - [A, 2]
+    expression: x = T
+    target: 1
+    weight: .inf
+"""
+    with pytest.raises(ValueError, match="must reference a shift type in countShiftTypes"):
+        scheduler.schedule(coefficient_not_selected_yaml)
+
+    for invalid_coefficient in (0, -1):
+        invalid_coefficient_yaml = coefficient_not_selected_yaml.replace(
+            b"- [A, 2]", f"- [D, {invalid_coefficient}]".encode()
+        )
+        with pytest.raises(ValueError, match="must be at least 1"):
+            scheduler.schedule(invalid_coefficient_yaml)
+
+    duplicate_coefficient_yaml = coefficient_not_selected_yaml.replace(
+        b"""countShiftTypes: [D]
+    countShiftTypeCoefficients:
+      - [A, 2]""",
+        b"""countShiftTypes: [D, G]
+    countShiftTypeCoefficients:
+      - [D, 2]
+      - [G, 3]""",
+    ).replace(
+        b"""shiftTypes:
+  items:
+    - id: D
+    - id: A""",
+        b"""shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: G
+      members: [D, A]""",
+    )
+    with pytest.raises(ValueError, match="Duplicate shift count coefficient"):
+        scheduler.schedule(duplicate_coefficient_yaml)
 
 
 def test_shift_type_successions_rejects_history_all_and_group_ids():

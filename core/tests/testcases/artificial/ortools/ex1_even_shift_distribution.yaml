@@ -31,14 +31,14 @@ preferences:
     countDates: ALL
     countShiftTypes: ALL
     expression: 'x >= T'
-    target: floor(AVG_SHIFTS_PER_PERSON)
+    target: 2
     weight: .inf
   - type: shift count
     person: ALL
     countDates: ALL
     countShiftTypes: ALL
     expression: 'x <= T'
-    target: ceil(AVG_SHIFTS_PER_PERSON)
+    target: 3
     weight: .inf
   - type: shift request
     person: 0

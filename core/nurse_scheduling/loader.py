@@ -19,20 +19,20 @@
 
 from io import BytesIO
 from ruamel.yaml import YAML
-from typing import Dict, Any
+from typing import Any
 from .models import NurseSchedulingData
 
 yaml = YAML(typ="safe")
 
 
-def _load_yaml(content: bytes) -> Dict[str, Any]:
+def _load_yaml(content: bytes) -> dict[str, Any]:
     """Load YAML from bytes content.
 
     Args:
         content: File content as bytes
 
     Returns:
-        Dict[str, Any]: The loaded YAML data
+        dict[str, Any]: The loaded YAML data
     """
     stream = BytesIO(content)
     # Use ruamel.yaml instead of PyYAML to support YAML 1.2

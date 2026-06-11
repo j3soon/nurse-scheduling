@@ -19,7 +19,7 @@
 
 import logging
 from collections.abc import Callable
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any
 from ortools.sat.python import cp_model
 
 from .constants import Operator
@@ -50,11 +50,11 @@ class ORToolsSolver(SolverInterface):
         """Add a constraint to the model."""
         self.model.Add(constraint)
 
-    def add_bool_or(self, literals: List[Any]) -> None:
+    def add_bool_or(self, literals: list[Any]) -> None:
         """Add a boolean OR constraint."""
         self.model.AddBoolOr(literals)
 
-    def create_bool_and_var(self, name: str, literals: List[Any]) -> Any:
+    def create_bool_and_var(self, name: str, literals: list[Any]) -> Any:
         """Create a boolean variable equivalent to the AND of the literals."""
         var = self.new_bool_var(name)
         if not literals:
@@ -89,7 +89,7 @@ class ORToolsSolver(SolverInterface):
 
     def solve(
         self,
-        timeout: Union[int, None] = None,
+        timeout: int | None = None,
         deterministic: bool = False,
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
@@ -137,7 +137,7 @@ class ORToolsSolver(SolverInterface):
 
         return self.solver_status
 
-    def get_value(self, var: Any) -> Union[int, float]:
+    def get_value(self, var: Any) -> int | float:
         """Get the value of a variable in the solution."""
         if self._active_solution_callback is not None:
             # During CP-SAT solution callbacks, incumbent values are exposed
@@ -153,7 +153,7 @@ class ORToolsSolver(SolverInterface):
             return self._active_solution_callback.Value(self.objective_expr)
         return self.solver.Value(self.objective_expr)
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get solver statistics."""
         return {
             "conflicts": self.solver.NumConflicts(),
@@ -170,7 +170,7 @@ class ORToolsSolver(SolverInterface):
         return var.Not()
 
     def create_bool_var_with_constraint(
-        self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: Tuple[int, int]
+        self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: tuple[int, int]
     ) -> Any:
         """Create a boolean variable with a constraint."""
         # Ref: https://stackoverflow.com/a/70571397
@@ -198,11 +198,11 @@ class ORToolsSolver(SolverInterface):
             raise NotImplementedError(f"Operator {operator} not implemented for OR-Tools solver.")
         return var
 
-    def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: Tuple[int, int]) -> None:
+    def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: tuple[int, int]) -> None:
         """Add a constraint that target_var = |source_expr|."""
         self.model.AddAbsEquality(target_var, source_expr)
 
-    def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: Tuple[int, int]) -> None:
+    def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: tuple[int, int]) -> None:
         """Add a constraint that target_var = source_var^2."""
         self.model.AddMultiplicationEquality(target_var, [source_var, source_var])
 

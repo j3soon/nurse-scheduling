@@ -25,7 +25,7 @@ from datetime import datetime
 from io import BytesIO
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
@@ -422,10 +422,10 @@ async def health():
 
 @app.post("/optimize", status_code=202)
 async def create_optimize_job(
-    file: Optional[UploadFile] = File(None, description="YAML file with scheduling data"),
-    yaml_content: Optional[str] = Form(None, description="YAML content as a string"),
-    prettify: Optional[bool] = Form(None, description="Enable prettier output formatting"),
-    timeout: Optional[int] = Form(None, description="Max execution time in seconds"),
+    file: UploadFile | None = File(None, description="YAML file with scheduling data"),
+    yaml_content: str | None = Form(None, description="YAML content as a string"),
+    prettify: bool | None = Form(None, description="Enable prettier output formatting"),
+    timeout: int | None = Form(None, description="Max execution time in seconds"),
     solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc, pulp/cuopt)"),
 ):
     content, input_name = await _read_optimization_input(file, yaml_content)

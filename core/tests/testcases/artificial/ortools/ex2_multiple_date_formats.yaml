@@ -33,7 +33,7 @@ preferences:
     countDates: ALL
     countShiftTypes: ALL
     expression: '|x - T|^2'
-    target: round(AVG_SHIFTS_PER_PERSON)
+    target: 4
     weight: -1000000
   - type: shift request
     person: 0

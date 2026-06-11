@@ -33,6 +33,7 @@ import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { OFF } from '@/utils/keywords';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
+import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
 interface ShiftTypeRequirementForm {
   description: string;
@@ -214,7 +215,7 @@ export default function ShiftTypeRequirementsPage() {
     if (!isFormVisible) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
         e.preventDefault();
         handleSave();
       } else if (e.key === 'Escape') {

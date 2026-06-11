@@ -32,6 +32,7 @@ import { Mode } from '@/constants/modes';
 import { Item, Group, DataType } from '@/types/scheduling';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
+import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
 const getLabels = (dataType: DataType) => {
   switch (dataType) {
@@ -300,7 +301,7 @@ export default function ItemGroupEditorPage({
     if (mode !== Mode.ADDING && mode !== Mode.EDITING) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
         e.preventDefault();
         handleSave();
       } else if (e.key === 'Escape') {

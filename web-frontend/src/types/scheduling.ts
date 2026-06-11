@@ -155,7 +155,7 @@ export const SHIFT_COUNT = 'shift count';
 export const SHIFT_AFFINITY = 'shift affinity';
 
 export const SUPPORTED_EXPRESSIONS = ['|x - T|^2', 'x >= T', 'x <= T', 'x > T', 'x < T', 'x = T'] as const;
-export const SUPPORTED_SPECIAL_TARGETS = ['floor(AVG_SHIFTS_PER_PERSON)', 'ceil(AVG_SHIFTS_PER_PERSON)', 'round(AVG_SHIFTS_PER_PERSON)'] as const;
+export type ShiftCountTypeCoefficient = [string, number];
 
 export interface BasePreference {
   type: string;
@@ -201,8 +201,9 @@ export interface ShiftCountPreference extends BasePreference {
   person: string[];
   countDates: string[];
   countShiftTypes: string[];
+  countShiftTypeCoefficients?: ShiftCountTypeCoefficient[];
   expression: typeof SUPPORTED_EXPRESSIONS[number];
-  target: number | typeof SUPPORTED_SPECIAL_TARGETS[number];
+  target: number;
   weight: number;
 }
 

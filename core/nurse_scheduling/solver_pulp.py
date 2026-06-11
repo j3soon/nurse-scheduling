@@ -24,7 +24,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any
 import pulp
 
 from .constants import Operator
@@ -48,7 +48,7 @@ class BasePuLPSolver(SolverInterface):
         self._name_counter = 0
 
     @staticmethod
-    def _normalize_numeric_value(value: Any, *, integer_tolerance: float = 1e-6) -> Union[int, float, None]:
+    def _normalize_numeric_value(value: Any, *, integer_tolerance: float = 1e-6) -> int | float | None:
         """Normalize solver numeric output, snapping near-integers back to ints."""
         if value is None:
             return None
@@ -132,7 +132,7 @@ class BasePuLPSolver(SolverInterface):
         """Return a generated constraint name using the current number of model constraints."""
         return f"{base}_{len(self.model.constraints)}"
 
-    def _infer_expr_bounds(self, expr: Any) -> Tuple[int, int]:
+    def _infer_expr_bounds(self, expr: Any) -> tuple[int, int]:
         """Infer integer lower/upper bounds for a linear expression."""
         # We require the expression to work on integer domains here.
         if isinstance(expr, (int, float)):
@@ -184,7 +184,7 @@ class BasePuLPSolver(SolverInterface):
         name = self._unique_name(name)
         self.model += constraint, name
 
-    def add_bool_or(self, literals: List[Any]) -> None:
+    def add_bool_or(self, literals: list[Any]) -> None:
         """
         Add a boolean OR constraint (at least one literal must be true).
 
@@ -197,7 +197,7 @@ class BasePuLPSolver(SolverInterface):
 
         self.add_constraint(expr_sum >= 1, name=self.unique_constraint_name("bool_or"))
 
-    def create_bool_and_var(self, name: str, literals: List[Any]) -> Any:
+    def create_bool_and_var(self, name: str, literals: list[Any]) -> Any:
         """Create a boolean variable equivalent to the AND of the literals."""
         var = self.new_bool_var(name)
         if not literals:
@@ -246,7 +246,7 @@ class BasePuLPSolver(SolverInterface):
 
     def solve(
         self,
-        timeout: Union[int, None] = None,
+        timeout: int | None = None,
         deterministic: bool = False,
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
@@ -364,7 +364,7 @@ class BasePuLPSolver(SolverInterface):
 
         return self.solver_status
 
-    def get_value(self, var: Any) -> Union[int, float]:
+    def get_value(self, var: Any) -> int | float:
         """Get the value of a variable in the solution."""
         return self._normalize_numeric_value(pulp.value(var))
 
@@ -382,7 +382,7 @@ class BasePuLPSolver(SolverInterface):
             return val
         return 0
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get solver statistics."""
         return {
             "status": pulp.LpStatus[self.status],
@@ -410,7 +410,7 @@ class BasePuLPSolver(SolverInterface):
         return 1 - var
 
     def create_bool_var_with_constraint(
-        self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: Tuple[int, int]
+        self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: tuple[int, int]
     ) -> Any:
         """Create a boolean variable with a constraint."""
         var = self.new_bool_var(name)
@@ -540,7 +540,7 @@ class BasePuLPSolver(SolverInterface):
 
         raise NotImplementedError(f"Operator {operator} not implemented for PuLP solver.")
 
-    def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: Tuple[int, int]) -> None:
+    def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: tuple[int, int]) -> None:
         """
         Add a constraint that target_var = |source_expr|.
 
@@ -595,7 +595,7 @@ class BasePuLPSolver(SolverInterface):
             name=self.unique_constraint_name("abs_neg_ub"),
         )
 
-    def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: Tuple[int, int]) -> None:
+    def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: tuple[int, int]) -> None:
         """
         Add a constraint that target_var = source_var^2.
 

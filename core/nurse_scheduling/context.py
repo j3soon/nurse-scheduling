@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 from pydantic import ConfigDict, Field
 
 from .models import (
@@ -36,38 +36,38 @@ class Context(NurseSchedulingData):
     n_people: int = None
 
     # Mapping fields
-    map_sid_s: Dict[str | int, List[int]] = Field(
+    map_sid_s: dict[str | int, list[int]] = Field(
         default_factory=dict
     )  # Maps shift type ID to list of shift type indices
-    map_pid_p: Dict[str | int, List[int]] = Field(
+    map_pid_p: dict[str | int, list[int]] = Field(
         default_factory=dict
     )  # Maps person/group ID to list of person indices
-    map_did_d: Dict[str, List[int]] = Field(default_factory=dict)  # Maps date/group ID to list of date indices
+    map_did_d: dict[str, list[int]] = Field(default_factory=dict)  # Maps date/group ID to list of date indices
 
     # Fields used by the solver (abstracted)
-    solver: Optional[SolverInterface] = None
-    model_vars: Dict[str, Any] = Field(default_factory=dict)
-    shifts: Dict[tuple[int, int, int], Any] = Field(default_factory=dict)
+    solver: SolverInterface | None = None
+    model_vars: dict[str, Any] = Field(default_factory=dict)
+    shifts: dict[tuple[int, int, int], Any] = Field(default_factory=dict)
     """A set of indicator variables (shifts[(d, s, p)]) that are 1 if
     and only if a person (p) is assigned to a shift type (s) on day (d)."""
-    offs: Dict[tuple[int, int], Any] = Field(default_factory=dict)
+    offs: dict[tuple[int, int], Any] = Field(default_factory=dict)
     """A set of indicator variables (offs[(d, p)]) that are 1 if and
     only if a person (p) is off on day (d)."""
 
     # Results and reporting
-    reports: List[Report] = Field(default_factory=list)
+    reports: list[Report] = Field(default_factory=list)
     solver_status: str | None = None
 
     # Lookup maps
-    map_ds_p: Dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, shift_type) to set of people
-    map_dp_s: Dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, person) to set of shift types
-    map_d_sp: Dict[int, set[tuple[int, int]]] = Field(
+    map_ds_p: dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, shift_type) to set of people
+    map_dp_s: dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, person) to set of shift types
+    map_d_sp: dict[int, set[tuple[int, int]]] = Field(
         default_factory=dict
     )  # Maps day to set of (shift_type, person) pairs
-    map_s_dp: Dict[int, set[tuple[int, int]]] = Field(
+    map_s_dp: dict[int, set[tuple[int, int]]] = Field(
         default_factory=dict
     )  # Maps shift_type to set of (day, person) pairs
-    map_p_ds: Dict[int, set[tuple[int, int]]] = Field(
+    map_p_ds: dict[int, set[tuple[int, int]]] = Field(
         default_factory=dict
     )  # Maps person to set of (day, shift_type) pairs
 
