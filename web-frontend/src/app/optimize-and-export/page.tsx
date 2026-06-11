@@ -28,22 +28,17 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizePeopleInStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
-import { compareVersionsDescending, CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
+import {
+  BACKEND_API_CANDIDATES,
+  INITIAL_BACKEND_API_URL,
+  selectOfflineFallbackBackendApiUrl,
+  selectPreferredServer,
+  type ServerHealthCheckResult,
+  type ServerHealthResponse,
+} from '@/app/optimize-and-export/serverSelection';
+import { CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
 
 type ServerHealthStatus = 'checking' | 'online' | 'offline';
-
-interface ServerHealthResponse {
-  status: string;
-  version: string;
-  apiVersion?: string;
-  appVersion: string;
-}
-
-interface ServerHealthCheckResult {
-  endpoint: string;
-  index: number;
-  health: ServerHealthResponse;
-}
 
 interface OptimizeJobResponse {
   jobId: string;
@@ -85,39 +80,7 @@ const TERMINAL_JOB_STATUSES = new Set(['optimal', 'feasible', 'infeasible', 'can
 const OPTIMIZE_CLIENT_HEARTBEAT_INTERVAL_MS = 10_000;
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
 const INITIAL_HEALTH_CHECK_TIMEOUT_MS = 3000;
-const LOCAL_BACKEND_API_URL = 'http://localhost:8000';
-const PRODUCTION_BACKEND_API_URL = 'https://api.nursescheduling.org';
-const SHOULD_DISABLE_PRODUCTION_BACKEND_API = process.env.NODE_ENV === 'test'
-  || process.env.NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API === '1';
-const BACKEND_API_CANDIDATES = SHOULD_DISABLE_PRODUCTION_BACKEND_API
-  ? [LOCAL_BACKEND_API_URL]
-  : [LOCAL_BACKEND_API_URL, PRODUCTION_BACKEND_API_URL];
-const INITIAL_BACKEND_API_URL = BACKEND_API_CANDIDATES[0];
-
-function selectPreferredServer(results: ServerHealthCheckResult[]): ServerHealthCheckResult | undefined {
-  return [...results].sort((a, b) => {
-    const aIsProduction = a.endpoint === PRODUCTION_BACKEND_API_URL;
-    const bIsProduction = b.endpoint === PRODUCTION_BACKEND_API_URL;
-
-    if (aIsProduction !== bIsProduction) {
-      return aIsProduction ? -1 : 1;
-    }
-
-    const aVersionMatches = a.health.appVersion === CURRENT_APP_VERSION;
-    const bVersionMatches = b.health.appVersion === CURRENT_APP_VERSION;
-
-    if (aVersionMatches !== bVersionMatches) {
-      return aVersionMatches ? -1 : 1;
-    }
-
-    const versionComparison = compareVersionsDescending(a.health.appVersion, b.health.appVersion);
-    if (versionComparison !== null && versionComparison !== 0) {
-      return versionComparison;
-    }
-
-    return a.index - b.index;
-  })[0];
-}
+const OFFLINE_FALLBACK_BACKEND_API_URL = selectOfflineFallbackBackendApiUrl(BACKEND_API_CANDIDATES);
 
 function isDirtyAppVersion(version: string): boolean {
   return parseVersionParts(version).dirty;
@@ -457,6 +420,7 @@ export default function OptimizeAndExportPage() {
       setServerHealthStatus('online');
       setServerHealth(selected.health);
     } else {
+      setApiEndpoint(OFFLINE_FALLBACK_BACKEND_API_URL);
       setServerHealthStatus('offline');
       setServerHealth(null);
     }

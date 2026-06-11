@@ -23,6 +23,10 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
+import {
+  selectOfflineFallbackBackendApiUrl,
+  selectPreferredServer,
+} from '@/app/optimize-and-export/serverSelection';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 const mockGenerateYamlFromState = vi.hoisted(() => vi.fn());
@@ -114,6 +118,43 @@ const queueInitialLocalSelection = (fetchMock: ReturnType<typeof vi.fn>) => {
   fetchMock.mockResolvedValueOnce(healthyResponse());
   return fetchMock;
 };
+
+describe('optimize backend server selection', () => {
+  it('prefers a healthy local backend over production when app versions are equally preferred', () => {
+    const selected = selectPreferredServer([
+      {
+        endpoint: PRODUCTION_API_URL,
+        index: 1,
+        health: {
+          status: 'ok',
+          version: 'alpha',
+          apiVersion: 'alpha',
+          appVersion: 'frontend-test',
+        },
+      },
+      {
+        endpoint: LOCAL_API_URL,
+        index: 0,
+        health: {
+          status: 'ok',
+          version: 'alpha',
+          apiVersion: 'alpha',
+          appVersion: 'frontend-test',
+        },
+      },
+    ]);
+
+    expect(selected?.endpoint).toBe(LOCAL_API_URL);
+  });
+
+  it('falls back to production when all production-enabled backend candidates are offline', () => {
+    expect(selectOfflineFallbackBackendApiUrl([LOCAL_API_URL, PRODUCTION_API_URL])).toBe(PRODUCTION_API_URL);
+  });
+
+  it('falls back to local when production is not a backend candidate', () => {
+    expect(selectOfflineFallbackBackendApiUrl([LOCAL_API_URL])).toBe(LOCAL_API_URL);
+  });
+});
 
 describe('OptimizeAndExportPage error handling', () => {
   beforeEach(() => {
