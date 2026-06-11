@@ -24,7 +24,14 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftCountPreference, ShiftCountTypeCoefficient, SHIFT_COUNT, SUPPORTED_EXPRESSIONS } from '@/types/scheduling';
+import {
+  Group,
+  Item,
+  ShiftCountPreference,
+  ShiftCountTypeCoefficient,
+  SHIFT_COUNT,
+  SUPPORTED_EXPRESSIONS
+} from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
@@ -55,6 +62,34 @@ function syncCoefficientPairs(
   coefficients: ShiftCountTypeCoefficient[]
 ): ShiftCountTypeCoefficient[] {
   return selectedShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
+}
+
+function getCoefficientOverlapError(
+  coefficientPairs: ShiftCountTypeCoefficient[],
+  shiftTypeData: { items: Item[]; groups: Group[] }
+): string | undefined {
+  // Frontend groups contain only shift type item IDs, so they expand directly to their members.
+  const mapShiftTypeIdToExpandedShiftTypeIds = new Map(
+    [
+      ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
+      ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
+    ]
+  );
+
+  // Remember the first coefficient source for each expanded shift type.
+  const mapShiftTypeIdToSourceShiftTypeId = new Map<string, string>();
+  for (const [shiftTypeId] of coefficientPairs) {
+    for (const expandedShiftTypeId of mapShiftTypeIdToExpandedShiftTypeIds.get(shiftTypeId) ?? []) {
+      const existingSourceShiftTypeId = mapShiftTypeIdToSourceShiftTypeId.get(expandedShiftTypeId);
+      // The backend rejects a second coefficient source for the same expanded shift type.
+      if (existingSourceShiftTypeId !== undefined) {
+        return `Shift type coefficients overlap: ${existingSourceShiftTypeId}, ${shiftTypeId} include ${expandedShiftTypeId}`;
+      }
+      mapShiftTypeIdToSourceShiftTypeId.set(expandedShiftTypeId, shiftTypeId);
+    }
+  }
+
+  return undefined;
 }
 
 export default function ShiftCountsPage() {
@@ -173,6 +208,15 @@ export default function ShiftCountsPage() {
         break;
       }
     }
+    if (!newErrors.count_shift_type_coefficients) {
+      const overlapError = getCoefficientOverlapError(
+        formData.count_shift_type_coefficients.filter(([, coefficient]) => coefficient !== 1),
+        shiftTypeData
+      );
+      if (overlapError) {
+        newErrors.count_shift_type_coefficients = overlapError;
+      }
+    }
 
     if (!SUPPORTED_EXPRESSIONS.includes(formData.expression)) {
       newErrors.expression = 'Please select a valid expression';
@@ -204,6 +248,7 @@ export default function ShiftCountsPage() {
       description: formData.description,
       person: formData.person,
       countDates: formData.count_dates,
+      // updatePreferencesByType normalizes this and countShiftTypeCoefficients to canonical entry order.
       countShiftTypes: formData.count_shift_types,
       ...(countShiftTypeCoefficients.length > 0 ? { countShiftTypeCoefficients } : {}),
       expression: formData.expression,
