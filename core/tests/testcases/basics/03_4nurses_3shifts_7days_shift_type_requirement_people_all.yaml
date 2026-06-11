@@ -22,7 +22,7 @@ shiftTypes:
 preferences:
   - type: at most one shift per day
   - type: shift type requirement
-    shiftType: ALL
+    shiftType: [D, E, N]
     requiredNumPeople: 1
     qualifiedPeople: ALL
   - type: shift request

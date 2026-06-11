@@ -59,7 +59,7 @@ interface RequirementCoverageWarning {
   duplicateCells: string[];
 }
 
-function areSameIds(leftIds: string[], rightIds: string[]): boolean {
+function areSameIds(leftIds: readonly string[], rightIds: readonly string[]): boolean {
   if (leftIds.length !== rightIds.length) return false;
 
   const rightIdSet = new Set(rightIds);
@@ -69,7 +69,7 @@ function areSameIds(leftIds: string[], rightIds: string[]): boolean {
 function formatDateCoverage(
   dateIds: string[],
   dateGroups: Group[],
-  mapDateIdToExpandedDateIds: Map<string, string[]>,
+  mapDateIdToExpandedDateIds: Map<string, readonly string[]>,
 ): string {
   // Prefer a human-readable date group when it exactly represents the missing
   // dates; otherwise list the concrete dates so no undefined cells are hidden.
@@ -252,6 +252,11 @@ export default function ShiftTypeRequirementsPage() {
 
     if (formData.shift_type.length === 0) {
       newErrors.shift_type = 'At least one shift type must be selected';
+    } else {
+      const shiftTypeGroupIds = new Set(shiftTypeData.groups.map(group => group.id));
+      if (formData.shift_type.some(shiftTypeId => shiftTypeGroupIds.has(shiftTypeId))) {
+        newErrors.shift_type = 'Shift type groups are not allowed; select concrete shift types instead';
+      }
     }
 
     if (formData.qualified_people.length === 0) {
@@ -367,11 +372,7 @@ export default function ShiftTypeRequirementsPage() {
       .map(shiftType => ({
         id: shiftType.id,
         description: shiftType.description
-      })),
-    ...shiftTypeData.groups.map(group => ({
-      id: group.id,
-      description: group.description
-    }))
+      }))
   ];
   const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
   const coverageWarning = useMemo(
