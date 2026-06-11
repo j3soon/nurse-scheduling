@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     ripgrep \
     unzip \
     && rm -rf /var/lib/apt/lists/*
+RUN git config --system --add safe.directory /app
 
 COPY core/requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
