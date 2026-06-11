@@ -395,6 +395,41 @@ def test_shift_type_requirements_rejects_empty_shift_types():
         preference_types.utils.parse_sids = original_parse_sids
 
 
+def test_shift_type_requirements_rejects_duplicate_expanded_coverage():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: DayOrEvening
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: DayOrEvening
+    date: 2025-01-01
+    requiredNumPeople: 0
+  - type: shift type requirement
+    shiftType: D
+    date: 2025-01-01
+    requiredNumPeople: 1
+"""
+    with pytest.raises(
+        ValueError,
+        match="Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'D'",
+    ):
+        scheduler.schedule(yaml_content)
+
+
 def test_shift_type_successions_and_affinity_reject_non_list_inputs():
     dummy_ctx = SimpleNamespace(map_pid_p={"n1": [0]}, map_did_d={}, dates=SimpleNamespace(range=None))
 

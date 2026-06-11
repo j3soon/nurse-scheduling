@@ -20,11 +20,11 @@
 // The shift type requirements management page for Tab "4. Shift Type Requirements"
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
+import { Group, Item, ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
@@ -48,6 +48,115 @@ interface ShiftTypeRequirementForm {
 function preferredNumPeopleDiffersFromRequired(formData: ShiftTypeRequirementForm): boolean {
   return formData.preferred_num_people !== undefined
     && formData.preferred_num_people !== formData.required_num_people;
+}
+
+interface RequirementCoverageWarning {
+  undefinedPairsCount: number;
+  undefinedShiftTypes: {
+    shiftTypeId: string;
+    datesLabel: string;
+  }[];
+  duplicateCells: string[];
+}
+
+function areSameIds(leftIds: string[], rightIds: string[]): boolean {
+  if (leftIds.length !== rightIds.length) return false;
+
+  const rightIdSet = new Set(rightIds);
+  return leftIds.every(id => rightIdSet.has(id));
+}
+
+function formatDateCoverage(
+  dateIds: string[],
+  dateGroups: Group[],
+  mapDateIdToExpandedDateIds: Map<string, string[]>,
+): string {
+  // Prefer a human-readable date group when it exactly represents the missing
+  // dates; otherwise list the concrete dates so no undefined cells are hidden.
+  const exactGroup = dateGroups.find(group =>
+    areSameIds(dateIds, mapDateIdToExpandedDateIds.get(group.id) ?? [])
+  );
+
+  return exactGroup?.id ?? dateIds.join(', ');
+}
+
+function buildRequirementCoverageWarning(
+  requirements: ShiftTypeRequirementsPreference[],
+  dateItems: Item[],
+  dateGroups: Group[],
+  shiftTypeItems: Item[],
+  shiftTypeGroups: Group[],
+): RequirementCoverageWarning {
+  // Coverage records which requirement first defines each concrete
+  // (date, shift type) pair after frontend groups are expanded. JSON-encoding
+  // the tuple avoids collisions between IDs that contain separator characters.
+  const coverage = new Map<string, number>();
+  const duplicateCells: string[] = [];
+  const staffedShiftTypeItems = shiftTypeItems.filter(shiftType => shiftType.id !== OFF);
+  const mapDateIdToExpandedDateIds = new Map(
+    [
+      ...dateItems.map(date => [date.id, [date.id]] as const),
+      ...dateGroups.map(group => [group.id, [...new Set(group.members)]] as const),
+    ]
+  );
+  const mapShiftTypeIdToExpandedShiftTypeIds = new Map(
+    [
+      ...staffedShiftTypeItems.map(shiftType => [shiftType.id, [shiftType.id]] as const),
+      ...shiftTypeGroups.map(group => [group.id, [...new Set(group.members)]] as const),
+    ]
+  );
+
+  // Track coverage by concrete (date, shift type) pair so overlapping groups
+  // are detected before users reach the backend solver error.
+  requirements.forEach((requirement, requirementIndex) => {
+    // Frontend date and shift type groups contain only item IDs, so they expand
+    // directly to their members. Special date range strings are core-only.
+    const dates = Array.from(new Set((requirement.date ?? []).flatMap(dateId =>
+      mapDateIdToExpandedDateIds.get(dateId) ?? []
+    )));
+    const shiftTypes = Array.from(new Set((requirement.shiftType ?? []).flatMap(shiftTypeId =>
+      mapShiftTypeIdToExpandedShiftTypeIds.get(shiftTypeId) ?? []
+    )));
+
+    dates.forEach(dateId => {
+      shiftTypes.forEach(shiftTypeId => {
+        const key = JSON.stringify([dateId, shiftTypeId]);
+        const previousRequirementIndex = coverage.get(key);
+        if (previousRequirementIndex !== undefined) {
+          duplicateCells.push(`${dateId} / ${shiftTypeId} (requirements ${previousRequirementIndex + 1} and ${requirementIndex + 1})`);
+        } else {
+          coverage.set(key, requirementIndex);
+        }
+      });
+    });
+  });
+
+  // Undefined requirements are grouped by shift type to make the warning
+  // actionable: users can fix all missing dates for one shift type at a time.
+  const undefinedShiftTypes = staffedShiftTypeItems
+    .map(shiftTypeItem => ({
+      shiftTypeId: shiftTypeItem.id,
+      dateIds: dateItems
+        .filter(dateItem => !coverage.has(JSON.stringify([dateItem.id, shiftTypeItem.id])))
+        .map(dateItem => dateItem.id),
+    }))
+    .filter(entry => entry.dateIds.length > 0);
+
+  const undefinedPairsCount = undefinedShiftTypes.reduce(
+    (sum, entry) => sum + entry.dateIds.length,
+    0,
+  );
+
+  const undefinedShiftTypeSummaries = undefinedShiftTypes.map(entry => ({
+    shiftTypeId: entry.shiftTypeId,
+    datesLabel: formatDateCoverage(entry.dateIds, dateGroups, mapDateIdToExpandedDateIds),
+  }));
+
+  return {
+    undefinedPairsCount,
+    undefinedShiftTypes: undefinedShiftTypeSummaries,
+    duplicateCells,
+  };
 }
 
 export default function ShiftTypeRequirementsPage() {
@@ -265,6 +374,17 @@ export default function ShiftTypeRequirementsPage() {
     }))
   ];
   const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
+  const coverageWarning = useMemo(
+    () => buildRequirementCoverageWarning(
+      shiftTypeRequirements,
+      dateData.items,
+      dateData.groups,
+      shiftTypeData.items,
+      shiftTypeData.groups,
+    ),
+    [dateData.groups, dateData.items, shiftTypeData.groups, shiftTypeData.items, shiftTypeRequirements],
+  );
+  const warningExamplesLimit = 5;
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -304,6 +424,44 @@ export default function ShiftTypeRequirementsPage() {
               <li key={index}>• {instruction}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {(coverageWarning.undefinedShiftTypes.length > 0 || coverageWarning.duplicateCells.length > 0) && (
+        <div className="mb-6 bg-amber-50 border border-amber-300 rounded-lg p-4 text-sm text-amber-900">
+          <div className="flex items-center gap-2 font-semibold text-amber-950">
+            <FiAlertCircle className="h-5 w-5" />
+            Requirement coverage warnings
+          </div>
+          {coverageWarning.undefinedShiftTypes.length > 0 && (
+            <div className="mt-2">
+              <p>
+                Undefined staffing requirements: {coverageWarning.undefinedPairsCount} date/shift type pairs have no requirement, so the solver may assign an arbitrary number of people.
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {coverageWarning.undefinedShiftTypes.map(entry => (
+                  <li key={entry.shiftTypeId}>
+                    <span className="font-medium">{entry.shiftTypeId}</span>: {entry.datesLabel}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {coverageWarning.duplicateCells.length > 0 && (
+            <div className="mt-2">
+              <p>
+                Duplicate staffing requirements: {coverageWarning.duplicateCells.length} date/shift type pairs are covered by more than one requirement. The core solver will reject these.
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {coverageWarning.duplicateCells.slice(0, warningExamplesLimit).map(cell => (
+                  <li key={cell}>{cell}</li>
+                ))}
+                {coverageWarning.duplicateCells.length > warningExamplesLimit && (
+                  <li>...</li>
+                )}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

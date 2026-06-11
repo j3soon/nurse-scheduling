@@ -52,6 +52,22 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
         )
     for d in ds:
         for s in ss:
+            # A requirement expands through date and shift type groups into concrete
+            # (date, shift type) pairs. Each concrete pair must be defined by at
+            # most one preference, otherwise two hard staffing constraints may
+            # conflict or silently duplicate the same rule.
+            coverage_key = (d, s)
+            if coverage_key in ctx.shift_type_requirement_coverage:
+                previous_preference_idx = ctx.shift_type_requirement_coverage[coverage_key]
+                date_id = str(ctx.dates.items[d])
+                shift_type_id = ctx.shiftTypes.items[s].id
+                raise ValueError(
+                    "Duplicate shift type requirement coverage for "
+                    f"date '{date_id}' and shift type '{shift_type_id}' "
+                    f"in preferences {previous_preference_idx} and {preference_idx}."
+                )
+            ctx.shift_type_requirement_coverage[coverage_key] = preference_idx
+
             # Get the set of people who can work this shift
             qualified_ps = ctx.map_ds_p[(d, s)]
             if preference.qualifiedPeople is not None:

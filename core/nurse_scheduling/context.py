@@ -70,6 +70,9 @@ class Context(NurseSchedulingData):
     map_p_ds: dict[int, set[tuple[int, int]]] = Field(
         default_factory=dict
     )  # Maps person to set of (day, shift_type) pairs
+    shift_type_requirement_coverage: dict[tuple[int, int], int] = Field(
+        default_factory=dict
+    )  # Maps (day, shift_type) to the preference index that defines it
 
     # Optimization objective (expression type varies by solver)
     objective: Any = 0
