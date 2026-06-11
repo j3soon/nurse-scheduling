@@ -377,7 +377,7 @@ describe('OptimizeAndExportPage error handling', () => {
     await expect(screen.findByText('Server: Offline', {}, { timeout: 4000 })).resolves.toBeInTheDocument();
   });
 
-  it('keeps endpoint controls available while initial backend selection is pending', () => {
+  it('keeps endpoint input available but disables manual health checks while initial backend selection is pending', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (url === `${LOCAL_API_URL}/health`) {
@@ -396,7 +396,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('Server: Checking')).toBeInTheDocument();
     expect(screen.getByText('Checking API endpoints...')).toBeInTheDocument();
     expect(screen.getByDisplayValue(LOCAL_API_URL)).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: /check backend/i })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /check backend/i })).toBeDisabled();
   });
 
   it('does not overwrite a user-entered endpoint when background discovery finishes', async () => {
@@ -431,6 +431,50 @@ describe('OptimizeAndExportPage error handling', () => {
       expect(screen.queryByText('Checking API endpoints...')).not.toBeInTheDocument();
     });
     expect(screen.getByDisplayValue('https://backend.example.test')).toBeInTheDocument();
+  });
+
+  it('ignores manual health check results for an endpoint that is no longer current', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    let resolveManualCheck: (response: ReturnType<typeof healthyResponse>) => void = () => undefined;
+
+    fetchMock.mockImplementation((url: string) => {
+      if (url === `${LOCAL_API_URL}/health`) {
+        return Promise.resolve(healthyResponse());
+      }
+      if (url === 'https://backend.example.test/health') {
+        return new Promise(resolve => {
+          resolveManualCheck = resolve;
+        });
+      }
+      if (url === 'https://next-backend.example.test/health') {
+        return new Promise(() => undefined);
+      }
+      if (url.startsWith('https://') && url.endsWith('/health')) {
+        return new Promise(() => undefined);
+      }
+
+      return Promise.reject(new Error(`Unexpected URL: ${url}`));
+    });
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+
+    const endpointInput = screen.getByDisplayValue(LOCAL_API_URL);
+    await user.clear(endpointInput);
+    await user.type(endpointInput, 'https://backend.example.test');
+    await user.click(screen.getByRole('button', { name: /check backend/i }));
+    await user.clear(endpointInput);
+    await user.type(endpointInput, 'https://next-backend.example.test');
+
+    act(() => {
+      resolveManualCheck(healthyResponse({ appVersion: 'custom-backend' }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('https://next-backend.example.test')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Server: Checking')).toBeInTheDocument();
   });
 
   it('warns when frontend and backend versions differ', async () => {
