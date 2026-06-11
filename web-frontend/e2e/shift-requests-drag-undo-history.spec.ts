@@ -59,7 +59,7 @@ test('revisiting a cell during one quick-add drag gesture should still produce a
 
   await page.getByRole('button', { name: 'Quick Add Preference' }).click();
   await page.getByRole('checkbox', { name: 'D', exact: true }).check();
-  await page.getByRole('textbox', { name: 'Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)' }).fill('2');
+  await page.getByPlaceholder('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)').fill('2');
 
   const firstCell = page.locator('td[title="Click or drag to update preferences for P1 on date 01"]');
   const secondCell = page.locator('td[title="Click or drag to update preferences for P1 on date 02"]');

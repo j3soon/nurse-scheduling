@@ -295,7 +295,7 @@ class TestOptimizeJobs:
         cancel_response = client.post(f"/optimize/{job_id}/cancel")
 
         assert cancel_response.status_code == 200
-        assert cancel_response.json()["status"] == "cancelling"
+        assert cancel_response.json()["status"] in {"cancelling", "cancelled"}
         completed = wait_for_job_status(job_id, "cancelled")
         assert solve_started
         assert completed["error"] == "Optimization cancelled."

@@ -48,7 +48,7 @@ test('quick-add click can apply multiple shift types to one request cell', async
   await page.getByRole('button', { name: 'Quick Add Preference' }).click();
   await page.getByRole('checkbox', { name: 'D', exact: true }).check();
   await page.getByRole('checkbox', { name: 'N', exact: true }).check();
-  await page.getByRole('textbox', { name: 'Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)' }).fill('2');
+  await page.getByPlaceholder('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)').fill('2');
   const cell = page.locator('td[title="Click or drag to update preferences for P1 on date 01"]');
   await cell.click();
 
