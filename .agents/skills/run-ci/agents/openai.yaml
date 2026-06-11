@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run CI"
+  short_description: "Run repository CI checks with solver exclusions"
+  default_prompt: "Use $run-ci to run all configured local CI checks."

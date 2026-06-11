@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="${1:-$PWD}"
+repo_root="$(cd "$repo_root" && pwd)"
+
+if [[ ! -d "$repo_root/core" || ! -d "$repo_root/web-frontend" ]]; then
+  printf 'error: %s is not the repository root\n' "$repo_root" >&2
+  exit 2
+fi
+
+set -x
+
+(
+  cd "$repo_root/core"
+  ruff format --check nurse_scheduling tests
+  ruff check nurse_scheduling tests
+  pytest \
+    --cov=nurse_scheduling \
+    --log-cli-level=DEBUG \
+    --ignore-glob='*pulp_cbc.py' \
+    --ignore-glob='*pulp_cuopt.py' \
+    --ignore=tests/test_solver_pulp_progress.py \
+    tests
+)
+
+(
+  cd "$repo_root/web-frontend"
+  bun run lint
+  bun run build
+  bun run test:coverage
+  bun run test:e2e:coverage
+  bun run coverage:e2e:report
+)
