@@ -116,6 +116,20 @@ describe('ExportLayoutPage extra column coefficients', () => {
     expect(updateExportConfig.mock.calls[0][0].extraColumns[0]).not.toHaveProperty('countShiftTypeCoefficients');
   });
 
+  it('resets a coefficient after its shift type is deselected and reselected', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await startExtraColumn(user, ['D']);
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'D' }), { target: { value: '3' } });
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(updateExportConfig).toHaveBeenCalledOnce();
+    expect(updateExportConfig.mock.calls[0][0].extraColumns[0]).not.toHaveProperty('countShiftTypeCoefficients');
+  });
+
   it('blocks overlapping non-default coefficients from an item and containing group', async () => {
     const user = userEvent.setup();
     renderExportLayoutPage();
@@ -125,8 +139,28 @@ describe('ExportLayoutPage extra column coefficients', () => {
     fireEvent.change(screen.getByRole('spinbutton', { name: 'WORK' }), { target: { value: '3' } });
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
 
-    expect(screen.getByText('Shift type coefficients overlap: D, WORK include D')).toBeInTheDocument();
+    const overlapError = screen.getByText('Shift type coefficients overlap: D, WORK include D');
+    expect(overlapError).toBeInTheDocument();
+    expect(
+      overlapError.compareDocumentPosition(screen.getByText('Count Dates *')) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
     expect(updateExportConfig).not.toHaveBeenCalled();
+  });
+
+  it('clears an overlap error when the count shift type selection changes', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await startExtraColumn(user, ['D', 'WORK']);
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'D' }), { target: { value: '2' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'WORK' }), { target: { value: '3' } });
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(screen.getByText('Shift type coefficients overlap: D, WORK include D')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+
+    expect(screen.queryByText(/Shift type coefficients overlap/)).not.toBeInTheDocument();
   });
 
   it('loads and updates an existing extra column coefficient', async () => {
@@ -171,5 +205,37 @@ describe('ExportLayoutPage extra column coefficients', () => {
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
     expect(updateExportConfig).toHaveBeenCalledOnce();
     expect(updateExportConfig.mock.calls[0][0].extraColumns[0].countShiftTypeCoefficients).toEqual([['D', 2]]);
+  });
+
+  it('clears an invalid coefficient error when the count shift type selection changes', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await startExtraColumn(user, ['D']);
+    await user.clear(screen.getByRole('spinbutton', { name: 'D' }));
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+
+    expect(screen.queryByText('Coefficient for D must be an integer of at least 1')).not.toBeInTheDocument();
+  });
+
+  it('preserves unrelated errors when a coefficient changes', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
+    await user.selectOptions(screen.getAllByRole('combobox')[0], 'extra column');
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('checkbox', { name: '2026-01-01' }));
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(screen.getByText('Column header is required')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'D' }), { target: { value: '2' } });
+
+    expect(screen.getByText('Column header is required')).toBeInTheDocument();
   });
 });

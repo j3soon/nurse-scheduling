@@ -25,14 +25,12 @@ import Link from 'next/link';
 import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import {
-  Group,
-  Item,
   ShiftCountPreference,
-  ShiftCountTypeCoefficient,
   SHIFT_COUNT,
   SUPPORTED_EXPRESSIONS
 } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
+import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
 import NumberInput from '@/components/NumberInput';
@@ -42,13 +40,18 @@ import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 import { sortIdsByEntryOrder } from '@/utils/entityOrdering';
+import {
+  DraftShiftCountTypeCoefficient,
+  syncCoefficientPairs,
+  validateCoefficientPairs,
+} from '@/utils/countShiftTypeCoefficients';
 
 interface ShiftCountForm {
   description: string;
   person: string[];
   count_dates: string[];
   count_shift_types: string[];
-  count_shift_type_coefficients: Array<[string, number | string]>;
+  count_shift_type_coefficients: DraftShiftCountTypeCoefficient[];
   expression: typeof SUPPORTED_EXPRESSIONS[number];
   target: number | string;
   weight: number | string;
@@ -63,45 +66,6 @@ interface ShiftCountErrors {
   expression?: string;
   target?: string;
   weight?: string;
-}
-
-function getCoefficientForShiftType(coefficients: Array<[string, number | string]>, shiftTypeId: string): number | string {
-  return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? 1;
-}
-
-function syncCoefficientPairs(
-  selectedShiftTypeIds: string[],
-  coefficients: Array<[string, number | string]>
-): Array<[string, number | string]> {
-  return selectedShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
-}
-
-function getCoefficientOverlapError(
-  coefficientPairs: ShiftCountTypeCoefficient[],
-  shiftTypeData: { items: Item[]; groups: Group[] }
-): string | undefined {
-  // Frontend groups contain only shift type item IDs, so they expand directly to their members.
-  const mapShiftTypeIdToExpandedShiftTypeIds = new Map(
-    [
-      ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
-      ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
-    ]
-  );
-
-  // Remember the first coefficient source for each expanded shift type.
-  const mapShiftTypeIdToSourceShiftTypeId = new Map<string, string>();
-  for (const [shiftTypeId] of coefficientPairs) {
-    for (const expandedShiftTypeId of mapShiftTypeIdToExpandedShiftTypeIds.get(shiftTypeId) ?? []) {
-      const existingSourceShiftTypeId = mapShiftTypeIdToSourceShiftTypeId.get(expandedShiftTypeId);
-      // The backend rejects a second coefficient source for the same expanded shift type.
-      if (existingSourceShiftTypeId !== undefined) {
-        return `Shift type coefficients overlap: ${existingSourceShiftTypeId}, ${shiftTypeId} include ${expandedShiftTypeId}`;
-      }
-      mapShiftTypeIdToSourceShiftTypeId.set(expandedShiftTypeId, shiftTypeId);
-    }
-  }
-
-  return undefined;
 }
 
 export default function ShiftCountsPage() {
@@ -215,24 +179,17 @@ export default function ShiftCountsPage() {
       newErrors.count_shift_types = 'At least one shift type must be selected';
     }
 
-    for (const [shiftTypeId, coefficient] of formData.count_shift_type_coefficients) {
-      if (typeof coefficient !== 'number' || !Number.isInteger(coefficient) || coefficient < 1) {
-        const message = `Coefficient for ${shiftTypeId} must be an integer of at least 1`;
-        newCoefficientErrors[shiftTypeId] = message;
-      }
-    }
+    const coefficientValidation = validateCoefficientPairs(
+      formData.count_shift_types,
+      formData.count_shift_type_coefficients,
+      shiftTypeData
+    );
+    Object.assign(newCoefficientErrors, coefficientValidation.errorsById);
     if (Object.keys(newCoefficientErrors).length > 0) {
       newErrors.count_shift_type_coefficients = Object.values(newCoefficientErrors).join('\n');
       newErrors.count_shift_type_coefficients_by_id = newCoefficientErrors;
-    }
-    if (!newErrors.count_shift_type_coefficients) {
-      const overlapError = getCoefficientOverlapError(
-        formData.count_shift_type_coefficients.filter(([, coefficient]) => coefficient !== 1) as ShiftCountTypeCoefficient[],
-        shiftTypeData
-      );
-      if (overlapError) {
-        newErrors.count_shift_type_coefficients = overlapError;
-      }
+    } else if (coefficientValidation.overlapError) {
+      newErrors.count_shift_type_coefficients = coefficientValidation.overlapError;
     }
 
     if (!SUPPORTED_EXPRESSIONS.includes(formData.expression)) {
@@ -260,10 +217,11 @@ export default function ShiftCountsPage() {
     if (!validateForm()) return;
 
     const sortedCountShiftTypes = sortIdsByEntryOrder(formData.count_shift_types, shiftTypeEntries);
-    const countShiftTypeCoefficients = syncCoefficientPairs(
+    const { coefficients: countShiftTypeCoefficients } = validateCoefficientPairs(
       sortedCountShiftTypes,
-      formData.count_shift_type_coefficients
-    ).filter(([, coefficient]) => coefficient !== 1) as ShiftCountTypeCoefficient[];
+      formData.count_shift_type_coefficients,
+      shiftTypeData
+    );
 
     const newShiftCount: ShiftCountPreference = {
       type: SHIFT_COUNT,
@@ -345,19 +303,6 @@ export default function ShiftCountsPage() {
           prev.count_shift_type_coefficients
         )
       } : {})
-    }));
-  };
-
-  const setCoefficientForShiftType = (shiftTypeId: string, coefficient: number | string) => {
-    setFormData(prev => ({
-      ...prev,
-      count_shift_type_coefficients: syncCoefficientPairs(
-        prev.count_shift_types,
-        [
-          ...prev.count_shift_type_coefficients.filter(([id]) => id !== shiftTypeId),
-          [shiftTypeId, coefficient]
-        ]
-      )
     }));
   };
 
@@ -552,42 +497,19 @@ export default function ShiftCountsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Count Shift Type Coefficients
-                </label>
-
-                <div className="flex flex-wrap items-end">
-                  {formData.count_shift_types.length === 0 ? (
-                    <div className="text-sm text-gray-500 italic">
-                      Select count shift types to set coefficients.
-                    </div>
-                  ) : (
-                    sortIdsByEntryOrder(formData.count_shift_types, shiftTypeEntries).map(shiftTypeId => (
-                      <label key={shiftTypeId} className="block w-28">
-                        <span className="block truncate text-xs font-medium text-gray-600 mb-1" title={shiftTypeId}>{shiftTypeId}</span>
-                        <NumberInput
-                          min="1"
-                          step="1"
-                          value={getCoefficientForShiftType(formData.count_shift_type_coefficients, shiftTypeId)}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            const nextValue = Number.parseInt(value, 10);
-                            clearCoefficientError(shiftTypeId);
-                            setCoefficientForShiftType(
-                              shiftTypeId,
-                              value === '' ? '' : (Number.isNaN(nextValue) ? value : Math.max(1, nextValue))
-                            );
-                          }}
-                          className={`block w-24 px-3 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
-                            errors.count_shift_type_coefficients_by_id?.[shiftTypeId]
-                              ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
-                              : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
-                          }`}
-                        />
-                      </label>
-                    ))
-                  )}
-                </div>
+                <CountShiftTypeCoefficientFields
+                  selectedShiftTypeIds={formData.count_shift_types}
+                  coefficients={formData.count_shift_type_coefficients}
+                  shiftTypeEntries={shiftTypeEntries}
+                  errorsById={errors.count_shift_type_coefficients_by_id}
+                  onChange={(coefficients, changedShiftTypeId) => {
+                    clearCoefficientError(changedShiftTypeId);
+                    setFormData(prev => ({
+                      ...prev,
+                      count_shift_type_coefficients: coefficients,
+                    }));
+                  }}
+                />
                 {errors.count_shift_type_coefficients && (
                   <div className="mt-2 space-y-1">
                     {errors.count_shift_type_coefficients.split('\n').map(error => (

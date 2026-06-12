@@ -29,21 +29,22 @@ import {
   ExportExtraRow,
   ExportFormatting,
   ExportFormattingType,
-  ExportRequestShape,
-  Group,
-  Item,
-  ShiftCountTypeCoefficient
+  ExportRequestShape
 } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
+import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
 import ToggleButton from '@/components/ToggleButton';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import WeightInput from '@/components/WeightInput';
-import NumberInput from '@/components/NumberInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
-import { sortIdsByEntryOrder } from '@/utils/entityOrdering';
+import {
+  DraftShiftCountTypeCoefficient,
+  syncCoefficientPairs,
+  validateCoefficientPairs,
+} from '@/utils/countShiftTypeCoefficients';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor' | 'fontColor';
@@ -62,7 +63,7 @@ interface DraftRule {
   fontColor: string;
   header: string;
   countShiftTypes: string[];
-  countShiftTypeCoefficients: Array<[string, number | string]>;
+  countShiftTypeCoefficients: DraftShiftCountTypeCoefficient[];
   countDates: string[];
   countPeople: string[];
   requestShape: string[];
@@ -76,6 +77,12 @@ interface DraftRule {
 interface EditingTarget {
   kind: RuleKind;
   index: number;
+}
+
+interface ExportLayoutErrors {
+  general?: string;
+  countShiftTypeCoefficients?: string;
+  countShiftTypeCoefficientsById?: Record<string, string>;
 }
 
 interface SelectOption {
@@ -144,42 +151,6 @@ const getPickerDisplay = (value: string) => {
   return { pickerValue, pickerText, pickerTextColor };
 };
 
-function getCoefficientForShiftType(coefficients: Array<[string, number | string]>, shiftTypeId: string): number | string {
-  return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? 1;
-}
-
-function syncCoefficientPairs(
-  selectedShiftTypeIds: string[],
-  coefficients: Array<[string, number | string]>
-): Array<[string, number | string]> {
-  return selectedShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
-}
-
-function getCoefficientOverlapError(
-  coefficientPairs: ShiftCountTypeCoefficient[],
-  shiftTypeData: { items: Item[]; groups: Group[] }
-): string | undefined {
-  const mapShiftTypeIdToExpandedShiftTypeIds = new Map(
-    [
-      ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
-      ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
-    ]
-  );
-
-  const mapShiftTypeIdToSourceShiftTypeId = new Map<string, string>();
-  for (const [shiftTypeId] of coefficientPairs) {
-    for (const expandedShiftTypeId of mapShiftTypeIdToExpandedShiftTypeIds.get(shiftTypeId) ?? []) {
-      const existingSourceShiftTypeId = mapShiftTypeIdToSourceShiftTypeId.get(expandedShiftTypeId);
-      if (existingSourceShiftTypeId !== undefined) {
-        return `Shift type coefficients overlap: ${existingSourceShiftTypeId}, ${shiftTypeId} include ${expandedShiftTypeId}`;
-      }
-      mapShiftTypeIdToSourceShiftTypeId.set(expandedShiftTypeId, shiftTypeId);
-    }
-  }
-
-  return undefined;
-}
-
 export default function ExportFormattingPage() {
   const {
     effectiveExportData,
@@ -194,8 +165,7 @@ export default function ExportFormattingPage() {
   const [showInstructions, setShowInstructions] = useState(false);
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingTarget, setEditingTarget] = useState<EditingTarget | null>(null);
-  const [error, setError] = useState('');
-  const [coefficientErrors, setCoefficientErrors] = useState<{[shiftTypeId: string]: string}>({});
+  const [errors, setErrors] = useState<ExportLayoutErrors>({});
   const [draft, setDraft] = useState<DraftRule>(createEmptyDraft);
   useTabSwitchWarning(isFormVisible);
 
@@ -270,8 +240,7 @@ export default function ExportFormattingPage() {
 
   const resetForm = () => {
     setDraft(createEmptyDraft());
-    setError('');
-    setCoefficientErrors({});
+    setErrors({});
     setEditingTarget(null);
   };
 
@@ -305,7 +274,9 @@ export default function ExportFormattingPage() {
       appendText: 'appendText' in rule ? rule.appendText || '' : '',
       noteText: 'note' in rule ? rule.note?.text || '' : '',
     });
-    setError(weightRange !== undefined && !hasValidWeightRange ? 'Weight Range must contain exactly two values' : '');
+    setErrors(weightRange !== undefined && !hasValidWeightRange
+      ? { general: 'Weight Range must contain exactly two values' }
+      : {});
     setEditingTarget({ kind: 'style', index });
     setIsFormVisible(true);
     saveScrollPosition();
@@ -329,7 +300,7 @@ export default function ExportFormattingPage() {
     });
     setEditingTarget({ kind: 'extra column', index });
     setIsFormVisible(true);
-    setError('');
+    setErrors({});
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
@@ -347,7 +318,7 @@ export default function ExportFormattingPage() {
     });
     setEditingTarget({ kind: 'extra row', index });
     setIsFormVisible(true);
-    setError('');
+    setErrors({});
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
@@ -363,13 +334,13 @@ export default function ExportFormattingPage() {
 
   const validateSelectedOptions = (label: string, selectedIds: string[], options: SelectOption[]) => {
     if (selectedIds.length === 0) {
-      setError(`Select at least one ${label.toLowerCase()}`);
+      setErrors({ general: `Select at least one ${label.toLowerCase()}` });
       return false;
     }
 
     const validIds = new Set(options.map(option => option.id));
     if (selectedIds.some(id => !validIds.has(id))) {
-      setError(`Selected ${label.toLowerCase()} are invalid for this rule type`);
+      setErrors({ general: `Selected ${label.toLowerCase()} are invalid for this rule type` });
       return false;
     }
 
@@ -396,17 +367,17 @@ export default function ExportFormattingPage() {
       return undefined;
     }
     if (!minInput || !maxInput) {
-      setError('Weight Range requires both minimum and maximum values');
+      setErrors({ general: 'Weight Range requires both minimum and maximum values' });
       return null;
     }
     const minWeight = parseWeightValue(minInput);
     const maxWeight = parseWeightValue(maxInput);
     if (!isValidWeightValue(minWeight) || !isValidWeightValue(maxWeight)) {
-      setError('Weight Range values must be valid numbers, Infinity, or -Infinity');
+      setErrors({ general: 'Weight Range values must be valid numbers, Infinity, or -Infinity' });
       return null;
     }
     if (minWeight > maxWeight) {
-      setError('Weight Range minimum must be less than or equal to maximum');
+      setErrors({ general: 'Weight Range minimum must be less than or equal to maximum' });
       return null;
     }
     return [minWeight as number, maxWeight as number];
@@ -432,26 +403,26 @@ export default function ExportFormattingPage() {
 
     const backgroundColorError = validateColor(backgroundColor, 'Background Color');
     if (backgroundColorError) {
-      setError(backgroundColorError);
+      setErrors({ general: backgroundColorError });
       return false;
     }
     const bottomBorderColorError = validateColor(bottomBorderColor, 'Bottom Border Color');
     if (bottomBorderColorError) {
-      setError(bottomBorderColorError);
+      setErrors({ general: bottomBorderColorError });
       return false;
     }
     const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
     if (rightBorderColorError) {
-      setError(rightBorderColorError);
+      setErrors({ general: rightBorderColorError });
       return false;
     }
     const fontColorError = validateColor(fontColor, 'Font Color');
     if (fontColorError) {
-      setError(fontColorError);
+      setErrors({ general: fontColorError });
       return false;
     }
     if (!backgroundColor && !bottomBorderColor && !rightBorderColor && !fontColor && !appendText && !noteText) {
-      setError('At least one style or annotation field is required');
+      setErrors({ general: 'At least one style or annotation field is required' });
       return false;
     }
 
@@ -529,53 +500,57 @@ export default function ExportFormattingPage() {
     const description = draft.description.trim();
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
     if (!header) {
-      setError('Column header is required');
+      setErrors({ general: 'Column header is required' });
       return false;
     }
     const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
     if (rightBorderColorError) {
-      setError(rightBorderColorError);
+      setErrors({ general: rightBorderColorError });
       return false;
     }
     if (draft.countShiftTypes.length === 0) {
-      setError('Select at least one shift type to count');
+      setErrors({ general: 'Select at least one shift type to count' });
       return false;
     }
     if (draft.countDates.length === 0) {
-      setError('Select at least one date target to count over');
+      setErrors({ general: 'Select at least one date target to count over' });
       return false;
     }
 
     const validShiftTypeIds = new Set(shiftTypeOptions.map(option => option.id));
     if (draft.countShiftTypes.some(id => !validShiftTypeIds.has(id))) {
-      setError('Selected shift types are invalid for this extra column');
+      setErrors({ general: 'Selected shift types are invalid for this extra column' });
       return false;
     }
     const validDateIds = new Set(dateOptions.map(option => option.id));
     if (draft.countDates.some(id => !validDateIds.has(id))) {
-      setError('Selected dates are invalid for this extra column');
+      setErrors({ general: 'Selected dates are invalid for this extra column' });
       return false;
     }
 
-    const nextCoefficientErrors: {[shiftTypeId: string]: string} = {};
-    const syncedCoefficients = syncCoefficientPairs(draft.countShiftTypes, draft.countShiftTypeCoefficients);
-    for (const [shiftTypeId, coefficient] of syncedCoefficients) {
-      if (typeof coefficient !== 'number' || !Number.isInteger(coefficient) || coefficient < 1) {
-        nextCoefficientErrors[shiftTypeId] = `Coefficient for ${shiftTypeId} must be an integer of at least 1`;
-      }
-    }
-    setCoefficientErrors(nextCoefficientErrors);
-    if (Object.keys(nextCoefficientErrors).length > 0) {
-      setError(Object.values(nextCoefficientErrors).join('\n'));
+    const coefficientValidation = validateCoefficientPairs(
+      draft.countShiftTypes,
+      draft.countShiftTypeCoefficients,
+      shiftTypeData
+    );
+    if (Object.keys(coefficientValidation.errorsById).length > 0) {
+      setErrors(prev => ({
+        ...prev,
+        countShiftTypeCoefficients: Object.values(coefficientValidation.errorsById).join('\n'),
+        countShiftTypeCoefficientsById: coefficientValidation.errorsById,
+      }));
       return false;
     }
 
-    const countShiftTypeCoefficients = syncedCoefficients.filter(([, coefficient]) => coefficient !== 1) as ShiftCountTypeCoefficient[];
-    const coefficientOverlapError = getCoefficientOverlapError(countShiftTypeCoefficients, shiftTypeData);
-    if (coefficientOverlapError) {
-      setError(coefficientOverlapError);
+    if (coefficientValidation.overlapError) {
+      setErrors(prev => ({
+        ...prev,
+        countShiftTypeCoefficients: coefficientValidation.overlapError,
+        countShiftTypeCoefficientsById: {},
+      }));
       return false;
     }
+    const countShiftTypeCoefficients = coefficientValidation.coefficients;
 
     const newRule: ExportExtraColumn = {
       description,
@@ -614,31 +589,31 @@ export default function ExportFormattingPage() {
     const description = draft.description.trim();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
     if (!header) {
-      setError('Row header is required');
+      setErrors({ general: 'Row header is required' });
       return false;
     }
     const bottomBorderColorError = validateColor(bottomBorderColor, 'Bottom Border Color');
     if (bottomBorderColorError) {
-      setError(bottomBorderColorError);
+      setErrors({ general: bottomBorderColorError });
       return false;
     }
     if (draft.countShiftTypes.length === 0) {
-      setError('Select at least one shift type to count');
+      setErrors({ general: 'Select at least one shift type to count' });
       return false;
     }
     if (draft.countPeople.length === 0) {
-      setError('Select at least one people target to count over');
+      setErrors({ general: 'Select at least one people target to count over' });
       return false;
     }
 
     const validShiftTypeIds = new Set(shiftTypeOptions.map(option => option.id));
     if (draft.countShiftTypes.some(id => !validShiftTypeIds.has(id))) {
-      setError('Selected shift types are invalid for this extra row');
+      setErrors({ general: 'Selected shift types are invalid for this extra row' });
       return false;
     }
     const validPeopleIds = new Set(peopleOptions.map(option => option.id));
     if (draft.countPeople.some(id => !validPeopleIds.has(id))) {
-      setError('Selected people are invalid for this extra row');
+      setErrors({ general: 'Selected people are invalid for this extra row' });
       return false;
     }
 
@@ -781,34 +756,41 @@ export default function ExportFormattingPage() {
   };
 
   const toggleDraftArrayField = (field: DraftArrayField, id: string) => {
+    if (field === 'countShiftTypes') {
+      setErrors(prev => ({
+        ...prev,
+        countShiftTypeCoefficients: '',
+        countShiftTypeCoefficientsById: {},
+      }));
+    }
     setDraft(prev => ({
       ...prev,
       [field]: prev[field].includes(id)
         ? prev[field].filter(targetId => targetId !== id)
-        : [...prev[field], id]
+        : [...prev[field], id],
+      ...(field === 'countShiftTypes' ? {
+        countShiftTypeCoefficients: syncCoefficientPairs(
+          prev.countShiftTypes.includes(id)
+            ? prev.countShiftTypes.filter(targetId => targetId !== id)
+            : [...prev.countShiftTypes, id],
+          prev.countShiftTypeCoefficients
+        )
+      } : {})
     }));
   };
 
-  const setCoefficientForShiftType = (shiftTypeId: string, coefficient: number | string) => {
-    setDraft(prev => ({
+  const setCoefficientPairs = (coefficients: DraftShiftCountTypeCoefficient[]) => {
+    setDraft(prev => ({ ...prev, countShiftTypeCoefficients: coefficients }));
+  };
+
+  const clearCoefficientError = (shiftTypeId: string) => {
+    const nextCoefficientErrors = { ...errors.countShiftTypeCoefficientsById };
+    delete nextCoefficientErrors[shiftTypeId];
+    setErrors(prev => ({
       ...prev,
-      countShiftTypeCoefficients: syncCoefficientPairs(
-        prev.countShiftTypes,
-        [
-          ...prev.countShiftTypeCoefficients.filter(([id]) => id !== shiftTypeId),
-          [shiftTypeId, coefficient]
-        ]
-      )
+      countShiftTypeCoefficients: Object.values(nextCoefficientErrors).join('\n'),
+      countShiftTypeCoefficientsById: nextCoefficientErrors,
     }));
-    setCoefficientErrors(prev => {
-      const nextErrors = { ...prev };
-      delete nextErrors[shiftTypeId];
-      return nextErrors;
-    });
-    setError(prev => prev
-      .split('\n')
-      .filter(message => message !== `Coefficient for ${shiftTypeId} must be an integer of at least 1`)
-      .join('\n'));
   };
 
   const renderExtraColumnCoefficientFields = () => {
@@ -816,46 +798,17 @@ export default function ExportFormattingPage() {
       return null;
     }
 
-    const shiftTypeEntries = [...shiftTypeData.items, ...shiftTypeData.groups];
-
     return (
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Count Shift Type Coefficients
-        </label>
-
-        <div className="flex flex-wrap items-end">
-          {draft.countShiftTypes.length === 0 ? (
-            <div className="text-sm text-gray-500 italic">
-              Select count shift types to set coefficients.
-            </div>
-          ) : (
-            sortIdsByEntryOrder(draft.countShiftTypes, shiftTypeEntries).map(shiftTypeId => (
-              <label key={shiftTypeId} className="block w-28">
-                <span className="block truncate text-xs font-medium text-gray-600 mb-1" title={shiftTypeId}>{shiftTypeId}</span>
-                <NumberInput
-                  min="1"
-                  step="1"
-                  value={getCoefficientForShiftType(draft.countShiftTypeCoefficients, shiftTypeId)}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    const nextValue = Number.parseInt(value, 10);
-                    setCoefficientForShiftType(
-                      shiftTypeId,
-                      value === '' ? '' : (Number.isNaN(nextValue) ? value : Math.max(1, nextValue))
-                    );
-                  }}
-                  className={`block w-24 px-3 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
-                    coefficientErrors[shiftTypeId]
-                      ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
-                      : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
-                  }`}
-                />
-              </label>
-            ))
-          )}
-        </div>
-      </div>
+      <CountShiftTypeCoefficientFields
+        selectedShiftTypeIds={draft.countShiftTypes}
+        coefficients={draft.countShiftTypeCoefficients}
+        shiftTypeEntries={[...shiftTypeData.items, ...shiftTypeData.groups]}
+        errorsById={errors.countShiftTypeCoefficientsById}
+        onChange={(coefficients, changedShiftTypeId) => {
+          clearCoefficientError(changedShiftTypeId);
+          setCoefficientPairs(coefficients);
+        }}
+      />
     );
   };
 
@@ -1195,6 +1148,16 @@ export default function ExportFormattingPage() {
                     'Shift Types'
                   )}
                   {renderExtraColumnCoefficientFields()}
+                  {draft.kind === 'extra column' && errors.countShiftTypeCoefficients && (
+                    <div className="mt-2 space-y-1">
+                      {errors.countShiftTypeCoefficients.split('\n').map(error => (
+                        <p key={error} className="text-sm text-red-600 flex items-center gap-1">
+                          <FiAlertCircle className="h-4 w-4" />
+                          {error}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                   {draft.kind === 'extra column'
                     ? renderCheckboxes(
                         'Count Dates *',
@@ -1217,9 +1180,9 @@ export default function ExportFormattingPage() {
                 </div>
               )}
 
-              {error && (
+              {errors.general && (
                 <div className="space-y-1">
-                  {error.split('\n').map(message => (
+                  {errors.general.split('\n').map(message => (
                     <p key={message} className="text-sm text-red-600 flex items-center gap-1">
                       <FiAlertCircle className="h-4 w-4" />
                       {message}
