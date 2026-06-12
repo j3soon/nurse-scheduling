@@ -54,6 +54,7 @@ class OptimizeJob:
     status: OptimizeJobStatus
     created_at: datetime
     input_name: str
+    client_uuid: str
     solver: str
     prettify: bool | None
     timeout: int | None
@@ -131,11 +132,12 @@ def _log_terminal_job(job: OptimizeJob) -> None:
     finished_at = job.finished_at or utc_now()
     started_at = job.started_at or job.created_at
     server_logger.info(
-        "[server:job] completed job_id=%s status=%s score=%s duration_seconds=%.3f",
+        "[server:job] completed job_id=%s status=%s score=%s duration_seconds=%.3f client_uuid=%s",
         job.id,
         job.status.value,
         job.score,
         (finished_at - started_at).total_seconds(),
+        job.client_uuid,
     )
 
 
@@ -169,9 +171,10 @@ def _cleanup_expired_optimize_jobs(now: datetime | None = None) -> list[str]:
             del _optimize_jobs[job.id]
     for job in expired_jobs:
         server_logger.info(
-            "[server:job] expired job_id=%s status=%s reason=ttl",
+            "[server:job] expired job_id=%s status=%s reason=ttl client_uuid=%s",
             job.id,
             job.status.value,
+            job.client_uuid,
         )
     return [job.id for job in expired_jobs]
 
@@ -197,9 +200,10 @@ def _enforce_optimize_job_limits() -> None:
         expired_job = terminal_jobs.pop(0)
         del _optimize_jobs[expired_job.id]
         server_logger.info(
-            "[server:job] expired job_id=%s status=%s reason=retention_limit",
+            "[server:job] expired job_id=%s status=%s reason=retention_limit client_uuid=%s",
             expired_job.id,
             expired_job.status.value,
+            expired_job.client_uuid,
         )
 
     if len(_optimize_jobs) >= OPTIMIZE_MAX_RETAINED_JOBS:
@@ -220,7 +224,13 @@ def _get_optimize_job(job_id: str) -> OptimizeJob:
     return job
 
 
-def _create_optimize_job(input_name: str, solver: str, prettify: bool | None, timeout: int | None) -> OptimizeJob:
+def _create_optimize_job(
+    input_name: str,
+    client_uuid: str,
+    solver: str,
+    prettify: bool | None,
+    timeout: int | None,
+) -> OptimizeJob:
     _cleanup_expired_optimize_jobs()
     with _optimize_jobs_lock:
         _enforce_optimize_job_limits()
@@ -234,6 +244,7 @@ def _create_optimize_job(input_name: str, solver: str, prettify: bool | None, ti
             status=OptimizeJobStatus.QUEUED,
             created_at=utc_now(),
             input_name=input_name,
+            client_uuid=client_uuid,
             solver=solver,
             prettify=prettify,
             timeout=timeout,
@@ -242,12 +253,13 @@ def _create_optimize_job(input_name: str, solver: str, prettify: bool | None, ti
         _optimize_jobs[job.id] = job
     _refresh_queue_positions()
     server_logger.info(
-        "[server:job] queued job_id=%s solver=%s timeout=%s input_name=%s queue_position=%s",
+        "[server:job] queued job_id=%s solver=%s timeout=%s input_name=%s queue_position=%s client_uuid=%s",
         job.id,
         job.solver,
         job.timeout,
         job.input_name,
         job.queue_position,
+        job.client_uuid,
     )
     return job
 
@@ -361,10 +373,11 @@ def _request_optimize_job_stop(job_id: str, *, finish_now: bool) -> OptimizeJob:
             job.cancel_requested = True
             job.status = OptimizeJobStatus.CANCELLING
     server_logger.info(
-        "[server:job] %s job_id=%s status=%s",
+        "[server:job] %s job_id=%s status=%s client_uuid=%s",
         "finish-now-requested" if finish_now else "cancel-requested",
         job.id,
         job.status.value,
+        job.client_uuid,
     )
     if complete_immediately:
         _refresh_queue_positions()
@@ -425,9 +438,10 @@ def _cancel_jobs_with_expired_heartbeats(now: datetime | None = None) -> list[st
         _refresh_queue_positions()
     for job in expired_jobs:
         server_logger.warning(
-            "[server:job] heartbeat-expired job_id=%s status=%s action=cancel-requested",
+            "[server:job] heartbeat-expired job_id=%s status=%s action=cancel-requested client_uuid=%s",
             job.id,
             job.status.value,
+            job.client_uuid,
         )
         if _is_terminal_job_status(job.status):
             _log_terminal_job(job)

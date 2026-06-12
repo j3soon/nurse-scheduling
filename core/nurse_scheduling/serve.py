@@ -26,8 +26,9 @@ from io import BytesIO
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4, UUID
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request, Response
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
@@ -155,6 +156,8 @@ OPTIMIZE_SSE_KEEPALIVE_SECONDS = optimize_jobs_state.OPTIMIZE_SSE_KEEPALIVE_SECO
 OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS
 OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS
 OPTIMIZE_MAX_WORKERS = 1
+CLIENT_UUID_COOKIE_NAME = "nurse_scheduling_client_uuid"
+CLIENT_UUID_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 UNEXPECTED_ERROR_VERSION_ADVICE = (
     "If this error was unexpected, check that your frontend and backend versions match. "
     "Older YAML may not work after breaking changes, though we try to preserve compatibility."
@@ -220,6 +223,17 @@ def _format_unexpected_error(error: Exception) -> str:
     return f"{error}\n\n{UNEXPECTED_ERROR_VERSION_ADVICE}"
 
 
+def _get_or_create_client_uuid(request: Request) -> tuple[str, bool]:
+    client_uuid = request.cookies.get(CLIENT_UUID_COOKIE_NAME)
+    if client_uuid is not None:
+        try:
+            UUID(client_uuid)
+            return client_uuid, False
+        except ValueError:
+            pass
+    return uuid4().hex, True
+
+
 def _job_cancellation_error(job: OptimizeJob) -> str:
     return job.error or "Optimization cancelled."
 
@@ -229,11 +243,12 @@ def _log_job_completed(job: OptimizeJob) -> None:
     finished_at = job.finished_at or utc_now()
     duration_seconds = (finished_at - started_at).total_seconds()
     server_logger.info(
-        "[server:job] completed job_id=%s status=%s score=%s duration_seconds=%.3f",
+        "[server:job] completed job_id=%s status=%s score=%s duration_seconds=%.3f client_uuid=%s",
         job.id,
         job.status.value,
         job.score,
         duration_seconds,
+        job.client_uuid,
     )
 
 
@@ -257,10 +272,11 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
     _refresh_queue_positions()
     queue_wait_seconds = (job.started_at - job.created_at).total_seconds()
     server_logger.info(
-        "[server:job] started job_id=%s solver=%s queue_wait_seconds=%.3f",
+        "[server:job] started job_id=%s solver=%s queue_wait_seconds=%.3f client_uuid=%s",
         job.id,
         job.solver,
         queue_wait_seconds,
+        job.client_uuid,
     )
 
     try:
@@ -340,18 +356,20 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         )
         if job is None:
             server_logger.warning(
-                "[server:job] failed-after-deletion job_id=%s error=%s",
+                "[server:job] failed-after-deletion job_id=%s error=%s client_uuid=%s",
                 job_id,
                 str(e),
+                current_job.client_uuid,
             )
             return
         _refresh_queue_positions()
         duration_seconds = (job.finished_at - (job.started_at or job.created_at)).total_seconds()
         server_logger.error(
-            "[server:job] failed job_id=%s error=%s duration_seconds=%.3f",
+            "[server:job] failed job_id=%s error=%s duration_seconds=%.3f client_uuid=%s",
             job.id,
             str(e),
             duration_seconds,
+            job.client_uuid,
         )
 
 
@@ -436,6 +454,8 @@ async def health():
 
 @app.post("/optimize", status_code=202)
 async def create_optimize_job(
+    request: Request,
+    response: Response,
     file: UploadFile | None = File(None, description="YAML file with scheduling data"),
     yaml_content: str | None = Form(None, description="YAML content as a string"),
     prettify: bool | None = Form(None, description="Enable prettier output formatting"),
@@ -444,7 +464,24 @@ async def create_optimize_job(
 ):
     content, input_name = await _read_optimization_input(file, yaml_content)
     timeout = _normalize_optimization_timeout(timeout)
-    job = _create_optimize_job(input_name=input_name, solver=solver, prettify=prettify, timeout=timeout)
+    client_uuid, is_new_client_uuid = _get_or_create_client_uuid(request)
+    if is_new_client_uuid:
+        response.set_cookie(
+            key=CLIENT_UUID_COOKIE_NAME,
+            value=client_uuid,
+            max_age=CLIENT_UUID_COOKIE_MAX_AGE_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+            path="/",
+        )
+    job = _create_optimize_job(
+        input_name=input_name,
+        client_uuid=client_uuid,
+        solver=solver,
+        prettify=prettify,
+        timeout=timeout,
+    )
     _optimize_executor.submit(_run_optimize_job, job.id, content)
     return _optimize_job_response(job)
 
@@ -536,7 +573,7 @@ async def delete_optimize_job(job_id: str):
                 },
             )
         del _optimize_jobs[job_id]
-    server_logger.info("[server:job] deleted job_id=%s status=%s", job.id, job.status.value)
+    server_logger.info("[server:job] deleted job_id=%s status=%s client_uuid=%s", job.id, job.status.value, job.client_uuid)
     return {"deleted": True, "jobId": job_id}
 
 

@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 import types
+import uuid
 from datetime import UTC, datetime, timedelta
 
 # Add the project root to the Python path so imports will work when running directly
@@ -113,9 +114,13 @@ class TestOptimizeJobs:
         monkeypatch.setattr(serve.exporter, "export_to_excel", fake_export_to_excel)
 
     def test_optimize_job_lifecycle_and_xlsx_download(self, fake_successful_scheduler, caplog):
+        client.cookies.clear()
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
 
         assert response.status_code == 202
+        assert serve.CLIENT_UUID_COOKIE_NAME in response.headers.get("set-cookie", "")
+        client_uuid = client.cookies[serve.CLIENT_UUID_COOKIE_NAME]
+        uuid.UUID(client_uuid)
         created = response.json()
         job_id = created["jobId"]
         assert job_id.startswith("opt_")
@@ -134,10 +139,20 @@ class TestOptimizeJobs:
         assert download.content == b"fake xlsx bytes"
         assert download.headers["X-Schedule-Score"] == "42"
         assert download.headers["X-Schedule-Status"] == "OPTIMAL"
-        assert any(f"[server:job] queued job_id={job_id} " in message for message in caplog.messages)
-        assert any(f"[server:job] started job_id={job_id} " in message for message in caplog.messages)
         assert any(
-            f"[server:job] completed job_id={job_id} status=optimal score=42 " in message for message in caplog.messages
+            f"[server:job] queued job_id={job_id} " in message
+            and f"client_uuid={client_uuid}" in message
+            for message in caplog.messages
+        )
+        assert any(
+            f"[server:job] started job_id={job_id} " in message
+            and f"client_uuid={client_uuid}" in message
+            for message in caplog.messages
+        )
+        assert any(
+            f"[server:job] completed job_id={job_id} status=optimal score=42 " in message
+            and f"client_uuid={client_uuid}" in message
+            for message in caplog.messages
         )
 
     def test_optimize_job_accepts_file_upload_and_options(self, fake_successful_scheduler):
@@ -157,6 +172,26 @@ class TestOptimizeJobs:
 
         completed = wait_for_job_status(created["jobId"], "optimal")
         assert completed["xlsxReady"] is True
+
+    def test_optimize_job_reuses_client_uuid_cookie(self, fake_successful_scheduler):
+        client.cookies.clear()
+        first = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        assert first.status_code == 202
+        client_uuid = client.cookies[serve.CLIENT_UUID_COOKIE_NAME]
+        uuid.UUID(client_uuid)
+
+        client.cookies.set(serve.CLIENT_UUID_COOKIE_NAME, client_uuid)
+        second = client.post(
+            "/optimize",
+            data={"yaml_content": "apiVersion: alpha\n"},
+        )
+
+        assert second.status_code == 202
+        assert serve.CLIENT_UUID_COOKIE_NAME not in second.headers.get("set-cookie", "")
+        first_job = serve._get_optimize_job(first.json()["jobId"])
+        second_job = serve._get_optimize_job(second.json()["jobId"])
+        assert first_job.client_uuid == client_uuid
+        assert second_job.client_uuid == client_uuid
 
     def test_optimize_job_streams_lifecycle_events(self, fake_successful_scheduler):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
@@ -327,11 +362,15 @@ class TestOptimizeJobs:
         completed = wait_for_job_status(job_id, "feasible")
         assert completed["score"] == 7
         assert completed["xlsxReady"] is True
-        assert f"[server:job] finish-now-requested job_id={job_id} status=running" in caplog.messages
+        assert any(
+            f"[server:job] finish-now-requested job_id={job_id} status=running client_uuid=" in message
+            for message in caplog.messages
+        )
 
     def test_optimize_job_control_rejects_solver_without_stop_support(self):
         job = serve._create_optimize_job(
             input_name="pulp.yaml",
+            client_uuid="test-client",
             solver="pulp/cbc",
             prettify=True,
             timeout=60,
@@ -365,6 +404,7 @@ class TestOptimizeJobs:
     def test_optimize_job_failed_fallback_streams_error_event(self):
         job = serve._create_optimize_job(
             input_name="failed.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -386,6 +426,7 @@ class TestOptimizeJobs:
     def test_optimize_job_terminal_update_and_event_are_atomic(self, monkeypatch):
         job = serve._create_optimize_job(
             input_name="atomic.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -436,11 +477,15 @@ class TestOptimizeJobs:
         assert delete_response.status_code == 200
         assert delete_response.json() == {"deleted": True, "jobId": job_id}
         assert client.get(f"/optimize/{job_id}").status_code == 404
-        assert f"[server:job] deleted job_id={job_id} status=optimal" in caplog.messages
+        assert any(
+            f"[server:job] deleted job_id={job_id} status=optimal client_uuid=" in message
+            for message in caplog.messages
+        )
 
     def test_optimize_job_expiration_removes_finished_jobs(self, caplog):
         job = serve._create_optimize_job(
             input_name="expired.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=False,
             timeout=1,
@@ -454,7 +499,10 @@ class TestOptimizeJobs:
         response = client.get(f"/optimize/{job.id}")
 
         assert response.status_code == 404
-        assert f"[server:job] expired job_id={job.id} status=optimal reason=ttl" in caplog.messages
+        assert any(
+            f"[server:job] expired job_id={job.id} status=optimal reason=ttl client_uuid=" in message
+            for message in caplog.messages
+        )
 
     def test_optimize_job_retries_generated_id_collision(self, monkeypatch):
         generated_ids = iter(
@@ -469,6 +517,7 @@ class TestOptimizeJobs:
             status=serve.OptimizeJobStatus.OPTIMAL,
             created_at=datetime.now(UTC),
             input_name="existing.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=False,
             timeout=None,
@@ -479,6 +528,7 @@ class TestOptimizeJobs:
 
         job = serve._create_optimize_job(
             input_name="new.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -494,12 +544,14 @@ class TestOptimizeJobs:
     def test_optimize_jobs_report_and_publish_updated_queue_positions(self):
         first = serve._create_optimize_job(
             input_name="first.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
         second = serve._create_optimize_job(
             input_name="second.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -521,12 +573,14 @@ class TestOptimizeJobs:
     def test_optimize_job_cancels_queued_job_immediately_for_any_solver(self, caplog):
         first = serve._create_optimize_job(
             input_name="first.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
         second = serve._create_optimize_job(
             input_name="second.yaml",
+            client_uuid="test-client",
             solver="pulp/cbc",
             prettify=True,
             timeout=60,
@@ -538,14 +592,19 @@ class TestOptimizeJobs:
         assert response.json()["status"] == "cancelled"
         assert response.json()["queuePosition"] is None
         assert serve._optimize_job_response(second)["queuePosition"] == 1
-        assert f"[server:job] cancel-requested job_id={first.id} status=cancelled" in caplog.messages
         assert any(
-            f"[server:job] completed job_id={first.id} status=cancelled " in message for message in caplog.messages
+            f"[server:job] cancel-requested job_id={first.id} status=cancelled client_uuid=" in message
+            for message in caplog.messages
+        )
+        assert any(
+            f"[server:job] completed job_id={first.id} status=cancelled " in message
+            for message in caplog.messages
         )
 
     def test_optimize_job_heartbeat_updates_client_liveness(self):
         job = serve._create_optimize_job(
             input_name="heartbeat.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -563,6 +622,7 @@ class TestOptimizeJobs:
     def test_optimize_job_heartbeat_rejects_terminal_job(self):
         job = serve._create_optimize_job(
             input_name="finished.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -577,6 +637,7 @@ class TestOptimizeJobs:
     def test_optimize_job_update_rejects_unknown_fields(self):
         job = serve._create_optimize_job(
             input_name="invalid-update.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -590,6 +651,7 @@ class TestOptimizeJobs:
     def test_job_is_cancelled_after_client_heartbeat_timeout(self, caplog):
         job = serve._create_optimize_job(
             input_name="expired-heartbeat.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -606,14 +668,16 @@ class TestOptimizeJobs:
         assert response["status"] == "cancelled"
         assert response["clientHeartbeatExpired"] is True
         assert response["error"] == "Optimization cancelled because the client heartbeat expired."
-        assert (
-            f"[server:job] heartbeat-expired job_id={job.id} status=cancelled action=cancel-requested"
-            in caplog.messages
+        assert any(
+            f"[server:job] heartbeat-expired job_id={job.id} status=cancelled action=cancel-requested client_uuid="
+            in message
+            for message in caplog.messages
         )
 
     def test_recent_client_heartbeat_prevents_job_cancellation(self):
         job = serve._create_optimize_job(
             input_name="alive.yaml",
+            client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
@@ -632,6 +696,7 @@ class TestOptimizeJobs:
     def test_expired_heartbeat_requests_running_job_stop_even_for_non_interruptible_solver(self):
         job = serve._create_optimize_job(
             input_name="running.yaml",
+            client_uuid="test-client",
             solver="pulp/cbc",
             prettify=True,
             timeout=60,
@@ -653,6 +718,7 @@ class TestOptimizeJobs:
         pending_jobs = [
             serve._create_optimize_job(
                 input_name=f"pending-{index}.yaml",
+                client_uuid="test-client",
                 solver="ortools/cp-sat",
                 prettify=True,
                 timeout=60,
@@ -679,6 +745,7 @@ class TestOptimizeJobs:
                     status=serve.OptimizeJobStatus.OPTIMAL,
                     created_at=now - timedelta(seconds=serve.OPTIMIZE_MAX_RETAINED_JOBS - index),
                     input_name=f"retained-{index}.yaml",
+                    client_uuid="test-client",
                     solver="ortools/cp-sat",
                     prettify=True,
                     timeout=60,
@@ -821,8 +888,10 @@ class TestOptimizeJobs:
 
         monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
 
+        client.cookies.clear()
         response = client.post("/optimize", data={"yaml_content": "bad: input\n"})
         job_id = response.json()["jobId"]
+        client_uuid = client.cookies[serve.CLIENT_UUID_COOKIE_NAME]
 
         completed = wait_for_job_status(job_id, "failed")
         assert "bad scheduling data" in completed["error"]
@@ -830,7 +899,9 @@ class TestOptimizeJobs:
         assert "Older YAML may not work after breaking changes" in completed["error"]
         assert completed["xlsxReady"] is False
         assert any(
-            f"[server:job] failed job_id={job_id} error=bad scheduling data " in message for message in caplog.messages
+            f"[server:job] failed job_id={job_id} error=bad scheduling data " in message
+            and f"client_uuid={client_uuid}" in message
+            for message in caplog.messages
         )
 
     def test_optimize_job_records_no_solution(self, monkeypatch):
