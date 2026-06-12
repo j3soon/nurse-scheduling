@@ -110,6 +110,25 @@ describe('DatePage', () => {
     expect(updateDateRange).not.toHaveBeenCalled();
   });
 
+  it('clears date range errors when the related date is edited', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('End Date *'), { target: { value: '' } });
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(screen.getByText('Start date is required')).toBeInTheDocument();
+    expect(screen.getByText('End date is required')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-01' } });
+
+    expect(screen.queryByText('Start date is required')).not.toBeInTheDocument();
+    expect(screen.getByText('End date is required')).toBeInTheDocument();
+  });
+
   it('shows an end-date validation error when the end date is before the start date', async () => {
     const user = userEvent.setup();
 

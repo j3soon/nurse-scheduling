@@ -324,6 +324,14 @@ export default function ShiftCountsPage() {
   };
 
   const handleArrayFieldToggle = (field: 'person' | 'count_dates' | 'count_shift_types', id: string) => {
+    setErrors(prev => ({
+      ...prev,
+      [field]: '',
+      ...(field === 'count_shift_types' ? {
+        count_shift_type_coefficients: '',
+        count_shift_type_coefficients_by_id: {},
+      } : {})
+    }));
     setFormData(prev => ({
       ...prev,
       [field]: prev[field].includes(id)
@@ -600,7 +608,10 @@ export default function ShiftCountsPage() {
                   </label>
                   <select
                     value={formData.expression}
-                    onChange={(e) => setFormData(prev => ({ ...prev, expression: e.target.value as typeof SUPPORTED_EXPRESSIONS[number] }))}
+                    onChange={(e) => {
+                      setErrors(prev => ({ ...prev, expression: '' }));
+                      setFormData(prev => ({ ...prev, expression: e.target.value as typeof SUPPORTED_EXPRESSIONS[number] }));
+                    }}
                     className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
                       errors.expression
                         ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
@@ -660,7 +671,10 @@ export default function ShiftCountsPage() {
               {/* Weight */}
               <WeightInput
                 value={formData.weight}
-                onChange={(value) => setFormData(prev => ({ ...prev, weight: value }))}
+                onChange={(value) => {
+                  setErrors(prev => ({ ...prev, weight: '' }));
+                  setFormData(prev => ({ ...prev, weight: value }));
+                }}
                 error={errors.weight}
                 placeholder="e.g., -1, -10, ∞"
               />

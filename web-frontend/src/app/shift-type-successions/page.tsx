@@ -206,6 +206,7 @@ export default function ShiftTypeSuccessionsPage() {
   };
 
   const handleArrayFieldToggle = (field: 'person' | 'date', id: string) => {
+    setErrors(prev => ({ ...prev, [field]: '' }));
     setFormData(prev => ({
       ...prev,
       [field]: prev[field].includes(id)
@@ -215,6 +216,7 @@ export default function ShiftTypeSuccessionsPage() {
   };
 
   const addToPattern = (shiftTypeId: string) => {
+    setErrors(prev => ({ ...prev, pattern: '' }));
     setFormData(prev => ({
       ...prev,
       pattern: [...prev.pattern, shiftTypeId]
@@ -222,6 +224,7 @@ export default function ShiftTypeSuccessionsPage() {
   };
 
   const removeFromPattern = (index: number) => {
+    setErrors(prev => ({ ...prev, pattern: '' }));
     setFormData(prev => ({
       ...prev,
       pattern: prev.pattern.filter((_, i) => i !== index)
@@ -551,7 +554,10 @@ export default function ShiftTypeSuccessionsPage() {
               {/* Weight */}
               <WeightInput
                 value={formData.weight}
-                onChange={(value) => setFormData(prev => ({ ...prev, weight: value }))}
+                onChange={(value) => {
+                  setErrors(prev => ({ ...prev, weight: '' }));
+                  setFormData(prev => ({ ...prev, weight: value }));
+                }}
                 error={errors.weight}
                 placeholder="e.g., -1, -10, ∞"
               />

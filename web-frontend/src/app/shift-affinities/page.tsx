@@ -213,6 +213,7 @@ export default function ShiftAffinitiesPage() {
   };
 
   const handleArrayFieldToggle = (field: 'date' | 'people1' | 'people2' | 'shift_types', id: string) => {
+    setErrors(prev => ({ ...prev, [field === 'shift_types' ? 'shiftTypes' : field]: '' }));
     setFormData(prev => ({
       ...prev,
       [field]: prev[field].includes(id)
@@ -442,7 +443,10 @@ export default function ShiftAffinitiesPage() {
               {/* Weight */}
               <WeightInput
                 value={formData.weight}
-                onChange={(value) => setFormData(prev => ({ ...prev, weight: value }))}
+                onChange={(value) => {
+                  setErrors(prev => ({ ...prev, weight: '' }));
+                  setFormData(prev => ({ ...prev, weight: value }));
+                }}
                 error={errors.weight}
                 placeholder="e.g., 1, 10, ∞"
               />

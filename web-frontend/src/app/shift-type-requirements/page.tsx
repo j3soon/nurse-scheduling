@@ -368,6 +368,7 @@ export default function ShiftTypeRequirementsPage() {
   };
 
   const handleArrayFieldToggle = (field: 'shift_type' | 'qualified_people' | 'date', id: string) => {
+    setErrors(prev => ({ ...prev, [field]: '' }));
     setFormData(prev => ({
       ...prev,
       [field]: prev[field].includes(id)
@@ -689,7 +690,10 @@ export default function ShiftTypeRequirementsPage() {
               {usesWeight ? (
                 <WeightInput
                   value={formData.weight}
-                  onChange={(value) => setFormData(prev => ({ ...prev, weight: value }))}
+                  onChange={(value) => {
+                    setErrors(prev => ({ ...prev, weight: '' }));
+                    setFormData(prev => ({ ...prev, weight: value }));
+                  }}
                   error={errors.weight}
                   placeholder="e.g., -1, -10, ∞"
                 />
