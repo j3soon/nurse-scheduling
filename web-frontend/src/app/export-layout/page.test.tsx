@@ -207,6 +207,100 @@ describe('ExportLayoutPage extra column coefficients', () => {
     expect(updateExportConfig.mock.calls[0][0].extraColumns[0].countShiftTypeCoefficients).toEqual([['D', 2]]);
   });
 
+  it('shows the required header error under the header input with a red border', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
+    await user.selectOptions(screen.getAllByRole('combobox')[0], 'extra column');
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('checkbox', { name: '2026-01-01' }));
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    const headerInput = screen.getByPlaceholderText('OFF (Weekend)');
+    const headerError = screen.getByText('Column header is required');
+    expect(headerInput).toHaveClass('border-red-300');
+    expect(
+      headerInput.compareDocumentPosition(headerError) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+
+    await user.type(headerInput, 'Score');
+
+    expect(screen.queryByText('Column header is required')).not.toBeInTheDocument();
+    expect(headerInput).not.toHaveClass('border-red-300');
+  });
+
+  it('shows the count dates error under the count dates list', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
+    await user.selectOptions(screen.getAllByRole('combobox')[0], 'extra column');
+    await user.type(screen.getByPlaceholderText('OFF (Weekend)'), 'Score');
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    const countDatesLabel = screen.getByText('Count Dates *');
+    const countDatesError = screen.getByText('Select at least one date target to count over');
+    expect(
+      countDatesLabel.compareDocumentPosition(countDatesError) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it('shows color errors under the corresponding color field with a red border', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await startExtraColumn(user, ['D']);
+    const rightBorderInput = screen.getByTitle('Enter right border color in hex');
+    await user.type(rightBorderInput, 'red');
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(screen.getByText('Right Border Color must be a valid hex color in #RRGGBB format')).toBeInTheDocument();
+    expect(rightBorderInput).toHaveClass('border-red-300');
+  });
+
+  it('shows all extra column validation errors from one save attempt', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
+    await user.selectOptions(screen.getAllByRole('combobox')[0], 'extra column');
+    await user.type(screen.getByTitle('Enter right border color in hex'), 'red');
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.clear(screen.getByRole('spinbutton', { name: 'D' }));
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(screen.getByText('Column header is required')).toBeInTheDocument();
+    expect(screen.getByText('Right Border Color must be a valid hex color in #RRGGBB format')).toBeInTheDocument();
+    expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
+    expect(screen.getByText('Select at least one date target to count over')).toBeInTheDocument();
+    expect(updateExportConfig).not.toHaveBeenCalled();
+  });
+
+  it('shows all style validation errors and places the style field error after styles', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    const fontColorInput = screen.getByTitle('Enter font color in hex');
+    const styleFieldError = screen.getByText('At least one style or annotation field is required');
+    const appendTextLabel = screen.getByText('Append Text');
+
+    expect(screen.getByText('Select at least one people')).toBeInTheDocument();
+    expect(screen.getByText('Select at least one dates')).toBeInTheDocument();
+    expect(screen.getByText('Select at least one shift types')).toBeInTheDocument();
+    expect(
+      fontColorInput.compareDocumentPosition(styleFieldError) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      styleFieldError.compareDocumentPosition(appendTextLabel) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(updateExportConfig).not.toHaveBeenCalled();
+  });
+
   it('clears an invalid coefficient error when the count shift type selection changes', async () => {
     const user = userEvent.setup();
     renderExportLayoutPage();
