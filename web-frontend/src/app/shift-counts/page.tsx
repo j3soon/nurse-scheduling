@@ -216,7 +216,7 @@ export default function ShiftCountsPage() {
     }
 
     for (const [shiftTypeId, coefficient] of formData.count_shift_type_coefficients) {
-      if (!Number.isInteger(coefficient) || coefficient < 1) {
+      if (typeof coefficient !== 'number' || !Number.isInteger(coefficient) || coefficient < 1) {
         const message = `Coefficient for ${shiftTypeId} must be an integer of at least 1`;
         newCoefficientErrors[shiftTypeId] = message;
       }

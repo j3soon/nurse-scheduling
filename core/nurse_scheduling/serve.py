@@ -573,7 +573,9 @@ async def delete_optimize_job(job_id: str):
                 },
             )
         del _optimize_jobs[job_id]
-    server_logger.info("[server:job] deleted job_id=%s status=%s client_uuid=%s", job.id, job.status.value, job.client_uuid)
+    server_logger.info(
+        "[server:job] deleted job_id=%s status=%s client_uuid=%s", job.id, job.status.value, job.client_uuid
+    )
     return {"deleted": True, "jobId": job_id}
 
 

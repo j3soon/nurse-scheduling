@@ -140,13 +140,11 @@ class TestOptimizeJobs:
         assert download.headers["X-Schedule-Score"] == "42"
         assert download.headers["X-Schedule-Status"] == "OPTIMAL"
         assert any(
-            f"[server:job] queued job_id={job_id} " in message
-            and f"client_uuid={client_uuid}" in message
+            f"[server:job] queued job_id={job_id} " in message and f"client_uuid={client_uuid}" in message
             for message in caplog.messages
         )
         assert any(
-            f"[server:job] started job_id={job_id} " in message
-            and f"client_uuid={client_uuid}" in message
+            f"[server:job] started job_id={job_id} " in message and f"client_uuid={client_uuid}" in message
             for message in caplog.messages
         )
         assert any(
@@ -597,8 +595,7 @@ class TestOptimizeJobs:
             for message in caplog.messages
         )
         assert any(
-            f"[server:job] completed job_id={first.id} status=cancelled " in message
-            for message in caplog.messages
+            f"[server:job] completed job_id={first.id} status=cancelled " in message for message in caplog.messages
         )
 
     def test_optimize_job_heartbeat_updates_client_liveness(self):
