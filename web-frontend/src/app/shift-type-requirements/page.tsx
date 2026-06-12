@@ -47,8 +47,8 @@ interface ShiftTypeRequirementForm {
 }
 
 type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
-  // The backend intentionally accepts null/missing to mean all people. The
-  // frontend form requires [ALL] to keep the selection explicit.
+  // Backend input accepts both null/missing and the reserved ALL selector for
+  // all people. The frontend form normalizes the implicit form to [ALL].
   qualifiedPeople?: ShiftTypeRequirementsPreference['qualifiedPeople'] | null;
 };
 
@@ -233,6 +233,7 @@ export default function ShiftTypeRequirementsPage() {
       shift_type: requirement.shiftType,
       required_num_people: requirement.requiredNumPeople,
       // Normalize the backend's implicit all-people representation for the UI.
+      // Saving [ALL] back is intentional because the backend interprets null as [ALL].
       qualified_people: requirement.qualifiedPeople === null || requirement.qualifiedPeople === undefined
         ? [ALL]
         : requirement.qualifiedPeople,

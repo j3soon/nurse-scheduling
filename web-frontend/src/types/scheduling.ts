@@ -172,11 +172,13 @@ export interface ShiftTypeRequirementsPreference extends BasePreference {
   description?: string;
   shiftType: string[];
   requiredNumPeople: number;
-  // Unlike the backend schema, frontend state requires explicit selectors to
-  // prevent ambiguous form state. Backend null/missing values normalize to ALL.
+  // Backend input accepts either null/missing or the reserved ALL selector for
+  // all people. Frontend state intentionally stores the explicit ALL selector
+  // so forms and persisted client state never have an implicit empty scope.
   qualifiedPeople: string[];
   preferredNumPeople?: number;
-  // The backend permits null/missing to mean all dates; frontend state uses ALL.
+  // Backend input accepts null/missing for all dates; frontend state uses the
+  // explicit ALL selector for the same reason as qualifiedPeople.
   date: string[];
   weight: number;
 }

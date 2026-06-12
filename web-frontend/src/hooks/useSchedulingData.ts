@@ -72,8 +72,8 @@ interface HistoryMutationOptions {
 }
 
 type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
-  // The backend intentionally accepts null/missing to mean all people. The
-  // frontend requires [ALL] to keep forms and persisted frontend state explicit.
+  // Backend input accepts both null/missing and the reserved ALL selector for
+  // all people. Frontend state normalizes the implicit form to [ALL].
   qualifiedPeople?: ShiftTypeRequirementsPreference['qualifiedPeople'] | null;
 };
 
@@ -81,7 +81,8 @@ function normalizeQualifiedPeopleForFrontend(
   qualifiedPeople: NullableShiftTypeRequirementsPreference['qualifiedPeople']
 ): string[] {
   // Normalize the backend's implicit all-people representation into the
-  // frontend's explicit selector.
+  // frontend's explicit selector. Keeping [ALL] in client state is intentional;
+  // the backend knows to interpret null as [ALL].
   return qualifiedPeople === null || qualifiedPeople === undefined ? [ALL] : qualifiedPeople;
 }
 
