@@ -866,13 +866,16 @@ export default function ExportFormattingPage() {
   };
 
   const clearCoefficientError = (shiftTypeId: string) => {
-    const nextCoefficientErrors = { ...errors.countShiftTypeCoefficientsById };
-    delete nextCoefficientErrors[shiftTypeId];
-    setErrors(prev => ({
-      ...prev,
-      countShiftTypeCoefficients: Object.values(nextCoefficientErrors).join('\n'),
-      countShiftTypeCoefficientsById: nextCoefficientErrors,
-    }));
+    setErrors(prev => {
+      const nextCoefficientErrors = { ...prev.countShiftTypeCoefficientsById };
+      delete nextCoefficientErrors[shiftTypeId];
+
+      return {
+        ...prev,
+        countShiftTypeCoefficients: Object.values(nextCoefficientErrors).join('\n'),
+        countShiftTypeCoefficientsById: nextCoefficientErrors,
+      };
+    });
   };
 
   const renderExtraColumnCoefficientFields = () => {

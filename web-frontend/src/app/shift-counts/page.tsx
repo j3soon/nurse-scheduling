@@ -307,13 +307,16 @@ export default function ShiftCountsPage() {
   };
 
   const clearCoefficientError = (shiftTypeId: string) => {
-    const nextCoefficientErrors = { ...errors.count_shift_type_coefficients_by_id };
-    delete nextCoefficientErrors[shiftTypeId];
-    setErrors(prev => ({
-      ...prev,
-      count_shift_type_coefficients: Object.values(nextCoefficientErrors).join('\n'),
-      count_shift_type_coefficients_by_id: nextCoefficientErrors
-    }));
+    setErrors(prev => {
+      const nextCoefficientErrors = { ...prev.count_shift_type_coefficients_by_id };
+      delete nextCoefficientErrors[shiftTypeId];
+
+      return {
+        ...prev,
+        count_shift_type_coefficients: Object.values(nextCoefficientErrors).join('\n'),
+        count_shift_type_coefficients_by_id: nextCoefficientErrors
+      };
+    });
   };
 
   return (

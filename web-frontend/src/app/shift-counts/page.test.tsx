@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ShiftCountsPage from '@/app/shift-counts/page';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
@@ -219,6 +219,32 @@ describe('ShiftCountsPage', () => {
     expect(screen.getByText('Coefficient for N must be an integer of at least 1')).toBeInTheDocument();
     expect(dayCoefficientInput).not.toHaveClass('border-red-300');
     expect(nightCoefficientInput).toHaveClass('border-red-300');
+  });
+
+  it('clears multiple coefficient errors queued before a render', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
+    const dayCoefficientInput = screen.getByRole('spinbutton', { name: 'D' });
+    const nightCoefficientInput = screen.getByRole('spinbutton', { name: 'N' });
+
+    await user.clear(dayCoefficientInput);
+    await user.clear(nightCoefficientInput);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
+    expect(screen.getByText('Coefficient for N must be an integer of at least 1')).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.change(dayCoefficientInput, { target: { value: '2' } });
+      fireEvent.change(nightCoefficientInput, { target: { value: '3' } });
+    });
+
+    expect(screen.queryByText('Coefficient for D must be an integer of at least 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Coefficient for N must be an integer of at least 1')).not.toBeInTheDocument();
+    expect(dayCoefficientInput).not.toHaveClass('border-red-300');
+    expect(nightCoefficientInput).not.toHaveClass('border-red-300');
   });
 
   it('allows an empty target while editing and clears its save error only after a value change', async () => {
