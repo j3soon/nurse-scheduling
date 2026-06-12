@@ -1,6 +1,6 @@
 ---
 name: run-ci
-description: Run the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs core lint and the normal core pytest suite with coverage without CBC, cuOpt, or the three explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E coverage.
+description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs core lint and the normal core pytest suite with coverage without CBC, cuOpt, or the three explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E coverage. Fix failures and rerun until the full script passes.
 ---
 
 # Run CI
@@ -29,6 +29,12 @@ The script intentionally:
 - Does not upload coverage or artifacts.
 
 Do not replace the script with affected-test commands or add excluded solver
-tests. Stop on the first failed check and report the failed command. If a
-required dependency or Playwright browser is missing, install it using the
-repository's documented setup commands, then rerun the script.
+tests. When a check fails, diagnose and fix the underlying error while
+preserving repository conventions and unrelated user changes. Run a focused
+check when useful to verify the fix, then rerun the bundled script from the
+beginning. Repeat until the full script passes.
+
+Do not weaken, skip, or alter checks merely to make CI pass. If a required
+dependency or Playwright browser is missing, install it using the repository's
+documented setup commands, then rerun the script. Report a blocker only when
+the failure cannot be fixed locally.
