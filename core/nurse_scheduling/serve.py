@@ -223,15 +223,14 @@ def _format_unexpected_error(error: Exception) -> str:
     return f"{error}\n\n{UNEXPECTED_ERROR_VERSION_ADVICE}"
 
 
-def _get_or_create_client_uuid(request: Request) -> tuple[str, bool]:
+def _get_client_uuid_from_cookie(request: Request) -> str | None:
     client_uuid = request.cookies.get(CLIENT_UUID_COOKIE_NAME)
-    if client_uuid is not None:
-        try:
-            UUID(client_uuid)
-            return client_uuid, False
-        except ValueError:
-            pass
-    return uuid4().hex, True
+    if client_uuid is None:
+        return None
+    try:
+        return UUID(client_uuid).hex
+    except ValueError:
+        return None
 
 
 def _job_cancellation_error(job: OptimizeJob) -> str:
@@ -464,8 +463,9 @@ async def create_optimize_job(
 ):
     content, input_name = await _read_optimization_input(file, yaml_content)
     timeout = _normalize_optimization_timeout(timeout)
-    client_uuid, is_new_client_uuid = _get_or_create_client_uuid(request)
-    if is_new_client_uuid:
+    client_uuid = _get_client_uuid_from_cookie(request)
+    if client_uuid is None:
+        client_uuid = uuid4().hex
         response.set_cookie(
             key=CLIENT_UUID_COOKIE_NAME,
             value=client_uuid,

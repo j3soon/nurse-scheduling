@@ -204,6 +204,32 @@ class TestOptimizeJobs:
         assert first_job.client_uuid == client_uuid
         assert second_job.client_uuid == client_uuid
 
+    def test_optimize_job_replaces_invalid_client_uuid_cookie(self, fake_successful_scheduler):
+        client.cookies.clear()
+        client.cookies.set(serve.CLIENT_UUID_COOKIE_NAME, "not-a-uuid")
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+
+        assert response.status_code == 202
+        assert serve.CLIENT_UUID_COOKIE_NAME in response.headers.get("set-cookie", "")
+        client_uuid = response.cookies[serve.CLIENT_UUID_COOKIE_NAME]
+        uuid.UUID(client_uuid)
+        assert client_uuid != "not-a-uuid"
+        job = serve._get_optimize_job(response.json()["jobId"])
+        assert job.client_uuid == client_uuid
+
+    def test_optimize_job_normalizes_client_uuid_cookie(self, fake_successful_scheduler):
+        client.cookies.clear()
+        client_uuid = uuid.uuid4()
+        client.cookies.set(serve.CLIENT_UUID_COOKIE_NAME, str(client_uuid))
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+
+        assert response.status_code == 202
+        assert serve.CLIENT_UUID_COOKIE_NAME not in response.headers.get("set-cookie", "")
+        job = serve._get_optimize_job(response.json()["jobId"])
+        assert job.client_uuid == client_uuid.hex
+
     def test_optimize_job_streams_lifecycle_events(self, fake_successful_scheduler):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
         job_id = response.json()["jobId"]
