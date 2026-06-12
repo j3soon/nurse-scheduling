@@ -725,6 +725,15 @@ class TestOptimizeJobs:
         assert response.status_code == 413
         assert "too large" in response.json()["detail"].lower()
 
+    def test_optimize_job_rejects_oversized_multipart_yaml_content(self):
+        response = client.post(
+            "/optimize",
+            files={"yaml_content": (None, "a" * (serve.MAX_OPTIMIZATION_YAML_BYTES + 1))},
+        )
+
+        assert response.status_code == 413
+        assert "too large" in response.json()["detail"].lower()
+
     def test_optimize_job_rejects_oversized_file_upload(self):
         response = client.post(
             "/optimize",

@@ -133,8 +133,15 @@ async def sentry_http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ):
-    if 400 <= exc.status_code < 500:
-        capture_invalid_request(request, exc.status_code, exc.detail)
+    status_code = exc.status_code
+    detail = exc.detail
+    if request.url.path == "/optimize" and _is_form_parser_size_error(exc):
+        status_code = 413
+        detail = "Scheduling YAML is too large"
+        exc = StarletteHTTPException(status_code=status_code, detail=detail)
+
+    if 400 <= status_code < 500:
+        capture_invalid_request(request, status_code, detail)
     return await http_exception_handler(request, exc)
 
 
@@ -155,6 +162,13 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
 _optimize_executor = ThreadPoolExecutor(max_workers=OPTIMIZE_MAX_WORKERS)
 uuid = optimize_jobs_state.uuid
 _cancel_jobs_with_expired_heartbeats = optimize_jobs_state._cancel_jobs_with_expired_heartbeats
+
+
+def _is_form_parser_size_error(exc: StarletteHTTPException) -> bool:
+    if exc.status_code != 400:
+        return False
+    detail = str(exc.detail).lower()
+    return "size" in detail and ("exceeded" in detail or "too large" in detail)
 
 
 async def _read_optimization_input(
