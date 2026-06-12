@@ -22,12 +22,21 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ShiftCountsPage from '@/app/shift-counts/page';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useSchedulingData', () => ({
   useSchedulingData: mockUseSchedulingData,
 }));
+
+function renderShiftCountsPage() {
+  return render(
+    <UnsavedEditingStateProvider>
+      <ShiftCountsPage />
+    </UnsavedEditingStateProvider>
+  );
+}
 
 describe('ShiftCountsPage', () => {
   const updatePreferencesByType = vi.fn();
@@ -78,7 +87,7 @@ describe('ShiftCountsPage', () => {
 
   it('blocks overlapping coefficients for a shift type and a group containing it', async () => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
     setCoefficient('D', 2);
@@ -91,7 +100,7 @@ describe('ShiftCountsPage', () => {
 
   it('allows overlapping selected shift types when their default coefficients are omitted', async () => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
     await user.click(screen.getByRole('button', { name: 'Add' }));
@@ -102,7 +111,7 @@ describe('ShiftCountsPage', () => {
 
   it('allows overlapping selected shift types when only one has a non-default coefficient', async () => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
     setCoefficient('WORK', 3);
@@ -114,7 +123,7 @@ describe('ShiftCountsPage', () => {
 
   it('allows non-overlapping non-default coefficients', async () => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
     setCoefficient('D', 2);
@@ -162,7 +171,7 @@ describe('ShiftCountsPage', () => {
       updatePreferencesByType,
     });
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await user.click(screen.getByRole('button', { name: /edit/i }));
     await user.click(screen.getByRole('button', { name: 'Update' }));
@@ -178,7 +187,7 @@ describe('ShiftCountsPage', () => {
     ['-Infinity', -Infinity],
   ])('allows squared-error expression with non-positive weight %s', async (weightInput, expectedWeight) => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
     await user.selectOptions(screen.getByRole('combobox'), '|x - T|^2');
@@ -191,7 +200,7 @@ describe('ShiftCountsPage', () => {
 
   it.each(['1', 'Infinity'])('rejects squared-error expression with positive weight %s', async (weightInput) => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
     await user.selectOptions(screen.getByRole('combobox'), '|x - T|^2');

@@ -25,6 +25,7 @@ import userEvent from '@testing-library/user-event';
 import { DataType } from '@/types/scheduling';
 import { Mode } from '@/constants/modes';
 import ItemGroupEditorPage, { ItemGroupEditorPageData } from '@/components/ItemGroupEditorPage';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
 let latestItemEdit: ((id: string) => void) | undefined;
 let latestItemDelete: ((id: string) => void) | undefined;
@@ -99,42 +100,44 @@ function Harness({
   const [data, setData] = useState<ItemGroupEditorPageData>(initialData);
 
   return (
-    <ItemGroupEditorPage
-      title="People"
-      instructions={[]}
-      data={data}
-      dataType={DataType.PEOPLE}
-      mode={mode}
-      setMode={setMode}
-      itemsReadOnly={itemsReadOnly}
-      groupsReadOnly={groupsReadOnly}
-      addItem={vi.fn()}
-      addGroup={vi.fn()}
-      updateItem={vi.fn()}
-      updateGroup={vi.fn()}
-      deleteItem={(_dataType, prev, id) => setData({ ...prev, items: prev.items.filter(item => item.id !== id) })}
-      deleteGroup={(_dataType, prev, id) => setData({ ...prev, groups: prev.groups.filter(group => group.id !== id) })}
-      removeItemFromGroup={vi.fn()}
-      reorderItems={vi.fn()}
-      reorderGroups={vi.fn()}
-      filterItemGroups={(entities) => entities}
-      extraButtons={
-        <div>
-          <button type="button" onClick={() => latestItemEdit?.('Person 1')}>
-            Programmatic Edit Missing Person 1
-          </button>
-          <button type="button" onClick={() => latestItemDelete?.('Person 1')}>
-            Programmatic Delete Missing Person 1
-          </button>
-          <button type="button" onClick={() => latestGroupEdit?.('Team A')}>
-            Programmatic Edit Missing Team A
-          </button>
-          <button type="button" onClick={() => latestGroupDelete?.('Team A')}>
-            Programmatic Delete Missing Team A
-          </button>
-        </div>
-      }
-    />
+    <UnsavedEditingStateProvider>
+      <ItemGroupEditorPage
+        title="People"
+        instructions={[]}
+        data={data}
+        dataType={DataType.PEOPLE}
+        mode={mode}
+        setMode={setMode}
+        itemsReadOnly={itemsReadOnly}
+        groupsReadOnly={groupsReadOnly}
+        addItem={vi.fn()}
+        addGroup={vi.fn()}
+        updateItem={vi.fn()}
+        updateGroup={vi.fn()}
+        deleteItem={(_dataType, prev, id) => setData({ ...prev, items: prev.items.filter(item => item.id !== id) })}
+        deleteGroup={(_dataType, prev, id) => setData({ ...prev, groups: prev.groups.filter(group => group.id !== id) })}
+        removeItemFromGroup={vi.fn()}
+        reorderItems={vi.fn()}
+        reorderGroups={vi.fn()}
+        filterItemGroups={(entities) => entities}
+        extraButtons={
+          <div>
+            <button type="button" onClick={() => latestItemEdit?.('Person 1')}>
+              Programmatic Edit Missing Person 1
+            </button>
+            <button type="button" onClick={() => latestItemDelete?.('Person 1')}>
+              Programmatic Delete Missing Person 1
+            </button>
+            <button type="button" onClick={() => latestGroupEdit?.('Team A')}>
+              Programmatic Edit Missing Team A
+            </button>
+            <button type="button" onClick={() => latestGroupDelete?.('Team A')}>
+              Programmatic Delete Missing Team A
+            </button>
+          </div>
+        }
+      />
+    </UnsavedEditingStateProvider>
   );
 }
 

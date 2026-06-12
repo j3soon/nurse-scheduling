@@ -26,6 +26,7 @@ import ItemGroupEditorPage, { ItemGroupEditorPageData } from '@/components/ItemG
 import { Mode } from '@/constants/modes';
 import { DataType, Group, Item } from '@/types/scheduling';
 import * as scrolling from '@/utils/scrolling';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
 function ItemGroupEditorHarness({
   initialData,
@@ -129,29 +130,31 @@ function ItemGroupEditorHarness({
   };
 
   return (
-    <ItemGroupEditorPage
-      title="People"
-      instructions={instructions}
-      data={data}
-      dataType={DataType.PEOPLE}
-      mode={mode}
-      setMode={setMode}
-      itemsReadOnly={itemsReadOnly}
-      groupsReadOnly={groupsReadOnly}
-      extraButtons={extraButtons}
-      addItem={addItem}
-      addGroup={addGroup}
-      updateItem={updateItem}
-      updateGroup={updateGroup}
-      deleteItem={deleteItem}
-      deleteGroup={deleteGroup}
-      removeItemFromGroup={removeItemFromGroup}
-      reorderItems={reorderItems}
-      reorderGroups={reorderGroups}
-      filterItemGroups={(entities) => entities}
-    >
-      {children}
-    </ItemGroupEditorPage>
+    <UnsavedEditingStateProvider>
+      <ItemGroupEditorPage
+        title="People"
+        instructions={instructions}
+        data={data}
+        dataType={DataType.PEOPLE}
+        mode={mode}
+        setMode={setMode}
+        itemsReadOnly={itemsReadOnly}
+        groupsReadOnly={groupsReadOnly}
+        extraButtons={extraButtons}
+        addItem={addItem}
+        addGroup={addGroup}
+        updateItem={updateItem}
+        updateGroup={updateGroup}
+        deleteItem={deleteItem}
+        deleteGroup={deleteGroup}
+        removeItemFromGroup={removeItemFromGroup}
+        reorderItems={reorderItems}
+        reorderGroups={reorderGroups}
+        filterItemGroups={(entities) => entities}
+      >
+        {children}
+      </ItemGroupEditorPage>
+    </UnsavedEditingStateProvider>
   );
 }
 

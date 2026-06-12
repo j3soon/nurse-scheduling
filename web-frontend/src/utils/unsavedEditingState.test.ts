@@ -20,34 +20,72 @@
 // This test is mostly AI generated.
 
 import { renderHook } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
 import {
-  clearTabSwitchWarningActive,
-  hasTabSwitchWarningActive,
+  UnsavedEditingStateProvider,
+  useUnsavedEditingState,
   useTabSwitchWarning,
 } from '@/utils/unsavedEditingState';
 
 describe('useTabSwitchWarning', () => {
-  beforeEach(() => {
-    clearTabSwitchWarningActive();
-  });
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(UnsavedEditingStateProvider, null, children);
 
   it('sets the warning while active and clears it on cleanup', () => {
-    const active = renderHook(() => useTabSwitchWarning(true));
+    const active = renderHook(() => {
+      useTabSwitchWarning(true);
+      return useUnsavedEditingState();
+    }, { wrapper });
 
-    expect(hasTabSwitchWarningActive()).toBe(true);
+    expect(active.result.current.hasTabSwitchWarningActive()).toBe(true);
 
     active.unmount();
-    expect(hasTabSwitchWarningActive()).toBe(false);
+    expect(active.result.current.hasTabSwitchWarningActive()).toBe(false);
   });
 
   it('clears the warning when rerendered inactive', () => {
-    const { rerender } = renderHook(({ isActive }) => useTabSwitchWarning(isActive), {
+    const { result, rerender } = renderHook(({ isActive }) => {
+      useTabSwitchWarning(isActive);
+      return useUnsavedEditingState();
+    }, {
       initialProps: { isActive: true },
+      wrapper,
     });
 
-    expect(hasTabSwitchWarningActive()).toBe(true);
+    expect(result.current.hasTabSwitchWarningActive()).toBe(true);
 
     rerender({ isActive: false });
-    expect(hasTabSwitchWarningActive()).toBe(false);
+    expect(result.current.hasTabSwitchWarningActive()).toBe(false);
+  });
+
+  it('keeps the warning active until all active hooks clean up', () => {
+    const { result, rerender } = renderHook(({ firstActive, secondActive }) => {
+      useTabSwitchWarning(firstActive);
+      useTabSwitchWarning(secondActive);
+      return useUnsavedEditingState();
+    }, {
+      initialProps: { firstActive: true, secondActive: true },
+      wrapper,
+    });
+
+    rerender({ firstActive: false, secondActive: true });
+    expect(result.current.hasTabSwitchWarningActive()).toBe(true);
+
+    rerender({ firstActive: false, secondActive: false });
+    expect(result.current.hasTabSwitchWarningActive()).toBe(false);
+  });
+
+  it('keeps provider warnings active until all provider registrations clear', () => {
+    const { result } = renderHook(() => useUnsavedEditingState(), { wrapper });
+
+    result.current.setTabSwitchWarningActive();
+    result.current.setTabSwitchWarningActive();
+
+    result.current.clearTabSwitchWarningActive();
+    expect(result.current.hasTabSwitchWarningActive()).toBe(true);
+
+    result.current.clearTabSwitchWarningActive();
+    result.current.clearTabSwitchWarningActive();
+    expect(result.current.hasTabSwitchWarningActive()).toBe(false);
   });
 });

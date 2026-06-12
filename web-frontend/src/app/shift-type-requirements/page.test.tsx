@@ -22,12 +22,21 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ShiftTypeRequirementsPage from '@/app/shift-type-requirements/page';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useSchedulingData', () => ({
   useSchedulingData: mockUseSchedulingData,
 }));
+
+function renderShiftTypeRequirementsPage() {
+  return render(
+    <UnsavedEditingStateProvider>
+      <ShiftTypeRequirementsPage />
+    </UnsavedEditingStateProvider>
+  );
+}
 
 describe('ShiftTypeRequirementsPage', () => {
   const updatePreferencesByType = vi.fn();
@@ -65,7 +74,7 @@ describe('ShiftTypeRequirementsPage', () => {
   it('does not show OFF in the shift type requirement checkbox list', async () => {
     const user = userEvent.setup();
 
-    render(<ShiftTypeRequirementsPage />);
+    renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
 
@@ -111,7 +120,7 @@ describe('ShiftTypeRequirementsPage', () => {
       updatePreferencesByType,
     });
 
-    render(<ShiftTypeRequirementsPage />);
+    renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /edit/i }));
     await user.click(screen.getByRole('button', { name: 'Update' }));
@@ -121,7 +130,7 @@ describe('ShiftTypeRequirementsPage', () => {
   });
 
   it('warns when a date and shift type pair has no requirement coverage', () => {
-    render(<ShiftTypeRequirementsPage />);
+    renderShiftTypeRequirementsPage();
 
     expect(screen.getByText('Requirement coverage warnings')).toBeInTheDocument();
     expect(screen.getByText(/Undefined staffing requirements: 1 date\/shift type pairs have no requirement/)).toBeInTheDocument();
@@ -156,7 +165,7 @@ describe('ShiftTypeRequirementsPage', () => {
       updatePreferencesByType,
     });
 
-    render(<ShiftTypeRequirementsPage />);
+    renderShiftTypeRequirementsPage();
 
     expect(screen.getByText(/Undefined staffing requirements: 2 date\/shift type pairs have no requirement/)).toBeInTheDocument();
     expect(screen.getAllByText((_, element) => element?.tagName === 'LI' && element.textContent === 'D: 01, 02')).toHaveLength(1);
@@ -204,7 +213,7 @@ describe('ShiftTypeRequirementsPage', () => {
       updatePreferencesByType,
     });
 
-    render(<ShiftTypeRequirementsPage />);
+    renderShiftTypeRequirementsPage();
 
     expect(screen.getByText('Requirement coverage warnings')).toBeInTheDocument();
     expect(screen.getByText(/Duplicate staffing requirements: 1 date\/shift type pairs are covered by more than one requirement/)).toBeInTheDocument();
@@ -214,7 +223,7 @@ describe('ShiftTypeRequirementsPage', () => {
   it('hides weight when preferred number of people equals required number and saves the default weight', async () => {
     const user = userEvent.setup();
 
-    render(<ShiftTypeRequirementsPage />);
+    renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
 
@@ -236,7 +245,7 @@ describe('ShiftTypeRequirementsPage', () => {
   it('shows weight when preferred number of people is higher than required number', async () => {
     const user = userEvent.setup();
 
-    render(<ShiftTypeRequirementsPage />);
+    renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
     const preferredNumPeopleInput = screen.getAllByRole('spinbutton')[1];

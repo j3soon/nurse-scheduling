@@ -35,31 +35,21 @@ type UnsavedEditingState = {
   hasTabSwitchWarningActive: () => boolean;
 };
 
-let defaultTabSwitchWarningActive = false;
-
-const defaultUnsavedEditingState: UnsavedEditingState = {
-  setTabSwitchWarningActive: () => {
-    defaultTabSwitchWarningActive = true;
-  },
-  clearTabSwitchWarningActive: () => {
-    defaultTabSwitchWarningActive = false;
-  },
-  hasTabSwitchWarningActive: () => defaultTabSwitchWarningActive,
-};
-
-const UnsavedEditingStateContext = createContext<UnsavedEditingState>(defaultUnsavedEditingState);
+const UnsavedEditingStateContext = createContext<UnsavedEditingState | null>(null);
 
 function createUnsavedEditingState(): UnsavedEditingState {
-  let tabSwitchWarningActive = false;
+  // Current pages only open one editor at a time, but keep a count so future
+  // overlapping warning registrations cannot clear each other.
+  let tabSwitchWarningCount = 0;
 
   return {
     setTabSwitchWarningActive: () => {
-      tabSwitchWarningActive = true;
+      tabSwitchWarningCount += 1;
     },
     clearTabSwitchWarningActive: () => {
-      tabSwitchWarningActive = false;
+      tabSwitchWarningCount = Math.max(0, tabSwitchWarningCount - 1);
     },
-    hasTabSwitchWarningActive: () => tabSwitchWarningActive,
+    hasTabSwitchWarningActive: () => tabSwitchWarningCount > 0,
   };
 }
 
@@ -69,16 +59,13 @@ export function UnsavedEditingStateProvider({ children }: { children: ReactNode 
   return createElement(UnsavedEditingStateContext.Provider, { value }, children);
 }
 
-export function setTabSwitchWarningActive(): void {
-  defaultUnsavedEditingState.setTabSwitchWarningActive();
-}
-
-export function clearTabSwitchWarningActive(): void {
-  defaultUnsavedEditingState.clearTabSwitchWarningActive();
-}
-
 export function useUnsavedEditingState(): UnsavedEditingState {
-  return useContext(UnsavedEditingStateContext);
+  const value = useContext(UnsavedEditingStateContext);
+  if (!value) {
+    throw new Error('useUnsavedEditingState must be used within UnsavedEditingStateProvider');
+  }
+
+  return value;
 }
 
 export function useTabSwitchWarning(isActive: boolean): void {
@@ -96,12 +83,4 @@ export function useTabSwitchWarning(isActive: boolean): void {
       clearActive();
     };
   }, [clearActive, isActive, setActive]);
-}
-
-export function hasTabSwitchWarningActive(): boolean {
-  return defaultUnsavedEditingState.hasTabSwitchWarningActive();
-}
-
-export function hasSaveAndLoadEditingWarningActive(): boolean {
-  return hasTabSwitchWarningActive();
 }

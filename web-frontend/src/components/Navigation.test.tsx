@@ -21,10 +21,11 @@
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useEffect } from 'react';
 import Navigation from '@/components/Navigation';
 import {
-  clearTabSwitchWarningActive,
-  setTabSwitchWarningActive,
+  UnsavedEditingStateProvider,
+  useUnsavedEditingState,
 } from '@/utils/unsavedEditingState';
 
 const mockPush = vi.hoisted(() => vi.fn());
@@ -35,20 +36,42 @@ vi.mock('next/navigation', () => ({
   usePathname: () => mockUsePathname(),
 }));
 
+function TestTabSwitchWarning() {
+  const { setTabSwitchWarningActive, clearTabSwitchWarningActive } = useUnsavedEditingState();
+
+  useEffect(() => {
+    setTabSwitchWarningActive();
+
+    return () => {
+      clearTabSwitchWarningActive();
+    };
+  }, [clearTabSwitchWarningActive, setTabSwitchWarningActive]);
+
+  return null;
+}
+
+function renderNavigation({ tabSwitchWarningActive = false } = {}) {
+  return render(
+    <UnsavedEditingStateProvider>
+      {tabSwitchWarningActive && <TestTabSwitchWarning />}
+      <Navigation />
+    </UnsavedEditingStateProvider>
+  );
+}
+
 describe('Navigation', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockPush.mockReset();
     mockUsePathname.mockReturnValue('/people');
     vi.spyOn(window, 'scrollBy').mockImplementation(() => undefined);
-    clearTabSwitchWarningActive();
     vi.stubGlobal('confirm', vi.fn(() => true));
   });
 
   it('navigates when a tab button is clicked', async () => {
     const user = userEvent.setup();
 
-    render(<Navigation />);
+    renderNavigation();
 
     await user.click(screen.getByRole('button', { name: '5. Shift Requests' }));
 
@@ -56,7 +79,7 @@ describe('Navigation', () => {
   });
 
   it('supports number-key shortcut navigation when no input is focused', () => {
-    render(<Navigation />);
+    renderNavigation();
 
     fireEvent.keyDown(document, { key: '5' });
 
@@ -64,7 +87,7 @@ describe('Navigation', () => {
   });
 
   it('does not use number shortcuts while an input is focused', () => {
-    render(<Navigation />);
+    renderNavigation();
 
     const input = document.createElement('input');
     document.body.appendChild(input);
@@ -78,7 +101,7 @@ describe('Navigation', () => {
   });
 
   it('navigates with arrow keys and scroll shortcuts', () => {
-    render(<Navigation />);
+    renderNavigation();
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     expect(mockPush).toHaveBeenCalledWith('/dates');
@@ -93,7 +116,7 @@ describe('Navigation', () => {
   it('does not push when clicking the active tab or pressing a modified number shortcut', async () => {
     const user = userEvent.setup();
 
-    render(<Navigation />);
+    renderNavigation();
 
     await user.click(screen.getByRole('button', { name: '2. People' }));
     fireEvent.keyDown(document, { key: '5', ctrlKey: true });
@@ -104,9 +127,8 @@ describe('Navigation', () => {
   it('asks before navigating away when the YAML editor has unsaved changes', async () => {
     const user = userEvent.setup();
     (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
-    setTabSwitchWarningActive();
 
-    render(<Navigation />);
+    renderNavigation({ tabSwitchWarningActive: true });
 
     await user.click(screen.getByRole('button', { name: '5. Shift Requests' }));
 
@@ -115,12 +137,16 @@ describe('Navigation', () => {
   });
 
   it('updates active tab styling on rerender when pathname changes', () => {
-    const { rerender } = render(<Navigation />);
+    const { rerender } = renderNavigation();
 
     expect(screen.getByRole('button', { name: '2. People' }).className).toContain('text-blue-600');
 
     mockUsePathname.mockReturnValue('/save-and-load');
-    rerender(<Navigation />);
+    rerender(
+      <UnsavedEditingStateProvider>
+        <Navigation />
+      </UnsavedEditingStateProvider>
+    );
 
     expect(screen.getByRole('button', { name: '10. Save and Load' }).className).toContain('text-blue-600');
     expect(screen.getByRole('button', { name: '2. People' }).className).not.toContain('text-blue-600');
@@ -128,7 +154,7 @@ describe('Navigation', () => {
 
   it('does nothing on boundary arrow navigation and supports ArrowUp scrolling', () => {
     mockUsePathname.mockReturnValue('/');
-    const { rerender } = render(<Navigation />);
+    const { rerender } = renderNavigation();
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     expect(mockPush).not.toHaveBeenCalled();
@@ -140,14 +166,18 @@ describe('Navigation', () => {
     });
 
     mockUsePathname.mockReturnValue('/optimize-and-export');
-    rerender(<Navigation />);
+    rerender(
+      <UnsavedEditingStateProvider>
+        <Navigation />
+      </UnsavedEditingStateProvider>
+    );
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     expect(mockPush).not.toHaveBeenCalled();
   });
 
   it('ignores shortcuts while textarea, select, or contenteditable elements are focused', () => {
-    render(<Navigation />);
+    renderNavigation();
 
     const textarea = document.createElement('textarea');
     document.body.appendChild(textarea);
@@ -175,7 +205,7 @@ describe('Navigation', () => {
   });
 
   it('navigates home with the 0 shortcut', () => {
-    render(<Navigation />);
+    renderNavigation();
 
     fireEvent.keyDown(document, { key: '0' });
 
@@ -183,7 +213,7 @@ describe('Navigation', () => {
   });
 
   it('updates active-tab styling on rerender even while an editable element remains focused', () => {
-    const { rerender } = render(<Navigation />);
+    const { rerender } = renderNavigation();
     const editable = document.createElement('div');
     editable.setAttribute('contenteditable', 'true');
     document.body.appendChild(editable);
@@ -193,7 +223,11 @@ describe('Navigation', () => {
     expect(mockPush).not.toHaveBeenCalled();
 
     mockUsePathname.mockReturnValue('/shift-requests');
-    rerender(<Navigation />);
+    rerender(
+      <UnsavedEditingStateProvider>
+        <Navigation />
+      </UnsavedEditingStateProvider>
+    );
 
     expect(screen.getByRole('button', { name: '5. Shift Requests' }).className).toContain('text-blue-600');
     expect(screen.getByRole('button', { name: '2. People' }).className).not.toContain('text-blue-600');
@@ -203,7 +237,7 @@ describe('Navigation', () => {
   });
 
   it('removes keyboard listeners on unmount', () => {
-    const { unmount } = render(<Navigation />);
+    const { unmount } = renderNavigation();
 
     unmount();
     fireEvent.keyDown(document, { key: '5' });
