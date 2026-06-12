@@ -31,7 +31,7 @@ import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
-import { OFF } from '@/utils/keywords';
+import { ALL, OFF } from '@/utils/keywords';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
@@ -44,6 +44,10 @@ interface ShiftTypeRequirementForm {
   date: string[];
   weight: number | string;
 }
+
+type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
+  qualifiedPeople?: ShiftTypeRequirementsPreference['qualifiedPeople'] | null;
+};
 
 function preferredNumPeopleDiffersFromRequired(formData: ShiftTypeRequirementForm): boolean {
   return formData.preferred_num_people !== undefined
@@ -219,12 +223,14 @@ export default function ShiftTypeRequirementsPage() {
   };
 
   const handleStartEdit = (index: number) => {
-    const requirement = shiftTypeRequirements[index];
+    const requirement = shiftTypeRequirements[index] as NullableShiftTypeRequirementsPreference;
     setFormData({
       description: requirement.description ?? '',
       shift_type: requirement.shiftType,
       required_num_people: requirement.requiredNumPeople,
-      qualified_people: requirement.qualifiedPeople,
+      qualified_people: requirement.qualifiedPeople === null || requirement.qualifiedPeople === undefined
+        ? [ALL]
+        : requirement.qualifiedPeople,
       preferred_num_people: requirement.preferredNumPeople,
       date: requirement.date,
       weight: requirement.weight

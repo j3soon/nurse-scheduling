@@ -108,6 +108,87 @@ describe('useSchedulingData', () => {
     expect(result.current.dateData.items.map(item => item.id)).toEqual(['10', '11']);
   });
 
+  it('normalizes null qualified people from localStorage to all people', async () => {
+    const storedState = {
+      state: {
+        apiVersion: 'alpha',
+        description: 'loaded from storage',
+        dates: {
+          range: {
+            startDate: '2026-01-10T12:00:00.000Z',
+            endDate: '2026-01-10T12:00:00.000Z',
+          },
+          items: undefined,
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_TYPE_REQUIREMENT,
+            shiftType: ['D'],
+            requiredNumPeople: 1,
+            qualifiedPeople: null,
+            date: ['01'],
+            weight: -1,
+          },
+        ],
+      },
+      history: [
+        {
+          apiVersion: 'alpha',
+          description: 'loaded from storage',
+          dates: {
+            range: {
+              startDate: '2026-01-10T12:00:00.000Z',
+              endDate: '2026-01-10T12:00:00.000Z',
+            },
+            items: undefined,
+            groups: [],
+          },
+          people: {
+            items: [{ id: 'P1', description: '', history: [] }],
+            groups: [],
+            history: [],
+          },
+          shiftTypes: {
+            items: [{ id: 'D', description: 'Day' }],
+            groups: [],
+          },
+          preferences: [
+            {
+              type: SHIFT_TYPE_REQUIREMENT,
+              shiftType: ['D'],
+              requiredNumPeople: 1,
+              qualifiedPeople: null,
+              date: ['01'],
+              weight: -1,
+            },
+          ],
+        },
+      ],
+      currentHistoryIndex: 0,
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(storedState));
+
+    const { result } = renderHook(() => useSchedulingData());
+
+    await waitFor(() => {
+      const requirement = result.current.getPreferencesByType(SHIFT_TYPE_REQUIREMENT)[0] as
+        | { qualifiedPeople: string[] }
+        | undefined;
+      expect(requirement?.qualifiedPeople).toEqual([ALL]);
+    });
+  });
+
   it('falls back to the default state and logs when localStorage.getItem throws', async () => {
     const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('storage unavailable');
