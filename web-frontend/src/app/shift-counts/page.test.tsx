@@ -58,6 +58,21 @@ describe('ShiftCountsPage', () => {
     fireEvent.change(input, { target: { value: coefficient.toString() } });
   }
 
+  it('blurs number inputs on wheel so scrolling does not step their value', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+
+    const coefficientInput = screen.getByRole('spinbutton', { name: 'D' });
+    coefficientInput.focus();
+    expect(coefficientInput).toHaveFocus();
+
+    fireEvent.wheel(coefficientInput, { deltaY: 120 });
+
+    expect(coefficientInput).not.toHaveFocus();
+  });
+
   beforeEach(() => {
     updatePreferencesByType.mockReset();
     mockUseSchedulingData.mockReturnValue({

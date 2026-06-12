@@ -35,6 +35,7 @@ import {
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
+import NumberInput from '@/components/NumberInput';
 import { isValidWeightValue, getWeightWithPositivePrefix, isWeightNonPositive } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
@@ -530,8 +531,7 @@ export default function ShiftCountsPage() {
                     sortIdsByEntryOrder(formData.count_shift_types, shiftTypeEntries).map(shiftTypeId => (
                       <label key={shiftTypeId} className="block w-28">
                         <span className="block truncate text-xs font-medium text-gray-600 mb-1" title={shiftTypeId}>{shiftTypeId}</span>
-                        <input
-                          type="number"
+                        <NumberInput
                           min="1"
                           step="1"
                           value={getCoefficientForShiftType(formData.count_shift_type_coefficients, shiftTypeId)}
@@ -584,8 +584,7 @@ export default function ShiftCountsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Target Value *
                   </label>
-                  <input
-                    type="number"
+                  <NumberInput
                     min="0"
                     step="1"
                     value={formData.target}

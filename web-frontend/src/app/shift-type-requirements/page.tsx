@@ -27,6 +27,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { Group, Item, ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
+import NumberInput from '@/components/NumberInput';
 import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
@@ -530,8 +531,7 @@ export default function ShiftTypeRequirementsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Required Number of People *
                   </label>
-                  <input
-                    type="number"
+                  <NumberInput
                     min="0"
                     value={formData.required_num_people}
                     onChange={(e) => setFormData(prev => {
@@ -564,8 +564,7 @@ export default function ShiftTypeRequirementsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Preferred Number of People (optional)
                   </label>
-                  <input
-                    type="number"
+                  <NumberInput
                     min="1"
                     value={formData.preferred_num_people ?? formData.required_num_people}
                     onChange={(e) => setFormData(prev => ({
