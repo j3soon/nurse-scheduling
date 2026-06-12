@@ -29,10 +29,11 @@ import {
 } from '@/utils/unsavedEditingState';
 
 const mockPush = vi.hoisted(() => vi.fn());
+const mockPrefetch = vi.hoisted(() => vi.fn());
 const mockUsePathname = vi.hoisted(() => vi.fn());
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, prefetch: mockPrefetch }),
   usePathname: () => mockUsePathname(),
 }));
 
@@ -63,9 +64,20 @@ describe('Navigation', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockPush.mockReset();
+    mockPrefetch.mockReset();
     mockUsePathname.mockReturnValue('/people');
     vi.spyOn(window, 'scrollBy').mockImplementation(() => undefined);
     vi.stubGlobal('confirm', vi.fn(() => true));
+  });
+
+  it('prefetches all inactive tabs after render', () => {
+    renderNavigation();
+
+    expect(mockPrefetch).toHaveBeenCalledWith('/');
+    expect(mockPrefetch).toHaveBeenCalledWith('/dates');
+    expect(mockPrefetch).toHaveBeenCalledWith('/shift-types');
+    expect(mockPrefetch).toHaveBeenCalledWith('/optimize-and-export');
+    expect(mockPrefetch).not.toHaveBeenCalledWith('/people');
   });
 
   it('navigates when a tab button is clicked', async () => {

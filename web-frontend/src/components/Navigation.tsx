@@ -61,6 +61,14 @@ export default function Navigation() {
   const navigateNext = useCallback(() => navigateToTab(currentTabIndex + 1), [currentTabIndex, navigateToTab]);
 
   useEffect(() => {
+    TABS.forEach((tab, index) => {
+      if (index !== currentTabIndex) {
+        router.prefetch?.(tab.path);
+      }
+    });
+  }, [currentTabIndex, router]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Only handle keyboard shortcuts when no input/textarea/select is focused
       const activeElement = document.activeElement;
