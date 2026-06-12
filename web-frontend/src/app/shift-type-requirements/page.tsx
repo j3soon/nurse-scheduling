@@ -39,9 +39,9 @@ import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 interface ShiftTypeRequirementForm {
   description: string;
   shift_type: string[];
-  required_num_people: number;
+  required_num_people: number | string;
   qualified_people: string[];
-  preferred_num_people?: number;
+  preferred_num_people?: number | string;
   date: string[];
   weight: number | string;
 }
@@ -52,6 +52,7 @@ type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPrefere
 
 function preferredNumPeopleDiffersFromRequired(formData: ShiftTypeRequirementForm): boolean {
   return formData.preferred_num_people !== undefined
+    && formData.preferred_num_people !== ''
     && formData.preferred_num_people !== formData.required_num_people;
 }
 
@@ -274,13 +275,15 @@ export default function ShiftTypeRequirementsPage() {
       newErrors.date = 'At least one date must be selected';
     }
 
-    if (!isValidNumberValue(formData.required_num_people)) {
+    if (formData.required_num_people === '') {
+      newErrors.required_num_people = 'Required number of people must be a valid number';
+    } else if (!isValidNumberValue(formData.required_num_people)) {
       newErrors.required_num_people = 'Required number of people must be a valid number';
     } else if (typeof formData.required_num_people === 'number' && formData.required_num_people < 0) {
       newErrors.required_num_people = 'Required number of people must be at least 0';
     }
 
-    if (formData.preferred_num_people !== undefined) {
+    if (formData.preferred_num_people !== undefined && formData.preferred_num_people !== '') {
       if (!isValidNumberValue(formData.preferred_num_people)) {
         newErrors.preferred_num_people = 'Preferred number of people must be a valid number';
       } else if (typeof formData.preferred_num_people === 'number') {
@@ -312,9 +315,9 @@ export default function ShiftTypeRequirementsPage() {
       type: SHIFT_TYPE_REQUIREMENT,
       description: formData.description,
       shiftType: formData.shift_type,
-      requiredNumPeople: formData.required_num_people,
+      requiredNumPeople: formData.required_num_people as number,
       qualifiedPeople: formData.qualified_people,
-      preferredNumPeople: usesWeight ? formData.preferred_num_people : undefined,
+      preferredNumPeople: usesWeight ? formData.preferred_num_people as number : undefined,
       date: formData.date,
       weight: usesWeight ? formData.weight as number : -1
     };
@@ -535,6 +538,12 @@ export default function ShiftTypeRequirementsPage() {
                     min="0"
                     value={formData.required_num_people}
                     onChange={(e) => setFormData(prev => {
+                      if (e.target.value === '') {
+                        return {
+                          ...prev,
+                          required_num_people: '',
+                        };
+                      }
                       // Note that the isNaN check is necessary, since a simple parseInt(e.target.value) will return 0 if the value is exactly 0.
                       const newRequiredValue = isNaN(parseInt(e.target.value)) ? prev.required_num_people : parseInt(e.target.value);
                       return {
@@ -542,6 +551,7 @@ export default function ShiftTypeRequirementsPage() {
                         required_num_people: newRequiredValue,
                         // If required_num_people has been parsed correctly and changed to same as preferred_num_people, also change preferred_num_people to undefined
                         preferred_num_people: !isNaN(parseInt(e.target.value)) && newRequiredValue === prev.preferred_num_people
+                          || prev.preferred_num_people === ''
                           ? undefined
                           : prev.preferred_num_people,
                       };
@@ -569,12 +579,13 @@ export default function ShiftTypeRequirementsPage() {
                     value={formData.preferred_num_people ?? formData.required_num_people}
                     onChange={(e) => setFormData(prev => ({
                       ...prev,
-                      // If the parsed value matches required_num_people, set preferred_num_people to undefined; otherwise, set to the parsed value
-                      preferred_num_people: isNaN(parseInt(e.target.value))
-                        ? prev.preferred_num_people
-                        : (parseInt(e.target.value) === prev.required_num_people
-                            ? undefined
-                            : parseInt(e.target.value))
+                      preferred_num_people: e.target.value === ''
+                        ? ''
+                        : (isNaN(parseInt(e.target.value))
+                            ? prev.preferred_num_people
+                            : (parseInt(e.target.value) === prev.required_num_people
+                                ? undefined
+                                : parseInt(e.target.value)))
                     }))}
                     className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
                       errors.preferred_num_people

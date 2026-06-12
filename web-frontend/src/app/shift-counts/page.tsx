@@ -48,20 +48,20 @@ interface ShiftCountForm {
   person: string[];
   count_dates: string[];
   count_shift_types: string[];
-  count_shift_type_coefficients: ShiftCountTypeCoefficient[];
+  count_shift_type_coefficients: Array<[string, number | string]>;
   expression: typeof SUPPORTED_EXPRESSIONS[number];
   target: number | string;
   weight: number | string;
 }
 
-function getCoefficientForShiftType(coefficients: ShiftCountTypeCoefficient[], shiftTypeId: string): number {
+function getCoefficientForShiftType(coefficients: Array<[string, number | string]>, shiftTypeId: string): number | string {
   return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? 1;
 }
 
 function syncCoefficientPairs(
   selectedShiftTypeIds: string[],
-  coefficients: ShiftCountTypeCoefficient[]
-): ShiftCountTypeCoefficient[] {
+  coefficients: Array<[string, number | string]>
+): Array<[string, number | string]> {
   return selectedShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
 }
 
@@ -121,6 +121,7 @@ export default function ShiftCountsPage() {
     weight: -1
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
+  const [coefficientErrors, setCoefficientErrors] = useState<{[shiftTypeId: string]: string}>({});
   useTabSwitchWarning(isFormVisible);
   const shiftTypeEntries = [...shiftTypeData.items, ...shiftTypeData.groups];
 
@@ -147,6 +148,7 @@ export default function ShiftCountsPage() {
       weight: -1
     });
     setErrors({});
+    setCoefficientErrors({});
     setEditingIndex(null);
   };
 
@@ -173,6 +175,7 @@ export default function ShiftCountsPage() {
     setEditingIndex(index);
     setIsFormVisible(true);
     setErrors({});
+    setCoefficientErrors({});
     // Save current scroll position and scroll to top
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -190,6 +193,7 @@ export default function ShiftCountsPage() {
 
   const validateForm = (): boolean => {
     const newErrors: {[key: string]: string} = {};
+    const newCoefficientErrors: {[shiftTypeId: string]: string} = {};
 
     if (formData.person.length === 0) {
       newErrors.person = 'At least one person must be selected';
@@ -205,13 +209,16 @@ export default function ShiftCountsPage() {
 
     for (const [shiftTypeId, coefficient] of formData.count_shift_type_coefficients) {
       if (!Number.isInteger(coefficient) || coefficient < 1) {
-        newErrors.count_shift_type_coefficients = `Coefficient for ${shiftTypeId} must be an integer of at least 1`;
-        break;
+        const message = `Coefficient for ${shiftTypeId} must be an integer of at least 1`;
+        newCoefficientErrors[shiftTypeId] = message;
       }
+    }
+    if (Object.keys(newCoefficientErrors).length > 0) {
+      newErrors.count_shift_type_coefficients = Object.values(newCoefficientErrors).join('\n');
     }
     if (!newErrors.count_shift_type_coefficients) {
       const overlapError = getCoefficientOverlapError(
-        formData.count_shift_type_coefficients.filter(([, coefficient]) => coefficient !== 1),
+        formData.count_shift_type_coefficients.filter(([, coefficient]) => coefficient !== 1) as ShiftCountTypeCoefficient[],
         shiftTypeData
       );
       if (overlapError) {
@@ -237,6 +244,7 @@ export default function ShiftCountsPage() {
     }
 
     setErrors(newErrors);
+    setCoefficientErrors(newCoefficientErrors);
     return Object.keys(newErrors).length === 0;
   };
 
@@ -247,7 +255,7 @@ export default function ShiftCountsPage() {
     const countShiftTypeCoefficients = syncCoefficientPairs(
       sortedCountShiftTypes,
       formData.count_shift_type_coefficients
-    ).filter(([, coefficient]) => coefficient !== 1);
+    ).filter(([, coefficient]) => coefficient !== 1) as ShiftCountTypeCoefficient[];
 
     const newShiftCount: ShiftCountPreference = {
       type: SHIFT_COUNT,
@@ -324,7 +332,7 @@ export default function ShiftCountsPage() {
     }));
   };
 
-  const setCoefficientForShiftType = (shiftTypeId: string, coefficient: number) => {
+  const setCoefficientForShiftType = (shiftTypeId: string, coefficient: number | string) => {
     setFormData(prev => ({
       ...prev,
       count_shift_type_coefficients: syncCoefficientPairs(
@@ -536,20 +544,32 @@ export default function ShiftCountsPage() {
                           step="1"
                           value={getCoefficientForShiftType(formData.count_shift_type_coefficients, shiftTypeId)}
                           onChange={(e) => {
-                            const nextValue = Number.parseInt(e.target.value, 10);
-                            setCoefficientForShiftType(shiftTypeId, Number.isNaN(nextValue) ? 1 : Math.max(1, nextValue));
+                            const value = e.target.value;
+                            const nextValue = Number.parseInt(value, 10);
+                            setCoefficientForShiftType(
+                              shiftTypeId,
+                              value === '' ? '' : (Number.isNaN(nextValue) ? value : Math.max(1, nextValue))
+                            );
                           }}
-                          className="block w-24 px-3 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:border-blue-500 focus:ring-blue-200 focus:outline-none focus:ring-2 hover:border-gray-400"
+                          className={`block w-24 px-3 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
+                            coefficientErrors[shiftTypeId]
+                              ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
+                              : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
+                          }`}
                         />
                       </label>
                     ))
                   )}
                 </div>
                 {errors.count_shift_type_coefficients && (
-                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                    <FiAlertCircle className="h-4 w-4" />
-                    {errors.count_shift_type_coefficients}
-                  </p>
+                  <div className="mt-2 space-y-1">
+                    {errors.count_shift_type_coefficients.split('\n').map(error => (
+                      <p key={error} className="text-sm text-red-600 flex items-center gap-1">
+                        <FiAlertCircle className="h-4 w-4" />
+                        {error}
+                      </p>
+                    ))}
+                  </div>
                 )}
               </div>
 
@@ -590,7 +610,6 @@ export default function ShiftCountsPage() {
                     value={formData.target}
                     onChange={(e) => {
                       const value = e.target.value;
-                      setErrors(prev => ({ ...prev, target: '' }));
                       if (value === '') {
                         setFormData(prev => ({ ...prev, target: value }));
                       } else {
@@ -599,7 +618,6 @@ export default function ShiftCountsPage() {
                           setFormData(prev => ({ ...prev, target: numValue }));
                         } else {
                           setFormData(prev => ({ ...prev, target: value }));
-                          setErrors(prev => ({ ...prev, target: 'Target must be a non-negative integer' }));
                         }
                       }
                     }}

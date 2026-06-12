@@ -271,7 +271,8 @@ export default function OptimizeAndExportPage() {
   const [apiEndpoint, setApiEndpoint] = useState(INITIAL_BACKEND_API_URL);
   const [prettifyArg, setPrettifyArg] = useState(true);
   const [anonymizePeople, setAnonymizePeople] = useState(true);
-  const [timeoutArg, setTimeoutArg] = useState<number>(300);
+  const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
+  const [timeoutError, setTimeoutError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -616,7 +617,14 @@ export default function OptimizeAndExportPage() {
       return;
     }
 
+    if (timeoutArg === '' || typeof timeoutArg !== 'number' || !Number.isInteger(timeoutArg) || timeoutArg < 1) {
+      setTimeoutError('Solver timeout must be a valid positive integer.');
+      setErrorMessage(null);
+      return;
+    }
+
     setIsLoading(true);
+    setTimeoutError(null);
     setErrorMessage(null);
     setSuccessMessage(null);
     setScheduleScore(null);
@@ -644,9 +652,7 @@ export default function OptimizeAndExportPage() {
         formData.append('prettify', String(prettifyArg));
       }
 
-      if (timeoutArg !== null && timeoutArg !== undefined) {
-        formData.append('timeout', String(timeoutArg));
-      }
+      formData.append('timeout', String(timeoutArg));
 
       const createResponse = await fetch(`${normalizeEndpoint(apiEndpoint)}/optimize`, {
         method: 'POST',
@@ -880,14 +886,27 @@ export default function OptimizeAndExportPage() {
                 <div className="flex items-center gap-2">
                   <NumberInput
                     value={timeoutArg}
-                    onChange={(e) => setTimeoutArg(parseInt(e.target.value) || 300)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setTimeoutArg(value === '' ? '' : (Number.isInteger(Number(value)) ? Number(value) : value));
+                    }}
                     min="1"
                     max="3600"
-                    className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    className={`block w-full rounded-md border bg-white px-3 py-2 text-sm text-gray-900 shadow-sm transition-colors focus:outline-none focus:ring-2 ${
+                      timeoutError
+                        ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
+                        : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
+                    }`}
                     placeholder="300"
                   />
                   <span className="text-sm text-gray-500">sec</span>
                 </div>
+                {timeoutError && (
+                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {timeoutError}
+                  </p>
+                )}
               </div>
             </div>
 
