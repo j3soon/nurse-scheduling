@@ -180,6 +180,7 @@ class ExportExtraColumn(BaseModel):
     type: Annotated[str, Field(pattern=r"^count$")]
     header: str
     countShiftTypes: list[int | str]
+    countShiftTypeCoefficients: list[tuple[str, int]] | None = None
     countDates: list[int | str]
 
 

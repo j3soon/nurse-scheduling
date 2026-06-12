@@ -24,15 +24,26 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle, FiHelpCircle, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ExportExtraColumn, ExportExtraRow, ExportFormatting, ExportFormattingType, ExportRequestShape } from '@/types/scheduling';
+import {
+  ExportExtraColumn,
+  ExportExtraRow,
+  ExportFormatting,
+  ExportFormattingType,
+  ExportRequestShape,
+  Group,
+  Item,
+  ShiftCountTypeCoefficient
+} from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import ToggleButton from '@/components/ToggleButton';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import WeightInput from '@/components/WeightInput';
+import NumberInput from '@/components/NumberInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
+import { sortIdsByEntryOrder } from '@/utils/entityOrdering';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor' | 'fontColor';
@@ -51,6 +62,7 @@ interface DraftRule {
   fontColor: string;
   header: string;
   countShiftTypes: string[];
+  countShiftTypeCoefficients: Array<[string, number | string]>;
   countDates: string[];
   countPeople: string[];
   requestShape: string[];
@@ -101,6 +113,7 @@ const createEmptyDraft = (): DraftRule => ({
   fontColor: '',
   header: '',
   countShiftTypes: [],
+  countShiftTypeCoefficients: [],
   countDates: [],
   countPeople: [],
   requestShape: [],
@@ -131,6 +144,42 @@ const getPickerDisplay = (value: string) => {
   return { pickerValue, pickerText, pickerTextColor };
 };
 
+function getCoefficientForShiftType(coefficients: Array<[string, number | string]>, shiftTypeId: string): number | string {
+  return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? 1;
+}
+
+function syncCoefficientPairs(
+  selectedShiftTypeIds: string[],
+  coefficients: Array<[string, number | string]>
+): Array<[string, number | string]> {
+  return selectedShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
+}
+
+function getCoefficientOverlapError(
+  coefficientPairs: ShiftCountTypeCoefficient[],
+  shiftTypeData: { items: Item[]; groups: Group[] }
+): string | undefined {
+  const mapShiftTypeIdToExpandedShiftTypeIds = new Map(
+    [
+      ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
+      ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
+    ]
+  );
+
+  const mapShiftTypeIdToSourceShiftTypeId = new Map<string, string>();
+  for (const [shiftTypeId] of coefficientPairs) {
+    for (const expandedShiftTypeId of mapShiftTypeIdToExpandedShiftTypeIds.get(shiftTypeId) ?? []) {
+      const existingSourceShiftTypeId = mapShiftTypeIdToSourceShiftTypeId.get(expandedShiftTypeId);
+      if (existingSourceShiftTypeId !== undefined) {
+        return `Shift type coefficients overlap: ${existingSourceShiftTypeId}, ${shiftTypeId} include ${expandedShiftTypeId}`;
+      }
+      mapShiftTypeIdToSourceShiftTypeId.set(expandedShiftTypeId, shiftTypeId);
+    }
+  }
+
+  return undefined;
+}
+
 export default function ExportFormattingPage() {
   const {
     effectiveExportData,
@@ -146,6 +195,7 @@ export default function ExportFormattingPage() {
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingTarget, setEditingTarget] = useState<EditingTarget | null>(null);
   const [error, setError] = useState('');
+  const [coefficientErrors, setCoefficientErrors] = useState<{[shiftTypeId: string]: string}>({});
   const [draft, setDraft] = useState<DraftRule>(createEmptyDraft);
   useTabSwitchWarning(isFormVisible);
 
@@ -221,6 +271,7 @@ export default function ExportFormattingPage() {
   const resetForm = () => {
     setDraft(createEmptyDraft());
     setError('');
+    setCoefficientErrors({});
     setEditingTarget(null);
   };
 
@@ -269,6 +320,10 @@ export default function ExportFormattingPage() {
       kind: 'extra column',
       header: rule.header,
       countShiftTypes: rule.countShiftTypes,
+      countShiftTypeCoefficients: syncCoefficientPairs(
+        rule.countShiftTypes,
+        rule.countShiftTypeCoefficients ?? []
+      ),
       countDates: rule.countDates,
       rightBorderColor: rule.rightBorderColor || '',
     });
@@ -502,11 +557,32 @@ export default function ExportFormattingPage() {
       return false;
     }
 
+    const nextCoefficientErrors: {[shiftTypeId: string]: string} = {};
+    const syncedCoefficients = syncCoefficientPairs(draft.countShiftTypes, draft.countShiftTypeCoefficients);
+    for (const [shiftTypeId, coefficient] of syncedCoefficients) {
+      if (typeof coefficient !== 'number' || !Number.isInteger(coefficient) || coefficient < 1) {
+        nextCoefficientErrors[shiftTypeId] = `Coefficient for ${shiftTypeId} must be an integer of at least 1`;
+      }
+    }
+    setCoefficientErrors(nextCoefficientErrors);
+    if (Object.keys(nextCoefficientErrors).length > 0) {
+      setError(Object.values(nextCoefficientErrors).join('\n'));
+      return false;
+    }
+
+    const countShiftTypeCoefficients = syncedCoefficients.filter(([, coefficient]) => coefficient !== 1) as ShiftCountTypeCoefficient[];
+    const coefficientOverlapError = getCoefficientOverlapError(countShiftTypeCoefficients, shiftTypeData);
+    if (coefficientOverlapError) {
+      setError(coefficientOverlapError);
+      return false;
+    }
+
     const newRule: ExportExtraColumn = {
       description,
       type: 'count',
       header,
       countShiftTypes: draft.countShiftTypes,
+      ...(countShiftTypeCoefficients.length > 0 ? { countShiftTypeCoefficients } : {}),
       countDates: draft.countDates,
       ...(rightBorderColor ? { rightBorderColor } : {})
     };
@@ -711,6 +787,76 @@ export default function ExportFormattingPage() {
         ? prev[field].filter(targetId => targetId !== id)
         : [...prev[field], id]
     }));
+  };
+
+  const setCoefficientForShiftType = (shiftTypeId: string, coefficient: number | string) => {
+    setDraft(prev => ({
+      ...prev,
+      countShiftTypeCoefficients: syncCoefficientPairs(
+        prev.countShiftTypes,
+        [
+          ...prev.countShiftTypeCoefficients.filter(([id]) => id !== shiftTypeId),
+          [shiftTypeId, coefficient]
+        ]
+      )
+    }));
+    setCoefficientErrors(prev => {
+      const nextErrors = { ...prev };
+      delete nextErrors[shiftTypeId];
+      return nextErrors;
+    });
+    setError(prev => prev
+      .split('\n')
+      .filter(message => message !== `Coefficient for ${shiftTypeId} must be an integer of at least 1`)
+      .join('\n'));
+  };
+
+  const renderExtraColumnCoefficientFields = () => {
+    if (draft.kind !== 'extra column') {
+      return null;
+    }
+
+    const shiftTypeEntries = [...shiftTypeData.items, ...shiftTypeData.groups];
+
+    return (
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Count Shift Type Coefficients
+        </label>
+
+        <div className="flex flex-wrap items-end">
+          {draft.countShiftTypes.length === 0 ? (
+            <div className="text-sm text-gray-500 italic">
+              Select count shift types to set coefficients.
+            </div>
+          ) : (
+            sortIdsByEntryOrder(draft.countShiftTypes, shiftTypeEntries).map(shiftTypeId => (
+              <label key={shiftTypeId} className="block w-28">
+                <span className="block truncate text-xs font-medium text-gray-600 mb-1" title={shiftTypeId}>{shiftTypeId}</span>
+                <NumberInput
+                  min="1"
+                  step="1"
+                  value={getCoefficientForShiftType(draft.countShiftTypeCoefficients, shiftTypeId)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const nextValue = Number.parseInt(value, 10);
+                    setCoefficientForShiftType(
+                      shiftTypeId,
+                      value === '' ? '' : (Number.isNaN(nextValue) ? value : Math.max(1, nextValue))
+                    );
+                  }}
+                  className={`block w-24 px-3 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
+                    coefficientErrors[shiftTypeId]
+                      ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
+                      : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
+                  }`}
+                />
+              </label>
+            ))
+          )}
+        </div>
+      </div>
+    );
   };
 
   const renderStyleTargetRows = () => (
@@ -959,6 +1105,7 @@ export default function ExportFormattingPage() {
                       dates: [],
                       shiftTypes: [],
                       countShiftTypes: [],
+                      countShiftTypeCoefficients: [],
                       countDates: [],
                       countPeople: []
                     }))}
@@ -1047,6 +1194,7 @@ export default function ExportFormattingPage() {
                     '/shift-types',
                     'Shift Types'
                   )}
+                  {renderExtraColumnCoefficientFields()}
                   {draft.kind === 'extra column'
                     ? renderCheckboxes(
                         'Count Dates *',
@@ -1070,10 +1218,14 @@ export default function ExportFormattingPage() {
               )}
 
               {error && (
-                <p className="text-sm text-red-600 flex items-center gap-1">
-                  <FiAlertCircle className="h-4 w-4" />
-                  {error}
-                </p>
+                <div className="space-y-1">
+                  {error.split('\n').map(message => (
+                    <p key={message} className="text-sm text-red-600 flex items-center gap-1">
+                      <FiAlertCircle className="h-4 w-4" />
+                      {message}
+                    </p>
+                  ))}
+                </div>
               )}
 
               <div className="flex justify-end gap-3 pt-4">
@@ -1212,6 +1364,12 @@ export default function ExportFormattingPage() {
                 <div>
                   <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
                 </div>
+                {rule.countShiftTypeCoefficients && (
+                  <div>
+                    <span className="font-medium">Coefficients:</span>{' '}
+                    {rule.countShiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
+                  </div>
+                )}
                 <div>
                   <span className="font-medium">Count Dates:</span> {rule.countDates.join(', ')}
                 </div>

@@ -1460,6 +1460,7 @@ describe('useSchedulingData', () => {
           header: 'Count',
           countDates: [ALL, '03', '01'],
           countShiftTypes: ['Night', 'E', 'D'],
+          countShiftTypeCoefficients: [['Night', 3], ['D', 2]],
         },
       ]);
       result.current.updateExportExtraRows([
@@ -1487,6 +1488,7 @@ describe('useSchedulingData', () => {
       expect(row?.people).toEqual(['Person 1', 'Person 3', 'Group 2']);
       expect(result.current.exportData?.extraColumns?.[0].countDates).toEqual(['01', '03', ALL]);
       expect(result.current.exportData?.extraColumns?.[0].countShiftTypes).toEqual(['D', 'E', 'Night']);
+      expect(result.current.exportData?.extraColumns?.[0].countShiftTypeCoefficients).toEqual([['D', 2], ['Night', 3]]);
       expect(result.current.exportData?.extraRows?.[0].countPeople).toEqual(['Person 1', 'Person 2', 'Group 1']);
       expect(result.current.exportData?.extraRows?.[0].countShiftTypes).toEqual(['D', 'E', 'Night']);
     });
@@ -1520,6 +1522,7 @@ describe('useSchedulingData', () => {
           header: 'Count',
           countDates: [ALL, '03', '01'],
           countShiftTypes: ['Night', 'E', 'D'],
+          countShiftTypeCoefficients: [['Night', 3], ['D', 2]],
         }],
         extraRows: [{
           type: 'count',
@@ -1539,6 +1542,7 @@ describe('useSchedulingData', () => {
       expect(cell?.shiftTypes).toEqual(['D', 'E', 'Night']);
       expect(result.current.exportData?.extraColumns?.[0].countDates).toEqual(['01', '03', ALL]);
       expect(result.current.exportData?.extraColumns?.[0].countShiftTypes).toEqual(['D', 'E', 'Night']);
+      expect(result.current.exportData?.extraColumns?.[0].countShiftTypeCoefficients).toEqual([['D', 2], ['Night', 3]]);
       expect(result.current.exportData?.extraRows?.[0].countPeople).toEqual(['Person 1', 'Person 2', 'Group 1']);
       expect(result.current.exportData?.extraRows?.[0].countShiftTypes).toEqual(['D', 'E', 'Night']);
     });
@@ -1645,7 +1649,13 @@ describe('useSchedulingData', () => {
             { type: 'history header', backgroundColor: '#444444' },
           ],
           extraColumns: [
-            { type: 'count', header: 'N on second day', countDates: ['02'], countShiftTypes: ['N'] },
+            {
+              type: 'count',
+              header: 'N on second day',
+              countDates: ['02'],
+              countShiftTypes: ['N'],
+              countShiftTypeCoefficients: [['N', 2]],
+            },
           ],
           extraRows: [
             { type: 'count', header: 'P1 nights', countPeople: ['P1'], countShiftTypes: ['N'] },
@@ -1729,7 +1739,13 @@ describe('useSchedulingData', () => {
             { type: 'cell', people: ['P1'], dates: ['Weekend Team'], shiftTypes: ['D'], backgroundColor: '#333333' },
           ],
           extraColumns: [
-            { type: 'count', header: 'Day group count', countDates: ['Weekend Team'], countShiftTypes: ['D'] },
+            {
+              type: 'count',
+              header: 'Day group count',
+              countDates: ['Weekend Team'],
+              countShiftTypes: ['D'],
+              countShiftTypeCoefficients: [['D', 2]],
+            },
           ],
           extraRows: [
             { type: 'count', header: 'Person day count', countPeople: ['P1'], countShiftTypes: ['D'] },
@@ -1761,7 +1777,13 @@ describe('useSchedulingData', () => {
         },
       ]);
       expect(result.current.exportData?.extraColumns).toEqual([
-        { type: 'count', header: 'Day group count', countDates: ['Weekend Crew'], countShiftTypes: ['DX'] },
+        {
+          type: 'count',
+          header: 'Day group count',
+          countDates: ['Weekend Crew'],
+          countShiftTypes: ['DX'],
+          countShiftTypeCoefficients: [['DX', 2]],
+        },
       ]);
       expect(result.current.exportData?.extraRows).toEqual([
         { type: 'count', header: 'Person day count', countPeople: ['P1X'], countShiftTypes: ['DX'] },
@@ -3476,7 +3498,13 @@ describe('useSchedulingData', () => {
         preferences: [{ type: 'at most one shift per day' }],
         export: {
           formatting: [{ type: 'cell', people: ['P1'], dates: ['01'], shiftTypes: ['D'], backgroundColor: '#111111' }],
-          extraColumns: [{ type: 'count', header: 'D count', countDates: ['01'], countShiftTypes: ['D'] }],
+          extraColumns: [{
+            type: 'count',
+            header: 'D count',
+            countDates: ['01'],
+            countShiftTypes: ['D'],
+            countShiftTypeCoefficients: [['D', 2]],
+          }],
           extraRows: [{ type: 'count', header: 'P1 D', countPeople: ['P1'], countShiftTypes: ['D'] }],
         },
       });
@@ -3490,6 +3518,7 @@ describe('useSchedulingData', () => {
       expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['DX', 'N', 'DX']);
       expect(result.current.exportData?.formatting?.[0]).toMatchObject({ shiftTypes: ['DX'] });
       expect(result.current.exportData?.extraColumns?.[0].countShiftTypes).toEqual(['DX']);
+      expect(result.current.exportData?.extraColumns?.[0].countShiftTypeCoefficients).toEqual([['DX', 2]]);
       expect(result.current.exportData?.extraRows?.[0].countShiftTypes).toEqual(['DX']);
     });
   });

@@ -230,16 +230,43 @@ def _build_custom_export_style_info(
     return style_map
 
 
-def _count_extra_column_for_person(ctx: Context, p: int, count_dates, count_shift_types) -> int:
+def _parse_extra_column_coefficients(ctx: Context, rule, count_shift_types: list[int]) -> dict[int, int]:
+    selected_shift_type_ids = set(utils.ensure_list(rule.countShiftTypes))
+    coefficients = dict.fromkeys(count_shift_types, 1)
+    coefficient_entries = rule.countShiftTypeCoefficients or []
+    coefficient_sids = set()
+
+    for shift_type_id, coefficient in coefficient_entries:
+        if shift_type_id not in selected_shift_type_ids:
+            raise ValueError(
+                f"Export extra column coefficient for '{shift_type_id}' must reference a shift type in countShiftTypes."
+            )
+        if coefficient < 1:
+            raise ValueError(f"Export extra column coefficient for '{shift_type_id}' must be at least 1.")
+
+        expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
+        duplicate_sids = coefficient_sids.intersection(expanded_sids)
+        if duplicate_sids:
+            raise ValueError(f"Duplicate export extra column coefficient for '{shift_type_id}'.")
+        coefficient_sids.update(expanded_sids)
+
+        for s in expanded_sids:
+            coefficients[s] = coefficient
+
+    return coefficients
+
+
+def _count_extra_column_for_person(ctx: Context, p: int, count_dates, count_shift_types, coefficients) -> int:
     count = 0
     for d in count_dates:
         if constants.OFF_sid in count_shift_types and ctx.solver.get_value(ctx.offs[(d, p)]) == 1:
-            count += 1
+            count += coefficients[constants.OFF_sid]
             continue
-        if any(
-            0 <= s < ctx.n_shift_types and ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1 for s in count_shift_types
-        ):
-            count += 1
+        count += sum(
+            coefficients[s]
+            for s in count_shift_types
+            if 0 <= s < ctx.n_shift_types and ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
+        )
     return count
 
 
@@ -591,6 +618,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             col_idx = extra_col_start + rule_idx
             count_dates = utils.parse_dates(rule.countDates, ctx.map_did_d, ctx.dates.range)
             count_shift_types = utils.parse_sids(rule.countShiftTypes, ctx.map_sid_s)
+            coefficients = _parse_extra_column_coefficients(ctx, rule, count_shift_types)
             df.iloc[1, col_idx] = rule.header
             for p in range(len(ctx.people.items)):
                 df.iloc[n_leading_rows + p, col_idx] = _count_extra_column_for_person(
@@ -598,6 +626,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                     p,
                     count_dates,
                     count_shift_types,
+                    coefficients,
                 )
 
         extra_row_start = n_leading_rows + len(ctx.people.items) + n_trailing_rows + 1

@@ -136,7 +136,13 @@ test('export layout extra rows and columns cascade through entity deletion', asy
     export: {
       formatting: [],
       extraColumns: [
-        { type: 'count', header: 'All shifts', countDates: ['01'], countShiftTypes: ['D', 'N'] },
+        {
+          type: 'count',
+          header: 'All shifts',
+          countDates: ['01'],
+          countShiftTypes: ['D', 'N'],
+          countShiftTypeCoefficients: [['D', 2], ['N', 3]],
+        },
         { type: 'count', header: 'Night only', countDates: ['01'], countShiftTypes: ['N'] },
       ],
       extraRows: [
@@ -161,6 +167,9 @@ test('export layout extra rows and columns cascade through entity deletion', asy
   const yamlPreview = page.locator('pre');
   await expect(yamlPreview).toContainText('header: All shifts');
   await expect(yamlPreview).toContainText('countShiftTypes: [D]');
+  await expect(yamlPreview).toContainText('countShiftTypeCoefficients');
+  await expect(yamlPreview).toContainText('[D, 2]');
+  await expect(yamlPreview).not.toContainText('[N, 3]');
   await expect(yamlPreview).toContainText('header: All people');
   await expect(yamlPreview).toContainText('countPeople: [P2]');
   await expect(yamlPreview).not.toContainText('Night only');

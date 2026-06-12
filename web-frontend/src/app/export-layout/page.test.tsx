@@ -1,0 +1,175 @@
+/*
+ * This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+ *
+ * Copyright (C) 2023-2026 Johnson Sun
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+// This test is mostly AI generated.
+
+import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import ExportLayoutPage from '@/app/export-layout/page';
+import { ExportConfig } from '@/types/scheduling';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
+
+const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+
+vi.mock('@/hooks/useSchedulingData', () => ({
+  useSchedulingData: mockUseSchedulingData,
+}));
+
+const updateExportConfig = vi.fn();
+
+function renderExportLayoutPage(exportData: ExportConfig = { formatting: [], extraColumns: [], extraRows: [] }) {
+  mockUseSchedulingData.mockReturnValue({
+    effectiveExportData: exportData,
+    updateExportFormatting: vi.fn(),
+    updateExportExtraColumns: vi.fn(),
+    updateExportExtraRows: vi.fn(),
+    updateExportConfig,
+    peopleData: {
+      items: [{ id: 'P1', description: 'Person 1', history: [] }],
+      groups: [],
+    },
+    dateData: {
+      range: {
+        startDate: new Date('2026-01-01T12:00:00.000Z'),
+        endDate: new Date('2026-01-01T12:00:00.000Z'),
+      },
+      items: [{ id: '2026-01-01', description: 'Jan 1' }],
+      groups: [],
+    },
+    shiftTypeData: {
+      items: [
+        { id: 'D', description: 'Day' },
+        { id: 'N', description: 'Night' },
+      ],
+      groups: [{ id: 'WORK', members: ['D', 'N'], description: 'Working shifts' }],
+    },
+  });
+
+  return render(
+    <UnsavedEditingStateProvider>
+      <ExportLayoutPage />
+    </UnsavedEditingStateProvider>
+  );
+}
+
+async function startExtraColumn(
+  user: ReturnType<typeof userEvent.setup>,
+  shiftTypeIds: string[]
+) {
+  await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
+  await user.selectOptions(screen.getAllByRole('combobox')[0], 'extra column');
+  await user.type(screen.getByPlaceholderText('OFF (Weekend)'), 'Score');
+  for (const shiftTypeId of shiftTypeIds) {
+    await user.click(screen.getByRole('checkbox', { name: shiftTypeId }));
+  }
+  await user.click(screen.getByRole('checkbox', { name: '2026-01-01' }));
+}
+
+describe('ExportLayoutPage extra column coefficients', () => {
+  beforeEach(() => {
+    updateExportConfig.mockReset();
+  });
+
+  it('saves only non-default coefficients on an extra column', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await startExtraColumn(user, ['D', 'N']);
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'N' }), { target: { value: '3' } });
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(updateExportConfig).toHaveBeenCalledOnce();
+    expect(updateExportConfig.mock.calls[0][0].extraColumns).toEqual([{
+      description: '',
+      type: 'count',
+      header: 'Score',
+      countShiftTypes: ['D', 'N'],
+      countShiftTypeCoefficients: [['N', 3]],
+      countDates: ['2026-01-01'],
+    }]);
+  });
+
+  it('omits coefficients when every selected shift type uses the default value', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await startExtraColumn(user, ['D', 'WORK']);
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(updateExportConfig).toHaveBeenCalledOnce();
+    expect(updateExportConfig.mock.calls[0][0].extraColumns[0]).not.toHaveProperty('countShiftTypeCoefficients');
+  });
+
+  it('blocks overlapping non-default coefficients from an item and containing group', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await startExtraColumn(user, ['D', 'WORK']);
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'D' }), { target: { value: '2' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'WORK' }), { target: { value: '3' } });
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(screen.getByText('Shift type coefficients overlap: D, WORK include D')).toBeInTheDocument();
+    expect(updateExportConfig).not.toHaveBeenCalled();
+  });
+
+  it('loads and updates an existing extra column coefficient', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage({
+      formatting: [],
+      extraColumns: [{
+        type: 'count',
+        header: 'Existing Score',
+        countShiftTypes: ['D'],
+        countShiftTypeCoefficients: [['D', 2]],
+        countDates: ['2026-01-01'],
+      }],
+      extraRows: [],
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByRole('spinbutton', { name: 'D' })).toHaveValue(2);
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'D' }), { target: { value: '4' } });
+    await user.click(screen.getByRole('button', { name: 'Update', exact: true }));
+
+    expect(updateExportConfig.mock.calls[0][0].extraColumns[0].countShiftTypeCoefficients).toEqual([['D', 4]]);
+  });
+
+  it('clears an invalid coefficient error after correction and saves the rule', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage();
+
+    await startExtraColumn(user, ['D']);
+    const coefficientInput = screen.getByRole('spinbutton', { name: 'D' });
+    await user.clear(coefficientInput);
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+
+    expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
+    expect(coefficientInput).toHaveClass('border-red-300');
+    expect(updateExportConfig).not.toHaveBeenCalled();
+
+    await user.type(coefficientInput, '2');
+    expect(screen.queryByText('Coefficient for D must be an integer of at least 1')).not.toBeInTheDocument();
+    expect(coefficientInput).not.toHaveClass('border-red-300');
+
+    await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
+    expect(updateExportConfig).toHaveBeenCalledOnce();
+    expect(updateExportConfig.mock.calls[0][0].extraColumns[0].countShiftTypeCoefficients).toEqual([['D', 2]]);
+  });
+});

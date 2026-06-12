@@ -200,6 +200,7 @@ function normalizeExportExtraColumnsOrder(extraColumns: ExportExtraColumn[] | un
   return extraColumns.map(rule => ({
     ...rule,
     countShiftTypes: sortIdsByEntryOrder(rule.countShiftTypes, shiftTypeEntries),
+    countShiftTypeCoefficients: sortPairsByFirstIdEntryOrder(rule.countShiftTypeCoefficients, shiftTypeEntries),
     countDates: sortIdsByEntryOrder(rule.countDates, dateEntries),
   }));
 }
@@ -1324,7 +1325,13 @@ export function useSchedulingData() {
               return { ...rule, countDates: filterIds(rule.countDates) };
             }
             if (dataType === DataType.SHIFT_TYPES) {
-              return { ...rule, countShiftTypes: filterIds(rule.countShiftTypes) };
+              return {
+                ...rule,
+                countShiftTypes: filterIds(rule.countShiftTypes),
+                countShiftTypeCoefficients: rule.countShiftTypeCoefficients?.filter(
+                  ([id]) => !deletedIdsSet.has(id)
+                ),
+              };
             }
             return rule;
           })
@@ -1378,7 +1385,14 @@ export function useSchedulingData() {
             return { ...rule, countDates: renameIds(rule.countDates) };
           }
           if (dataType === DataType.SHIFT_TYPES) {
-            return { ...rule, countShiftTypes: renameIds(rule.countShiftTypes) };
+            return {
+              ...rule,
+              countShiftTypes: renameIds(rule.countShiftTypes),
+              countShiftTypeCoefficients: rule.countShiftTypeCoefficients?.map(([id, coefficient]) => [
+                renameId(id),
+                coefficient
+              ]),
+            };
           }
           return rule;
         }),
@@ -1885,6 +1899,12 @@ export function useSchedulingData() {
     });
     newState.export?.extraColumns?.forEach(rule => {
       convertArrayIdsToString(rule.countShiftTypes);
+      if (rule.countShiftTypeCoefficients) {
+        rule.countShiftTypeCoefficients = rule.countShiftTypeCoefficients.map(([id, coefficient]) => [
+          String(id),
+          coefficient
+        ]);
+      }
       convertArrayIdsToString(rule.countDates, true);
     });
     newState.export?.extraRows?.forEach(rule => {

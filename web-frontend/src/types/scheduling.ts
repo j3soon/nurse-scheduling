@@ -93,6 +93,7 @@ export interface ExportExtraColumn {
   type: 'count';
   header: string;
   countShiftTypes: string[];
+  countShiftTypeCoefficients?: ShiftCountTypeCoefficient[];
   countDates: string[];
 }
 
