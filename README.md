@@ -62,7 +62,31 @@ uv pip install -r requirements.txt
 fastapi dev nurse_scheduling/serve.py
 ```
 
+#### macOS (bash/zsh)
+
+> macOS support is experimental.
+
+Start frontend:
+
+```sh
+cd web-frontend
+bun install
+bun run dev
+```
+
+In a new terminal, start backend:
+
+```sh
+cd core
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -r requirements.txt
+fastapi dev nurse_scheduling/serve.py
+```
+
 #### Windows (PowerShell)
+
+> Windows OS support is experimental.
 
 Start frontend:
 
@@ -234,6 +258,8 @@ bun run lint -- --fix
 ### Core
 
 We currently support three solvers: OR-Tools/CP-SAT, PuLP/CBC, and PuLP/cuOpt.
+
+> The PuLP/CBC and PuLP/cuOpt backends are experimental.
 
 - `ortools/cp-sat` is the default solver and the most battle-tested one.
 - `pulp/cbc` is covered by the normal schedule regression suite and opt-in real-world smoke checks.
