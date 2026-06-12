@@ -196,7 +196,7 @@ export default function OptimizationProgressChart({
     startIndex: getRangeStartIndex(points, rangePreset),
     endIndex: latestPointIndex,
   };
-  const fullDomainMax = Math.max(isActive ? liveElapsedSeconds : latestElapsedSeconds, latestElapsedSeconds, 1);
+  const fullDomainMax = Math.max(liveElapsedSeconds, latestElapsedSeconds, 1);
   const requestedDomainMin = rangePreset === 'full' ? 0 : points[range.startIndex]?.elapsedSeconds ?? 0;
   const requestedDomainMax = fullDomainMax;
   const minimumDomainSpan = Math.max(requestedDomainMax * 0.01, 0.1);
