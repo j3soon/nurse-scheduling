@@ -305,4 +305,55 @@ describe('ShiftTypeRequirementsPage', () => {
     expect(screen.queryByText('Weight is not needed when the preferred number of people equals the required number.')).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText('e.g., -1, -10, ∞')).toBeInTheDocument();
   });
+
+  it('allows an empty required number while editing and clears its save error only after a value change', async () => {
+    const user = userEvent.setup();
+
+    renderShiftTypeRequirementsPage();
+
+    await user.click(screen.getByRole('button', { name: /add requirement/i }));
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('checkbox', { name: 'P1' }));
+    await user.click(screen.getByRole('checkbox', { name: '01' }));
+
+    const requiredNumPeopleInput = screen.getAllByRole('spinbutton')[0];
+    await user.clear(requiredNumPeopleInput);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Required number of people must be a valid number')).toBeInTheDocument();
+    expect(requiredNumPeopleInput).toHaveClass('border-red-300');
+
+    await user.type(requiredNumPeopleInput, 'abc');
+
+    expect(screen.getByText('Required number of people must be a valid number')).toBeInTheDocument();
+    expect(requiredNumPeopleInput).toHaveClass('border-red-300');
+
+    await user.type(requiredNumPeopleInput, '2');
+
+    expect(screen.queryByText('Required number of people must be a valid number')).not.toBeInTheDocument();
+    expect(requiredNumPeopleInput).not.toHaveClass('border-red-300');
+  });
+
+  it('treats an empty preferred number as the required number on save', async () => {
+    const user = userEvent.setup();
+
+    renderShiftTypeRequirementsPage();
+
+    await user.click(screen.getByRole('button', { name: /add requirement/i }));
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('checkbox', { name: 'P1' }));
+    await user.click(screen.getByRole('checkbox', { name: '01' }));
+
+    const preferredNumPeopleInput = screen.getAllByRole('spinbutton')[1];
+    await user.clear(preferredNumPeopleInput);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.queryByText('Preferred number of people must be a valid number')).not.toBeInTheDocument();
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0]).toMatchObject({
+      requiredNumPeople: 1,
+      preferredNumPeople: undefined,
+      weight: -1,
+    });
+  });
 });

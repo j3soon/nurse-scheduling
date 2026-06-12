@@ -888,6 +888,7 @@ export default function OptimizeAndExportPage() {
                     value={timeoutArg}
                     onChange={(e) => {
                       const value = e.target.value;
+                      setTimeoutError(null);
                       setTimeoutArg(value === '' ? '' : (Number.isInteger(Number(value)) ? Number(value) : value));
                     }}
                     min="1"

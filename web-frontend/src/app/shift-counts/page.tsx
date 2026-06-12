@@ -54,6 +54,17 @@ interface ShiftCountForm {
   weight: number | string;
 }
 
+interface ShiftCountErrors {
+  person?: string;
+  count_dates?: string;
+  count_shift_types?: string;
+  count_shift_type_coefficients?: string;
+  count_shift_type_coefficients_by_id?: Record<string, string>;
+  expression?: string;
+  target?: string;
+  weight?: string;
+}
+
 function getCoefficientForShiftType(coefficients: Array<[string, number | string]>, shiftTypeId: string): number | string {
   return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? 1;
 }
@@ -120,8 +131,7 @@ export default function ShiftCountsPage() {
     target: 0,
     weight: -1
   });
-  const [errors, setErrors] = useState<{[key: string]: string}>({});
-  const [coefficientErrors, setCoefficientErrors] = useState<{[shiftTypeId: string]: string}>({});
+  const [errors, setErrors] = useState<ShiftCountErrors>({});
   useTabSwitchWarning(isFormVisible);
   const shiftTypeEntries = [...shiftTypeData.items, ...shiftTypeData.groups];
 
@@ -148,7 +158,6 @@ export default function ShiftCountsPage() {
       weight: -1
     });
     setErrors({});
-    setCoefficientErrors({});
     setEditingIndex(null);
   };
 
@@ -175,7 +184,6 @@ export default function ShiftCountsPage() {
     setEditingIndex(index);
     setIsFormVisible(true);
     setErrors({});
-    setCoefficientErrors({});
     // Save current scroll position and scroll to top
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -192,7 +200,7 @@ export default function ShiftCountsPage() {
   }
 
   const validateForm = (): boolean => {
-    const newErrors: {[key: string]: string} = {};
+    const newErrors: ShiftCountErrors = {};
     const newCoefficientErrors: {[shiftTypeId: string]: string} = {};
 
     if (formData.person.length === 0) {
@@ -215,6 +223,7 @@ export default function ShiftCountsPage() {
     }
     if (Object.keys(newCoefficientErrors).length > 0) {
       newErrors.count_shift_type_coefficients = Object.values(newCoefficientErrors).join('\n');
+      newErrors.count_shift_type_coefficients_by_id = newCoefficientErrors;
     }
     if (!newErrors.count_shift_type_coefficients) {
       const overlapError = getCoefficientOverlapError(
@@ -244,7 +253,6 @@ export default function ShiftCountsPage() {
     }
 
     setErrors(newErrors);
-    setCoefficientErrors(newCoefficientErrors);
     return Object.keys(newErrors).length === 0;
   };
 
@@ -342,6 +350,16 @@ export default function ShiftCountsPage() {
           [shiftTypeId, coefficient]
         ]
       )
+    }));
+  };
+
+  const clearCoefficientError = (shiftTypeId: string) => {
+    const nextCoefficientErrors = { ...errors.count_shift_type_coefficients_by_id };
+    delete nextCoefficientErrors[shiftTypeId];
+    setErrors(prev => ({
+      ...prev,
+      count_shift_type_coefficients: Object.values(nextCoefficientErrors).join('\n'),
+      count_shift_type_coefficients_by_id: nextCoefficientErrors
     }));
   };
 
@@ -546,13 +564,14 @@ export default function ShiftCountsPage() {
                           onChange={(e) => {
                             const value = e.target.value;
                             const nextValue = Number.parseInt(value, 10);
+                            clearCoefficientError(shiftTypeId);
                             setCoefficientForShiftType(
                               shiftTypeId,
                               value === '' ? '' : (Number.isNaN(nextValue) ? value : Math.max(1, nextValue))
                             );
                           }}
                           className={`block w-24 px-3 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
-                            coefficientErrors[shiftTypeId]
+                            errors.count_shift_type_coefficients_by_id?.[shiftTypeId]
                               ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
                               : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
                           }`}
@@ -610,6 +629,7 @@ export default function ShiftCountsPage() {
                     value={formData.target}
                     onChange={(e) => {
                       const value = e.target.value;
+                      setErrors(prev => ({ ...prev, target: '' }));
                       if (value === '') {
                         setFormData(prev => ({ ...prev, target: value }));
                       } else {

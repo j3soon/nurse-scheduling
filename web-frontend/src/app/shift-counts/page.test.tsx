@@ -196,6 +196,55 @@ describe('ShiftCountsPage', () => {
     expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
 
+  it('shows all invalid coefficient errors and clears only the edited coefficient error', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
+    const dayCoefficientInput = screen.getByRole('spinbutton', { name: 'D' });
+    const nightCoefficientInput = screen.getByRole('spinbutton', { name: 'N' });
+
+    await user.clear(dayCoefficientInput);
+    await user.clear(nightCoefficientInput);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
+    expect(screen.getByText('Coefficient for N must be an integer of at least 1')).toBeInTheDocument();
+    expect(dayCoefficientInput).toHaveClass('border-red-300');
+    expect(nightCoefficientInput).toHaveClass('border-red-300');
+
+    await user.type(dayCoefficientInput, '2');
+
+    expect(screen.queryByText('Coefficient for D must be an integer of at least 1')).not.toBeInTheDocument();
+    expect(screen.getByText('Coefficient for N must be an integer of at least 1')).toBeInTheDocument();
+    expect(dayCoefficientInput).not.toHaveClass('border-red-300');
+    expect(nightCoefficientInput).toHaveClass('border-red-300');
+  });
+
+  it('allows an empty target while editing and clears its save error only after a value change', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+    const targetInput = screen.getByPlaceholderText('e.g., 5');
+
+    await user.clear(targetInput);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Target must be a non-negative integer')).toBeInTheDocument();
+    expect(targetInput).toHaveClass('border-red-300');
+
+    await user.type(targetInput, 'abc');
+
+    expect(screen.getByText('Target must be a non-negative integer')).toBeInTheDocument();
+    expect(targetInput).toHaveClass('border-red-300');
+
+    await user.type(targetInput, '2');
+
+    expect(screen.queryByText('Target must be a non-negative integer')).not.toBeInTheDocument();
+    expect(targetInput).not.toHaveClass('border-red-300');
+  });
+
   it.each([
     ['0', 0],
     ['-1', -1],

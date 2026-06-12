@@ -538,6 +538,7 @@ export default function ShiftTypeRequirementsPage() {
                     min="0"
                     value={formData.required_num_people}
                     onChange={(e) => setFormData(prev => {
+                      setErrors(currentErrors => ({ ...currentErrors, required_num_people: '' }));
                       if (e.target.value === '') {
                         return {
                           ...prev,
@@ -577,16 +578,19 @@ export default function ShiftTypeRequirementsPage() {
                   <NumberInput
                     min="1"
                     value={formData.preferred_num_people ?? formData.required_num_people}
-                    onChange={(e) => setFormData(prev => ({
-                      ...prev,
-                      preferred_num_people: e.target.value === ''
-                        ? ''
-                        : (isNaN(parseInt(e.target.value))
-                            ? prev.preferred_num_people
-                            : (parseInt(e.target.value) === prev.required_num_people
-                                ? undefined
-                                : parseInt(e.target.value)))
-                    }))}
+                    onChange={(e) => {
+                      setErrors(currentErrors => ({ ...currentErrors, preferred_num_people: '' }));
+                      setFormData(prev => ({
+                        ...prev,
+                        preferred_num_people: e.target.value === ''
+                          ? ''
+                          : (isNaN(parseInt(e.target.value))
+                              ? prev.preferred_num_people
+                              : (parseInt(e.target.value) === prev.required_num_people
+                                  ? undefined
+                                  : parseInt(e.target.value)))
+                      }));
+                    }}
                     className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
                       errors.preferred_num_people
                         ? 'border-red-300 focus:border-red-500 focus:ring-red-200'

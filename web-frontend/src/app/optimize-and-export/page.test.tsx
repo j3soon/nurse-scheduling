@@ -255,6 +255,33 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText(/API version: alpha · Frontend version: frontend-test · Backend version: v-test/)).toBeInTheDocument();
   });
 
+  it('allows an empty solver timeout while editing and clears its run error only after a value change', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    queueInitialLocalSelection(fetchMock);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+
+    const timeoutInput = screen.getByRole('spinbutton');
+    await user.clear(timeoutInput);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+
+    expect(screen.getByText('Solver timeout must be a valid positive integer.')).toBeInTheDocument();
+    expect(timeoutInput).toHaveClass('border-red-300');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await user.type(timeoutInput, 'abc');
+
+    expect(screen.getByText('Solver timeout must be a valid positive integer.')).toBeInTheDocument();
+    expect(timeoutInput).toHaveClass('border-red-300');
+
+    await user.type(timeoutInput, '45');
+
+    expect(screen.queryByText('Solver timeout must be a valid positive integer.')).not.toBeInTheDocument();
+    expect(timeoutInput).not.toHaveClass('border-red-300');
+  });
+
   it('keeps the previous backend version visible while a health check is pending and clears it when offline', async () => {
     const user = userEvent.setup();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
