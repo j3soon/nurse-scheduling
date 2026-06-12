@@ -171,8 +171,11 @@ export interface ShiftTypeRequirementsPreference extends BasePreference {
   description?: string;
   shiftType: string[];
   requiredNumPeople: number;
+  // Unlike the backend schema, frontend state requires explicit selectors to
+  // prevent ambiguous form state. Backend null/missing values normalize to ALL.
   qualifiedPeople: string[];
   preferredNumPeople?: number;
+  // The backend permits null/missing to mean all dates; frontend state uses ALL.
   date: string[];
   weight: number;
 }
@@ -191,6 +194,7 @@ export interface ShiftTypeSuccessionsPreference extends BasePreference {
   description?: string;
   person: string[];
   pattern: string[];  // List of shift type IDs that are in succession
+  // The backend permits null/missing to mean all dates; frontend state uses ALL.
   date: string[];
   weight: number;
 }

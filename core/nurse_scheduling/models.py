@@ -247,8 +247,10 @@ class ShiftTypeRequirementsPreference(BasePreference):
     description: str | None = None
     shiftType: str | list[str]  # Single shift type ID or list of shift type IDs
     requiredNumPeople: int
-    qualifiedPeople: (int | str) | list[int | str] | None = None  # Single person/group ID or list or None
+    # None intentionally means all people; the frontend represents this scope as "ALL".
+    qualifiedPeople: (int | str) | list[int | str] | None = None
     preferredNumPeople: int | None = None  # Preferred number of people for each shift type
+    # None intentionally means all dates; the frontend represents this scope as "ALL".
     date: (int | str | datetime.date) | list[int | str | datetime.date] | None = None  # Single date or list of dates
     weight: int | float = Field(default=-1)  # For float can only be .inf or -.inf
 

@@ -72,12 +72,16 @@ interface HistoryMutationOptions {
 }
 
 type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
+  // The backend intentionally accepts null/missing to mean all people. The
+  // frontend requires [ALL] to keep forms and persisted frontend state explicit.
   qualifiedPeople?: ShiftTypeRequirementsPreference['qualifiedPeople'] | null;
 };
 
 function normalizeQualifiedPeopleForFrontend(
   qualifiedPeople: NullableShiftTypeRequirementsPreference['qualifiedPeople']
 ): string[] {
+  // Normalize the backend's implicit all-people representation into the
+  // frontend's explicit selector.
   return qualifiedPeople === null || qualifiedPeople === undefined ? [ALL] : qualifiedPeople;
 }
 
@@ -1822,7 +1826,8 @@ export function useSchedulingData() {
       }
     };
     newState.preferences.forEach(pref => {
-      // Compatibility: Add missing date field for those not required by the backend solver.
+      // The backend permits an omitted date to mean all dates. Require an
+      // explicit selector in frontend state to avoid ambiguous form values.
       if (pref.type === SHIFT_TYPE_REQUIREMENT && !('date' in pref)) {
         (pref as ShiftTypeRequirementsPreference).date = [ALL];
       } else if (pref.type === SHIFT_TYPE_SUCCESSIONS && !('date' in pref)) {
