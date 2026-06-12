@@ -63,6 +63,19 @@ def wait_for_job_status(job_id: str, *statuses: str) -> dict:
 class TestServerHealth:
     """Test server health and basic endpoints."""
 
+    @pytest.mark.parametrize("origin", ["http://localhost:3001", "http://127.0.0.1:5173"])
+    def test_cors_allows_local_development_origin_on_arbitrary_port(self, origin):
+        response = client.get("/", headers={"Origin": origin})
+
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+
+    def test_cors_rejects_untrusted_origin(self):
+        response = client.get("/", headers={"Origin": "http://localhost.evil.example:3001"})
+
+        assert response.status_code == 200
+        assert "access-control-allow-origin" not in response.headers
+
     def test_server_root(self):
         """Check if server is running and returns correct response."""
         response = client.get("/")

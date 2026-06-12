@@ -410,10 +410,10 @@ def _stream_optimize_job_events(job: OptimizeJob):
 
 
 # Regex to match allowed origins:
-# - http://localhost:3000, http://127.0.0.1:3000 (for Next.js local development)
+# - http://localhost:<port>, http://127.0.0.1:<port> (for local development)
 # - https://*.nursescheduling.org (including nursescheduling.org itself)
 #   Examples: https://nursescheduling.org, https://dev.nursescheduling.org, https://release-0-1.nursescheduling.org
-origin_regex = r"^(http://(localhost|127\.0\.0\.1):3000|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
+origin_regex = r"^(http://(localhost|127\.0\.0\.1):[0-9]+|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 
 expose_headers = [
     "Content-Disposition",
