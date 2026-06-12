@@ -780,6 +780,7 @@ export:
     workbook = load_workbook(output)
     assert workbook.active.cell(row=3, column=5).value == 5
 
+
 def test_export_extra_column_defaults_to_one_and_scores_off_coefficients():
     yaml_content = b"""
 apiVersion: alpha

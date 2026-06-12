@@ -55,7 +55,10 @@ test('extra column coefficients persist through Save and Load YAML and page navi
 
   await page.goto('/export-layout');
   await page.reload();
-  await page.getByRole('button', { name: 'Edit' }).click();
+  const extraColumnCard = page.getByText('Header: Weighted shifts').locator(
+    'xpath=ancestor::div[contains(@class, "px-4 py-2")][1]'
+  );
+  await extraColumnCard.getByRole('button', { name: 'Edit' }).click();
   await expect(page.getByRole('spinbutton', { name: 'D' })).toHaveValue('1');
   await expect(page.getByRole('spinbutton', { name: 'N' })).toHaveValue('3');
 });

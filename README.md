@@ -26,8 +26,8 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 ### Prerequisites
 
-- [bun](https://bun.com/docs/installation).
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- [bun](https://bun.com/docs/installation) (for frontend development).
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (for backend development).
 - [Docker](https://docs.docker.com/engine/install/ubuntu/) (optional, for Docker-based development environment and GPU solver).
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (optional, for GPU solver).
 
