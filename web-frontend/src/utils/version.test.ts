@@ -63,6 +63,14 @@ describe('version utils', () => {
       commitId: null,
       dirty: false,
     });
+    expect(parseVersionParts('123')).toEqual({
+      major: null,
+      minor: null,
+      patch: null,
+      commitsAfterTag: 0,
+      commitId: null,
+      dirty: false,
+    });
   });
 
   it('compares versions in descending semver order', () => {
@@ -97,6 +105,7 @@ describe('version utils', () => {
 
   it('sorts hash-only versions after tagged versions', () => {
     expect(compareVersionsDescending('abc1234', 'v1.2.3-4-gabc1234')).toBeGreaterThan(0);
+    expect(compareVersionsDescending('1234567', 'v1.2.3-4-gabc1234')).toBeGreaterThan(0);
     expect(compareVersionsDescending('abc1234', 'abc1234')).toBe(0);
     expect(compareVersionsDescending('abc1234-dirty', 'abc1234')).toBeLessThan(0);
     expect(compareVersionsDescending('abc1234-dirty', 'def5678')).toBeNull();

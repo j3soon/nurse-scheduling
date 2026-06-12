@@ -34,8 +34,8 @@ export type VersionParts = {
   dirty: boolean;
 };
 
-const HASH_ONLY_PATTERN = /^[0-9a-fA-F]+$/;
-const TAGGED_COMMIT_PATTERN = /^(v\d+\.\d+\.\d+)-(\d+)-g([0-9a-fA-F]+)$/;
+const HASH_ONLY_PATTERN = /^[0-9a-fA-F]{7,}$/;
+const TAGGED_COMMIT_PATTERN = /^(v\d+\.\d+\.\d+)-(\d+)-g([0-9a-fA-F]{7,})$/;
 const TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;
 
 export function parseVersionParts(version: string): VersionParts {
