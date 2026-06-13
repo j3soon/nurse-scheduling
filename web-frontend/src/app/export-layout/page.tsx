@@ -224,6 +224,18 @@ export default function ExportFormattingPage() {
     }
   };
 
+  const deleteStyleRule = (index: number) => {
+    updateExportFormatting(formattingRules.filter((_, i) => i !== index));
+  };
+
+  const deleteExtraColumn = (index: number) => {
+    updateExportExtraColumns(extraColumns.filter((_, i) => i !== index));
+  };
+
+  const deleteExtraRow = (index: number) => {
+    updateExportExtraRows(extraRows.filter((_, i) => i !== index));
+  };
+
   const peopleOptions = [
     ...peopleData.items.map(person => ({ id: person.id, description: person.description })),
     ...peopleData.groups.map(group => ({ id: group.id, description: group.description })),
@@ -745,22 +757,14 @@ export default function ExportFormattingPage() {
   const handleDeleteEditingRule = () => {
     if (editingTarget === null) return;
 
-    const nextFormatting = [...formattingRules];
-    const nextExtraColumns = [...extraColumns];
-    const nextExtraRows = [...extraRows];
     if (editingTarget.kind === 'style') {
-      nextFormatting.splice(editingTarget.index, 1);
+      deleteStyleRule(editingTarget.index);
     } else if (editingTarget.kind === 'extra column') {
-      nextExtraColumns.splice(editingTarget.index, 1);
+      deleteExtraColumn(editingTarget.index);
     } else {
-      nextExtraRows.splice(editingTarget.index, 1);
+      deleteExtraRow(editingTarget.index);
     }
-    updateExportConfig({
-      ...effectiveExportData,
-      formatting: nextFormatting,
-      extraColumns: nextExtraColumns,
-      extraRows: nextExtraRows,
-    });
+
     setIsFormVisible(false);
     resetForm();
     restoreScrollPosition();
@@ -1385,7 +1389,7 @@ export default function ExportFormattingPage() {
           items={formattingRules}
           emptyMessage='No style rules defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditStyle}
-          onDelete={(index) => updateExportFormatting(formattingRules.filter((_, i) => i !== index))}
+          onDelete={deleteStyleRule}
           onReorder={(newItems) => updateExportFormatting(newItems)}
           renderContent={(rule) => (
             <>
@@ -1479,7 +1483,7 @@ export default function ExportFormattingPage() {
           items={extraColumns}
           emptyMessage='No extra columns defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditExtraColumn}
-          onDelete={(index) => updateExportExtraColumns(extraColumns.filter((_, i) => i !== index))}
+          onDelete={deleteExtraColumn}
           onReorder={(newItems) => updateExportExtraColumns(newItems)}
           renderContent={(rule) => (
             <>
@@ -1520,7 +1524,7 @@ export default function ExportFormattingPage() {
           items={extraRows}
           emptyMessage='No extra rows defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditExtraRow}
-          onDelete={(index) => updateExportExtraRows(extraRows.filter((_, i) => i !== index))}
+          onDelete={deleteExtraRow}
           onReorder={(newItems) => updateExportExtraRows(newItems)}
           renderContent={(rule) => (
             <>
