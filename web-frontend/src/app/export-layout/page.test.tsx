@@ -185,6 +185,31 @@ describe('ExportLayoutPage extra column coefficients', () => {
     expect(updateExportConfig.mock.calls[0][0].extraColumns[0].countShiftTypeCoefficients).toEqual([['D', 4]]);
   });
 
+  it('saves an edited export rule draft as a new rule without changing the original', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage({
+      formatting: [],
+      extraColumns: [{
+        type: 'count',
+        header: 'Existing Score',
+        countShiftTypes: ['D'],
+        countDates: ['2026-01-01'],
+      }],
+      extraRows: [],
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.clear(screen.getByPlaceholderText('OFF (Weekend)'));
+    await user.type(screen.getByPlaceholderText('OFF (Weekend)'), 'Copied Score');
+    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+
+    expect(updateExportConfig).toHaveBeenCalledOnce();
+    expect(updateExportConfig.mock.calls[0][0].extraColumns).toMatchObject([
+      { header: 'Existing Score' },
+      { header: 'Copied Score' },
+    ]);
+  });
+
   it('clears an invalid coefficient error after correction and saves the rule', async () => {
     const user = userEvent.setup();
     renderExportLayoutPage();

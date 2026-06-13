@@ -311,11 +311,9 @@ export default function ShiftTypeRequirementsPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  function handleSave() {
-    if (!validateForm()) return;
-
+  const buildRequirementFromForm = (): ShiftTypeRequirementsPreference => {
     const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
-    const newRequirement: ShiftTypeRequirementsPreference = {
+    return {
       type: SHIFT_TYPE_REQUIREMENT,
       description: formData.description,
       shiftType: formData.shift_type,
@@ -325,25 +323,38 @@ export default function ShiftTypeRequirementsPage() {
       date: formData.date,
       weight: usesWeight ? formData.weight as number : -1
     };
+  };
 
-    let newRequirements;
+  function saveDraft(saveAsNew: boolean) {
+    if (!validateForm()) return;
+
+    const newRequirement = buildRequirementFromForm();
+
     const wasEditing = editingIndex !== null;
-    if (wasEditing) {
+    if (wasEditing && !saveAsNew) {
       // Edit existing requirement
-      newRequirements = [...shiftTypeRequirements];
+      const newRequirements = [...shiftTypeRequirements];
       newRequirements[editingIndex] = newRequirement;
+      updateShiftTypeRequirements(newRequirements);
     } else {
       // Add new requirement
-      newRequirements = [...shiftTypeRequirements, newRequirement];
+      updateShiftTypeRequirements([...shiftTypeRequirements, newRequirement]);
     }
 
-    updateShiftTypeRequirements(newRequirements);
     setIsFormVisible(false);
     resetForm();
     // Restore scroll position if we were editing
     if (wasEditing) {
       restoreScrollPosition();
     }
+  }
+
+  function handleSave() {
+    saveDraft(false);
+  }
+
+  function handleSaveAsNew() {
+    saveDraft(true);
   }
 
   // Handle global keydown for Enter/Escape when form is visible
@@ -369,6 +380,15 @@ export default function ShiftTypeRequirementsPage() {
   const handleDelete = (index: number) => {
     const newRequirements = shiftTypeRequirements.filter((_, i) => i !== index);
     updateShiftTypeRequirements(newRequirements);
+  };
+
+  const handleDeleteEditingRequirement = () => {
+    if (editingIndex === null) return;
+
+    handleDelete(editingIndex);
+    setIsFormVisible(false);
+    resetForm();
+    restoreScrollPosition();
   };
 
   const handleArrayFieldToggle = (field: 'shift_type' | 'qualified_people' | 'date', id: string) => {
@@ -713,19 +733,39 @@ export default function ShiftTypeRequirementsPage() {
               )}
 
               {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  {editingIndex !== null ? 'Update' : 'Add'}
-                </button>
+              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {editingIndex !== null && (
+                    <button
+                      onClick={handleDeleteEditingRequirement}
+                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap justify-end gap-3">
+                  <button
+                    onClick={handleCancel}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  {editingIndex !== null && (
+                    <button
+                      onClick={handleSaveAsNew}
+                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+                    >
+                      Save as New
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSave}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  >
+                    {editingIndex !== null ? 'Update' : 'Add'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

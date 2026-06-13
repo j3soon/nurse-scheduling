@@ -196,6 +196,51 @@ describe('ShiftCountsPage', () => {
     expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
 
+  it('saves an edited shift count draft as a new shift count without changing the original', async () => {
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '2026-01-01', description: 'Jan 1' }],
+        groups: [],
+      },
+      peopleData: {
+        items: [{ id: 'P1', description: 'Person 1', history: [] }],
+        groups: [],
+      },
+      shiftTypeData: {
+        items: [{ id: 'D', description: 'Day' }],
+        groups: [],
+      },
+      getPreferencesByType: vi.fn(() => [{
+        type: 'shift count',
+        description: 'Original count',
+        person: ['P1'],
+        countDates: ['2026-01-01'],
+        countShiftTypes: ['D'],
+        expression: 'x >= T',
+        target: 1,
+        weight: -1,
+      }]),
+      updatePreferencesByType,
+    });
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await user.click(screen.getByRole('button', { name: /edit/i }));
+    await user.clear(screen.getByPlaceholderText('e.g., 5'));
+    await user.type(screen.getByPlaceholderText('e.g., 5'), '2');
+    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1]).toMatchObject([
+      { description: 'Original count', target: 1 },
+      { description: 'Original count', target: 2 },
+    ]);
+  });
+
   it('shows all invalid coefficient errors and clears only the edited coefficient error', async () => {
     const user = userEvent.setup();
     renderShiftCountsPage();

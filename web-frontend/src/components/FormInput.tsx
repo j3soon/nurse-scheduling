@@ -31,6 +31,8 @@ interface FormInputProps {
   error?: string;
   onAction: () => void;
   onCancel: () => void;
+  onSaveAsNew?: () => void;
+  onDelete?: () => void;
   actionText: string;
   children?: React.ReactNode;
 }
@@ -46,6 +48,8 @@ export function FormInput({
   error,
   onAction,
   onCancel,
+  onSaveAsNew,
+  onDelete,
   actionText,
   children
 }: FormInputProps) {
@@ -86,19 +90,39 @@ export function FormInput({
         />
       </div>
       {children}
-      <div className="flex justify-end gap-3 pt-4">
-        <button
-          onClick={onCancel}
-          className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onAction}
-          className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-        >
-          {actionText}
-        </button>
+      <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
+            >
+              Delete
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap justify-end gap-3">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          {onSaveAsNew && (
+            <button
+              onClick={onSaveAsNew}
+              className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+            >
+              Save as New
+            </button>
+          )}
+          <button
+            onClick={onAction}
+            className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+          >
+            {actionText}
+          </button>
+        </div>
       </div>
     </div>
   );

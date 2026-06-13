@@ -445,7 +445,7 @@ export default function ExportFormattingPage() {
     return [minWeight as number, maxWeight as number];
   };
 
-  const saveStyleRule = () => {
+  const saveStyleRule = (saveAsNew: boolean) => {
     const description = draft.description.trim();
     const backgroundColor = draft.backgroundColor.trim().toLowerCase();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
@@ -534,12 +534,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (editingTarget?.kind === 'style') {
+    if (!saveAsNew && editingTarget?.kind === 'style') {
       nextFormatting[editingTarget.index] = newRule;
     } else {
-      if (editingTarget?.kind === 'extra column') {
+      if (!saveAsNew && editingTarget?.kind === 'extra column') {
         nextExtraColumns.splice(editingTarget.index, 1);
-      } else if (editingTarget?.kind === 'extra row') {
+      } else if (!saveAsNew && editingTarget?.kind === 'extra row') {
         nextExtraRows.splice(editingTarget.index, 1);
       }
       nextFormatting.push(newRule);
@@ -553,7 +553,7 @@ export default function ExportFormattingPage() {
     return true;
   };
 
-  const saveExtraColumn = () => {
+  const saveExtraColumn = (saveAsNew: boolean) => {
     const header = draft.header.trim();
     const description = draft.description.trim();
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
@@ -623,12 +623,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (editingTarget?.kind === 'extra column') {
+    if (!saveAsNew && editingTarget?.kind === 'extra column') {
       nextExtraColumns[editingTarget.index] = newRule;
     } else {
-      if (editingTarget?.kind === 'style') {
+      if (!saveAsNew && editingTarget?.kind === 'style') {
         nextFormatting.splice(editingTarget.index, 1);
-      } else if (editingTarget?.kind === 'extra row') {
+      } else if (!saveAsNew && editingTarget?.kind === 'extra row') {
         nextExtraRows.splice(editingTarget.index, 1);
       }
       nextExtraColumns.push(newRule);
@@ -642,7 +642,7 @@ export default function ExportFormattingPage() {
     return true;
   };
 
-  const saveExtraRow = () => {
+  const saveExtraRow = (saveAsNew: boolean) => {
     const header = draft.header.trim();
     const description = draft.description.trim();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
@@ -694,12 +694,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (editingTarget?.kind === 'extra row') {
+    if (!saveAsNew && editingTarget?.kind === 'extra row') {
       nextExtraRows[editingTarget.index] = newRule;
     } else {
-      if (editingTarget?.kind === 'style') {
+      if (!saveAsNew && editingTarget?.kind === 'style') {
         nextFormatting.splice(editingTarget.index, 1);
-      } else if (editingTarget?.kind === 'extra column') {
+      } else if (!saveAsNew && editingTarget?.kind === 'extra column') {
         nextExtraColumns.splice(editingTarget.index, 1);
       }
       nextExtraRows.push(newRule);
@@ -716,10 +716,10 @@ export default function ExportFormattingPage() {
   const handleSave = () => {
     const wasEditing = editingTarget !== null;
     const didSave = draft.kind === 'style'
-      ? saveStyleRule()
+      ? saveStyleRule(false)
       : draft.kind === 'extra column'
-        ? saveExtraColumn()
-        : saveExtraRow();
+        ? saveExtraColumn(false)
+        : saveExtraRow(false);
     if (!didSave) return;
 
     setIsFormVisible(false);
@@ -727,6 +727,43 @@ export default function ExportFormattingPage() {
     if (wasEditing) {
       restoreScrollPosition();
     }
+  };
+
+  const handleSaveAsNew = () => {
+    const didSave = draft.kind === 'style'
+      ? saveStyleRule(true)
+      : draft.kind === 'extra column'
+        ? saveExtraColumn(true)
+        : saveExtraRow(true);
+    if (!didSave) return;
+
+    setIsFormVisible(false);
+    resetForm();
+    restoreScrollPosition();
+  };
+
+  const handleDeleteEditingRule = () => {
+    if (editingTarget === null) return;
+
+    const nextFormatting = [...formattingRules];
+    const nextExtraColumns = [...extraColumns];
+    const nextExtraRows = [...extraRows];
+    if (editingTarget.kind === 'style') {
+      nextFormatting.splice(editingTarget.index, 1);
+    } else if (editingTarget.kind === 'extra column') {
+      nextExtraColumns.splice(editingTarget.index, 1);
+    } else {
+      nextExtraRows.splice(editingTarget.index, 1);
+    }
+    updateExportConfig({
+      ...effectiveExportData,
+      formatting: nextFormatting,
+      extraColumns: nextExtraColumns,
+      extraRows: nextExtraRows,
+    });
+    setIsFormVisible(false);
+    resetForm();
+    restoreScrollPosition();
   };
 
   useEffect(() => {
@@ -1303,19 +1340,39 @@ export default function ExportFormattingPage() {
                 </div>
               )}
 
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  {editingTarget !== null ? 'Update' : 'Add'}
-                </button>
+              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {editingTarget !== null && (
+                    <button
+                      onClick={handleDeleteEditingRule}
+                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap justify-end gap-3">
+                  <button
+                    onClick={handleCancel}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  {editingTarget !== null && (
+                    <button
+                      onClick={handleSaveAsNew}
+                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+                    >
+                      Save as New
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSave}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  >
+                    {editingTarget !== null ? 'Update' : 'Add'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

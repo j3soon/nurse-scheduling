@@ -213,9 +213,7 @@ export default function ShiftCountsPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  function handleSave() {
-    if (!validateForm()) return;
-
+  const buildShiftCountFromForm = (): ShiftCountPreference => {
     const sortedCountShiftTypes = sortIdsByEntryOrder(formData.count_shift_types, shiftTypeEntries);
     const { coefficients: countShiftTypeCoefficients } = validateCoefficientPairs(
       sortedCountShiftTypes,
@@ -223,7 +221,7 @@ export default function ShiftCountsPage() {
       shiftTypeData
     );
 
-    const newShiftCount: ShiftCountPreference = {
+    return {
       type: SHIFT_COUNT,
       description: formData.description,
       person: formData.person,
@@ -235,25 +233,38 @@ export default function ShiftCountsPage() {
       target: formData.target as number,
       weight: formData.weight as number
     };
+  };
 
-    let newShiftCounts;
+  function saveDraft(saveAsNew: boolean) {
+    if (!validateForm()) return;
+
+    const newShiftCount = buildShiftCountFromForm();
+
     const wasEditing = editingIndex !== null;
-    if (wasEditing) {
+    if (wasEditing && !saveAsNew) {
       // Edit existing shift count
-      newShiftCounts = [...shiftCounts];
+      const newShiftCounts = [...shiftCounts];
       newShiftCounts[editingIndex] = newShiftCount;
+      updateShiftCounts(newShiftCounts);
     } else {
       // Add new shift count
-      newShiftCounts = [...shiftCounts, newShiftCount];
+      updateShiftCounts([...shiftCounts, newShiftCount]);
     }
 
-    updateShiftCounts(newShiftCounts);
     setIsFormVisible(false);
     resetForm();
     // Restore scroll position if we were editing
     if (wasEditing) {
       restoreScrollPosition();
     }
+  }
+
+  function handleSave() {
+    saveDraft(false);
+  }
+
+  function handleSaveAsNew() {
+    saveDraft(true);
   }
 
   // Handle global keydown for Enter/Escape when form is visible
@@ -279,6 +290,15 @@ export default function ShiftCountsPage() {
   const handleDelete = (index: number) => {
     const newShiftCounts = shiftCounts.filter((_, i) => i !== index);
     updateShiftCounts(newShiftCounts);
+  };
+
+  const handleDeleteEditingShiftCount = () => {
+    if (editingIndex === null) return;
+
+    handleDelete(editingIndex);
+    setIsFormVisible(false);
+    resetForm();
+    restoreScrollPosition();
   };
 
   const handleArrayFieldToggle = (field: 'person' | 'count_dates' | 'count_shift_types', id: string) => {
@@ -605,19 +625,39 @@ export default function ShiftCountsPage() {
               />
 
               {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  {editingIndex !== null ? 'Update' : 'Add'}
-                </button>
+              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {editingIndex !== null && (
+                    <button
+                      onClick={handleDeleteEditingShiftCount}
+                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap justify-end gap-3">
+                  <button
+                    onClick={handleCancel}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  {editingIndex !== null && (
+                    <button
+                      onClick={handleSaveAsNew}
+                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+                    >
+                      Save as New
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSave}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  >
+                    {editingIndex !== null ? 'Update' : 'Add'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

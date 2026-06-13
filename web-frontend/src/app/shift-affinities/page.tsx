@@ -154,10 +154,7 @@ export default function ShiftAffinitiesPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  function handleSave() {
-    if (!validateForm()) return;
-
-    const newShiftAffinity: ShiftAffinityPreference = {
+  const buildShiftAffinityFromForm = (): ShiftAffinityPreference => ({
       type: SHIFT_AFFINITY,
       description: formData.description,
       date: formData.date,
@@ -165,26 +162,38 @@ export default function ShiftAffinitiesPage() {
       people2: formData.people2,
       shiftTypes: formData.shift_types,
       weight: formData.weight as number
-    };
+  });
 
-    let newAffinities;
+  function saveDraft(saveAsNew: boolean) {
+    if (!validateForm()) return;
+
+    const newShiftAffinity = buildShiftAffinityFromForm();
+
     const wasEditing = editingIndex !== null;
-    if (wasEditing) {
+    if (wasEditing && !saveAsNew) {
       // Edit existing shift affinity
-      newAffinities = [...shiftAffinities];
+      const newAffinities = [...shiftAffinities];
       newAffinities[editingIndex] = newShiftAffinity;
+      updateShiftAffinities(newAffinities);
     } else {
       // Add new shift affinity
-      newAffinities = [...shiftAffinities, newShiftAffinity];
+      updateShiftAffinities([...shiftAffinities, newShiftAffinity]);
     }
 
-    updateShiftAffinities(newAffinities);
     setIsFormVisible(false);
     resetForm();
     // Restore scroll position if we were editing
     if (wasEditing) {
       restoreScrollPosition();
     }
+  }
+
+  function handleSave() {
+    saveDraft(false);
+  }
+
+  function handleSaveAsNew() {
+    saveDraft(true);
   }
 
   // Handle global keydown for Enter/Escape when form is visible
@@ -210,6 +219,15 @@ export default function ShiftAffinitiesPage() {
   const handleDelete = (index: number) => {
     const newShiftAffinities = shiftAffinities.filter((_, i) => i !== index);
     updateShiftAffinities(newShiftAffinities);
+  };
+
+  const handleDeleteEditingShiftAffinity = () => {
+    if (editingIndex === null) return;
+
+    handleDelete(editingIndex);
+    setIsFormVisible(false);
+    resetForm();
+    restoreScrollPosition();
   };
 
   const handleArrayFieldToggle = (field: 'date' | 'people1' | 'people2' | 'shift_types', id: string) => {
@@ -452,19 +470,39 @@ export default function ShiftAffinitiesPage() {
               />
 
               {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  {editingIndex !== null ? 'Update' : 'Add'}
-                </button>
+              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {editingIndex !== null && (
+                    <button
+                      onClick={handleDeleteEditingShiftAffinity}
+                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap justify-end gap-3">
+                  <button
+                    onClick={handleCancel}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  {editingIndex !== null && (
+                    <button
+                      onClick={handleSaveAsNew}
+                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+                    >
+                      Save as New
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSave}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  >
+                    {editingIndex !== null ? 'Update' : 'Add'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

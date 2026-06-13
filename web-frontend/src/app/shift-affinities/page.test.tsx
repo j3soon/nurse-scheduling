@@ -90,4 +90,51 @@ describe('ShiftAffinitiesPage', () => {
     expect(screen.queryByText('At least one person must be selected for People 2')).not.toBeInTheDocument();
     expect(screen.queryByText('At least one shift type must be selected')).not.toBeInTheDocument();
   });
+
+  it('saves an edited affinity draft as a new affinity without changing the original', async () => {
+    const user = userEvent.setup();
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '01', description: 'Jan 1' }],
+        groups: [],
+      },
+      peopleData: {
+        items: [
+          { id: 'P1', description: 'Person 1', history: [] },
+          { id: 'P2', description: 'Person 2', history: [] },
+        ],
+        groups: [],
+      },
+      shiftTypeData: {
+        items: [{ id: 'D', description: 'Day' }],
+        groups: [],
+      },
+      getPreferencesByType: vi.fn(() => [{
+        type: 'shift affinity',
+        description: 'Original affinity',
+        date: ['01'],
+        people1: ['P1'],
+        people2: ['P2'],
+        shiftTypes: ['D'],
+        weight: 1,
+      }]),
+      updatePreferencesByType,
+    });
+    renderShiftAffinitiesPage();
+
+    await user.click(screen.getByRole('button', { name: /edit/i }));
+    await user.clear(screen.getByPlaceholderText('e.g., 1, 10, ∞'));
+    await user.type(screen.getByPlaceholderText('e.g., 1, 10, ∞'), '2');
+    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1]).toMatchObject([
+      { description: 'Original affinity', weight: 1 },
+      { description: 'Original affinity', weight: 2 },
+    ]);
+  });
 });
