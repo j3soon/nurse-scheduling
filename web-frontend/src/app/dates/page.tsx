@@ -256,7 +256,10 @@ export default function DatePage() {
               type="date"
               id="startDate"
               value={dateToString(draft.startDate)}
-              onChange={(e) => setDraft(prev => ({ ...prev, startDate: stringToDate(e.target.value) }))}
+              onChange={(e) => {
+                setErrors(prev => ({ ...prev, startDate: '' }));
+                setDraft(prev => ({ ...prev, startDate: stringToDate(e.target.value) }));
+              }}
               className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                 errors.startDate ? 'border-red-500' : 'border-gray-300'
               }`}
@@ -277,7 +280,10 @@ export default function DatePage() {
               type="date"
               id="endDate"
               value={dateToString(draft.endDate)}
-              onChange={(e) => setDraft(prev => ({ ...prev, endDate: stringToDate(e.target.value) }))}
+              onChange={(e) => {
+                setErrors(prev => ({ ...prev, endDate: '' }));
+                setDraft(prev => ({ ...prev, endDate: stringToDate(e.target.value) }));
+              }}
               className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                 errors.endDate ? 'border-red-500' : 'border-gray-300'
               }`}

@@ -24,8 +24,16 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle, FiHelpCircle, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ExportExtraColumn, ExportExtraRow, ExportFormatting, ExportFormattingType, ExportRequestShape } from '@/types/scheduling';
+import {
+  ExportExtraColumn,
+  ExportExtraRow,
+  ExportFormatting,
+  ExportFormattingType,
+  ExportRequestShape,
+  ShiftCountTypeCoefficient
+} from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
+import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
 import ToggleButton from '@/components/ToggleButton';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import WeightInput from '@/components/WeightInput';
@@ -33,6 +41,11 @@ import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
+import {
+  DraftShiftCountTypeCoefficient,
+  syncCoefficientPairs,
+  validateCoefficientPairs,
+} from '@/utils/countShiftTypeCoefficients';
 
 type RuleKind = 'style' | 'extra column' | 'extra row';
 type ColorField = 'backgroundColor' | 'bottomBorderColor' | 'rightBorderColor' | 'fontColor';
@@ -51,6 +64,7 @@ interface DraftRule {
   fontColor: string;
   header: string;
   countShiftTypes: string[];
+  countShiftTypeCoefficients: DraftShiftCountTypeCoefficient[];
   countDates: string[];
   countPeople: string[];
   requestShape: string[];
@@ -65,6 +79,28 @@ interface EditingTarget {
   kind: RuleKind;
   index: number;
 }
+
+interface ExportLayoutErrors {
+  header?: string;
+  backgroundColor?: string;
+  bottomBorderColor?: string;
+  rightBorderColor?: string;
+  fontColor?: string;
+  people?: string;
+  dates?: string;
+  shiftTypes?: string;
+  countShiftTypes?: string;
+  countShiftTypeCoefficients?: string;
+  countShiftTypeCoefficientsById?: Record<string, string>;
+  countDates?: string;
+  countPeople?: string;
+  requestShape?: string;
+  weightRangeMin?: string;
+  weightRangeMax?: string;
+  styleFields?: string;
+}
+
+type ExportLayoutErrorField = Exclude<keyof ExportLayoutErrors, 'countShiftTypeCoefficientsById'>;
 
 interface SelectOption {
   id: string;
@@ -101,6 +137,7 @@ const createEmptyDraft = (): DraftRule => ({
   fontColor: '',
   header: '',
   countShiftTypes: [],
+  countShiftTypeCoefficients: [],
   countDates: [],
   countPeople: [],
   requestShape: [],
@@ -145,7 +182,7 @@ export default function ExportFormattingPage() {
   const [showInstructions, setShowInstructions] = useState(false);
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingTarget, setEditingTarget] = useState<EditingTarget | null>(null);
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState<ExportLayoutErrors>({});
   const [draft, setDraft] = useState<DraftRule>(createEmptyDraft);
   useTabSwitchWarning(isFormVisible);
 
@@ -187,6 +224,18 @@ export default function ExportFormattingPage() {
     }
   };
 
+  const deleteStyleRule = (index: number) => {
+    updateExportFormatting(formattingRules.filter((_, i) => i !== index));
+  };
+
+  const deleteExtraColumn = (index: number) => {
+    updateExportExtraColumns(extraColumns.filter((_, i) => i !== index));
+  };
+
+  const deleteExtraRow = (index: number) => {
+    updateExportExtraRows(extraRows.filter((_, i) => i !== index));
+  };
+
   const peopleOptions = [
     ...peopleData.items.map(person => ({ id: person.id, description: person.description })),
     ...peopleData.groups.map(group => ({ id: group.id, description: group.description })),
@@ -218,9 +267,35 @@ export default function ExportFormattingPage() {
     return null;
   };
 
+  const renderErrorMessages = (error?: string, className = 'mt-2') => {
+    if (!error) return null;
+
+    return (
+      <div className={`${className} space-y-1`}>
+        {error.split('\n').map(message => (
+          <p key={message} className="text-sm text-red-600 flex items-center gap-1">
+            <FiAlertCircle className="h-4 w-4" />
+            {message}
+          </p>
+        ))}
+      </div>
+    );
+  };
+
+  const inputClassName = (hasError?: boolean) =>
+    `px-3 py-2 border rounded-md w-full ${
+      hasError
+        ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
+        : 'border-gray-300'
+    }`;
+
+  const clearError = (field: ExportLayoutErrorField) => {
+    setErrors(prev => ({ ...prev, [field]: '' }));
+  };
+
   const resetForm = () => {
     setDraft(createEmptyDraft());
-    setError('');
+    setErrors({});
     setEditingTarget(null);
   };
 
@@ -254,7 +329,9 @@ export default function ExportFormattingPage() {
       appendText: 'appendText' in rule ? rule.appendText || '' : '',
       noteText: 'note' in rule ? rule.note?.text || '' : '',
     });
-    setError(weightRange !== undefined && !hasValidWeightRange ? 'Weight Range must contain exactly two values' : '');
+    setErrors(weightRange !== undefined && !hasValidWeightRange
+      ? { weightRangeMin: 'Weight Range must contain exactly two values' }
+      : {});
     setEditingTarget({ kind: 'style', index });
     setIsFormVisible(true);
     saveScrollPosition();
@@ -269,12 +346,16 @@ export default function ExportFormattingPage() {
       kind: 'extra column',
       header: rule.header,
       countShiftTypes: rule.countShiftTypes,
+      countShiftTypeCoefficients: syncCoefficientPairs(
+        rule.countShiftTypes,
+        rule.countShiftTypeCoefficients ?? []
+      ),
       countDates: rule.countDates,
       rightBorderColor: rule.rightBorderColor || '',
     });
     setEditingTarget({ kind: 'extra column', index });
     setIsFormVisible(true);
-    setError('');
+    setErrors({});
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
@@ -292,7 +373,7 @@ export default function ExportFormattingPage() {
     });
     setEditingTarget({ kind: 'extra row', index });
     setIsFormVisible(true);
-    setError('');
+    setErrors({});
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
@@ -306,58 +387,77 @@ export default function ExportFormattingPage() {
     }
   };
 
-  const validateSelectedOptions = (label: string, selectedIds: string[], options: SelectOption[]) => {
-    if (selectedIds.length === 0) {
-      setError(`Select at least one ${label.toLowerCase()}`);
+  const hasErrors = (nextErrors: ExportLayoutErrors) =>
+    Object.values(nextErrors).some(value => {
+      if (typeof value === 'string') return value.length > 0;
+      if (value && typeof value === 'object') return Object.keys(value).length > 0;
       return false;
+    });
+
+  const getSelectedOptionsError = (
+    label: string,
+    selectedIds: string[],
+    options: SelectOption[],
+    invalidMessage = `Selected ${label.toLowerCase()} are invalid for this rule type`
+  ) => {
+    if (selectedIds.length === 0) {
+      return `Select at least one ${label.toLowerCase()}`;
     }
 
     const validIds = new Set(options.map(option => option.id));
     if (selectedIds.some(id => !validIds.has(id))) {
-      setError(`Selected ${label.toLowerCase()} are invalid for this rule type`);
-      return false;
+      return invalidMessage;
     }
 
-    return true;
+    return undefined;
   };
 
-  const validateStyleTargets = () => {
-    if (styleUsesPeople(draft.type) && !validateSelectedOptions('people', draft.people, peopleOptions)) {
-      return false;
+  const addStyleTargetErrors = (nextErrors: ExportLayoutErrors) => {
+    if (styleUsesPeople(draft.type)) {
+      const error = getSelectedOptionsError('people', draft.people, peopleOptions);
+      if (error) nextErrors.people = error;
     }
-    if (styleUsesDates(draft.type) && !validateSelectedOptions('dates', draft.dates, dateOptions)) {
-      return false;
+    if (styleUsesDates(draft.type)) {
+      const error = getSelectedOptionsError('dates', draft.dates, dateOptions);
+      if (error) nextErrors.dates = error;
     }
-    if (styleUsesShiftTypes(draft.type) && !validateSelectedOptions('shift types', draft.shiftTypes, shiftTypeOptions)) {
-      return false;
+    if (styleUsesShiftTypes(draft.type)) {
+      const error = getSelectedOptionsError('shift types', draft.shiftTypes, shiftTypeOptions);
+      if (error) nextErrors.shiftTypes = error;
     }
-    return true;
   };
 
-  const parseOptionalWeightRange = (): [number, number] | undefined | null => {
+  const parseOptionalWeightRange = (nextErrors: ExportLayoutErrors): [number, number] | undefined | null => {
     const minInput = String(draft.weightRangeMin).trim();
     const maxInput = String(draft.weightRangeMax).trim();
     if (!minInput && !maxInput) {
       return undefined;
     }
     if (!minInput || !maxInput) {
-      setError('Weight Range requires both minimum and maximum values');
+      if (!minInput) nextErrors.weightRangeMin = 'Weight Range minimum is required when maximum is set';
+      if (!maxInput) nextErrors.weightRangeMax = 'Weight Range maximum is required when minimum is set';
       return null;
     }
     const minWeight = parseWeightValue(minInput);
     const maxWeight = parseWeightValue(maxInput);
     if (!isValidWeightValue(minWeight) || !isValidWeightValue(maxWeight)) {
-      setError('Weight Range values must be valid numbers, Infinity, or -Infinity');
+      if (!isValidWeightValue(minWeight)) {
+        nextErrors.weightRangeMin = 'Minimum Weight must be a valid number, Infinity, or -Infinity';
+      }
+      if (!isValidWeightValue(maxWeight)) {
+        nextErrors.weightRangeMax = 'Maximum Weight must be a valid number, Infinity, or -Infinity';
+      }
       return null;
     }
     if (minWeight > maxWeight) {
-      setError('Weight Range minimum must be less than or equal to maximum');
+      nextErrors.weightRangeMin = 'Weight Range minimum must be less than or equal to maximum';
+      nextErrors.weightRangeMax = 'Weight Range minimum must be less than or equal to maximum';
       return null;
     }
     return [minWeight as number, maxWeight as number];
   };
 
-  const saveStyleRule = () => {
+  const saveStyleRule = (saveAsNew: boolean) => {
     const description = draft.description.trim();
     const backgroundColor = draft.backgroundColor.trim().toLowerCase();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
@@ -366,37 +466,33 @@ export default function ExportFormattingPage() {
     const appendText = draft.appendText;
     const noteText = draft.noteText.trim();
     const hasCondition = draft.requestShape.length > 0 || draft.satisfied !== '' || Boolean(String(draft.weightRangeMin).trim() || String(draft.weightRangeMax).trim());
+    const nextErrors: ExportLayoutErrors = {};
 
-    if (!validateStyleTargets()) {
-      return false;
-    }
-    const weightRange = parseOptionalWeightRange();
-    if (weightRange === null) {
-      return false;
-    }
+    addStyleTargetErrors(nextErrors);
+    const weightRange = parseOptionalWeightRange(nextErrors);
 
     const backgroundColorError = validateColor(backgroundColor, 'Background Color');
     if (backgroundColorError) {
-      setError(backgroundColorError);
-      return false;
+      nextErrors.backgroundColor = backgroundColorError;
     }
     const bottomBorderColorError = validateColor(bottomBorderColor, 'Bottom Border Color');
     if (bottomBorderColorError) {
-      setError(bottomBorderColorError);
-      return false;
+      nextErrors.bottomBorderColor = bottomBorderColorError;
     }
     const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
     if (rightBorderColorError) {
-      setError(rightBorderColorError);
-      return false;
+      nextErrors.rightBorderColor = rightBorderColorError;
     }
     const fontColorError = validateColor(fontColor, 'Font Color');
     if (fontColorError) {
-      setError(fontColorError);
-      return false;
+      nextErrors.fontColor = fontColorError;
     }
     if (!backgroundColor && !bottomBorderColor && !rightBorderColor && !fontColor && !appendText && !noteText) {
-      setError('At least one style or annotation field is required');
+      nextErrors.styleFields = 'At least one style or annotation field is required';
+    }
+
+    if (weightRange === null || hasErrors(nextErrors)) {
+      setErrors(nextErrors);
       return false;
     }
 
@@ -450,12 +546,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (editingTarget?.kind === 'style') {
+    if (!saveAsNew && editingTarget?.kind === 'style') {
       nextFormatting[editingTarget.index] = newRule;
     } else {
-      if (editingTarget?.kind === 'extra column') {
+      if (!saveAsNew && editingTarget?.kind === 'extra column') {
         nextExtraColumns.splice(editingTarget.index, 1);
-      } else if (editingTarget?.kind === 'extra row') {
+      } else if (!saveAsNew && editingTarget?.kind === 'extra row') {
         nextExtraRows.splice(editingTarget.index, 1);
       }
       nextFormatting.push(newRule);
@@ -469,36 +565,60 @@ export default function ExportFormattingPage() {
     return true;
   };
 
-  const saveExtraColumn = () => {
+  const saveExtraColumn = (saveAsNew: boolean) => {
     const header = draft.header.trim();
     const description = draft.description.trim();
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
+    const nextErrors: ExportLayoutErrors = {};
     if (!header) {
-      setError('Column header is required');
-      return false;
+      nextErrors.header = 'Column header is required';
     }
     const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
     if (rightBorderColorError) {
-      setError(rightBorderColorError);
-      return false;
+      nextErrors.rightBorderColor = rightBorderColorError;
     }
     if (draft.countShiftTypes.length === 0) {
-      setError('Select at least one shift type to count');
-      return false;
+      nextErrors.countShiftTypes = 'Select at least one shift type to count';
+    } else {
+      const countShiftTypeError = getSelectedOptionsError(
+        'shift type',
+        draft.countShiftTypes,
+        shiftTypeOptions,
+        'Selected shift types are invalid for this extra column'
+      );
+      if (countShiftTypeError) nextErrors.countShiftTypes = countShiftTypeError;
     }
     if (draft.countDates.length === 0) {
-      setError('Select at least one date target to count over');
-      return false;
+      nextErrors.countDates = 'Select at least one date target to count over';
+    } else {
+      const countDatesError = getSelectedOptionsError(
+        'date target',
+        draft.countDates,
+        dateOptions,
+        'Selected dates are invalid for this extra column'
+      );
+      if (countDatesError) nextErrors.countDates = countDatesError;
     }
 
-    const validShiftTypeIds = new Set(shiftTypeOptions.map(option => option.id));
-    if (draft.countShiftTypes.some(id => !validShiftTypeIds.has(id))) {
-      setError('Selected shift types are invalid for this extra column');
-      return false;
+    let countShiftTypeCoefficients: ShiftCountTypeCoefficient[] = [];
+    if (!nextErrors.countShiftTypes) {
+      const coefficientValidation = validateCoefficientPairs(
+        draft.countShiftTypes,
+        draft.countShiftTypeCoefficients,
+        shiftTypeData
+      );
+      countShiftTypeCoefficients = coefficientValidation.coefficients;
+      if (Object.keys(coefficientValidation.errorsById).length > 0) {
+        nextErrors.countShiftTypeCoefficients = Object.values(coefficientValidation.errorsById).join('\n');
+        nextErrors.countShiftTypeCoefficientsById = coefficientValidation.errorsById;
+      } else if (coefficientValidation.overlapError) {
+        nextErrors.countShiftTypeCoefficients = coefficientValidation.overlapError;
+        nextErrors.countShiftTypeCoefficientsById = {};
+      }
     }
-    const validDateIds = new Set(dateOptions.map(option => option.id));
-    if (draft.countDates.some(id => !validDateIds.has(id))) {
-      setError('Selected dates are invalid for this extra column');
+
+    if (hasErrors(nextErrors)) {
+      setErrors(nextErrors);
       return false;
     }
 
@@ -507,6 +627,7 @@ export default function ExportFormattingPage() {
       type: 'count',
       header,
       countShiftTypes: draft.countShiftTypes,
+      ...(countShiftTypeCoefficients.length > 0 ? { countShiftTypeCoefficients } : {}),
       countDates: draft.countDates,
       ...(rightBorderColor ? { rightBorderColor } : {})
     };
@@ -514,12 +635,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (editingTarget?.kind === 'extra column') {
+    if (!saveAsNew && editingTarget?.kind === 'extra column') {
       nextExtraColumns[editingTarget.index] = newRule;
     } else {
-      if (editingTarget?.kind === 'style') {
+      if (!saveAsNew && editingTarget?.kind === 'style') {
         nextFormatting.splice(editingTarget.index, 1);
-      } else if (editingTarget?.kind === 'extra row') {
+      } else if (!saveAsNew && editingTarget?.kind === 'extra row') {
         nextExtraRows.splice(editingTarget.index, 1);
       }
       nextExtraColumns.push(newRule);
@@ -533,36 +654,43 @@ export default function ExportFormattingPage() {
     return true;
   };
 
-  const saveExtraRow = () => {
+  const saveExtraRow = (saveAsNew: boolean) => {
     const header = draft.header.trim();
     const description = draft.description.trim();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
+    const nextErrors: ExportLayoutErrors = {};
     if (!header) {
-      setError('Row header is required');
-      return false;
+      nextErrors.header = 'Row header is required';
     }
     const bottomBorderColorError = validateColor(bottomBorderColor, 'Bottom Border Color');
     if (bottomBorderColorError) {
-      setError(bottomBorderColorError);
-      return false;
+      nextErrors.bottomBorderColor = bottomBorderColorError;
     }
     if (draft.countShiftTypes.length === 0) {
-      setError('Select at least one shift type to count');
-      return false;
+      nextErrors.countShiftTypes = 'Select at least one shift type to count';
+    } else {
+      const countShiftTypeError = getSelectedOptionsError(
+        'shift type',
+        draft.countShiftTypes,
+        shiftTypeOptions,
+        'Selected shift types are invalid for this extra row'
+      );
+      if (countShiftTypeError) nextErrors.countShiftTypes = countShiftTypeError;
     }
     if (draft.countPeople.length === 0) {
-      setError('Select at least one people target to count over');
-      return false;
+      nextErrors.countPeople = 'Select at least one people target to count over';
+    } else {
+      const countPeopleError = getSelectedOptionsError(
+        'people target',
+        draft.countPeople,
+        peopleOptions,
+        'Selected people are invalid for this extra row'
+      );
+      if (countPeopleError) nextErrors.countPeople = countPeopleError;
     }
 
-    const validShiftTypeIds = new Set(shiftTypeOptions.map(option => option.id));
-    if (draft.countShiftTypes.some(id => !validShiftTypeIds.has(id))) {
-      setError('Selected shift types are invalid for this extra row');
-      return false;
-    }
-    const validPeopleIds = new Set(peopleOptions.map(option => option.id));
-    if (draft.countPeople.some(id => !validPeopleIds.has(id))) {
-      setError('Selected people are invalid for this extra row');
+    if (hasErrors(nextErrors)) {
+      setErrors(nextErrors);
       return false;
     }
 
@@ -578,12 +706,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (editingTarget?.kind === 'extra row') {
+    if (!saveAsNew && editingTarget?.kind === 'extra row') {
       nextExtraRows[editingTarget.index] = newRule;
     } else {
-      if (editingTarget?.kind === 'style') {
+      if (!saveAsNew && editingTarget?.kind === 'style') {
         nextFormatting.splice(editingTarget.index, 1);
-      } else if (editingTarget?.kind === 'extra column') {
+      } else if (!saveAsNew && editingTarget?.kind === 'extra column') {
         nextExtraColumns.splice(editingTarget.index, 1);
       }
       nextExtraRows.push(newRule);
@@ -600,10 +728,10 @@ export default function ExportFormattingPage() {
   const handleSave = () => {
     const wasEditing = editingTarget !== null;
     const didSave = draft.kind === 'style'
-      ? saveStyleRule()
+      ? saveStyleRule(false)
       : draft.kind === 'extra column'
-        ? saveExtraColumn()
-        : saveExtraRow();
+        ? saveExtraColumn(false)
+        : saveExtraRow(false);
     if (!didSave) return;
 
     setIsFormVisible(false);
@@ -611,6 +739,35 @@ export default function ExportFormattingPage() {
     if (wasEditing) {
       restoreScrollPosition();
     }
+  };
+
+  const handleSaveAsNew = () => {
+    const didSave = draft.kind === 'style'
+      ? saveStyleRule(true)
+      : draft.kind === 'extra column'
+        ? saveExtraColumn(true)
+        : saveExtraRow(true);
+    if (!didSave) return;
+
+    setIsFormVisible(false);
+    resetForm();
+    restoreScrollPosition();
+  };
+
+  const handleDeleteEditingRule = () => {
+    if (editingTarget === null) return;
+
+    if (editingTarget.kind === 'style') {
+      deleteStyleRule(editingTarget.index);
+    } else if (editingTarget.kind === 'extra column') {
+      deleteExtraColumn(editingTarget.index);
+    } else {
+      deleteExtraRow(editingTarget.index);
+    }
+
+    setIsFormVisible(false);
+    resetForm();
+    restoreScrollPosition();
   };
 
   useEffect(() => {
@@ -634,6 +791,7 @@ export default function ExportFormattingPage() {
 
   const renderColorField = (field: ColorField, label: string) => {
     const value = draft[field];
+    const error = errors[field];
     const { pickerValue, pickerText, pickerTextColor } = getPickerDisplay(value);
     return (
       <div className="space-y-1">
@@ -643,8 +801,14 @@ export default function ExportFormattingPage() {
             <input
               type="color"
               value={pickerValue}
-              onChange={(e) => setDraft(prev => ({ ...prev, [field]: e.target.value }))}
-              className="h-9 w-28 rounded border border-gray-300 bg-white cursor-pointer"
+              onChange={(e) => {
+                clearError(field);
+                clearError('styleFields');
+                setDraft(prev => ({ ...prev, [field]: e.target.value }));
+              }}
+              className={`h-9 w-28 rounded border bg-white cursor-pointer ${
+                error ? 'border-red-300' : 'border-gray-300'
+              }`}
               title={`Choose ${label.toLowerCase()}`}
             />
             <span
@@ -657,12 +821,19 @@ export default function ExportFormattingPage() {
           <input
             type="text"
             value={value}
-            onChange={(e) => setDraft(prev => ({ ...prev, [field]: e.target.value }))}
+            onChange={(e) => {
+              clearError(field);
+              clearError('styleFields');
+              setDraft(prev => ({ ...prev, [field]: e.target.value }));
+            }}
             placeholder="#RRGGBB"
-            className="w-28 px-2 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+            className={`w-28 px-2 py-1.5 text-sm border rounded-md font-mono ${
+              error ? 'border-red-300 focus:border-red-500 focus:ring-red-200' : 'border-gray-300'
+            }`}
             title={`Enter ${label.toLowerCase()} in hex`}
           />
         </div>
+        {renderErrorMessages(error)}
       </div>
     );
   };
@@ -675,7 +846,8 @@ export default function ExportFormattingPage() {
     emptyText: string,
     href: string,
     hrefLabel: string,
-    scrollable = false
+    scrollable = false,
+    error?: string
   ) => {
     const content = options.length === 0 ? (
         <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
@@ -700,17 +872,70 @@ export default function ExportFormattingPage() {
         {scrollable && options.length > 0 ? (
           <div className="max-h-32 overflow-y-auto">{content}</div>
         ) : content}
+        {renderErrorMessages(error, 'mt-1')}
       </div>
     );
   };
 
   const toggleDraftArrayField = (field: DraftArrayField, id: string) => {
+    clearError(field);
+    if (field === 'countShiftTypes') {
+      setErrors(prev => ({
+        ...prev,
+        countShiftTypeCoefficients: '',
+        countShiftTypeCoefficientsById: {},
+      }));
+    }
     setDraft(prev => ({
       ...prev,
       [field]: prev[field].includes(id)
         ? prev[field].filter(targetId => targetId !== id)
-        : [...prev[field], id]
+        : [...prev[field], id],
+      ...(field === 'countShiftTypes' ? {
+        countShiftTypeCoefficients: syncCoefficientPairs(
+          prev.countShiftTypes.includes(id)
+            ? prev.countShiftTypes.filter(targetId => targetId !== id)
+            : [...prev.countShiftTypes, id],
+          prev.countShiftTypeCoefficients
+        )
+      } : {})
     }));
+  };
+
+  const setCoefficientPairs = (coefficients: DraftShiftCountTypeCoefficient[]) => {
+    setDraft(prev => ({ ...prev, countShiftTypeCoefficients: coefficients }));
+  };
+
+  const clearCoefficientError = (shiftTypeId: string) => {
+    setErrors(prev => {
+      const nextCoefficientErrors = { ...prev.countShiftTypeCoefficientsById };
+      delete nextCoefficientErrors[shiftTypeId];
+
+      return {
+        ...prev,
+        countShiftTypeCoefficients: Object.values(nextCoefficientErrors).join('\n'),
+        countShiftTypeCoefficientsById: nextCoefficientErrors,
+      };
+    });
+  };
+
+  const renderExtraColumnCoefficientFields = () => {
+    if (draft.kind !== 'extra column') {
+      return null;
+    }
+
+    return (
+      <CountShiftTypeCoefficientFields
+        selectedShiftTypeIds={draft.countShiftTypes}
+        coefficients={draft.countShiftTypeCoefficients}
+        shiftTypeEntries={[...shiftTypeData.items, ...shiftTypeData.groups]}
+        errorsById={errors.countShiftTypeCoefficientsById}
+        onChange={(coefficients, changedShiftTypeId) => {
+          clearCoefficientError(changedShiftTypeId);
+          setCoefficientPairs(coefficients);
+        }}
+      />
+    );
   };
 
   const renderStyleTargetRows = () => (
@@ -722,7 +947,9 @@ export default function ExportFormattingPage() {
         (id) => toggleDraftArrayField('people', id),
         'No people available. Please set up people in the',
         '/people',
-        'People'
+        'People',
+        false,
+        errors.people
       )}
 
       {styleUsesDates(draft.type) && renderCheckboxes(
@@ -733,7 +960,8 @@ export default function ExportFormattingPage() {
         'No dates available. Please set up dates in the',
         '/dates',
         'Dates',
-        true
+        true,
+        errors.dates
       )}
 
       {styleUsesShiftTypes(draft.type) && renderCheckboxes(
@@ -743,7 +971,9 @@ export default function ExportFormattingPage() {
         (id) => toggleDraftArrayField('shiftTypes', id),
         'No shift types available. Please set up shift types in the',
         '/shift-types',
-        'Shift Types'
+        'Shift Types',
+        false,
+        errors.shiftTypes
       )}
     </div>
   );
@@ -760,7 +990,10 @@ export default function ExportFormattingPage() {
           <input
             type="text"
             value={draft.appendText}
-            onChange={(e) => setDraft(prev => ({ ...prev, appendText: e.target.value }))}
+            onChange={(e) => {
+              clearError('styleFields');
+              setDraft(prev => ({ ...prev, appendText: e.target.value }));
+            }}
             placeholder=" [{shiftType}]"
             className="px-3 py-2 border border-gray-300 rounded-md w-full"
           />
@@ -771,7 +1004,10 @@ export default function ExportFormattingPage() {
           <input
             type="text"
             value={draft.noteText}
-            onChange={(e) => setDraft(prev => ({ ...prev, noteText: e.target.value }))}
+            onChange={(e) => {
+              clearError('styleFields');
+              setDraft(prev => ({ ...prev, noteText: e.target.value }));
+            }}
             placeholder="Weight of unmet single-style request: {totalAbsWeight}"
             className="px-3 py-2 border border-gray-300 rounded-md w-full"
           />
@@ -814,19 +1050,29 @@ export default function ExportFormattingPage() {
           (id) => toggleDraftArrayField('requestShape', id),
           'No request shape options available.',
           '/shift-requests',
-          'Shift Requests'
+          'Shift Requests',
+          false,
+          errors.requestShape
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <WeightInput
             value={draft.weightRangeMin}
-            onChange={(value) => setDraft(prev => ({ ...prev, weightRangeMin: value }))}
+            onChange={(value) => {
+              clearError('weightRangeMin');
+              setDraft(prev => ({ ...prev, weightRangeMin: value }));
+            }}
+            error={errors.weightRangeMin}
             label="Minimum Weight (inclusive)"
             placeholder="-Infinity"
           />
           <WeightInput
             value={draft.weightRangeMax}
-            onChange={(value) => setDraft(prev => ({ ...prev, weightRangeMax: value }))}
+            onChange={(value) => {
+              clearError('weightRangeMax');
+              setDraft(prev => ({ ...prev, weightRangeMax: value }));
+            }}
+            error={errors.weightRangeMax}
             label="Maximum Weight (inclusive)"
             placeholder="Infinity"
           />
@@ -952,16 +1198,20 @@ export default function ExportFormattingPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">Rule Kind</label>
                   <select
                     value={draft.kind}
-                    onChange={(e) => setDraft(prev => ({
-                      ...prev,
-                      kind: e.target.value as RuleKind,
-                      people: [],
-                      dates: [],
-                      shiftTypes: [],
-                      countShiftTypes: [],
-                      countDates: [],
-                      countPeople: []
-                    }))}
+                    onChange={(e) => {
+                      setErrors({});
+                      setDraft(prev => ({
+                        ...prev,
+                        kind: e.target.value as RuleKind,
+                        people: [],
+                        dates: [],
+                        shiftTypes: [],
+                        countShiftTypes: [],
+                        countShiftTypeCoefficients: [],
+                        countDates: [],
+                        countPeople: []
+                      }));
+                    }}
                     className="px-3 py-2 border border-gray-300 rounded-md w-full"
                   >
                     <option value="style">Style</option>
@@ -976,13 +1226,16 @@ export default function ExportFormattingPage() {
                       <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
                       <select
                         value={draft.type}
-                        onChange={(e) => setDraft(prev => ({
-                          ...prev,
-                          type: e.target.value as ExportFormattingType,
-                          people: [],
-                          dates: [],
-                          shiftTypes: []
-                        }))}
+                        onChange={(e) => {
+                          setErrors({});
+                          setDraft(prev => ({
+                            ...prev,
+                            type: e.target.value as ExportFormattingType,
+                            people: [],
+                            dates: [],
+                            shiftTypes: []
+                          }));
+                        }}
                         className="px-3 py-2 border border-gray-300 rounded-md w-full"
                       >
                         <option value="people header">people header</option>
@@ -1016,10 +1269,14 @@ export default function ExportFormattingPage() {
                       <input
                         type="text"
                         value={draft.header}
-                        onChange={(e) => setDraft(prev => ({ ...prev, header: e.target.value }))}
+                        onChange={(e) => {
+                          clearError('header');
+                          setDraft(prev => ({ ...prev, header: e.target.value }));
+                        }}
                         placeholder={draft.kind === 'extra column' ? 'OFF (Weekend)' : 'Day Count'}
-                        className="px-3 py-2 border border-gray-300 rounded-md w-full"
+                        className={inputClassName(Boolean(errors.header))}
                       />
+                      {renderErrorMessages(errors.header)}
                     </div>
                     <div className="min-w-[260px]">
                       {draft.kind === 'extra column'
@@ -1029,6 +1286,7 @@ export default function ExportFormattingPage() {
                   </>
                 )}
               </div>
+              {draft.kind === 'style' && renderErrorMessages(errors.styleFields)}
 
               {draft.kind === 'style' ? (
                 <>
@@ -1045,7 +1303,20 @@ export default function ExportFormattingPage() {
                     (id) => toggleDraftArrayField('countShiftTypes', id),
                     'No shift types available. Please set up shift types in the',
                     '/shift-types',
-                    'Shift Types'
+                    'Shift Types',
+                    false,
+                    errors.countShiftTypes
+                  )}
+                  {renderExtraColumnCoefficientFields()}
+                  {draft.kind === 'extra column' && errors.countShiftTypeCoefficients && (
+                    <div className="mt-2 space-y-1">
+                      {errors.countShiftTypeCoefficients.split('\n').map(error => (
+                        <p key={error} className="text-sm text-red-600 flex items-center gap-1">
+                          <FiAlertCircle className="h-4 w-4" />
+                          {error}
+                        </p>
+                      ))}
+                    </div>
                   )}
                   {draft.kind === 'extra column'
                     ? renderCheckboxes(
@@ -1055,7 +1326,9 @@ export default function ExportFormattingPage() {
                         (id) => toggleDraftArrayField('countDates', id),
                         'No dates available. Please set up dates in the',
                         '/dates',
-                        'Dates'
+                        'Dates',
+                        false,
+                        errors.countDates
                       )
                     : renderCheckboxes(
                         'Count People *',
@@ -1064,31 +1337,46 @@ export default function ExportFormattingPage() {
                         (id) => toggleDraftArrayField('countPeople', id),
                         'No people available. Please set up people in the',
                         '/people',
-                        'People'
+                        'People',
+                        false,
+                        errors.countPeople
                       )}
                 </div>
               )}
 
-              {error && (
-                <p className="text-sm text-red-600 flex items-center gap-1">
-                  <FiAlertCircle className="h-4 w-4" />
-                  {error}
-                </p>
-              )}
-
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  {editingTarget !== null ? 'Update' : 'Add'}
-                </button>
+              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {editingTarget !== null && (
+                    <button
+                      onClick={handleDeleteEditingRule}
+                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap justify-end gap-3">
+                  <button
+                    onClick={handleCancel}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  {editingTarget !== null && (
+                    <button
+                      onClick={handleSaveAsNew}
+                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+                    >
+                      Save as New
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSave}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  >
+                    {editingTarget !== null ? 'Update' : 'Add'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1101,7 +1389,7 @@ export default function ExportFormattingPage() {
           items={formattingRules}
           emptyMessage='No style rules defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditStyle}
-          onDelete={(index) => updateExportFormatting(formattingRules.filter((_, i) => i !== index))}
+          onDelete={deleteStyleRule}
           onReorder={(newItems) => updateExportFormatting(newItems)}
           renderContent={(rule) => (
             <>
@@ -1195,7 +1483,7 @@ export default function ExportFormattingPage() {
           items={extraColumns}
           emptyMessage='No extra columns defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditExtraColumn}
-          onDelete={(index) => updateExportExtraColumns(extraColumns.filter((_, i) => i !== index))}
+          onDelete={deleteExtraColumn}
           onReorder={(newItems) => updateExportExtraColumns(newItems)}
           renderContent={(rule) => (
             <>
@@ -1212,6 +1500,12 @@ export default function ExportFormattingPage() {
                 <div>
                   <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
                 </div>
+                {rule.countShiftTypeCoefficients && (
+                  <div>
+                    <span className="font-medium">Coefficients:</span>{' '}
+                    {rule.countShiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
+                  </div>
+                )}
                 <div>
                   <span className="font-medium">Count Dates:</span> {rule.countDates.join(', ')}
                 </div>
@@ -1230,7 +1524,7 @@ export default function ExportFormattingPage() {
           items={extraRows}
           emptyMessage='No extra rows defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditExtraRow}
-          onDelete={(index) => updateExportExtraRows(extraRows.filter((_, i) => i !== index))}
+          onDelete={deleteExtraRow}
           onReorder={(newItems) => updateExportExtraRows(newItems)}
           renderContent={(rule) => (
             <>

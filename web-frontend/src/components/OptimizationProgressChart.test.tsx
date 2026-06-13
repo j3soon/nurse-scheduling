@@ -124,21 +124,30 @@ describe('OptimizationProgressChart', () => {
     expect(screen.getByTestId('elapsed-axis')).toBeInTheDocument();
   });
 
-  it('keeps the elapsed-time domain end live while active', () => {
+  it('keeps the elapsed-time domain end after an active job completes', () => {
     vi.useFakeTimers();
-    vi.spyOn(performance, 'now')
+    const nowSpy = vi.spyOn(performance, 'now')
       .mockReturnValueOnce(1000)
       .mockReturnValue(2250);
 
-    render(<OptimizationProgressChart points={points} isActive />);
-    expect(screen.getByTestId('elapsed-axis')).toHaveAttribute('data-domain-max', '1');
+    try {
+      const { rerender } = render(<OptimizationProgressChart points={points} isActive />);
+      expect(screen.getByTestId('elapsed-axis')).toHaveAttribute('data-domain-max', '1');
 
-    act(() => {
-      vi.advanceTimersByTime(250);
-    });
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
 
-    expect(Number(screen.getByTestId('elapsed-axis').getAttribute('data-domain-max'))).toBeGreaterThan(2);
-    vi.useRealTimers();
+      const activeDomainMax = Number(screen.getByTestId('elapsed-axis').getAttribute('data-domain-max'));
+      expect(activeDomainMax).toBeGreaterThan(2);
+
+      rerender(<OptimizationProgressChart points={points} />);
+
+      expect(Number(screen.getByTestId('elapsed-axis').getAttribute('data-domain-max'))).toBe(activeDomainMax);
+    } finally {
+      vi.useRealTimers();
+      nowSpy.mockRestore();
+    }
   });
 
   it('keeps a finite x-axis span when a range contains only the latest point', () => {

@@ -26,8 +26,9 @@ from io import BytesIO
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4, UUID
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request, Response
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
@@ -133,8 +134,15 @@ async def sentry_http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ):
-    if 400 <= exc.status_code < 500:
-        capture_invalid_request(request, exc.status_code, exc.detail)
+    status_code = exc.status_code
+    detail = exc.detail
+    if request.url.path == "/optimize" and _is_form_parser_size_error(exc):
+        status_code = 413
+        detail = "Scheduling YAML is too large"
+        exc = StarletteHTTPException(status_code=status_code, detail=detail)
+
+    if 400 <= status_code < 500:
+        capture_invalid_request(request, status_code, detail)
     return await http_exception_handler(request, exc)
 
 
@@ -148,6 +156,8 @@ OPTIMIZE_SSE_KEEPALIVE_SECONDS = optimize_jobs_state.OPTIMIZE_SSE_KEEPALIVE_SECO
 OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS
 OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS
 OPTIMIZE_MAX_WORKERS = 1
+CLIENT_UUID_COOKIE_NAME = "nurse_scheduling_client_uuid"
+CLIENT_UUID_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 UNEXPECTED_ERROR_VERSION_ADVICE = (
     "If this error was unexpected, check that your frontend and backend versions match. "
     "Older YAML may not work after breaking changes, though we try to preserve compatibility."
@@ -155,6 +165,13 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
 _optimize_executor = ThreadPoolExecutor(max_workers=OPTIMIZE_MAX_WORKERS)
 uuid = optimize_jobs_state.uuid
 _cancel_jobs_with_expired_heartbeats = optimize_jobs_state._cancel_jobs_with_expired_heartbeats
+
+
+def _is_form_parser_size_error(exc: StarletteHTTPException) -> bool:
+    if exc.status_code != 400:
+        return False
+    detail = str(exc.detail).lower()
+    return "size" in detail and ("exceeded" in detail or "too large" in detail)
 
 
 async def _read_optimization_input(
@@ -206,6 +223,16 @@ def _format_unexpected_error(error: Exception) -> str:
     return f"{error}\n\n{UNEXPECTED_ERROR_VERSION_ADVICE}"
 
 
+def _get_client_uuid_from_cookie(request: Request) -> str | None:
+    client_uuid = request.cookies.get(CLIENT_UUID_COOKIE_NAME)
+    if client_uuid is None:
+        return None
+    try:
+        return UUID(client_uuid).hex
+    except ValueError:
+        return None
+
+
 def _job_cancellation_error(job: OptimizeJob) -> str:
     return job.error or "Optimization cancelled."
 
@@ -215,11 +242,12 @@ def _log_job_completed(job: OptimizeJob) -> None:
     finished_at = job.finished_at or utc_now()
     duration_seconds = (finished_at - started_at).total_seconds()
     server_logger.info(
-        "[server:job] completed job_id=%s status=%s score=%s duration_seconds=%.3f",
+        "[server:job] completed job_id=%s status=%s score=%s duration_seconds=%.3f client_uuid=%s",
         job.id,
         job.status.value,
         job.score,
         duration_seconds,
+        job.client_uuid,
     )
 
 
@@ -243,10 +271,11 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
     _refresh_queue_positions()
     queue_wait_seconds = (job.started_at - job.created_at).total_seconds()
     server_logger.info(
-        "[server:job] started job_id=%s solver=%s queue_wait_seconds=%.3f",
+        "[server:job] started job_id=%s solver=%s queue_wait_seconds=%.3f client_uuid=%s",
         job.id,
         job.solver,
         queue_wait_seconds,
+        job.client_uuid,
     )
 
     try:
@@ -326,18 +355,20 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         )
         if job is None:
             server_logger.warning(
-                "[server:job] failed-after-deletion job_id=%s error=%s",
+                "[server:job] failed-after-deletion job_id=%s error=%s client_uuid=%s",
                 job_id,
                 str(e),
+                current_job.client_uuid,
             )
             return
         _refresh_queue_positions()
         duration_seconds = (job.finished_at - (job.started_at or job.created_at)).total_seconds()
         server_logger.error(
-            "[server:job] failed job_id=%s error=%s duration_seconds=%.3f",
+            "[server:job] failed job_id=%s error=%s duration_seconds=%.3f client_uuid=%s",
             job.id,
             str(e),
             duration_seconds,
+            job.client_uuid,
         )
 
 
@@ -378,10 +409,10 @@ def _stream_optimize_job_events(job: OptimizeJob):
 
 
 # Regex to match allowed origins:
-# - http://localhost:3000, http://127.0.0.1:3000 (for Next.js local development)
+# - http://localhost:<port>, http://127.0.0.1:<port> (for local development)
 # - https://*.nursescheduling.org (including nursescheduling.org itself)
 #   Examples: https://nursescheduling.org, https://dev.nursescheduling.org, https://release-0-1.nursescheduling.org
-origin_regex = r"^(http://(localhost|127\.0\.0\.1):3000|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
+origin_regex = r"^(http://(localhost|127\.0\.0\.1):[0-9]+|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 
 expose_headers = [
     "Content-Disposition",
@@ -422,6 +453,8 @@ async def health():
 
 @app.post("/optimize", status_code=202)
 async def create_optimize_job(
+    request: Request,
+    response: Response,
     file: UploadFile | None = File(None, description="YAML file with scheduling data"),
     yaml_content: str | None = Form(None, description="YAML content as a string"),
     prettify: bool | None = Form(None, description="Enable prettier output formatting"),
@@ -430,7 +463,25 @@ async def create_optimize_job(
 ):
     content, input_name = await _read_optimization_input(file, yaml_content)
     timeout = _normalize_optimization_timeout(timeout)
-    job = _create_optimize_job(input_name=input_name, solver=solver, prettify=prettify, timeout=timeout)
+    client_uuid = _get_client_uuid_from_cookie(request)
+    if client_uuid is None:
+        client_uuid = uuid4().hex
+        response.set_cookie(
+            key=CLIENT_UUID_COOKIE_NAME,
+            value=client_uuid,
+            max_age=CLIENT_UUID_COOKIE_MAX_AGE_SECONDS,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+            path="/",
+        )
+    job = _create_optimize_job(
+        input_name=input_name,
+        client_uuid=client_uuid,
+        solver=solver,
+        prettify=prettify,
+        timeout=timeout,
+    )
     _optimize_executor.submit(_run_optimize_job, job.id, content)
     return _optimize_job_response(job)
 
@@ -522,7 +573,9 @@ async def delete_optimize_job(job_id: str):
                 },
             )
         del _optimize_jobs[job_id]
-    server_logger.info("[server:job] deleted job_id=%s status=%s", job.id, job.status.value)
+    server_logger.info(
+        "[server:job] deleted job_id=%s status=%s client_uuid=%s", job.id, job.status.value, job.client_uuid
+    )
     return {"deleted": True, "jobId": job_id}
 
 

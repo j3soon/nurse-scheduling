@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run CI"
+  short_description: "Run, fix, and rerun repository CI checks"
+  default_prompt: "Use $run-ci to run all configured local CI checks, fix failures, and rerun until clean."

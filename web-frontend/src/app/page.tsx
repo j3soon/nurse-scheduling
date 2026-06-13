@@ -21,12 +21,14 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useRouter } from 'next/navigation';
 import { FiChevronDown, FiCheck } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { STATIC_BUILD_URLS } from '@/constants/urls';
 import { fetchReleaseBranches, BuildEntry } from '@/utils/version';
 
 export default function Home() {
+  const router = useRouter();
   const { createNewState } = useSchedulingData();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -118,7 +120,7 @@ export default function Home() {
             New Schedule
           </button>
           <button
-            onClick={() => window.location.assign('/dates')}
+            onClick={() => router.push('/dates')}
             className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
             Continue

@@ -93,6 +93,7 @@ export interface ExportExtraColumn {
   type: 'count';
   header: string;
   countShiftTypes: string[];
+  countShiftTypeCoefficients?: ShiftCountTypeCoefficient[];
   countDates: string[];
 }
 
@@ -171,8 +172,13 @@ export interface ShiftTypeRequirementsPreference extends BasePreference {
   description?: string;
   shiftType: string[];
   requiredNumPeople: number;
+  // Backend input accepts either null/missing or the reserved ALL selector for
+  // all people. Frontend state intentionally stores the explicit ALL selector
+  // so forms and persisted client state never have an implicit empty scope.
   qualifiedPeople: string[];
   preferredNumPeople?: number;
+  // Backend input accepts null/missing for all dates; frontend state uses the
+  // explicit ALL selector for the same reason as qualifiedPeople.
   date: string[];
   weight: number;
 }
@@ -191,6 +197,7 @@ export interface ShiftTypeSuccessionsPreference extends BasePreference {
   description?: string;
   person: string[];
   pattern: string[];  // List of shift type IDs that are in succession
+  // The backend permits null/missing to mean all dates; frontend state uses ALL.
   date: string[];
   weight: number;
 }

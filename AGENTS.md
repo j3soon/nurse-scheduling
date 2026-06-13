@@ -1,115 +1,29 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- `core/`: Python scheduling engine, CLI, and FastAPI backend (`core/nurse_scheduling/serve.py`).
-- `core/tests/`: normal pytest suites, opt-in real-world checks under `core/tests/real/`, and fixtures under `core/tests/testcases/`.
-- `web-frontend/`: Next.js + TypeScript app (App Router) with shared code in `src/components/`, `src/hooks/`, `src/utils/`, and `src/types/`.
+## Project Structure
+- `core/`: Python scheduling engine, CLI, and FastAPI backend.
+- `web-frontend/`: Next.js + TypeScript app.
 - `docs/`: MkDocs source and overrides.
-- `scripts/`: setup utilities (for example `scripts/setup_env.sh`).
+- `scripts/`: setup and development utilities.
 - `thirdparty/`: external calendar data and helpers.
 
-## Build, Test, and Development Commands
-- Frontend (from `web-frontend/`):
-  - `bun install`: install JS dependencies.
-  - `bun run dev`: run local dev server.
-  - `bun run build`: production build.
-  - `bun run lint -- --fix`: run ESLint with fixes.
-  - `bun run test`: run frontend unit/component tests.
-  - `bun run test:e2e`: run Playwright browser integration tests.
-- Core (from `core/`):
-  - `uv venv --python 3.12 && source .venv/bin/activate`: create/activate venv.
-  - `uv pip install -r requirements.txt`: install Python deps.
-  - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver ortools/cp-sat|pulp/cbc`: run scheduler CLI.
-  - `pytest --log-cli-level=INFO`: run the normal core test suite.
-  - `pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: explicitly run the slower bounded real-world scenario checks.
-  - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact model-build statistics for real testcase checking and benchmarking.
-  - `pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run primary solver/schedule suites.
-  - `ruff check nurse_scheduling tests`: lint core Python code.
-  - `ruff format nurse_scheduling tests`: format core Python code.
+Before modifying core or frontend files, read the module-specific commands and
+conventions in `core/AGENTS.md` or `web-frontend/AGENTS.md`.
 
-## Coding Style & Naming Conventions
-- Python: 4-space indentation, `snake_case` for functions/modules, `PascalCase` for classes, keep type names explicit.
-- TypeScript/React: component files and components in `PascalCase`; hooks prefixed with `use`.
-- Linting: frontend uses `next/core-web-vitals` + TypeScript rules via `web-frontend/eslint.config.mjs`; core uses Ruff.
-- Keep file endings clean: no trailing spaces; newline at end of file.
+## Shared Workflow
+- For Linux environment setup, run `./scripts/setup_env.sh`.
+- Keep edits scoped to the requested module and preserve existing patterns.
+- Keep commits focused by module (`core`, `web-frontend`, or `docs`).
+- Keep file endings clean: no trailing spaces and a newline at end of file.
+- Run affected tests and lint checks before finishing.
+- Use Conventional Commits, scoped by module where applicable, for example:
+  `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
 
-## Testing Guidelines
-- Frameworks: `pytest` for core and backend tests; Vitest and Playwright for frontend tests.
-- Main suites: `core/tests/test_solver_ortools_cp_sat.py`, `core/tests/test_solver_pulp_cbc.py`, `core/tests/test_schedule_ortools_cp_sat.py`, `core/tests/test_schedule_pulp_cbc.py`, `core/tests/test_serve.py`.
-- Real-world checks under `core/tests/real/` intentionally omit pytest's `test_` filename prefix. Do not include them in normal test commands; run them explicitly when validating real-case optimization behavior.
-- Use `--show-model-build-stats` with real testcases when checking or benchmarking model-building optimizations. It emits a compact aggregated summary and suppresses the full schedule output.
-- Frontend validation should include `bun run test` for unit/component coverage and `bun run test:e2e` for browser integration coverage when checking the full app.
-- Add new scheduling cases as fixture pairs in `core/tests/testcases/**` (typically `.yaml` input with matching `.csv` or `.txt` expected output).
-- Run affected tests locally before opening a PR, and run Ruff on touched core files.
+## Cross-Module Requirements
+- When changing frontend rename/delete behavior for people, dates, or shift
+  types, keep all references in sync, including preferences and export layout
+  entries.
 
-## Agent Workflow Requirement
-- When changing frontend rename/delete behavior for people, dates, or shift types, keep all references in sync, including preferences and export layout entries.
-- After agent code modifications in `core/`, run Ruff before finishing:
-  - `cd core && ruff check nurse_scheduling tests`
-  - `cd core && ruff format nurse_scheduling tests`
-- After agent code modifications in `core/`, run affected tests before finishing:
-  - `cd core && pytest --log-cli-level=INFO <affected_test_paths>`
-- Every Python file should keep the repository header convention:
-  - module docstring/description at the top, then the AGPL license header block.
-  - for Python test files mostly generated directly by AI coding agents, add:
-    - `# This test is mostly AI generated.`
-    - place it immediately after the license header block.
-- Every frontend test file (`*.test.ts` and `*.test.tsx`) should include the AGPL license header block at the top of the file, matching the block style used in `web-frontend/src/app/page.tsx`.
-
-### Python Header Template
-```python
-"""<Module description here>."""
-
-# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
-#
-# Copyright (C) 2023-2026 Johnson Sun
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as
-# published by the Free Software Foundation, either version 3 of the
-# License, or (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-```
-
-Optional line for tests mostly generated by AI agents (place right after the license block):
-```python
-# This test is mostly AI generated.
-```
-
-### TypeScript Test Header Template
-```ts
-/*
- * This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
- *
- * Copyright (C) 2023-2026 Johnson Sun
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
-```
-
-## Commit & Pull Request Guidelines
-- Follow Conventional Commits as seen in history, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `refactor(core): ...`.
-- Keep commits focused by module (`core`, `web-frontend`, `docs`).
-- PRs should include:
-  - clear scope and rationale,
-  - linked issue(s) when applicable,
-  - test/lint evidence (commands + results),
-  - screenshots for frontend UI changes.
+## Pull Requests
+Include scope and rationale, linked issues when applicable, test/lint evidence,
+and screenshots for frontend UI changes.

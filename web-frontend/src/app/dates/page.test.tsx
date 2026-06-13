@@ -23,6 +23,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DatePage from '@/app/dates/page';
 import Navigation from '@/components/Navigation';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 const mockPush = vi.hoisted(() => vi.fn());
@@ -55,6 +56,14 @@ vi.mock('@/components/ItemGroupEditorPage', () => ({
     </div>
   ),
 }));
+
+function renderDatePage() {
+  return render(
+    <UnsavedEditingStateProvider>
+      <DatePage />
+    </UnsavedEditingStateProvider>
+  );
+}
 
 describe('DatePage', () => {
   const updateDateRange = vi.fn();
@@ -89,7 +98,7 @@ describe('DatePage', () => {
   it('shows required-field errors when applying without dates', async () => {
     const user = userEvent.setup();
 
-    render(<DatePage />);
+    renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '' } });
@@ -101,10 +110,29 @@ describe('DatePage', () => {
     expect(updateDateRange).not.toHaveBeenCalled();
   });
 
+  it('clears date range errors when the related date is edited', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('End Date *'), { target: { value: '' } });
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(screen.getByText('Start date is required')).toBeInTheDocument();
+    expect(screen.getByText('End date is required')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-01' } });
+
+    expect(screen.queryByText('Start date is required')).not.toBeInTheDocument();
+    expect(screen.getByText('End date is required')).toBeInTheDocument();
+  });
+
   it('shows an end-date validation error when the end date is before the start date', async () => {
     const user = userEvent.setup();
 
-    render(<DatePage />);
+    renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-10' } });
@@ -118,7 +146,7 @@ describe('DatePage', () => {
   it('disables Taiwan holiday import for unsupported ranges and saves with import disabled', async () => {
     const user = userEvent.setup();
 
-    render(<DatePage />);
+    renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2027-01-01' } });
@@ -142,7 +170,7 @@ describe('DatePage', () => {
   it('shows supported Taiwan holiday entries and imports them by default on save', async () => {
     const user = userEvent.setup();
 
-    render(<DatePage />);
+    renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-01' } });
@@ -166,7 +194,7 @@ describe('DatePage', () => {
   it('respects turning Taiwan holiday import off before save', async () => {
     const user = userEvent.setup();
 
-    render(<DatePage />);
+    renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-01' } });
@@ -214,7 +242,7 @@ describe('DatePage', () => {
       reorderGroups: vi.fn(),
     });
 
-    render(<DatePage />);
+    renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-01' } });
@@ -233,7 +261,7 @@ describe('DatePage', () => {
   it('clears validation errors and restores persisted values after canceling from an invalid draft', async () => {
     const user = userEvent.setup();
 
-    render(<DatePage />);
+    renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-10' } });
@@ -253,7 +281,7 @@ describe('DatePage', () => {
   it('shows and then clears full-month and Labor Day warnings as the draft range changes', async () => {
     const user = userEvent.setup();
 
-    render(<DatePage />);
+    renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2024-05-01' } });
@@ -273,10 +301,14 @@ describe('DatePage', () => {
     const user = userEvent.setup();
     (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
-    render(<DatePage />);
+    render(
+      <UnsavedEditingStateProvider>
+        <DatePage />
+        <Navigation />
+      </UnsavedEditingStateProvider>
+    );
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
-    render(<Navigation />);
 
     await user.click(screen.getByRole('button', { name: '2. People' }));
 

@@ -19,15 +19,24 @@
 
 // This test is mostly AI generated.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ShiftCountsPage from '@/app/shift-counts/page';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useSchedulingData', () => ({
   useSchedulingData: mockUseSchedulingData,
 }));
+
+function renderShiftCountsPage() {
+  return render(
+    <UnsavedEditingStateProvider>
+      <ShiftCountsPage />
+    </UnsavedEditingStateProvider>
+  );
+}
 
 describe('ShiftCountsPage', () => {
   const updatePreferencesByType = vi.fn();
@@ -48,6 +57,21 @@ describe('ShiftCountsPage', () => {
     const input = screen.getByRole('spinbutton', { name: shiftTypeId });
     fireEvent.change(input, { target: { value: coefficient.toString() } });
   }
+
+  it('blurs number inputs on wheel so scrolling does not step their value', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+
+    const coefficientInput = screen.getByRole('spinbutton', { name: 'D' });
+    coefficientInput.focus();
+    expect(coefficientInput).toHaveFocus();
+
+    fireEvent.wheel(coefficientInput, { deltaY: 120 });
+
+    expect(coefficientInput).not.toHaveFocus();
+  });
 
   beforeEach(() => {
     updatePreferencesByType.mockReset();
@@ -78,7 +102,7 @@ describe('ShiftCountsPage', () => {
 
   it('blocks overlapping coefficients for a shift type and a group containing it', async () => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
     setCoefficient('D', 2);
@@ -91,7 +115,7 @@ describe('ShiftCountsPage', () => {
 
   it('allows overlapping selected shift types when their default coefficients are omitted', async () => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
     await user.click(screen.getByRole('button', { name: 'Add' }));
@@ -102,7 +126,7 @@ describe('ShiftCountsPage', () => {
 
   it('allows overlapping selected shift types when only one has a non-default coefficient', async () => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'WORK']);
     setCoefficient('WORK', 3);
@@ -114,7 +138,7 @@ describe('ShiftCountsPage', () => {
 
   it('allows non-overlapping non-default coefficients', async () => {
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
     setCoefficient('D', 2);
@@ -162,13 +186,163 @@ describe('ShiftCountsPage', () => {
       updatePreferencesByType,
     });
     const user = userEvent.setup();
-    render(<ShiftCountsPage />);
+    renderShiftCountsPage();
 
     await user.click(screen.getByRole('button', { name: /edit/i }));
     await user.click(screen.getByRole('button', { name: 'Update' }));
 
     expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
     expect(screen.queryByText(/Shift type coefficients overlap/)).not.toBeInTheDocument();
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
+  it('saves an edited shift count draft as a new shift count without changing the original', async () => {
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '2026-01-01', description: 'Jan 1' }],
+        groups: [],
+      },
+      peopleData: {
+        items: [{ id: 'P1', description: 'Person 1', history: [] }],
+        groups: [],
+      },
+      shiftTypeData: {
+        items: [{ id: 'D', description: 'Day' }],
+        groups: [],
+      },
+      getPreferencesByType: vi.fn(() => [{
+        type: 'shift count',
+        description: 'Original count',
+        person: ['P1'],
+        countDates: ['2026-01-01'],
+        countShiftTypes: ['D'],
+        expression: 'x >= T',
+        target: 1,
+        weight: -1,
+      }]),
+      updatePreferencesByType,
+    });
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await user.click(screen.getByRole('button', { name: /edit/i }));
+    await user.clear(screen.getByPlaceholderText('e.g., 5'));
+    await user.type(screen.getByPlaceholderText('e.g., 5'), '2');
+    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1]).toMatchObject([
+      { description: 'Original count', target: 1 },
+      { description: 'Original count', target: 2 },
+    ]);
+  });
+
+  it('shows all invalid coefficient errors and clears only the edited coefficient error', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
+    const dayCoefficientInput = screen.getByRole('spinbutton', { name: 'D' });
+    const nightCoefficientInput = screen.getByRole('spinbutton', { name: 'N' });
+
+    await user.clear(dayCoefficientInput);
+    await user.clear(nightCoefficientInput);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
+    expect(screen.getByText('Coefficient for N must be an integer of at least 1')).toBeInTheDocument();
+    expect(dayCoefficientInput).toHaveClass('border-red-300');
+    expect(nightCoefficientInput).toHaveClass('border-red-300');
+
+    await user.type(dayCoefficientInput, '2');
+
+    expect(screen.queryByText('Coefficient for D must be an integer of at least 1')).not.toBeInTheDocument();
+    expect(screen.getByText('Coefficient for N must be an integer of at least 1')).toBeInTheDocument();
+    expect(dayCoefficientInput).not.toHaveClass('border-red-300');
+    expect(nightCoefficientInput).toHaveClass('border-red-300');
+  });
+
+  it('clears multiple coefficient errors queued before a render', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
+    const dayCoefficientInput = screen.getByRole('spinbutton', { name: 'D' });
+    const nightCoefficientInput = screen.getByRole('spinbutton', { name: 'N' });
+
+    await user.clear(dayCoefficientInput);
+    await user.clear(nightCoefficientInput);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Coefficient for D must be an integer of at least 1')).toBeInTheDocument();
+    expect(screen.getByText('Coefficient for N must be an integer of at least 1')).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.change(dayCoefficientInput, { target: { value: '2' } });
+      fireEvent.change(nightCoefficientInput, { target: { value: '3' } });
+    });
+
+    expect(screen.queryByText('Coefficient for D must be an integer of at least 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Coefficient for N must be an integer of at least 1')).not.toBeInTheDocument();
+    expect(dayCoefficientInput).not.toHaveClass('border-red-300');
+    expect(nightCoefficientInput).not.toHaveClass('border-red-300');
+  });
+
+  it('allows an empty target while editing and clears its save error only after a value change', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+    const targetInput = screen.getByPlaceholderText('e.g., 5');
+
+    await user.clear(targetInput);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Target must be a non-negative integer')).toBeInTheDocument();
+    expect(targetInput).toHaveClass('border-red-300');
+
+    await user.type(targetInput, 'abc');
+
+    expect(screen.getByText('Target must be a non-negative integer')).toBeInTheDocument();
+    expect(targetInput).toHaveClass('border-red-300');
+
+    await user.type(targetInput, '2');
+
+    expect(screen.queryByText('Target must be a non-negative integer')).not.toBeInTheDocument();
+    expect(targetInput).not.toHaveClass('border-red-300');
+  });
+
+  it.each([
+    ['0', 0],
+    ['-1', -1],
+    ['-Infinity', -Infinity],
+  ])('allows squared-error expression with non-positive weight %s', async (weightInput, expectedWeight) => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+    await user.selectOptions(screen.getByRole('combobox'), '|x - T|^2');
+    fireEvent.change(screen.getByPlaceholderText('e.g., -1, -10, ∞'), { target: { value: weightInput } });
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0].weight).toBe(expectedWeight);
+  });
+
+  it.each(['1', 'Infinity'])('rejects squared-error expression with positive weight %s', async (weightInput) => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+    await user.selectOptions(screen.getByRole('combobox'), '|x - T|^2');
+    fireEvent.change(screen.getByPlaceholderText('e.g., -1, -10, ∞'), { target: { value: weightInput } });
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Weight must be non-positive for shift count with "|x - T|^2"')).toBeInTheDocument();
     expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
 

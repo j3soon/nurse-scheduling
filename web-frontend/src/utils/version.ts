@@ -25,45 +25,123 @@ export const CURRENT_APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || 'unkno
 // Type for release branch entries
 export type BuildEntry = { label: string; url: string };
 
-/**
- * Parse a version string into its components for comparison.
- * Supports formats like "v1.0.0", "1.0.0", "v1.0", "1.0"
- * Returns null if the version cannot be parsed.
- */
-export function parseVersion(version: string): { major: number; minor: number; patch: number } | null {
-  const match = version.match(/^v?(\d+)\.(\d+)(?:\.(\d+))?/);
-  if (!match) return null;
+export type VersionParts = {
+  major: number | null;
+  minor: number | null;
+  patch: number | null;
+  commitsAfterTag: number;
+  commitId: string | null;
+  dirty: boolean;
+};
+
+const HASH_ONLY_PATTERN = /^[0-9a-fA-F]{7,}$/;
+const TAGGED_COMMIT_PATTERN = /^(v\d+\.\d+\.\d+)-(\d+)-g([0-9a-fA-F]{7,})$/;
+const TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+export function parseVersionParts(version: string): VersionParts {
+  const isDirty = version.endsWith('-dirty');
+  const cleanVersion = isDirty ? version.slice(0, -'-dirty'.length) : version;
+
+  if (HASH_ONLY_PATTERN.test(cleanVersion)) {
+    return {
+      major: null,
+      minor: null,
+      patch: null,
+      commitsAfterTag: 0,
+      commitId: cleanVersion,
+      dirty: isDirty,
+    };
+  }
+
+  const taggedCommitMatch = cleanVersion.match(TAGGED_COMMIT_PATTERN);
+  if (taggedCommitMatch) {
+    const tagVersionMatch = taggedCommitMatch[1].match(TAG_PATTERN)!;
+    return {
+      major: parseInt(tagVersionMatch[1], 10),
+      minor: parseInt(tagVersionMatch[2], 10),
+      patch: parseInt(tagVersionMatch[3], 10),
+      commitsAfterTag: parseInt(taggedCommitMatch[2], 10),
+      commitId: taggedCommitMatch[3],
+      dirty: isDirty,
+    };
+  }
+
+  const tagVersionMatch = cleanVersion.match(TAG_PATTERN);
   return {
-    major: parseInt(match[1], 10),
-    minor: parseInt(match[2], 10),
-    patch: match[3] !== undefined ? parseInt(match[3], 10) : 0,
+    major: tagVersionMatch ? parseInt(tagVersionMatch[1], 10) : null,
+    minor: tagVersionMatch ? parseInt(tagVersionMatch[2], 10) : null,
+    patch: tagVersionMatch ? parseInt(tagVersionMatch[3], 10) : null,
+    commitsAfterTag: 0,
+    commitId: null,
+    dirty: isDirty,
   };
 }
 
 /**
  * Compare two version strings for sorting (descending order - newest first).
- * Returns negative if a > b, positive if a < b, 0 if equal.
+ * Supports release tags and git describe output such as
+ * "v1.2.3-4-gabcdef0-dirty"; hash-only versions sort after tagged versions.
+ *
+ * Rules:
+ * - "Semver/tagged" includes plain vX.Y.Z and git describe vX.Y.Z-N-gHASH versions, with optional -dirty suffixes.
+ * - Semver/tagged versions sort before hash-only versions.
+ * - Hash-only versions sort before unsupported formats.
+ * - Semver/tagged versions order by major/minor/patch, then commits after tag.
+ * - Dirty acts as a half-step newer only when semver, commit count, and commit id match.
+ * - Commit ids identify builds but do not imply recency; different commit ids with otherwise matching orderable fields return null.
+ * - Hash-only versions can only compare equal or dirty-vs-clean when the commit id matches.
+ * - Unsupported formats cannot be ordered against each other.
+ *
+ * Returns negative if a > b, positive if a < b, 0 if equal, or null if
+ * both versions are valid but their commit ids make recency unknowable.
  */
-export function compareVersionsDescending(a: string, b: string): number {
-  const versionA = parseVersion(a);
-  const versionB = parseVersion(b);
+export function compareVersionsDescending(a: string, b: string): number | null {
+  const versionA = parseVersionParts(a);
+  const versionB = parseVersionParts(b);
 
-  // Non-parseable versions go to the end
-  if (!versionA && !versionB) return 0;
-  if (!versionA) return 1;
-  if (!versionB) return -1;
+  const aHasSemver = versionA.major !== null;
+  const bHasSemver = versionB.major !== null;
+
+  if (!aHasSemver && bHasSemver) return 1;
+  if (aHasSemver && !bHasSemver) return -1;
+
+  // Versions without semver cannot be ordered by recency; only identical commit ids can compare equal.
+  if (!aHasSemver && !bHasSemver) {
+    if (versionA.commitId === null && versionB.commitId === null) return null;
+    if (versionA.commitId === null) return 1;
+    if (versionB.commitId === null) return -1;
+    if (versionA.commitId?.toLowerCase() !== versionB.commitId?.toLowerCase()) {
+      return null;
+    }
+    if (versionA.dirty !== versionB.dirty) {
+      return versionA.dirty ? -1 : 1;
+    }
+    return 0;
+  }
 
   // Compare major, minor, patch (descending)
-  if (versionA.major !== versionB.major) return versionB.major - versionA.major;
-  if (versionA.minor !== versionB.minor) return versionB.minor - versionA.minor;
-  return versionB.patch - versionA.patch;
+  if (versionA.major! !== versionB.major!) return versionB.major! - versionA.major!;
+  if (versionA.minor! !== versionB.minor!) return versionB.minor! - versionA.minor!;
+  if (versionA.patch! !== versionB.patch!) return versionB.patch! - versionA.patch!;
+  if (versionA.commitsAfterTag !== versionB.commitsAfterTag) {
+    return versionB.commitsAfterTag! - versionA.commitsAfterTag!;
+  }
+
+  if (versionA.commitId?.toLowerCase() !== versionB.commitId?.toLowerCase()) {
+    return null;
+  }
+
+  if (versionA.dirty !== versionB.dirty) {
+    return versionA.dirty ? -1 : 1;
+  }
+  return 0;
 }
 
 /**
- * Extract major.minor from a version string (e.g., "v1.0" from "v1.0.0" or "v1.0.0-5-gabcdef")
+ * Extract major.minor from a vX.Y.Z version string (e.g., "v1.0" from "v1.0.0" or "v1.0.0-5-gabcdef").
  */
 export function getMajorMinor(version: string): string | null {
-  const match = version.match(/^(v?\d+\.\d+)/);
+  const match = version.match(/^(v\d+\.\d+)/);
   return match ? match[1] : null;
 }
 
@@ -85,7 +163,7 @@ export async function fetchLatestTag(): Promise<string | null> {
     // Sort tags by semver (descending) and return the latest
     const sortedTags = tags
       .map((t) => t.name)
-      .sort(compareVersionsDescending);
+      .sort((a, b) => compareVersionsDescending(a, b) ?? 0);
     return sortedTags[0] || null;
   } catch (err) {
     console.warn('Failed to fetch latest tag:', err);
@@ -114,7 +192,7 @@ export async function fetchReleaseBranches(): Promise<BuildEntry[]> {
       }));
 
     // Sort by version (descending - newest first)
-    releases.sort((a, b) => compareVersionsDescending(a.version, b.version));
+    releases.sort((a, b) => compareVersionsDescending(`v${a.version}`, `v${b.version}`) ?? 0);
 
     return releases.map(({ label, url }) => ({ label, url }));
   } catch {

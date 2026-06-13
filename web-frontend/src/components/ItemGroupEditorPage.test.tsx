@@ -26,6 +26,7 @@ import ItemGroupEditorPage, { ItemGroupEditorPageData } from '@/components/ItemG
 import { Mode } from '@/constants/modes';
 import { DataType, Group, Item } from '@/types/scheduling';
 import * as scrolling from '@/utils/scrolling';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
 function ItemGroupEditorHarness({
   initialData,
@@ -129,29 +130,31 @@ function ItemGroupEditorHarness({
   };
 
   return (
-    <ItemGroupEditorPage
-      title="People"
-      instructions={instructions}
-      data={data}
-      dataType={DataType.PEOPLE}
-      mode={mode}
-      setMode={setMode}
-      itemsReadOnly={itemsReadOnly}
-      groupsReadOnly={groupsReadOnly}
-      extraButtons={extraButtons}
-      addItem={addItem}
-      addGroup={addGroup}
-      updateItem={updateItem}
-      updateGroup={updateGroup}
-      deleteItem={deleteItem}
-      deleteGroup={deleteGroup}
-      removeItemFromGroup={removeItemFromGroup}
-      reorderItems={reorderItems}
-      reorderGroups={reorderGroups}
-      filterItemGroups={(entities) => entities}
-    >
-      {children}
-    </ItemGroupEditorPage>
+    <UnsavedEditingStateProvider>
+      <ItemGroupEditorPage
+        title="People"
+        instructions={instructions}
+        data={data}
+        dataType={DataType.PEOPLE}
+        mode={mode}
+        setMode={setMode}
+        itemsReadOnly={itemsReadOnly}
+        groupsReadOnly={groupsReadOnly}
+        extraButtons={extraButtons}
+        addItem={addItem}
+        addGroup={addGroup}
+        updateItem={updateItem}
+        updateGroup={updateGroup}
+        deleteItem={deleteItem}
+        deleteGroup={deleteGroup}
+        removeItemFromGroup={removeItemFromGroup}
+        reorderItems={reorderItems}
+        reorderGroups={reorderGroups}
+        filterItemGroups={(entities) => entities}
+      >
+        {children}
+      </ItemGroupEditorPage>
+    </UnsavedEditingStateProvider>
   );
 }
 
@@ -209,6 +212,53 @@ describe('ItemGroupEditorPage', () => {
     await user.click(within(teamCRow).getByRole('button', { name: /delete/i }));
 
     expect(screen.queryByText('Team C')).not.toBeInTheDocument();
+  }, 15000);
+
+  it('saves an edited item draft as a new item after the ID changes', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    const person1Row = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
+    await user.click(within(person1Row).getByRole('button', { name: /edit/i }));
+
+    const idInput = screen.getByDisplayValue('Person 1');
+    await user.clear(idInput);
+    await user.type(idInput, 'Person 2');
+    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+
+    expect(screen.getByText('1. Person 1')).toBeInTheDocument();
+    expect(screen.getByText('2. Person 2')).toBeInTheDocument();
+  }, 15000);
+
+  it('requires a distinct ID when saving an edited item draft as new', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    const person1Row = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
+    await user.click(within(person1Row).getByRole('button', { name: /edit/i }));
+    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+
+    expect(screen.getByText('This ID is already used by another person or group')).toBeInTheDocument();
+    expect(screen.queryByText('2. Person 1')).not.toBeInTheDocument();
+  });
+
+  it('saves an edited group draft as a new group after the ID changes', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    const teamARow = screen.getByTitle('Team A').closest('tr') as HTMLTableRowElement;
+    await user.click(within(teamARow).getByRole('button', { name: /edit/i }));
+
+    const idInput = screen.getByDisplayValue('Team A');
+    await user.clear(idInput);
+    await user.type(idInput, 'Team B');
+    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+
+    expect(screen.getByTitle('Team A')).toBeInTheDocument();
+    expect(screen.getByTitle('Team B')).toBeInTheDocument();
   }, 15000);
 
   it('hides add actions in read-only modes', () => {

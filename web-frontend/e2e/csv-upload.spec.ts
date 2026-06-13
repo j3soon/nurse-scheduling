@@ -71,7 +71,9 @@ test('csv uploads recover from invalid history input and populate downstream req
   await expect(currentHistory.getByText(/H-2:\s*D/)).toHaveCount(0);
   await expect(currentHistory.getByText(/H-1:\s*D/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Quick Add Preference' }).click();
-  await page.getByRole('textbox', { name: 'Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)' }).fill('2');
+  const weightInput = page.getByPlaceholder('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)');
+  await expect(weightInput).toBeVisible();
+  await weightInput.fill('2');
 
   const uploadInputs = page.locator('input[type="file"]');
   await uploadInputs.nth(0).setInputFiles({

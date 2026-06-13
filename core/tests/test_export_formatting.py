@@ -336,6 +336,55 @@ export:
         ),
         (
             b"""
+  extraColumns:
+    - type: count
+      header: Stale coefficient shift
+      countDates: ["2025-01-01"]
+      countShiftTypes: [D]
+      countShiftTypeCoefficients:
+        - [stale_shift, 2]
+""",
+            "must reference a shift type in countShiftTypes",
+        ),
+        (
+            b"""
+  extraColumns:
+    - type: count
+      header: Invalid coefficient
+      countDates: ["2025-01-01"]
+      countShiftTypes: [D]
+      countShiftTypeCoefficients:
+        - [D, 0]
+""",
+            "must be at least 1",
+        ),
+        (
+            b"""
+  extraColumns:
+    - type: count
+      header: Fractional coefficient
+      countDates: ["2025-01-01"]
+      countShiftTypes: [D]
+      countShiftTypeCoefficients:
+        - [D, 1.5]
+""",
+            "Input should be a valid integer",
+        ),
+        (
+            b"""
+  extraColumns:
+    - type: count
+      header: Duplicate coefficient
+      countDates: ["2025-01-01"]
+      countShiftTypes: [D]
+      countShiftTypeCoefficients:
+        - [D, 2]
+        - [D, 3]
+""",
+            "Duplicate export extra column coefficient",
+        ),
+        (
+            b"""
   extraRows:
     - type: count
       header: Stale person
@@ -382,6 +431,40 @@ export:
     )
 
     with pytest.raises(ValueError, match=expected_message):
+        schedule(yaml_content, prettify=True)
+
+
+def test_export_extra_column_rejects_overlapping_expanded_coefficients():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: WORK
+      members: [D, A]
+preferences:
+  - type: at most one shift per day
+export:
+  extraColumns:
+    - type: count
+      header: Invalid overlap
+      countDates: [ALL]
+      countShiftTypes: [D, WORK]
+      countShiftTypeCoefficients:
+        - [D, 2]
+        - [WORK, 3]
+"""
+
+    with pytest.raises(ValueError, match="Duplicate export extra column coefficient"):
         schedule(yaml_content, prettify=True)
 
 

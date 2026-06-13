@@ -22,6 +22,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ShiftRequestsPage from '@/app/shift-requests/page';
+import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 const fileContentsByName = new Map<string, string>();
@@ -56,6 +57,14 @@ vi.mock('@/components/UploadButton', () => ({
     </button>
   ),
 }));
+
+function renderShiftRequestsPage() {
+  return render(
+    <UnsavedEditingStateProvider>
+      <ShiftRequestsPage />
+    </UnsavedEditingStateProvider>
+  );
+}
 
 describe('ShiftRequestsPage CSV parsing validation', () => {
   const reorderItems = vi.fn();
@@ -99,7 +108,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('people-history.csv', 'Person 1,D\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
@@ -113,7 +122,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('people-history.csv', 'Person 1,D,2\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
@@ -133,7 +142,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('people-history.csv', '');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
@@ -146,7 +155,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', 'Person 1,D\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
 
@@ -175,7 +184,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', '');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.change(
@@ -192,7 +201,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', 'Unknown,D\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.change(
@@ -210,7 +219,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
   it('recovers from an invalid shift-requests CSV upload and then accepts a valid one', async () => {
     const user = userEvent.setup();
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.change(
@@ -278,7 +287,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
 
     fileContentsByName.set('people-history.csv', 'Person 1,D,1\nPerson 1,D,2\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
@@ -293,7 +302,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', 'Person 1,D\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.change(
@@ -308,7 +317,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
   it('updates shift-request upload availability as the quick-add weight moves between invalid, valid, and zero values', async () => {
     const user = userEvent.setup();
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     const weightInput = screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)');
@@ -364,7 +373,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
       reorderItems,
     });
 
-    const { container } = render(<ShiftRequestsPage />);
+    const { container } = renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     const uploadButton = screen.getByRole('button', { name: /upload shift requests/i });
@@ -418,7 +427,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
       reorderItems,
     });
 
-    const { container } = render(<ShiftRequestsPage />);
+    const { container } = renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     const firstHistoryCell = container.querySelector('td[title="Click or drag to set history position H-2 to clear"]') as HTMLTableCellElement;
@@ -469,7 +478,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
       reorderItems,
     });
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     const shorterHistoryRow = screen.getByRole('row', { name: /2\. Person 2/ });
@@ -488,7 +497,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', '  Person 1  ,  D  \n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.change(
@@ -516,7 +525,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', '\uFEFFPerson 1,D\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.change(
@@ -545,7 +554,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
     fileContentsByName.set('shift-requests.csv', 'Person 1,X\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.change(
@@ -565,7 +574,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
     fileContentsByName.set('people-history.csv', 'Person 1,D,-1\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
@@ -581,7 +590,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
     fileContentsByName.set('people-history.csv', 'Person 1,X,1\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
@@ -597,7 +606,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
     fileContentsByName.set('people-history.csv', 'Person 1,,0\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));
@@ -646,7 +655,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
 
     fileContentsByName.set('people-history.csv', 'Person 1,D,1\n');
 
-    render(<ShiftRequestsPage />);
+    renderShiftRequestsPage();
 
     await user.click(screen.getByRole('button', { name: /quick add preference/i }));
     fireEvent.click(screen.getByRole('button', { name: /upload people history \(shorthand\)/i }));

@@ -139,6 +139,10 @@ export function isValidWeightValue(value: number | string): boolean {
   return false;
 }
 
+export function isWeightNonPositive(weight: number | string): boolean {
+  return typeof weight === 'number' && weight <= 0;
+}
+
 export function isValidNumberValue(value: number | string): boolean {
   if (typeof value === 'string') {
     // String values are invalid (parsing failed)

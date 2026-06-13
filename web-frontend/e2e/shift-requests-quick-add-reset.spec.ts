@@ -46,7 +46,7 @@ test('quick-add preference inputs reset after canceling and reopening the mode',
 
   await page.getByRole('button', { name: 'Quick Add Preference' }).click();
   const checkbox = page.getByRole('checkbox', { name: 'D', exact: true });
-  const weightInput = page.getByRole('textbox', { name: 'Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)' });
+  const weightInput = page.getByPlaceholder('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)');
   await checkbox.check();
   await weightInput.fill('2');
   await expect(checkbox).toBeChecked();
@@ -57,5 +57,5 @@ test('quick-add preference inputs reset after canceling and reopening the mode',
 
   await page.getByRole('button', { name: 'Quick Add Preference' }).click();
   await expect(page.getByRole('checkbox', { name: 'D', exact: true })).not.toBeChecked();
-  await expect(page.getByRole('textbox', { name: 'Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)' })).toHaveValue('0');
+  await expect(page.getByPlaceholder('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)')).toHaveValue('0');
 });

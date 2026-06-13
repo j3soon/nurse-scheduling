@@ -20,29 +20,151 @@
 // The shift type requirements management page for Tab "4. Shift Type Requirements"
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
+import { Group, Item, ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
+import NumberInput from '@/components/NumberInput';
 import ToggleButton from '@/components/ToggleButton';
 import { isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
-import { OFF } from '@/utils/keywords';
+import { ALL, OFF } from '@/utils/keywords';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
 interface ShiftTypeRequirementForm {
   description: string;
   shift_type: string[];
-  required_num_people: number;
+  required_num_people: number | string;
   qualified_people: string[];
-  preferred_num_people?: number;
+  preferred_num_people?: number | string;
   date: string[];
   weight: number | string;
+}
+
+type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
+  // Backend input accepts both null/missing and the reserved ALL selector for
+  // all people. The frontend form normalizes the implicit form to [ALL].
+  qualifiedPeople?: ShiftTypeRequirementsPreference['qualifiedPeople'] | null;
+};
+
+function preferredNumPeopleDiffersFromRequired(formData: ShiftTypeRequirementForm): boolean {
+  return formData.preferred_num_people !== undefined
+    && formData.preferred_num_people !== ''
+    && formData.preferred_num_people !== formData.required_num_people;
+}
+
+interface RequirementCoverageWarning {
+  undefinedPairsCount: number;
+  undefinedShiftTypes: {
+    shiftTypeId: string;
+    datesLabel: string;
+  }[];
+  duplicateCells: string[];
+}
+
+function areSameIds(leftIds: readonly string[], rightIds: readonly string[]): boolean {
+  if (leftIds.length !== rightIds.length) return false;
+
+  const rightIdSet = new Set(rightIds);
+  return leftIds.every(id => rightIdSet.has(id));
+}
+
+function formatDateCoverage(
+  dateIds: string[],
+  dateGroups: Group[],
+  mapDateIdToExpandedDateIds: Map<string, readonly string[]>,
+): string {
+  // Prefer a human-readable date group when it exactly represents the missing
+  // dates; otherwise list the concrete dates so no undefined cells are hidden.
+  const exactGroup = dateGroups.find(group =>
+    areSameIds(dateIds, mapDateIdToExpandedDateIds.get(group.id) ?? [])
+  );
+
+  return exactGroup?.id ?? dateIds.join(', ');
+}
+
+function buildRequirementCoverageWarning(
+  requirements: ShiftTypeRequirementsPreference[],
+  dateItems: Item[],
+  dateGroups: Group[],
+  shiftTypeItems: Item[],
+  shiftTypeGroups: Group[],
+): RequirementCoverageWarning {
+  // Coverage records which requirement first defines each concrete
+  // (date, shift type) pair after frontend groups are expanded. JSON-encoding
+  // the tuple avoids collisions between IDs that contain separator characters.
+  const coverage = new Map<string, number>();
+  const duplicateCells: string[] = [];
+  const staffedShiftTypeItems = shiftTypeItems.filter(shiftType => shiftType.id !== OFF);
+  const mapDateIdToExpandedDateIds = new Map(
+    [
+      ...dateItems.map(date => [date.id, [date.id]] as const),
+      ...dateGroups.map(group => [group.id, [...new Set(group.members)]] as const),
+    ]
+  );
+  const mapShiftTypeIdToExpandedShiftTypeIds = new Map(
+    [
+      ...staffedShiftTypeItems.map(shiftType => [shiftType.id, [shiftType.id]] as const),
+      ...shiftTypeGroups.map(group => [group.id, [...new Set(group.members)]] as const),
+    ]
+  );
+
+  // Track coverage by concrete (date, shift type) pair so overlapping groups
+  // are detected before users reach the backend solver error.
+  requirements.forEach((requirement, requirementIndex) => {
+    // Frontend date and shift type groups contain only item IDs, so they expand
+    // directly to their members. Special date range strings are core-only.
+    const dates = Array.from(new Set((requirement.date ?? []).flatMap(dateId =>
+      mapDateIdToExpandedDateIds.get(dateId) ?? []
+    )));
+    const shiftTypes = Array.from(new Set((requirement.shiftType ?? []).flatMap(shiftTypeId =>
+      mapShiftTypeIdToExpandedShiftTypeIds.get(shiftTypeId) ?? []
+    )));
+
+    dates.forEach(dateId => {
+      shiftTypes.forEach(shiftTypeId => {
+        const key = JSON.stringify([dateId, shiftTypeId]);
+        const previousRequirementIndex = coverage.get(key);
+        if (previousRequirementIndex !== undefined) {
+          duplicateCells.push(`${dateId} / ${shiftTypeId} (requirements ${previousRequirementIndex + 1} and ${requirementIndex + 1})`);
+        } else {
+          coverage.set(key, requirementIndex);
+        }
+      });
+    });
+  });
+
+  // Undefined requirements are grouped by shift type to make the warning
+  // actionable: users can fix all missing dates for one shift type at a time.
+  const undefinedShiftTypes = staffedShiftTypeItems
+    .map(shiftTypeItem => ({
+      shiftTypeId: shiftTypeItem.id,
+      dateIds: dateItems
+        .filter(dateItem => !coverage.has(JSON.stringify([dateItem.id, shiftTypeItem.id])))
+        .map(dateItem => dateItem.id),
+    }))
+    .filter(entry => entry.dateIds.length > 0);
+
+  const undefinedPairsCount = undefinedShiftTypes.reduce(
+    (sum, entry) => sum + entry.dateIds.length,
+    0,
+  );
+
+  const undefinedShiftTypeSummaries = undefinedShiftTypes.map(entry => ({
+    shiftTypeId: entry.shiftTypeId,
+    datesLabel: formatDateCoverage(entry.dateIds, dateGroups, mapDateIdToExpandedDateIds),
+  }));
+
+  return {
+    undefinedPairsCount,
+    undefinedShiftTypes: undefinedShiftTypeSummaries,
+    duplicateCells,
+  };
 }
 
 export default function ShiftTypeRequirementsPage() {
@@ -79,9 +201,9 @@ export default function ShiftTypeRequirementsPage() {
     "Select one or more shift types that this requirement applies to",
     "Set the required number of people for each instance of the shift type",
     "Optionally specify which people or groups are qualified for this requirement",
-    "Optionally set a preferred number of people (if different from required)",
+    "Optionally set a preferred number of people when extra staffing is useful",
     "Optionally specify specific dates this requirement applies to",
-    "Set weight to penalize unmet requirements (-1 is default, lower numbers = higher penalty)",
+    "Set weight only when the preferred number of people differs from the required number",
     "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
   ];
 
@@ -105,12 +227,16 @@ export default function ShiftTypeRequirementsPage() {
   };
 
   const handleStartEdit = (index: number) => {
-    const requirement = shiftTypeRequirements[index];
+    const requirement = shiftTypeRequirements[index] as NullableShiftTypeRequirementsPreference;
     setFormData({
       description: requirement.description ?? '',
       shift_type: requirement.shiftType,
       required_num_people: requirement.requiredNumPeople,
-      qualified_people: requirement.qualifiedPeople,
+      // Normalize the backend's implicit all-people representation for the UI.
+      // Saving [ALL] back is intentional because the backend interprets null as [ALL].
+      qualified_people: requirement.qualifiedPeople === null || requirement.qualifiedPeople === undefined
+        ? [ALL]
+        : requirement.qualifiedPeople,
       preferred_num_people: requirement.preferredNumPeople,
       date: requirement.date,
       weight: requirement.weight
@@ -138,6 +264,11 @@ export default function ShiftTypeRequirementsPage() {
 
     if (formData.shift_type.length === 0) {
       newErrors.shift_type = 'At least one shift type must be selected';
+    } else {
+      const shiftTypeGroupIds = new Set(shiftTypeData.groups.map(group => group.id));
+      if (formData.shift_type.some(shiftTypeId => shiftTypeGroupIds.has(shiftTypeId))) {
+        newErrors.shift_type = 'Shift type groups are not allowed; select concrete shift types instead';
+      }
     }
 
     if (formData.qualified_people.length === 0) {
@@ -148,13 +279,15 @@ export default function ShiftTypeRequirementsPage() {
       newErrors.date = 'At least one date must be selected';
     }
 
-    if (!isValidNumberValue(formData.required_num_people)) {
+    if (formData.required_num_people === '') {
+      newErrors.required_num_people = 'Required number of people must be a valid number';
+    } else if (!isValidNumberValue(formData.required_num_people)) {
       newErrors.required_num_people = 'Required number of people must be a valid number';
     } else if (typeof formData.required_num_people === 'number' && formData.required_num_people < 0) {
       newErrors.required_num_people = 'Required number of people must be at least 0';
     }
 
-    if (formData.preferred_num_people !== undefined) {
+    if (formData.preferred_num_people !== undefined && formData.preferred_num_people !== '') {
       if (!isValidNumberValue(formData.preferred_num_people)) {
         newErrors.preferred_num_people = 'Preferred number of people must be a valid number';
       } else if (typeof formData.preferred_num_people === 'number') {
@@ -166,48 +299,62 @@ export default function ShiftTypeRequirementsPage() {
       }
     }
 
-    if (!isValidWeightValue(formData.weight)) {
-      newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
-    } else if (typeof formData.weight === 'number' && formData.weight > -1) {
-      newErrors.weight = 'Weight must be -1 or less (including -Infinity)';
+    if (preferredNumPeopleDiffersFromRequired(formData)) {
+      if (!isValidWeightValue(formData.weight)) {
+        newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+      } else if (typeof formData.weight === 'number' && formData.weight > -1) {
+        newErrors.weight = 'Weight must be -1 or less (including -Infinity)';
+      }
     }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  function handleSave() {
-    if (!validateForm()) return;
-
-    const newRequirement: ShiftTypeRequirementsPreference = {
+  const buildRequirementFromForm = (): ShiftTypeRequirementsPreference => {
+    const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
+    return {
       type: SHIFT_TYPE_REQUIREMENT,
       description: formData.description,
       shiftType: formData.shift_type,
-      requiredNumPeople: formData.required_num_people,
+      requiredNumPeople: formData.required_num_people as number,
       qualifiedPeople: formData.qualified_people,
-      preferredNumPeople: formData.preferred_num_people,
+      preferredNumPeople: usesWeight ? formData.preferred_num_people as number : undefined,
       date: formData.date,
-      weight: formData.weight as number
+      weight: usesWeight ? formData.weight as number : -1
     };
+  };
 
-    let newRequirements;
+  function saveDraft(saveAsNew: boolean) {
+    if (!validateForm()) return;
+
+    const newRequirement = buildRequirementFromForm();
+
     const wasEditing = editingIndex !== null;
-    if (wasEditing) {
+    if (wasEditing && !saveAsNew) {
       // Edit existing requirement
-      newRequirements = [...shiftTypeRequirements];
+      const newRequirements = [...shiftTypeRequirements];
       newRequirements[editingIndex] = newRequirement;
+      updateShiftTypeRequirements(newRequirements);
     } else {
       // Add new requirement
-      newRequirements = [...shiftTypeRequirements, newRequirement];
+      updateShiftTypeRequirements([...shiftTypeRequirements, newRequirement]);
     }
 
-    updateShiftTypeRequirements(newRequirements);
     setIsFormVisible(false);
     resetForm();
     // Restore scroll position if we were editing
     if (wasEditing) {
       restoreScrollPosition();
     }
+  }
+
+  function handleSave() {
+    saveDraft(false);
+  }
+
+  function handleSaveAsNew() {
+    saveDraft(true);
   }
 
   // Handle global keydown for Enter/Escape when form is visible
@@ -235,7 +382,17 @@ export default function ShiftTypeRequirementsPage() {
     updateShiftTypeRequirements(newRequirements);
   };
 
+  const handleDeleteEditingRequirement = () => {
+    if (editingIndex === null) return;
+
+    handleDelete(editingIndex);
+    setIsFormVisible(false);
+    resetForm();
+    restoreScrollPosition();
+  };
+
   const handleArrayFieldToggle = (field: 'shift_type' | 'qualified_people' | 'date', id: string) => {
+    setErrors(prev => ({ ...prev, [field]: '' }));
     setFormData(prev => ({
       ...prev,
       [field]: prev[field].includes(id)
@@ -250,12 +407,20 @@ export default function ShiftTypeRequirementsPage() {
       .map(shiftType => ({
         id: shiftType.id,
         description: shiftType.description
-      })),
-    ...shiftTypeData.groups.map(group => ({
-      id: group.id,
-      description: group.description
-    }))
+      }))
   ];
+  const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
+  const coverageWarning = useMemo(
+    () => buildRequirementCoverageWarning(
+      shiftTypeRequirements,
+      dateData.items,
+      dateData.groups,
+      shiftTypeData.items,
+      shiftTypeData.groups,
+    ),
+    [dateData.groups, dateData.items, shiftTypeData.groups, shiftTypeData.items, shiftTypeRequirements],
+  );
+  const warningExamplesLimit = 5;
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -295,6 +460,44 @@ export default function ShiftTypeRequirementsPage() {
               <li key={index}>• {instruction}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {(coverageWarning.undefinedShiftTypes.length > 0 || coverageWarning.duplicateCells.length > 0) && (
+        <div className="mb-6 bg-amber-50 border border-amber-300 rounded-lg p-4 text-sm text-amber-900">
+          <div className="flex items-center gap-2 font-semibold text-amber-950">
+            <FiAlertCircle className="h-5 w-5" />
+            Requirement coverage warnings
+          </div>
+          {coverageWarning.undefinedShiftTypes.length > 0 && (
+            <div className="mt-2">
+              <p>
+                Undefined staffing requirements: {coverageWarning.undefinedPairsCount} date/shift type pairs have no requirement, so the solver may assign an arbitrary number of people.
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {coverageWarning.undefinedShiftTypes.map(entry => (
+                  <li key={entry.shiftTypeId}>
+                    <span className="font-medium">{entry.shiftTypeId}</span>: {entry.datesLabel}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {coverageWarning.duplicateCells.length > 0 && (
+            <div className="mt-2">
+              <p>
+                Duplicate staffing requirements: {coverageWarning.duplicateCells.length} date/shift type pairs are covered by more than one requirement. The core solver will reject these.
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {coverageWarning.duplicateCells.slice(0, warningExamplesLimit).map(cell => (
+                  <li key={cell}>{cell}</li>
+                ))}
+                {coverageWarning.duplicateCells.length > warningExamplesLimit && (
+                  <li>...</li>
+                )}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
@@ -356,11 +559,17 @@ export default function ShiftTypeRequirementsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Required Number of People *
                   </label>
-                  <input
-                    type="number"
+                  <NumberInput
                     min="0"
                     value={formData.required_num_people}
                     onChange={(e) => setFormData(prev => {
+                      setErrors(currentErrors => ({ ...currentErrors, required_num_people: '' }));
+                      if (e.target.value === '') {
+                        return {
+                          ...prev,
+                          required_num_people: '',
+                        };
+                      }
                       // Note that the isNaN check is necessary, since a simple parseInt(e.target.value) will return 0 if the value is exactly 0.
                       const newRequiredValue = isNaN(parseInt(e.target.value)) ? prev.required_num_people : parseInt(e.target.value);
                       return {
@@ -368,6 +577,7 @@ export default function ShiftTypeRequirementsPage() {
                         required_num_people: newRequiredValue,
                         // If required_num_people has been parsed correctly and changed to same as preferred_num_people, also change preferred_num_people to undefined
                         preferred_num_people: !isNaN(parseInt(e.target.value)) && newRequiredValue === prev.preferred_num_people
+                          || prev.preferred_num_people === ''
                           ? undefined
                           : prev.preferred_num_people,
                       };
@@ -390,19 +600,22 @@ export default function ShiftTypeRequirementsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Preferred Number of People (optional)
                   </label>
-                  <input
-                    type="number"
+                  <NumberInput
                     min="1"
                     value={formData.preferred_num_people ?? formData.required_num_people}
-                    onChange={(e) => setFormData(prev => ({
-                      ...prev,
-                      // If the parsed value matches required_num_people, set preferred_num_people to undefined; otherwise, set to the parsed value
-                      preferred_num_people: isNaN(parseInt(e.target.value))
-                        ? prev.preferred_num_people
-                        : (parseInt(e.target.value) === prev.required_num_people
-                            ? undefined
-                            : parseInt(e.target.value))
-                    }))}
+                    onChange={(e) => {
+                      setErrors(currentErrors => ({ ...currentErrors, preferred_num_people: '' }));
+                      setFormData(prev => ({
+                        ...prev,
+                        preferred_num_people: e.target.value === ''
+                          ? ''
+                          : (isNaN(parseInt(e.target.value))
+                              ? prev.preferred_num_people
+                              : (parseInt(e.target.value) === prev.required_num_people
+                                  ? undefined
+                                  : parseInt(e.target.value)))
+                      }));
+                    }}
                     className={`block w-full px-4 py-2 text-sm text-gray-900 bg-white border rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 hover:border-gray-400 ${
                       errors.preferred_num_people
                         ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
@@ -498,27 +711,61 @@ export default function ShiftTypeRequirementsPage() {
               </div>
 
               {/* Weight */}
-              <WeightInput
-                value={formData.weight}
-                onChange={(value) => setFormData(prev => ({ ...prev, weight: value }))}
-                error={errors.weight}
-                placeholder="e.g., -1, -10, ∞"
-              />
+              {usesWeight ? (
+                <WeightInput
+                  value={formData.weight}
+                  onChange={(value) => {
+                    setErrors(prev => ({ ...prev, weight: '' }));
+                    setFormData(prev => ({ ...prev, weight: value }));
+                  }}
+                  error={errors.weight}
+                  placeholder="e.g., -1, -10, ∞"
+                />
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Weight (priority)
+                  </label>
+                  <div className="text-sm text-gray-500 italic">
+                    Weight is not needed when the preferred number of people equals the required number.
+                  </div>
+                </div>
+              )}
 
               {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  {editingIndex !== null ? 'Update' : 'Add'}
-                </button>
+              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {editingIndex !== null && (
+                    <button
+                      onClick={handleDeleteEditingRequirement}
+                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap justify-end gap-3">
+                  <button
+                    onClick={handleCancel}
+                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  {editingIndex !== null && (
+                    <button
+                      onClick={handleSaveAsNew}
+                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+                    >
+                      Save as New
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSave}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  >
+                    {editingIndex !== null ? 'Update' : 'Add'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -549,9 +796,11 @@ export default function ShiftTypeRequirementsPage() {
                   <span> (Preferred: {requirement.preferredNumPeople})</span>
                 )}
               </div>
-              <div>
-                <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
-              </div>
+              {requirement.preferredNumPeople !== undefined && requirement.preferredNumPeople !== requirement.requiredNumPeople && (
+                <div>
+                  <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
+                </div>
+              )}
               {requirement.qualifiedPeople && (
                 <div className="md:col-span-2 lg:col-span-3">
                   <span className="font-medium">Qualified:</span>{' '}

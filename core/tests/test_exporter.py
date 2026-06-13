@@ -735,6 +735,133 @@ export:
     assert df.iloc[7, 2] == 2
 
 
+def test_export_extra_column_counts_shift_type_coefficient_scores():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+    date: 2025-01-01
+  - type: shift type requirement
+    shiftType: A
+    requiredNumPeople: 1
+    date: 2025-01-02
+export:
+  extraColumns:
+    - type: count
+      header: Weighted Score
+      countShiftTypes: [D, A]
+      countShiftTypeCoefficients:
+        - [D, 2]
+        - [A, 3]
+      countDates: [ALL]
+"""
+    styled_df, _solution, _score, _status, cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    assert df.iloc[1, 4] == "Weighted Score"
+    assert df.iloc[2, 4] == 5
+
+    output = BytesIO()
+    exporter.export_to_excel(styled_df, output, cell_export_info)
+    workbook = load_workbook(output)
+    assert workbook.active.cell(row=3, column=5).value == 5
+
+
+def test_export_extra_column_defaults_to_one_and_scores_off_coefficients():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+    date: 2025-01-01
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 0
+    date: 2025-01-02
+export:
+  extraColumns:
+    - type: count
+      header: Default Count
+      countShiftTypes: [D, OFF]
+      countDates: [ALL]
+    - type: count
+      header: Weighted Count
+      countShiftTypes: [D, OFF]
+      countShiftTypeCoefficients:
+        - [D, 2]
+        - [OFF, 4]
+      countDates: [ALL]
+"""
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    assert df.iloc[2, 4] == 2
+    assert df.iloc[2, 5] == 6
+
+
+def test_export_extra_column_applies_group_coefficient_to_expanded_shift_type():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: WORK
+      members: [D, A]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+export:
+  extraColumns:
+    - type: count
+      header: Work Score
+      countShiftTypes: [WORK]
+      countShiftTypeCoefficients:
+        - [WORK, 7]
+      countDates: [ALL]
+"""
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    assert df.iloc[2, 3] == 7
+
+
 def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
     ctx = SimpleNamespace(
         export=SimpleNamespace(

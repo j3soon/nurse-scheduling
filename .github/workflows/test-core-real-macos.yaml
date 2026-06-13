@@ -1,0 +1,36 @@
+name: Test Core Real Scenario macOS
+
+on:
+  - push
+  - pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  test-core-real-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        working-directory: core
+        run: python -m pip install -r requirements.txt
+      - name: Test real-world scenario until OR-Tools clears critical violations
+        working-directory: core
+        run: pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py
+      - name: Test bounded real-world scenario with CBC
+        working-directory: core
+        run: pytest --log-cli-level=INFO tests/real/schedule_pulp_cbc.py
+      - name: Test bounded real-world scenario with cuOpt
+        working-directory: core
+        run: pytest --log-cli-level=INFO tests/real/schedule_pulp_cuopt.py

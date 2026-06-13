@@ -24,20 +24,22 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { FiDownload, FiAlertCircle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity } from 'react-icons/fi';
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
+import NumberInput from '@/components/NumberInput';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizePeopleInStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
-import { CURRENT_APP_VERSION } from '@/utils/version';
+import {
+  BACKEND_API_CANDIDATES,
+  INITIAL_BACKEND_API_URL,
+  selectOfflineFallbackBackendApiUrl,
+  selectPreferredServer,
+  type ServerHealthCheckResult,
+  type ServerHealthResponse,
+} from '@/app/optimize-and-export/serverSelection';
+import { CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
 
 type ServerHealthStatus = 'checking' | 'online' | 'offline';
-
-interface ServerHealthResponse {
-  status: string;
-  version: string;
-  apiVersion?: string;
-  appVersion: string;
-}
 
 interface OptimizeJobResponse {
   jobId: string;
@@ -77,14 +79,17 @@ interface OptimizePhaseEvent {
 
 const TERMINAL_JOB_STATUSES = new Set(['optimal', 'feasible', 'infeasible', 'cancelled', 'failed']);
 const OPTIMIZE_CLIENT_HEARTBEAT_INTERVAL_MS = 10_000;
-const LOCAL_BACKEND_API_URL = 'http://localhost:8000';
-const PRODUCTION_BACKEND_API_URL = 'https://api.nursescheduling.org';
-const SHOULD_DISABLE_PRODUCTION_BACKEND_API = process.env.NODE_ENV === 'test'
-  || process.env.NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API === '1';
-const BACKEND_API_CANDIDATES = SHOULD_DISABLE_PRODUCTION_BACKEND_API
-  ? [LOCAL_BACKEND_API_URL]
-  : [LOCAL_BACKEND_API_URL, PRODUCTION_BACKEND_API_URL];
-const INITIAL_BACKEND_API_URL = BACKEND_API_CANDIDATES[0];
+const HEALTH_CHECK_TIMEOUT_MS = 3000;
+const INITIAL_HEALTH_CHECK_TIMEOUT_MS = 3000;
+const OFFLINE_FALLBACK_BACKEND_API_URL = selectOfflineFallbackBackendApiUrl(BACKEND_API_CANDIDATES);
+
+function isDirtyAppVersion(version: string): boolean {
+  return parseVersionParts(version).dirty;
+}
+
+function hasAppVersionMismatch(frontendVersion: string, backendVersion: string): boolean {
+  return frontendVersion !== backendVersion || isDirtyAppVersion(frontendVersion) || isDirtyAppVersion(backendVersion);
+}
 
 function normalizeEndpoint(endpoint: string): string {
   return endpoint.trim().replace(/\/+$/, '');
@@ -97,9 +102,9 @@ function buildApiUrl(endpoint: string, path: string): string {
   return `${normalizeEndpoint(endpoint)}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-async function fetchServerHealth(endpoint: string): Promise<ServerHealthResponse | null> {
+async function fetchServerHealth(endpoint: string, timeoutMs = HEALTH_CHECK_TIMEOUT_MS): Promise<ServerHealthResponse | null> {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${endpoint}/health`, {
@@ -266,7 +271,8 @@ export default function OptimizeAndExportPage() {
   const [apiEndpoint, setApiEndpoint] = useState(INITIAL_BACKEND_API_URL);
   const [prettifyArg, setPrettifyArg] = useState(true);
   const [anonymizePeople, setAnonymizePeople] = useState(true);
-  const [timeoutArg, setTimeoutArg] = useState<number>(300);
+  const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
+  const [timeoutError, setTimeoutError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -281,13 +287,19 @@ export default function OptimizeAndExportPage() {
   const [serverHealthStatus, setServerHealthStatus] = useState<ServerHealthStatus>('checking');
   const [lastHealthCheckedAt, setLastHealthCheckedAt] = useState<Date | null>(null);
   const [serverHealth, setServerHealth] = useState<ServerHealthResponse | null>(null);
-  const [isInitialServerChecking, setIsInitialServerChecking] = useState(false);
+  const [isInitialServerChecking, setIsInitialServerChecking] = useState(true);
   const eventLogRef = useRef<HTMLDivElement | null>(null);
   const savedDownloadUrlRef = useRef<string | null>(null);
   const shouldScrollEventLogToBottomRef = useRef(true);
+  // Async health checks must compare against the endpoint current at completion time.
+  const apiEndpointRef = useRef(INITIAL_BACKEND_API_URL);
   // The initial endpoint probe already sets health state; skip the debounce pass triggered when it completes.
   const skipNextDebouncedHealthCheckRef = useRef(true);
-  const hasVersionMismatch = Boolean(serverHealth && serverHealth.appVersion !== CURRENT_APP_VERSION);
+  // Only the newest health check may update online/offline state.
+  const latestHealthCheckIdRef = useRef(0);
+  // Preserve user-entered endpoint text when background discovery finishes.
+  const endpointEditedDuringDiscoveryRef = useRef(false);
+  const hasVersionMismatch = Boolean(serverHealth && hasAppVersionMismatch(CURRENT_APP_VERSION, serverHealth.appVersion));
   const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
   const isShiftTypeDataMissing = shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0;
@@ -361,10 +373,19 @@ export default function OptimizeAndExportPage() {
 
   const runHealthCheck = useCallback(async (endpoint: string) => {
     const normalizedEndpoint = normalizeEndpoint(endpoint);
+    const healthCheckId = latestHealthCheckIdRef.current + 1;
+    latestHealthCheckIdRef.current = healthCheckId;
 
     setServerHealthStatus('checking');
 
     const health = normalizedEndpoint ? await fetchServerHealth(normalizedEndpoint) : null;
+    if (
+      latestHealthCheckIdRef.current !== healthCheckId ||
+      normalizeEndpoint(apiEndpointRef.current) !== normalizedEndpoint
+    ) {
+      return health;
+    }
+
     setServerHealthStatus(health ? 'online' : 'offline');
     setServerHealth(health);
     setLastHealthCheckedAt(new Date());
@@ -373,40 +394,49 @@ export default function OptimizeAndExportPage() {
   }, []);
 
   const selectInitialServer = useCallback(async () => {
+    const healthCheckId = latestHealthCheckIdRef.current + 1;
+    latestHealthCheckIdRef.current = healthCheckId;
+
     setIsInitialServerChecking(true);
     setServerHealthStatus('checking');
     setServerHealth(null);
 
     const healthChecks = BACKEND_API_CANDIDATES.map(async (endpoint, index) => {
-      const health = await fetchServerHealth(endpoint);
+      const health = await fetchServerHealth(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS);
       return { endpoint, index, health };
     });
 
     const results = await Promise.all(healthChecks);
-    const selected = results
-      .filter((result): result is { endpoint: string; index: number; health: ServerHealthResponse } => Boolean(result.health))
-      .sort((a, b) => {
-        const aVersionMatches = a.health.appVersion === CURRENT_APP_VERSION;
-        const bVersionMatches = b.health.appVersion === CURRENT_APP_VERSION;
+    const selected = selectPreferredServer(
+      results.filter((result): result is ServerHealthCheckResult => Boolean(result.health))
+    );
 
-        if (aVersionMatches !== bVersionMatches) {
-          return aVersionMatches ? -1 : 1;
-        }
+    if (latestHealthCheckIdRef.current !== healthCheckId) {
+      setIsInitialServerChecking(false);
+      return selected?.health ?? null;
+    }
 
-        return a.index - b.index;
-      })[0];
+    if (endpointEditedDuringDiscoveryRef.current) {
+      skipNextDebouncedHealthCheckRef.current = false;
+      setIsInitialServerChecking(false);
+      return selected?.health ?? null;
+    }
 
     if (selected) {
+      apiEndpointRef.current = selected.endpoint;
       setApiEndpoint(selected.endpoint);
       setServerHealthStatus('online');
       setServerHealth(selected.health);
     } else {
+      apiEndpointRef.current = OFFLINE_FALLBACK_BACKEND_API_URL;
+      setApiEndpoint(OFFLINE_FALLBACK_BACKEND_API_URL);
       setServerHealthStatus('offline');
       setServerHealth(null);
     }
     setLastHealthCheckedAt(new Date());
     skipNextDebouncedHealthCheckRef.current = true;
     setIsInitialServerChecking(false);
+    return selected?.health ?? null;
   }, []);
 
   useEffect(() => {
@@ -414,6 +444,10 @@ export default function OptimizeAndExportPage() {
   }, [selectInitialServer]);
 
   useEffect(() => {
+    if (isInitialServerChecking) {
+      return;
+    }
+
     const intervalId = window.setInterval(() => {
       void runHealthCheck(apiEndpoint);
     }, 30000);
@@ -421,7 +455,7 @@ export default function OptimizeAndExportPage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [apiEndpoint, runHealthCheck]);
+  }, [apiEndpoint, isInitialServerChecking, runHealthCheck]);
 
   useEffect(() => {
     if (isInitialServerChecking) {
@@ -583,7 +617,14 @@ export default function OptimizeAndExportPage() {
       return;
     }
 
+    if (timeoutArg === '' || typeof timeoutArg !== 'number' || !Number.isInteger(timeoutArg) || timeoutArg < 1) {
+      setTimeoutError('Solver timeout must be a valid positive integer.');
+      setErrorMessage(null);
+      return;
+    }
+
     setIsLoading(true);
+    setTimeoutError(null);
     setErrorMessage(null);
     setSuccessMessage(null);
     setScheduleScore(null);
@@ -611,9 +652,7 @@ export default function OptimizeAndExportPage() {
         formData.append('prettify', String(prettifyArg));
       }
 
-      if (timeoutArg !== null && timeoutArg !== undefined) {
-        formData.append('timeout', String(timeoutArg));
-      }
+      formData.append('timeout', String(timeoutArg));
 
       const createResponse = await fetch(`${normalizeEndpoint(apiEndpoint)}/optimize`, {
         method: 'POST',
@@ -845,17 +884,30 @@ export default function OptimizeAndExportPage() {
                   Solver Timeout
                 </label>
                 <div className="flex items-center gap-2">
-                  <input
-                    type="number"
+                  <NumberInput
                     value={timeoutArg}
-                    onChange={(e) => setTimeoutArg(parseInt(e.target.value) || 300)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setTimeoutError(null);
+                      setTimeoutArg(value === '' ? '' : (Number.isInteger(Number(value)) ? Number(value) : value));
+                    }}
                     min="1"
                     max="3600"
-                    className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    className={`block w-full rounded-md border bg-white px-3 py-2 text-sm text-gray-900 shadow-sm transition-colors focus:outline-none focus:ring-2 ${
+                      timeoutError
+                        ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
+                        : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
+                    }`}
                     placeholder="300"
                   />
                   <span className="text-sm text-gray-500">sec</span>
                 </div>
+                {timeoutError && (
+                  <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {timeoutError}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -872,8 +924,12 @@ export default function OptimizeAndExportPage() {
                     list="backend-api-candidates"
                     type="text"
                     value={apiEndpoint}
-                    disabled={isInitialServerChecking || isLoading}
+                    disabled={isLoading}
                     onChange={(e) => {
+                      if (isInitialServerChecking) {
+                        endpointEditedDuringDiscoveryRef.current = true;
+                      }
+                      apiEndpointRef.current = e.target.value;
                       setApiEndpoint(e.target.value);
                       setServerHealthStatus('checking');
                       setServerHealth(null);
@@ -889,7 +945,7 @@ export default function OptimizeAndExportPage() {
                   <button
                     type="button"
                     onClick={() => void runHealthCheck(apiEndpoint)}
-                    disabled={isInitialServerChecking || isLoading}
+                    disabled={isLoading || isInitialServerChecking}
                     className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                   >
                     <FiRefreshCw className="h-4 w-4" />

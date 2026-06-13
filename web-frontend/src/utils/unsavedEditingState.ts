@@ -18,51 +18,69 @@
  */
 
 // This code is mostly AI generated.
+'use client';
 
-import { useEffect } from 'react';
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react';
 
-const TAB_SWITCH_WARNING_KEY = 'nurse-scheduling-tab-switch-warning-active';
+type UnsavedEditingState = {
+  setTabSwitchWarningActive: () => void;
+  clearTabSwitchWarningActive: () => void;
+  hasTabSwitchWarningActive: () => boolean;
+};
 
-function getTabSwitchWarningCount(): number {
-  if (typeof window === 'undefined') return 0;
+const UnsavedEditingStateContext = createContext<UnsavedEditingState | null>(null);
 
-  const count = parseInt(window.sessionStorage.getItem(TAB_SWITCH_WARNING_KEY) ?? '0', 10);
-  return Number.isNaN(count) ? 0 : Math.max(0, count);
+function createUnsavedEditingState(): UnsavedEditingState {
+  // Current pages only open one editor at a time, but keep a count so future
+  // overlapping warning registrations cannot clear each other.
+  let tabSwitchWarningCount = 0;
+
+  return {
+    setTabSwitchWarningActive: () => {
+      tabSwitchWarningCount += 1;
+    },
+    clearTabSwitchWarningActive: () => {
+      tabSwitchWarningCount = Math.max(0, tabSwitchWarningCount - 1);
+    },
+    hasTabSwitchWarningActive: () => tabSwitchWarningCount > 0,
+  };
 }
 
-export function incrementTabSwitchWarningActive(): void {
-  if (typeof window === 'undefined') return;
+export function UnsavedEditingStateProvider({ children }: { children: ReactNode }) {
+  const [value] = useState(createUnsavedEditingState);
 
-  window.sessionStorage.setItem(TAB_SWITCH_WARNING_KEY, String(getTabSwitchWarningCount() + 1));
+  return createElement(UnsavedEditingStateContext.Provider, { value }, children);
 }
 
-export function decrementTabSwitchWarningActive(): void {
-  if (typeof window === 'undefined') return;
-
-  const count = getTabSwitchWarningCount();
-  if (count <= 1) {
-    window.sessionStorage.removeItem(TAB_SWITCH_WARNING_KEY);
-  } else {
-    window.sessionStorage.setItem(TAB_SWITCH_WARNING_KEY, String(count - 1));
+export function useUnsavedEditingState(): UnsavedEditingState {
+  const value = useContext(UnsavedEditingStateContext);
+  if (!value) {
+    throw new Error('useUnsavedEditingState must be used within UnsavedEditingStateProvider');
   }
-}
 
-export function hasTabSwitchWarningActive(): boolean {
-  return getTabSwitchWarningCount() > 0;
+  return value;
 }
 
 export function useTabSwitchWarning(isActive: boolean): void {
+  const {
+    setTabSwitchWarningActive: setActive,
+    clearTabSwitchWarningActive: clearActive,
+  } = useUnsavedEditingState();
+
   useEffect(() => {
     if (!isActive) return;
 
-    incrementTabSwitchWarningActive();
+    setActive();
 
     return () => {
-      decrementTabSwitchWarningActive();
+      clearActive();
     };
-  }, [isActive]);
-}
-
-export function hasSaveAndLoadEditingWarningActive(): boolean {
-  return hasTabSwitchWarningActive();
+  }, [clearActive, isActive, setActive]);
 }

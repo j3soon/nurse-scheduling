@@ -69,4 +69,14 @@ describe('AppVersionText', () => {
     expect(hashLink).toHaveAttribute('href', 'https://github.com/j3soon/nurse-scheduling/tree/deadbeef');
     expect(screen.queryByText('-g')).not.toBeInTheDocument();
   });
+
+  it('renders unsupported fallback versions as plain text', () => {
+    render(
+      <div>
+        <AppVersionText version="v0.0.0-unknown" />
+      </div>,
+    );
+
+    expect(screen.getByText('v0.0.0-unknown')).toBeInTheDocument();
+  });
 });

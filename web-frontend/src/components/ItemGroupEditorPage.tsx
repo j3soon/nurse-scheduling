@@ -131,7 +131,7 @@ export default function ItemGroupEditorPage({
            groups.some(group => group.id === id && group.id !== currentId);
   };
 
-  const handleSave = () => {
+  const saveDraft = (saveAsNew: boolean) => {
     const trimmedId = draft.id.trim();
     const trimmedDescription = draft.description.trim();
     if (!trimmedId) {
@@ -144,14 +144,14 @@ export default function ItemGroupEditorPage({
       return;
     }
 
-    if (isDuplicateId(trimmedId, draft.editingId)) {
+    if (isDuplicateId(trimmedId, saveAsNew ? undefined : draft.editingId)) {
       setError(`This ID is already used by another ${itemLabel.toLowerCase()} or group`);
       return;
     }
 
     const wasEditing = !!draft.editingId;
     if (draft.isItem) {
-      if (draft.editingId) {
+      if (draft.editingId && !saveAsNew) {
         updateItem(
           dataType,
           data,
@@ -170,7 +170,7 @@ export default function ItemGroupEditorPage({
         );
       }
     } else {
-      if (draft.editingId) {
+      if (draft.editingId && !saveAsNew) {
         updateGroup(
           dataType,
           data,
@@ -197,6 +197,14 @@ export default function ItemGroupEditorPage({
     if (wasEditing) {
       restoreScrollPosition();
     }
+  };
+
+  const handleSave = () => {
+    saveDraft(false);
+  };
+
+  const handleSaveAsNew = () => {
+    saveDraft(true);
   };
 
   const handleStartEditing = (id: string) => {
@@ -283,6 +291,16 @@ export default function ItemGroupEditorPage({
       }
       deleteGroup(dataType, data, id);
     }
+  };
+
+  const handleDeleteEditing = () => {
+    if (!draft.editingId) return;
+
+    handleDelete(draft.editingId);
+    setMode(Mode.NORMAL);
+    setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
+    setError('');
+    restoreScrollPosition();
   };
 
   const handleCancel = () => {
@@ -539,6 +557,8 @@ export default function ItemGroupEditorPage({
           onMemberToggle={handleMemberToggle}
           onSave={handleSave}
           onCancel={handleCancel}
+          onSaveAsNew={handleSaveAsNew}
+          onDelete={handleDeleteEditing}
         />
       )}
 
