@@ -56,7 +56,7 @@ jobs:
         run: |
           Remove-Item -Recurse -Force .e2e-coverage, coverage-e2e -ErrorAction SilentlyContinue
           $env:E2E_COVERAGE = '1'
-          bunx playwright test
+          bunx playwright test --workers=4
       - name: Generate Playwright coverage report
         working-directory: web-frontend
         run: bun run coverage:e2e:report
