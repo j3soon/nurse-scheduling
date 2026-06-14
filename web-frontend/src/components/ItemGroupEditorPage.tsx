@@ -556,6 +556,7 @@ export default function ItemGroupEditorPage({
           items={items}
           groups={groups}
           itemLabel={itemLabel}
+          itemLabelPlural={itemLabelPlural}
           error={error}
           filterItemGroups={filterItemGroups}
           renderGroupMemberSelector={renderGroupMemberSelector}

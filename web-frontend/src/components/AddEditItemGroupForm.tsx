@@ -37,6 +37,7 @@ interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
   items: T[];
   groups: G[];
   itemLabel: string;
+  itemLabelPlural: string;
   error: string;
   filterItemGroups: (items: T[] | G[]) => T[] | G[];
   renderGroupMemberSelector?: (props: {
@@ -59,6 +60,7 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   items,
   groups,
   itemLabel,
+  itemLabelPlural,
   error,
   filterItemGroups,
   renderGroupMemberSelector,
@@ -73,6 +75,27 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   const isItem = draft.isItem;
   const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : "Group"}`;
   const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : "group"} ID`;
+  const filteredItems = filterItemGroups(items) as T[];
+  const filteredGroups = filterItemGroups(groups) as G[];
+  const memberSelector = filteredItems.length === 0 ? (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium text-gray-700">Members</h3>
+      <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
+        No {itemLabelPlural.toLowerCase()} available. Please set up {itemLabelPlural.toLowerCase()} first.
+      </div>
+    </div>
+  ) : renderGroupMemberSelector ? renderGroupMemberSelector({
+    items: filteredItems,
+    selectedIds: draft.members,
+    onToggle: onMemberToggle,
+  }) : (
+    <CheckboxList
+      items={filteredItems}
+      selectedIds={draft.members}
+      onToggle={onMemberToggle}
+      label="Members"
+    />
+  );
 
   return (
     <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
@@ -92,16 +115,12 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           onDelete={mode === Mode.EDITING ? onDelete : undefined}
           actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
         >
-          {!draft.isItem && renderGroupMemberSelector ? renderGroupMemberSelector({
-            items: filterItemGroups(items) as T[],
-            selectedIds: draft.members,
-            onToggle: onMemberToggle,
-          }) : (
+          {!draft.isItem ? memberSelector : (
             <CheckboxList
-              items={draft.isItem ? filterItemGroups(groups) as G[] : filterItemGroups(items) as T[]}
-              selectedIds={draft.isItem ? draft.groups : draft.members}
+              items={filteredGroups}
+              selectedIds={draft.groups}
               onToggle={onMemberToggle}
-              label={draft.isItem ? "Groups" : 'Members'}
+              label="Groups"
             />
           )}
         </FormInput>

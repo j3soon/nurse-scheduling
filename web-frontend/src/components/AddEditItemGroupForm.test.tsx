@@ -42,6 +42,7 @@ describe('AddEditItemGroupForm', () => {
           { id: 'Team B', description: 'Secondary team', members: [] },
         ]}
         itemLabel="Person"
+        itemLabelPlural="People"
         error=""
         filterItemGroups={(entries) => entries}
         onIdChange={() => undefined}
@@ -76,6 +77,7 @@ describe('AddEditItemGroupForm', () => {
         ]}
         groups={[{ id: 'Team A', description: 'Primary team', members: ['P1'] }]}
         itemLabel="Person"
+        itemLabelPlural="People"
         error=""
         filterItemGroups={(entries) => entries}
         onIdChange={() => undefined}
@@ -114,6 +116,7 @@ describe('AddEditItemGroupForm', () => {
         items={[]}
         groups={[{ id: 'Team A', description: 'Primary team', members: [] }]}
         itemLabel="Person"
+        itemLabelPlural="People"
         error=""
         filterItemGroups={(entries) => entries}
         onIdChange={onIdChange}
@@ -135,5 +138,43 @@ describe('AddEditItemGroupForm', () => {
     expect(onMemberToggle).toHaveBeenCalledWith('Team A');
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['Date', 'Dates'],
+    ['Person', 'People'],
+    ['Shift Type', 'Shift Types'],
+  ])('shows a setup hint when a group has no available %s members', (itemLabel, itemLabelPlural) => {
+    const renderGroupMemberSelector = vi.fn();
+
+    render(
+      <AddEditItemGroupForm
+        mode={Mode.ADDING}
+        draft={{
+          id: '',
+          description: '',
+          groups: [],
+          members: [],
+          isItem: false,
+        }}
+        items={[]}
+        groups={[]}
+        itemLabel={itemLabel}
+        itemLabelPlural={itemLabelPlural}
+        error=""
+        filterItemGroups={(entries) => entries}
+        renderGroupMemberSelector={renderGroupMemberSelector}
+        onIdChange={() => undefined}
+        onDescriptionChange={() => undefined}
+        onMemberToggle={() => undefined}
+        onSave={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText(
+      `No ${itemLabelPlural.toLowerCase()} available. Please set up ${itemLabelPlural.toLowerCase()} first.`,
+    )).toBeInTheDocument();
+    expect(renderGroupMemberSelector).not.toHaveBeenCalled();
   });
 });
