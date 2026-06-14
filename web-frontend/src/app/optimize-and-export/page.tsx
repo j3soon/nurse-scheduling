@@ -29,6 +29,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizePeopleInStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
+import { GITHUB_PRIVACY_URL } from '@/constants/urls';
 import {
   BACKEND_API_CANDIDATES,
   INITIAL_BACKEND_API_URL,
@@ -1005,6 +1006,17 @@ export default function OptimizeAndExportPage() {
               {optimizeDisabledReason && (
                 <p className="mt-2 text-sm text-amber-700">{optimizeDisabledReason}</p>
               )}
+              <p className="mt-2 text-xs text-gray-500">
+                Submitting sends scheduling data to the selected backend.{' '}
+                <a
+                  href={GITHUB_PRIVACY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 underline hover:text-blue-800"
+                >
+                  Privacy Policy
+                </a>.
+              </p>
             </div>
           </div>
         </section>

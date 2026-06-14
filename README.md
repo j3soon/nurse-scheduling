@@ -22,6 +22,10 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 > This project is in active development. Breaking changes may occur without notice. Please proceed with caution. Although the current version has been verified by domain experts and used successfully (with minimal post-adjustment) in several complex multi-ward scenarios involving up to ~100 nurses, it currently has a steep learning curve and lacks proper documentation.
 
+## Privacy Notice
+
+This early work-in-progress project provides basic privacy protections, including anonymizing individual people IDs where possible and privacy-masking Sentry session replays. The hosted application uses analytics and error reporting, and sends scheduling data to the selected backend when you click **Optimize**. Ad blockers may block analytics and error reporting, but not optimization submissions. Do not submit sensitive information. See [Privacy and Data Handling](PRIVACY.md) for details.
+
 ## How to run
 
 ### Prerequisites

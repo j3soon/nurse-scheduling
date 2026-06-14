@@ -29,6 +29,7 @@ import {
   GITHUB_REPO_URL,
   GITHUB_TAGS_URL,
   GITHUB_LICENSE_URL,
+  GITHUB_PRIVACY_URL,
   GITHUB_CODE_FREQUENCY_URL,
   GITHUB_ACKNOWLEDGMENTS_URL,
   GITHUB_AUTHOR_URL,
@@ -81,7 +82,8 @@ export default function RootLayout({
               <a href={GITHUB_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Copyright ©</a>{' '}
               <a href={GITHUB_CODE_FREQUENCY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">2023-{new Date().getFullYear()}</a>{' '}
               <a href={GITHUB_AUTHOR_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Johnson Sun</a> &{' '}
-              <a href={GITHUB_ACKNOWLEDGMENTS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.
+              <a href={GITHUB_ACKNOWLEDGMENTS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.{' '}
+              <a href={GITHUB_PRIVACY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Privacy Policy</a>.
             </div>
             <div>
               <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Nurse Scheduling Project</a>{' '}
