@@ -36,6 +36,7 @@ import {
   isTaiwanHolidayRangeSupported,
 } from '@/utils/taiwanHolidays';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
+import { isFullCalendarMonth } from '@/utils/calendar';
 
 export default function DatePage() {
   const {
@@ -85,29 +86,13 @@ export default function DatePage() {
   );
   useTabSwitchWarning(mode === Mode.DATE_RANGE_EDITING);
 
-  // Helper function to check if date range represents a full month
-  const isFullMonth = (startDate?: Date, endDate?: Date): boolean => {
-    if (!startDate || !endDate) return false;
-
-    // Check if start date is the first day of the month
-    const isFirstDay = startDate.getUTCDate() === 1;
-
-    // Check if end date is the last day of the same month/year
-    const lastDayOfMonth = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 1, 0));
-    const isLastDay = endDate.getUTCDate() === lastDayOfMonth.getUTCDate() &&
-                      endDate.getUTCMonth() === startDate.getUTCMonth() &&
-                      endDate.getUTCFullYear() === startDate.getUTCFullYear();
-
-    return isFirstDay && isLastDay;
-  };
-
   const warnings = useMemo<{[key: string]: string}>(() => {
     if (mode !== Mode.DATE_RANGE_EDITING) {
       return {};
     }
 
     const newWarnings: {[key: string]: string} = {};
-    if (!isFullMonth(draft.startDate, draft.endDate)) {
+    if (!isFullCalendarMonth(draft)) {
       newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
     }
     if (shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported && includesUnimportedTaiwanLaborDay(draft)) {
@@ -365,9 +350,9 @@ export default function DatePage() {
                   <p className="mt-2 text-sm text-gray-500">No holiday changes in the selected range.</p>
                 )}
                 {isTaiwanHolidayImportSupported && includedTaiwanHolidays.length > 0 && (
-                  <details className="mt-3 rounded-md border border-gray-200 bg-white">
+                  <details open className="mt-3 rounded-md border border-gray-200 bg-white">
                     <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
-                      {includedTaiwanHolidays.length} holiday {includedTaiwanHolidays.length === 1 ? 'change' : 'changes'} - Show details
+                      {includedTaiwanHolidays.length} holiday {includedTaiwanHolidays.length === 1 ? 'change' : 'changes'}
                     </summary>
                     <div className="max-h-56 space-y-2 overflow-y-auto border-t border-gray-200 p-3">
                       {includedTaiwanHolidays.map((entry) => (

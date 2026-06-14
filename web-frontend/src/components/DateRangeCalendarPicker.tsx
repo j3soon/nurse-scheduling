@@ -19,9 +19,20 @@
 
 // This code is mostly AI generated.
 
-import { useMemo, useState } from 'react';
-import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import { useCallback, useMemo, useState } from 'react';
+import {
+  CalendarDayButton,
+  CalendarMonthView,
+  getCalendarDayCategoryClassName,
+  useCalendarMonthNavigation,
+  useMouseDragLifecycle,
+} from '@/components/CalendarMonthView';
 import { DateRange } from '@/types/scheduling';
+import {
+  endOfMonth,
+  formatMonthYear,
+  startOfMonth,
+} from '@/utils/calendar';
 
 interface DateRangeCalendarPickerProps {
   value: DateRange;
@@ -33,50 +44,29 @@ function dateToString(date?: Date): string {
   return date ? date.toISOString().split('T')[0] : '';
 }
 
-function startOfMonth(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
-}
-
-function endOfMonth(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
-}
-
-function addMonths(date: Date, months: number): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
-}
-
-function addDays(date: Date, days: number): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days));
-}
-
-function formatMonthYear(date: Date): string {
-  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-}
-
 export default function DateRangeCalendarPicker({
   value,
   onChange,
   onActiveEndpointChange,
 }: DateRangeCalendarPickerProps) {
-  const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
-    const anchorDate = value.startDate ?? new Date();
-    return startOfMonth(anchorDate);
+  const {
+    activeMonth: calendarMonth,
+    setActiveMonth: setCalendarMonth,
+  } = useCalendarMonthNavigation({
+    initialMonth: value.startDate ?? new Date(),
   });
   const [dragAnchorDate, setDragAnchorDate] = useState<Date | undefined>(undefined);
   const [clickAnchorDate, setClickAnchorDate] = useState<Date | undefined>(undefined);
   const [hoverDate, setHoverDate] = useState<Date | undefined>(undefined);
   const [didDrag, setDidDrag] = useState(false);
+  const resetDragState = useCallback(() => {
+    setDragAnchorDate(undefined);
+    setHoverDate(undefined);
+    setDidDrag(false);
+    document.body.style.removeProperty('user-select');
+  }, []);
+  const { disableTextSelection } = useMouseDragLifecycle(resetDragState);
 
-  const calendarDates = useMemo(() => {
-    const firstDay = startOfMonth(calendarMonth);
-    const monthLength = endOfMonth(calendarMonth).getUTCDate();
-    const leadingBlankCount = firstDay.getUTCDay();
-
-    return [
-      ...Array.from({ length: leadingBlankCount }, () => undefined),
-      ...Array.from({ length: monthLength }, (_, dayIndex) => addDays(firstDay, dayIndex)),
-    ];
-  }, [calendarMonth]);
   const suggestedMonthLabel = formatMonthYear(calendarMonth);
   const previewRange = useMemo<DateRange>(() => {
     const anchorDate = dragAnchorDate ?? clickAnchorDate;
@@ -112,6 +102,7 @@ export default function DateRangeCalendarPicker({
     setDragAnchorDate(date);
     setHoverDate(date);
     setDidDrag(false);
+    disableTextSelection();
   };
 
   const handleCalendarDateMouseEnter = (date: Date) => {
@@ -144,9 +135,7 @@ export default function DateRangeCalendarPicker({
       setClickAnchorDate(date);
       onActiveEndpointChange?.('end');
     }
-    setDragAnchorDate(undefined);
-    setHoverDate(undefined);
-    setDidDrag(false);
+    resetDragState();
   };
 
   const handleUseSuggestedMonth = () => {
@@ -160,75 +149,44 @@ export default function DateRangeCalendarPicker({
   };
 
   return (
-    <div className="w-full max-w-md rounded-md border border-gray-200 bg-gray-50 p-4">
-      <div className="flex items-center justify-between border-b border-gray-200 pb-2">
-        <button
-          type="button"
-          aria-label="Previous month"
-          onClick={() => setCalendarMonth(prev => addMonths(prev, -1))}
-          className="rounded-md p-2 text-gray-600 hover:bg-white hover:text-gray-900"
-        >
-          <FiChevronLeft className="h-5 w-5" />
-        </button>
-        <div className="text-sm font-semibold text-gray-900">{formatMonthYear(calendarMonth)}</div>
-        <button
-          type="button"
-          aria-label="Next month"
-          onClick={() => setCalendarMonth(prev => addMonths(prev, 1))}
-          className="rounded-md p-2 text-gray-600 hover:bg-white hover:text-gray-900"
-        >
-          <FiChevronRight className="h-5 w-5" />
-        </button>
-      </div>
+    <CalendarMonthView
+      activeMonth={calendarMonth}
+      onActiveMonthChange={setCalendarMonth}
+      onGridMouseLeave={resetDragState}
+      renderDay={(date) => {
+        const isPreviewEndpoint = isRangeEndpoint(date, previewRange);
+        const isPreviewMiddle = isRangeMiddleDate(date, previewRange);
+        const isSelected = isRangeEndpoint(date, value) || isRangeMiddleDate(date, value);
 
-      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-xs font-medium text-gray-500">
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(dayName => (
-          <div key={dayName}>{dayName}</div>
-        ))}
-      </div>
-      <div
-        className="mt-2 grid grid-cols-7 gap-1"
-        onMouseLeave={() => {
-          setDragAnchorDate(undefined);
-          setHoverDate(undefined);
-          setDidDrag(false);
-        }}
-      >
-        {calendarDates.map((date, index) => (
-          date ? (
-            <button
-              key={date.toISOString()}
-              type="button"
-              aria-label={`Select ${dateToString(date)}`}
-              onMouseDown={() => handleCalendarDateMouseDown(date)}
-              onMouseEnter={() => handleCalendarDateMouseEnter(date)}
-              onMouseUp={() => handleCalendarDateMouseUp(date)}
-              className={`aspect-square rounded-md text-sm font-medium transition-colors ${
-                isRangeEndpoint(date, previewRange)
-                  ? 'bg-blue-100 text-blue-900 ring-1 ring-blue-500'
-                  : isRangeMiddleDate(date, previewRange)
-                    ? 'bg-blue-100 text-blue-900'
-                    : isRangeEndpoint(date, value)
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : isRangeMiddleDate(date, value)
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
-                        : 'bg-white text-gray-800 hover:bg-blue-50'
-              }`}
-            >
-              {date.getUTCDate()}
-            </button>
-          ) : (
-            <div key={`blank-${index}`} aria-hidden="true" />
-          )
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={handleUseSuggestedMonth}
-        className="mt-4 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
-      >
-        Use full {suggestedMonthLabel}
-      </button>
-    </div>
+        return (
+          <CalendarDayButton
+            key={date.toISOString()}
+            date={date}
+            ariaLabel={`Select ${dateToString(date)}`}
+            onMouseDown={() => handleCalendarDateMouseDown(date)}
+            onMouseEnter={() => handleCalendarDateMouseEnter(date)}
+            onMouseUp={() => handleCalendarDateMouseUp(date)}
+            stateClassName={
+              isPreviewEndpoint
+                ? 'bg-indigo-200 font-medium text-indigo-950'
+                : isPreviewMiddle
+                  ? 'bg-indigo-100 text-indigo-900'
+                  : isSelected
+                    ? 'bg-blue-600 font-medium text-white hover:bg-blue-700'
+                    : getCalendarDayCategoryClassName(date)
+            }
+          />
+        );
+      }}
+      footer={(
+        <button
+          type="button"
+          onClick={handleUseSuggestedMonth}
+          className="mt-4 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+        >
+          Use full {suggestedMonthLabel}
+        </button>
+      )}
+    />
   );
 }

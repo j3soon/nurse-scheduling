@@ -64,11 +64,30 @@ describe('DateGroupMemberSelector', () => {
 
     expect(screen.getByText('May 2026')).toBeInTheDocument();
     expect(screen.getByText('Sun')).toBeInTheDocument();
-    expect(screen.getByLabelText('01')).toBeChecked();
+    expect(screen.getByRole('button', { name: '01' })).toHaveAttribute('aria-pressed', 'true');
 
-    await user.click(screen.getByLabelText('02'));
+    await user.click(screen.getByRole('button', { name: '02' }));
 
     expect(onToggle).toHaveBeenCalledWith('02');
+  });
+
+  it('shows normal weekends and Taiwan calendar exceptions without overriding selection', () => {
+    render(
+      <DateGroupMemberSelector
+        dateRange={{
+          startDate: new Date('2025-02-01'),
+          endDate: new Date('2025-02-28'),
+        }}
+        items={mayItems.slice(0, 28)}
+        selectedIds={['09']}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '08' })).toHaveClass('bg-white', 'text-slate-700');
+    expect(screen.getByRole('button', { name: '09' })).toHaveClass('bg-blue-600', 'text-white');
+    expect(screen.getByRole('button', { name: '16' })).toHaveClass('bg-amber-50/70', 'text-amber-700');
+    expect(screen.getByRole('button', { name: '28' })).toHaveClass('bg-amber-50/70', 'font-medium', 'text-amber-800');
   });
 
   it('preserves drag selection across calendar dates', () => {
@@ -86,16 +105,37 @@ describe('DateGroupMemberSelector', () => {
       />,
     );
 
-    const first = screen.getByText('01').closest('label') as HTMLLabelElement;
-    const second = screen.getByText('02').closest('label') as HTMLLabelElement;
+    const first = screen.getByRole('button', { name: '01' });
+    const second = screen.getByRole('button', { name: '02' });
     fireEvent.mouseEnter(first);
     fireEvent.mouseDown(first, { button: 0 });
-    fireEvent.mouseLeave(first);
     fireEvent.mouseEnter(second);
     fireEvent.mouseUp(second, { button: 0 });
 
     expect(onToggle).toHaveBeenNthCalledWith(1, '01');
     expect(onToggle).toHaveBeenNthCalledWith(2, '02');
+  });
+
+  it('ends a mouse gesture when released between calendar dates', () => {
+    const onToggle = vi.fn();
+
+    render(
+      <DateGroupMemberSelector
+        dateRange={{
+          startDate: new Date('2026-05-01'),
+          endDate: new Date('2026-05-31'),
+        }}
+        items={mayItems}
+        selectedIds={[]}
+        onToggle={onToggle}
+      />,
+    );
+
+    fireEvent.mouseDown(screen.getByRole('button', { name: '01' }), { button: 0 });
+    fireEvent.mouseUp(screen.getByTestId('calendar-month-grid'), { button: 0 });
+    fireEvent.mouseEnter(screen.getByRole('button', { name: '02' }));
+
+    expect(onToggle).not.toHaveBeenCalled();
   });
 
   it('preserves selections when switching between calendar and list views', async () => {
@@ -104,33 +144,75 @@ describe('DateGroupMemberSelector', () => {
     render(<StatefulSelector />);
 
     expect(screen.getByRole('button', { name: 'Calendar view' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByLabelText('01')).toBeChecked();
+    expect(screen.getByRole('button', { name: '01' })).toHaveAttribute('aria-pressed', 'true');
 
     await user.click(screen.getByRole('button', { name: 'List view' }));
     expect(screen.getByRole('button', { name: 'List view' })).toHaveAttribute('aria-pressed', 'true');
     await user.click(screen.getByLabelText('02'));
 
     await user.click(screen.getByRole('button', { name: 'Calendar view' }));
-    expect(screen.getByLabelText('01')).toBeChecked();
-    expect(screen.getByLabelText('02')).toBeChecked();
+    expect(screen.getByRole('button', { name: '01' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '02' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('uses the checkbox list for a partial month', () => {
+  it('shows a bounded calendar for a partial month', () => {
     render(
       <DateGroupMemberSelector
         dateRange={{
-          startDate: new Date('2026-05-01'),
+          startDate: new Date('2026-05-05'),
           endDate: new Date('2026-05-30'),
         }}
-        items={mayItems.slice(0, 30)}
+        items={mayItems.slice(4, 30)}
         selectedIds={[]}
         onToggle={vi.fn()}
       />,
     );
 
-    expect(screen.queryByText('May 2026')).not.toBeInTheDocument();
-    expect(screen.getByText('Members')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Calendar view' })).not.toBeInTheDocument();
+    expect(screen.getByText('May 2026')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Unavailable 2026-05-04' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '05' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Unavailable 2026-05-31' })).toBeDisabled();
+  });
+
+  it('navigates between months within a multi-month range', async () => {
+    const user = userEvent.setup();
+    const items = [
+      ...Array.from({ length: 17 }, (_, index) => ({
+        id: `05-${String(index + 15).padStart(2, '0')}`,
+        description: '',
+      })),
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `06-${String(index + 1).padStart(2, '0')}`,
+        description: '',
+      })),
+    ];
+
+    render(
+      <DateGroupMemberSelector
+        dateRange={{
+          startDate: new Date('2026-05-15'),
+          endDate: new Date('2026-06-10'),
+        }}
+        items={items}
+        selectedIds={[]}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('May 2026')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next month' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '05-15' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Next month' }));
+
+    expect(screen.getByText('June 2026')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '06-10' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Unavailable 2026-06-11' })).toBeDisabled();
   });
 
   it('lists non-calendar date IDs separately', () => {

@@ -58,6 +58,13 @@ test('dates page keeps generated date items read-only while group controls remai
 
   await expect(groupsTable.getByText('Special Dates', { exact: true })).toBeVisible();
   await expect(groupsTable.getByRole('button', { name: 'Edit' })).toBeVisible();
+
+  await groupsTable.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByText('May 2026', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Next month' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '01' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Unavailable 2026-05-03' })).toBeDisabled();
 });
 
 test('dates page edits full-month date-group members with a calendar', async ({ page }) => {
@@ -81,12 +88,12 @@ test('dates page edits full-month date-group members with a calendar', async ({ 
 
   await expect(page.getByRole('heading', { name: 'Edit Group' })).toBeVisible();
   await expect(page.getByText('May 2026', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('01')).toBeChecked();
+  await expect(page.getByRole('button', { name: '01' })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'List view' }).click();
   await page.getByLabel('02').click();
   await page.getByRole('button', { name: 'Calendar view' }).click();
-  await expect(page.getByLabel('01')).toBeChecked();
-  await expect(page.getByLabel('02')).toBeChecked();
+  await expect(page.getByRole('button', { name: '01' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: '02' })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Update' }).click();
 
   const specialDatesRow = groupsTable.getByTitle('Special Dates').locator('xpath=ancestor::tr');

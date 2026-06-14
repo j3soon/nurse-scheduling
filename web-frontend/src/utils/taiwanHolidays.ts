@@ -158,6 +158,15 @@ function isTaiwanFreeday(date: Date): boolean {
   return date.getUTCDay() === 0 || date.getUTCDay() === 6;
 }
 
+export function getTaiwanDayType(date: Date): 'WORKDAY' | 'FREEDAY' | undefined {
+  const dateKey = formatDate(date);
+  if (dateKey < TAIWAN_HOLIDAY_SUPPORTED_START || dateKey > TAIWAN_HOLIDAY_SUPPORTED_END) {
+    return undefined;
+  }
+
+  return isTaiwanFreeday(date) ? TAIWAN_FREEDAY_GROUP_ID : TAIWAN_WORKDAY_GROUP_ID;
+}
+
 function includesDate(dateRange: DateRange, dateKey: string): boolean {
   if (!dateRange.startDate || !dateRange.endDate) {
     return false;

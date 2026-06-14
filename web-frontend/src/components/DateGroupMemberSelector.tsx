@@ -21,27 +21,23 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  CalendarDayButton,
+  CalendarMonthView,
+  getCalendarDayCategoryClassName,
+  useCalendarMonthNavigation,
+  useMouseDragLifecycle,
+} from '@/components/CalendarMonthView';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DateRange, Item } from '@/types/scheduling';
+import { getDateIdForRange } from '@/utils/calendar';
 
 interface DateGroupMemberSelectorProps {
   dateRange: DateRange;
   items: Item[];
   selectedIds: string[];
   onToggle: (id: string) => void;
-}
-
-function isFullCalendarMonth(dateRange: DateRange): boolean {
-  const { startDate, endDate } = dateRange;
-  if (!startDate || !endDate || startDate.getUTCDate() !== 1) {
-    return false;
-  }
-
-  const lastDay = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 1, 0));
-  return endDate.getUTCFullYear() === lastDay.getUTCFullYear()
-    && endDate.getUTCMonth() === lastDay.getUTCMonth()
-    && endDate.getUTCDate() === lastDay.getUTCDate();
 }
 
 export function DateGroupMemberSelector({
@@ -51,8 +47,50 @@ export function DateGroupMemberSelector({
   onToggle,
 }: DateGroupMemberSelectorProps) {
   const [view, setView] = useState<'calendar' | 'list'>('calendar');
+  const {
+    activeMonth,
+    setActiveMonth,
+    isPreviousMonthDisabled,
+    isNextMonthDisabled,
+  } = useCalendarMonthNavigation({
+    initialMonth: dateRange.startDate ?? new Date(),
+    minimumMonth: dateRange.startDate,
+    maximumMonth: dateRange.endDate,
+  });
+  const mouseDownIdRef = useRef('');
+  const lastEnteredIdRef = useRef('');
+  const isDraggingRef = useRef(false);
 
-  if (!isFullCalendarMonth(dateRange) || !dateRange.startDate) {
+  const resetDragState = useCallback(() => {
+    mouseDownIdRef.current = '';
+    lastEnteredIdRef.current = '';
+    isDraggingRef.current = false;
+    document.body.style.removeProperty('user-select');
+  }, []);
+  const { disableTextSelection } = useMouseDragLifecycle(resetDragState);
+
+  const generatedIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!dateRange.startDate || !dateRange.endDate) {
+      return ids;
+    }
+
+    const endDateKey = dateRange.endDate.toISOString().split('T')[0];
+    for (
+      let date = new Date(Date.UTC(
+        dateRange.startDate.getUTCFullYear(),
+        dateRange.startDate.getUTCMonth(),
+        dateRange.startDate.getUTCDate(),
+      ));
+      date.toISOString().split('T')[0] <= endDateKey;
+      date.setUTCDate(date.getUTCDate() + 1)
+    ) {
+      ids.add(getDateIdForRange(date, dateRange));
+    }
+    return ids;
+  }, [dateRange]);
+
+  if (!dateRange.startDate || !dateRange.endDate) {
     return (
       <CheckboxList
         items={items}
@@ -64,18 +102,47 @@ export function DateGroupMemberSelector({
   }
 
   const itemById = new Map(items.map(item => [item.id, item]));
-  const monthLength = dateRange.endDate!.getUTCDate();
-  const calendarItems = Array.from({ length: monthLength }, (_, index) => {
-    const id = String(index + 1).padStart(2, '0');
-    return itemById.get(id);
-  }).filter((item): item is Item => Boolean(item));
-  const calendarIds = new Set(calendarItems.map(item => item.id));
-  const otherItems = items.filter(item => !calendarIds.has(item.id));
-  const monthLabel = dateRange.startDate.toLocaleDateString('en-US', {
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
+  const startDateKey = dateRange.startDate.toISOString().split('T')[0];
+  const endDateKey = dateRange.endDate.toISOString().split('T')[0];
+  const generatedItems = items.filter(item => generatedIds.has(item.id));
+  const otherItems = items.filter(item => !generatedIds.has(item.id));
+
+  const getSelectableId = (date: Date): string | undefined => {
+    const dateKey = date.toISOString().split('T')[0];
+    if (dateKey < startDateKey || dateKey > endDateKey) {
+      return undefined;
+    }
+
+    const id = getDateIdForRange(date, dateRange);
+    return itemById.has(id) ? id : undefined;
+  };
+
+  const handleDateMouseDown = (id: string) => {
+    mouseDownIdRef.current = id;
+    lastEnteredIdRef.current = id;
+    isDraggingRef.current = false;
+    disableTextSelection();
+  };
+
+  const handleDateMouseEnter = (id: string) => {
+    if (!mouseDownIdRef.current || id === lastEnteredIdRef.current) {
+      return;
+    }
+
+    if (!isDraggingRef.current) {
+      isDraggingRef.current = true;
+      onToggle(mouseDownIdRef.current);
+    }
+    onToggle(id);
+    lastEnteredIdRef.current = id;
+  };
+
+  const handleDateMouseUp = (id: string) => {
+    if (!isDraggingRef.current) {
+      onToggle(id);
+    }
+    resetDragState();
+  };
 
   return (
     <div className="space-y-3">
@@ -100,34 +167,40 @@ export function DateGroupMemberSelector({
         </div>
       </div>
       {view === 'calendar' ? (
-        <div className="max-w-md rounded-md border border-gray-200 bg-gray-50 p-3">
-          <div className="text-center text-sm font-semibold text-gray-900">{monthLabel}</div>
-          <div className="mt-3 grid grid-cols-7 gap-1 text-center text-xs font-medium text-gray-500">
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(dayName => (
-              <div key={dayName}>{dayName}</div>
-            ))}
-          </div>
-          <CheckboxList
-            items={calendarItems}
-            selectedIds={selectedIds}
-            onToggle={onToggle}
-            label=""
-            itemsClassName="mt-2 grid grid-cols-7 gap-1"
-            inputClassName="sr-only"
-            textClassName="text-sm text-inherit"
-            getItemClassName={(_item, isSelected) => `aspect-square cursor-pointer justify-center rounded-md border text-sm ${
-              isSelected
-                ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-gray-200 bg-white hover:bg-blue-50'
-            }`}
-            getItemStyle={(item, index) => index === 0
-              ? { gridColumnStart: (dateRange.startDate!.getUTCDay() + Number(item.id) - 1) % 7 + 1 }
-              : undefined}
-          />
-        </div>
+        <CalendarMonthView
+          activeMonth={activeMonth}
+          onActiveMonthChange={setActiveMonth}
+          isPreviousMonthDisabled={isPreviousMonthDisabled}
+          isNextMonthDisabled={isNextMonthDisabled}
+          onGridMouseLeave={resetDragState}
+          renderDay={(date) => {
+            const id = getSelectableId(date);
+            const isSelected = Boolean(id && selectedIds.includes(id));
+
+            return (
+              <CalendarDayButton
+                key={date.toISOString()}
+                date={date}
+                disabled={!id}
+                ariaLabel={id ?? `Unavailable ${date.toISOString().split('T')[0]}`}
+                ariaPressed={id ? isSelected : undefined}
+                onMouseDown={() => id && handleDateMouseDown(id)}
+                onMouseEnter={() => id && handleDateMouseEnter(id)}
+                onMouseUp={() => id && handleDateMouseUp(id)}
+                stateClassName={
+                  !id
+                    ? 'cursor-not-allowed bg-transparent text-gray-300'
+                    : isSelected
+                      ? 'bg-blue-600 font-medium text-white hover:bg-blue-700'
+                      : getCalendarDayCategoryClassName(date)
+                }
+              />
+            );
+          }}
+        />
       ) : (
         <CheckboxList
-          items={calendarItems}
+          items={generatedItems}
           selectedIds={selectedIds}
           onToggle={onToggle}
           label=""

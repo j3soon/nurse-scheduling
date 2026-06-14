@@ -176,9 +176,8 @@ describe('DatePage', () => {
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-01' } });
     fireEvent.change(screen.getByLabelText('End Date *'), { target: { value: '2026-05-31' } });
 
-    const holidayDetails = screen.getByText(/holiday change.*Show details/i);
+    const holidayDetails = screen.getByText(/holiday change/i);
     expect(holidayDetails).toBeInTheDocument();
-    await user.click(holidayDetails);
     expect(screen.getByText(/2026-05-01 \(Fri\)/)).toBeInTheDocument();
     expect(screen.getByText('FREEDAY')).toBeInTheDocument();
 
@@ -208,6 +207,7 @@ describe('DatePage', () => {
     expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-10');
     expect(screen.getByText('6 days selected')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Select 2026-01-07' })).toHaveClass('bg-blue-600');
+    expect(screen.getByRole('button', { name: 'Select 2026-01-05' })).not.toHaveClass('ring-1', 'ring-blue-500');
   });
 
   it('updates the start and end dates when dragging backward across the calendar', async () => {
@@ -223,6 +223,20 @@ describe('DatePage', () => {
 
     expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-05');
     expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-10');
+  });
+
+  it('ends date-range dragging when released between calendar dates', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Select 2026-01-05' }), { button: 0 });
+    fireEvent.mouseUp(screen.getByTestId('calendar-month-grid'), { button: 0 });
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Select 2026-01-10' }));
+
+    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-01');
+    expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-31');
   });
 
   it('previews a second-click range without committing it', async () => {
@@ -244,7 +258,7 @@ describe('DatePage', () => {
     const previewEnd = screen.getByRole('button', { name: 'Select 2026-01-10' });
     fireEvent.mouseEnter(previewEnd);
 
-    expect(previewEnd).toHaveClass('bg-blue-100');
+    expect(previewEnd).toHaveClass('bg-indigo-200');
     expect(startDateInput).toHaveValue('2026-01-05');
     expect(endDateInput).toHaveValue('2026-01-05');
     expect(startDateInput).not.toHaveClass('border-blue-500');

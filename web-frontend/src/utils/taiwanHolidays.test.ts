@@ -22,6 +22,7 @@
 import {
   buildTaiwanHolidayGroups,
   getTaiwanHolidayEntriesInRange,
+  getTaiwanDayType,
   includesUnimportedTaiwanLaborDay,
   isTaiwanHolidayRangeSupported,
   TAIWAN_FREEDAY_GROUP_ID,
@@ -124,6 +125,13 @@ describe('taiwanHolidays', () => {
         members: ['01', '02'],
       },
     ]);
+  });
+
+  it('classifies supported dates directly from the Taiwan holiday calendar', () => {
+    expect(getTaiwanDayType(new Date('2025-02-08'))).toBe('WORKDAY');
+    expect(getTaiwanDayType(new Date('2025-02-09'))).toBe('FREEDAY');
+    expect(getTaiwanDayType(new Date('2025-02-10'))).toBe('WORKDAY');
+    expect(getTaiwanDayType(new Date('2027-02-07'))).toBeUndefined();
   });
 
   it('returns no Taiwan holiday groups for unsupported ranges', () => {
