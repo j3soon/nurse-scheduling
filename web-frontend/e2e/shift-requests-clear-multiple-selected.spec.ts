@@ -27,7 +27,7 @@ test('clear mode remains deterministic after multiple shift types were previousl
    * Steps:
    * 1. Confirm a seeded request cell starts populated.
    * 2. Enter quick-add, select multiple shift types, then unselect them all.
-   * 3. Click the populated cell in resulting clear mode.
+   * 3. Click the populated cell in clear mode.
    * 4. Confirm the request is cleared.
    */
   await disableModalDialogs(page);

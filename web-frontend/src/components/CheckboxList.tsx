@@ -26,7 +26,7 @@
 // - Re-entering a checkbox during the same drag gesture toggles it again, so one checkbox may be toggled multiple times.
 // - Mouse up anywhere, including outside this component, ends the current gesture via the global mouseup listener.
 // - Native checkbox onChange is intentionally suppressed so all toggles follow the custom mouse gesture rules.
-import { useCallback, useEffect, useRef } from 'react';
+import { CSSProperties, useCallback, useEffect, useRef } from 'react';
 
 interface CheckboxItem {
   id: string;
@@ -38,6 +38,11 @@ interface CheckboxListProps {
   selectedIds: string[];
   onToggle: (id: string) => void;
   label: string;
+  itemsClassName?: string;
+  inputClassName?: string;
+  textClassName?: string;
+  getItemClassName?: (item: CheckboxItem, isSelected: boolean) => string;
+  getItemStyle?: (item: CheckboxItem, index: number) => CSSProperties | undefined;
 }
 
 export function CheckboxList({
@@ -45,6 +50,11 @@ export function CheckboxList({
   selectedIds,
   onToggle,
   label,
+  itemsClassName = 'flex flex-wrap',
+  inputClassName = 'form-checkbox h-4 w-4 text-blue-600',
+  textClassName = 'ml-2 text-sm text-gray-700',
+  getItemClassName,
+  getItemStyle,
 }: CheckboxListProps) {
   const mouseDownCheckboxIdRef = useRef('');
   const mouseEnteredCheckboxIdRef = useRef('');
@@ -125,11 +135,12 @@ export function CheckboxList({
         <h3 className="text-sm font-medium text-gray-700">{label}</h3>
       )}
       {/* Horizontal padding is used instead of margin to avoid gaps between checkboxes that could cause text selection when dragging */}
-      <div className="flex flex-wrap">
-        {items.map(item => (
+      <div className={itemsClassName}>
+        {items.map((item, index) => (
           <label
             key={item.id}
-            className="inline-flex items-center px-1 py-1"
+            className={`inline-flex items-center px-1 py-1 ${getItemClassName?.(item, selectedIds.includes(item.id)) ?? ''}`}
+            style={getItemStyle?.(item, index)}
             title={item.description}
             onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
             onMouseDown={(e) => handleCheckboxMouseDown(item.id, e)}
@@ -140,9 +151,9 @@ export function CheckboxList({
               type="checkbox"
               checked={selectedIds.includes(item.id)}
               onChange={() => {}} // Keep native checkbox changes disabled so gesture logic stays fully in mouse handlers.
-              className="form-checkbox h-4 w-4 text-blue-600"
+              className={inputClassName}
             />
-            <span className="ml-2 text-sm text-gray-700">{item.id}</span>
+            <span className={textClassName}>{item.id}</span>
           </label>
         ))}
       </div>

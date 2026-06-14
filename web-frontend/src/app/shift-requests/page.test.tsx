@@ -298,7 +298,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     expect(reorderItems).not.toHaveBeenCalled();
   });
 
-  it('keeps shift-requests upload disabled when weight is zero', async () => {
+  it('allows shift-requests upload when weight is zero', async () => {
     const user = userEvent.setup();
     fileContentsByName.set('shift-requests.csv', 'Person 1,D\n');
 
@@ -309,9 +309,17 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
       screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)'),
       { target: { value: '0' } },
     );
-    await user.click(screen.getByText('D'));
-    expect(screen.getByRole('button', { name: /upload shift requests/i })).toBeDisabled();
-    expect(updatePreferencesByType).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    const uploadButton = screen.getByRole('button', { name: /upload shift requests/i });
+    expect(uploadButton).toBeEnabled();
+
+    fireEvent.click(uploadButton);
+
+    expect(updatePreferencesByType).toHaveBeenCalledWith(
+      'shift request',
+      [],
+      undefined,
+    );
   });
 
   it('updates shift-request upload availability as the quick-add weight moves between invalid, valid, and zero values', async () => {
@@ -329,15 +337,15 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     fireEvent.change(weightInput, { target: { value: '2' } });
     expect(uploadButton).toBeEnabled();
 
-    await user.click(screen.getByText('D'));
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
     fireEvent.change(weightInput, { target: { value: '0' } });
-    expect(uploadButton).toBeDisabled();
+    expect(uploadButton).toBeEnabled();
 
     fireEvent.change(weightInput, { target: { value: '-Infinity' } });
     expect(uploadButton).toBeEnabled();
   });
 
-  it('keeps clear-mode cell edits usable even when the weight is invalid or zero', async () => {
+  it('shows quick-add no-op warnings while keeping implicit clear behavior', async () => {
     const user = userEvent.setup();
     const existingPreferences = [
       {
@@ -380,8 +388,16 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const weightInput = screen.getByPlaceholderText('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)');
     const requestCell = container.querySelector('td[title="Click or drag to update preferences for Person 1 on date 01"]') as HTMLTableCellElement;
 
+    expect(screen.getByText('Drag over cells to clear existing requests or history. Empty cells will not change.')).toBeInTheDocument();
     fireEvent.change(weightInput, { target: { value: '0' } });
-    expect(uploadButton).toBeDisabled();
+    expect(uploadButton).toBeEnabled();
+    fireEvent.mouseDown(requestCell, { button: 0 });
+    fireEvent.mouseUp(requestCell, { button: 0 });
+    expect(updatePreferencesByType).toHaveBeenCalledWith('shift request', [], { replaceLatestHistoryEntry: false });
+
+    updatePreferencesByType.mockClear();
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    expect(screen.getByText('Drag over cells to remove D. Empty cells without it will not change.')).toBeInTheDocument();
     fireEvent.mouseDown(requestCell, { button: 0 });
     fireEvent.mouseUp(requestCell, { button: 0 });
     expect(updatePreferencesByType).toHaveBeenCalledWith('shift request', [], { replaceLatestHistoryEntry: false });
@@ -389,6 +405,11 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     updatePreferencesByType.mockClear();
     fireEvent.change(weightInput, { target: { value: 'not-a-number' } });
     expect(uploadButton).toBeDisabled();
+    fireEvent.mouseDown(requestCell, { button: 0 });
+    fireEvent.mouseUp(requestCell, { button: 0 });
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('checkbox', { name: 'D' }));
     fireEvent.mouseDown(requestCell, { button: 0 });
     fireEvent.mouseUp(requestCell, { button: 0 });
     expect(updatePreferencesByType).toHaveBeenCalledWith('shift request', [], { replaceLatestHistoryEntry: false });

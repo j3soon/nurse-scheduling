@@ -20,6 +20,7 @@
 // This test is mostly AI generated.
 
 import {
+  areBuildOriginsEquivalent,
   compareVersionsDescending,
   fetchLatestTag,
   fetchReleaseBranches,
@@ -30,6 +31,18 @@ import {
 describe('version utils', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('treats localhost origins on any port as the same build', () => {
+    expect(areBuildOriginsEquivalent('http://localhost:3000', 'http://localhost:3001')).toBe(true);
+    expect(areBuildOriginsEquivalent('http://localhost:3000/', 'https://localhost:4443')).toBe(true);
+    expect(areBuildOriginsEquivalent('http://localhost:3000', 'http://127.0.0.1:3000')).toBe(false);
+  });
+
+  it('compares non-localhost build origins exactly', () => {
+    expect(areBuildOriginsEquivalent('https://nursescheduling.org/', 'https://nursescheduling.org')).toBe(true);
+    expect(areBuildOriginsEquivalent('https://dev.nursescheduling.org', 'https://nursescheduling.org')).toBe(false);
+    expect(areBuildOriginsEquivalent('not-a-url/', 'not-a-url')).toBe(true);
   });
 
   it('extracts major/minor from version strings', () => {

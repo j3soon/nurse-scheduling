@@ -34,6 +34,23 @@ export type VersionParts = {
   dirty: boolean;
 };
 
+export function areBuildOriginsEquivalent(firstUrl: string, secondUrl: string): boolean {
+  try {
+    const firstOrigin = new URL(firstUrl).origin;
+    const secondOrigin = new URL(secondUrl).origin;
+    const firstHostname = new URL(firstOrigin).hostname;
+    const secondHostname = new URL(secondOrigin).hostname;
+
+    if (firstHostname === 'localhost' && secondHostname === 'localhost') {
+      return true;
+    }
+
+    return firstOrigin === secondOrigin;
+  } catch {
+    return firstUrl.replace(/\/$/, '') === secondUrl.replace(/\/$/, '');
+  }
+}
+
 const HASH_ONLY_PATTERN = /^[0-9a-fA-F]{7,}$/;
 const TAGGED_COMMIT_PATTERN = /^(v\d+\.\d+\.\d+)-(\d+)-g([0-9a-fA-F]{7,})$/;
 const TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;

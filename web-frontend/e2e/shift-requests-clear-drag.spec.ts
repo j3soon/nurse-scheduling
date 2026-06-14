@@ -26,7 +26,7 @@ test('quick-add clear-mode drag clears existing requests across multiple cells',
   /*
    * Steps:
    * 1. Confirm two seeded request cells are visible.
-   * 2. Enter quick-add without selecting any shift type, which is clear mode.
+   * 2. Enter quick-add clear mode by leaving all shift types unselected.
    * 3. Drag across both cells.
    * 4. Confirm both cells and the grouped request summary are cleared.
    */

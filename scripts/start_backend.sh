@@ -27,4 +27,4 @@ fi
 # cd "$BACKEND_DIR"
 # exec fastapi dev serve.py
 cd "$CORE_DIR"
-exec uvicorn nurse_scheduling.serve:app --reload --no-access-log
+exec uvicorn nurse_scheduling.serve:app --reload --no-access-log "$@"

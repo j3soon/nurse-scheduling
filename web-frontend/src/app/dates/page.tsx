@@ -23,6 +23,8 @@
 import { useMemo, useState } from 'react';
 import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
+import DateRangeCalendarPicker from '@/components/DateRangeCalendarPicker';
+import { DateGroupMemberSelector } from '@/components/DateGroupMemberSelector';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import ToggleButton from '@/components/ToggleButton';
 import { Mode } from '@/constants/modes';
@@ -34,6 +36,7 @@ import {
   isTaiwanHolidayRangeSupported,
 } from '@/utils/taiwanHolidays';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
+import { isFullCalendarMonth } from '@/utils/calendar';
 
 export default function DatePage() {
   const {
@@ -58,6 +61,7 @@ export default function DatePage() {
     endDate: undefined,
   });
   const [shouldImportTaiwanHolidays, setShouldImportTaiwanHolidays] = useState(true);
+  const [activeCalendarEndpoint, setActiveCalendarEndpoint] = useState<'start' | 'end'>('start');
   // Error messages for start date and end date
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   // Helper functions to convert between Date and string for form inputs
@@ -82,29 +86,13 @@ export default function DatePage() {
   );
   useTabSwitchWarning(mode === Mode.DATE_RANGE_EDITING);
 
-  // Helper function to check if date range represents a full month
-  const isFullMonth = (startDate?: Date, endDate?: Date): boolean => {
-    if (!startDate || !endDate) return false;
-
-    // Check if start date is the first day of the month
-    const isFirstDay = startDate.getUTCDate() === 1;
-
-    // Check if end date is the last day of the same month/year
-    const lastDayOfMonth = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 1, 0));
-    const isLastDay = endDate.getUTCDate() === lastDayOfMonth.getUTCDate() &&
-                      endDate.getUTCMonth() === startDate.getUTCMonth() &&
-                      endDate.getUTCFullYear() === startDate.getUTCFullYear();
-
-    return isFirstDay && isLastDay;
-  };
-
   const warnings = useMemo<{[key: string]: string}>(() => {
     if (mode !== Mode.DATE_RANGE_EDITING) {
       return {};
     }
 
     const newWarnings: {[key: string]: string} = {};
-    if (!isFullMonth(draft.startDate, draft.endDate)) {
+    if (!isFullCalendarMonth(draft)) {
       newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
     }
     if (shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported && includesUnimportedTaiwanLaborDay(draft)) {
@@ -121,6 +109,9 @@ export default function DatePage() {
     ),
     [draft]
   );
+  const selectedDayCount = draft.startDate && draft.endDate
+    ? Math.ceil((draft.endDate.getTime() - draft.startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    : 0;
 
   // Instructions for the help component
   const instructions = [
@@ -180,6 +171,7 @@ export default function DatePage() {
         });
       }
       setShouldImportTaiwanHolidays(true);
+      setActiveCalendarEndpoint('start');
       setErrors({});
     }
   };
@@ -194,6 +186,7 @@ export default function DatePage() {
       });
     }
     setShouldImportTaiwanHolidays(true);
+    setActiveCalendarEndpoint('start');
     setErrors({});
   };
 
@@ -245,122 +238,161 @@ export default function DatePage() {
       <h3 className="text-lg font-semibold mb-4 text-gray-800">
         Set Date Range
       </h3>
-      <div className="space-y-4">
-        {/* Start Date and End Date */}
-        <div className="flex gap-4">
-          <div className="flex-1">
-            <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
-              Start Date *
-            </label>
-            <input
-              type="date"
-              id="startDate"
-              value={dateToString(draft.startDate)}
-              onChange={(e) => {
-                setErrors(prev => ({ ...prev, startDate: '' }));
-                setDraft(prev => ({ ...prev, startDate: stringToDate(e.target.value) }));
-              }}
-              className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                errors.startDate ? 'border-red-500' : 'border-gray-300'
-              }`}
-            />
-            {errors.startDate && (
-              <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
-                <FiAlertCircle className="h-4 w-4" />
-                {errors.startDate}
-              </p>
-            )}
-          </div>
-
-          <div className="flex-1">
-            <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-2">
-              End Date *
-            </label>
-            <input
-              type="date"
-              id="endDate"
-              value={dateToString(draft.endDate)}
-              onChange={(e) => {
-                setErrors(prev => ({ ...prev, endDate: '' }));
-                setDraft(prev => ({ ...prev, endDate: stringToDate(e.target.value) }));
-              }}
-              className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                errors.endDate ? 'border-red-500' : 'border-gray-300'
-              }`}
-            />
-            {errors.endDate && (
-              <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
-                <FiAlertCircle className="h-4 w-4" />
-                {errors.endDate}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Warning message for non-full month selection */}
-        {Object.entries(warnings).map(([warningKey, warningMessage]) => (
-          <div key={warningKey} className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-            <p className="text-sm text-yellow-800 flex items-center gap-2">
-              <FiAlertCircle className="h-4 w-4 text-yellow-600" />
-              <span className="font-medium">Warning:</span>
-              {warningMessage}
-            </p>
-          </div>
-        ))}
-
-        <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              checked={shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported}
-              disabled={!isTaiwanHolidayImportSupported}
-              onChange={(e) => setShouldImportTaiwanHolidays(e.target.checked)}
-              className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-            <div>
-              <div className="text-sm font-medium text-gray-900">
-                Import Taiwan holidays into date groups
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(22rem,0.95fr)]">
+        <div className="space-y-5">
+          <section>
+            <h4 className="mb-3 text-sm font-semibold text-gray-900">Date range</h4>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
+                  Start Date *
+                </label>
+                <input
+                  type="date"
+                  id="startDate"
+                  value={dateToString(draft.startDate)}
+                  onChange={(e) => {
+                    setErrors(prev => ({ ...prev, startDate: '' }));
+                    setDraft(prev => ({ ...prev, startDate: stringToDate(e.target.value) }));
+                  }}
+                  onFocus={() => setActiveCalendarEndpoint('start')}
+                  className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                    errors.startDate
+                      ? 'border-red-500'
+                      : activeCalendarEndpoint === 'start'
+                        ? 'border-blue-500 ring-1 ring-blue-500'
+                        : 'border-gray-300'
+                  }`}
+                />
+                {errors.startDate && (
+                  <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4 shrink-0" />
+                    {errors.startDate}
+                  </p>
+                )}
               </div>
-              <p className="mt-1 text-sm text-gray-600">
-                Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.
-              </p>
-              {!isTaiwanHolidayImportSupported && (
-                <p className="mt-2 text-sm text-amber-700">
-                  Available only when the selected date range stays within {taiwanHolidaySupportLabel}.
-                </p>
-              )}
-              {isTaiwanHolidayImportSupported && includedTaiwanHolidays.length > 0 && (
-                <div className="mt-3 rounded-md border border-gray-200 bg-white p-3">
-                  <div className="text-sm font-medium text-gray-900">
-                    Included holiday entries
-                  </div>
-                  <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
-                    {includedTaiwanHolidays.map((entry) => (
-                      <div key={entry.date} className="rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-mono text-gray-700">{entry.date} ({formatHolidayWeekday(entry.date)})</span>
-                          {shouldShowHolidayTypeBadge(entry.date, entry.isFreeday) && (
-                            <span className={`rounded px-2 py-0.5 text-xs font-medium ${
-                              entry.isFreeday
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-blue-100 text-blue-800'
-                            }`}>
-                              {entry.isFreeday ? 'FREEDAY' : 'WORKDAY'}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1 text-gray-600">{entry.reason}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+
+              <div>
+                <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-2">
+                  End Date *
+                </label>
+                <input
+                  type="date"
+                  id="endDate"
+                  value={dateToString(draft.endDate)}
+                  onChange={(e) => {
+                    setErrors(prev => ({ ...prev, endDate: '' }));
+                    setDraft(prev => ({ ...prev, endDate: stringToDate(e.target.value) }));
+                  }}
+                  onFocus={() => setActiveCalendarEndpoint('end')}
+                  className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                    errors.endDate
+                      ? 'border-red-500'
+                      : activeCalendarEndpoint === 'end'
+                        ? 'border-blue-500 ring-1 ring-blue-500'
+                        : 'border-gray-300'
+                  }`}
+                />
+                {errors.endDate && (
+                  <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                    <FiAlertCircle className="h-4 w-4 shrink-0" />
+                    {errors.endDate}
+                  </p>
+                )}
+              </div>
             </div>
-          </label>
+            {draft.startDate && draft.endDate && (
+              <p className="mt-3 text-sm text-gray-600" aria-live="polite">
+                {selectedDayCount} day{selectedDayCount === 1 ? '' : 's'} selected
+              </p>
+            )}
+          </section>
+
+          {Object.keys(warnings).length > 0 && (
+            <section className="rounded-md border border-yellow-200 bg-yellow-50 p-4" aria-labelledby="date-range-review">
+              <h4 id="date-range-review" className="text-sm font-semibold text-yellow-900">
+                Review
+              </h4>
+              <div className="mt-2 space-y-2">
+                {Object.entries(warnings).map(([warningKey, warningMessage]) => (
+                  <p key={warningKey} className="flex items-start gap-2 text-sm text-yellow-800">
+                    <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-600" />
+                    <span>{warningMessage}</span>
+                  </p>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="rounded-md border border-gray-200 bg-gray-50 p-4" aria-labelledby="holiday-import-heading">
+            <div className="flex items-start gap-3">
+              <input
+                id="importTaiwanHolidays"
+                type="checkbox"
+                checked={shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported}
+                disabled={!isTaiwanHolidayImportSupported}
+                onChange={(e) => setShouldImportTaiwanHolidays(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <div className="min-w-0 flex-1">
+                <label id="holiday-import-heading" htmlFor="importTaiwanHolidays" className="text-sm font-medium text-gray-900">
+                  Import Taiwan holidays into date groups
+                </label>
+                <p className="mt-1 text-sm text-gray-600">
+                  Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.
+                </p>
+                {!isTaiwanHolidayImportSupported && (
+                  <p className="mt-2 text-sm text-amber-700">
+                    Available only when the selected date range stays within {taiwanHolidaySupportLabel}.
+                  </p>
+                )}
+                {isTaiwanHolidayImportSupported && includedTaiwanHolidays.length === 0 && (
+                  <p className="mt-2 text-sm text-gray-500">No holiday changes in the selected range.</p>
+                )}
+                {isTaiwanHolidayImportSupported && includedTaiwanHolidays.length > 0 && (
+                  <details open className="mt-3 rounded-md border border-gray-200 bg-white">
+                    <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
+                      {includedTaiwanHolidays.length} holiday {includedTaiwanHolidays.length === 1 ? 'change' : 'changes'}
+                    </summary>
+                    <div className="max-h-56 space-y-2 overflow-y-auto border-t border-gray-200 p-3">
+                      {includedTaiwanHolidays.map((entry) => (
+                        <div key={entry.date} className="rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-mono text-gray-700">{entry.date} ({formatHolidayWeekday(entry.date)})</span>
+                            {shouldShowHolidayTypeBadge(entry.date, entry.isFreeday) && (
+                              <span className={`rounded px-2 py-0.5 text-xs font-medium ${
+                                entry.isFreeday
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {entry.isFreeday ? 'FREEDAY' : 'WORKDAY'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 text-gray-600">{entry.reason}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
+
+        <section className="w-full lg:justify-self-center" aria-label="Calendar date range picker">
+          <DateRangeCalendarPicker
+            value={draft}
+            onChange={(value) => {
+              setDraft(value);
+              setErrors(prev => ({ ...prev, startDate: '', endDate: '' }));
+            }}
+            onActiveEndpointChange={setActiveCalendarEndpoint}
+          />
+        </section>
 
         {/* Action Buttons */}
-        <div className="flex justify-end gap-3 pt-4">
+        <div className="flex justify-end gap-3 border-t border-gray-200 pt-4 lg:col-span-2">
           <button
             onClick={handleCancel}
             className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
@@ -397,6 +429,14 @@ export default function DatePage() {
       reorderItems={reorderItems}
       reorderGroups={reorderGroups}
       filterItemGroups={x => x}
+      renderGroupMemberSelector={({ items, selectedIds, onToggle }) => (
+        <DateGroupMemberSelector
+          dateRange={dateData.range}
+          items={items}
+          selectedIds={selectedIds}
+          onToggle={onToggle}
+        />
+      )}
       extraButtons={
         <ToggleButton
           label="Set Date Range"

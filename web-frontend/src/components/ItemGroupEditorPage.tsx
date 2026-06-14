@@ -74,6 +74,11 @@ interface ItemGroupEditorPageProps {
   reorderItems: (dataType: DataType, data: ItemGroupEditorPageData, reorderedItems: Item[]) => void;
   reorderGroups: (dataType: DataType, data: ItemGroupEditorPageData, newGroups: Group[]) => void;
   filterItemGroups: (items: Item[] | Group[]) => Item[] | Group[];
+  renderGroupMemberSelector?: (props: {
+    items: Item[];
+    selectedIds: string[];
+    onToggle: (id: string) => void;
+  }) => React.ReactNode;
 }
 
 export default function ItemGroupEditorPage({
@@ -98,6 +103,7 @@ export default function ItemGroupEditorPage({
   reorderItems,
   reorderGroups,
   filterItemGroups,
+  renderGroupMemberSelector,
 }: ItemGroupEditorPageProps) {
 
   const { itemLabel, itemLabelPlural } = getLabels(dataType);
@@ -550,8 +556,10 @@ export default function ItemGroupEditorPage({
           items={items}
           groups={groups}
           itemLabel={itemLabel}
+          itemLabelPlural={itemLabelPlural}
           error={error}
           filterItemGroups={filterItemGroups}
+          renderGroupMemberSelector={renderGroupMemberSelector}
           onIdChange={handleDraftIdChange}
           onDescriptionChange={handleDraftDescriptionChange}
           onMemberToggle={handleMemberToggle}

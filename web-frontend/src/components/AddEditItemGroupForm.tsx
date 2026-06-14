@@ -37,8 +37,14 @@ interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
   items: T[];
   groups: G[];
   itemLabel: string;
+  itemLabelPlural: string;
   error: string;
   filterItemGroups: (items: T[] | G[]) => T[] | G[];
+  renderGroupMemberSelector?: (props: {
+    items: T[];
+    selectedIds: string[];
+    onToggle: (id: string) => void;
+  }) => React.ReactNode;
   onIdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDescriptionChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onMemberToggle: (id: string) => void;
@@ -54,8 +60,10 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   items,
   groups,
   itemLabel,
+  itemLabelPlural,
   error,
   filterItemGroups,
+  renderGroupMemberSelector,
   onIdChange,
   onDescriptionChange,
   onMemberToggle,
@@ -67,6 +75,42 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   const isItem = draft.isItem;
   const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : "Group"}`;
   const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : "group"} ID`;
+  const filteredItems = filterItemGroups(items) as T[];
+  const filteredGroups = filterItemGroups(groups) as G[];
+  const memberSelector = filteredItems.length === 0 ? (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium text-gray-700">Members</h3>
+      <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
+        No {itemLabelPlural.toLowerCase()} available. Please set up {itemLabelPlural.toLowerCase()} first.
+      </div>
+    </div>
+  ) : renderGroupMemberSelector ? renderGroupMemberSelector({
+    items: filteredItems,
+    selectedIds: draft.members,
+    onToggle: onMemberToggle,
+  }) : (
+    <CheckboxList
+      items={filteredItems}
+      selectedIds={draft.members}
+      onToggle={onMemberToggle}
+      label="Members"
+    />
+  );
+  const groupSelector = filteredGroups.length === 0 ? (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium text-gray-700">Groups</h3>
+      <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
+        No groups available.
+      </div>
+    </div>
+  ) : (
+    <CheckboxList
+      items={filteredGroups}
+      selectedIds={draft.groups}
+      onToggle={onMemberToggle}
+      label="Groups"
+    />
+  );
 
   return (
     <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
@@ -86,12 +130,7 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           onDelete={mode === Mode.EDITING ? onDelete : undefined}
           actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
         >
-          <CheckboxList
-            items={draft.isItem ? filterItemGroups(groups) as G[] : filterItemGroups(items) as T[]}
-            selectedIds={draft.isItem ? draft.groups : draft.members}
-            onToggle={onMemberToggle}
-            label={draft.isItem ? "Groups" : 'Members'}
-          />
+          {!draft.isItem ? memberSelector : groupSelector}
         </FormInput>
       </div>
     </div>

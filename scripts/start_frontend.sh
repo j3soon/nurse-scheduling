@@ -19,4 +19,4 @@ if [[ ! -d "$FRONTEND_DIR" ]]; then
 fi
 
 cd "$FRONTEND_DIR"
-exec bun run dev
+exec bun run dev "$@"
