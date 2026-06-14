@@ -96,6 +96,21 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
       label="Members"
     />
   );
+  const groupSelector = filteredGroups.length === 0 ? (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium text-gray-700">Groups</h3>
+      <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
+        No groups available.
+      </div>
+    </div>
+  ) : (
+    <CheckboxList
+      items={filteredGroups}
+      selectedIds={draft.groups}
+      onToggle={onMemberToggle}
+      label="Groups"
+    />
+  );
 
   return (
     <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
@@ -115,14 +130,7 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           onDelete={mode === Mode.EDITING ? onDelete : undefined}
           actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
         >
-          {!draft.isItem ? memberSelector : (
-            <CheckboxList
-              items={filteredGroups}
-              selectedIds={draft.groups}
-              onToggle={onMemberToggle}
-              label="Groups"
-            />
-          )}
+          {!draft.isItem ? memberSelector : groupSelector}
         </FormInput>
       </div>
     </div>

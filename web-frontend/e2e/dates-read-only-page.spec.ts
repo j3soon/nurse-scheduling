@@ -84,7 +84,8 @@ test('dates page edits full-month date-group members with a calendar', async ({ 
 
   await page.goto('/dates');
   const groupsTable = page.getByRole('heading', { name: 'Dates Groups', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
-  await groupsTable.getByRole('button', { name: 'Edit' }).click();
+  const specialDatesRow = groupsTable.getByTitle('Special Dates').locator('xpath=ancestor::tr');
+  await specialDatesRow.getByRole('button', { name: 'Edit' }).click();
 
   await expect(page.getByRole('heading', { name: 'Edit Group' })).toBeVisible();
   await expect(page.getByText('May 2026', { exact: true })).toBeVisible();
@@ -96,7 +97,6 @@ test('dates page edits full-month date-group members with a calendar', async ({ 
   await expect(page.getByRole('button', { name: '02' })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Update' }).click();
 
-  const specialDatesRow = groupsTable.getByTitle('Special Dates').locator('xpath=ancestor::tr');
   await expect(specialDatesRow).toContainText('2 members');
   await expect(specialDatesRow).toContainText('01');
   await expect(specialDatesRow).toContainText('02');

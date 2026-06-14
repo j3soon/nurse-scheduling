@@ -177,4 +177,34 @@ describe('AddEditItemGroupForm', () => {
     )).toBeInTheDocument();
     expect(renderGroupMemberSelector).not.toHaveBeenCalled();
   });
+
+  it('shows a setup hint when an item has no available groups', () => {
+    render(
+      <AddEditItemGroupForm
+        mode={Mode.ADDING}
+        draft={{
+          id: '',
+          description: '',
+          groups: [],
+          members: [],
+          isItem: true,
+        }}
+        items={[{ id: 'P1', description: 'Primary person' }]}
+        groups={[]}
+        itemLabel="Person"
+        itemLabelPlural="People"
+        error=""
+        filterItemGroups={(entries) => entries}
+        onIdChange={() => undefined}
+        onDescriptionChange={() => undefined}
+        onMemberToggle={() => undefined}
+        onSave={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText('Groups')).toBeInTheDocument();
+    expect(screen.getByText('No groups available.')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
 });
