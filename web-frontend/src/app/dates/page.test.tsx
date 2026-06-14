@@ -191,6 +191,108 @@ describe('DatePage', () => {
     );
   });
 
+  it('updates the start and end dates by dragging across the calendar', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Select 2026-01-05' }));
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Select 2026-01-10' }));
+    fireEvent.mouseUp(screen.getByRole('button', { name: 'Select 2026-01-10' }));
+
+    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-05');
+    expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-10');
+    expect(screen.getByText('6 days selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Select 2026-01-07' })).toHaveClass('bg-blue-600');
+  });
+
+  it('updates the start and end dates when dragging backward across the calendar', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Select 2026-01-10' }));
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Select 2026-01-05' }));
+    fireEvent.mouseUp(screen.getByRole('button', { name: 'Select 2026-01-05' }));
+
+    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-05');
+    expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-10');
+  });
+
+  it('previews a second-click range without committing it', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    await user.click(screen.getByRole('button', { name: 'Select 2026-01-05' }));
+
+    const previewEnd = screen.getByRole('button', { name: 'Select 2026-01-10' });
+    fireEvent.mouseEnter(previewEnd);
+
+    expect(previewEnd).toHaveClass('bg-blue-100');
+    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-05');
+    expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-05');
+  });
+
+  it('applies the full-month suggestion for the visible calendar month', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    await user.click(screen.getByRole('button', { name: 'Next month' }));
+    await user.click(screen.getByRole('button', { name: 'Use full February 2026' }));
+
+    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-02-01');
+    expect(screen.getByLabelText('End Date *')).toHaveValue('2026-02-28');
+    expect(screen.getByText('28 days selected')).toBeInTheDocument();
+  });
+
+  it('keeps the selected range unchanged while navigating months', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    await user.click(screen.getByRole('button', { name: 'Next month' }));
+
+    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-01');
+    expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-31');
+    expect(screen.getByRole('button', { name: 'Use full February 2026' })).toBeInTheDocument();
+  });
+
+  it('sets the end date when the second calendar click is later', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    await user.click(screen.getByRole('button', { name: 'Select 2026-01-05' }));
+    await user.click(screen.getByRole('button', { name: 'Select 2026-01-10' }));
+
+    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-05');
+    expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-10');
+  });
+
+  it('replaces the start date and clears the end date when the second calendar click is earlier', async () => {
+    const user = userEvent.setup();
+
+    renderDatePage();
+
+    await user.click(screen.getByRole('button', { name: /set date range/i }));
+    await user.click(screen.getByRole('button', { name: 'Select 2026-01-10' }));
+    await user.click(screen.getByRole('button', { name: 'Select 2026-01-05' }));
+
+    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-05');
+    expect(screen.getByLabelText('End Date *')).toHaveValue('');
+    expect(screen.queryByText(/days selected/)).not.toBeInTheDocument();
+  });
+
   it('respects turning Taiwan holiday import off before save', async () => {
     const user = userEvent.setup();
 

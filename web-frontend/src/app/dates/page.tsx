@@ -23,6 +23,7 @@
 import { useMemo, useState } from 'react';
 import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
+import DateRangeCalendarPicker from '@/components/DateRangeCalendarPicker';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import ToggleButton from '@/components/ToggleButton';
 import { Mode } from '@/constants/modes';
@@ -247,7 +248,7 @@ export default function DatePage() {
       </h3>
       <div className="space-y-4">
         {/* Start Date and End Date */}
-        <div className="flex gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="flex-1">
             <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
               Start Date *
@@ -296,6 +297,14 @@ export default function DatePage() {
             )}
           </div>
         </div>
+
+        <DateRangeCalendarPicker
+          value={draft}
+          onChange={(value) => {
+            setDraft(value);
+            setErrors(prev => ({ ...prev, startDate: '', endDate: '' }));
+          }}
+        />
 
         {/* Warning message for non-full month selection */}
         {Object.entries(warnings).map(([warningKey, warningMessage]) => (
