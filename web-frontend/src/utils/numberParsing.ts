@@ -100,6 +100,7 @@ export function getWeightWithPositivePrefix(weight: number | string, add_commas:
 export function getWeightDisplayLabel(weight: number | string): string {
   if (weight === Infinity) return '+∞';
   if (weight === -Infinity) return '-∞';
+  if (weight === 0) return '0';
   // Reduce weights length
   const ret = getWeightWithPositivePrefix(weight, false);
   if (typeof weight === 'number') {

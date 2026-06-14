@@ -378,6 +378,34 @@ export default function ShiftRequestsPage() {
     return Object.keys(newErrors).length === 0;
   };
 
+  const getQuickAddStatus = (): { text: string; tone: 'neutral' | 'warning' | 'error' } => {
+    if (addFormData.shiftTypes.length === 0) {
+      return {
+        text: 'Drag over cells to clear existing requests or history. Empty cells will not change.',
+        tone: 'warning',
+      };
+    }
+
+    if (!isValidWeightValue(addFormData.weight)) {
+      return {
+        text: 'Enter a valid weight before dragging over cells to apply preferences.',
+        tone: 'error',
+      };
+    }
+
+    if (addFormData.weight === 0) {
+      return {
+        text: `Drag over cells to remove ${addFormData.shiftTypes.join(', ')}. Empty cells without it will not change.`,
+        tone: 'warning',
+      };
+    }
+
+    return {
+      text: `Drag over cells to apply ${addFormData.shiftTypes.join(', ')} with weight ${getWeightDisplayLabel(addFormData.weight as number)}.`,
+      tone: 'neutral',
+    };
+  };
+
   const validateShiftRequestCsvData = (csvData: string[][]): {
     isValid: boolean;
     error?: string;
@@ -386,11 +414,6 @@ export default function ShiftRequestsPage() {
     // Validate weight is valid
     if (!validateWeight()) {
       return { isValid: false, error: 'Weight must be a valid number, Infinity, or -Infinity.' };
-    }
-
-    // Validate weight is not zero
-    if (addFormData.weight === 0) {
-      return { isValid: false, error: 'Weight must be a non-zero number.' };
     }
 
     // Validate CSV shape - should have people count + 0 rows (header + people rows)
@@ -1134,8 +1157,8 @@ export default function ShiftRequestsPage() {
 
   const applyPreferenceCellEdit = (personId: string, dateId: string, replaceLatestHistoryEntry = false) => {
     if (isAddMode) {
-      // In add mode, update the preferences with the form data
-      // If no shift types are selected, clear all preferences for this person-date combination
+      // In add mode, update the preferences with the form data.
+      // If no shift types are selected, clear all preferences for this person-date combination.
       if (addFormData.shiftTypes.length === 0) {
         updateShiftPreferences(personId, dateId, [], { replaceLatestHistoryEntry, clearFirst: true });
         return;
@@ -1183,7 +1206,7 @@ export default function ShiftRequestsPage() {
       const currentHistory = person.history!;
       const offset = historyColumnsCount - currentHistory.length;
 
-      // If no shift types are selected (Clear mode), clear the history position
+      // If no shift types are selected (Clear mode), clear the history position.
       if (addFormData.shiftTypes.length === 0) {
         // If targeting a position after the actual history (empty history cells on the left)
         if (historyIndex >= offset) {
@@ -1365,6 +1388,12 @@ export default function ShiftRequestsPage() {
 
   // Check if we have the required data
   const hasRequiredData = (dateData.range?.startDate && dateData.range?.endDate && dateData.items.length > 0 && peopleData.items.length > 0 && (shiftTypeData.items.length > 0 || shiftTypeData.groups.length > 0));
+  const quickAddStatus = getQuickAddStatus();
+  const quickAddStatusClassName = quickAddStatus.tone === 'error'
+    ? 'text-red-600'
+    : quickAddStatus.tone === 'warning'
+      ? 'text-amber-700'
+      : 'text-gray-600';
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -1372,7 +1401,7 @@ export default function ShiftRequestsPage() {
       {showStickyQuickAdd && hasRequiredData && isAddMode && (
         <div ref={stickyQuickAddRef} className="fixed top-0 left-0 right-0 z-50 bg-white shadow-md border-b border-gray-200">
           <div className="container mx-auto px-4 py-3">
-            <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-x-4 gap-y-0 flex-wrap">
               {/* Compact Shift Types */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -1458,6 +1487,10 @@ export default function ShiftRequestsPage() {
                   </div>
                 )}
               </div>
+              <p className={`basis-full text-xs ${quickAddStatusClassName} ${quickAddStatus.tone === 'error' ? 'flex items-center gap-1' : ''}`} aria-live="polite">
+                {quickAddStatus.tone === 'error' && <FiAlertCircle className="h-3 w-3 mt-0.5" />}
+                {quickAddStatus.text}
+              </p>
             </div>
           </div>
         </div>
@@ -1584,10 +1617,6 @@ export default function ShiftRequestsPage() {
                     if (!validateWeight()) {
                       return; // Don't proceed if weight is invalid
                     }
-                    if (addFormData.weight === 0) {
-                      alert('Weight must be a non-zero number.');
-                      return; // Don't proceed if weight is zero
-                    }
                     processShiftRequestFile(file);
                   }}
                   acceptedFileTypes={['.csv', '.txt']}
@@ -1595,17 +1624,20 @@ export default function ShiftRequestsPage() {
                   tooltipText={
                     !isValidWeightValue(addFormData.weight)
                       ? 'Weight must be a valid number, Infinity, or -Infinity'
-                      : addFormData.weight === 0
-                      ? 'Weight must be a non-zero number'
                       : 'Upload a CSV file with shift preferences (people x (dates + 1) matrix)'
                   }
-                  disabled={!isValidWeightValue(addFormData.weight) || addFormData.weight === 0}
+                  disabled={!isValidWeightValue(addFormData.weight)}
                   icon={<FiUpload className="h-4 w-4" />}
                 />
               </div>
             </div>
 
-            <div className="space-y-6">
+            <div className="space-y-4">
+              <p className={`text-sm ${quickAddStatusClassName} ${quickAddStatus.tone === 'error' ? 'flex items-center gap-1' : ''}`} aria-live="polite">
+                {quickAddStatus.tone === 'error' && <FiAlertCircle className="h-4 w-4" />}
+                {quickAddStatus.text}
+              </p>
+
               {/* Shift Type Selection */}
               <div>
                 <CheckboxList

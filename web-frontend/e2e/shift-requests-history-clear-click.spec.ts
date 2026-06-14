@@ -26,7 +26,7 @@ test('quick-add clear mode clears one history cell with a single click', async (
   /*
    * Steps:
    * 1. Confirm the seeded history summary and matrix start with one D entry.
-   * 2. Enter quick-add with no selected shift types, which is clear mode.
+   * 2. Enter quick-add clear mode by leaving all shift types unselected.
    * 3. Click the H-1 history cell once.
    * 4. Confirm the history summary returns to the empty state.
    */
