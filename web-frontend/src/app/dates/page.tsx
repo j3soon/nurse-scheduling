@@ -24,6 +24,7 @@ import { useMemo, useState } from 'react';
 import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import DateRangeCalendarPicker from '@/components/DateRangeCalendarPicker';
+import { DateGroupMemberSelector } from '@/components/DateGroupMemberSelector';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import ToggleButton from '@/components/ToggleButton';
 import { Mode } from '@/constants/modes';
@@ -443,6 +444,14 @@ export default function DatePage() {
       reorderItems={reorderItems}
       reorderGroups={reorderGroups}
       filterItemGroups={x => x}
+      renderGroupMemberSelector={({ items, selectedIds, onToggle }) => (
+        <DateGroupMemberSelector
+          dateRange={dateData.range}
+          items={items}
+          selectedIds={selectedIds}
+          onToggle={onToggle}
+        />
+      )}
       extraButtons={
         <ToggleButton
           label="Set Date Range"

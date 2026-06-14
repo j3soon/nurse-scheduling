@@ -39,6 +39,11 @@ interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
   itemLabel: string;
   error: string;
   filterItemGroups: (items: T[] | G[]) => T[] | G[];
+  renderGroupMemberSelector?: (props: {
+    items: T[];
+    selectedIds: string[];
+    onToggle: (id: string) => void;
+  }) => React.ReactNode;
   onIdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDescriptionChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onMemberToggle: (id: string) => void;
@@ -56,6 +61,7 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   itemLabel,
   error,
   filterItemGroups,
+  renderGroupMemberSelector,
   onIdChange,
   onDescriptionChange,
   onMemberToggle,
@@ -86,12 +92,18 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           onDelete={mode === Mode.EDITING ? onDelete : undefined}
           actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
         >
-          <CheckboxList
-            items={draft.isItem ? filterItemGroups(groups) as G[] : filterItemGroups(items) as T[]}
-            selectedIds={draft.isItem ? draft.groups : draft.members}
-            onToggle={onMemberToggle}
-            label={draft.isItem ? "Groups" : 'Members'}
-          />
+          {!draft.isItem && renderGroupMemberSelector ? renderGroupMemberSelector({
+            items: filterItemGroups(items) as T[],
+            selectedIds: draft.members,
+            onToggle: onMemberToggle,
+          }) : (
+            <CheckboxList
+              items={draft.isItem ? filterItemGroups(groups) as G[] : filterItemGroups(items) as T[]}
+              selectedIds={draft.isItem ? draft.groups : draft.members}
+              onToggle={onMemberToggle}
+              label={draft.isItem ? "Groups" : 'Members'}
+            />
+          )}
         </FormInput>
       </div>
     </div>
