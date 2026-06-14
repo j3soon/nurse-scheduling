@@ -25,7 +25,7 @@ import { useRouter } from 'next/navigation';
 import { FiChevronDown, FiCheck } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { STATIC_BUILD_URLS } from '@/constants/urls';
-import { fetchReleaseBranches, BuildEntry } from '@/utils/version';
+import { areBuildOriginsEquivalent, fetchReleaseBranches, BuildEntry } from '@/utils/version';
 
 export default function Home() {
   const router = useRouter();
@@ -64,17 +64,14 @@ export default function Home() {
 
   const currentBuild = useMemo<BuildEntry | null>(() => {
     if (!currentOrigin) return null;
-    const normalizedOrigin = currentOrigin.replace(/\/$/, '');
-    const found = buildUrls.find(
-      (build) => build.url.replace(/\/$/, '') === normalizedOrigin
-    );
+    const found = buildUrls.find((build) => areBuildOriginsEquivalent(build.url, currentOrigin));
     if (found) return found;
     return { label: 'unknown', url: currentOrigin };
   }, [currentOrigin, buildUrls]);
 
   const handleBuildSelect = (url: string) => {
     setIsDropdownOpen(false);
-    if (url !== currentOrigin && url !== currentOrigin + '/') {
+    if (!areBuildOriginsEquivalent(url, currentOrigin)) {
       window.location.assign(url);
     }
   };
