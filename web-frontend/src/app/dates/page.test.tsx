@@ -176,7 +176,9 @@ describe('DatePage', () => {
     fireEvent.change(screen.getByLabelText('Start Date *'), { target: { value: '2026-05-01' } });
     fireEvent.change(screen.getByLabelText('End Date *'), { target: { value: '2026-05-31' } });
 
-    expect(screen.getByText('Included holiday entries')).toBeInTheDocument();
+    const holidayDetails = screen.getByText(/holiday change.*Show details/i);
+    expect(holidayDetails).toBeInTheDocument();
+    await user.click(holidayDetails);
     expect(screen.getByText(/2026-05-01 \(Fri\)/)).toBeInTheDocument();
     expect(screen.getByText('FREEDAY')).toBeInTheDocument();
 
@@ -229,14 +231,29 @@ describe('DatePage', () => {
     renderDatePage();
 
     await user.click(screen.getByRole('button', { name: /set date range/i }));
+    const startDateInput = screen.getByLabelText('Start Date *');
+    const endDateInput = screen.getByLabelText('End Date *');
+
+    expect(screen.queryByText('Start', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('End', { exact: true })).not.toBeInTheDocument();
+    expect(startDateInput).toHaveClass('border-blue-500');
+    expect(endDateInput).not.toHaveClass('border-blue-500');
+
     await user.click(screen.getByRole('button', { name: 'Select 2026-01-05' }));
 
     const previewEnd = screen.getByRole('button', { name: 'Select 2026-01-10' });
     fireEvent.mouseEnter(previewEnd);
 
     expect(previewEnd).toHaveClass('bg-blue-100');
-    expect(screen.getByLabelText('Start Date *')).toHaveValue('2026-01-05');
-    expect(screen.getByLabelText('End Date *')).toHaveValue('2026-01-05');
+    expect(startDateInput).toHaveValue('2026-01-05');
+    expect(endDateInput).toHaveValue('2026-01-05');
+    expect(startDateInput).not.toHaveClass('border-blue-500');
+    expect(endDateInput).toHaveClass('border-blue-500');
+
+    await user.click(previewEnd);
+
+    expect(startDateInput).toHaveClass('border-blue-500');
+    expect(endDateInput).not.toHaveClass('border-blue-500');
   });
 
   it('applies the full-month suggestion for the visible calendar month', async () => {

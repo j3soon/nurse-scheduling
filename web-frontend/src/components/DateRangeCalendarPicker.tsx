@@ -26,6 +26,7 @@ import { DateRange } from '@/types/scheduling';
 interface DateRangeCalendarPickerProps {
   value: DateRange;
   onChange: (value: DateRange) => void;
+  onActiveEndpointChange?: (endpoint: 'start' | 'end') => void;
 }
 
 function dateToString(date?: Date): string {
@@ -52,7 +53,11 @@ function formatMonthYear(date: Date): string {
   return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
-export default function DateRangeCalendarPicker({ value, onChange }: DateRangeCalendarPickerProps) {
+export default function DateRangeCalendarPicker({
+  value,
+  onChange,
+  onActiveEndpointChange,
+}: DateRangeCalendarPickerProps) {
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
     const anchorDate = value.startDate ?? new Date();
     return startOfMonth(anchorDate);
@@ -73,9 +78,6 @@ export default function DateRangeCalendarPicker({ value, onChange }: DateRangeCa
     ];
   }, [calendarMonth]);
   const suggestedMonthLabel = formatMonthYear(calendarMonth);
-  const selectedDayCount = value.startDate && value.endDate
-    ? Math.ceil((value.endDate.getTime() - value.startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1
-    : 0;
   const previewRange = useMemo<DateRange>(() => {
     const anchorDate = dragAnchorDate ?? clickAnchorDate;
     if (!anchorDate || !hoverDate) {
@@ -126,17 +128,21 @@ export default function DateRangeCalendarPicker({ value, onChange }: DateRangeCa
     if (dragAnchorDate && didDrag) {
       setRangeFromDates(dragAnchorDate, date);
       setClickAnchorDate(undefined);
+      onActiveEndpointChange?.('start');
     } else if (clickAnchorDate) {
       if (date >= clickAnchorDate) {
         onChange({ startDate: clickAnchorDate, endDate: date });
         setClickAnchorDate(undefined);
+        onActiveEndpointChange?.('start');
       } else {
         onChange({ startDate: date, endDate: undefined });
         setClickAnchorDate(date);
+        onActiveEndpointChange?.('end');
       }
     } else {
       onChange({ startDate: date, endDate: date });
       setClickAnchorDate(date);
+      onActiveEndpointChange?.('end');
     }
     setDragAnchorDate(undefined);
     setHoverDate(undefined);
@@ -150,48 +156,12 @@ export default function DateRangeCalendarPicker({ value, onChange }: DateRangeCa
     setClickAnchorDate(undefined);
     setHoverDate(undefined);
     onChange({ startDate, endDate });
+    onActiveEndpointChange?.('start');
   };
 
   return (
-    <div className="w-full max-w-sm rounded-md border border-gray-200 bg-gray-50 p-4">
-      <div className="mb-3 space-y-3">
-        <div className="grid grid-cols-2 gap-2" aria-live="polite">
-          <div className={`rounded-md border bg-white px-3 py-2 ${
-            clickAnchorDate ? 'border-gray-200' : 'border-blue-500 ring-1 ring-blue-500'
-          }`}>
-            <div className={`text-xs font-medium ${clickAnchorDate ? 'text-gray-500' : 'text-blue-700'}`}>
-              Start
-            </div>
-            <div className="mt-0.5 text-sm font-medium text-gray-900">
-              {dateToString(value.startDate) || 'Select date'}
-            </div>
-          </div>
-          <div className={`rounded-md border bg-white px-3 py-2 ${
-            clickAnchorDate ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200'
-          }`}>
-            <div className={`text-xs font-medium ${clickAnchorDate ? 'text-blue-700' : 'text-gray-500'}`}>
-              End
-            </div>
-            <div className="mt-0.5 text-sm font-medium text-gray-900">
-              {dateToString(value.endDate) || 'Select date'}
-            </div>
-          </div>
-        </div>
-        {value.startDate && value.endDate && (
-          <div className="text-sm text-gray-600">
-            {selectedDayCount} day{selectedDayCount === 1 ? '' : 's'} selected
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={handleUseSuggestedMonth}
-          className="w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
-        >
-          Use full {suggestedMonthLabel}
-        </button>
-      </div>
-
-      <div className="flex items-center justify-between border-y border-gray-200 py-2">
+    <div className="w-full max-w-md rounded-md border border-gray-200 bg-gray-50 p-4">
+      <div className="flex items-center justify-between border-b border-gray-200 pb-2">
         <button
           type="button"
           aria-label="Previous month"
@@ -252,6 +222,13 @@ export default function DateRangeCalendarPicker({ value, onChange }: DateRangeCa
           )
         ))}
       </div>
+      <button
+        type="button"
+        onClick={handleUseSuggestedMonth}
+        className="mt-4 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+      >
+        Use full {suggestedMonthLabel}
+      </button>
     </div>
   );
 }
