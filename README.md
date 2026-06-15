@@ -281,14 +281,16 @@ uv pip install -r requirements.txt
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path]
 # for example:
 python -m nurse_scheduling.cli tests/testcases/basics/01_1nurse_1shift_1day.yaml
-# run CLI with PuLP/CBC solver
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cbc
-# explicit OR-Tools/CP-SAT selector
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 # run CLI with prettify and verbose
 python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
 # record solver progress as JSON Lines for later plotting
 python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --verbose --prettify --timeout 180 --progress-output progress.jsonl
+# run CLI with PuLP/CBC solver (experimental)
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cbc
+# run CLI with PuLP/cuOpt solver (experimental) and GPU required
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cuopt
+# explicit OR-Tools/CP-SAT selector
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 ```
 
 Run tests:
