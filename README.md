@@ -406,7 +406,7 @@ You can find the full list of code contributors [here](https://github.com/j3soon
 
 ## License
 
-This project is licensed under the [AGPL-3.0 License](https://github.com/j3soon/nurse-scheduling/blob/main/LICENSE).
+This project is licensed under the [AGPL-3.0 License](https://github.com/j3soon/nurse-scheduling/blob/dev/LICENSE).
 
 ## References
 
