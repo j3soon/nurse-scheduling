@@ -28,7 +28,7 @@ import ToggleButton from '@/components/ToggleButton';
 import UploadButton from '@/components/UploadButton';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
-import { anonymizePeopleInState } from '@/utils/anonymizeSchedulingState';
+import { anonymizeSchedulingState } from '@/utils/anonymizeSchedulingState';
 import { getMissingPreferredScatterDateGroups, randomizeConcreteDateShiftRequests } from '@/utils/randomizeShiftRequests';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
@@ -111,7 +111,7 @@ export default function SaveAndLoadPage() {
       const exportState = scatterShiftRequests
         ? randomizeConcreteDateShiftRequests(filteredState, dateData.items, dateData.groups)
         : filteredState;
-      const anonymizedState = anonymizePeopleInState(exportState, {
+      const anonymizedState = anonymizeSchedulingState(exportState, {
         anonymizePeopleItems,
         anonymizePeopleGroups
       });

@@ -79,6 +79,8 @@ test('editing YAML applies renamed entities through the real save flow', async (
   const editedYaml = ((await textarea.inputValue()) || '').replace('Team Alpha', 'Team Omega');
   await textarea.fill(editedYaml);
   await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('pre')).toContainText('Team Omega');
+  await expect(page.locator('pre')).not.toContainText('Team Alpha');
 
   await page.goto('/people');
   await expect(page.getByTitle('Team Omega', { exact: true })).toBeVisible();

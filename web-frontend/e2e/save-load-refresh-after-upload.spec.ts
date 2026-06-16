@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('save-load YAML preview reflects uploaded state after a page refresh', async ({ page }) => {
   /*
@@ -75,6 +75,8 @@ test('save-load YAML preview reflects uploaded state after a page refresh', asyn
 
   await expect.poll(() => dialogs.filter(message => message.includes('YAML file loaded successfully!')).length).toBe(1);
   expect(dialogs.find(message => message.includes('YAML file loaded successfully!'))).toBeDefined();
+  await expect(page.locator('pre')).toContainText('Team Alpha');
+  await waitForStoredCurrentSchedulingData(page, 'Team Alpha');
   await page.reload();
   await expect(page.locator('pre')).toContainText('Team Alpha');
 });

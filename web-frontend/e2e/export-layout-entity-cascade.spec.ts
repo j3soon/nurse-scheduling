@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedSchedulingState } from './helpers';
 
 test('export layout references cascade through entity rename, delete, undo, and redo', async ({ page }) => {
   /*
@@ -235,7 +235,7 @@ test('optimize payload stays free of stale IDs after delete cascade', async ({ p
   await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
-  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
+  await disableOptimizeAnonymization(page);
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
 

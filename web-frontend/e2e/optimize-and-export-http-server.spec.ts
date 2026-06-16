@@ -164,8 +164,9 @@ test('optimize and export works against a real local HTTP server instead of Play
 
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
     await expect(page.getByText('schedule-http.xlsx')).toBeVisible();
-    await expect(page.getByText('99')).toBeVisible();
-    await expect(page.getByText('OPTIMAL')).toBeVisible();
+    const liveResult = page.getByRole('heading', { name: 'Live Result' }).locator('xpath=ancestor::section');
+    await expect(liveResult.getByText('99', { exact: true })).toBeVisible();
+    await expect(liveResult.getByText('OPTIMAL')).toBeVisible();
     expect(submittedBody).toContain('yaml_content');
     expect(submittedBody).toContain('2026-05-01');
   } finally {

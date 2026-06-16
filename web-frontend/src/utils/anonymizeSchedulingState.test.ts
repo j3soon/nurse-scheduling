@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import type { SchedulingState } from '@/hooks/useSchedulingData';
-import { anonymizePeopleInState, anonymizePeopleInStateWithMapping } from '@/utils/anonymizeSchedulingState';
+import { anonymizeSchedulingState, anonymizeSchedulingStateWithMapping, removeDescriptionFields } from '@/utils/anonymizeSchedulingState';
 
 const state: SchedulingState = {
   apiVersion: 'alpha',
@@ -35,21 +35,21 @@ const state: SchedulingState = {
   },
   shiftTypes: { items: [{ id: 'D', description: '' }], groups: [] },
   preferences: [
-    { type: 'shift request', person: ['Alice'], date: ['01'], shiftType: ['D'], weight: 1 },
+    { type: 'shift request', description: 'Alice wants day', person: ['Alice'], date: ['01'], shiftType: ['D'], weight: 1 },
     { type: 'shift type requirement', qualifiedPeople: ['Team'], date: ['ALL'], shiftType: ['D'], requiredNumPeople: 1, weight: 2 },
     { type: 'shift type successions', person: ['Bob'], pattern: ['D'], date: ['ALL'], weight: 3 },
     { type: 'shift count', person: ['Alice', 'Team'], countDates: ['ALL'], countShiftTypes: ['D'], expression: 'x >= T', target: 1, weight: 4 },
     { type: 'shift affinity', people1: ['Alice'], people2: ['Team'], date: ['ALL'], shiftTypes: ['D'], weight: 5 }
   ],
   export: {
-    formatting: [{ type: 'row', people: ['ALL', 'Alice', 'Team'], backgroundColor: '#ffffff' }],
-    extraRows: [{ type: 'count', header: 'People', countPeople: ['ALL', 'Bob', 'Team'], countShiftTypes: ['D'] }]
+    formatting: [{ type: 'row', description: 'Highlight Alice', people: ['ALL', 'Alice', 'Team'], backgroundColor: '#ffffff' }],
+    extraRows: [{ type: 'count', description: 'Count people', header: 'People', countPeople: ['ALL', 'Bob', 'Team'], countShiftTypes: ['D'] }]
   }
 };
 
-describe('anonymizePeopleInState', () => {
+describe('anonymizeSchedulingState', () => {
   it('replaces people item IDs and item references without mutating the source state', () => {
-    const result = anonymizePeopleInState(state, {
+    const result = anonymizeSchedulingState(state, {
       anonymizePeopleItems: true,
       anonymizePeopleGroups: false
     });
@@ -57,7 +57,7 @@ describe('anonymizePeopleInState', () => {
     expect(result.people.items.map(item => item.id)).toEqual(['P1', 'P2']);
     expect(result.people.groups).toEqual([{ id: 'Team', members: ['P1', 'P2'], description: 'all people' }]);
     expect(result.preferences).toEqual([
-      { type: 'shift request', person: ['P1'], date: ['01'], shiftType: ['D'], weight: 1 },
+      { type: 'shift request', description: 'Alice wants day', person: ['P1'], date: ['01'], shiftType: ['D'], weight: 1 },
       { type: 'shift type requirement', qualifiedPeople: ['Team'], date: ['ALL'], shiftType: ['D'], requiredNumPeople: 1, weight: 2 },
       { type: 'shift type successions', person: ['P2'], pattern: ['D'], date: ['ALL'], weight: 3 },
       { type: 'shift count', person: ['P1', 'Team'], countDates: ['ALL'], countShiftTypes: ['D'], expression: 'x >= T', target: 1, weight: 4 },
@@ -69,7 +69,7 @@ describe('anonymizePeopleInState', () => {
   });
 
   it('replaces people group IDs and references independently', () => {
-    const result = anonymizePeopleInState(state, {
+    const result = anonymizeSchedulingState(state, {
       anonymizePeopleItems: false,
       anonymizePeopleGroups: true
     });
@@ -84,7 +84,7 @@ describe('anonymizePeopleInState', () => {
   });
 
   it('returns a reverse mapping for restoring anonymized IDs', () => {
-    const result = anonymizePeopleInStateWithMapping(state, {
+    const result = anonymizeSchedulingStateWithMapping(state, {
       anonymizePeopleItems: true,
       anonymizePeopleGroups: false
     });
@@ -93,5 +93,37 @@ describe('anonymizePeopleInState', () => {
       ['P1', 'Alice'],
       ['P2', 'Bob']
     ]));
+  });
+
+  it('removes description fields when requested', () => {
+    const result = anonymizeSchedulingState(state, {
+      anonymizePeopleItems: true,
+      anonymizePeopleGroups: false,
+      removeDescriptions: true
+    });
+
+    expect(result).toEqual(removeDescriptionFields(result));
+    expect('description' in result).toBe(false);
+    expect(result.people.items).toEqual([{ id: 'P1' }, { id: 'P2' }]);
+    expect(result.people.groups).toEqual([{ id: 'Team', members: ['P1', 'P2'] }]);
+    expect(result.preferences[0]).toEqual({
+      type: 'shift request',
+      person: ['P1'],
+      date: ['01'],
+      shiftType: ['D'],
+      weight: 1
+    });
+    expect(result.export?.formatting?.[0]).toEqual({
+      type: 'row',
+      people: ['ALL', 'P1', 'Team'],
+      backgroundColor: '#ffffff'
+    });
+    expect(result.export?.extraRows?.[0]).toEqual({
+      type: 'count',
+      header: 'People',
+      countPeople: ['ALL', 'P2', 'Team'],
+      countShiftTypes: ['D']
+    });
+    expect(state.description).toBe('schedule');
   });
 });

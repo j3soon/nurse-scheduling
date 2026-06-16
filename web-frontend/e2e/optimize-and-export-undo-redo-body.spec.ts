@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, setDateRange } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, setDateRange, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('optimize request body follows undo and redo of upstream edits', async ({ page }) => {
   /*
@@ -49,20 +49,20 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
   await expect(page.getByText('Undo Redo Nurse', { exact: true })).toHaveCount(0);
 
   await page.goto('/optimize-and-export');
-  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
-  const firstDownload = page.waitForEvent('download');
+  await disableOptimizeAnonymization(page);
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
-  await firstDownload;
+  await expect.poll(() => submittedBodies.length).toBe(1);
   expect(submittedBodies[0]).not.toContain('Undo Redo Nurse');
 
-  await page.keyboard.press('Control+y');
   await page.goto('/people');
+  await page.getByRole('heading', { name: 'People Management', exact: true }).click();
+  await page.keyboard.press('Control+y');
+  await waitForStoredCurrentSchedulingData(page, 'Undo Redo Nurse');
   await expect(page.getByText('Undo Redo Nurse', { exact: true })).toBeVisible();
 
   await page.goto('/optimize-and-export');
-  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
-  const secondDownload = page.waitForEvent('download');
+  await disableOptimizeAnonymization(page);
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
-  await secondDownload;
+  await expect.poll(() => submittedBodies.length).toBe(2);
   expect(submittedBodies[1]).toContain('Undo Redo Nurse');
 });

@@ -30,19 +30,25 @@ from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_ex
 
 SCHEDULE_YAML = b"""\
 apiVersion: alpha
+description: Sensitive schedule
 dates:
   groups:
     - id: special-dates
       members: [Alice]
+      description: Sensitive date group
 people:
   items:
     - id: Alice
+      description: Sensitive Alice
     - id: Bob
+      description: Sensitive Bob
   groups:
     - id: P1
       members: [Alice, Bob]
+      description: Sensitive people group
 preferences:
   - type: shift request
+    description: Sensitive request
     person: Alice
   - type: shift type requirement
     qualifiedPeople: [P1]
@@ -52,15 +58,18 @@ preferences:
 export:
   formatting:
     - type: row
+      description: Sensitive formatting
       people: [ALL, Alice, P1]
   extraRows:
     - type: count
+      description: Sensitive count
       countPeople: [Bob, P1]
 """
 
 
 def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
     attachments = []
+    contexts = []
 
     class FakeScope:
         def __enter__(self):
@@ -70,7 +79,7 @@ def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
             return False
 
         def set_context(self, name, context):
-            pass
+            contexts.append((name, context))
 
         def add_attachment(self, **attachment):
             attachments.append(attachment)
@@ -98,7 +107,21 @@ def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
     attachment = attachments[0]
     assert attachment["filename"] == "schedule.yaml"
     assert b"Bob" not in attachment["bytes"]
+    assert b"description" not in attachment["bytes"]
+    assert b"Sensitive" not in attachment["bytes"]
     assert _load_yaml(attachment["bytes"])["people"]["items"] == [{"id": "P2"}, {"id": "P3"}]
+    assert contexts == [
+        (
+            "schedule_state",
+            {
+                "attached": True,
+                "content_sanitized": True,
+                "input_name": "schedule.yaml",
+                "job_id": "opt_test",
+                "size_bytes": len(attachment["bytes"]),
+            },
+        )
+    ]
 
 
 def test_capture_optimize_exception_attaches_unparseable_raw_yaml(monkeypatch):
@@ -152,7 +175,7 @@ def test_capture_optimize_exception_attaches_unparseable_raw_yaml(monkeypatch):
             "schedule_state",
             {
                 "attached": True,
-                "people_ids_anonymized": False,
+                "content_sanitized": False,
                 "input_name": "invalid.yaml",
                 "job_id": "opt_test",
                 "size_bytes": len(content),

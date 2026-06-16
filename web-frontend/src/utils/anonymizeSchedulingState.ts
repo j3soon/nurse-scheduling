@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Utility functions for anonymizing people identifiers in exported scheduling state.
+// Utility functions for anonymizing exported scheduling state.
 import {
   SHIFT_AFFINITY,
   SHIFT_COUNT,
@@ -28,12 +28,13 @@ import {
 import type { Preference } from '@/types/scheduling';
 import type { SchedulingState } from '@/hooks/useSchedulingData';
 
-export interface PeopleAnonymizationOptions {
+export interface SchedulingAnonymizationOptions {
   anonymizePeopleItems: boolean;
   anonymizePeopleGroups: boolean;
+  removeDescriptions?: boolean;
 }
 
-export interface PeopleAnonymizationResult {
+export interface SchedulingAnonymizationResult {
   state: SchedulingState;
   originalIdByAnonymizedId: Map<string, string>;
 }
@@ -73,10 +74,25 @@ function anonymizePreference(pref: Preference, anonymizeIds: (ids: string[]) => 
   return pref;
 }
 
-export function anonymizePeopleInStateWithMapping(
+export function removeDescriptionFields<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(item => removeDescriptionFields(item)) as T;
+  }
+  if (value instanceof Date || value === null || typeof value !== 'object') {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== 'description')
+      .map(([key, item]) => [key, removeDescriptionFields(item)])
+  ) as T;
+}
+
+export function anonymizeSchedulingStateWithMapping(
   state: SchedulingState,
-  options: PeopleAnonymizationOptions
-): PeopleAnonymizationResult {
+  options: SchedulingAnonymizationOptions
+): SchedulingAnonymizationResult {
   const retainedIds = new Set<string>();
   if (!options.anonymizePeopleItems) {
     state.people.items.forEach(item => retainedIds.add(item.id));
@@ -124,16 +140,16 @@ export function anonymizePeopleInStateWithMapping(
   };
 
   return {
-    state: anonymizedState,
+    state: options.removeDescriptions ? removeDescriptionFields(anonymizedState) : anonymizedState,
     originalIdByAnonymizedId: new Map(
       [...idMap].map(([originalId, anonymizedId]) => [anonymizedId, originalId])
     )
   };
 }
 
-export function anonymizePeopleInState(
+export function anonymizeSchedulingState(
   state: SchedulingState,
-  options: PeopleAnonymizationOptions
+  options: SchedulingAnonymizationOptions
 ): SchedulingState {
-  return anonymizePeopleInStateWithMapping(state, options).state;
+  return anonymizeSchedulingStateWithMapping(state, options).state;
 }

@@ -4,7 +4,7 @@ This document describes the Nurse Scheduling System's current data-handling beha
 
 ## Project Status and Privacy Limitations
 
-This project is in early development. Its basic privacy protections primarily anonymize individual people IDs where possible. Other information, including people-group IDs, descriptions, dates, shift types, histories, preferences, and export configuration, may remain identifiable or sensitive. Anonymization may fail for malformed or unsupported data. We plan to improve these protections as the project matures.
+This project is in early development. Its basic privacy protections primarily anonymize individual people IDs and remove descriptions where possible. Other information, including people-group IDs, dates, shift types, histories, preferences, and export configuration, may remain identifiable or sensitive. Anonymization may fail for malformed or unsupported data. We plan to improve these protections as the project matures.
 
 ## Browser Storage
 
@@ -16,7 +16,7 @@ The hosted frontend uses Google Analytics and Sentry for analytics, diagnostics,
 
 - Sentry Session Replay samples video-like page interactions. Its current defaults mask text and input values and block media before transmission, but replay events and technical metadata are still sent.
 - Feedback screenshots are optional and user-initiated. They are not automatically fully anonymized; users can redact sensitive areas with Sentry's **Hide** tool before submission.
-- On frontend or backend errors, the current scheduling YAML may be attached to Sentry. Individual people IDs are anonymized where possible, but other sensitive information may remain. If backend anonymization fails, the original YAML may be attached.
+- On frontend or backend errors, the current scheduling YAML may be attached to Sentry. Individual people IDs are anonymized and descriptions are removed where possible, but other sensitive information may remain. If backend anonymization fails, the original YAML may be attached.
 
 Data received by Google Analytics and Sentry is subject to their policies and retention settings.
 
@@ -24,7 +24,7 @@ Data received by Google Analytics and Sentry is subject to their policies and re
 
 Clicking **Optimize** sends the current scheduling YAML to the backend shown in the API Endpoint field, which may be the hosted server at `https://api.nursescheduling.org` or a user-selected server.
 
-- **Anonymize people IDs** is enabled by default but may be disabled. It replaces individual people IDs, not all potentially sensitive scheduling information.
+- **Anonymize schedule data** is enabled by default but may be disabled. It replaces individual people IDs and removes descriptions, not all potentially sensitive scheduling information.
 - Submitted YAML is processed in memory. Results and job metadata become eligible for automatic removal 30 minutes after completion, but may remain longer until a later job operation triggers cleanup. The hosted frontend attempts deletion after a successful download.
 - Operational logs may include job IDs, pseudonymous client IDs, filenames, statuses, timing, and errors.
 - The backend sets a pseudonymous client UUID cookie for up to 30 days.

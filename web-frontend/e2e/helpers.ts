@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
 import ExcelJS from 'exceljs';
 
 const STORAGE_KEY = 'nurse-scheduling-data';
@@ -229,6 +229,39 @@ export async function mockOptimizeAndExport(
       body: xlsxBody,
     });
   });
+}
+
+export async function disableOptimizeAnonymization(page: Page) {
+  const checkbox = page.getByRole('checkbox', { name: /anonymize schedule data/i });
+  await checkbox.waitFor({ state: 'visible' });
+  await checkbox.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    if (input.checked) {
+      input.click();
+    }
+  });
+  await expect(checkbox).not.toBeChecked();
+}
+
+export async function waitForStoredCurrentSchedulingData(page: Page, expectedText: string) {
+  await page.waitForFunction(
+    ({ key, value, workerNamespaceKey }) => {
+      const workerNamespace = (window as unknown as { [key: string]: string | undefined })[workerNamespaceKey];
+      const storageKey = workerNamespace ? `${key}__${workerNamespace}` : key;
+      const stored = window.localStorage.getItem(storageKey);
+      if (!stored) {
+        return false;
+      }
+
+      try {
+        const parsed = JSON.parse(stored) as { state?: unknown };
+        return JSON.stringify(parsed.state ?? '').includes(value);
+      } catch {
+        return false;
+      }
+    },
+    { key: STORAGE_KEY, value: expectedText, workerNamespaceKey: WORKER_NAMESPACE_KEY }
+  );
 }
 
 export async function setDateRange(
