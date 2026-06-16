@@ -654,11 +654,12 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(removeChildSpy).toHaveBeenCalledTimes(removeCallCount + 1);
   });
 
-  it('anonymizes people by default and restores their IDs in the XLSX', async () => {
+  it('anonymizes schedule data by default and restores people IDs in the XLSX', async () => {
     const user = userEvent.setup();
     const xlsxBlob = new Blob(['xlsx']);
     mockUseSchedulingData.mockReturnValue(createSchedulingData({
-      peopleData: { items: [{ id: 'Alice', description: '', history: [] }], groups: [], history: [] },
+      descriptionData: 'sensitive schedule',
+      peopleData: { items: [{ id: 'Alice', description: 'sensitive person', history: [] }], groups: [], history: [] },
     }));
 
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
@@ -686,17 +687,20 @@ describe('OptimizeAndExportPage error handling', () => {
       .mockResolvedValueOnce({ ok: true });
 
     render(<OptimizeAndExportPage />);
-    expect(screen.getByRole('checkbox', { name: /anonymize people ids/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /anonymize schedule data/i })).toBeChecked();
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await screen.findByText('Schedule optimized and downloaded successfully!');
 
-    expect(mockGenerateYamlFromState).toHaveBeenLastCalledWith(
+    const submittedState = mockGenerateYamlFromState.mock.lastCall?.[0];
+    expect(submittedState).toEqual(
       expect.objectContaining({
         people: expect.objectContaining({
-          items: [expect.objectContaining({ id: 'P1' })],
+          items: [{ id: 'P1', history: [] }],
         }),
       })
     );
+    expect(submittedState).not.toHaveProperty('description');
+    expect(submittedState.people.items[0]).not.toHaveProperty('description');
     expect(mockRestorePeopleIdsInXlsx).toHaveBeenCalledWith(xlsxBlob, new Map([['P1', 'Alice']]), 1);
   });
 
@@ -704,7 +708,8 @@ describe('OptimizeAndExportPage error handling', () => {
     const user = userEvent.setup();
     const xlsxBlob = new Blob(['xlsx']);
     mockUseSchedulingData.mockReturnValue(createSchedulingData({
-      peopleData: { items: [{ id: 'Alice', description: '', history: [] }], groups: [], history: [] },
+      descriptionData: 'sensitive schedule',
+      peopleData: { items: [{ id: 'Alice', description: 'sensitive person', history: [] }], groups: [], history: [] },
     }));
 
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
@@ -732,7 +737,7 @@ describe('OptimizeAndExportPage error handling', () => {
       .mockResolvedValueOnce({ ok: true });
 
     render(<OptimizeAndExportPage />);
-    await user.click(screen.getByRole('checkbox', { name: /anonymize people ids/i }));
+    await user.click(screen.getByRole('checkbox', { name: /anonymize schedule data/i }));
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await screen.findByText('Schedule optimized and downloaded successfully!');
 

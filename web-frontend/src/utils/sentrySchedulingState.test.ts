@@ -20,18 +20,18 @@
 import type { SchedulingState } from '@/hooks/useSchedulingData';
 import { getLatestSchedulingYamlForSentry, setLatestSchedulingStateForSentry } from '@/utils/sentrySchedulingState';
 
-it('anonymizes people item IDs and references in Sentry YAML', () => {
+it('anonymizes people item IDs and references and removes descriptions in Sentry YAML', () => {
   const state: SchedulingState = {
     apiVersion: 'alpha',
-    description: '',
+    description: 'Sensitive schedule',
     dates: { range: {}, items: [], groups: [] },
     people: {
-      items: [{ id: 'Alice', description: '' }, { id: 'Bob', description: '' }],
-      groups: [{ id: 'Team', members: ['Alice', 'Bob'], description: '' }]
+      items: [{ id: 'Alice', description: 'First person' }, { id: 'Bob', description: 'Second person' }],
+      groups: [{ id: 'Team', members: ['Alice', 'Bob'], description: 'Sensitive team' }]
     },
     shiftTypes: { items: [], groups: [] },
     preferences: [
-      { type: 'shift request', person: ['Alice'], date: ['ALL'], shiftType: ['OFF'], weight: 1 }
+      { type: 'shift request', description: 'Sensitive request', person: ['Alice'], date: ['ALL'], shiftType: ['OFF'], weight: 1 }
     ]
   };
   setLatestSchedulingStateForSentry(state, current => current);
@@ -44,4 +44,6 @@ it('anonymizes people item IDs and references in Sentry YAML', () => {
   expect(yaml).toContain('person: [P1]');
   expect(yaml).not.toContain('Alice');
   expect(yaml).not.toContain('Bob');
+  expect(yaml).not.toContain('description:');
+  expect(yaml).not.toContain('Sensitive');
 });

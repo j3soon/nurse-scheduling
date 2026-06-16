@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Request
 from fastapi.encoders import jsonable_encoder
 
-from .anonymize_scheduling_data import anonymize_people_ids_in_yaml
+from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
 
 if TYPE_CHECKING:
     from .jobs import OptimizeJob
@@ -72,8 +72,9 @@ def capture_optimize_exception(job: "OptimizeJob", content: bytes, error: Except
 
     import sentry_sdk
 
-    anonymized_content = anonymize_people_ids_in_yaml(content)
+    anonymized_content = anonymize_scheduling_data_in_yaml(content)
     people_ids_anonymized = anonymized_content is not content
+    descriptions_removed = anonymized_content is not content
 
     # Ref: https://docs.sentry.io/platforms/python/enriching-events/scopes/
     with sentry_sdk.new_scope() as scope:
@@ -82,6 +83,7 @@ def capture_optimize_exception(job: "OptimizeJob", content: bytes, error: Except
             {
                 "attached": True,
                 "people_ids_anonymized": people_ids_anonymized,
+                "descriptions_removed": descriptions_removed,
                 "input_name": job.input_name,
                 "job_id": job.id,
                 "size_bytes": len(anonymized_content),

@@ -26,7 +26,7 @@ import { FiDownload, FiAlertCircle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import NumberInput from '@/components/NumberInput';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { anonymizePeopleInStateWithMapping } from '@/utils/anonymizeSchedulingState';
+import { anonymizeSchedulingStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import { GITHUB_PRIVACY_URL } from '@/constants/urls';
@@ -271,7 +271,7 @@ export default function OptimizeAndExportPage() {
 
   const [apiEndpoint, setApiEndpoint] = useState(INITIAL_BACKEND_API_URL);
   const [prettifyArg, setPrettifyArg] = useState(true);
-  const [anonymizePeople, setAnonymizePeople] = useState(true);
+  const [anonymizeScheduleData, setAnonymizeScheduleData] = useState(true);
   const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
   const [timeoutError, setTimeoutError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -638,10 +638,11 @@ export default function OptimizeAndExportPage() {
     setSseEvents([]);
 
     try {
-      const anonymizationResult = anonymizePeople
-        ? anonymizePeopleInStateWithMapping(filteredState, {
+      const anonymizationResult = anonymizeScheduleData
+        ? anonymizeSchedulingStateWithMapping(filteredState, {
             anonymizePeopleItems: true,
             anonymizePeopleGroups: false,
+            removeDescriptions: true,
           })
         : null;
 
@@ -870,13 +871,13 @@ export default function OptimizeAndExportPage() {
               <label className="flex min-h-20 cursor-pointer items-start gap-3 rounded-md border border-gray-200 bg-gray-50 p-3">
                 <input
                   type="checkbox"
-                  checked={anonymizePeople}
-                  onChange={(e) => setAnonymizePeople(e.target.checked)}
+                  checked={anonymizeScheduleData}
+                  onChange={(e) => setAnonymizeScheduleData(e.target.checked)}
                   className="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
                 />
                 <span>
-                  <span className="block text-sm font-medium text-gray-800">Anonymize people IDs</span>
-                  <span className="mt-1 block text-xs text-gray-500">Anonymize before sending to the backend, then restore in the workbook afterward.</span>
+                  <span className="block text-sm font-medium text-gray-800">Anonymize schedule data</span>
+                  <span className="mt-1 block text-xs text-gray-500">Anonymize people IDs and remove descriptions before sending to the backend.</span>
                 </span>
               </label>
 
