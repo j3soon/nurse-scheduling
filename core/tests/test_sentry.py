@@ -69,6 +69,7 @@ export:
 
 def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
     attachments = []
+    contexts = []
 
     class FakeScope:
         def __enter__(self):
@@ -78,7 +79,7 @@ def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
             return False
 
         def set_context(self, name, context):
-            pass
+            contexts.append((name, context))
 
         def add_attachment(self, **attachment):
             attachments.append(attachment)
@@ -109,6 +110,18 @@ def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
     assert b"description" not in attachment["bytes"]
     assert b"Sensitive" not in attachment["bytes"]
     assert _load_yaml(attachment["bytes"])["people"]["items"] == [{"id": "P2"}, {"id": "P3"}]
+    assert contexts == [
+        (
+            "schedule_state",
+            {
+                "attached": True,
+                "content_sanitized": True,
+                "input_name": "schedule.yaml",
+                "job_id": "opt_test",
+                "size_bytes": len(attachment["bytes"]),
+            },
+        )
+    ]
 
 
 def test_capture_optimize_exception_attaches_unparseable_raw_yaml(monkeypatch):
@@ -162,8 +175,7 @@ def test_capture_optimize_exception_attaches_unparseable_raw_yaml(monkeypatch):
             "schedule_state",
             {
                 "attached": True,
-                "people_ids_anonymized": False,
-                "descriptions_removed": False,
+                "content_sanitized": False,
                 "input_name": "invalid.yaml",
                 "job_id": "opt_test",
                 "size_bytes": len(content),
