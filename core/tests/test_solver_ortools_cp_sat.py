@@ -21,6 +21,7 @@
 
 import os
 import sys
+import threading
 
 import pytest
 from ortools.sat.python import cp_model
@@ -357,3 +358,46 @@ def test_solve_always_registers_internal_solution_callback():
 
     assert status == SolverStatus.OPTIMAL
     assert isinstance(dummy_solver.callback, cp_model.CpSolverSolutionCallback)
+
+
+def test_solve_should_stop_interrupts_search_between_solution_callbacks():
+    solver = ORToolsSolver()
+    solver.set_objective(0, maximize=True)
+
+    class BlockingCpSolver:
+        def __init__(self):
+            self.callback = None
+            self.solve_started = threading.Event()
+            self.stop_search_called = threading.Event()
+
+        def Solve(self, model, callback=None):
+            self.callback = callback
+            self.solve_started.set()
+            # Simulates CP-SAT spending a long time searching before the next
+            # solution callback. A responsive wrapper should interrupt this via
+            # StopSearch() after should_stop() becomes true.
+            self.stop_search_called.wait(timeout=0.5)
+            return cp_model.UNKNOWN
+
+        def StopSearch(self):
+            self.stop_search_called.set()
+
+    dummy_solver = BlockingCpSolver()
+    solver.solver = dummy_solver
+    stop_requested = threading.Event()
+    result = {}
+
+    def run_solve():
+        result["status"] = solver.solve(should_stop=stop_requested.is_set)
+
+    solve_thread = threading.Thread(target=run_solve)
+    solve_thread.start()
+    assert dummy_solver.solve_started.wait(timeout=1)
+
+    stop_requested.set()
+    solve_thread.join(timeout=1)
+
+    assert not solve_thread.is_alive()
+    assert isinstance(dummy_solver.callback, cp_model.CpSolverSolutionCallback)
+    assert dummy_solver.stop_search_called.is_set()
+    assert result["status"] == SolverStatus.UNKNOWN

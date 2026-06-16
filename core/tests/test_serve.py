@@ -35,9 +35,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
+from ortools.sat.python import cp_model
 
 import nurse_scheduling.serve as serve
 from nurse_scheduling.solver_interface import SchedulePhaseProgress, SolverProgress
+from nurse_scheduling.solver_ortools_cp_sat import ORToolsSolver
 from nurse_scheduling.serve import app
 
 # Test client
@@ -403,6 +405,49 @@ class TestOptimizeJobs:
             f"[server:job] finish-now-requested job_id={job_id} status=running client_uuid=" in message
             for message in caplog.messages
         )
+
+    def test_optimize_job_finish_now_interrupts_ortools_search_between_solution_callbacks(self, monkeypatch):
+        class BlockingCpSolver:
+            def __init__(self):
+                self.solve_started = threading.Event()
+                self.stop_search_called = threading.Event()
+
+            def Solve(self, model, callback=None):
+                self.solve_started.set()
+                if not self.stop_search_called.wait(timeout=2):
+                    raise AssertionError("finish-now did not interrupt OR-Tools search")
+                return cp_model.FEASIBLE
+
+            def StopSearch(self):
+                self.stop_search_called.set()
+
+        blocking_solver = BlockingCpSolver()
+
+        def fake_schedule(*args, **kwargs):
+            solver = ORToolsSolver()
+            solver.set_objective(0, maximize=True)
+            solver.solver = blocking_solver
+            solver.solve(should_stop=kwargs["should_stop"])
+            return "fake_df", {}, 7, "FEASIBLE", None
+
+        def fake_export_to_excel(df, output_buffer, cell_export_info):
+            output_buffer.write(b"fake xlsx bytes")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+        monkeypatch.setattr(serve.exporter, "export_to_excel", fake_export_to_excel)
+
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "running")
+        assert blocking_solver.solve_started.wait(timeout=1)
+
+        finish_response = client.post(f"/optimize/{job_id}/finish-now")
+
+        assert finish_response.status_code == 200
+        completed = wait_for_job_status(job_id, "feasible")
+        assert blocking_solver.stop_search_called.is_set()
+        assert completed["score"] == 7
+        assert completed["xlsxReady"] is True
 
     def test_optimize_job_control_rejects_solver_without_stop_support(self):
         job = serve._create_optimize_job(
