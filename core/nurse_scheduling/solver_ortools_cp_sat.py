@@ -18,6 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 from ortools.sat.python import cp_model
@@ -121,7 +122,31 @@ class ORToolsSolver(SolverInterface):
             progress_callback=progress_callback,
             should_stop=should_stop,
         )
-        self.status = self.solver.Solve(self.model, internal_solution_callback)
+        stop_watcher_done = threading.Event()
+        stop_watcher = None
+
+        if should_stop is not None:
+
+            def watch_stop_request():
+                while not stop_watcher_done.wait(0.2):
+                    try:
+                        stop_requested = should_stop()
+                    except Exception:
+                        logging.exception("Stop callback failed")
+                        return
+                    if stop_requested:
+                        self.solver.StopSearch()
+                        return
+
+            stop_watcher = threading.Thread(target=watch_stop_request, name="ortools-stop-watcher", daemon=True)
+            stop_watcher.start()
+
+        try:
+            self.status = self.solver.Solve(self.model, internal_solution_callback)
+        finally:
+            stop_watcher_done.set()
+            if stop_watcher is not None:
+                stop_watcher.join(timeout=1)
 
         # Convert OR-Tools status to our enum
         if self.status == cp_model.OPTIMAL:
