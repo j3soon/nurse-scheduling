@@ -20,6 +20,7 @@
 import logging
 import threading
 from collections.abc import Callable
+from _thread import LockType
 from typing import Any
 from ortools.sat.python import cp_model
 
@@ -244,7 +245,7 @@ class ORToolsSolver(SolverInterface):
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
-        should_stop_lock=None,
+        should_stop_lock: LockType | None = None,
     ) -> Any:
         """Create a solution callback for tracking intermediate solutions."""
         import time
