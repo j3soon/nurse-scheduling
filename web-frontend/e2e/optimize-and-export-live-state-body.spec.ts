@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, setDateRange } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, setDateRange } from './helpers';
 
 test('optimize request body reflects live page edits without going through Save and Load edit mode', async ({ page }) => {
   /*
@@ -48,7 +48,7 @@ test('optimize request body reflects live page edits without going through Save 
   await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
 
   await page.goto('/optimize-and-export');
-  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
+  await disableOptimizeAnonymization(page);
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await downloadPromise;

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, setDateRange } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, setDateRange } from './helpers';
 
 test('a repeated optimize run after upstream edits submits updated yaml_content', async ({ page }) => {
   /*
@@ -40,7 +40,7 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
   await mockOptimizeAndExport(page, { onSubmit: body => { bodies.push(body); } });
 
   await page.goto('/optimize-and-export');
-  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
+  await disableOptimizeAnonymization(page);
   let downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await downloadPromise;
@@ -51,9 +51,10 @@ test('a repeated optimize run after upstream edits submits updated yaml_content'
   await peopleTable.locator('tr').filter({ has: page.getByText('1. Person 1', { exact: true }) }).getByRole('button', { name: 'Edit' }).click();
   await page.getByPlaceholder('Enter person ID').fill('Person X');
   await page.getByRole('button', { name: 'Update' }).click();
+  await expect(page.getByText('1. Person X', { exact: true })).toBeVisible();
 
   await page.goto('/optimize-and-export');
-  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
+  await disableOptimizeAnonymization(page);
   downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await downloadPromise;

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, setDateRange } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, setDateRange, waitForStoredSchedulingData } from './helpers';
 
 test('optimize request body follows undo and redo of upstream edits', async ({ page }) => {
   /*
@@ -49,18 +49,19 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
   await expect(page.getByText('Undo Redo Nurse', { exact: true })).toHaveCount(0);
 
   await page.goto('/optimize-and-export');
-  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
+  await disableOptimizeAnonymization(page);
   const firstDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await firstDownload;
   expect(submittedBodies[0]).not.toContain('Undo Redo Nurse');
 
   await page.keyboard.press('Control+y');
+  await waitForStoredSchedulingData(page, 'Undo Redo Nurse');
   await page.goto('/people');
   await expect(page.getByText('Undo Redo Nurse', { exact: true })).toBeVisible();
 
   await page.goto('/optimize-and-export');
-  await page.getByRole('checkbox', { name: /anonymize people ids/i }).uncheck();
+  await disableOptimizeAnonymization(page);
   const secondDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await secondDownload;

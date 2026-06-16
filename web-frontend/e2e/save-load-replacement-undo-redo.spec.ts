@@ -67,6 +67,7 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
     buffer: Buffer.from(replacementYaml, 'utf8'),
   });
   await expect.poll(() => dialogs.length).toBe(2);
+  await expect(page.locator('pre')).toContainText('replacement upload state');
 
   await page.goto('/people');
   await expect(page.getByText('1. P9', { exact: true })).toBeVisible();
@@ -77,6 +78,7 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
 
   await page.getByRole('heading', { name: 'Shift Type Management', exact: true }).click();
   await page.keyboard.press('Control+z');
+  await expect(page.getByText('1. D', { exact: true })).toBeVisible();
 
   await page.goto('/people');
   await expect(page.getByText('1. P1', { exact: true })).toBeVisible();
@@ -87,6 +89,7 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
 
   await page.getByRole('heading', { name: 'Shift Type Management', exact: true }).click();
   await page.keyboard.press('Control+y');
+  await expect(page.getByText('1. ZX', { exact: true })).toBeVisible();
 
   await page.goto('/people');
   await expect(page.getByText('1. P9', { exact: true })).toBeVisible();
