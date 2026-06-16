@@ -67,13 +67,15 @@ def _anonymize_yaml_content(content: bytes) -> bytes:
     if not isinstance(data, dict):
         return content
 
+    _remove_description_fields(data)
+
     people = data.get("people")
     if not isinstance(people, dict):
-        return content
+        return _dump_yaml(data)
     items = people.get("items", [])
     groups = people.get("groups", [])
     if not isinstance(items, list) or not isinstance(groups, list):
-        return content
+        return _dump_yaml(data)
 
     retained_ids = {group["id"] for group in groups if isinstance(group, dict) and "id" in group}
     id_map: dict[Any, str] = {}
@@ -98,7 +100,6 @@ def _anonymize_yaml_content(content: bytes) -> bytes:
         if isinstance(group, dict) and "members" in group:
             group["members"] = _anonymize_people_reference(group["members"], id_map)
 
-    _remove_description_fields(data)
     return _dump_yaml(data)
 
 

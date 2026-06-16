@@ -85,6 +85,27 @@ def test_anonymize_scheduling_data_in_yaml_returns_original_unparseable_yaml():
     assert anonymize_scheduling_data_in_yaml(content) is content
 
 
+def test_anonymize_scheduling_data_in_yaml_removes_descriptions_with_malformed_people():
+    content = b"""\
+apiVersion: alpha
+description: Sensitive schedule
+people:
+  items: Alice
+preferences:
+  - type: shift request
+    description: Sensitive request
+    person: Alice
+"""
+
+    anonymized = anonymize_scheduling_data_in_yaml(content)
+
+    data = _load_yaml(anonymized)
+    assert "description" not in data
+    assert data["people"] == {"items": "Alice"}
+    assert data["preferences"] == [{"type": "shift request", "person": "Alice"}]
+    assert b"Sensitive" not in anonymized
+
+
 def test_anonymize_scheduling_data_in_yaml_removes_descriptions():
     content = b"""\
 apiVersion: alpha
