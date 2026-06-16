@@ -153,6 +153,19 @@ describe('useSchedulingData', () => {
     expect(screen.queryByText('Schedule data changed in another browser tab.')).not.toBeInTheDocument();
   });
 
+  it('shows the cross-tab change banner when localStorage is cleared in another tab', async () => {
+    render(createElement(SchedulingDataProvider));
+
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: null,
+        storageArea: localStorage,
+      }));
+    });
+
+    expect(screen.getByText('Schedule data changed in another browser tab.')).toBeInTheDocument();
+  });
+
   it('ignores storage events for unrelated keys and storage areas', async () => {
     render(createElement(SchedulingDataProvider));
 

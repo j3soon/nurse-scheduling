@@ -784,9 +784,9 @@ export function useSchedulingDataInternal() {
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.storageArea === localStorage && event.key === getStorageKey()) {
-        setHasExternalStorageChange(true);
-      }
+      if (event.storageArea !== localStorage) return;
+      if (event.key !== null && event.key !== getStorageKey()) return;
+      setHasExternalStorageChange(true);
     };
 
     window.addEventListener('storage', handleStorage);
