@@ -116,11 +116,13 @@ class ORToolsSolver(SolverInterface):
                     exc,
                 )
 
+        should_stop_lock = threading.Lock() if should_stop is not None else None
         internal_solution_callback = self.create_solution_callback(
             self.objective_expr,
             solution_callback=solution_callback,
             progress_callback=progress_callback,
             should_stop=should_stop,
+            should_stop_lock=should_stop_lock,
         )
         stop_watcher_done = threading.Event()
         stop_watcher = None
@@ -130,7 +132,8 @@ class ORToolsSolver(SolverInterface):
             def watch_stop_request():
                 while not stop_watcher_done.wait(0.2):
                     try:
-                        stop_requested = should_stop()
+                        with should_stop_lock:
+                            stop_requested = should_stop()
                     except Exception:
                         logging.exception("Stop callback failed")
                         return
@@ -241,17 +244,20 @@ class ORToolsSolver(SolverInterface):
         solution_callback: Callable[[Any], None] | None = None,
         progress_callback: Callable[[SolverProgress], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        should_stop_lock=None,
     ) -> Any:
         """Create a solution callback for tracking intermediate solutions."""
         import time
 
+        if should_stop is not None and should_stop_lock is None:
+            should_stop_lock = threading.Lock()
         maximize = self.maximize
         solver = self
 
         class PartialSolutionPrinter(cp_model.CpSolverSolutionCallback):
             """Print intermediate solutions."""
 
-            def __init__(self, objective_var, solution_callback, progress_callback, should_stop):
+            def __init__(self, objective_var, solution_callback, progress_callback, should_stop, should_stop_lock):
                 cp_model.CpSolverSolutionCallback.__init__(self)
                 self.n_solutions = 0
                 self.best_score = float("-inf") if maximize else float("inf")
@@ -260,6 +266,7 @@ class ORToolsSolver(SolverInterface):
                 self.solution_callback = solution_callback
                 self.progress_callback = progress_callback
                 self.should_stop = should_stop
+                self.should_stop_lock = should_stop_lock
                 self.solution_index = 0
 
             def on_solution_callback(self):
@@ -299,9 +306,14 @@ class ORToolsSolver(SolverInterface):
                             self.solution_callback(self)
                         except Exception:
                             logging.exception("Solution callback failed")
-                    if self.should_stop is not None and self.should_stop():
-                        self.StopSearch()
+                    if self.should_stop is not None:
+                        with self.should_stop_lock:
+                            stop_requested = self.should_stop()
+                        if stop_requested:
+                            self.StopSearch()
                 finally:
                     solver._active_solution_callback = None
 
-        return PartialSolutionPrinter(objective_var, solution_callback, progress_callback, should_stop)
+        return PartialSolutionPrinter(
+            objective_var, solution_callback, progress_callback, should_stop, should_stop_lock
+        )
