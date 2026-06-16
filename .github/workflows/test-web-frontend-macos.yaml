@@ -53,7 +53,9 @@ jobs:
         run: bunx playwright install chromium
       - name: Run Playwright tests with coverage
         working-directory: web-frontend
-        run: bun run test:e2e:coverage
+        run: |
+          rm -rf .e2e-coverage coverage-e2e
+          E2E_COVERAGE=1 bunx playwright test --workers=4
       - name: Generate Playwright coverage report
         working-directory: web-frontend
         run: bun run coverage:e2e:report

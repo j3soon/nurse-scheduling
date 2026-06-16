@@ -243,12 +243,22 @@ export async function disableOptimizeAnonymization(page: Page) {
   await expect(checkbox).not.toBeChecked();
 }
 
-export async function waitForStoredSchedulingData(page: Page, expectedText: string) {
+export async function waitForStoredCurrentSchedulingData(page: Page, expectedText: string) {
   await page.waitForFunction(
     ({ key, value, workerNamespaceKey }) => {
       const workerNamespace = (window as unknown as { [key: string]: string | undefined })[workerNamespaceKey];
       const storageKey = workerNamespace ? `${key}__${workerNamespace}` : key;
-      return window.localStorage.getItem(storageKey)?.includes(value) ?? false;
+      const stored = window.localStorage.getItem(storageKey);
+      if (!stored) {
+        return false;
+      }
+
+      try {
+        const parsed = JSON.parse(stored) as { state?: unknown };
+        return JSON.stringify(parsed.state ?? '').includes(value);
+      } catch {
+        return false;
+      }
     },
     { key: STORAGE_KEY, value: expectedText, workerNamespaceKey: WORKER_NAMESPACE_KEY }
   );

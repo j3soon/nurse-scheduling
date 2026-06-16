@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('save and load roundtrip restores seeded state after reset', async ({ page }) => {
   /*
@@ -97,6 +97,8 @@ test('save and load roundtrip restores seeded state after reset', async ({ page 
   });
 
   await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
+  await expect(page.locator('pre')).toContainText('Team Alpha');
+  await waitForStoredCurrentSchedulingData(page, 'Team Alpha');
 
   await page.goto('/people');
   await expect(page.getByText('1. P1', { exact: true })).toBeVisible();

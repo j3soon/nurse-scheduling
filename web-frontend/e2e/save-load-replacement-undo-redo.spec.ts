@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('uploading replacement YAML is one undoable state boundary over the prior schedule', async ({ page }) => {
   /*
@@ -68,6 +68,7 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
   });
   await expect.poll(() => dialogs.length).toBe(2);
   await expect(page.locator('pre')).toContainText('replacement upload state');
+  await waitForStoredCurrentSchedulingData(page, 'P9');
 
   await page.goto('/people');
   await expect(page.getByText('1. P9', { exact: true })).toBeVisible();
@@ -79,6 +80,7 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
   await page.getByRole('heading', { name: 'Shift Type Management', exact: true }).click();
   await page.keyboard.press('Control+z');
   await expect(page.getByText('1. D', { exact: true })).toBeVisible();
+  await waitForStoredCurrentSchedulingData(page, 'P1');
 
   await page.goto('/people');
   await expect(page.getByText('1. P1', { exact: true })).toBeVisible();
@@ -90,6 +92,7 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
   await page.getByRole('heading', { name: 'Shift Type Management', exact: true }).click();
   await page.keyboard.press('Control+y');
   await expect(page.getByText('1. ZX', { exact: true })).toBeVisible();
+  await waitForStoredCurrentSchedulingData(page, 'P9');
 
   await page.goto('/people');
   await expect(page.getByText('1. P9', { exact: true })).toBeVisible();
