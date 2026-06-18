@@ -29,17 +29,20 @@ describe('TableRowActions', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders edit and delete buttons when callbacks are provided', async () => {
+  it('renders edit, duplicate, and delete buttons when callbacks are provided', async () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();
+    const onDuplicate = vi.fn();
     const onDelete = vi.fn();
 
-    render(<TableRowActions onEdit={onEdit} onDelete={onDelete} />);
+    render(<TableRowActions onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete} />);
 
     await user.click(screen.getByRole('button', { name: /edit/i }));
+    await user.click(screen.getByRole('button', { name: /duplicate/i }));
     await user.click(screen.getByRole('button', { name: /delete/i }));
 
     expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onDuplicate).toHaveBeenCalledTimes(1);
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
@@ -50,7 +53,13 @@ describe('TableRowActions', () => {
 
     rerender(<TableRowActions onDelete={vi.fn()} />);
     expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /duplicate/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
+
+    rerender(<TableRowActions onDuplicate={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /duplicate/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
   });
 
   it('supports Space key activation for action buttons', async () => {

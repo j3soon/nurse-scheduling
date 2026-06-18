@@ -32,14 +32,23 @@ vi.mock('@/hooks/useSchedulingData', () => ({
 }));
 
 const updateExportConfig = vi.fn();
+const updateExportFormatting = vi.fn();
+const updateExportExtraColumns = vi.fn();
+const updateExportExtraRows = vi.fn();
+const duplicateExportFormatting = vi.fn();
+const duplicateExportExtraColumn = vi.fn();
+const duplicateExportExtraRow = vi.fn();
 
 function renderExportLayoutPage(exportData: ExportConfig = { formatting: [], extraColumns: [], extraRows: [] }) {
   mockUseSchedulingData.mockReturnValue({
     effectiveExportData: exportData,
-    updateExportFormatting: vi.fn(),
-    updateExportExtraColumns: vi.fn(),
-    updateExportExtraRows: vi.fn(),
+    updateExportFormatting,
+    updateExportExtraColumns,
+    updateExportExtraRows,
     updateExportConfig,
+    duplicateExportFormatting,
+    duplicateExportExtraColumn,
+    duplicateExportExtraRow,
     peopleData: {
       items: [{ id: 'P1', description: 'Person 1', history: [] }],
       groups: [],
@@ -84,6 +93,12 @@ async function startExtraColumn(
 describe('ExportLayoutPage extra column coefficients', () => {
   beforeEach(() => {
     updateExportConfig.mockReset();
+    updateExportFormatting.mockReset();
+    updateExportExtraColumns.mockReset();
+    updateExportExtraRows.mockReset();
+    duplicateExportFormatting.mockReset();
+    duplicateExportExtraColumn.mockReset();
+    duplicateExportExtraRow.mockReset();
   });
 
   it('saves only non-default coefficients on an extra column', async () => {
@@ -185,7 +200,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
     expect(updateExportConfig.mock.calls[0][0].extraColumns[0].countShiftTypeCoefficients).toEqual([['D', 4]]);
   });
 
-  it('saves an edited export rule draft as a new rule without changing the original', async () => {
+  it('duplicates an export rule under the original with a copied description', async () => {
     const user = userEvent.setup();
     renderExportLayoutPage({
       formatting: [],
@@ -198,16 +213,10 @@ describe('ExportLayoutPage extra column coefficients', () => {
       extraRows: [],
     });
 
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    await user.clear(screen.getByPlaceholderText('OFF (Weekend)'));
-    await user.type(screen.getByPlaceholderText('OFF (Weekend)'), 'Copied Score');
-    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+    await user.click(screen.getByRole('button', { name: 'Duplicate' }));
 
-    expect(updateExportConfig).toHaveBeenCalledOnce();
-    expect(updateExportConfig.mock.calls[0][0].extraColumns).toMatchObject([
-      { header: 'Existing Score' },
-      { header: 'Copied Score' },
-    ]);
+    expect(duplicateExportExtraColumn).toHaveBeenCalledWith(0);
+    expect(updateExportExtraColumns).not.toHaveBeenCalled();
   });
 
   it('clears an invalid coefficient error after correction and saves the rule', async () => {

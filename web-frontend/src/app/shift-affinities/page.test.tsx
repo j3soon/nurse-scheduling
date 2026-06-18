@@ -40,9 +40,11 @@ function renderShiftAffinitiesPage() {
 
 describe('ShiftAffinitiesPage', () => {
   const updatePreferencesByType = vi.fn();
+  const duplicatePreferenceByType = vi.fn();
 
   beforeEach(() => {
     updatePreferencesByType.mockReset();
+    duplicatePreferenceByType.mockReset();
     mockUseSchedulingData.mockReturnValue({
       dateData: {
         range: {
@@ -65,6 +67,7 @@ describe('ShiftAffinitiesPage', () => {
       },
       getPreferencesByType: vi.fn(() => []),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
   });
 
@@ -123,18 +126,13 @@ describe('ShiftAffinitiesPage', () => {
         weight: 1,
       }]),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
     renderShiftAffinitiesPage();
 
-    await user.click(screen.getByRole('button', { name: /edit/i }));
-    await user.clear(screen.getByPlaceholderText('e.g., 1, 10, ∞'));
-    await user.type(screen.getByPlaceholderText('e.g., 1, 10, ∞'), '2');
-    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+    await user.click(screen.getByRole('button', { name: /duplicate/i }));
 
-    expect(updatePreferencesByType).toHaveBeenCalledOnce();
-    expect(updatePreferencesByType.mock.calls[0][1]).toMatchObject([
-      { description: 'Original affinity', weight: 1 },
-      { description: 'Original affinity', weight: 2 },
-    ]);
+    expect(duplicatePreferenceByType).toHaveBeenCalledWith('shift affinity', 0);
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
 });

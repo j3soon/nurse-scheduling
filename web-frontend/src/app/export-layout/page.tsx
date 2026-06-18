@@ -175,6 +175,9 @@ export default function ExportFormattingPage() {
     updateExportExtraColumns,
     updateExportExtraRows,
     updateExportConfig,
+    duplicateExportFormatting,
+    duplicateExportExtraColumn,
+    duplicateExportExtraRow,
     peopleData,
     dateData,
     shiftTypeData
@@ -739,35 +742,6 @@ export default function ExportFormattingPage() {
     if (wasEditing) {
       restoreScrollPosition();
     }
-  };
-
-  const handleSaveAsNew = () => {
-    const didSave = draft.kind === 'style'
-      ? saveStyleRule(true)
-      : draft.kind === 'extra column'
-        ? saveExtraColumn(true)
-        : saveExtraRow(true);
-    if (!didSave) return;
-
-    setIsFormVisible(false);
-    resetForm();
-    restoreScrollPosition();
-  };
-
-  const handleDeleteEditingRule = () => {
-    if (editingTarget === null) return;
-
-    if (editingTarget.kind === 'style') {
-      deleteStyleRule(editingTarget.index);
-    } else if (editingTarget.kind === 'extra column') {
-      deleteExtraColumn(editingTarget.index);
-    } else {
-      deleteExtraRow(editingTarget.index);
-    }
-
-    setIsFormVisible(false);
-    resetForm();
-    restoreScrollPosition();
   };
 
   useEffect(() => {
@@ -1345,16 +1319,7 @@ export default function ExportFormattingPage() {
               )}
 
               <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  {editingTarget !== null && (
-                    <button
-                      onClick={handleDeleteEditingRule}
-                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
+                <div />
                 <div className="flex flex-wrap justify-end gap-3">
                   <button
                     onClick={handleCancel}
@@ -1362,14 +1327,6 @@ export default function ExportFormattingPage() {
                   >
                     Cancel
                   </button>
-                  {editingTarget !== null && (
-                    <button
-                      onClick={handleSaveAsNew}
-                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
-                    >
-                      Save as New
-                    </button>
-                  )}
                   <button
                     onClick={handleSave}
                     className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
@@ -1389,6 +1346,7 @@ export default function ExportFormattingPage() {
           items={formattingRules}
           emptyMessage='No style rules defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditStyle}
+          onDuplicate={duplicateExportFormatting}
           onDelete={deleteStyleRule}
           onReorder={(newItems) => updateExportFormatting(newItems)}
           renderContent={(rule) => (
@@ -1483,6 +1441,7 @@ export default function ExportFormattingPage() {
           items={extraColumns}
           emptyMessage='No extra columns defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditExtraColumn}
+          onDuplicate={duplicateExportExtraColumn}
           onDelete={deleteExtraColumn}
           onReorder={(newItems) => updateExportExtraColumns(newItems)}
           renderContent={(rule) => (
@@ -1524,6 +1483,7 @@ export default function ExportFormattingPage() {
           items={extraRows}
           emptyMessage='No extra rows defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditExtraRow}
+          onDuplicate={duplicateExportExtraRow}
           onDelete={deleteExtraRow}
           onReorder={(newItems) => updateExportExtraRows(newItems)}
           renderContent={(rule) => (

@@ -171,6 +171,7 @@ export default function ShiftTypeRequirementsPage() {
   const {
     getPreferencesByType,
     updatePreferencesByType,
+    duplicatePreferenceByType,
     shiftTypeData,
     peopleData,
     dateData
@@ -325,13 +326,13 @@ export default function ShiftTypeRequirementsPage() {
     };
   };
 
-  function saveDraft(saveAsNew: boolean) {
+  function saveDraft() {
     if (!validateForm()) return;
 
     const newRequirement = buildRequirementFromForm();
 
     const wasEditing = editingIndex !== null;
-    if (wasEditing && !saveAsNew) {
+    if (wasEditing) {
       // Edit existing requirement
       const newRequirements = [...shiftTypeRequirements];
       newRequirements[editingIndex] = newRequirement;
@@ -350,11 +351,7 @@ export default function ShiftTypeRequirementsPage() {
   }
 
   function handleSave() {
-    saveDraft(false);
-  }
-
-  function handleSaveAsNew() {
-    saveDraft(true);
+    saveDraft();
   }
 
   // Handle global keydown for Enter/Escape when form is visible
@@ -380,15 +377,6 @@ export default function ShiftTypeRequirementsPage() {
   const handleDelete = (index: number) => {
     const newRequirements = shiftTypeRequirements.filter((_, i) => i !== index);
     updateShiftTypeRequirements(newRequirements);
-  };
-
-  const handleDeleteEditingRequirement = () => {
-    if (editingIndex === null) return;
-
-    handleDelete(editingIndex);
-    setIsFormVisible(false);
-    resetForm();
-    restoreScrollPosition();
   };
 
   const handleArrayFieldToggle = (field: 'shift_type' | 'qualified_people' | 'date', id: string) => {
@@ -734,16 +722,7 @@ export default function ShiftTypeRequirementsPage() {
 
               {/* Action Buttons */}
               <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  {editingIndex !== null && (
-                    <button
-                      onClick={handleDeleteEditingRequirement}
-                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
+                <div />
                 <div className="flex flex-wrap justify-end gap-3">
                   <button
                     onClick={handleCancel}
@@ -751,14 +730,6 @@ export default function ShiftTypeRequirementsPage() {
                   >
                     Cancel
                   </button>
-                  {editingIndex !== null && (
-                    <button
-                      onClick={handleSaveAsNew}
-                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
-                    >
-                      Save as New
-                    </button>
-                  )}
                   <button
                     onClick={handleSave}
                     className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
@@ -778,6 +749,7 @@ export default function ShiftTypeRequirementsPage() {
         items={shiftTypeRequirements}
         emptyMessage='No requirements defined yet. Click "Add Requirement" to get started.'
         onEdit={handleStartEdit}
+        onDuplicate={(index) => duplicatePreferenceByType(SHIFT_TYPE_REQUIREMENT, index)}
         onDelete={handleDelete}
         onReorder={updateShiftTypeRequirements}
         renderContent={(requirement) => (

@@ -40,9 +40,11 @@ function renderShiftTypeRequirementsPage() {
 
 describe('ShiftTypeRequirementsPage', () => {
   const updatePreferencesByType = vi.fn();
+  const duplicatePreferenceByType = vi.fn();
 
   beforeEach(() => {
     updatePreferencesByType.mockReset();
+    duplicatePreferenceByType.mockReset();
     mockUseSchedulingData.mockReturnValue({
       dateData: {
         range: {
@@ -68,6 +70,7 @@ describe('ShiftTypeRequirementsPage', () => {
       },
       getPreferencesByType: vi.fn(() => []),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
   });
 
@@ -118,6 +121,7 @@ describe('ShiftTypeRequirementsPage', () => {
         weight: -1,
       }]),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
 
     renderShiftTypeRequirementsPage();
@@ -160,6 +164,7 @@ describe('ShiftTypeRequirementsPage', () => {
         weight: -1,
       }]),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
 
     renderShiftTypeRequirementsPage();
@@ -211,20 +216,15 @@ describe('ShiftTypeRequirementsPage', () => {
         weight: -1,
       }]),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
 
     renderShiftTypeRequirementsPage();
 
-    await user.click(screen.getByRole('button', { name: /edit/i }));
-    await user.clear(screen.getAllByRole('spinbutton')[0]);
-    await user.type(screen.getAllByRole('spinbutton')[0], '2');
-    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+    await user.click(screen.getByRole('button', { name: /duplicate/i }));
 
-    expect(updatePreferencesByType).toHaveBeenCalledOnce();
-    expect(updatePreferencesByType.mock.calls[0][1]).toMatchObject([
-      { description: 'Original', requiredNumPeople: 1 },
-      { description: 'Original', requiredNumPeople: 2 },
-    ]);
+    expect(duplicatePreferenceByType).toHaveBeenCalledWith('shift type requirement', 0);
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
 
   it('warns when a date and shift type pair has no requirement coverage', () => {
@@ -261,6 +261,7 @@ describe('ShiftTypeRequirementsPage', () => {
       },
       getPreferencesByType: vi.fn(() => []),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
 
     renderShiftTypeRequirementsPage();
@@ -309,6 +310,7 @@ describe('ShiftTypeRequirementsPage', () => {
         },
       ]),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
 
     renderShiftTypeRequirementsPage();

@@ -2361,6 +2361,211 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('duplicates items and groups under the original with hook-generated copied IDs', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'duplicate entities',
+        dates: {
+          range: { startDate: '2026-01-01', endDate: '2026-01-01' },
+          items: [{ id: '01', description: 'Jan 1' }],
+          groups: [],
+        },
+        people: {
+          items: [
+            { id: 'P1', description: 'Person 1', history: ['D'] },
+            { id: 'P1 copy', description: 'Existing copy', history: [] },
+          ],
+          groups: [{ id: 'G1', description: 'Group 1', members: ['P1'] }],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [],
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.map(item => item.id)).toEqual(['P1', 'P1 copy']);
+    });
+
+    act(() => {
+      result.current.duplicateItem(DataType.PEOPLE, result.current.peopleData, 'P1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.map(item => item.id)).toEqual(['P1', 'P1 copy 2', 'P1 copy']);
+      expect(result.current.peopleData.items[1]).toMatchObject({ id: 'P1 copy 2', description: 'Person 1', history: ['D'] });
+      expect(result.current.peopleData.items[1].history).not.toBe(result.current.peopleData.items[0].history);
+      expect(result.current.peopleData.groups[0].members).toEqual(['P1', 'P1 copy 2']);
+    });
+
+    act(() => {
+      result.current.duplicateGroup(DataType.PEOPLE, result.current.peopleData, 'G1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.groups.slice(0, 2).map(group => group.id)).toEqual(['G1', 'G1 copy']);
+      expect(result.current.peopleData.groups[1].members).toEqual(['P1', 'P1 copy 2']);
+      expect(result.current.peopleData.groups[1].members).not.toBe(result.current.peopleData.groups[0].members);
+    });
+  });
+
+  it('duplicates preferences by type under the original with hook-generated copied descriptions', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'duplicate preferences',
+        dates: {
+          range: { startDate: '2026-01-01', endDate: '2026-01-01' },
+          items: [{ id: '01', description: 'Jan 1' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: 'Person 1', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [{
+          type: SHIFT_COUNT,
+          description: 'Original count',
+          person: ['P1'],
+          countDates: ['01'],
+          countShiftTypes: ['D'],
+          expression: 'x >= T',
+          target: 1,
+          weight: -1,
+        }],
+      });
+    });
+
+    act(() => {
+      result.current.duplicatePreferenceByType(SHIFT_COUNT, 0);
+    });
+
+    await waitFor(() => {
+      expect(result.current.getPreferencesByType(SHIFT_COUNT)).toMatchObject([
+        { description: 'Original count', target: 1 },
+        { description: 'Original count copy', target: 1 },
+      ]);
+    });
+  });
+
+  it('duplicates export entries under the original with hook-generated copied descriptions', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'duplicate export entries',
+        dates: {
+          range: { startDate: '2026-01-01', endDate: '2026-01-01' },
+          items: [{ id: '01', description: 'Jan 1' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: 'Person 1', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [],
+        export: {
+          formatting: [],
+          extraColumns: [{
+            type: 'count',
+            header: 'Existing Score',
+            countShiftTypes: ['D'],
+            countDates: ['01'],
+          }],
+          extraRows: [],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.duplicateExportExtraColumn(0);
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveExportData.extraColumns).toMatchObject([
+        { header: 'Existing Score' },
+        { header: 'Existing Score', description: 'Copy' },
+      ]);
+    });
+  });
+
+  it('logs and no-ops when duplicate preference or export indexes are invalid', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'invalid duplicate indexes',
+        dates: {
+          range: { startDate: '2026-01-01', endDate: '2026-01-01' },
+          items: [{ id: '01', description: 'Jan 1' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: 'Person 1', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [{
+          type: SHIFT_COUNT,
+          description: 'Original count',
+          person: ['P1'],
+          countDates: ['01'],
+          countShiftTypes: ['D'],
+          expression: 'x >= T',
+          target: 1,
+          weight: -1,
+        }],
+        export: {
+          formatting: [],
+          extraColumns: [{
+            type: 'count',
+            header: 'Existing Score',
+            countShiftTypes: ['D'],
+            countDates: ['01'],
+          }],
+          extraRows: [],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.duplicatePreferenceByType(SHIFT_COUNT, 9);
+      result.current.duplicateExportExtraColumn(9);
+    });
+
+    await waitFor(() => {
+      expect(result.current.getPreferencesByType(SHIFT_COUNT)).toHaveLength(1);
+      expect(result.current.effectiveExportData.extraColumns).toHaveLength(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot duplicate shift count at index 9'));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot duplicate export extra column at index 9'));
+    });
+  });
+
   it('renaming/deleting shift types cascades to preferences and people history', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 

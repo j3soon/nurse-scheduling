@@ -40,6 +40,7 @@ function renderShiftCountsPage() {
 
 describe('ShiftCountsPage', () => {
   const updatePreferencesByType = vi.fn();
+  const duplicatePreferenceByType = vi.fn();
 
   async function fillRequiredFieldsAndSelectShiftTypes(
     user: ReturnType<typeof userEvent.setup>,
@@ -75,6 +76,7 @@ describe('ShiftCountsPage', () => {
 
   beforeEach(() => {
     updatePreferencesByType.mockReset();
+    duplicatePreferenceByType.mockReset();
     mockUseSchedulingData.mockReturnValue({
       dateData: {
         range: {
@@ -97,6 +99,7 @@ describe('ShiftCountsPage', () => {
       },
       getPreferencesByType: vi.fn(() => []),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
   });
 
@@ -184,6 +187,7 @@ describe('ShiftCountsPage', () => {
         weight: -1,
       }]),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
     const user = userEvent.setup();
     renderShiftCountsPage();
@@ -225,20 +229,15 @@ describe('ShiftCountsPage', () => {
         weight: -1,
       }]),
       updatePreferencesByType,
+      duplicatePreferenceByType,
     });
     const user = userEvent.setup();
     renderShiftCountsPage();
 
-    await user.click(screen.getByRole('button', { name: /edit/i }));
-    await user.clear(screen.getByPlaceholderText('e.g., 5'));
-    await user.type(screen.getByPlaceholderText('e.g., 5'), '2');
-    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+    await user.click(screen.getByRole('button', { name: /duplicate/i }));
 
-    expect(updatePreferencesByType).toHaveBeenCalledOnce();
-    expect(updatePreferencesByType.mock.calls[0][1]).toMatchObject([
-      { description: 'Original count', target: 1 },
-      { description: 'Original count', target: 2 },
-    ]);
+    expect(duplicatePreferenceByType).toHaveBeenCalledWith('shift count', 0);
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
 
   it('shows all invalid coefficient errors and clears only the edited coefficient error', async () => {

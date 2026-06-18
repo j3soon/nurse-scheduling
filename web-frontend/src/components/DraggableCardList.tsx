@@ -21,7 +21,7 @@
 // Note that this file highly duplicates with DataTable.tsx.
 import { ReactNode, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
-import { FiEdit2, FiTrash2 } from 'react-icons/fi';
+import { FiCopy, FiEdit2, FiTrash2 } from 'react-icons/fi';
 
 interface DraggableCardListProps<T> {
   title: string;
@@ -29,6 +29,7 @@ interface DraggableCardListProps<T> {
   emptyMessage: string;
   renderContent: (item: T, index: number) => ReactNode;
   onEdit: (index: number) => void;
+  onDuplicate?: (index: number) => void;
   onDelete: (index: number) => void;
   onReorder?: (newItems: T[]) => void;
 }
@@ -39,6 +40,7 @@ export function DraggableCardList<T>({
   emptyMessage,
   renderContent,
   onEdit,
+  onDuplicate,
   onDelete,
   onReorder,
 }: DraggableCardListProps<T>) {
@@ -127,6 +129,15 @@ export function DraggableCardList<T>({
                       <FiEdit2 className="h-4 w-4" />
                       Edit
                     </button>
+                    {onDuplicate && (
+                      <button
+                        onClick={() => onDuplicate(index)}
+                        className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
+                      >
+                        <FiCopy className="h-4 w-4" />
+                        Duplicate
+                      </button>
+                    )}
                     <button
                       onClick={() => onDelete(index)}
                       className="text-red-600 hover:text-red-900 flex items-center gap-1 text-sm"

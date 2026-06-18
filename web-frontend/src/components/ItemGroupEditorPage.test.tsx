@@ -25,6 +25,7 @@ import userEvent from '@testing-library/user-event';
 import ItemGroupEditorPage, { ItemGroupEditorPageData } from '@/components/ItemGroupEditorPage';
 import { Mode } from '@/constants/modes';
 import { DataType, Group, Item } from '@/types/scheduling';
+import { getUniqueCopyLabel } from '@/utils/duplicateLabels';
 import * as scrolling from '@/utils/scrolling';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
@@ -66,6 +67,52 @@ function ItemGroupEditorHarness({
     setData({
       ...prev,
       groups: [...prev.groups, { id, members: memberIds, description: description || '' }],
+    });
+  };
+
+  const duplicateItem = (_dataType: DataType, prev: ItemGroupEditorPageData, id: string) => {
+    const newId = getUniqueCopyLabel(id, [
+      ...prev.items.map(item => item.id),
+      ...prev.groups.map(group => group.id),
+    ]);
+    const sourceIndex = prev.items.findIndex(item => item.id === id);
+    const sourceItem = prev.items[sourceIndex];
+    setData({
+      ...prev,
+      items: [
+        ...prev.items.slice(0, sourceIndex + 1),
+        { ...sourceItem, id: newId },
+        ...prev.items.slice(sourceIndex + 1),
+      ],
+      groups: prev.groups.map(group => {
+        const memberIndex = group.members.indexOf(id);
+        return memberIndex === -1
+          ? group
+          : {
+              ...group,
+              members: [
+                ...group.members.slice(0, memberIndex + 1),
+                newId,
+                ...group.members.slice(memberIndex + 1),
+              ],
+            };
+      }),
+    });
+  };
+
+  const duplicateGroup = (_dataType: DataType, prev: ItemGroupEditorPageData, id: string) => {
+    const newId = getUniqueCopyLabel(id, [
+      ...prev.items.map(item => item.id),
+      ...prev.groups.map(group => group.id),
+    ]);
+    const sourceIndex = prev.groups.findIndex(group => group.id === id);
+    setData({
+      ...prev,
+      groups: [
+        ...prev.groups.slice(0, sourceIndex + 1),
+        { ...prev.groups[sourceIndex], id: newId },
+        ...prev.groups.slice(sourceIndex + 1),
+      ],
     });
   };
 
@@ -143,6 +190,8 @@ function ItemGroupEditorHarness({
         extraButtons={extraButtons}
         addItem={addItem}
         addGroup={addGroup}
+        duplicateItem={duplicateItem}
+        duplicateGroup={duplicateGroup}
         updateItem={updateItem}
         updateGroup={updateGroup}
         deleteItem={deleteItem}
@@ -214,52 +263,55 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.queryByText('Team C')).not.toBeInTheDocument();
   }, 15000);
 
-  it('saves an edited item draft as a new item after the ID changes', async () => {
+  it('duplicates an item under the original with a unique copied ID without opening the form', async () => {
     const user = userEvent.setup();
 
     render(<ItemGroupEditorHarness />);
 
     const person1Row = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
-    await user.click(within(person1Row).getByRole('button', { name: /edit/i }));
-
-    const idInput = screen.getByDisplayValue('Person 1');
-    await user.clear(idInput);
-    await user.type(idInput, 'Person 2');
-    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+    await user.click(within(person1Row).getByRole('button', { name: /duplicate/i }));
 
     expect(screen.getByText('1. Person 1')).toBeInTheDocument();
-    expect(screen.getByText('2. Person 2')).toBeInTheDocument();
-  }, 15000);
-
-  it('requires a distinct ID when saving an edited item draft as new', async () => {
-    const user = userEvent.setup();
-
-    render(<ItemGroupEditorHarness />);
-
-    const person1Row = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
-    await user.click(within(person1Row).getByRole('button', { name: /edit/i }));
-    await user.click(screen.getByRole('button', { name: 'Save as New' }));
-
-    expect(screen.getByText('This ID is already used by another person or group')).toBeInTheDocument();
-    expect(screen.queryByText('2. Person 1')).not.toBeInTheDocument();
+    expect(screen.getByText('2. Person 1 copy')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Enter person ID')).not.toBeInTheDocument();
   });
 
-  it('saves an edited group draft as a new group after the ID changes', async () => {
+  it('increments copied item IDs when the first copy name already exists', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [
+            { id: 'Person 1', description: 'First person', history: [] },
+            { id: 'Person 1 copy', description: 'Existing copy', history: [] },
+          ],
+          groups: [{ id: 'Team A', members: ['Person 1'], description: 'Initial team' }],
+          history: [],
+        }}
+      />,
+    );
+
+    const person1Row = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
+    await user.click(within(person1Row).getByRole('button', { name: /duplicate/i }));
+
+    expect(screen.getByText('1. Person 1')).toBeInTheDocument();
+    expect(screen.getByText('2. Person 1 copy 2')).toBeInTheDocument();
+    expect(screen.getByText('3. Person 1 copy')).toBeInTheDocument();
+  });
+
+  it('duplicates a group under the original with copied members', async () => {
     const user = userEvent.setup();
 
     render(<ItemGroupEditorHarness />);
 
     const teamARow = screen.getByTitle('Team A').closest('tr') as HTMLTableRowElement;
-    await user.click(within(teamARow).getByRole('button', { name: /edit/i }));
-
-    const idInput = screen.getByDisplayValue('Team A');
-    await user.clear(idInput);
-    await user.type(idInput, 'Team B');
-    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+    await user.click(within(teamARow).getByRole('button', { name: /duplicate/i }));
 
     expect(screen.getByTitle('Team A')).toBeInTheDocument();
-    expect(screen.getByTitle('Team B')).toBeInTheDocument();
-  }, 15000);
+    expect(screen.getByTitle('Team A copy')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Enter group ID')).not.toBeInTheDocument();
+  });
 
   it('hides add actions in read-only modes', () => {
     render(<ItemGroupEditorHarness itemsReadOnly={true} groupsReadOnly={true} />);

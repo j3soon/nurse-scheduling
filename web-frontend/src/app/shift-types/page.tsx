@@ -33,6 +33,8 @@ export default function ShiftTypePage() {
     // Get functions to pass as props
     addItem,
     addGroup,
+    duplicateItem,
+    duplicateGroup,
     updateItem,
     updateGroup,
     deleteItem,
@@ -64,6 +66,8 @@ export default function ShiftTypePage() {
       setMode={setMode}
       addItem={addItem}
       addGroup={addGroup}
+      duplicateItem={duplicateItem}
+      duplicateGroup={duplicateGroup}
       updateItem={updateItem}
       updateGroup={updateGroup}
       deleteItem={deleteItem}

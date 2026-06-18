@@ -17,16 +17,17 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// A component for the edit and delete actions of a table row.
-import { FiEdit2, FiTrash2 } from 'react-icons/fi';
+// A component for the edit, duplicate, and delete actions of a table row.
+import { FiCopy, FiEdit2, FiTrash2 } from 'react-icons/fi';
 
 interface TableRowActionsProps {
   onEdit?: () => void;
+  onDuplicate?: () => void;
   onDelete?: () => void;
 }
 
-export function TableRowActions({ onEdit, onDelete }: TableRowActionsProps) {
-  if (!onEdit && !onDelete) {
+export function TableRowActions({ onEdit, onDuplicate, onDelete }: TableRowActionsProps) {
+  if (!onEdit && !onDuplicate && !onDelete) {
     return null;
   }
 
@@ -39,6 +40,15 @@ export function TableRowActions({ onEdit, onDelete }: TableRowActionsProps) {
         >
           <FiEdit2 className="h-4 w-4" />
           Edit
+        </button>
+      )}
+      {onDuplicate && (
+        <button
+          onClick={onDuplicate}
+          className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
+        >
+          <FiCopy className="h-4 w-4" />
+          Duplicate
         </button>
       )}
       {onDelete && (

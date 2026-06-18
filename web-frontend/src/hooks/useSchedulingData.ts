@@ -27,6 +27,7 @@ import { AUTO_GENERATED_ITEMS, AUTO_GENERATED_GROUPS, isReservedKeyword, filterA
 import { setLatestSchedulingStateForSentry } from '@/utils/sentrySchedulingState';
 import { buildTaiwanHolidayGroups, isTaiwanHolidayRangeSupported } from '@/utils/taiwanHolidays';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
+import { getUniqueCopyLabel } from '@/utils/duplicateLabels';
 import {
   compareFirstIdByEntryOrder,
   getOrderedEntries,
@@ -1040,6 +1041,84 @@ export function useSchedulingDataInternal() {
     updateData(dataType, newData);
   };
 
+  const duplicateItem = (
+    dataType: DataType,
+    data: ItemGroupEditorPageData,
+    id: string
+  ): void => {
+    const newId = getUniqueCopyLabel(id, [
+      ...data.items.map(item => item.id),
+      ...data.groups.map(group => group.id),
+    ]);
+
+    if (isReservedKeyword(dataType, newId)) {
+      console.error(`Cannot duplicate item with ID "${newId}" - it is a reserved keyword. ${ERROR_SHOULD_NOT_HAPPEN}`);
+      return;
+    }
+
+    const sourceIndex = data.items.findIndex(item => item.id === id);
+    if (sourceIndex === -1) {
+      console.error(`Cannot duplicate item with ID "${id}" - item not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
+      return;
+    }
+
+    const sourceItem = data.items[sourceIndex];
+    const duplicatedItem = { ...structuredClone(sourceItem), id: newId };
+    const newItems = [
+      ...data.items.slice(0, sourceIndex + 1),
+      duplicatedItem,
+      ...data.items.slice(sourceIndex + 1),
+    ];
+    const updatedGroups = data.groups.map(group => {
+      const memberIndex = group.members.indexOf(id);
+      if (memberIndex === -1) {
+        return group;
+      }
+
+      return {
+        ...group,
+        members: [
+          ...group.members.slice(0, memberIndex + 1),
+          newId,
+          ...group.members.slice(memberIndex + 1),
+        ],
+      };
+    });
+
+    updateData(dataType, { ...data, items: newItems, groups: updatedGroups });
+  };
+
+  const duplicateGroup = (
+    dataType: DataType,
+    data: ItemGroupEditorPageData,
+    id: string
+  ): void => {
+    const newId = getUniqueCopyLabel(id, [
+      ...data.items.map(item => item.id),
+      ...data.groups.map(group => group.id),
+    ]);
+
+    if (isReservedKeyword(dataType, newId)) {
+      console.error(`Cannot duplicate group with ID "${newId}" - it is a reserved keyword. ${ERROR_SHOULD_NOT_HAPPEN}`);
+      return;
+    }
+
+    const sourceIndex = data.groups.findIndex(group => group.id === id);
+    if (sourceIndex === -1) {
+      console.error(`Cannot duplicate group with ID "${id}" - group not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
+      return;
+    }
+
+    const duplicatedGroup = { ...structuredClone(data.groups[sourceIndex]), id: newId };
+    const newGroups = [
+      ...data.groups.slice(0, sourceIndex + 1),
+      duplicatedGroup,
+      ...data.groups.slice(sourceIndex + 1),
+    ];
+
+    updateData(dataType, { ...data, groups: newGroups });
+  };
+
   const applyPeopleHistoryForIdChange = (
     state: SchedulingState,
     dataType: DataType,
@@ -1758,6 +1837,44 @@ export function useSchedulingDataInternal() {
     updatePreferences(updatedPreferences, options);
   };
 
+  const duplicateEntryWithCopiedDescription = <T extends { description?: string }>(
+    entries: T[],
+    index: number,
+    entryLabel: string
+  ): T[] | null => {
+    const sourceEntry = entries[index];
+    if (!sourceEntry) {
+      console.error(`Cannot duplicate ${entryLabel} at index ${index} - entry not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
+      return null;
+    }
+
+    const duplicatedEntry = {
+      ...structuredClone(sourceEntry),
+      description: getUniqueCopyLabel(
+        sourceEntry.description,
+        entries.map(entry => entry.description ?? '')
+      ),
+    };
+
+    return [
+      ...entries.slice(0, index + 1),
+      duplicatedEntry,
+      ...entries.slice(index + 1),
+    ];
+  };
+
+  const duplicatePreferenceByType = <T extends Preference>(
+    type: string,
+    index: number,
+    options: HistoryMutationOptions = {}
+  ) => {
+    const preferencesOfType = getPreferencesByType<T>(type);
+    const duplicatedPreferences = duplicateEntryWithCopiedDescription(preferencesOfType, index, type);
+    if (!duplicatedPreferences) return;
+
+    updatePreferencesByType(type, duplicatedPreferences, options);
+  };
+
   const updateExportFormatting = (formatting?: ExportFormatting[]) => {
     updateState(prevState => ({
       ...prevState,
@@ -1793,6 +1910,30 @@ export function useSchedulingDataInternal() {
       ...prevState,
       export: normalizeExportConfigOrder(exportConfig, prevState)
     }));
+  };
+
+  const duplicateExportFormatting = (index: number) => {
+    const exportData = historyState.state.export ?? generateExportLayoutConfig(historyState.state.shiftTypes, historyState.state.dates.groups);
+    const duplicatedFormatting = duplicateEntryWithCopiedDescription(exportData.formatting ?? [], index, 'export formatting rule');
+    if (!duplicatedFormatting) return;
+
+    updateExportFormatting(duplicatedFormatting);
+  };
+
+  const duplicateExportExtraColumn = (index: number) => {
+    const exportData = historyState.state.export ?? generateExportLayoutConfig(historyState.state.shiftTypes, historyState.state.dates.groups);
+    const duplicatedExtraColumns = duplicateEntryWithCopiedDescription(exportData.extraColumns ?? [], index, 'export extra column');
+    if (!duplicatedExtraColumns) return;
+
+    updateExportExtraColumns(duplicatedExtraColumns);
+  };
+
+  const duplicateExportExtraRow = (index: number) => {
+    const exportData = historyState.state.export ?? generateExportLayoutConfig(historyState.state.shiftTypes, historyState.state.dates.groups);
+    const duplicatedExtraRows = duplicateEntryWithCopiedDescription(exportData.extraRows ?? [], index, 'export extra row');
+    if (!duplicatedExtraRows) return;
+
+    updateExportExtraRows(duplicatedExtraRows);
   };
 
   const loadFromYaml = (yamlData: unknown) => {
@@ -1964,10 +2105,14 @@ export function useSchedulingDataInternal() {
     updatePreferences,
     updatePreferencesByType,
     getPreferencesByType,
+    duplicatePreferenceByType,
     updateExportFormatting,
     updateExportExtraColumns,
     updateExportExtraRows,
     updateExportConfig,
+    duplicateExportFormatting,
+    duplicateExportExtraColumn,
+    duplicateExportExtraRow,
 
     addPersonHistory,
     updatePersonHistory,
@@ -1979,6 +2124,8 @@ export function useSchedulingDataInternal() {
     // Helper functions
     addItem,
     addGroup,
+    duplicateItem,
+    duplicateGroup,
     updateItem,
     updateGroup,
     deleteItem,
