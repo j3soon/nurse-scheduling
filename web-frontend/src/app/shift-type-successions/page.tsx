@@ -647,7 +647,7 @@ export default function ShiftTypeSuccessionsPage() {
                     return (
                       <span key={idx} className="flex items-center">
                         <span
-                          className="px-1.5 py-0.5 rbg-gray-100 ounded text-xs"
+                          className="px-1.5 py-0.5 bg-gray-100 rounded text-xs"
                           title={shiftType?.description}
                         >
                           {shiftTypeId}
