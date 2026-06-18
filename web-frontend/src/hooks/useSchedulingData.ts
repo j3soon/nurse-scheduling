@@ -1103,7 +1103,7 @@ export function useSchedulingDataInternal() {
     };
 
     const shiftTypeSuccessionsFieldMap = {
-      [DataType.DATES]: undefined,
+      [DataType.DATES]: 'date',
       [DataType.PEOPLE]: 'person',
       [DataType.SHIFT_TYPES]: 'pattern'
     };
@@ -1136,9 +1136,6 @@ export function useSchedulingDataInternal() {
             [fieldName]: ((pref as ShiftRequestPreference)[fieldName] as string[]).map(id => id === oldId ? newId : id)
           };
         } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
-          if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
-            return pref;
-          }
           const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
           return {
             ...pref,
@@ -1200,7 +1197,7 @@ export function useSchedulingDataInternal() {
     };
 
     const shiftTypeSuccessionsFieldMap = {
-      [DataType.DATES]: undefined,
+      [DataType.DATES]: 'date',
       [DataType.PEOPLE]: 'person',
       [DataType.SHIFT_TYPES]: 'pattern'
     };
@@ -1233,9 +1230,6 @@ export function useSchedulingDataInternal() {
             [fieldName]: ((pref as ShiftRequestPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
           };
         } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
-          if (shiftTypeSuccessionsFieldMap[dataType] === undefined) {
-            return pref;
-          }
           const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
           return {
             ...pref,
@@ -1270,13 +1264,16 @@ export function useSchedulingDataInternal() {
       // Second, remove preferences with empty required fields
       .filter(pref => {
         if (pref.type === SHIFT_TYPE_REQUIREMENT) {
-          return (pref as ShiftTypeRequirementsPreference).shiftType.length > 0;
+          return (pref as ShiftTypeRequirementsPreference).date.length > 0 &&
+            (pref as ShiftTypeRequirementsPreference).qualifiedPeople.length > 0 &&
+            (pref as ShiftTypeRequirementsPreference).shiftType.length > 0;
         } else if (pref.type === SHIFT_REQUEST) {
           return (pref as ShiftRequestPreference).person.length > 0 &&
             (pref as ShiftRequestPreference).date.length > 0 &&
             (pref as ShiftRequestPreference).shiftType.length > 0;
         } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
           return (pref as ShiftTypeSuccessionsPreference).person.length > 0 &&
+            (pref as ShiftTypeSuccessionsPreference).date.length > 0 &&
             (pref as ShiftTypeSuccessionsPreference).pattern.length > 0;
         } else if (pref.type === SHIFT_COUNT) {
           return (pref as ShiftCountPreference).person.length > 0 &&

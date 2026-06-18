@@ -2515,10 +2515,199 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
-      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(true);
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_COUNT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_AFFINITY)).toBe(false);
-      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(true);
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);
+    });
+  });
+
+  it('renames date groups across all date-based preference fields', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'date group succession rename',
+        dates: {
+          range: { startDate: '2026-12-01', endDate: '2026-12-02' },
+          items: [
+            { id: '01', description: 'Date 1' },
+            { id: '02', description: 'Date 2' },
+          ],
+          groups: [{ id: 'Weekend Team', members: ['01', '02'], description: '' }],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [
+            { id: 'D', description: 'Day' },
+            { id: 'N', description: 'Night' },
+          ],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_TYPE_REQUIREMENT,
+            shiftType: ['D'],
+            requiredNumPeople: 1,
+            qualifiedPeople: ['P1'],
+            date: ['Weekend Team'],
+            weight: 1,
+          },
+          { type: SHIFT_REQUEST, person: ['P1'], date: ['Weekend Team'], shiftType: ['D'], weight: 2 },
+          {
+            type: SHIFT_TYPE_SUCCESSIONS,
+            person: ['P1'],
+            pattern: ['D', 'N'],
+            date: ['Weekend Team'],
+            weight: -3,
+          },
+          {
+            type: SHIFT_COUNT,
+            person: ['P1'],
+            countDates: ['Weekend Team'],
+            countShiftTypes: ['D'],
+            expression: 'x >= T',
+            target: 1,
+            weight: 4,
+          },
+          {
+            type: SHIFT_AFFINITY,
+            date: ['Weekend Team'],
+            people1: ['P1'],
+            people2: ['P1'],
+            shiftTypes: ['D'],
+            weight: 5,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.updateGroup(DataType.DATES, result.current.dateData, 'Weekend Team', 'Weekend Crew');
+    });
+
+    await waitFor(() => {
+      const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as
+        | { date: string[] }
+        | undefined;
+      const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as
+        | { date: string[] }
+        | undefined;
+      const successions = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_SUCCESSIONS) as
+        | { date: string[] }
+        | undefined;
+      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
+        | { countDates: string[] }
+        | undefined;
+      const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as
+        | { date: string[] }
+        | undefined;
+
+      expect(requirement?.date).toEqual(['Weekend Crew']);
+      expect(request?.date).toEqual(['Weekend Crew']);
+      expect(successions?.date).toEqual(['Weekend Crew']);
+      expect(count?.countDates).toEqual(['Weekend Crew']);
+      expect(affinity?.date).toEqual(['Weekend Crew']);
+      expect(JSON.stringify(result.current.preferences)).not.toContain('Weekend Team');
+    });
+  });
+
+  it('deletes shift type successions when their date group reference is deleted', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'date group succession delete',
+        dates: {
+          range: { startDate: '2026-12-01', endDate: '2026-12-02' },
+          items: [
+            { id: '01', description: 'Date 1' },
+            { id: '02', description: 'Date 2' },
+          ],
+          groups: [{ id: 'Weekend Team', members: ['01', '02'], description: '' }],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [
+            { id: 'D', description: 'Day' },
+            { id: 'N', description: 'Night' },
+          ],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_TYPE_SUCCESSIONS,
+            person: ['P1'],
+            pattern: ['D', 'N'],
+            date: ['Weekend Team'],
+            weight: -1,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteGroup(DataType.DATES, result.current.dateData, 'Weekend Team');
+    });
+
+    await waitFor(() => {
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);
+    });
+  });
+
+  it('deletes shift type requirements when their only qualified person reference is deleted', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'requirement qualified person delete',
+        dates: {
+          range: { startDate: '2026-12-01', endDate: '2026-12-01' },
+          items: [{ id: '01', description: 'Date 1' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_TYPE_REQUIREMENT,
+            shiftType: ['D'],
+            requiredNumPeople: 1,
+            qualifiedPeople: ['P1'],
+            date: ['01'],
+            weight: 1,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.PEOPLE, result.current.peopleData, 'P1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
     });
   });
 
@@ -3295,6 +3484,7 @@ describe('useSchedulingData', () => {
         preferences: [
           { type: SHIFT_REQUEST, person: ['P1'], date: ['01'], shiftType: ['DN'], weight: 1 },
           { type: SHIFT_TYPE_REQUIREMENT, date: ['01'], shiftType: ['DN'], qualifiedPeople: ['P1'], requiredNumPeople: 1, weight: 2 },
+          { type: SHIFT_TYPE_SUCCESSIONS, person: ['P1'], date: ['01'], pattern: ['DN', 'D'], weight: -2 },
           {
             type: SHIFT_COUNT,
             person: ['P1'],
@@ -3318,6 +3508,7 @@ describe('useSchedulingData', () => {
     await waitFor(() => {
       const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as { shiftType: string[] } | undefined;
       const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as { shiftType: string[] } | undefined;
+      const successions = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_SUCCESSIONS) as { pattern: string[] } | undefined;
       const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
         | { countShiftTypes: string[]; countShiftTypeCoefficients?: Array<[string, number]> }
         | undefined;
@@ -3326,6 +3517,7 @@ describe('useSchedulingData', () => {
       expect(result.current.shiftTypeData.groups.some(group => group.id === 'DAYNIGHT')).toBe(true);
       expect(request?.shiftType).toEqual(['DAYNIGHT']);
       expect(requirement?.shiftType).toEqual(['DAYNIGHT']);
+      expect(successions?.pattern).toEqual(['DAYNIGHT', 'D']);
       expect(count?.countShiftTypes).toEqual(['DAYNIGHT']);
       expect(count?.countShiftTypeCoefficients).toEqual([['DAYNIGHT', 4]]);
       expect(affinity?.shiftTypes).toEqual(['DAYNIGHT']);
@@ -3355,6 +3547,7 @@ describe('useSchedulingData', () => {
         preferences: [
           { type: SHIFT_REQUEST, person: ['G1'], date: ['01'], shiftType: ['D'], weight: 1 },
           { type: SHIFT_COUNT, person: ['G1'], countDates: ['01'], countShiftTypes: ['D'], expression: 'x >= T', target: 1, weight: 2 },
+          { type: SHIFT_TYPE_SUCCESSIONS, person: ['G1'], date: ['01'], pattern: ['D', 'N'], weight: -2 },
           { type: SHIFT_AFFINITY, date: ['01'], people1: ['P1'], people2: ['G1'], shiftTypes: ['D'], weight: 3 },
           { type: SHIFT_TYPE_REQUIREMENT, date: ['01'], shiftType: ['D'], qualifiedPeople: ['P1', 'G1'], requiredNumPeople: 1, weight: 4 },
         ],
@@ -3369,11 +3562,13 @@ describe('useSchedulingData', () => {
     await waitFor(() => {
       const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as { person: string[] } | undefined;
       const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as { person: string[] } | undefined;
+      const successions = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_SUCCESSIONS) as { person: string[] } | undefined;
       const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as { people2: string[] } | undefined;
       const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as { qualifiedPeople: string[] } | undefined;
 
       expect(request?.person).toEqual(['G1X']);
       expect(count?.person).toEqual(['G1X']);
+      expect(successions?.person).toEqual(['G1X']);
       expect(affinity?.people2).toEqual(['G1X']);
       expect(requirement?.qualifiedPeople).toEqual(['P1', 'G1X']);
     });
