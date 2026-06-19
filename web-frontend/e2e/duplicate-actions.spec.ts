@@ -130,7 +130,14 @@ async function openAddForm(page: Page, buttonName: string, headingName: string) 
 
 async function expectAddFormDismissed(page: Page, placeholder: string, draftText: string) {
   await expect(page.getByPlaceholder(placeholder)).toHaveCount(0);
-  await expect(page.getByDisplayValue(draftText)).toHaveCount(0);
+  await expect.poll(async () =>
+    page.locator('input, textarea').evaluateAll((fields, expectedValue) =>
+      fields.filter((field) =>
+        (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) &&
+        field.value === expectedValue
+      ).length,
+    draftText)
+  ).toBe(0);
 }
 
 test('item and group duplicate actions insert copies under the original without opening the editor', async ({ page }) => {
@@ -209,7 +216,7 @@ test('preference duplicate actions insert copied cards for each preference page'
 
   await page.goto('/shift-type-successions');
   await openAddForm(page, 'Add Succession', 'Add New Succession');
-  await page.getByPlaceholder('e.g., Avoid Night → Day transitions').fill('succession rule');
+  await page.getByPlaceholder('e.g., Forbid Evening -> Day succession').fill('succession rule');
   await page.getByRole('checkbox', { name: 'Alice', exact: true }).check();
   await page.getByRole('button', { name: 'N', exact: true }).click();
   await page.getByRole('button', { name: 'D', exact: true }).click();
@@ -224,7 +231,7 @@ test('preference duplicate actions insert copied cards for each preference page'
 
   await page.goto('/shift-affinities');
   await openAddForm(page, 'Add Shift Affinity', 'Add New Shift Affinity');
-  await page.getByPlaceholder('e.g., Alice and Bob should work together').fill('affinity rule');
+  await page.getByPlaceholder('e.g., Encourage newcomers and seniors to work together').fill('affinity rule');
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByRole('checkbox', { name: 'Alice', exact: true }).nth(0).check();
   await page.getByRole('checkbox', { name: 'Bob', exact: true }).nth(1).check();
@@ -290,7 +297,7 @@ test('item group mutations dismiss open add drafts before mutating', async ({ pa
   await peopleTable.getByTitle('Remove "Team A"').first().click();
   await waitForStoredCurrentSchedulingData(page, 'Alice copy');
   await expectAddFormDismissed(page, 'Enter person ID', 'Unsaved tag draft');
-  await expect(peopleTable.locator('tbody tr').nth(0)).toContainText('0 groups');
+  await expect(peopleTable.locator('tbody tr').nth(0)).not.toContainText('Team A');
 
   await openAddForm(page, 'Add Person', 'Add New Person');
   await page.getByPlaceholder('Enter person ID').fill('Unsaved reorder draft');

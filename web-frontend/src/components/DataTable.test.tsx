@@ -151,10 +151,59 @@ describe('DataTable', () => {
     );
 
     const row = container.querySelectorAll('tbody tr')[1] as HTMLTableRowElement;
-    fireEvent.dragOver(row, { clientY: 0 });
+    const dataTransfer = createDataTransfer();
+
+    fireEvent.dragStart(row, { dataTransfer });
+    fireEvent.dragOver(row, { dataTransfer, clientY: 0 });
     expect(row.className).toMatch(/border-(t|b)-2/);
 
     fireEvent.dragLeave(row);
     expect(row.className).not.toMatch(/border-(t|b)-2/);
+    fireEvent.dragEnd(row, { dataTransfer });
+  });
+
+  it('ignores drops from another table', () => {
+    const sourceOnReorder = vi.fn();
+    const targetOnReorder = vi.fn();
+    const sourceData: Row[] = [
+      { id: 'group-a', name: 'Group Alpha' },
+      { id: 'group-b', name: 'Group Beta' },
+    ];
+    const targetData: Row[] = [
+      { id: 'person-a', name: 'Person Alpha' },
+      { id: 'person-b', name: 'Person Beta' },
+    ];
+
+    const { container } = render(
+      <>
+        <DataTable<Row>
+          title="Groups"
+          columns={columns}
+          data={sourceData}
+          onReorder={sourceOnReorder}
+        />
+        <DataTable<Row>
+          title="People"
+          columns={columns}
+          data={targetData}
+          onReorder={targetOnReorder}
+        />
+      </>,
+    );
+
+    const sourceRow = screen.getByText('Group Alpha').closest('tr') as HTMLTableRowElement;
+    const targetRow = screen.getByText('Person Beta').closest('tr') as HTMLTableRowElement;
+    const dataTransfer = createDataTransfer();
+
+    fireEvent.dragStart(sourceRow, { dataTransfer });
+    fireEvent.dragOver(targetRow, { dataTransfer, clientY: 0 });
+    expect(targetRow.className).not.toMatch(/border-(t|b)-2/);
+
+    fireEvent.drop(targetRow, { dataTransfer, clientY: 0 });
+    fireEvent.dragEnd(sourceRow, { dataTransfer });
+
+    expect(sourceOnReorder).not.toHaveBeenCalled();
+    expect(targetOnReorder).not.toHaveBeenCalled();
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(4);
   });
 });
