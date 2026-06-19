@@ -207,6 +207,14 @@ function ItemGroupEditorHarness({
   );
 }
 
+function createDataTransfer() {
+  const store = new Map<string, string>();
+  return {
+    setData: (key: string, value: string) => store.set(key, value),
+    getData: (key: string) => store.get(key) ?? '',
+  };
+}
+
 describe('ItemGroupEditorPage', () => {
   it('supports add, edit, and delete flow for items', async () => {
     const user = userEvent.setup();
@@ -274,6 +282,88 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.getByText('1. Person 1')).toBeInTheDocument();
     expect(screen.getByText('2. Person 1 copy')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Enter person ID')).not.toBeInTheDocument();
+  });
+
+  it('dismisses the edited item draft before duplicating an item', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    const person1Row = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
+    await user.click(within(person1Row).getByRole('button', { name: /edit/i }));
+    await user.clear(screen.getByDisplayValue('Person 1'));
+    await user.type(screen.getByPlaceholderText('Enter person ID'), 'Unsaved Person');
+    await user.click(within(person1Row).getByRole('button', { name: /duplicate/i }));
+
+    expect(screen.queryByRole('button', { name: 'Update' })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved Person')).not.toBeInTheDocument();
+    expect(screen.getByText('1. Person 1')).toBeInTheDocument();
+    expect(screen.getByText('2. Person 1 copy')).toBeInTheDocument();
+  });
+
+  it('dismisses an added item draft before duplicating an item', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    await user.click(screen.getByRole('button', { name: /add person/i }));
+    await user.type(screen.getByPlaceholderText('Enter person ID'), 'Unsaved Person');
+    const person1Row = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
+    await user.click(within(person1Row).getByRole('button', { name: /duplicate/i }));
+
+    expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved Person')).not.toBeInTheDocument();
+    expect(screen.getByText('1. Person 1')).toBeInTheDocument();
+    expect(screen.getByText('2. Person 1 copy')).toBeInTheDocument();
+  });
+
+  it('dismisses the edited item draft before deleting an item', async () => {
+    const user = userEvent.setup();
+
+    render(<ItemGroupEditorHarness />);
+
+    const person1Row = screen.getByText('1. Person 1').closest('tr') as HTMLTableRowElement;
+    await user.click(within(person1Row).getByRole('button', { name: /edit/i }));
+    await user.clear(screen.getByDisplayValue('Person 1'));
+    await user.type(screen.getByPlaceholderText('Enter person ID'), 'Unsaved Person');
+    await user.click(within(person1Row).getByRole('button', { name: /delete/i }));
+
+    expect(screen.queryByRole('button', { name: 'Update' })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved Person')).not.toBeInTheDocument();
+    expect(screen.queryByText('1. Person 1')).not.toBeInTheDocument();
+  });
+
+  it('dismisses an added item draft before reordering items', async () => {
+    const user = userEvent.setup();
+
+    const { container } = render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [
+            { id: 'Person 1', description: 'First person', history: [] },
+            { id: 'Person 2', description: 'Second person', history: [] },
+          ],
+          groups: [],
+          history: [],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /add person/i }));
+    await user.type(screen.getByPlaceholderText('Enter person ID'), 'Unsaved Person');
+
+    const rows = container.querySelectorAll('tbody tr');
+    const sourceRow = rows[1] as HTMLTableRowElement;
+    const targetRow = rows[0] as HTMLTableRowElement;
+    const dataTransfer = createDataTransfer();
+    dataTransfer.setData('text/plain', '1');
+    fireEvent.dragStart(sourceRow, { dataTransfer });
+    fireEvent.drop(targetRow, { dataTransfer, clientY: 0 });
+
+    expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved Person')).not.toBeInTheDocument();
+    expect(screen.getByText('1. Person 2')).toBeInTheDocument();
+    expect(screen.getByText('2. Person 1')).toBeInTheDocument();
   });
 
   it('increments copied item IDs when the first copy name already exists', async () => {
@@ -545,6 +635,29 @@ describe('ItemGroupEditorPage', () => {
 
     await user.click(screen.getByTitle('Remove "Team A"'));
 
+    expect(screen.getByText('0 groups')).toBeInTheDocument();
+    expect(screen.getByText('0 members')).toBeInTheDocument();
+  });
+
+  it('dismisses an added item draft before removing membership via removable tag action', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [{ id: 'Person 1', description: '', history: [] }],
+          groups: [{ id: 'Team A', members: ['Person 1'], description: '' }],
+          history: [],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /add person/i }));
+    await user.type(screen.getByPlaceholderText('Enter person ID'), 'Unsaved Person');
+    await user.click(screen.getByTitle('Remove "Team A"'));
+
+    expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved Person')).not.toBeInTheDocument();
     expect(screen.getByText('0 groups')).toBeInTheDocument();
     expect(screen.getByText('0 members')).toBeInTheDocument();
   });

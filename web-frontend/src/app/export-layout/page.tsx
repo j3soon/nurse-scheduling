@@ -227,16 +227,55 @@ export default function ExportFormattingPage() {
     }
   };
 
+  const dismissEditingDraft = () => {
+    if (isFormVisible) {
+      handleCancel();
+    }
+  };
+
   const deleteStyleRule = (index: number) => {
+    dismissEditingDraft();
     updateExportFormatting(formattingRules.filter((_, i) => i !== index));
   };
 
   const deleteExtraColumn = (index: number) => {
+    dismissEditingDraft();
     updateExportExtraColumns(extraColumns.filter((_, i) => i !== index));
   };
 
   const deleteExtraRow = (index: number) => {
+    dismissEditingDraft();
     updateExportExtraRows(extraRows.filter((_, i) => i !== index));
+  };
+
+  const handleDuplicateStyleRule = (index: number) => {
+    dismissEditingDraft();
+    duplicateExportFormatting(index);
+  };
+
+  const handleDuplicateExtraColumn = (index: number) => {
+    dismissEditingDraft();
+    duplicateExportExtraColumn(index);
+  };
+
+  const handleDuplicateExtraRow = (index: number) => {
+    dismissEditingDraft();
+    duplicateExportExtraRow(index);
+  };
+
+  const handleReorderStyleRules = (newItems: typeof formattingRules) => {
+    dismissEditingDraft();
+    updateExportFormatting(newItems);
+  };
+
+  const handleReorderExtraColumns = (newItems: typeof extraColumns) => {
+    dismissEditingDraft();
+    updateExportExtraColumns(newItems);
+  };
+
+  const handleReorderExtraRows = (newItems: typeof extraRows) => {
+    dismissEditingDraft();
+    updateExportExtraRows(newItems);
   };
 
   const peopleOptions = [
@@ -460,7 +499,7 @@ export default function ExportFormattingPage() {
     return [minWeight as number, maxWeight as number];
   };
 
-  const saveStyleRule = (saveAsNew: boolean) => {
+  const saveStyleRule = () => {
     const description = draft.description.trim();
     const backgroundColor = draft.backgroundColor.trim().toLowerCase();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
@@ -549,12 +588,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (!saveAsNew && editingTarget?.kind === 'style') {
+    if (editingTarget?.kind === 'style') {
       nextFormatting[editingTarget.index] = newRule;
     } else {
-      if (!saveAsNew && editingTarget?.kind === 'extra column') {
+      if (editingTarget?.kind === 'extra column') {
         nextExtraColumns.splice(editingTarget.index, 1);
-      } else if (!saveAsNew && editingTarget?.kind === 'extra row') {
+      } else if (editingTarget?.kind === 'extra row') {
         nextExtraRows.splice(editingTarget.index, 1);
       }
       nextFormatting.push(newRule);
@@ -568,7 +607,7 @@ export default function ExportFormattingPage() {
     return true;
   };
 
-  const saveExtraColumn = (saveAsNew: boolean) => {
+  const saveExtraColumn = () => {
     const header = draft.header.trim();
     const description = draft.description.trim();
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
@@ -638,12 +677,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (!saveAsNew && editingTarget?.kind === 'extra column') {
+    if (editingTarget?.kind === 'extra column') {
       nextExtraColumns[editingTarget.index] = newRule;
     } else {
-      if (!saveAsNew && editingTarget?.kind === 'style') {
+      if (editingTarget?.kind === 'style') {
         nextFormatting.splice(editingTarget.index, 1);
-      } else if (!saveAsNew && editingTarget?.kind === 'extra row') {
+      } else if (editingTarget?.kind === 'extra row') {
         nextExtraRows.splice(editingTarget.index, 1);
       }
       nextExtraColumns.push(newRule);
@@ -657,7 +696,7 @@ export default function ExportFormattingPage() {
     return true;
   };
 
-  const saveExtraRow = (saveAsNew: boolean) => {
+  const saveExtraRow = () => {
     const header = draft.header.trim();
     const description = draft.description.trim();
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
@@ -709,12 +748,12 @@ export default function ExportFormattingPage() {
     const nextFormatting = [...formattingRules];
     const nextExtraColumns = [...extraColumns];
     const nextExtraRows = [...extraRows];
-    if (!saveAsNew && editingTarget?.kind === 'extra row') {
+    if (editingTarget?.kind === 'extra row') {
       nextExtraRows[editingTarget.index] = newRule;
     } else {
-      if (!saveAsNew && editingTarget?.kind === 'style') {
+      if (editingTarget?.kind === 'style') {
         nextFormatting.splice(editingTarget.index, 1);
-      } else if (!saveAsNew && editingTarget?.kind === 'extra column') {
+      } else if (editingTarget?.kind === 'extra column') {
         nextExtraColumns.splice(editingTarget.index, 1);
       }
       nextExtraRows.push(newRule);
@@ -731,10 +770,10 @@ export default function ExportFormattingPage() {
   const handleSave = () => {
     const wasEditing = editingTarget !== null;
     const didSave = draft.kind === 'style'
-      ? saveStyleRule(false)
+      ? saveStyleRule()
       : draft.kind === 'extra column'
-        ? saveExtraColumn(false)
-        : saveExtraRow(false);
+        ? saveExtraColumn()
+        : saveExtraRow();
     if (!didSave) return;
 
     setIsFormVisible(false);
@@ -1346,9 +1385,9 @@ export default function ExportFormattingPage() {
           items={formattingRules}
           emptyMessage='No style rules defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditStyle}
-          onDuplicate={duplicateExportFormatting}
+          onDuplicate={handleDuplicateStyleRule}
           onDelete={deleteStyleRule}
-          onReorder={(newItems) => updateExportFormatting(newItems)}
+          onReorder={handleReorderStyleRules}
           renderContent={(rule) => (
             <>
               {rule.description && (
@@ -1441,9 +1480,9 @@ export default function ExportFormattingPage() {
           items={extraColumns}
           emptyMessage='No extra columns defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditExtraColumn}
-          onDuplicate={duplicateExportExtraColumn}
+          onDuplicate={handleDuplicateExtraColumn}
           onDelete={deleteExtraColumn}
-          onReorder={(newItems) => updateExportExtraColumns(newItems)}
+          onReorder={handleReorderExtraColumns}
           renderContent={(rule) => (
             <>
               {rule.description && (
@@ -1483,9 +1522,9 @@ export default function ExportFormattingPage() {
           items={extraRows}
           emptyMessage='No extra rows defined yet. Click "Add Export Rule" to get started.'
           onEdit={handleStartEditExtraRow}
-          onDuplicate={duplicateExportExtraRow}
+          onDuplicate={handleDuplicateExtraRow}
           onDelete={deleteExtraRow}
-          onReorder={(newItems) => updateExportExtraRows(newItems)}
+          onReorder={handleReorderExtraRows}
           renderContent={(rule) => (
             <>
               {rule.description && (

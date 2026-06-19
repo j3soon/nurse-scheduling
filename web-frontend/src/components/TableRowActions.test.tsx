@@ -40,6 +40,9 @@ describe('TableRowActions', () => {
     expect(screen.getByRole('button', { name: /edit/i })).toHaveAttribute('title', 'Edit');
     expect(screen.getByRole('button', { name: /duplicate/i })).toHaveAttribute('title', 'Duplicate');
     expect(screen.getByRole('button', { name: /delete/i })).toHaveAttribute('title', 'Delete');
+    expect(screen.getByRole('button', { name: /edit/i }).className).not.toContain('hover:bg');
+    expect(screen.getByRole('button', { name: /duplicate/i }).className).not.toContain('hover:bg');
+    expect(screen.getByRole('button', { name: /delete/i }).className).not.toContain('hover:bg');
     expect(screen.queryByText('Edit')).not.toBeInTheDocument();
     expect(screen.queryByText('Duplicate')).not.toBeInTheDocument();
     expect(screen.queryByText('Delete')).not.toBeInTheDocument();

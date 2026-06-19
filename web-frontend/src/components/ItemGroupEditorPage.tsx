@@ -141,7 +141,7 @@ export default function ItemGroupEditorPage({
            groups.some(group => group.id === id && group.id !== currentId);
   };
 
-  const saveDraft = (saveAsNew: boolean) => {
+  const saveDraft = () => {
     const trimmedId = draft.id.trim();
     const trimmedDescription = draft.description.trim();
     if (!trimmedId) {
@@ -154,14 +154,14 @@ export default function ItemGroupEditorPage({
       return;
     }
 
-    if (isDuplicateId(trimmedId, saveAsNew ? undefined : draft.editingId)) {
+    if (isDuplicateId(trimmedId, draft.editingId)) {
       setError(`This ID is already used by another ${itemLabel.toLowerCase()} or group`);
       return;
     }
 
     const wasEditing = !!draft.editingId;
     if (draft.isItem) {
-      if (draft.editingId && !saveAsNew) {
+      if (draft.editingId) {
         updateItem(
           dataType,
           data,
@@ -180,7 +180,7 @@ export default function ItemGroupEditorPage({
         );
       }
     } else {
-      if (draft.editingId && !saveAsNew) {
+      if (draft.editingId) {
         updateGroup(
           dataType,
           data,
@@ -210,7 +210,7 @@ export default function ItemGroupEditorPage({
   };
 
   const handleSave = () => {
-    saveDraft(false);
+    saveDraft();
   };
 
   const handleStartEditing = (id: string) => {
@@ -272,6 +272,22 @@ export default function ItemGroupEditorPage({
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
+  const dismissActiveDraft = () => {
+    const wasEditing = !!draft.editingId;
+    if (mode === Mode.ADDING || mode === Mode.EDITING) {
+      setMode(Mode.NORMAL);
+      setDraft({ id: '', description: '', groups: [], members: [], isItem: true });
+      setError('');
+      if (wasEditing) {
+        restoreScrollPosition();
+      }
+    } else if (mode === Mode.INLINE_EDITING) {
+      setMode(Mode.NORMAL);
+      setInlineEditingId('');
+      setError('');
+    }
+  };
+
   const handleDelete = (id: string) => {
     const isItem = items.some(i => i.id === id);
     if (isItem) {
@@ -284,6 +300,7 @@ export default function ItemGroupEditorPage({
         console.error(`Cannot delete auto-generated ${itemLabel.toLowerCase()} ${id}. ${ERROR_SHOULD_NOT_HAPPEN}`);
         return;
       }
+      dismissActiveDraft();
       deleteItem(dataType, data, id);
     } else {
       if (groupsReadOnly) {
@@ -295,6 +312,7 @@ export default function ItemGroupEditorPage({
         console.error(`Cannot delete auto-generated group ${id}. ${ERROR_SHOULD_NOT_HAPPEN}`);
         return;
       }
+      dismissActiveDraft();
       deleteGroup(dataType, data, id);
     }
   };
@@ -312,6 +330,7 @@ export default function ItemGroupEditorPage({
         console.error(`Cannot duplicate auto-generated ${itemLabel.toLowerCase()} ${id}. ${ERROR_SHOULD_NOT_HAPPEN}`);
         return;
       }
+      dismissActiveDraft();
       duplicateItem(dataType, data, id);
     } else {
       if (groupsReadOnly) {
@@ -323,6 +342,7 @@ export default function ItemGroupEditorPage({
         console.error(`Cannot duplicate auto-generated group ${id}. ${ERROR_SHOULD_NOT_HAPPEN}`);
         return;
       }
+      dismissActiveDraft();
       duplicateGroup(dataType, data, id);
     }
   };
@@ -487,6 +507,21 @@ export default function ItemGroupEditorPage({
     }
   };
 
+  const handleReorderItems = (reorderedItems: Item[]) => {
+    dismissActiveDraft();
+    reorderItems(dataType, data, reorderedItems);
+  };
+
+  const handleReorderGroups = (newGroups: Group[]) => {
+    dismissActiveDraft();
+    reorderGroups(dataType, data, newGroups);
+  };
+
+  const handleRemoveItemFromGroup = (itemId: string, groupId: string) => {
+    dismissActiveDraft();
+    removeItemFromGroup(dataType, data, itemId, groupId);
+  };
+
   // Table columns using the separate functions
   const itemColumns = useItemTableColumns({
     mode,
@@ -501,7 +536,7 @@ export default function ItemGroupEditorPage({
     onEdit: handleStartEditing,
     onDuplicate: handleDuplicate,
     onDelete: handleDelete,
-    removeItemFromGroup: (itemId: string, groupId: string) => removeItemFromGroup(dataType, data, itemId, groupId),
+    removeItemFromGroup: handleRemoveItemFromGroup,
     itemsReadOnly,
   });
 
@@ -518,7 +553,7 @@ export default function ItemGroupEditorPage({
     onEdit: handleStartEditing,
     onDuplicate: handleDuplicate,
     onDelete: handleDelete,
-    removeItemFromGroup: (itemId: string, groupId: string) => removeItemFromGroup(dataType, data, itemId, groupId),
+    removeItemFromGroup: handleRemoveItemFromGroup,
     groupsReadOnly,
   });
 
@@ -593,7 +628,7 @@ export default function ItemGroupEditorPage({
           title={itemLabelPlural}
           columns={itemColumns}
           data={items}
-          onReorder={mode === Mode.INLINE_EDITING || itemsReadOnly ? undefined : (items: Item[]) => reorderItems(dataType, data, items)}
+          onReorder={itemsReadOnly ? undefined : handleReorderItems}
           getRowClassName={(item) => item.isAutoGenerated ? 'bg-blue-50 border-blue-200 non-draggable' : ''}
           headerAction={itemTableHeaderAction}
         />
@@ -602,7 +637,7 @@ export default function ItemGroupEditorPage({
           title={itemLabelPlural + ' Groups'}
           columns={groupColumns}
           data={groups}
-          onReorder={mode === Mode.INLINE_EDITING || groupsReadOnly ? undefined : (groups: Group[]) => reorderGroups(dataType, data, groups)}
+          onReorder={groupsReadOnly ? undefined : handleReorderGroups}
           getRowClassName={(group) => group.isAutoGenerated ? 'bg-blue-50 border-blue-200 non-draggable' : ''}
         />
       </div>

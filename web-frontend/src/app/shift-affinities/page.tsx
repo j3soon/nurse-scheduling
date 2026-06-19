@@ -213,8 +213,25 @@ export default function ShiftAffinitiesPage() {
     };
   });
 
+  const dismissEditingDraft = () => {
+    if (isFormVisible) {
+      handleCancel();
+    }
+  };
+
+  const handleDuplicate = (index: number) => {
+    dismissEditingDraft();
+    duplicatePreferenceByType(SHIFT_AFFINITY, index);
+  };
+
   const handleDelete = (index: number) => {
+    dismissEditingDraft();
     const newShiftAffinities = shiftAffinities.filter((_, i) => i !== index);
+    updateShiftAffinities(newShiftAffinities);
+  };
+
+  const handleReorder = (newShiftAffinities: ShiftAffinityPreference[]) => {
+    dismissEditingDraft();
     updateShiftAffinities(newShiftAffinities);
   };
 
@@ -486,9 +503,9 @@ export default function ShiftAffinitiesPage() {
         items={shiftAffinities}
         emptyMessage='No shift affinities defined yet. Click "Add Shift Affinity" to get started.'
         onEdit={handleStartEdit}
-        onDuplicate={(index) => duplicatePreferenceByType(SHIFT_AFFINITY, index)}
+        onDuplicate={handleDuplicate}
         onDelete={handleDelete}
-        onReorder={updateShiftAffinities}
+        onReorder={handleReorder}
         renderContent={(shiftAffinity) => (
           <>
             {shiftAffinity.description && (

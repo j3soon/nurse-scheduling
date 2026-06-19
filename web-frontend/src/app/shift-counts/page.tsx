@@ -284,8 +284,25 @@ export default function ShiftCountsPage() {
     };
   });
 
+  const dismissEditingDraft = () => {
+    if (isFormVisible) {
+      handleCancel();
+    }
+  };
+
+  const handleDuplicate = (index: number) => {
+    dismissEditingDraft();
+    duplicatePreferenceByType(SHIFT_COUNT, index);
+  };
+
   const handleDelete = (index: number) => {
+    dismissEditingDraft();
     const newShiftCounts = shiftCounts.filter((_, i) => i !== index);
+    updateShiftCounts(newShiftCounts);
+  };
+
+  const handleReorder = (newShiftCounts: ShiftCountPreference[]) => {
+    dismissEditingDraft();
     updateShiftCounts(newShiftCounts);
   };
 
@@ -641,9 +658,9 @@ export default function ShiftCountsPage() {
         items={shiftCounts}
         emptyMessage='No shift counts defined yet. Click "Add Shift Count" to get started.'
         onEdit={handleStartEdit}
-        onDuplicate={(index) => duplicatePreferenceByType(SHIFT_COUNT, index)}
+        onDuplicate={handleDuplicate}
         onDelete={handleDelete}
-        onReorder={updateShiftCounts}
+        onReorder={handleReorder}
         renderContent={(shiftCount) => (
           <>
             {shiftCount.description && (

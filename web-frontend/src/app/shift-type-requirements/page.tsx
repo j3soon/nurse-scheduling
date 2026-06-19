@@ -374,8 +374,25 @@ export default function ShiftTypeRequirementsPage() {
     };
   });
 
+  const dismissEditingDraft = () => {
+    if (isFormVisible) {
+      handleCancel();
+    }
+  };
+
+  const handleDuplicate = (index: number) => {
+    dismissEditingDraft();
+    duplicatePreferenceByType(SHIFT_TYPE_REQUIREMENT, index);
+  };
+
   const handleDelete = (index: number) => {
+    dismissEditingDraft();
     const newRequirements = shiftTypeRequirements.filter((_, i) => i !== index);
+    updateShiftTypeRequirements(newRequirements);
+  };
+
+  const handleReorder = (newRequirements: ShiftTypeRequirementsPreference[]) => {
+    dismissEditingDraft();
     updateShiftTypeRequirements(newRequirements);
   };
 
@@ -749,9 +766,9 @@ export default function ShiftTypeRequirementsPage() {
         items={shiftTypeRequirements}
         emptyMessage='No requirements defined yet. Click "Add Requirement" to get started.'
         onEdit={handleStartEdit}
-        onDuplicate={(index) => duplicatePreferenceByType(SHIFT_TYPE_REQUIREMENT, index)}
+        onDuplicate={handleDuplicate}
         onDelete={handleDelete}
-        onReorder={updateShiftTypeRequirements}
+        onReorder={handleReorder}
         renderContent={(requirement) => (
           <>
             {requirement.description && (

@@ -31,9 +31,9 @@ export function TableRowActions({ onEdit, onDuplicate, onDelete }: TableRowActio
     return null;
   }
 
-  const editClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-blue-600 hover:bg-blue-50 hover:text-blue-900';
-  const duplicateClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-indigo-600 hover:bg-indigo-50 hover:text-indigo-800';
-  const deleteClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-red-600 hover:bg-red-50 hover:text-red-900';
+  const editClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-blue-600 hover:text-blue-900';
+  const duplicateClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-indigo-600 hover:text-indigo-800';
+  const deleteClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-red-600 hover:text-red-900';
 
   return (
     <div className="flex flex-nowrap justify-start gap-1">

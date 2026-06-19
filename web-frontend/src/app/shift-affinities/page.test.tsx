@@ -94,7 +94,7 @@ describe('ShiftAffinitiesPage', () => {
     expect(screen.queryByText('At least one shift type must be selected')).not.toBeInTheDocument();
   });
 
-  it('saves an edited affinity draft as a new affinity without changing the original', async () => {
+  it('dismisses the edited affinity draft before duplicating an affinity', async () => {
     const user = userEvent.setup();
     mockUseSchedulingData.mockReturnValue({
       dateData: {
@@ -130,8 +130,56 @@ describe('ShiftAffinitiesPage', () => {
     });
     renderShiftAffinitiesPage();
 
+    await user.click(screen.getByRole('button', { name: /edit/i }));
     await user.click(screen.getByRole('button', { name: /duplicate/i }));
 
+    expect(screen.queryByRole('button', { name: 'Update' })).not.toBeInTheDocument();
+    expect(duplicatePreferenceByType).toHaveBeenCalledWith('shift affinity', 0);
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
+  it('dismisses an added affinity draft before duplicating an affinity', async () => {
+    const user = userEvent.setup();
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '01', description: 'Jan 1' }],
+        groups: [],
+      },
+      peopleData: {
+        items: [
+          { id: 'P1', description: 'Person 1', history: [] },
+          { id: 'P2', description: 'Person 2', history: [] },
+        ],
+        groups: [],
+      },
+      shiftTypeData: {
+        items: [{ id: 'D', description: 'Day' }],
+        groups: [],
+      },
+      getPreferencesByType: vi.fn(() => [{
+        type: 'shift affinity',
+        description: 'Original affinity',
+        date: ['01'],
+        people1: ['P1'],
+        people2: ['P2'],
+        shiftTypes: ['D'],
+        weight: 1,
+      }]),
+      updatePreferencesByType,
+      duplicatePreferenceByType,
+    });
+    renderShiftAffinitiesPage();
+
+    await user.click(screen.getByRole('button', { name: /add shift affinity/i }));
+    await user.type(screen.getByPlaceholderText('e.g., Encourage newcomers and seniors to work together'), 'Unsaved affinity');
+    await user.click(screen.getByRole('button', { name: /duplicate/i }));
+
+    expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved affinity')).not.toBeInTheDocument();
     expect(duplicatePreferenceByType).toHaveBeenCalledWith('shift affinity', 0);
     expect(updatePreferencesByType).not.toHaveBeenCalled();
   });

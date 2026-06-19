@@ -20,7 +20,11 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
+import type { Page } from '@playwright/test';
+import { disableModalDialogs, waitForStoredCurrentSchedulingData } from './helpers';
+
+const STORAGE_KEY = 'nurse-scheduling-data';
+const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
 
 const baseState = {
   apiVersion: 'v2',
@@ -30,6 +34,7 @@ const baseState = {
       startDate: '2026-05-01',
       endDate: '2026-05-01',
     },
+    items: [],
     groups: [],
   },
   people: {
@@ -86,8 +91,46 @@ const baseState = {
   },
 };
 
-async function seedDuplicateState(page: Parameters<typeof seedSchedulingState>[0]) {
-  await seedSchedulingState(page, baseState);
+async function seedStateBeforeNavigation(page: Page, state: Record<string, unknown>) {
+  const persisted = JSON.stringify({
+    state,
+    history: [state],
+    currentHistoryIndex: 0,
+  });
+
+  await page.addInitScript(
+    ({ key, value, workerNamespaceKey }) => {
+      const workerNamespace = (window as unknown as { [key: string]: string | undefined })[workerNamespaceKey];
+      const storageKey = workerNamespace ? `${key}__${workerNamespace}` : key;
+      window.localStorage.setItem(storageKey, value);
+      window.localStorage.setItem(key, value);
+      for (let workerIndex = 0; workerIndex < 8; workerIndex += 1) {
+        window.localStorage.setItem(`${key}__worker-${workerIndex}`, value);
+      }
+    },
+    { key: STORAGE_KEY, value: persisted, workerNamespaceKey: WORKER_NAMESPACE_KEY }
+  );
+}
+
+async function seedDuplicateState(page: Page) {
+  await seedStateBeforeNavigation(page, baseState);
+}
+
+async function openAddForm(page: Page, buttonName: string, headingName: string) {
+  const heading = page.getByRole('heading', { name: headingName, exact: true });
+  const button = page.getByRole('button', { name: buttonName, exact: true });
+
+  await expect(async () => {
+    if (await heading.count() === 0) {
+      await button.click();
+    }
+    await expect(heading).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 10000 });
+}
+
+async function expectAddFormDismissed(page: Page, placeholder: string, draftText: string) {
+  await expect(page.getByPlaceholder(placeholder)).toHaveCount(0);
+  await expect(page.getByDisplayValue(draftText)).toHaveCount(0);
 }
 
 test('item and group duplicate actions insert copies under the original without opening the editor', async ({ page }) => {
@@ -136,21 +179,22 @@ test('preference duplicate actions insert copied cards for each preference page'
   await seedDuplicateState(page);
 
   await page.goto('/shift-counts');
-  await page.getByRole('button', { name: 'Add Shift Count' }).click();
+  await openAddForm(page, 'Add Shift Count', 'Add New Shift Count');
   await page.getByPlaceholder('e.g., Working shifts should be close to the average').fill('count rule');
   await page.getByRole('checkbox', { name: 'Alice', exact: true }).check();
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByRole('checkbox', { name: 'D', exact: true }).check();
+  await page.getByPlaceholder('e.g., 5').fill('1');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await page.getByRole('button', { name: 'Duplicate' }).click();
   await waitForStoredCurrentSchedulingData(page, 'count rule copy');
   await expect(page.getByText('count rule', { exact: true })).toBeVisible();
   await expect(page.getByText('count rule copy', { exact: true })).toBeVisible();
-  await expect(page.getByText('Expression: x >= 1')).toHaveCount(2);
+  await expect(page.getByText('x >= 1', { exact: true })).toHaveCount(2);
   await expect(page.getByRole('heading', { name: 'Add New Shift Count', exact: true })).toHaveCount(0);
 
   await page.goto('/shift-type-requirements');
-  await page.getByRole('button', { name: 'Add Requirement' }).click();
+  await openAddForm(page, 'Add Requirement', 'Add New Requirement');
   await page.getByPlaceholder('e.g., Night shifts need senior nurses').fill('requirement rule');
   await page.getByRole('checkbox', { name: 'D', exact: true }).check();
   await page.getByRole('checkbox', { name: 'Alice', exact: true }).check();
@@ -164,7 +208,7 @@ test('preference duplicate actions insert copied cards for each preference page'
   await expect(page.getByRole('heading', { name: 'Add New Requirement', exact: true })).toHaveCount(0);
 
   await page.goto('/shift-type-successions');
-  await page.getByRole('button', { name: 'Add Succession' }).click();
+  await openAddForm(page, 'Add Succession', 'Add New Succession');
   await page.getByPlaceholder('e.g., Avoid Night → Day transitions').fill('succession rule');
   await page.getByRole('checkbox', { name: 'Alice', exact: true }).check();
   await page.getByRole('button', { name: 'N', exact: true }).click();
@@ -179,7 +223,7 @@ test('preference duplicate actions insert copied cards for each preference page'
   await expect(page.getByRole('heading', { name: 'Add New Succession', exact: true })).toHaveCount(0);
 
   await page.goto('/shift-affinities');
-  await page.getByRole('button', { name: 'Add Shift Affinity' }).click();
+  await openAddForm(page, 'Add Shift Affinity', 'Add New Shift Affinity');
   await page.getByPlaceholder('e.g., Alice and Bob should work together').fill('affinity rule');
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByRole('checkbox', { name: 'Alice', exact: true }).nth(0).check();
@@ -218,4 +262,128 @@ test('export layout duplicate actions insert copied entries for every export lis
   await expect(extraRows.getByText('Copy', { exact: true })).toBeVisible();
   await expect(extraRows.getByText('Header: Alice Count')).toHaveCount(2);
   await expect(page.getByRole('heading', { name: 'Add Export Rule', exact: true })).toHaveCount(0);
+});
+
+test('item group mutations dismiss open add drafts before mutating', async ({ page }) => {
+  await disableModalDialogs(page);
+  await seedDuplicateState(page);
+  await page.goto('/people');
+
+  const peopleTable = page.getByRole('heading', { name: 'People', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+
+  await openAddForm(page, 'Add Person', 'Add New Person');
+  await page.getByPlaceholder('Enter person ID').fill('Unsaved duplicate draft');
+  await peopleTable.locator('tr').filter({ has: page.getByText('1. Alice', { exact: true }) }).getByRole('button', { name: 'Duplicate' }).click();
+  await waitForStoredCurrentSchedulingData(page, 'Alice copy');
+  await expectAddFormDismissed(page, 'Enter person ID', 'Unsaved duplicate draft');
+  await expect(peopleTable.locator('tbody tr').nth(1)).toContainText('2. Alice copy');
+
+  await openAddForm(page, 'Add Person', 'Add New Person');
+  await page.getByPlaceholder('Enter person ID').fill('Unsaved delete draft');
+  await peopleTable.locator('tr').filter({ has: page.getByText('3. Bob', { exact: true }) }).getByRole('button', { name: 'Delete' }).click();
+  await waitForStoredCurrentSchedulingData(page, 'Alice copy');
+  await expectAddFormDismissed(page, 'Enter person ID', 'Unsaved delete draft');
+  await expect(peopleTable.getByText('Bob', { exact: true })).toHaveCount(0);
+
+  await openAddForm(page, 'Add Person', 'Add New Person');
+  await page.getByPlaceholder('Enter person ID').fill('Unsaved tag draft');
+  await peopleTable.getByTitle('Remove "Team A"').first().click();
+  await waitForStoredCurrentSchedulingData(page, 'Alice copy');
+  await expectAddFormDismissed(page, 'Enter person ID', 'Unsaved tag draft');
+  await expect(peopleTable.locator('tbody tr').nth(0)).toContainText('0 groups');
+
+  await openAddForm(page, 'Add Person', 'Add New Person');
+  await page.getByPlaceholder('Enter person ID').fill('Unsaved reorder draft');
+  const rows = peopleTable.locator('tbody tr');
+  await rows.nth(1).dragTo(rows.nth(0));
+  await expectAddFormDismissed(page, 'Enter person ID', 'Unsaved reorder draft');
+  await expect(rows.nth(0)).toContainText('1. Alice copy');
+  await expect(rows.nth(1)).toContainText('2. Alice');
+});
+
+test('preference and export duplicate actions dismiss open add drafts before mutating', async ({ page }) => {
+  await disableModalDialogs(page);
+  await seedStateBeforeNavigation(page, {
+    ...baseState,
+    preferences: [
+      { type: 'at most one shift per day' },
+      {
+        type: 'shift count',
+        description: 'Existing count',
+        person: ['Alice'],
+        countDates: ['01'],
+        countShiftTypes: ['D'],
+        expression: 'x >= T',
+        target: 1,
+        weight: -1,
+      },
+      {
+        type: 'shift type requirement',
+        description: 'Existing requirement',
+        shiftType: ['D'],
+        requiredNumPeople: 1,
+        qualifiedPeople: ['Alice'],
+        date: ['01'],
+        weight: -1,
+      },
+      {
+        type: 'shift type successions',
+        description: 'Existing succession',
+        person: ['Alice'],
+        pattern: ['N', 'D'],
+        date: ['01'],
+        weight: -1,
+      },
+      {
+        type: 'shift affinity',
+        description: 'Existing affinity',
+        date: ['01'],
+        people1: ['Alice'],
+        people2: ['Bob'],
+        shiftTypes: ['D'],
+        weight: 1,
+      },
+    ],
+  });
+
+  await page.goto('/shift-counts');
+  await openAddForm(page, 'Add Shift Count', 'Add New Shift Count');
+  await page.getByPlaceholder('e.g., Working shifts should be close to the average').fill('Unsaved count draft');
+  await page.getByRole('button', { name: 'Duplicate' }).click();
+  await waitForStoredCurrentSchedulingData(page, 'Existing count copy');
+  await expectAddFormDismissed(page, 'e.g., Working shifts should be close to the average', 'Unsaved count draft');
+  await expect(page.getByText('Existing count copy', { exact: true })).toBeVisible();
+
+  await page.goto('/shift-type-requirements');
+  await openAddForm(page, 'Add Requirement', 'Add New Requirement');
+  await page.getByPlaceholder('e.g., Night shifts need senior nurses').fill('Unsaved requirement draft');
+  await page.getByRole('button', { name: 'Duplicate' }).click();
+  await waitForStoredCurrentSchedulingData(page, 'Existing requirement copy');
+  await expectAddFormDismissed(page, 'e.g., Night shifts need senior nurses', 'Unsaved requirement draft');
+  await expect(page.getByText('Existing requirement copy', { exact: true })).toBeVisible();
+
+  await page.goto('/shift-type-successions');
+  await openAddForm(page, 'Add Succession', 'Add New Succession');
+  await page.getByPlaceholder('e.g., Forbid Evening -> Day succession').fill('Unsaved succession draft');
+  await page.getByRole('button', { name: 'Duplicate' }).click();
+  await waitForStoredCurrentSchedulingData(page, 'Existing succession copy');
+  await expectAddFormDismissed(page, 'e.g., Forbid Evening -> Day succession', 'Unsaved succession draft');
+  await expect(page.getByText('Existing succession copy', { exact: true })).toBeVisible();
+
+  await page.goto('/shift-affinities');
+  await openAddForm(page, 'Add Shift Affinity', 'Add New Shift Affinity');
+  await page.getByPlaceholder('e.g., Encourage newcomers and seniors to work together').fill('Unsaved affinity draft');
+  await page.getByRole('button', { name: 'Duplicate' }).click();
+  await waitForStoredCurrentSchedulingData(page, 'Existing affinity copy');
+  await expectAddFormDismissed(page, 'e.g., Encourage newcomers and seniors to work together', 'Unsaved affinity draft');
+  await expect(page.getByText('Existing affinity copy', { exact: true })).toBeVisible();
+
+  await page.goto('/export-layout');
+  await openAddForm(page, 'Add Export Rule', 'Add Export Rule');
+  await page.getByPlaceholder('Optional note for this export rule').fill('Unsaved export draft');
+  const styleRules = page.getByRole('heading', { name: 'Style Rules', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  await styleRules.getByRole('button', { name: 'Duplicate' }).first().click();
+  await waitForStoredCurrentSchedulingData(page, 'Style day cells copy');
+  await expectAddFormDismissed(page, 'Optional note for this export rule', 'Unsaved export draft');
+  await expect(styleRules.getByText('Style day cells copy', { exact: true })).toBeVisible();
 });

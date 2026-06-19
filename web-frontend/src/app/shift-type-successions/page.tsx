@@ -206,8 +206,25 @@ export default function ShiftTypeSuccessionsPage() {
     };
   });
 
+  const dismissEditingDraft = () => {
+    if (isFormVisible) {
+      handleCancel();
+    }
+  };
+
+  const handleDuplicate = (index: number) => {
+    dismissEditingDraft();
+    duplicatePreferenceByType(SHIFT_TYPE_SUCCESSIONS, index);
+  };
+
   const handleDelete = (index: number) => {
+    dismissEditingDraft();
     const newSuccessions = shiftTypeSuccessions.filter((_, i) => i !== index);
+    updateShiftTypeSuccessions(newSuccessions);
+  };
+
+  const handleReorder = (newSuccessions: ShiftTypeSuccessionsPreference[]) => {
+    dismissEditingDraft();
     updateShiftTypeSuccessions(newSuccessions);
   };
 
@@ -597,9 +614,9 @@ export default function ShiftTypeSuccessionsPage() {
         items={shiftTypeSuccessions}
         emptyMessage='No successions defined yet. Click "Add Succession" to get started.'
         onEdit={handleStartEdit}
-        onDuplicate={(index) => duplicatePreferenceByType(SHIFT_TYPE_SUCCESSIONS, index)}
+        onDuplicate={handleDuplicate}
         onDelete={handleDelete}
-        onReorder={updateShiftTypeSuccessions}
+        onReorder={handleReorder}
         renderContent={(succession) => (
           <>
             {succession.description && (

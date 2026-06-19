@@ -91,7 +91,7 @@ describe('ShiftTypeSuccessionsPage', () => {
     expect(screen.queryByText('At least one date must be selected')).not.toBeInTheDocument();
   });
 
-  it('saves an edited succession draft as a new succession without changing the original', async () => {
+  it('dismisses the edited succession draft before duplicating a succession', async () => {
     const user = userEvent.setup();
     mockUseSchedulingData.mockReturnValue({
       dateData: {
@@ -126,8 +126,55 @@ describe('ShiftTypeSuccessionsPage', () => {
     });
     renderShiftTypeSuccessionsPage();
 
+    await user.click(screen.getByRole('button', { name: /edit/i }));
     await user.click(screen.getByRole('button', { name: /duplicate/i }));
 
+    expect(screen.queryByRole('button', { name: 'Update' })).not.toBeInTheDocument();
+    expect(duplicatePreferenceByType).toHaveBeenCalledWith('shift type successions', 0);
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
+  it('dismisses an added succession draft before duplicating a succession', async () => {
+    const user = userEvent.setup();
+    mockUseSchedulingData.mockReturnValue({
+      dateData: {
+        range: {
+          startDate: new Date('2026-01-01T12:00:00.000Z'),
+          endDate: new Date('2026-01-01T12:00:00.000Z'),
+        },
+        items: [{ id: '01', description: 'Jan 1' }],
+        groups: [],
+      },
+      peopleData: {
+        items: [{ id: 'P1', description: 'Person 1', history: [] }],
+        groups: [],
+      },
+      shiftTypeData: {
+        items: [
+          { id: 'D', description: 'Day' },
+          { id: 'N', description: 'Night' },
+        ],
+        groups: [],
+      },
+      getPreferencesByType: vi.fn(() => [{
+        type: 'shift type successions',
+        description: 'Original succession',
+        person: ['P1'],
+        pattern: ['D', 'N'],
+        date: ['01'],
+        weight: -1,
+      }]),
+      updatePreferencesByType,
+      duplicatePreferenceByType,
+    });
+    renderShiftTypeSuccessionsPage();
+
+    await user.click(screen.getByRole('button', { name: /add succession/i }));
+    await user.type(screen.getByPlaceholderText('e.g., Forbid Evening -> Day succession'), 'Unsaved succession');
+    await user.click(screen.getByRole('button', { name: /duplicate/i }));
+
+    expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved succession')).not.toBeInTheDocument();
     expect(duplicatePreferenceByType).toHaveBeenCalledWith('shift type successions', 0);
     expect(updatePreferencesByType).not.toHaveBeenCalled();
   });
