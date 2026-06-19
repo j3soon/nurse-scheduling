@@ -132,7 +132,7 @@ export function DraggableCardList<T>({
                     {onDuplicate && (
                       <button
                         onClick={() => onDuplicate(index)}
-                        className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
+                        className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 text-sm"
                       >
                         <FiCopy className="h-4 w-4" />
                         Duplicate

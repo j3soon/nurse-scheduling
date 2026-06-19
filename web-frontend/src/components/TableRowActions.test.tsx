@@ -37,6 +37,13 @@ describe('TableRowActions', () => {
 
     render(<TableRowActions onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete} />);
 
+    expect(screen.getByRole('button', { name: /edit/i })).toHaveAttribute('title', 'Edit');
+    expect(screen.getByRole('button', { name: /duplicate/i })).toHaveAttribute('title', 'Duplicate');
+    expect(screen.getByRole('button', { name: /delete/i })).toHaveAttribute('title', 'Delete');
+    expect(screen.queryByText('Edit')).not.toBeInTheDocument();
+    expect(screen.queryByText('Duplicate')).not.toBeInTheDocument();
+    expect(screen.queryByText('Delete')).not.toBeInTheDocument();
+
     await user.click(screen.getByRole('button', { name: /edit/i }));
     await user.click(screen.getByRole('button', { name: /duplicate/i }));
     await user.click(screen.getByRole('button', { name: /delete/i }));
