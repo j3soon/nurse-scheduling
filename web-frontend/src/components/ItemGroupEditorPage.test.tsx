@@ -366,6 +366,67 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.getByText('2. Person 1')).toBeInTheDocument();
   });
 
+  it('disables item reordering while inline editing', async () => {
+    const user = userEvent.setup();
+
+    const { container } = render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [
+            { id: 'Person 1', description: 'First person', history: [] },
+            { id: 'Person 2', description: 'Second person', history: [] },
+          ],
+          groups: [],
+          history: [],
+        }}
+      />,
+    );
+
+    await user.dblClick(screen.getByText('1. Person 1'));
+
+    const rows = container.querySelectorAll('tbody tr');
+    expect(rows[0]).not.toHaveAttribute('draggable', 'true');
+    expect(rows[1]).not.toHaveAttribute('draggable', 'true');
+
+    const input = screen.getByDisplayValue('Person 1');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const reorderedRows = container.querySelectorAll('tbody tr');
+    expect(reorderedRows[0]).toHaveAttribute('draggable', 'true');
+    expect(reorderedRows[1]).toHaveAttribute('draggable', 'true');
+  });
+
+  it('disables group reordering while inline editing', async () => {
+    const user = userEvent.setup();
+
+    const { container } = render(
+      <ItemGroupEditorHarness
+        initialData={{
+          items: [{ id: 'Person 1', description: 'First person', history: [] }],
+          groups: [
+            { id: 'Team A', members: ['Person 1'], description: 'Initial team' },
+            { id: 'Team B', members: [], description: 'Backup team' },
+          ],
+          history: [],
+        }}
+      />,
+    );
+
+    const tables = container.querySelectorAll('table');
+    const groupRows = tables[1].querySelectorAll('tbody tr');
+    await user.dblClick(within(groupRows[0]).getByTitle('Team A'));
+
+    expect(groupRows[0]).not.toHaveAttribute('draggable', 'true');
+    expect(groupRows[1]).not.toHaveAttribute('draggable', 'true');
+
+    const input = screen.getByDisplayValue('Team A');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const reorderedGroupRows = tables[1].querySelectorAll('tbody tr');
+    expect(reorderedGroupRows[0]).toHaveAttribute('draggable', 'true');
+    expect(reorderedGroupRows[1]).toHaveAttribute('draggable', 'true');
+  });
+
   it('increments copied item IDs when the first copy name already exists', async () => {
     const user = userEvent.setup();
 
