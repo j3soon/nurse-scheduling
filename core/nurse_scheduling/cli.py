@@ -22,8 +22,10 @@ import argparse
 import json
 import logging
 import os.path
+import subprocess
 import time
 from io import BytesIO
+from pathlib import Path
 from . import scheduler, exporter
 from .model_build_stats import ModelBuildStatsSummary
 from .solver_interface import (
@@ -36,6 +38,28 @@ from .solver_interface import (
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
+
+
+def _get_app_version() -> str:
+    repo_root = Path(__file__).resolve().parents[2]
+    try:
+        return subprocess.check_output(
+            [
+                "git",
+                "-c",
+                f"safe.directory={repo_root}",
+                "-C",
+                str(repo_root),
+                "describe",
+                "--tags",
+                "--always",
+                "--dirty",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "v0.0.0-unknown"
 
 
 def _create_cli_progress_callback(progress_output_file=None, print_to_stdout: bool = True):
@@ -69,8 +93,9 @@ def _create_cli_progress_callback(progress_output_file=None, print_to_stdout: bo
 
 def main():
     parser = argparse.ArgumentParser(description="Nurse Scheduling Tool")
-    parser.add_argument("input_file_path", help="Path to the input file")
+    parser.add_argument("input_file_path", nargs="?", help="Path to the input file")
     parser.add_argument("output_path", nargs="?", help="Path to save the output file (optional)")
+    parser.add_argument("--version", action="store_true", help="Print the current git version and exit")
     parser.add_argument("--prettify", action="store_true", help="Enable prettify mode for enhanced output formatting")
     parser.add_argument(
         "-v",
@@ -102,6 +127,11 @@ def main():
         help="Write solver progress events as JSON Lines for later plotting.",
     )
     args = parser.parse_args()
+    if args.version:
+        print(f"nurse-scheduling {_get_app_version()}")
+        return
+    if args.input_file_path is None:
+        parser.error("the following arguments are required: input_file_path")
     filepath = args.input_file_path
     output_path = args.output_path
     prettify = args.prettify
@@ -142,6 +172,8 @@ def main():
 
     with open(filepath, "rb") as f:
         file_content = f.read()
+
+    print(f"nurse-scheduling {_get_app_version()}")
 
     model_build_stats_callback = ModelBuildStatsSummary() if args.show_model_build_stats else None
     progress_output_file = None
