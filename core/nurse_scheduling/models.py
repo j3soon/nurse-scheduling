@@ -370,7 +370,9 @@ class NurseSchedulingData(BaseModel):
             if group.id in person_and_group_ids:
                 raise ValueError(f"Duplicated people group (or person) ID: {group.id!r}")
             if str(group.id).upper() in people_reserved_ids:
-                raise ValueError(f"People group ID {group.id!r} cannot be one of the reserved values: {people_reserved_ids}")
+                raise ValueError(
+                    f"People group ID {group.id!r} cannot be one of the reserved values: {people_reserved_ids}"
+                )
             person_and_group_ids.add(group.id)
 
         # Validate dates
@@ -382,15 +384,15 @@ class NurseSchedulingData(BaseModel):
             if group.id in date_group_ids:
                 raise ValueError(f"Duplicated date group ID: {group.id!r}")
             if str(group.id).upper() in date_reserved_ids:
-                raise ValueError(f"Date group ID {group.id!r} cannot be one of the reserved values: {date_reserved_ids}")
+                raise ValueError(
+                    f"Date group ID {group.id!r} cannot be one of the reserved values: {date_reserved_ids}"
+                )
             if (
                 re.match(r"^\d{1,2}$", group.id)
                 or re.match(r"^(\d{2})-(\d{2})$", group.id)
                 or re.match(r"^(\d{4})-(\d{2})-(\d{2})$", group.id)
             ):
-                raise ValueError(
-                    f"Date group ID {group.id!r} must not be in the format of YYYY-MM-DD, MM-DD, or D"
-                )
+                raise ValueError(f"Date group ID {group.id!r} must not be in the format of YYYY-MM-DD, MM-DD, or D")
             date_group_ids.add(group.id)
 
         return self
