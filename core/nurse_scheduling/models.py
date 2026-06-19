@@ -331,34 +331,46 @@ class NurseSchedulingData(BaseModel):
 
         # Validate duplicate IDs and reserved IDs
         shift_type_reserved_ids = {k.upper() for k in {ALL, OFF}}
-        shift_type_and_group_ids = set()
+        shift_type_ids = set()
+        shift_type_group_ids = set()
         for shift_type in self.shiftTypes.items:
-            if shift_type.id in shift_type_and_group_ids:
-                raise ValueError(f"Duplicated shift type ID: {shift_type.id}")
+            if shift_type.id in shift_type_ids:
+                raise ValueError(f"Duplicated shift type ID: {shift_type.id!r}")
             if str(shift_type.id).upper() in shift_type_reserved_ids:
-                raise ValueError(f"Shift type ID cannot be one of the reserved values: {shift_type_reserved_ids}")
-            shift_type_and_group_ids.add(shift_type.id)
+                raise ValueError(
+                    f"Shift type ID {shift_type.id!r} cannot be one of the reserved values: {shift_type_reserved_ids}"
+                )
+            shift_type_ids.add(shift_type.id)
         for group in self.shiftTypes.groups:
-            if group.id in shift_type_and_group_ids:
-                raise ValueError(f"Duplicated shift type group (or shift type) ID: {group.id}")
+            if group.id in shift_type_ids or group.id in shift_type_group_ids:
+                raise ValueError(f"Duplicated shift type group (or shift type) ID: {group.id!r}")
             if str(group.id).upper() in shift_type_reserved_ids:
-                raise ValueError(f"Shift type group ID cannot be one of the reserved values: {shift_type_reserved_ids}")
-            shift_type_and_group_ids.add(group.id)
+                raise ValueError(
+                    f"Shift type group ID {group.id!r} cannot be one of the reserved values: {shift_type_reserved_ids}"
+                )
+            shift_type_group_ids.add(group.id)
 
         # Validate duplicate IDs and reserved IDs
         people_reserved_ids = {k.upper() for k in {ALL}}
         person_and_group_ids = set()
         for person in self.people.items:
             if person.id in person_and_group_ids:
-                raise ValueError(f"Duplicated person ID: {person.id}")
+                raise ValueError(f"Duplicated person ID: {person.id!r}")
             if str(person.id).upper() in people_reserved_ids:
-                raise ValueError(f"Person ID cannot be one of the reserved values: {people_reserved_ids}")
+                raise ValueError(f"Person ID {person.id!r} cannot be one of the reserved values: {people_reserved_ids}")
+            for history_shift_type_id in person.history or []:
+                if history_shift_type_id == ALL:
+                    raise ValueError(f"History must not include 'ALL', but got {history_shift_type_id!r}")
+                if history_shift_type_id in shift_type_group_ids:
+                    raise ValueError(f"History must not include group ID, but got {history_shift_type_id!r}")
+                if history_shift_type_id != OFF and history_shift_type_id not in shift_type_ids:
+                    raise ValueError(f"Unknown shift type ID in history: {history_shift_type_id!r}")
             person_and_group_ids.add(person.id)
         for group in self.people.groups:
             if group.id in person_and_group_ids:
-                raise ValueError(f"Duplicated people group (or person) ID: {group.id}")
+                raise ValueError(f"Duplicated people group (or person) ID: {group.id!r}")
             if str(group.id).upper() in people_reserved_ids:
-                raise ValueError(f"People group ID cannot be one of the reserved values: {people_reserved_ids}")
+                raise ValueError(f"People group ID {group.id!r} cannot be one of the reserved values: {people_reserved_ids}")
             person_and_group_ids.add(group.id)
 
         # Validate dates
@@ -368,15 +380,17 @@ class NurseSchedulingData(BaseModel):
         date_group_ids = set()
         for group in self.dates.groups:
             if group.id in date_group_ids:
-                raise ValueError(f"Duplicated date group ID: {group.id}")
+                raise ValueError(f"Duplicated date group ID: {group.id!r}")
             if str(group.id).upper() in date_reserved_ids:
-                raise ValueError(f"Date group ID cannot be one of the reserved values: {date_reserved_ids}")
+                raise ValueError(f"Date group ID {group.id!r} cannot be one of the reserved values: {date_reserved_ids}")
             if (
                 re.match(r"^\d{1,2}$", group.id)
                 or re.match(r"^(\d{2})-(\d{2})$", group.id)
                 or re.match(r"^(\d{4})-(\d{2})-(\d{2})$", group.id)
             ):
-                raise ValueError(f"Date group ID must not be in the format of YYYY-MM-DD, MM-DD, or D: {group.id}")
+                raise ValueError(
+                    f"Date group ID {group.id!r} must not be in the format of YYYY-MM-DD, MM-DD, or D"
+                )
             date_group_ids.add(group.id)
 
         return self

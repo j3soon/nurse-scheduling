@@ -214,10 +214,10 @@ describe('applyReferencesForIdDeletion', () => {
     ]);
   });
 
-  it('truncates deleted shift type history and removes shift type export references', () => {
+  it('blanks deleted shift type history slots and removes shift type export references', () => {
     const state = applyReferencesForIdDeletion(createState(), DataType.SHIFT_TYPES, ['N']);
 
-    expect(state.people.items.map(person => person.history)).toEqual([['D'], ['D']]);
+    expect(state.people.items.map(person => person.history)).toEqual([['', 'D'], ['D']]);
     expect(state.preferences[2] as ShiftTypeSuccessionsPreference).toMatchObject({
       pattern: ['D'],
     });

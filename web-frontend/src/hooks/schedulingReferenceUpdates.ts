@@ -51,14 +51,10 @@ export const applyPeopleHistoryForIdDeletion = (
     ...state,
     people: {
       ...state.people,
-      items: state.people.items.map(person => {
-        const history = person.history ?? [];
-        const lastDeletedIndex = history.findLastIndex(shiftTypeId => deletedIdSet.has(shiftTypeId));
-        return {
-          ...person,
-          history: lastDeletedIndex === -1 ? history : history.slice(lastDeletedIndex + 1)
-        };
-      })
+      items: state.people.items.map(person => ({
+        ...person,
+        history: person.history?.map(shiftTypeId => deletedIdSet.has(shiftTypeId) ? '' : shiftTypeId) || []
+      }))
     }
   };
 };

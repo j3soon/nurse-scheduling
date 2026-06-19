@@ -41,14 +41,14 @@ const baseState: SchedulingState = {
 };
 
 describe('applyDataUpdate', () => {
-  it('updates date groups while preserving generated date items', () => {
+  it('updates date items and groups together', () => {
     const result = applyDataUpdate(baseState, DataType.DATES, {
-      items: [{ id: 'ignored', description: 'Ignored' }],
-      groups: [{ id: 'Weekend', members: ['01'], description: '' }],
+      items: [{ id: '02', description: 'Jan 2' }],
+      groups: [{ id: 'Weekend', members: ['02'], description: '' }],
     });
 
-    expect(result.dates.items).toBe(baseState.dates.items);
-    expect(result.dates.groups).toEqual([{ id: 'Weekend', members: ['01'], description: '' }]);
+    expect(result.dates.items).toEqual([{ id: '02', description: 'Jan 2' }]);
+    expect(result.dates.groups).toEqual([{ id: 'Weekend', members: ['02'], description: '' }]);
   });
 
   it('replaces people data', () => {

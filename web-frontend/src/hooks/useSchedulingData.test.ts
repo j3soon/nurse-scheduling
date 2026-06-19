@@ -2651,7 +2651,7 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       const person = result.current.peopleData.items.find(item => item.id === 'P1');
-      expect(person?.history).toEqual(['N']);
+      expect(person?.history).toEqual(['A', '', 'N']);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);
@@ -3912,7 +3912,7 @@ describe('useSchedulingData', () => {
     });
   });
 
-  it('deleting a repeated shift type from history keeps only newer contiguous history', async () => {
+  it('deleting a repeated shift type from history blanks only matching entries', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -3938,7 +3938,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['', 'N', '', 'A']);
     });
   });
 
@@ -3972,7 +3972,7 @@ describe('useSchedulingData', () => {
     });
   });
 
-  it('deleting multiple shift types trims history through repeated public deletions', async () => {
+  it('deleting multiple shift types blanks history through repeated public deletions', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -4003,7 +4003,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N', 'E']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N', 'E']);
     });
 
     act(() => {
@@ -4011,11 +4011,11 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['E']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', '', 'E']);
     });
   });
 
-  it('undoes and redoes shift-type deletion history trimming exactly', async () => {
+  it('undoes and redoes shift-type deletion history blanking exactly', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -4041,7 +4041,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N']);
     });
 
     act(() => {
@@ -4057,7 +4057,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N']);
     });
   });
 
