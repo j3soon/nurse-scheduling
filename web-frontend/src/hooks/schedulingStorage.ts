@@ -87,7 +87,7 @@ export function loadStateFromStorage(): HistoryState {
     return {
       state: currentState,
       history: parsedHistoryState.history.map(normalizeStateForFrontend),
-      currentHistoryIndex: Math.min(parsedHistoryState.currentHistoryIndex || 0, parsedHistoryState.history.length - 1)
+      currentHistoryIndex: Math.max(0, Math.min(parsedHistoryState.currentHistoryIndex || 0, parsedHistoryState.history.length - 1))
     };
   } catch (error) {
     console.error('Failed to load data from localStorage:', error);

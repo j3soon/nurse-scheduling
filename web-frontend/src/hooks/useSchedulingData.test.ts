@@ -22,6 +22,7 @@
 import { createElement } from 'react';
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { SchedulingDataProvider, useSchedulingData } from '@/hooks/useSchedulingData';
+import { loadStateFromStorage } from '@/hooks/schedulingStorage';
 import {
   DataType,
   SHIFT_AFFINITY,
@@ -3664,6 +3665,24 @@ describe('useSchedulingData', () => {
     await waitFor(() => {
       expect(result.current.descriptionData).toBe('second');
     });
+  });
+
+  it('clamps stored currentHistoryIndex to zero when stored history is empty', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      state: {
+        apiVersion: 'alpha',
+        description: 'empty history',
+        dates: { range: { startDate: undefined, endDate: undefined }, items: undefined, groups: [] },
+        people: { items: [{ id: 'P1', description: '', history: [] }], groups: [], history: [] },
+        shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+        preferences: [],
+        export: { formatting: [] },
+      },
+      history: [],
+      currentHistoryIndex: 0,
+    }));
+
+    expect(loadStateFromStorage().currentHistoryIndex).toBe(0);
   });
 
   it('renames a shift-type group consistently across group-referenced preferences', async () => {
