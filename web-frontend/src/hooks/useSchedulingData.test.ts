@@ -22,6 +22,7 @@
 import { createElement } from 'react';
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { SchedulingDataProvider, useSchedulingData } from '@/hooks/useSchedulingData';
+import { loadStateFromStorage } from '@/hooks/schedulingStorage';
 import {
   DataType,
   SHIFT_AFFINITY,
@@ -2361,6 +2362,211 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('duplicates items and groups under the original with hook-generated copied IDs', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'duplicate entities',
+        dates: {
+          range: { startDate: '2026-01-01', endDate: '2026-01-01' },
+          items: [{ id: '01', description: 'Jan 1' }],
+          groups: [],
+        },
+        people: {
+          items: [
+            { id: 'P1', description: 'Person 1', history: ['D'] },
+            { id: 'P1 copy', description: 'Existing copy', history: [] },
+          ],
+          groups: [{ id: 'G1', description: 'Group 1', members: ['P1'] }],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [],
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.map(item => item.id)).toEqual(['P1', 'P1 copy']);
+    });
+
+    act(() => {
+      result.current.duplicateItem(DataType.PEOPLE, result.current.peopleData, 'P1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.map(item => item.id)).toEqual(['P1', 'P1 copy 2', 'P1 copy']);
+      expect(result.current.peopleData.items[1]).toMatchObject({ id: 'P1 copy 2', description: 'Person 1', history: ['D'] });
+      expect(result.current.peopleData.items[1].history).not.toBe(result.current.peopleData.items[0].history);
+      expect(result.current.peopleData.groups[0].members).toEqual(['P1', 'P1 copy 2']);
+    });
+
+    act(() => {
+      result.current.duplicateGroup(DataType.PEOPLE, result.current.peopleData, 'G1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.groups.slice(0, 2).map(group => group.id)).toEqual(['G1', 'G1 copy']);
+      expect(result.current.peopleData.groups[1].members).toEqual(['P1', 'P1 copy 2']);
+      expect(result.current.peopleData.groups[1].members).not.toBe(result.current.peopleData.groups[0].members);
+    });
+  });
+
+  it('duplicates preferences by type under the original with hook-generated copied descriptions', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'duplicate preferences',
+        dates: {
+          range: { startDate: '2026-01-01', endDate: '2026-01-01' },
+          items: [{ id: '01', description: 'Jan 1' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: 'Person 1', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [{
+          type: SHIFT_COUNT,
+          description: 'Original count',
+          person: ['P1'],
+          countDates: ['01'],
+          countShiftTypes: ['D'],
+          expression: 'x >= T',
+          target: 1,
+          weight: -1,
+        }],
+      });
+    });
+
+    act(() => {
+      result.current.duplicatePreferenceByType(SHIFT_COUNT, 0);
+    });
+
+    await waitFor(() => {
+      expect(result.current.getPreferencesByType(SHIFT_COUNT)).toMatchObject([
+        { description: 'Original count', target: 1 },
+        { description: 'Original count copy', target: 1 },
+      ]);
+    });
+  });
+
+  it('duplicates export entries under the original with hook-generated copied descriptions', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'duplicate export entries',
+        dates: {
+          range: { startDate: '2026-01-01', endDate: '2026-01-01' },
+          items: [{ id: '01', description: 'Jan 1' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: 'Person 1', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [],
+        export: {
+          formatting: [],
+          extraColumns: [{
+            type: 'count',
+            header: 'Existing Score',
+            countShiftTypes: ['D'],
+            countDates: ['01'],
+          }],
+          extraRows: [],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.duplicateExportExtraColumn(0);
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveExportData.extraColumns).toMatchObject([
+        { header: 'Existing Score' },
+        { header: 'Existing Score', description: 'Copy' },
+      ]);
+    });
+  });
+
+  it('logs and no-ops when duplicate preference or export indexes are invalid', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'invalid duplicate indexes',
+        dates: {
+          range: { startDate: '2026-01-01', endDate: '2026-01-01' },
+          items: [{ id: '01', description: 'Jan 1' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: 'Person 1', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [{
+          type: SHIFT_COUNT,
+          description: 'Original count',
+          person: ['P1'],
+          countDates: ['01'],
+          countShiftTypes: ['D'],
+          expression: 'x >= T',
+          target: 1,
+          weight: -1,
+        }],
+        export: {
+          formatting: [],
+          extraColumns: [{
+            type: 'count',
+            header: 'Existing Score',
+            countShiftTypes: ['D'],
+            countDates: ['01'],
+          }],
+          extraRows: [],
+        },
+      });
+    });
+
+    act(() => {
+      result.current.duplicatePreferenceByType(SHIFT_COUNT, 9);
+      result.current.duplicateExportExtraColumn(9);
+    });
+
+    await waitFor(() => {
+      expect(result.current.getPreferencesByType(SHIFT_COUNT)).toHaveLength(1);
+      expect(result.current.effectiveExportData.extraColumns).toHaveLength(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot duplicate shift count at index 9'));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Cannot duplicate export extra column at index 9'));
+    });
+  });
+
   it('renaming/deleting shift types cascades to preferences and people history', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
@@ -2446,7 +2652,7 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       const person = result.current.peopleData.items.find(item => item.id === 'P1');
-      expect(person?.history).toEqual(['N']);
+      expect(person?.history).toEqual(['A', '', 'N']);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);
@@ -2515,10 +2721,199 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
-      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(true);
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_COUNT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_AFFINITY)).toBe(false);
-      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(true);
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);
+    });
+  });
+
+  it('renames date groups across all date-based preference fields', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'date group succession rename',
+        dates: {
+          range: { startDate: '2026-12-01', endDate: '2026-12-02' },
+          items: [
+            { id: '01', description: 'Date 1' },
+            { id: '02', description: 'Date 2' },
+          ],
+          groups: [{ id: 'Weekend Team', members: ['01', '02'], description: '' }],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [
+            { id: 'D', description: 'Day' },
+            { id: 'N', description: 'Night' },
+          ],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_TYPE_REQUIREMENT,
+            shiftType: ['D'],
+            requiredNumPeople: 1,
+            qualifiedPeople: ['P1'],
+            date: ['Weekend Team'],
+            weight: 1,
+          },
+          { type: SHIFT_REQUEST, person: ['P1'], date: ['Weekend Team'], shiftType: ['D'], weight: 2 },
+          {
+            type: SHIFT_TYPE_SUCCESSIONS,
+            person: ['P1'],
+            pattern: ['D', 'N'],
+            date: ['Weekend Team'],
+            weight: -3,
+          },
+          {
+            type: SHIFT_COUNT,
+            person: ['P1'],
+            countDates: ['Weekend Team'],
+            countShiftTypes: ['D'],
+            expression: 'x >= T',
+            target: 1,
+            weight: 4,
+          },
+          {
+            type: SHIFT_AFFINITY,
+            date: ['Weekend Team'],
+            people1: ['P1'],
+            people2: ['P1'],
+            shiftTypes: ['D'],
+            weight: 5,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.updateGroup(DataType.DATES, result.current.dateData, 'Weekend Team', 'Weekend Crew');
+    });
+
+    await waitFor(() => {
+      const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as
+        | { date: string[] }
+        | undefined;
+      const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as
+        | { date: string[] }
+        | undefined;
+      const successions = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_SUCCESSIONS) as
+        | { date: string[] }
+        | undefined;
+      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
+        | { countDates: string[] }
+        | undefined;
+      const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as
+        | { date: string[] }
+        | undefined;
+
+      expect(requirement?.date).toEqual(['Weekend Crew']);
+      expect(request?.date).toEqual(['Weekend Crew']);
+      expect(successions?.date).toEqual(['Weekend Crew']);
+      expect(count?.countDates).toEqual(['Weekend Crew']);
+      expect(affinity?.date).toEqual(['Weekend Crew']);
+      expect(JSON.stringify(result.current.preferences)).not.toContain('Weekend Team');
+    });
+  });
+
+  it('deletes shift type successions when their date group reference is deleted', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'date group succession delete',
+        dates: {
+          range: { startDate: '2026-12-01', endDate: '2026-12-02' },
+          items: [
+            { id: '01', description: 'Date 1' },
+            { id: '02', description: 'Date 2' },
+          ],
+          groups: [{ id: 'Weekend Team', members: ['01', '02'], description: '' }],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [
+            { id: 'D', description: 'Day' },
+            { id: 'N', description: 'Night' },
+          ],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_TYPE_SUCCESSIONS,
+            person: ['P1'],
+            pattern: ['D', 'N'],
+            date: ['Weekend Team'],
+            weight: -1,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteGroup(DataType.DATES, result.current.dateData, 'Weekend Team');
+    });
+
+    await waitFor(() => {
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);
+    });
+  });
+
+  it('deletes shift type requirements when their only qualified person reference is deleted', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        description: 'requirement qualified person delete',
+        dates: {
+          range: { startDate: '2026-12-01', endDate: '2026-12-01' },
+          items: [{ id: '01', description: 'Date 1' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+          history: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: 'Day' }],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_TYPE_REQUIREMENT,
+            shiftType: ['D'],
+            requiredNumPeople: 1,
+            qualifiedPeople: ['P1'],
+            date: ['01'],
+            weight: 1,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    act(() => {
+      result.current.deleteItem(DataType.PEOPLE, result.current.peopleData, 'P1');
+    });
+
+    await waitFor(() => {
+      expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
     });
   });
 
@@ -3272,6 +3667,24 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('clamps stored currentHistoryIndex to zero when stored history is empty', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      state: {
+        apiVersion: 'alpha',
+        description: 'empty history',
+        dates: { range: { startDate: undefined, endDate: undefined }, items: undefined, groups: [] },
+        people: { items: [{ id: 'P1', description: '', history: [] }], groups: [], history: [] },
+        shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+        preferences: [],
+        export: { formatting: [] },
+      },
+      history: [],
+      currentHistoryIndex: 0,
+    }));
+
+    expect(loadStateFromStorage().currentHistoryIndex).toBe(0);
+  });
+
   it('renames a shift-type group consistently across group-referenced preferences', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
@@ -3295,6 +3708,7 @@ describe('useSchedulingData', () => {
         preferences: [
           { type: SHIFT_REQUEST, person: ['P1'], date: ['01'], shiftType: ['DN'], weight: 1 },
           { type: SHIFT_TYPE_REQUIREMENT, date: ['01'], shiftType: ['DN'], qualifiedPeople: ['P1'], requiredNumPeople: 1, weight: 2 },
+          { type: SHIFT_TYPE_SUCCESSIONS, person: ['P1'], date: ['01'], pattern: ['DN', 'D'], weight: -2 },
           {
             type: SHIFT_COUNT,
             person: ['P1'],
@@ -3318,6 +3732,7 @@ describe('useSchedulingData', () => {
     await waitFor(() => {
       const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as { shiftType: string[] } | undefined;
       const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as { shiftType: string[] } | undefined;
+      const successions = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_SUCCESSIONS) as { pattern: string[] } | undefined;
       const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
         | { countShiftTypes: string[]; countShiftTypeCoefficients?: Array<[string, number]> }
         | undefined;
@@ -3326,6 +3741,7 @@ describe('useSchedulingData', () => {
       expect(result.current.shiftTypeData.groups.some(group => group.id === 'DAYNIGHT')).toBe(true);
       expect(request?.shiftType).toEqual(['DAYNIGHT']);
       expect(requirement?.shiftType).toEqual(['DAYNIGHT']);
+      expect(successions?.pattern).toEqual(['DAYNIGHT', 'D']);
       expect(count?.countShiftTypes).toEqual(['DAYNIGHT']);
       expect(count?.countShiftTypeCoefficients).toEqual([['DAYNIGHT', 4]]);
       expect(affinity?.shiftTypes).toEqual(['DAYNIGHT']);
@@ -3355,6 +3771,7 @@ describe('useSchedulingData', () => {
         preferences: [
           { type: SHIFT_REQUEST, person: ['G1'], date: ['01'], shiftType: ['D'], weight: 1 },
           { type: SHIFT_COUNT, person: ['G1'], countDates: ['01'], countShiftTypes: ['D'], expression: 'x >= T', target: 1, weight: 2 },
+          { type: SHIFT_TYPE_SUCCESSIONS, person: ['G1'], date: ['01'], pattern: ['D', 'N'], weight: -2 },
           { type: SHIFT_AFFINITY, date: ['01'], people1: ['P1'], people2: ['G1'], shiftTypes: ['D'], weight: 3 },
           { type: SHIFT_TYPE_REQUIREMENT, date: ['01'], shiftType: ['D'], qualifiedPeople: ['P1', 'G1'], requiredNumPeople: 1, weight: 4 },
         ],
@@ -3369,11 +3786,13 @@ describe('useSchedulingData', () => {
     await waitFor(() => {
       const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as { person: string[] } | undefined;
       const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as { person: string[] } | undefined;
+      const successions = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_SUCCESSIONS) as { person: string[] } | undefined;
       const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as { people2: string[] } | undefined;
       const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as { qualifiedPeople: string[] } | undefined;
 
       expect(request?.person).toEqual(['G1X']);
       expect(count?.person).toEqual(['G1X']);
+      expect(successions?.person).toEqual(['G1X']);
       expect(affinity?.people2).toEqual(['G1X']);
       expect(requirement?.qualifiedPeople).toEqual(['P1', 'G1X']);
     });
@@ -3512,7 +3931,7 @@ describe('useSchedulingData', () => {
     });
   });
 
-  it('deleting a repeated shift type from history keeps only newer contiguous history', async () => {
+  it('deleting a repeated shift type from history blanks only matching entries', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -3538,7 +3957,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['', 'N', '', 'A']);
     });
   });
 
@@ -3572,7 +3991,7 @@ describe('useSchedulingData', () => {
     });
   });
 
-  it('deleting multiple shift types trims history through repeated public deletions', async () => {
+  it('deleting multiple shift types blanks history through repeated public deletions', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -3603,7 +4022,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N', 'E']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N', 'E']);
     });
 
     act(() => {
@@ -3611,11 +4030,11 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['E']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', '', 'E']);
     });
   });
 
-  it('undoes and redoes shift-type deletion history trimming exactly', async () => {
+  it('undoes and redoes shift-type deletion history blanking exactly', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -3641,7 +4060,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N']);
     });
 
     act(() => {
@@ -3657,7 +4076,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N']);
     });
   });
 

@@ -17,37 +17,57 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// A component for the edit and delete actions of a table row.
-import { FiEdit2, FiTrash2 } from 'react-icons/fi';
+// A component for the edit, duplicate, and delete actions of a table row.
+import { FiCopy, FiEdit2, FiTrash2 } from 'react-icons/fi';
 
 interface TableRowActionsProps {
   onEdit?: () => void;
+  onDuplicate?: () => void;
   onDelete?: () => void;
 }
 
-export function TableRowActions({ onEdit, onDelete }: TableRowActionsProps) {
-  if (!onEdit && !onDelete) {
+export function TableRowActions({ onEdit, onDuplicate, onDelete }: TableRowActionsProps) {
+  if (!onEdit && !onDuplicate && !onDelete) {
     return null;
   }
 
+  const editClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-blue-600 hover:text-blue-900';
+  const duplicateClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-indigo-600 hover:text-indigo-800';
+  const deleteClassName = 'inline-flex h-8 w-8 items-center justify-center rounded text-red-600 hover:text-red-900';
+
   return (
-    <div className="flex flex-wrap justify-start gap-2">
+    <div className="flex flex-nowrap justify-start gap-1">
       {onEdit && (
         <button
+          type="button"
+          aria-label="Edit"
+          title="Edit"
           onClick={onEdit}
-          className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
+          className={editClassName}
         >
           <FiEdit2 className="h-4 w-4" />
-          Edit
+        </button>
+      )}
+      {onDuplicate && (
+        <button
+          type="button"
+          aria-label="Duplicate"
+          title="Duplicate"
+          onClick={onDuplicate}
+          className={duplicateClassName}
+        >
+          <FiCopy className="h-4 w-4" />
         </button>
       )}
       {onDelete && (
         <button
+          type="button"
+          aria-label="Delete"
+          title="Delete"
           onClick={onDelete}
-          className="text-red-600 hover:text-red-900 flex items-center gap-1"
+          className={deleteClassName}
         >
           <FiTrash2 className="h-4 w-4" />
-          Delete
         </button>
       )}
     </div>

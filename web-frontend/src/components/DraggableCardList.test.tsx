@@ -62,8 +62,9 @@ describe('DraggableCardList', () => {
     expect(onReorder).toHaveBeenCalledWith([{ title: 'B' }, { title: 'A' }, { title: 'C' }]);
   });
 
-  it('calls edit and delete callbacks for the selected card', () => {
+  it('calls edit, duplicate, and delete callbacks for the selected card', () => {
     const onEdit = vi.fn();
+    const onDuplicate = vi.fn();
     const onDelete = vi.fn();
 
     render(
@@ -73,14 +74,17 @@ describe('DraggableCardList', () => {
         emptyMessage="No rules"
         renderContent={(item) => <span>{item.title}</span>}
         onEdit={onEdit}
+        onDuplicate={onDuplicate}
         onDelete={onDelete}
       />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    fireEvent.click(screen.getByRole('button', { name: /duplicate/i }));
     fireEvent.click(screen.getByRole('button', { name: /delete/i }));
 
     expect(onEdit).toHaveBeenCalledWith(0);
+    expect(onDuplicate).toHaveBeenCalledWith(0);
     expect(onDelete).toHaveBeenCalledWith(0);
   });
 
@@ -98,12 +102,14 @@ describe('DraggableCardList', () => {
 
     expect(screen.getByText('No rules')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /duplicate/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
   });
 
-  it('supports keyboard activation for edit and delete buttons', async () => {
+  it('supports keyboard activation for edit, duplicate, and delete buttons', async () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();
+    const onDuplicate = vi.fn();
     const onDelete = vi.fn();
 
     render(
@@ -113,6 +119,7 @@ describe('DraggableCardList', () => {
         emptyMessage="No rules"
         renderContent={(item) => <span>{item.title}</span>}
         onEdit={onEdit}
+        onDuplicate={onDuplicate}
         onDelete={onDelete}
       />,
     );
@@ -121,8 +128,11 @@ describe('DraggableCardList', () => {
     await user.keyboard('{Enter}');
     await user.tab();
     await user.keyboard('{Enter}');
+    await user.tab();
+    await user.keyboard('{Enter}');
 
     expect(onEdit).toHaveBeenCalledWith(0);
+    expect(onDuplicate).toHaveBeenCalledWith(0);
     expect(onDelete).toHaveBeenCalledWith(0);
   });
 

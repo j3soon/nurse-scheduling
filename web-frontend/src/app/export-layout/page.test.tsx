@@ -32,14 +32,23 @@ vi.mock('@/hooks/useSchedulingData', () => ({
 }));
 
 const updateExportConfig = vi.fn();
+const updateExportFormatting = vi.fn();
+const updateExportExtraColumns = vi.fn();
+const updateExportExtraRows = vi.fn();
+const duplicateExportFormatting = vi.fn();
+const duplicateExportExtraColumn = vi.fn();
+const duplicateExportExtraRow = vi.fn();
 
 function renderExportLayoutPage(exportData: ExportConfig = { formatting: [], extraColumns: [], extraRows: [] }) {
   mockUseSchedulingData.mockReturnValue({
     effectiveExportData: exportData,
-    updateExportFormatting: vi.fn(),
-    updateExportExtraColumns: vi.fn(),
-    updateExportExtraRows: vi.fn(),
+    updateExportFormatting,
+    updateExportExtraColumns,
+    updateExportExtraRows,
     updateExportConfig,
+    duplicateExportFormatting,
+    duplicateExportExtraColumn,
+    duplicateExportExtraRow,
     peopleData: {
       items: [{ id: 'P1', description: 'Person 1', history: [] }],
       groups: [],
@@ -84,6 +93,12 @@ async function startExtraColumn(
 describe('ExportLayoutPage extra column coefficients', () => {
   beforeEach(() => {
     updateExportConfig.mockReset();
+    updateExportFormatting.mockReset();
+    updateExportExtraColumns.mockReset();
+    updateExportExtraRows.mockReset();
+    duplicateExportFormatting.mockReset();
+    duplicateExportExtraColumn.mockReset();
+    duplicateExportExtraRow.mockReset();
   });
 
   it('saves only non-default coefficients on an extra column', async () => {
@@ -185,7 +200,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
     expect(updateExportConfig.mock.calls[0][0].extraColumns[0].countShiftTypeCoefficients).toEqual([['D', 4]]);
   });
 
-  it('saves an edited export rule draft as a new rule without changing the original', async () => {
+  it('duplicates an export rule under the original with a copied description', async () => {
     const user = userEvent.setup();
     renderExportLayoutPage({
       formatting: [],
@@ -198,16 +213,94 @@ describe('ExportLayoutPage extra column coefficients', () => {
       extraRows: [],
     });
 
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    await user.clear(screen.getByPlaceholderText('OFF (Weekend)'));
-    await user.type(screen.getByPlaceholderText('OFF (Weekend)'), 'Copied Score');
-    await user.click(screen.getByRole('button', { name: 'Save as New' }));
+    await user.click(screen.getByRole('button', { name: 'Duplicate' }));
 
-    expect(updateExportConfig).toHaveBeenCalledOnce();
-    expect(updateExportConfig.mock.calls[0][0].extraColumns).toMatchObject([
-      { header: 'Existing Score' },
-      { header: 'Copied Score' },
-    ]);
+    expect(duplicateExportExtraColumn).toHaveBeenCalledWith(0);
+    expect(updateExportExtraColumns).not.toHaveBeenCalled();
+  });
+
+  it('dismisses the edited export draft before duplicating export entries', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage({
+      formatting: [{
+        description: 'Weekend style',
+        type: 'cell',
+        people: ['P1'],
+        dates: ['2026-01-01'],
+        shiftTypes: ['D'],
+        backgroundColor: '#ffffff',
+      }],
+      extraColumns: [{
+        type: 'count',
+        header: 'Existing Score',
+        countShiftTypes: ['D'],
+        countDates: ['2026-01-01'],
+      }],
+      extraRows: [{
+        type: 'count',
+        header: 'Existing Total',
+        countShiftTypes: ['D'],
+        countPeople: ['P1'],
+      }],
+    });
+
+    await user.click(screen.getAllByRole('button', { name: 'Edit' })[0]);
+    for (const duplicateButton of screen.getAllByRole('button', { name: 'Duplicate' })) {
+      await user.click(duplicateButton);
+    }
+
+    expect(screen.queryByRole('button', { name: 'Update' })).not.toBeInTheDocument();
+    expect(duplicateExportFormatting).toHaveBeenCalledWith(0);
+    expect(duplicateExportExtraColumn).toHaveBeenCalledWith(0);
+    expect(duplicateExportExtraRow).toHaveBeenCalledWith(0);
+  });
+
+  it('dismisses an added export draft before duplicating export entries', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage({
+      formatting: [{
+        description: 'Weekend style',
+        type: 'cell',
+        people: ['P1'],
+        dates: ['2026-01-01'],
+        shiftTypes: ['D'],
+        backgroundColor: '#ffffff',
+      }],
+      extraColumns: [],
+      extraRows: [],
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
+    await user.type(screen.getByPlaceholderText('Optional note for this export rule'), 'Unsaved rule');
+    await user.click(screen.getByRole('button', { name: 'Duplicate' }));
+
+    expect(screen.queryByRole('button', { name: 'Add', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved rule')).not.toBeInTheDocument();
+    expect(duplicateExportFormatting).toHaveBeenCalledWith(0);
+  });
+
+  it('dismisses an added export draft before deleting an export entry', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage({
+      formatting: [{
+        description: 'Weekend style',
+        type: 'cell',
+        people: ['P1'],
+        dates: ['2026-01-01'],
+        shiftTypes: ['D'],
+        backgroundColor: '#ffffff',
+      }],
+      extraColumns: [],
+      extraRows: [],
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
+    await user.type(screen.getByPlaceholderText('Optional note for this export rule'), 'Unsaved rule');
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(screen.queryByRole('button', { name: 'Add', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Unsaved rule')).not.toBeInTheDocument();
+    expect(updateExportFormatting).toHaveBeenCalledWith([]);
   });
 
   it('clears an invalid coefficient error after correction and saves the rule', async () => {

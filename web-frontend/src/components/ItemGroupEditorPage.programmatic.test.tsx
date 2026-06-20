@@ -112,6 +112,8 @@ function Harness({
         groupsReadOnly={groupsReadOnly}
         addItem={vi.fn()}
         addGroup={vi.fn()}
+        duplicateItem={vi.fn()}
+        duplicateGroup={vi.fn()}
         updateItem={vi.fn()}
         updateGroup={vi.fn()}
         deleteItem={(_dataType, prev, id) => setData({ ...prev, items: prev.items.filter(item => item.id !== id) })}

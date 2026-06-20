@@ -22,6 +22,7 @@
 import os
 import sys
 import json
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +31,49 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import cli
 from nurse_scheduling.solver_interface import SolverProgress
+
+
+def test_cli_version_prints_git_version(monkeypatch, capsys):
+    seen = {}
+
+    def fake_check_output(cmd, stderr, text):
+        seen["cmd"] = cmd
+        seen["stderr"] = stderr
+        seen["text"] = text
+        return "v1.2.3-dirty\n"
+
+    def fail_schedule(*args, **kwargs):
+        raise AssertionError("schedule should not run for --version")
+
+    monkeypatch.setattr(cli.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(cli.scheduler, "schedule", fail_schedule)
+    monkeypatch.setattr(sys, "argv", ["nurse-scheduling", "--version"])
+
+    cli.main()
+
+    repo_root = Path(cli.__file__).resolve().parents[2]
+    assert capsys.readouterr().out == "nurse-scheduling v1.2.3-dirty\n"
+    assert seen["cmd"][:5] == [
+        "git",
+        "-c",
+        f"safe.directory={repo_root}",
+        "-C",
+        str(repo_root),
+    ]
+    assert seen["cmd"][5:] == ["describe", "--tags", "--always", "--dirty"]
+    assert seen["text"] is True
+
+
+def test_cli_version_falls_back_when_git_version_is_unavailable(monkeypatch, capsys):
+    def raise_git_error(*args, **kwargs):
+        raise OSError("git unavailable")
+
+    monkeypatch.setattr(cli.subprocess, "check_output", raise_git_error)
+    monkeypatch.setattr(sys, "argv", ["nurse-scheduling", "--version"])
+
+    cli.main()
+
+    assert capsys.readouterr().out == "nurse-scheduling v0.0.0-unknown\n"
 
 
 def test_cli_missing_input_file_exits_with_error(tmp_path, monkeypatch, capsys):
@@ -97,6 +141,7 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
     monkeypatch.setattr(cli.exporter, "export_to_csv", fake_export_to_csv)
+    monkeypatch.setattr(cli, "_get_app_version", lambda: "v9.8.7-test")
     monkeypatch.setattr(
         sys,
         "argv",
@@ -125,6 +170,7 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
     assert seen["export_df"] == "fake_df"
     assert output_file.read_bytes() == b"csv-bytes"
     out = capsys.readouterr().out
+    assert out.splitlines()[0] == "nurse-scheduling v9.8.7-test"
     assert f"Results saved to {output_file}" in out
     assert "Score: 123" in out
     assert "Status: OPTIMAL" in out
@@ -304,14 +350,15 @@ def test_cli_show_model_build_stats_prints_scheduler_events(tmp_path, monkeypatc
                 preferenceType="shift request",
             )
         )
-        assert capsys.readouterr().out == ""
         return "large dataframe", {"large": "solution"}, 123, "FEASIBLE", {}
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
+    monkeypatch.setattr(cli, "_get_app_version", lambda: "v9.8.7-test")
     monkeypatch.setattr(sys, "argv", ["nurse-scheduling", str(input_file), "--show-model-build-stats"])
 
     cli.main()
     out = capsys.readouterr().out
+    assert out.splitlines()[0] == "nurse-scheduling v9.8.7-test"
     assert (
         "MODEL_BUILD_STATS\tstep\tcount\telapsed_seconds\tvariables_added\tconstraints_added"
         "\ttotal_variables\ttotal_constraints"

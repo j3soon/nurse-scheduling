@@ -123,7 +123,7 @@ test('renaming and deleting shift types keeps people history coherent in UI and 
    * Steps:
    * 1. Seed ordered people history with an older D entry between A and N.
    * 2. Rename D to DX and confirm history is renamed in the summary and YAML.
-   * 3. Delete DX and confirm only newer contiguous history remains.
+   * 3. Delete DX and confirm the deleted history entry is replaced with an empty slot.
    */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {
@@ -172,21 +172,21 @@ test('renaming and deleting shift types keeps people history coherent in UI and 
 
   await page.goto('/shift-requests');
   await expect(currentHistory.getByText(/H-1:\s*N/)).toBeVisible();
-  await expect(currentHistory.getByText(/H-2:/)).toHaveCount(0);
+  await expect(currentHistory.getByText(/H-2:\s*$/)).toBeVisible();
+  await expect(currentHistory.getByText(/H-3:\s*A/)).toBeVisible();
   await expect(currentHistory.getByText(/DX/)).toHaveCount(0);
 
   await page.goto('/save-and-load');
-  await expect(page.locator('pre')).toContainText('history: [N]');
-  await expect(page.locator('pre')).not.toContainText('history: [A');
+  await expect(page.locator('pre')).toContainText("history: [A, '', N]");
   await expect(page.locator('pre')).not.toContainText('DX');
 });
 
-test('optimize payload reflects trimmed people history after shift-type deletion', async ({ page }) => {
+test('optimize payload reflects empty replacement in people history after shift-type deletion', async ({ page }) => {
   /*
    * Steps:
    * 1. Seed history where D is older than N.
    * 2. Delete D through the shift-type page.
-   * 3. Run Optimize and assert the submitted YAML keeps N but drops D and older A history.
+   * 3. Run Optimize and assert the submitted YAML keeps the empty replacement slot.
    */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {
@@ -224,7 +224,6 @@ test('optimize payload reflects trimmed people history after shift-type deletion
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
 
-  expect(submittedBody).toContain('history: [N]');
-  expect(submittedBody).not.toContain('history: [A');
+  expect(submittedBody).toContain("history: [A, '', N]");
   expect(submittedBody).not.toContain('id: D');
 });

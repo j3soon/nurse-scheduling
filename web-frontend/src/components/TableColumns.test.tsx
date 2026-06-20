@@ -31,6 +31,7 @@ function ItemTableHarness({
   groups,
   onInlineEdit,
   onEdit,
+  onDuplicate = vi.fn(),
   onDelete,
   itemsReadOnly = false,
   removeItemFromGroup = vi.fn(),
@@ -39,6 +40,7 @@ function ItemTableHarness({
   groups: Group[];
   onInlineEdit: (id: string, isItem: boolean, field?: 'id' | 'description') => void;
   onEdit: (id: string) => void;
+  onDuplicate?: (id: string) => void;
   onDelete: (id: string) => void;
   itemsReadOnly?: boolean;
   removeItemFromGroup?: (itemId: string, groupId: string) => void;
@@ -54,6 +56,7 @@ function ItemTableHarness({
     onInlineCancel: vi.fn(),
     onInlineEdit,
     onEdit,
+    onDuplicate,
     onDelete,
     removeItemFromGroup,
     itemsReadOnly,
@@ -67,6 +70,7 @@ function GroupTableHarness({
   items,
   onInlineEdit,
   onEdit,
+  onDuplicate = vi.fn(),
   onDelete,
   groupsReadOnly = false,
 }: {
@@ -74,6 +78,7 @@ function GroupTableHarness({
   items: Item[];
   onInlineEdit: (id: string, isItem: boolean, field?: 'id' | 'description') => void;
   onEdit: (id: string) => void;
+  onDuplicate?: (id: string) => void;
   onDelete: (id: string) => void;
   groupsReadOnly?: boolean;
 }) {
@@ -88,6 +93,7 @@ function GroupTableHarness({
     onInlineCancel: vi.fn(),
     onInlineEdit,
     onEdit,
+    onDuplicate,
     onDelete,
     removeItemFromGroup: vi.fn(),
     groupsReadOnly,
@@ -116,9 +122,10 @@ describe('TableColumns', () => {
     expect(onInlineEdit).toHaveBeenCalledWith('A', true, 'id');
   });
 
-  it('triggers row action callbacks for edit and delete', async () => {
+  it('triggers row action callbacks for edit, duplicate, and delete', async () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();
+    const onDuplicate = vi.fn();
     const onDelete = vi.fn();
 
     render(
@@ -127,14 +134,17 @@ describe('TableColumns', () => {
         groups={[]}
         onInlineEdit={vi.fn()}
         onEdit={onEdit}
+        onDuplicate={onDuplicate}
         onDelete={onDelete}
       />,
     );
 
     await user.click(screen.getByRole('button', { name: /edit/i }));
+    await user.click(screen.getByRole('button', { name: /duplicate/i }));
     await user.click(screen.getByRole('button', { name: /delete/i }));
 
     expect(onEdit).toHaveBeenCalledWith('A');
+    expect(onDuplicate).toHaveBeenCalledWith('A');
     expect(onDelete).toHaveBeenCalledWith('A');
   });
 
@@ -151,6 +161,7 @@ describe('TableColumns', () => {
 
     expect(screen.getByText('Auto')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /duplicate/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
   });
 
@@ -167,6 +178,7 @@ describe('TableColumns', () => {
     );
 
     expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /duplicate/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
   });
 

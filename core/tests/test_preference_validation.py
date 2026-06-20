@@ -343,7 +343,7 @@ preferences:
     pattern: [D]
     weight: 1
 """
-    with pytest.raises(ValueError, match="History must not include 'ALL'"):
+    with pytest.raises(ValueError, match="History must not include 'ALL', but got 'ALL'"):
         scheduler.schedule(history_all_yaml)
 
     history_group_yaml = b"""
@@ -373,7 +373,78 @@ preferences:
     pattern: [D]
     weight: 1
 """
-    with pytest.raises(ValueError, match="History must not include nested ID"):
+    with pytest.raises(ValueError, match="History must not include group ID, but got 'G'"):
+        scheduler.schedule(history_group_yaml)
+
+
+def test_people_history_rejects_invalid_shift_types_without_successions():
+    empty_history_yaml = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+      history: [""]
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+"""
+    with pytest.raises(ValueError, match="Unknown shift type ID in history: ''"):
+        scheduler.schedule(empty_history_yaml)
+
+    history_all_yaml = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+      history: [ALL]
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+"""
+    with pytest.raises(ValueError, match="History must not include 'ALL', but got 'ALL'"):
+        scheduler.schedule(history_all_yaml)
+
+    history_group_yaml = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+      history: [G]
+shiftTypes:
+  items:
+    - id: D
+  groups:
+    - id: G
+      members: [D]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+"""
+    with pytest.raises(ValueError, match="History must not include group ID, but got 'G'"):
         scheduler.schedule(history_group_yaml)
 
 

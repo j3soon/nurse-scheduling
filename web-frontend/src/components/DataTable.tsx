@@ -19,7 +19,7 @@
 
 // A table component that allows reordering of rows by dragging the mouse.
 // Note that this file highly duplicates with DraggableCardList.tsx.
-import { ReactNode, useState } from 'react';
+import { ReactNode, useRef, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 
 interface Column<T> {
@@ -38,19 +38,26 @@ interface DataTableProps<T> {
 }
 
 export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, headerAction }: DataTableProps<T>) {
+  const draggedRowIndexRef = useRef<number | null>(null);
   const [dragOverState, setDragOverState] = useState<{ rowIndex: number; insertAfter: boolean } | null>(null);
 
   const handleDragStart = (e: React.DragEvent<HTMLTableRowElement>, index: number) => {
+    draggedRowIndexRef.current = index;
     e.dataTransfer.setData('text/plain', index.toString());
     e.currentTarget.classList.add('opacity-50');
   };
 
   const handleDragEnd = (e: React.DragEvent<HTMLTableRowElement>) => {
+    draggedRowIndexRef.current = null;
     e.currentTarget.classList.remove('opacity-50');
     setDragOverState(null);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>, rowIndex: number) => {
+    if (draggedRowIndexRef.current === null) {
+      return;
+    }
+
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
     const insertAfter = e.clientY > rect.top + rect.height / 2;
@@ -62,10 +69,15 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
   };
 
   const handleDrop = (e: React.DragEvent<HTMLTableRowElement>, dropIndex: number) => {
+    const dragIndex = draggedRowIndexRef.current;
+    if (dragIndex === null) {
+      setDragOverState(null);
+      return;
+    }
+
     e.preventDefault();
     setDragOverState(null);
 
-    const dragIndex = parseInt(e.dataTransfer.getData('text/plain'));
     if (!onReorder) {
       console.error(`onReorder is not defined. ${ERROR_SHOULD_NOT_HAPPEN}`);
       return;

@@ -47,6 +47,7 @@ export default function ShiftAffinitiesPage() {
   const {
     getPreferencesByType,
     updatePreferencesByType,
+    duplicatePreferenceByType,
     shiftTypeData,
     peopleData,
     dateData
@@ -164,13 +165,13 @@ export default function ShiftAffinitiesPage() {
       weight: formData.weight as number
   });
 
-  function saveDraft(saveAsNew: boolean) {
+  function saveDraft() {
     if (!validateForm()) return;
 
     const newShiftAffinity = buildShiftAffinityFromForm();
 
     const wasEditing = editingIndex !== null;
-    if (wasEditing && !saveAsNew) {
+    if (wasEditing) {
       // Edit existing shift affinity
       const newAffinities = [...shiftAffinities];
       newAffinities[editingIndex] = newShiftAffinity;
@@ -189,11 +190,7 @@ export default function ShiftAffinitiesPage() {
   }
 
   function handleSave() {
-    saveDraft(false);
-  }
-
-  function handleSaveAsNew() {
-    saveDraft(true);
+    saveDraft();
   }
 
   // Handle global keydown for Enter/Escape when form is visible
@@ -216,18 +213,26 @@ export default function ShiftAffinitiesPage() {
     };
   });
 
+  const dismissEditingDraft = () => {
+    if (isFormVisible) {
+      handleCancel();
+    }
+  };
+
+  const handleDuplicate = (index: number) => {
+    dismissEditingDraft();
+    duplicatePreferenceByType(SHIFT_AFFINITY, index);
+  };
+
   const handleDelete = (index: number) => {
+    dismissEditingDraft();
     const newShiftAffinities = shiftAffinities.filter((_, i) => i !== index);
     updateShiftAffinities(newShiftAffinities);
   };
 
-  const handleDeleteEditingShiftAffinity = () => {
-    if (editingIndex === null) return;
-
-    handleDelete(editingIndex);
-    setIsFormVisible(false);
-    resetForm();
-    restoreScrollPosition();
+  const handleReorder = (newShiftAffinities: ShiftAffinityPreference[]) => {
+    dismissEditingDraft();
+    updateShiftAffinities(newShiftAffinities);
   };
 
   const handleArrayFieldToggle = (field: 'date' | 'people1' | 'people2' | 'shift_types', id: string) => {
@@ -471,16 +476,7 @@ export default function ShiftAffinitiesPage() {
 
               {/* Action Buttons */}
               <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  {editingIndex !== null && (
-                    <button
-                      onClick={handleDeleteEditingShiftAffinity}
-                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
+                <div />
                 <div className="flex flex-wrap justify-end gap-3">
                   <button
                     onClick={handleCancel}
@@ -488,14 +484,6 @@ export default function ShiftAffinitiesPage() {
                   >
                     Cancel
                   </button>
-                  {editingIndex !== null && (
-                    <button
-                      onClick={handleSaveAsNew}
-                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
-                    >
-                      Save as New
-                    </button>
-                  )}
                   <button
                     onClick={handleSave}
                     className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
@@ -515,8 +503,9 @@ export default function ShiftAffinitiesPage() {
         items={shiftAffinities}
         emptyMessage='No shift affinities defined yet. Click "Add Shift Affinity" to get started.'
         onEdit={handleStartEdit}
+        onDuplicate={handleDuplicate}
         onDelete={handleDelete}
-        onReorder={updateShiftAffinities}
+        onReorder={handleReorder}
         renderContent={(shiftAffinity) => (
           <>
             {shiftAffinity.description && (

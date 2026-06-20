@@ -1,1 +1,1 @@
-Value error, Date group ID cannot be one of the reserved values
+Value error, Date group ID 'all' cannot be one of the reserved values

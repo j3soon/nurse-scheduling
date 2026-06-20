@@ -50,8 +50,6 @@ interface AddEditItemGroupFormProps<T extends Item, G extends Group> {
   onMemberToggle: (id: string) => void;
   onSave: () => void;
   onCancel: () => void;
-  onSaveAsNew?: () => void;
-  onDelete?: () => void;
 }
 
 export function AddEditItemGroupForm<T extends Item, G extends Group>({
@@ -69,8 +67,6 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   onMemberToggle,
   onSave,
   onCancel,
-  onSaveAsNew,
-  onDelete,
 }: AddEditItemGroupFormProps<T, G>) {
   const isItem = draft.isItem;
   const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : "Group"}`;
@@ -126,8 +122,6 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           error={error}
           onAction={onSave}
           onCancel={onCancel}
-          onSaveAsNew={mode === Mode.EDITING ? onSaveAsNew : undefined}
-          onDelete={mode === Mode.EDITING ? onDelete : undefined}
           actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
         >
           {!draft.isItem ? memberSelector : groupSelector}

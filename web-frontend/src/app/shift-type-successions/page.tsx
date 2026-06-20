@@ -47,6 +47,7 @@ export default function ShiftTypeSuccessionsPage() {
   const {
     getPreferencesByType,
     updatePreferencesByType,
+    duplicatePreferenceByType,
     shiftTypeData,
     peopleData,
     dateData
@@ -157,13 +158,13 @@ export default function ShiftTypeSuccessionsPage() {
       weight: formData.weight as number
   });
 
-  function saveDraft(saveAsNew: boolean) {
+  function saveDraft() {
     if (!validateForm()) return;
 
     const newSuccession = buildSuccessionFromForm();
 
     const wasEditing = editingIndex !== null;
-    if (wasEditing && !saveAsNew) {
+    if (wasEditing) {
       // Edit existing succession
       const newSuccessions = [...shiftTypeSuccessions];
       newSuccessions[editingIndex] = newSuccession;
@@ -182,11 +183,7 @@ export default function ShiftTypeSuccessionsPage() {
   }
 
   function handleSave() {
-    saveDraft(false);
-  }
-
-  function handleSaveAsNew() {
-    saveDraft(true);
+    saveDraft();
   }
 
   // Handle global keydown for Enter/Escape when form is visible
@@ -209,18 +206,26 @@ export default function ShiftTypeSuccessionsPage() {
     };
   });
 
+  const dismissEditingDraft = () => {
+    if (isFormVisible) {
+      handleCancel();
+    }
+  };
+
+  const handleDuplicate = (index: number) => {
+    dismissEditingDraft();
+    duplicatePreferenceByType(SHIFT_TYPE_SUCCESSIONS, index);
+  };
+
   const handleDelete = (index: number) => {
+    dismissEditingDraft();
     const newSuccessions = shiftTypeSuccessions.filter((_, i) => i !== index);
     updateShiftTypeSuccessions(newSuccessions);
   };
 
-  const handleDeleteEditingSuccession = () => {
-    if (editingIndex === null) return;
-
-    handleDelete(editingIndex);
-    setIsFormVisible(false);
-    resetForm();
-    restoreScrollPosition();
+  const handleReorder = (newSuccessions: ShiftTypeSuccessionsPreference[]) => {
+    dismissEditingDraft();
+    updateShiftTypeSuccessions(newSuccessions);
   };
 
   const handleArrayFieldToggle = (field: 'person' | 'date', id: string) => {
@@ -582,16 +587,7 @@ export default function ShiftTypeSuccessionsPage() {
 
               {/* Action Buttons */}
               <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  {editingIndex !== null && (
-                    <button
-                      onClick={handleDeleteEditingSuccession}
-                      className="px-4 py-2 text-red-600 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
+                <div />
                 <div className="flex flex-wrap justify-end gap-3">
                   <button
                     onClick={handleCancel}
@@ -599,14 +595,6 @@ export default function ShiftTypeSuccessionsPage() {
                   >
                     Cancel
                   </button>
-                  {editingIndex !== null && (
-                    <button
-                      onClick={handleSaveAsNew}
-                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
-                    >
-                      Save as New
-                    </button>
-                  )}
                   <button
                     onClick={handleSave}
                     className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
@@ -626,8 +614,9 @@ export default function ShiftTypeSuccessionsPage() {
         items={shiftTypeSuccessions}
         emptyMessage='No successions defined yet. Click "Add Succession" to get started.'
         onEdit={handleStartEdit}
+        onDuplicate={handleDuplicate}
         onDelete={handleDelete}
-        onReorder={updateShiftTypeSuccessions}
+        onReorder={handleReorder}
         renderContent={(succession) => (
           <>
             {succession.description && (
@@ -647,7 +636,7 @@ export default function ShiftTypeSuccessionsPage() {
                     return (
                       <span key={idx} className="flex items-center">
                         <span
-                          className="px-1.5 py-0.5 rbg-gray-100 ounded text-xs"
+                          className="px-1.5 py-0.5 bg-gray-100 rounded text-xs"
                           title={shiftType?.description}
                         >
                           {shiftTypeId}

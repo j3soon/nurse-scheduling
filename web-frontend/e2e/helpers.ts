@@ -33,6 +33,7 @@ type StoredState = {
       startDate?: string;
       endDate?: string;
     };
+    items?: Array<{ id: string; description: string }>;
     groups: Array<{ id: string; members: string[]; description: string }>;
   };
   people: {
@@ -47,6 +48,8 @@ type StoredState = {
   preferences: Array<Record<string, unknown>>;
   export: {
     formatting: Array<Record<string, unknown>>;
+    extraColumns?: Array<Record<string, unknown>>;
+    extraRows?: Array<Record<string, unknown>>;
   };
 };
 
@@ -65,6 +68,7 @@ export async function seedSchedulingState(page: Page, state: StoredState) {
       const workerNamespace = (window as unknown as { [key: string]: string | undefined })[workerNamespaceKey];
       const storageKey = workerNamespace ? `${key}__${workerNamespace}` : key;
       window.localStorage.setItem(storageKey, value);
+      window.localStorage.setItem(key, value);
     },
     { key: STORAGE_KEY, value: persisted, workerNamespaceKey: WORKER_NAMESPACE_KEY }
   );
@@ -248,7 +252,7 @@ export async function waitForStoredCurrentSchedulingData(page: Page, expectedTex
     ({ key, value, workerNamespaceKey }) => {
       const workerNamespace = (window as unknown as { [key: string]: string | undefined })[workerNamespaceKey];
       const storageKey = workerNamespace ? `${key}__${workerNamespace}` : key;
-      const stored = window.localStorage.getItem(storageKey);
+      const stored = window.localStorage.getItem(storageKey) ?? window.localStorage.getItem(key);
       if (!stored) {
         return false;
       }

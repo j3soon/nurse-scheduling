@@ -72,6 +72,7 @@ interface TableColumnsProps {
   onInlineCancel: () => void;
   onInlineEdit: (id: string, isItem: boolean, field?: 'id' | 'description') => void;
   onEdit: (id: string) => void;
+  onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   removeItemFromGroup: (itemId: string, groupId: string) => void;
   itemsReadOnly?: boolean;
@@ -157,6 +158,7 @@ function useBaseTableColumns(
     onInlineCancel,
     onInlineEdit,
     onEdit,
+    onDuplicate,
     onDelete,
     removeItemFromGroup,
   } = props;
@@ -257,6 +259,7 @@ function useBaseTableColumns(
         return (
           <TableRowActions
             onEdit={() => onEdit(entity.id)}
+            onDuplicate={() => onDuplicate(entity.id)}
             onDelete={() => onDelete(entity.id)}
           />
         );

@@ -64,35 +64,35 @@ def test_model_rejects_invalid_date_range():
 def test_model_rejects_duplicate_or_reserved_shift_type_ids():
     payload = _base_payload()
     payload["shiftTypes"]["items"] = [{"id": "D"}, {"id": "D"}]
-    with pytest.raises(ValueError, match="Duplicated shift type ID"):
+    with pytest.raises(ValueError, match="Duplicated shift type ID: 'D'"):
         NurseSchedulingData.model_validate(payload)
 
     payload = _base_payload()
     payload["shiftTypes"]["items"] = [{"id": "ALL"}]
     payload["preferences"][1]["shiftType"] = "ALL"
-    with pytest.raises(ValueError, match="Shift type ID cannot be one of the reserved values"):
+    with pytest.raises(ValueError, match="Shift type ID 'ALL' cannot be one of the reserved values"):
         NurseSchedulingData.model_validate(payload)
 
     payload = _base_payload()
     payload["shiftTypes"]["groups"] = [{"id": "D", "members": ["D"]}]
-    with pytest.raises(ValueError, match="Duplicated shift type group"):
+    with pytest.raises(ValueError, match="Duplicated shift type group .*'D'"):
         NurseSchedulingData.model_validate(payload)
 
 
 def test_model_rejects_duplicate_or_reserved_people_ids():
     payload = _base_payload()
     payload["people"]["items"] = [{"id": "n1"}, {"id": "n1"}]
-    with pytest.raises(ValueError, match="Duplicated person ID"):
+    with pytest.raises(ValueError, match="Duplicated person ID: 'n1'"):
         NurseSchedulingData.model_validate(payload)
 
     payload = _base_payload()
     payload["people"]["items"] = [{"id": "ALL"}]
-    with pytest.raises(ValueError, match="Person ID cannot be one of the reserved values"):
+    with pytest.raises(ValueError, match="Person ID 'ALL' cannot be one of the reserved values"):
         NurseSchedulingData.model_validate(payload)
 
     payload = _base_payload()
     payload["people"]["groups"] = [{"id": "n1", "members": ["n1"]}]
-    with pytest.raises(ValueError, match="Duplicated people group"):
+    with pytest.raises(ValueError, match="Duplicated people group .*'n1'"):
         NurseSchedulingData.model_validate(payload)
 
 
@@ -104,15 +104,15 @@ def test_model_rejects_invalid_dates_items_and_group_ids():
 
     payload = _base_payload()
     payload["dates"]["groups"] = [{"id": "g1", "members": ["2025-01-01"]}, {"id": "g1", "members": ["2025-01-01"]}]
-    with pytest.raises(ValueError, match="Duplicated date group ID"):
+    with pytest.raises(ValueError, match="Duplicated date group ID: 'g1'"):
         NurseSchedulingData.model_validate(payload)
 
     payload = _base_payload()
     payload["dates"]["groups"] = [{"id": "WEEKDAY", "members": ["2025-01-01"]}]
-    with pytest.raises(ValueError, match="Date group ID cannot be one of the reserved values"):
+    with pytest.raises(ValueError, match="Date group ID 'WEEKDAY' cannot be one of the reserved values"):
         NurseSchedulingData.model_validate(payload)
 
     payload = _base_payload()
     payload["dates"]["groups"] = [{"id": "2025-01-01", "members": ["2025-01-01"]}]
-    with pytest.raises(ValueError, match="Date group ID must not be in the format"):
+    with pytest.raises(ValueError, match="Date group ID '2025-01-01' must not be in the format"):
         NurseSchedulingData.model_validate(payload)
