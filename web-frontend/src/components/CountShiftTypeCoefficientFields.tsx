@@ -19,9 +19,11 @@
 
 import NumberInput from '@/components/NumberInput';
 import { OrderedEntry, sortIdsByEntryOrder } from '@/utils/entityOrdering';
+import { Group, Item } from '@/types/scheduling';
 import {
   DraftShiftCountTypeCoefficient,
   getCoefficientForShiftType,
+  getCoefficientShiftTypeIds,
   updateCoefficientPair,
 } from '@/utils/countShiftTypeCoefficients';
 
@@ -29,6 +31,7 @@ interface CountShiftTypeCoefficientFieldsProps {
   selectedShiftTypeIds: string[];
   coefficients: DraftShiftCountTypeCoefficient[];
   shiftTypeEntries: OrderedEntry[];
+  shiftTypeData: { items: Item[]; groups: Group[] };
   errorsById?: Record<string, string>;
   label?: string;
   onChange: (coefficients: DraftShiftCountTypeCoefficient[], changedShiftTypeId: string) => void;
@@ -38,12 +41,14 @@ export function CountShiftTypeCoefficientFields({
   selectedShiftTypeIds,
   coefficients,
   shiftTypeEntries,
+  shiftTypeData,
   errorsById = {},
   label = 'Count Shift Type',
   onChange,
 }: CountShiftTypeCoefficientFieldsProps) {
   const singularLabel = label.toLowerCase();
   const emptyHint = `Coefficients are not needed when no ${singularLabel} is selected.`;
+  const coefficientShiftTypeIds = getCoefficientShiftTypeIds(selectedShiftTypeIds, shiftTypeData);
 
   return (
     <div>
@@ -52,12 +57,12 @@ export function CountShiftTypeCoefficientFields({
       </label>
 
       <div className="flex flex-wrap items-end">
-        {selectedShiftTypeIds.length < 1 ? (
+        {coefficientShiftTypeIds.length < 1 ? (
           <div className="text-sm text-gray-500 italic">
             {emptyHint}
           </div>
         ) : (
-          sortIdsByEntryOrder(selectedShiftTypeIds, shiftTypeEntries).map(shiftTypeId => (
+          sortIdsByEntryOrder(coefficientShiftTypeIds, shiftTypeEntries).map(shiftTypeId => (
             <label key={shiftTypeId} className="block w-28">
               <span className="block truncate text-xs font-medium text-gray-600 mb-1" title={shiftTypeId}>
                 {shiftTypeId}
@@ -73,7 +78,7 @@ export function CountShiftTypeCoefficientFields({
                     ? ''
                     : (Number.isNaN(parsedValue) ? value : Math.max(1, parsedValue));
                   onChange(
-                    updateCoefficientPair(selectedShiftTypeIds, coefficients, shiftTypeId, coefficient),
+                    updateCoefficientPair(coefficientShiftTypeIds, coefficients, shiftTypeId, coefficient),
                     shiftTypeId
                   );
                 }}

@@ -344,7 +344,19 @@ export:
       countShiftTypeCoefficients:
         - [stale_shift, 2]
 """,
-            "must reference a shift type in countShiftTypes",
+            "Unknown shift type ID: stale_shift",
+        ),
+        (
+            b"""
+  extraColumns:
+    - type: count
+      header: Uncovered coefficient shift
+      countDates: ["2025-01-01"]
+      countShiftTypes: [D]
+      countShiftTypeCoefficients:
+        - [A, 2]
+""",
+            "must be covered by countShiftTypes",
         ),
         (
             b"""
@@ -419,6 +431,7 @@ people:
 shiftTypes:
   items:
     - id: D
+    - id: A
 preferences:
   - type: at most one shift per day
   - type: shift type requirement

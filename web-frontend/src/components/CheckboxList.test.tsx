@@ -219,4 +219,26 @@ describe('CheckboxList', () => {
 
     expect(onToggle).toHaveBeenCalledWith('A');
   });
+
+  it('uses the provided radio input name', () => {
+    render(
+      <CheckboxList
+        label=""
+        inputType="radio"
+        inputName="shift-type-requirement-shift-type"
+        items={[{ id: 'A' }, { id: 'B' }]}
+        selectedIds={[]}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('radio', { name: 'A' })).toHaveAttribute(
+      'name',
+      'shift-type-requirement-shift-type',
+    );
+    expect(screen.getByRole('radio', { name: 'B' })).toHaveAttribute(
+      'name',
+      'shift-type-requirement-shift-type',
+    );
+  });
 });

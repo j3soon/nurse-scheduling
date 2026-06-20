@@ -255,6 +255,47 @@ preferences:
     scheduler.schedule(yaml_content)
 
 
+def test_shift_count_accepts_coefficients_covered_by_selected_group():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: Work
+      members: [D, A]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+    date: 2025-01-01
+  - type: shift type requirement
+    shiftType: A
+    requiredNumPeople: 1
+    date: 2025-01-02
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: Work
+    countShiftTypeCoefficients:
+      - [D, 2]
+      - [A, 3]
+    expression: x = T
+    target: 5
+    weight: .inf
+"""
+    scheduler.schedule(yaml_content)
+
+
 def test_shift_count_rejects_invalid_shift_type_coefficients():
     coefficient_not_selected_yaml = b"""
 apiVersion: alpha
@@ -284,7 +325,7 @@ preferences:
     target: 1
     weight: .inf
 """
-    with pytest.raises(ValueError, match="must reference a shift type in countShiftTypes"):
+    with pytest.raises(ValueError, match="must be covered by countShiftTypes"):
         scheduler.schedule(coefficient_not_selected_yaml)
 
     for invalid_coefficient in (0, -1):
@@ -614,7 +655,7 @@ preferences:
 """
     with pytest.raises(
         ValueError,
-        match="Shift type requirement coefficient for 'E' must reference a shift type in shiftType",
+        match="Shift type requirement coefficient for 'E' must be covered by shiftType",
     ):
         scheduler.schedule(yaml_content)
 

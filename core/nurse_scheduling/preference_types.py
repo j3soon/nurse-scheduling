@@ -45,26 +45,11 @@ def _parse_shift_type_requirement_groups(shift_type, map_sid_s):
     for element in shift_type:
         if isinstance(element, list):
             groups.append(
-                sorted(
-                    set(itertools.chain.from_iterable(utils.parse_sids(sid, map_sid_s) for sid in element))
-                )
+                sorted(set(itertools.chain.from_iterable(utils.parse_sids(sid, map_sid_s) for sid in element)))
             )
         else:
             groups.append(utils.parse_sids(element, map_sid_s))
     return groups
-
-
-def _collect_shift_type_requirement_selector_ids(shift_type):
-    if not isinstance(shift_type, list):
-        return {shift_type}
-
-    selector_ids = set()
-    for element in shift_type:
-        if isinstance(element, list):
-            selector_ids.update(_collect_shift_type_requirement_selector_ids(element))
-        else:
-            selector_ids.add(element)
-    return selector_ids
 
 
 def _parse_shift_type_requirement_coefficients(
@@ -78,18 +63,16 @@ def _parse_shift_type_requirement_coefficients(
         raise ValueError(
             "Shift type requirement coefficients are only supported when shiftType normalizes to one requirement group."
         )
-    selected_shift_type_ids = _collect_shift_type_requirement_selector_ids(preference.shiftType)
+    selected_sids = set(coefficients)
     coefficient_sids = set()
 
     for shift_type_id, coefficient in coefficient_entries:
-        if shift_type_id not in selected_shift_type_ids:
-            raise ValueError(
-                f"Shift type requirement coefficient for '{shift_type_id}' must reference a shift type in shiftType."
-            )
         if coefficient < 1:
             raise ValueError(f"Shift type requirement coefficient for '{shift_type_id}' must be at least 1.")
 
         expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
+        if not set(expanded_sids).issubset(selected_sids):
+            raise ValueError(f"Shift type requirement coefficient for '{shift_type_id}' must be covered by shiftType.")
         duplicate_sids = coefficient_sids.intersection(expanded_sids)
         if duplicate_sids:
             raise ValueError(f"Duplicate shift type requirement coefficient for '{shift_type_id}'.")
@@ -388,20 +371,18 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
 def _parse_shift_count_coefficients(
     ctx: Context, preference: models.ShiftCountPreference, c_ss: list[int]
 ) -> dict[int, int]:
-    selected_shift_type_ids = set(utils.ensure_list(preference.countShiftTypes))
     coefficients = dict.fromkeys(c_ss, 1)
     coefficient_entries = preference.countShiftTypeCoefficients or []
+    selected_sids = set(c_ss)
     coefficient_sids = set()
 
     for shift_type_id, coefficient in coefficient_entries:
-        if shift_type_id not in selected_shift_type_ids:
-            raise ValueError(
-                f"Shift count coefficient for '{shift_type_id}' must reference a shift type in countShiftTypes."
-            )
         if coefficient < 1:
             raise ValueError(f"Shift count coefficient for '{shift_type_id}' must be at least 1.")
 
         expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
+        if not set(expanded_sids).issubset(selected_sids):
+            raise ValueError(f"Shift count coefficient for '{shift_type_id}' must be covered by countShiftTypes.")
         duplicate_sids = coefficient_sids.intersection(expanded_sids)
         if duplicate_sids:
             raise ValueError(f"Duplicate shift count coefficient for '{shift_type_id}'.")

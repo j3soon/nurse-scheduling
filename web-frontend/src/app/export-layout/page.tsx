@@ -390,7 +390,8 @@ export default function ExportFormattingPage() {
       countShiftTypes: rule.countShiftTypes,
       countShiftTypeCoefficients: syncCoefficientPairs(
         rule.countShiftTypes,
-        rule.countShiftTypeCoefficients ?? []
+        rule.countShiftTypeCoefficients ?? [],
+        shiftTypeData
       ),
       countDates: rule.countDates,
       rightBorderColor: rule.rightBorderColor || '',
@@ -909,7 +910,8 @@ export default function ExportFormattingPage() {
           prev.countShiftTypes.includes(id)
             ? prev.countShiftTypes.filter(targetId => targetId !== id)
             : [...prev.countShiftTypes, id],
-          prev.countShiftTypeCoefficients
+          prev.countShiftTypeCoefficients,
+          shiftTypeData
         )
       } : {})
     }));
@@ -942,6 +944,7 @@ export default function ExportFormattingPage() {
         selectedShiftTypeIds={draft.countShiftTypes}
         coefficients={draft.countShiftTypeCoefficients}
         shiftTypeEntries={[...shiftTypeData.items, ...shiftTypeData.groups]}
+        shiftTypeData={shiftTypeData}
         errorsById={errors.countShiftTypeCoefficientsById}
         onChange={(coefficients, changedShiftTypeId) => {
           clearCoefficientError(changedShiftTypeId);

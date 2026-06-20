@@ -26,7 +26,7 @@
 // - Re-entering a checkbox during the same drag gesture toggles it again, so one checkbox may be toggled multiple times.
 // - Mouse up anywhere, including outside this component, ends the current gesture via the global mouseup listener.
 // - Native checkbox onChange is intentionally suppressed so all toggles follow the custom mouse gesture rules.
-import { CSSProperties, useCallback, useEffect, useRef } from 'react';
+import { CSSProperties, useCallback, useEffect, useId, useRef } from 'react';
 
 interface CheckboxItem {
   id: string;
@@ -39,6 +39,7 @@ interface CheckboxListProps {
   onToggle: (id: string) => void;
   label: string;
   inputType?: 'checkbox' | 'radio';
+  inputName?: string;
   itemsClassName?: string;
   inputClassName?: string;
   textClassName?: string;
@@ -52,6 +53,7 @@ export function CheckboxList({
   onToggle,
   label,
   inputType = 'checkbox',
+  inputName,
   itemsClassName = 'flex flex-wrap',
   inputClassName,
   textClassName = 'ml-2 text-sm text-gray-700',
@@ -74,6 +76,10 @@ export function CheckboxList({
     onToggle(id);
   };
   const resolvedInputClassName = inputClassName ?? `form-${inputType} h-4 w-4 text-blue-600`;
+  const generatedInputName = useId();
+  const radioInputName = inputType === 'radio'
+    ? inputName ?? `checkbox-list-${generatedInputName}`
+    : undefined;
 
   const resetDragState = useCallback(() => {
     isMultiSelectDragRef.current = false;
@@ -152,7 +158,7 @@ export function CheckboxList({
           >
             <input
               type={inputType}
-              name={inputType === 'radio' ? label : undefined}
+              name={radioInputName}
               checked={selectedIds.includes(item.id)}
               onChange={inputType === 'radio' ? () => handleToggle(item.id) : () => {}} // Keep native checkbox changes disabled so gesture logic stays fully in mouse handlers.
               className={resolvedInputClassName}

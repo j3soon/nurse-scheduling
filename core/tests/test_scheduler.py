@@ -248,6 +248,45 @@ preferences:
     assert solution[(0, 1, 0)] == 0
 
 
+def test_scheduler_shift_type_requirement_coefficient_can_reference_selected_group_member():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: Work
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: Work
+    shiftTypeCoefficients:
+      - [D, 2]
+    requiredNumPeople: 2
+  - type: shift request
+    person: n1
+    date: 2025-01-01
+    shiftType: E
+    weight: 100
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] == 1
+    assert solution[(0, 1, 0)] == 0
+
+
 def test_scheduler_shift_type_requirement_flat_list_keeps_independent_counts():
     content = b"""
 apiVersion: alpha

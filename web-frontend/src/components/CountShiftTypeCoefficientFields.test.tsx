@@ -23,7 +23,15 @@ import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoef
 const shiftTypeEntries = [
   { id: 'D' },
   { id: 'N' },
+  { id: 'WORK' },
 ];
+const shiftTypeData = {
+  items: [
+    { id: 'D', description: 'Day' },
+    { id: 'N', description: 'Night' },
+  ],
+  groups: [{ id: 'WORK', members: ['D', 'N'], description: 'Working shifts' }],
+};
 
 describe('CountShiftTypeCoefficientFields', () => {
   it('shows a hint instead of fields when no shift type is selected', () => {
@@ -32,6 +40,7 @@ describe('CountShiftTypeCoefficientFields', () => {
         selectedShiftTypeIds={[]}
         coefficients={[]}
         shiftTypeEntries={shiftTypeEntries}
+        shiftTypeData={shiftTypeData}
         onChange={vi.fn()}
       />
     );
@@ -46,6 +55,7 @@ describe('CountShiftTypeCoefficientFields', () => {
         selectedShiftTypeIds={['D']}
         coefficients={[]}
         shiftTypeEntries={shiftTypeEntries}
+        shiftTypeData={shiftTypeData}
         onChange={vi.fn()}
       />
     );
@@ -60,6 +70,7 @@ describe('CountShiftTypeCoefficientFields', () => {
         selectedShiftTypeIds={['D', 'N']}
         coefficients={[]}
         shiftTypeEntries={shiftTypeEntries}
+        shiftTypeData={shiftTypeData}
         onChange={vi.fn()}
       />
     );
@@ -69,12 +80,29 @@ describe('CountShiftTypeCoefficientFields', () => {
     expect(screen.getByRole('spinbutton', { name: 'N' })).toBeInTheDocument();
   });
 
+  it('shows selected group members and fully covered groups', () => {
+    render(
+      <CountShiftTypeCoefficientFields
+        selectedShiftTypeIds={['WORK']}
+        coefficients={[]}
+        shiftTypeEntries={shiftTypeEntries}
+        shiftTypeData={shiftTypeData}
+        onChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('spinbutton', { name: 'D' })).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: 'N' })).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: 'WORK' })).toBeInTheDocument();
+  });
+
   it('uses one selected shift type as the fixed threshold for the hint', () => {
     render(
       <CountShiftTypeCoefficientFields
         selectedShiftTypeIds={[]}
         coefficients={[]}
         shiftTypeEntries={shiftTypeEntries}
+        shiftTypeData={shiftTypeData}
         onChange={vi.fn()}
       />
     );

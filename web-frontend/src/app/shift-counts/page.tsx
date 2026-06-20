@@ -140,7 +140,8 @@ export default function ShiftCountsPage() {
       count_shift_types: shiftCount.countShiftTypes,
       count_shift_type_coefficients: syncCoefficientPairs(
         shiftCount.countShiftTypes,
-        shiftCount.countShiftTypeCoefficients ?? []
+        shiftCount.countShiftTypeCoefficients ?? [],
+        shiftTypeData
       ),
       expression: shiftCount.expression,
       target: shiftCount.target,
@@ -325,7 +326,8 @@ export default function ShiftCountsPage() {
           prev.count_shift_types.includes(id)
             ? prev.count_shift_types.filter(v => v !== id)
             : [...prev.count_shift_types, id],
-          prev.count_shift_type_coefficients
+          prev.count_shift_type_coefficients,
+          shiftTypeData
         )
       } : {})
     }));
@@ -529,6 +531,7 @@ export default function ShiftCountsPage() {
                   selectedShiftTypeIds={formData.count_shift_types}
                   coefficients={formData.count_shift_type_coefficients}
                   shiftTypeEntries={shiftTypeEntries}
+                  shiftTypeData={shiftTypeData}
                   errorsById={errors.count_shift_type_coefficients_by_id}
                   onChange={(coefficients, changedShiftTypeId) => {
                     clearCoefficientError(changedShiftTypeId);

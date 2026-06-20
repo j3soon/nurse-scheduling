@@ -220,7 +220,7 @@ export default function ShiftTypeRequirementsPage() {
 
   const instructions = [
     "Define requirements for specific shift types (e.g., \"Night shifts need 3 senior nurses\")",
-    "Select one or more shift types that this requirement applies to",
+    "Select one shift type or group that this requirement applies to",
     "Set the required number of people for each instance of the shift type",
     "Optionally specify which people or groups are qualified for this requirement",
     "Optionally set a preferred number of people when extra staffing is useful",
@@ -256,7 +256,8 @@ export default function ShiftTypeRequirementsPage() {
       shift_type: requirement.shiftType,
       shift_type_coefficients: syncCoefficientPairs(
         requirement.shiftType,
-        requirement.shiftTypeCoefficients ?? []
+        requirement.shiftTypeCoefficients ?? [],
+        shiftTypeData
       ),
       required_num_people: requirement.requiredNumPeople,
       // Normalize the backend's implicit all-people representation for the UI.
@@ -449,7 +450,7 @@ export default function ShiftTypeRequirementsPage() {
             ? prev[field].filter(v => v !== id)
             : [...prev[field], id]),
       ...(field === 'shift_type'
-        ? { shift_type_coefficients: syncCoefficientPairs([id], prev.shift_type_coefficients) }
+        ? { shift_type_coefficients: syncCoefficientPairs([id], prev.shift_type_coefficients, shiftTypeData) }
         : {}),
     }));
   };
@@ -604,6 +605,7 @@ export default function ShiftTypeRequirementsPage() {
                     onToggle={(id) => handleArrayFieldToggle('shift_type', id)}
                     label=""
                     inputType="radio"
+                    inputName="shift-type-requirement-shift-type"
                   />
                 )}
                 {errors.shift_type && (
@@ -699,6 +701,7 @@ export default function ShiftTypeRequirementsPage() {
                   selectedShiftTypeIds={formData.shift_type}
                   coefficients={formData.shift_type_coefficients}
                   shiftTypeEntries={shiftTypeEntries}
+                  shiftTypeData={shiftTypeData}
                   errorsById={errors.shift_type_coefficients_by_id}
                   label="Shift Type"
                   onChange={(coefficients, changedShiftTypeId) => {

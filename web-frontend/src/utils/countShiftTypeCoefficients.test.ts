@@ -18,6 +18,7 @@
  */
 
 import {
+  getCoefficientShiftTypeIds,
   syncCoefficientPairs,
   updateCoefficientPair,
   validateCoefficientPairs,
@@ -33,11 +34,23 @@ const shiftTypeData = {
 
 describe('countShiftTypeCoefficients', () => {
   it('drops deselected coefficients and preserves selected coefficients', () => {
-    const afterDeselect = syncCoefficientPairs(['N'], [['D', 3], ['N', 2]]);
-    const afterReselect = syncCoefficientPairs(['N', 'D'], afterDeselect);
+    const afterDeselect = syncCoefficientPairs(['N'], [['D', 3], ['N', 2]], shiftTypeData);
+    const afterReselect = syncCoefficientPairs(['N', 'D'], afterDeselect, shiftTypeData);
 
     expect(afterDeselect).toEqual([['N', 2]]);
-    expect(afterReselect).toEqual([['N', 2], ['D', 1]]);
+    expect(afterReselect).toEqual([['D', 1], ['N', 2], ['WORK', 1]]);
+  });
+
+  it('uses selected item coverage to include fully covered groups', () => {
+    expect(getCoefficientShiftTypeIds(['D', 'N'], shiftTypeData)).toEqual(['D', 'N', 'WORK']);
+  });
+
+  it('expands selected groups into coefficient item options', () => {
+    expect(syncCoefficientPairs(['WORK'], [['D', 2]], shiftTypeData)).toEqual([
+      ['D', 2],
+      ['N', 1],
+      ['WORK', 1],
+    ]);
   });
 
   it('updates one coefficient while preserving selected pairs', () => {
