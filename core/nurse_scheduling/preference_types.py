@@ -28,56 +28,156 @@ from . import constants
 # Leave most parsing to the caller, keep the function here simple.
 
 
+def _parse_shift_type_requirement_groups(shift_type, map_sid_s):
+    # Normalize shiftType to a list of requirement groups. Each inner list is
+    # one staffing equation. This follows shift affinity's top-level list
+    # behavior: each top-level selector becomes one equation, and a group
+    # selector expands inside that equation.
+    #   D -> [[D]]
+    #   Group(D, E) -> [[D, E]]
+    #   [D, E] -> [[D], [E]]
+    #   [Group(D, E)] -> [[D, E]]
+    #   [[D, E]] -> [[D, E]]
+    if not isinstance(shift_type, list):
+        return [utils.parse_sids(shift_type, map_sid_s)]
+
+    groups = []
+    for element in shift_type:
+        if isinstance(element, list):
+            groups.append(
+                sorted(
+                    set(itertools.chain.from_iterable(utils.parse_sids(sid, map_sid_s) for sid in element))
+                )
+            )
+        else:
+            groups.append(utils.parse_sids(element, map_sid_s))
+    return groups
+
+
+def _collect_shift_type_requirement_selector_ids(shift_type):
+    if not isinstance(shift_type, list):
+        return {shift_type}
+
+    selector_ids = set()
+    for element in shift_type:
+        if isinstance(element, list):
+            selector_ids.update(_collect_shift_type_requirement_selector_ids(element))
+        else:
+            selector_ids.add(element)
+    return selector_ids
+
+
+def _parse_shift_type_requirement_coefficients(
+    ctx: Context,
+    preference: models.ShiftTypeRequirementsPreference,
+    shift_type_groups: list[list[int]],
+) -> dict[int, int]:
+    coefficients = {s: 1 for s in set(itertools.chain.from_iterable(shift_type_groups))}
+    coefficient_entries = preference.shiftTypeCoefficients or []
+    if coefficient_entries and len(shift_type_groups) != 1:
+        raise ValueError(
+            "Shift type requirement coefficients are only supported when shiftType normalizes to one requirement group."
+        )
+    selected_shift_type_ids = _collect_shift_type_requirement_selector_ids(preference.shiftType)
+    coefficient_sids = set()
+
+    for shift_type_id, coefficient in coefficient_entries:
+        if shift_type_id not in selected_shift_type_ids:
+            raise ValueError(
+                f"Shift type requirement coefficient for '{shift_type_id}' must reference a shift type in shiftType."
+            )
+        if coefficient < 1:
+            raise ValueError(f"Shift type requirement coefficient for '{shift_type_id}' must be at least 1.")
+
+        expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
+        duplicate_sids = coefficient_sids.intersection(expanded_sids)
+        if duplicate_sids:
+            raise ValueError(f"Duplicate shift type requirement coefficient for '{shift_type_id}'.")
+        coefficient_sids.update(expanded_sids)
+
+        for s in expanded_sids:
+            if s in coefficients:
+                coefficients[s] = coefficient
+
+    return coefficients
+
+
 def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequirementsPreference, preference_idx):
     # Hard constraint
-    # For all shift types, the requirements (# of people) must be fulfilled.
-    # Note that a shift is represented as (d, s)
-    # i.e., sum_{p}(shifts[(d, s, p)]) == required_num_people, for all (d, s)
+    # For all requirement groups, the required number of people must be
+    # fulfilled. Note that a concrete shift is represented as (d, s).
+    #
+    # A shiftType list applies one requirement per top-level selector:
+    #   shiftType: [D, E], requiredNumPeople: 1
+    #   sum_p shifts[(d, D, p)] == 1
+    #   sum_p shifts[(d, E, p)] == 1
+    #
+    # A group selector or nested shiftType list creates an aggregate staffing
+    # equation within that top-level selector:
+    #   shiftType: [DayOrEvening], where DayOrEvening = [D, E]
+    #   sum_{s in [D,E], p}(shifts[(d, s, p)]) == 1
+    #
+    #   shiftType: [[D, E]], requiredNumPeople: 1
+    #   sum_{s in [D,E], p}(shifts[(d, s, p)]) == 1
+    #
+    # Each concrete (date, shift type) may appear in only one requirement
+    # equation, including aggregate groups, so staffing demand has one source
+    # of truth.
+    #
     # Also note that this requirement is used in other preference types,
     # so this could not be implemented as a special case of shift_count.
-
-    # TODO: Check if each (d, s) is specified by only one shift type requirement
 
     ds = range(ctx.n_days)
     if preference.date is not None:
         ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
-    ss = utils.parse_sids(preference.shiftType, ctx.map_sid_s)
-    if len(ss) == 0:
+    shift_type_groups = _parse_shift_type_requirement_groups(preference.shiftType, ctx.map_sid_s)
+    if len(shift_type_groups) == 0 or any(len(ss) == 0 for ss in shift_type_groups):
         raise ValueError(f"Non-empty shift types are required, but got {preference.shiftType}")
-    if constants.OFF_sid in ss:
+    if any(constants.OFF_sid in ss for ss in shift_type_groups):
         raise ValueError(
             "'OFF' is not allowed in shift type requirement preferences. "
             "To specify a zero-shift day, define an ALL shift type for that date "
             "with requiredNumPeople set to 0."
         )
+    coefficients = _parse_shift_type_requirement_coefficients(ctx, preference, shift_type_groups)
     for d in ds:
-        for s in ss:
-            # A requirement expands through date and shift type groups into concrete
-            # (date, shift type) pairs. Each concrete pair must be defined by at
-            # most one preference, otherwise two hard staffing constraints may
-            # conflict or silently duplicate the same rule.
-            coverage_key = (d, s)
-            if coverage_key in ctx.shift_type_requirement_coverage:
-                previous_preference_idx = ctx.shift_type_requirement_coverage[coverage_key]
-                date_id = str(ctx.dates.items[d])
-                shift_type_id = ctx.shiftTypes.items[s].id
-                raise ValueError(
-                    "Duplicate shift type requirement coverage for "
-                    f"date '{date_id}' and shift type '{shift_type_id}' "
-                    f"in preferences {previous_preference_idx} and {preference_idx}."
-                )
-            ctx.shift_type_requirement_coverage[coverage_key] = preference_idx
+        for group_idx, ss in enumerate(shift_type_groups):
+            for s in ss:
+                # A requirement expands through date and shift type groups into
+                # concrete (date, shift type) pairs. Each concrete pair must be
+                # defined by at most one preference, including aggregate groups.
+                coverage_key = (d, s)
+                if coverage_key in ctx.shift_type_requirement_coverage:
+                    previous_preference_idx = ctx.shift_type_requirement_coverage[coverage_key]
+                    date_id = str(ctx.dates.items[d])
+                    shift_type_id = ctx.shiftTypes.items[s].id
+                    raise ValueError(
+                        "Duplicate shift type requirement coverage for "
+                        f"date '{date_id}' and shift type '{shift_type_id}' "
+                        f"in preferences {previous_preference_idx} and {preference_idx}."
+                    )
+                ctx.shift_type_requirement_coverage[coverage_key] = preference_idx
 
-            # Get the set of people who can work this shift
-            qualified_ps = ctx.map_ds_p[(d, s)]
+            # Get the set of people who can work each shift type in this
+            # requirement group. Without explicit qualifiedPeople, eligibility
+            # can differ by concrete shift type.
+            qualified_ps_by_s = {s: ctx.map_ds_p[(d, s)] for s in ss}
             if preference.qualifiedPeople is not None:
-                # If qualified_people is specified, only allow those people to work the shift
+                # If qualifiedPeople is specified, only allow those people to
+                # work any shift type in the group.
                 qualified_ps = utils.parse_pids(preference.qualifiedPeople, ctx.map_pid_p)
-                unqualified_n_people = sum(ctx.shifts[(d, s, p)] for p in range(ctx.n_people) if p not in qualified_ps)
-                ctx.solver.add_constraint(unqualified_n_people == 0)
+                qualified_ps_by_s = {s: qualified_ps for s in ss}
+                for s in ss:
+                    unqualified_n_people = sum(
+                        ctx.shifts[(d, s, p)] for p in range(ctx.n_people) if p not in qualified_ps
+                    )
+                    ctx.solver.add_constraint(unqualified_n_people == 0)
 
-            # Add constraint that exactly required_num_people must be assigned from the qualified people
-            actual_n_people = sum(ctx.shifts[(d, s, p)] for p in qualified_ps)
+            # Add the hard lower/exact staffing constraint over the whole
+            # requirement group. For singleton groups this is the simple
+            # per-shift constraint; for aggregate groups this sums across all
+            # shift types in the group.
+            actual_n_people = sum(coefficients[s] * ctx.shifts[(d, s, p)] for s in ss for p in qualified_ps_by_s[s])
             if preference.preferredNumPeople is not None:
                 ctx.solver.add_constraint(actual_n_people >= preference.requiredNumPeople)
             else:
@@ -87,7 +187,7 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
             if preference.preferredNumPeople is not None:
                 ctx.solver.add_constraint(actual_n_people <= preference.preferredNumPeople)
                 # Create a variable to track the difference between actual and preferred number of people
-                diff_var_name = f"pref_{preference_idx}_d_{d}_s_{s}_diff"
+                diff_var_name = f"pref_{preference_idx}_d_{d}_g_{group_idx}_diff"
                 ctx.model_vars[diff_var_name] = diff = ctx.solver.new_int_var(
                     0, preference.preferredNumPeople, diff_var_name
                 )
@@ -420,7 +520,7 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
     # the preference is satisfied on the date if at least one member of `p1s` and
     # at least one member of `p2s` are assigned to one of the specified shift types `ss`,
     # which doesn't necessarily need to be the same shift type. i.e.,
-    # max(weight * (some_p1s_matched and some_p2s_matched)), for all `p1s` in `people1`, `p2s` in `people2`, and `ss` in `shiftTypes`
+    # max(weight * (some_p1s_matched_some_ss and some_p2s_matched_some_ss)), for all `p1s` in `people1`, `p2s` in `people2`, and `ss` in `shiftTypes`
 
     # Example scenarios (formulation rationale):
     # - `p1s` represents a student who should work with at least one teacher in `p2s`,

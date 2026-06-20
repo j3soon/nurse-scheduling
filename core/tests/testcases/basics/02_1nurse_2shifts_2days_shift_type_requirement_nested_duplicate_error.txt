@@ -1,0 +1,1 @@
+Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'

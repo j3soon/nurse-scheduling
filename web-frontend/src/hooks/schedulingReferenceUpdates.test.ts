@@ -58,6 +58,7 @@ function createState(): SchedulingState {
         type: SHIFT_TYPE_REQUIREMENT,
         description: 'requirement',
         shiftType: ['D'],
+        shiftTypeCoefficients: [['D', 2]],
         requiredNumPeople: 1,
         qualifiedPeople: ['P1', 'Team'],
         date: ['2026-01-01'],
@@ -139,6 +140,7 @@ describe('applyReferencesForIdChange', () => {
 
     expect(state.preferences[0] as ShiftTypeRequirementsPreference).toMatchObject({
       shiftType: ['Day'],
+      shiftTypeCoefficients: [['Day', 2]],
       qualifiedPeople: ['Alice', 'Team'],
       date: ['Jan1'],
     });
@@ -228,6 +230,19 @@ describe('applyReferencesForIdDeletion', () => {
     expect(state.export?.extraColumns?.[0]).toMatchObject({
       countShiftTypes: ['D'],
       countShiftTypeCoefficients: [['D', 1]],
+    });
+  });
+
+  it('removes deleted shift type requirement coefficients', () => {
+    const initialState = createState();
+    (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftType = ['D', 'N'];
+    (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftTypeCoefficients = [['D', 2], ['N', 3]];
+
+    const state = applyReferencesForIdDeletion(initialState, DataType.SHIFT_TYPES, ['D']);
+
+    expect(state.preferences[0] as ShiftTypeRequirementsPreference).toMatchObject({
+      shiftType: ['N'],
+      shiftTypeCoefficients: [['N', 3]],
     });
   });
 });

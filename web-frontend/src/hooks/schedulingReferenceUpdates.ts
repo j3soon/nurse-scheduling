@@ -100,10 +100,17 @@ export const applyPreferencesForIdChange = (
     preferences: state.preferences.map(pref => {
       if (pref.type === SHIFT_TYPE_REQUIREMENT) {
         const fieldName = shiftTypeReqFieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
-        return {
+        const updatedPref: ShiftTypeRequirementsPreference = {
           ...pref,
           [fieldName]: ((pref as ShiftTypeRequirementsPreference)[fieldName] as string[]).map(id => id === oldId ? newId : id)
         };
+        if (dataType === DataType.SHIFT_TYPES && updatedPref.shiftTypeCoefficients) {
+          updatedPref.shiftTypeCoefficients = updatedPref.shiftTypeCoefficients.map(([id, coefficient]) => [
+            id === oldId ? newId : id,
+            coefficient
+          ]);
+        }
+        return updatedPref;
       } else if (pref.type === SHIFT_REQUEST) {
         const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
         return {
@@ -193,10 +200,16 @@ export const applyPreferencesForIdDeletion = (
     .map(pref => {
       if (pref.type === SHIFT_TYPE_REQUIREMENT) {
         const fieldName = shiftTypeReqFieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
-        return {
+        const updatedPref: ShiftTypeRequirementsPreference = {
           ...pref,
           [fieldName]: ((pref as ShiftTypeRequirementsPreference)[fieldName] as string[]).filter(id => !deletedIdsSet.has(id))
         };
+        if (dataType === DataType.SHIFT_TYPES && updatedPref.shiftTypeCoefficients) {
+          updatedPref.shiftTypeCoefficients = updatedPref.shiftTypeCoefficients.filter(
+            ([id]) => !deletedIdsSet.has(id)
+          );
+        }
+        return updatedPref;
       } else if (pref.type === SHIFT_REQUEST) {
         const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
         return {

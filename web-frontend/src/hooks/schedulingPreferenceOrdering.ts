@@ -47,6 +47,7 @@ export function normalizePreferenceOrder(pref: Preference, state: SchedulingStat
     return {
       ...requirementPref,
       shiftType: sortIdsByEntryOrder(requirementPref.shiftType, shiftTypeEntries),
+      shiftTypeCoefficients: sortPairsByFirstIdEntryOrder(requirementPref.shiftTypeCoefficients, shiftTypeEntries),
       qualifiedPeople: sortIdsByEntryOrder(normalizeQualifiedPeopleForFrontend(requirementPref.qualifiedPeople), peopleEntries),
       date: sortIdsByEntryOrder(requirementPref.date, dateEntries),
     };

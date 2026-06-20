@@ -63,7 +63,7 @@ describe('ShiftCountsPage', () => {
     const user = userEvent.setup();
     renderShiftCountsPage();
 
-    await fillRequiredFieldsAndSelectShiftTypes(user, ['D']);
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
 
     const coefficientInput = screen.getByRole('spinbutton', { name: 'D' });
     coefficientInput.focus();
@@ -153,6 +153,19 @@ describe('ShiftCountsPage', () => {
       ['D', 2],
       ['N', 3],
     ]);
+  });
+
+  it('preserves coefficients after deselecting down to one shift type', async () => {
+    const user = userEvent.setup();
+    renderShiftCountsPage();
+
+    await fillRequiredFieldsAndSelectShiftTypes(user, ['D', 'N']);
+    setCoefficient('D', 2);
+    await user.click(screen.getByRole('checkbox', { name: 'N' }));
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0].countShiftTypeCoefficients).toEqual([['D', 2]]);
   });
 
   it('shows an invalid coefficient error before checking coefficient overlap', async () => {

@@ -135,7 +135,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
     const user = userEvent.setup();
     renderExportLayoutPage();
 
-    await startExtraColumn(user, ['D']);
+    await startExtraColumn(user, ['D', 'N']);
     fireEvent.change(screen.getByRole('spinbutton', { name: 'D' }), { target: { value: '3' } });
     await user.click(screen.getByRole('checkbox', { name: 'D' }));
     await user.click(screen.getByRole('checkbox', { name: 'D' }));
@@ -185,7 +185,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
       extraColumns: [{
         type: 'count',
         header: 'Existing Score',
-        countShiftTypes: ['D'],
+        countShiftTypes: ['D', 'N'],
         countShiftTypeCoefficients: [['D', 2]],
         countDates: ['2026-01-01'],
       }],
@@ -307,7 +307,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
     const user = userEvent.setup();
     renderExportLayoutPage();
 
-    await startExtraColumn(user, ['D']);
+    await startExtraColumn(user, ['D', 'N']);
     const coefficientInput = screen.getByRole('spinbutton', { name: 'D' });
     await user.clear(coefficientInput);
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
@@ -369,7 +369,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
     const user = userEvent.setup();
     renderExportLayoutPage();
 
-    await startExtraColumn(user, ['D']);
+    await startExtraColumn(user, ['D', 'N']);
     const rightBorderInput = screen.getByTitle('Enter right border color in hex');
     await user.type(rightBorderInput, 'red');
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
@@ -386,6 +386,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
     await user.selectOptions(screen.getAllByRole('combobox')[0], 'extra column');
     await user.type(screen.getByTitle('Enter right border color in hex'), 'red');
     await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('checkbox', { name: 'N' }));
     await user.clear(screen.getByRole('spinbutton', { name: 'D' }));
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
 
@@ -423,7 +424,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
     const user = userEvent.setup();
     renderExportLayoutPage();
 
-    await startExtraColumn(user, ['D']);
+    await startExtraColumn(user, ['D', 'N']);
     await user.clear(screen.getByRole('spinbutton', { name: 'D' }));
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
 
@@ -441,6 +442,7 @@ describe('ExportLayoutPage extra column coefficients', () => {
     await user.click(screen.getByRole('button', { name: 'Add Export Rule' }));
     await user.selectOptions(screen.getAllByRole('combobox')[0], 'extra column');
     await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('checkbox', { name: 'N' }));
     await user.click(screen.getByRole('checkbox', { name: '2026-01-01' }));
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }));
 

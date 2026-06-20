@@ -38,6 +38,10 @@ export function syncCoefficientPairs(
   selectedShiftTypeIds: string[],
   coefficients: DraftShiftCountTypeCoefficient[]
 ): DraftShiftCountTypeCoefficient[] {
+  if (selectedShiftTypeIds.length < 1) {
+    return [];
+  }
+
   return selectedShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
 }
 

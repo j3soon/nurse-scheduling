@@ -246,7 +246,10 @@ class ShiftTypeRequirementsPreference(BasePreference):
     model_config = ConfigDict(extra="forbid")
     type: Annotated[str, Field(pattern=f"^{SHIFT_TYPE_REQUIREMENT}$")] = SHIFT_TYPE_REQUIREMENT
     description: str | None = None
-    shiftType: str | list[str]  # Single shift type ID or list of shift type IDs
+    # Single shift type ID, a flat list of independent shift type IDs, or
+    # nested aggregate groups of shift type IDs.
+    shiftType: str | list[str | list[str]]
+    shiftTypeCoefficients: list[tuple[str, int]] | None = None
     requiredNumPeople: int
     # None and the reserved "ALL" selector both mean all people. The frontend
     # intentionally normalizes implicit all-people values to explicit "ALL".

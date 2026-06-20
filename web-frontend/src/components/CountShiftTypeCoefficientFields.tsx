@@ -30,6 +30,7 @@ interface CountShiftTypeCoefficientFieldsProps {
   coefficients: DraftShiftCountTypeCoefficient[];
   shiftTypeEntries: OrderedEntry[];
   errorsById?: Record<string, string>;
+  label?: string;
   onChange: (coefficients: DraftShiftCountTypeCoefficient[], changedShiftTypeId: string) => void;
 }
 
@@ -38,18 +39,22 @@ export function CountShiftTypeCoefficientFields({
   coefficients,
   shiftTypeEntries,
   errorsById = {},
+  label = 'Count Shift Type',
   onChange,
 }: CountShiftTypeCoefficientFieldsProps) {
+  const singularLabel = label.toLowerCase();
+  const emptyHint = `Coefficients are not needed when fewer than 1 ${singularLabel} is selected.`;
+
   return (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-2">
-        Count Shift Type Coefficients
+        {label} Coefficients
       </label>
 
       <div className="flex flex-wrap items-end">
-        {selectedShiftTypeIds.length === 0 ? (
+        {selectedShiftTypeIds.length < 1 ? (
           <div className="text-sm text-gray-500 italic">
-            Select count shift types to set coefficients.
+            {emptyHint}
           </div>
         ) : (
           sortIdsByEntryOrder(selectedShiftTypeIds, shiftTypeEntries).map(shiftTypeId => (

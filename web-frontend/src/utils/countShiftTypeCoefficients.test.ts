@@ -32,7 +32,7 @@ const shiftTypeData = {
 };
 
 describe('countShiftTypeCoefficients', () => {
-  it('drops deselected coefficients and restores reselected shift types to the default', () => {
+  it('drops deselected coefficients and preserves selected coefficients', () => {
     const afterDeselect = syncCoefficientPairs(['N'], [['D', 3], ['N', 2]]);
     const afterReselect = syncCoefficientPairs(['N', 'D'], afterDeselect);
 

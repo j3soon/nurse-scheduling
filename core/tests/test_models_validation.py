@@ -52,6 +52,18 @@ def test_model_requires_at_most_one_shift_preference():
         NurseSchedulingData.model_validate(payload)
 
 
+def test_model_accepts_nested_shift_type_requirement_groups():
+    payload = _base_payload()
+    payload["shiftTypes"]["items"] = [{"id": "D"}, {"id": "E"}]
+    payload["preferences"][1]["shiftType"] = [["D", "E"]]
+    payload["preferences"][1]["shiftTypeCoefficients"] = [["D", 2]]
+
+    data = NurseSchedulingData.model_validate(payload)
+
+    assert data.preferences[1].shiftType == [["D", "E"]]
+    assert data.preferences[1].shiftTypeCoefficients == [("D", 2)]
+
+
 def test_model_rejects_invalid_date_range():
     payload = _base_payload()
     payload["dates"]["range"]["startDate"] = datetime.date(2025, 1, 2)

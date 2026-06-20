@@ -26,6 +26,7 @@ import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { Group, Item, ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
+import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import NumberInput from '@/components/NumberInput';
 import ToggleButton from '@/components/ToggleButton';
@@ -35,15 +36,34 @@ import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { ALL, OFF } from '@/utils/keywords';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
+import {
+  DraftShiftCountTypeCoefficient,
+  syncCoefficientPairs,
+  validateCoefficientPairs,
+} from '@/utils/countShiftTypeCoefficients';
+import { getOrderedEntries } from '@/utils/entityOrdering';
 
 interface ShiftTypeRequirementForm {
   description: string;
   shift_type: string[];
+  shift_type_coefficients: DraftShiftCountTypeCoefficient[];
   required_num_people: number | string;
   qualified_people: string[];
   preferred_num_people?: number | string;
   date: string[];
   weight: number | string;
+}
+
+interface ShiftTypeRequirementErrors {
+  shift_type?: string;
+  shift_type_coefficients?: string;
+  shift_type_coefficients_by_id?: Record<string, string>;
+  required_num_people?: string;
+  qualified_people?: string;
+  preferred_num_people?: string;
+  date?: string;
+  weight?: string;
+  [key: string]: string | Record<string, string> | undefined;
 }
 
 type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
@@ -188,13 +208,14 @@ export default function ShiftTypeRequirementsPage() {
   const [formData, setFormData] = useState<ShiftTypeRequirementForm>({
     description: '',
     shift_type: [],
+    shift_type_coefficients: [],
     required_num_people: 1,
     qualified_people: [],
     preferred_num_people: undefined,
     date: [],
     weight: -1
   });
-  const [errors, setErrors] = useState<{[key: string]: string}>({});
+  const [errors, setErrors] = useState<ShiftTypeRequirementErrors>({});
   useTabSwitchWarning(isFormVisible);
 
   const instructions = [
@@ -212,6 +233,7 @@ export default function ShiftTypeRequirementsPage() {
     setFormData({
       description: '',
       shift_type: [],
+      shift_type_coefficients: [],
       required_num_people: 1,
       qualified_people: [],
       preferred_num_people: undefined,
@@ -232,6 +254,10 @@ export default function ShiftTypeRequirementsPage() {
     setFormData({
       description: requirement.description ?? '',
       shift_type: requirement.shiftType,
+      shift_type_coefficients: syncCoefficientPairs(
+        requirement.shiftType,
+        requirement.shiftTypeCoefficients ?? []
+      ),
       required_num_people: requirement.requiredNumPeople,
       // Normalize the backend's implicit all-people representation for the UI.
       // Saving [ALL] back is intentional because the backend interprets null as [ALL].
@@ -261,15 +287,26 @@ export default function ShiftTypeRequirementsPage() {
   }
 
   const validateForm = (): boolean => {
-    const newErrors: {[key: string]: string} = {};
+    const newErrors: ShiftTypeRequirementErrors = {};
 
     if (formData.shift_type.length === 0) {
       newErrors.shift_type = 'At least one shift type must be selected';
-    } else {
-      const shiftTypeGroupIds = new Set(shiftTypeData.groups.map(group => group.id));
-      if (formData.shift_type.some(shiftTypeId => shiftTypeGroupIds.has(shiftTypeId))) {
-        newErrors.shift_type = 'Shift type groups are not allowed; select concrete shift types instead';
-      }
+    }
+
+    const coefficientValidation = validateCoefficientPairs(
+      formData.shift_type,
+      formData.shift_type_coefficients,
+      shiftTypeData
+    );
+    if (Object.keys(coefficientValidation.errorsById).length > 0) {
+      newErrors.shift_type_coefficients = Object.values(coefficientValidation.errorsById).join('\n');
+      newErrors.shift_type_coefficients_by_id = coefficientValidation.errorsById;
+    } else if (coefficientValidation.overlapError) {
+      newErrors.shift_type_coefficients = coefficientValidation.overlapError;
+      newErrors.shift_type_coefficients_by_id = {};
+    } else if (coefficientValidation.coefficients.length > 0 && formData.shift_type.length !== 1) {
+      newErrors.shift_type_coefficients = 'Shift type coefficients require exactly one selected shift type or group';
+      newErrors.shift_type_coefficients_by_id = {};
     }
 
     if (formData.qualified_people.length === 0) {
@@ -314,10 +351,16 @@ export default function ShiftTypeRequirementsPage() {
 
   const buildRequirementFromForm = (): ShiftTypeRequirementsPreference => {
     const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
+    const { coefficients: shiftTypeCoefficients } = validateCoefficientPairs(
+      formData.shift_type,
+      formData.shift_type_coefficients,
+      shiftTypeData
+    );
     return {
       type: SHIFT_TYPE_REQUIREMENT,
       description: formData.description,
       shiftType: formData.shift_type,
+      ...(shiftTypeCoefficients.length > 0 ? { shiftTypeCoefficients } : {}),
       requiredNumPeople: formData.required_num_people as number,
       qualifiedPeople: formData.qualified_people,
       preferredNumPeople: usesWeight ? formData.preferred_num_people as number : undefined,
@@ -402,7 +445,17 @@ export default function ShiftTypeRequirementsPage() {
       ...prev,
       [field]: prev[field].includes(id)
         ? prev[field].filter(v => v !== id)
-        : [...prev[field], id]
+        : [...prev[field], id],
+      ...(field === 'shift_type'
+        ? {
+            shift_type_coefficients: syncCoefficientPairs(
+              prev[field].includes(id)
+                ? prev[field].filter(v => v !== id)
+                : [...prev[field], id],
+              prev.shift_type_coefficients
+            ),
+          }
+        : {}),
     }));
   };
 
@@ -412,8 +465,15 @@ export default function ShiftTypeRequirementsPage() {
       .map(shiftType => ({
         id: shiftType.id,
         description: shiftType.description
+      })),
+    ...shiftTypeData.groups
+      .filter(group => !group.members.includes(OFF))
+      .map(group => ({
+        id: group.id,
+        description: group.description
       }))
   ];
+  const shiftTypeEntries = getOrderedEntries(shiftTypeData);
   const usesWeight = preferredNumPeopleDiffersFromRequired(formData);
   const coverageWarning = useMemo(
     () => buildRequirementCoverageWarning(
@@ -637,6 +697,42 @@ export default function ShiftTypeRequirementsPage() {
                 </div>
               </div>
 
+              {/* Shift Type Coefficients */}
+              <div>
+                <CountShiftTypeCoefficientFields
+                  selectedShiftTypeIds={formData.shift_type}
+                  coefficients={formData.shift_type_coefficients}
+                  shiftTypeEntries={shiftTypeEntries}
+                  errorsById={errors.shift_type_coefficients_by_id}
+                  label="Shift Type"
+                  onChange={(coefficients, changedShiftTypeId) => {
+                    setFormData(prev => ({
+                      ...prev,
+                      shift_type_coefficients: coefficients,
+                    }));
+                    setErrors(prev => {
+                      const nextCoefficientErrors = { ...prev.shift_type_coefficients_by_id };
+                      delete nextCoefficientErrors[changedShiftTypeId];
+                      return {
+                        ...prev,
+                        shift_type_coefficients: Object.values(nextCoefficientErrors).join('\n'),
+                        shift_type_coefficients_by_id: nextCoefficientErrors,
+                      };
+                    });
+                  }}
+                />
+                {errors.shift_type_coefficients && (
+                  <div className="mt-2 space-y-1">
+                    {errors.shift_type_coefficients.split('\n').map(error => (
+                      <p key={error} className="text-sm text-red-600 flex items-center gap-1">
+                        <FiAlertCircle className="h-4 w-4" />
+                        {error}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Qualified People */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -779,6 +875,12 @@ export default function ShiftTypeRequirementsPage() {
                 <span className="font-medium">Shift Types:</span>{' '}
                 {requirement.shiftType.join(', ')}
               </div>
+              {requirement.shiftTypeCoefficients && (
+                <div>
+                  <span className="font-medium">Coefficients:</span>{' '}
+                  {requirement.shiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
+                </div>
+              )}
               <div>
                 <span className="font-medium">Required:</span> {requirement.requiredNumPeople}
                 {requirement.preferredNumPeople && (

@@ -836,6 +836,12 @@ export function useSchedulingDataInternal() {
       if ('shiftType' in pref && pref.shiftType) {
         convertArrayIdsToString(pref.shiftType);
       }
+      if (pref.type === SHIFT_TYPE_REQUIREMENT && pref.shiftTypeCoefficients) {
+        pref.shiftTypeCoefficients = pref.shiftTypeCoefficients.map(([id, coefficient]) => [
+          String(id),
+          coefficient
+        ]);
+      }
       if ('qualifiedPeople' in pref && pref.qualifiedPeople) {
         convertArrayIdsToString(pref.qualifiedPeople);
       }
