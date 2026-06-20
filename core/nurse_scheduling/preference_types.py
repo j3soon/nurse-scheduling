@@ -34,10 +34,13 @@ def _parse_shift_type_requirement_groups(shift_type, map_sid_s):
     # behavior: each top-level selector becomes one equation, and a group
     # selector expands inside that equation.
     #   D -> [[D]]
+    #   ALL -> [[D, E, N]]
     #   Group(D, E) -> [[D, E]]
     #   [D, E] -> [[D], [E]]
+    #   [ALL] -> [[D, E, N]]
     #   [Group(D, E)] -> [[D, E]]
     #   [[D, E]] -> [[D, E]]
+    #   [[ALL]] -> [[D, E, N]]
     if not isinstance(shift_type, list):
         return [utils.parse_sids(shift_type, map_sid_s)]
 

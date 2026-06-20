@@ -507,6 +507,42 @@ def test_shift_type_requirements_rejects_empty_shift_types():
         preference_types.utils.parse_sids = original_parse_sids
 
 
+def test_shift_type_requirements_parse_all_scalar_and_list_forms():
+    map_sid_s = {
+        "D": [0],
+        "E": [1],
+        "N": [2],
+        "ALL": [0, 1, 2],
+    }
+
+    assert preference_types._parse_shift_type_requirement_groups("ALL", map_sid_s) == [[0, 1, 2]]
+    assert preference_types._parse_shift_type_requirement_groups(["ALL"], map_sid_s) == [[0, 1, 2]]
+    assert preference_types._parse_shift_type_requirement_groups([["ALL"]], map_sid_s) == [[0, 1, 2]]
+
+
+@pytest.mark.parametrize(
+    ("shift_type", "expected"),
+    [
+        ("D", [[0]]),
+        ("Weekend", [[0, 2]]),
+        (["D", "E"], [[0], [1]]),
+        (["Weekend", "E"], [[0, 2], [1]]),
+        ([["D", "E"]], [[0, 1]]),
+        ([["Weekend", "E"]], [[0, 1, 2]]),
+        ([["Weekend", "D"]], [[0, 2]]),
+    ],
+)
+def test_shift_type_requirements_parse_grouped_and_top_level_shift_types(shift_type, expected):
+    map_sid_s = {
+        "D": [0],
+        "E": [1],
+        "N": [2],
+        "Weekend": [0, 2],
+    }
+
+    assert preference_types._parse_shift_type_requirement_groups(shift_type, map_sid_s) == expected
+
+
 def test_shift_type_requirements_rejects_duplicate_expanded_coverage():
     yaml_content = b"""
 apiVersion: alpha

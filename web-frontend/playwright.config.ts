@@ -21,6 +21,10 @@
 
 import { defineConfig, devices } from '@playwright/test';
 
+// Use 13000 for E2E coverage to avoid port conflict with the local dev server (3000).
+const e2ePort = process.env.E2E_COVERAGE === '1' ? 13000 : 3000;
+const e2eBaseURL = `http://127.0.0.1:${e2ePort}`;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -28,7 +32,7 @@ export default defineConfig({
   reporter: 'list',
   workers: 8,
   use: {
-    baseURL: 'http://127.0.0.1:3000',
+    baseURL: e2eBaseURL,
     trace: 'on-first-retry',
   },
   projects: [
@@ -38,15 +42,15 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'bun run build:e2e && bun run start:e2e',
+    command: `bun run build:e2e && bunx serve@latest out -l ${e2ePort}`,
     env: {
       DISABLE_SENTRY: '1',
       E2E_COVERAGE: process.env.E2E_COVERAGE ?? '0',
       NEXT_PUBLIC_DISABLE_SENTRY: '1',
       NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API: '1',
     },
-    url: 'http://127.0.0.1:3000',
-    reuseExistingServer: !process.env.CI,
+    url: e2eBaseURL,
+    reuseExistingServer: !process.env.CI && process.env.E2E_COVERAGE !== '1',
     timeout: 120000,
   },
 });

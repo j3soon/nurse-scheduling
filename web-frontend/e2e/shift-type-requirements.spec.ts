@@ -68,7 +68,7 @@ test('adds a shift type requirement through the real form flow', async ({ page }
   await page.getByRole('button', { name: 'Add Requirement' }).click();
 
   await page.getByPlaceholder('e.g., Night shifts need senior nurses').fill('Need one day nurse');
-  await page.getByRole('checkbox', { name: 'D', exact: true }).check();
+  await page.getByRole('radio', { name: 'D', exact: true }).check();
   await page.getByRole('checkbox', { name: 'P1', exact: true }).check();
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByRole('button', { name: 'Add', exact: true }).click();

@@ -73,11 +73,11 @@ test('shift type requirements can be edited and deleted through the page UI', as
   await expect(page.getByText(/Preferred:\s*2/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Edit' }).click();
-  await page.getByRole('checkbox', { name: 'N', exact: true }).check();
+  await page.getByRole('radio', { name: 'N', exact: true }).check();
   await page.locator('input[type="number"]').nth(1).fill('3');
   await page.getByRole('button', { name: 'Update', exact: true }).click();
 
-  await expect(page.getByText('Shift Types: D, N')).toBeVisible();
+  await expect(page.getByText('Shift Types: N')).toBeVisible();
   await expect(page.getByText(/Preferred:\s*3/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Delete' }).click();

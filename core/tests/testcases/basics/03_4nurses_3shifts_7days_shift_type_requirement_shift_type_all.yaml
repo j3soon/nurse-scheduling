@@ -28,6 +28,7 @@ preferences:
     person: 0
     date: ALL
     shiftType: D
+    weight: 2
   - type: shift request
     person: 1
     date: ALL
