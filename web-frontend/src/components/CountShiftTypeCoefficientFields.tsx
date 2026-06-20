@@ -43,7 +43,7 @@ export function CountShiftTypeCoefficientFields({
   onChange,
 }: CountShiftTypeCoefficientFieldsProps) {
   const singularLabel = label.toLowerCase();
-  const emptyHint = `Coefficients are not needed when fewer than 1 ${singularLabel} is selected.`;
+  const emptyHint = `Coefficients are not needed when no ${singularLabel} is selected.`;
 
   return (
     <div>

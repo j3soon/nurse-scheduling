@@ -304,8 +304,8 @@ export default function ShiftTypeRequirementsPage() {
     } else if (coefficientValidation.overlapError) {
       newErrors.shift_type_coefficients = coefficientValidation.overlapError;
       newErrors.shift_type_coefficients_by_id = {};
-    } else if (coefficientValidation.coefficients.length > 0 && formData.shift_type.length !== 1) {
-      newErrors.shift_type_coefficients = 'Shift type coefficients require exactly one selected shift type or group';
+    } else if (formData.shift_type.length > 1) {
+      newErrors.shift_type_coefficients = 'Select exactly one shift type or group';
       newErrors.shift_type_coefficients_by_id = {};
     }
 
@@ -440,21 +440,16 @@ export default function ShiftTypeRequirementsPage() {
   };
 
   const handleArrayFieldToggle = (field: 'shift_type' | 'qualified_people' | 'date', id: string) => {
-    setErrors(prev => ({ ...prev, [field]: '' }));
+    setErrors(prev => ({ ...prev, [field]: '', ...(field === 'shift_type' ? { shift_type_coefficients: '', shift_type_coefficients_by_id: {} } : {}) }));
     setFormData(prev => ({
       ...prev,
-      [field]: prev[field].includes(id)
-        ? prev[field].filter(v => v !== id)
-        : [...prev[field], id],
+      [field]: field === 'shift_type'
+        ? [id]
+        : (prev[field].includes(id)
+            ? prev[field].filter(v => v !== id)
+            : [...prev[field], id]),
       ...(field === 'shift_type'
-        ? {
-            shift_type_coefficients: syncCoefficientPairs(
-              prev[field].includes(id)
-                ? prev[field].filter(v => v !== id)
-                : [...prev[field], id],
-              prev.shift_type_coefficients
-            ),
-          }
+        ? { shift_type_coefficients: syncCoefficientPairs([id], prev.shift_type_coefficients) }
         : {}),
     }));
   };
@@ -608,6 +603,7 @@ export default function ShiftTypeRequirementsPage() {
                     selectedIds={formData.shift_type}
                     onToggle={(id) => handleArrayFieldToggle('shift_type', id)}
                     label=""
+                    inputType="radio"
                   />
                 )}
                 {errors.shift_type && (

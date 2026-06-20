@@ -37,7 +37,7 @@ describe('CountShiftTypeCoefficientFields', () => {
     );
 
     expect(screen.getByText('Count Shift Type Coefficients')).toBeInTheDocument();
-    expect(screen.getByText('Coefficients are not needed when fewer than 1 count shift type is selected.')).toBeInTheDocument();
+    expect(screen.getByText('Coefficients are not needed when no count shift type is selected.')).toBeInTheDocument();
   });
 
   it('shows coefficient inputs when one shift type is selected', () => {
@@ -79,6 +79,6 @@ describe('CountShiftTypeCoefficientFields', () => {
       />
     );
 
-    expect(screen.getByText('Coefficients are not needed when fewer than 1 count shift type is selected.')).toBeInTheDocument();
+    expect(screen.getByText('Coefficients are not needed when no count shift type is selected.')).toBeInTheDocument();
   });
 });

@@ -38,6 +38,7 @@ interface CheckboxListProps {
   selectedIds: string[];
   onToggle: (id: string) => void;
   label: string;
+  inputType?: 'checkbox' | 'radio';
   itemsClassName?: string;
   inputClassName?: string;
   textClassName?: string;
@@ -50,8 +51,9 @@ export function CheckboxList({
   selectedIds,
   onToggle,
   label,
+  inputType = 'checkbox',
   itemsClassName = 'flex flex-wrap',
-  inputClassName = 'form-checkbox h-4 w-4 text-blue-600',
+  inputClassName,
   textClassName = 'ml-2 text-sm text-gray-700',
   getItemClassName,
   getItemStyle,
@@ -71,6 +73,7 @@ export function CheckboxList({
   const handleToggle = (id: string) => {
     onToggle(id);
   };
+  const resolvedInputClassName = inputClassName ?? `form-${inputType} h-4 w-4 text-blue-600`;
 
   const resetDragState = useCallback(() => {
     isMultiSelectDragRef.current = false;
@@ -142,16 +145,17 @@ export function CheckboxList({
             className={`inline-flex items-center px-1 py-1 ${getItemClassName?.(item, selectedIds.includes(item.id)) ?? ''}`}
             style={getItemStyle?.(item, index)}
             title={item.description}
-            onMouseEnter={() => handleCheckboxMouseEnter(item.id)}
-            onMouseDown={(e) => handleCheckboxMouseDown(item.id, e)}
-            onMouseLeave={() => handleCheckboxMouseLeave()}
-            onMouseUp={(e) => handleCheckboxMouseUp(item.id, e)}
+            onMouseEnter={inputType === 'checkbox' ? () => handleCheckboxMouseEnter(item.id) : undefined}
+            onMouseDown={inputType === 'checkbox' ? (e) => handleCheckboxMouseDown(item.id, e) : undefined}
+            onMouseLeave={inputType === 'checkbox' ? () => handleCheckboxMouseLeave() : undefined}
+            onMouseUp={inputType === 'checkbox' ? (e) => handleCheckboxMouseUp(item.id, e) : undefined}
           >
             <input
-              type="checkbox"
+              type={inputType}
+              name={inputType === 'radio' ? label : undefined}
               checked={selectedIds.includes(item.id)}
-              onChange={() => {}} // Keep native checkbox changes disabled so gesture logic stays fully in mouse handlers.
-              className={inputClassName}
+              onChange={inputType === 'radio' ? () => handleToggle(item.id) : () => {}} // Keep native checkbox changes disabled so gesture logic stays fully in mouse handlers.
+              className={resolvedInputClassName}
             />
             <span className={textClassName}>{item.id}</span>
           </label>

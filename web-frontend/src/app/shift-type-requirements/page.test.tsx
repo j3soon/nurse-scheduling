@@ -74,20 +74,20 @@ describe('ShiftTypeRequirementsPage', () => {
     });
   });
 
-  it('does not show OFF in the shift type requirement checkbox list', async () => {
+  it('does not show OFF in the shift type requirement radio group', async () => {
     const user = userEvent.setup();
 
     renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
 
-    expect(screen.getByRole('checkbox', { name: 'D' })).toBeInTheDocument();
-    expect(screen.queryByRole('checkbox', { name: 'OFF' })).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'D' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'OFF' })).not.toBeInTheDocument();
     expect(screen.queryByTitle('All shift types')).not.toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: 'Days' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Days' })).toBeInTheDocument();
   });
 
-  it('saves selected shift type items and groups as a flat list', async () => {
+  it('saves a selected shift type group as a flat list', async () => {
     const user = userEvent.setup();
     mockUseSchedulingData.mockReturnValue({
       dateData: {
@@ -121,15 +121,14 @@ describe('ShiftTypeRequirementsPage', () => {
     renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
-    await user.click(screen.getByRole('checkbox', { name: 'D' }));
-    await user.click(screen.getByRole('checkbox', { name: 'EveningGroup' }));
+    await user.click(screen.getByRole('radio', { name: 'EveningGroup' }));
     await user.click(screen.getByRole('checkbox', { name: 'P1' }));
     await user.click(screen.getByRole('checkbox', { name: '01' }));
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(updatePreferencesByType).toHaveBeenCalledOnce();
     expect(updatePreferencesByType.mock.calls[0][1][0]).toMatchObject({
-      shiftType: ['D', 'EveningGroup'],
+      shiftType: ['EveningGroup'],
     });
   });
 
@@ -139,7 +138,7 @@ describe('ShiftTypeRequirementsPage', () => {
     renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
-    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('radio', { name: 'D' }));
     await user.clear(screen.getByRole('spinbutton', { name: 'D' }));
     await user.type(screen.getByRole('spinbutton', { name: 'D' }), '2');
     await user.click(screen.getByRole('checkbox', { name: 'P1' }));
@@ -153,7 +152,7 @@ describe('ShiftTypeRequirementsPage', () => {
     });
   });
 
-  it('rejects coefficients when multiple top-level shift type selectors are selected', async () => {
+  it('replaces the selected shift type when another radio option is selected', async () => {
     const user = userEvent.setup();
     mockUseSchedulingData.mockReturnValue({
       dateData: {
@@ -184,16 +183,16 @@ describe('ShiftTypeRequirementsPage', () => {
     renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
-    await user.click(screen.getByRole('checkbox', { name: 'D' }));
-    await user.click(screen.getByRole('checkbox', { name: 'E' }));
-    await user.clear(screen.getByRole('spinbutton', { name: 'D' }));
-    await user.type(screen.getByRole('spinbutton', { name: 'D' }), '2');
+    await user.click(screen.getByRole('radio', { name: 'D' }));
+    await user.click(screen.getByRole('radio', { name: 'E' }));
     await user.click(screen.getByRole('checkbox', { name: 'P1' }));
     await user.click(screen.getByRole('checkbox', { name: '01' }));
     await user.click(screen.getByRole('button', { name: 'Add' }));
 
-    expect(screen.getByText('Shift type coefficients require exactly one selected shift type or group')).toBeInTheDocument();
-    expect(updatePreferencesByType).not.toHaveBeenCalled();
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0]).toMatchObject({
+      shiftType: ['E'],
+    });
   });
 
   it('treats null qualified people as all people when editing backend-compatible requirements', async () => {
@@ -442,7 +441,7 @@ describe('ShiftTypeRequirementsPage', () => {
     expect(screen.getByText('Weight is not needed when the preferred number of people equals the required number.')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('e.g., -1, -10, ∞')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('radio', { name: 'D' }));
     await user.click(screen.getByRole('checkbox', { name: 'P1' }));
     await user.click(screen.getByRole('checkbox', { name: '01' }));
     await user.click(screen.getByRole('button', { name: 'Add' }));
@@ -474,7 +473,7 @@ describe('ShiftTypeRequirementsPage', () => {
     renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
-    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('radio', { name: 'D' }));
     await user.click(screen.getByRole('checkbox', { name: 'P1' }));
     await user.click(screen.getByRole('checkbox', { name: '01' }));
 
@@ -502,7 +501,7 @@ describe('ShiftTypeRequirementsPage', () => {
     renderShiftTypeRequirementsPage();
 
     await user.click(screen.getByRole('button', { name: /add requirement/i }));
-    await user.click(screen.getByRole('checkbox', { name: 'D' }));
+    await user.click(screen.getByRole('radio', { name: 'D' }));
     await user.click(screen.getByRole('checkbox', { name: 'P1' }));
     await user.click(screen.getByRole('checkbox', { name: '01' }));
 

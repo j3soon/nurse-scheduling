@@ -198,4 +198,25 @@ describe('CheckboxList', () => {
     expect(onToggle).toHaveBeenNthCalledWith(1, 'A');
     expect(onToggle).toHaveBeenNthCalledWith(2, 'B');
   });
+
+  it('can render items as radio buttons', () => {
+    const onToggle = vi.fn();
+
+    render(
+      <CheckboxList
+        label="Items"
+        inputType="radio"
+        items={[{ id: 'A' }, { id: 'B' }]}
+        selectedIds={['B']}
+        onToggle={onToggle}
+      />,
+    );
+
+    expect(screen.getByRole('radio', { name: 'A' })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: 'B' })).toBeChecked();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'A' }));
+
+    expect(onToggle).toHaveBeenCalledWith('A');
+  });
 });
