@@ -15,6 +15,8 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 - Add a WAF/rate limit rule for `POST /optimize`.
 - Keep ports `80` and `443` closed on the VM unless another service needs them.
 
+> We used Cloudflare Tunnel for ease of setup, but you can easily switch to NGINX and Certbot if you have a dedicated public IP and are comfortable exposing it to the internet.
+
 ## Start
 
 Run these commands from the `docker/` directory.

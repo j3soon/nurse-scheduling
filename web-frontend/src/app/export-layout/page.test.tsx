@@ -101,6 +101,12 @@ describe('ExportLayoutPage extra column coefficients', () => {
     duplicateExportExtraRow.mockReset();
   });
 
+  it('shows the experimental export layout warning', () => {
+    renderExportLayoutPage();
+
+    expect(screen.getByText("This page is experimental. Only modify export layout entries if you know exactly what you're doing.")).toBeInTheDocument();
+  });
+
   it('saves only non-default coefficients on an extra column', async () => {
     const user = userEvent.setup();
     renderExportLayoutPage();

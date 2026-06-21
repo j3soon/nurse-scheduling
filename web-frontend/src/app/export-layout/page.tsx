@@ -1122,6 +1122,15 @@ export default function ExportFormattingPage() {
         />
       </div>
 
+      <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="flex items-start gap-2">
+          <FiAlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <p>
+            This page is experimental. Only modify export layout entries if you know exactly what you&apos;re doing.
+          </p>
+        </div>
+      </div>
+
       {showInstructions && instructions.length > 0 && (
         <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
