@@ -1850,6 +1850,62 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it.each([
+    [
+      'export.extraColumns[0].countShiftTypes is required',
+      {
+        extraColumns: [{ type: 'count', header: 'D count', countDates: ['01'] }],
+      },
+    ],
+    [
+      'export.extraColumns[0].countDates is required',
+      {
+        extraColumns: [{ type: 'count', header: 'D count', countShiftTypes: ['D'] }],
+      },
+    ],
+    [
+      'export.extraRows[0].countShiftTypes is required',
+      {
+        extraRows: [{ type: 'count', header: 'P1 count', countPeople: ['P1'] }],
+      },
+    ],
+    [
+      'export.extraRows[0].countPeople is required',
+      {
+        extraRows: [{ type: 'count', header: 'P1 count', countShiftTypes: ['D'] }],
+      },
+    ],
+  ])('rejects imported export layout entries missing %s', (expectedError, exportLayout) => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    expect(() => {
+      act(() => {
+        result.current.loadFromYaml({
+          apiVersion: 'alpha',
+          dates: {
+            range: { startDate: '2026-05-01', endDate: '2026-05-01' },
+            items: [{ id: '01', description: '' }],
+            groups: [],
+          },
+          people: {
+            items: [{ id: 'P1', description: '', history: [] }],
+            groups: [],
+            history: [],
+          },
+          shiftTypes: {
+            items: [{ id: 'D', description: '' }],
+            groups: [],
+          },
+          preferences: [{ type: 'at most one shift per day' }],
+          export: {
+            formatting: [],
+            ...exportLayout,
+          },
+        });
+      });
+    }).toThrow(expectedError);
+  });
+
   it('cascades entity deletion through export layout rules and extra count rows', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 

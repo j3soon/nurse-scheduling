@@ -839,6 +839,12 @@ export function useSchedulingDataInternal() {
       }
       return normalizedValue;
     };
+    const normalizeRequiredReferenceIdsForImport = (value: unknown, path: string, isDate: boolean = false): unknown => {
+      if (value === null || value === undefined) {
+        throw new Error(`${path} is required`);
+      }
+      return normalizeReferenceIdsForImport(value, path, isDate);
+    };
     const addUnsupportedFrontendShapeWarning = (path: string) => {
       importWarnings.push(
         `${path} uses backend-compatible syntax that is outside the web UI editing subset. It was preserved and may be replaced if edited in the web UI.`
@@ -924,19 +930,32 @@ export function useSchedulingDataInternal() {
         rule.shiftTypes = normalizeReferenceIdsForImport(rule.shiftTypes, 'export.formatting[].shiftTypes') as typeof rule.shiftTypes;
       }
     });
-    newState.export?.extraColumns?.forEach(rule => {
-      rule.countShiftTypes = normalizeReferenceIdsForImport(rule.countShiftTypes, 'export.extraColumns[].countShiftTypes') as typeof rule.countShiftTypes;
+    newState.export?.extraColumns?.forEach((rule, ruleIndex) => {
+      rule.countShiftTypes = normalizeRequiredReferenceIdsForImport(
+        rule.countShiftTypes,
+        `export.extraColumns[${ruleIndex}].countShiftTypes`
+      ) as typeof rule.countShiftTypes;
       if (rule.countShiftTypeCoefficients) {
         rule.countShiftTypeCoefficients = rule.countShiftTypeCoefficients.map(([id, coefficient]) => [
           String(id),
           coefficient
         ]);
       }
-      rule.countDates = normalizeReferenceIdsForImport(rule.countDates, 'export.extraColumns[].countDates', true) as typeof rule.countDates;
+      rule.countDates = normalizeRequiredReferenceIdsForImport(
+        rule.countDates,
+        `export.extraColumns[${ruleIndex}].countDates`,
+        true
+      ) as typeof rule.countDates;
     });
-    newState.export?.extraRows?.forEach(rule => {
-      rule.countShiftTypes = normalizeReferenceIdsForImport(rule.countShiftTypes, 'export.extraRows[].countShiftTypes') as typeof rule.countShiftTypes;
-      rule.countPeople = normalizeReferenceIdsForImport(rule.countPeople, 'export.extraRows[].countPeople') as typeof rule.countPeople;
+    newState.export?.extraRows?.forEach((rule, ruleIndex) => {
+      rule.countShiftTypes = normalizeRequiredReferenceIdsForImport(
+        rule.countShiftTypes,
+        `export.extraRows[${ruleIndex}].countShiftTypes`
+      ) as typeof rule.countShiftTypes;
+      rule.countPeople = normalizeRequiredReferenceIdsForImport(
+        rule.countPeople,
+        `export.extraRows[${ruleIndex}].countPeople`
+      ) as typeof rule.countPeople;
     });
     newState.preferences = normalizePreferencesOrder(newState.preferences, newState);
     newState.export = normalizeExportConfigOrder(newState.export, newState);
