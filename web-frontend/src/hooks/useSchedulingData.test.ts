@@ -167,6 +167,56 @@ describe('useSchedulingData', () => {
     expect(screen.getByText('Schedule data changed in another browser tab.')).toBeInTheDocument();
   });
 
+  it('shows and dismisses YAML import warnings for preserved advanced reference syntax', async () => {
+    function Importer() {
+      const { loadFromYaml } = useSchedulingData();
+      return createElement(
+        'button',
+        {
+          type: 'button',
+          onClick: () => loadFromYaml({
+            apiVersion: 'alpha',
+            people: {
+              items: [{ id: 'P1', description: '', history: [] }, { id: 'P2', description: '', history: [] }],
+              groups: [],
+            },
+            shiftTypes: {
+              items: [{ id: 'D', description: '' }, { id: 'N', description: '' }],
+              groups: [],
+            },
+            preferences: [
+              {
+                type: SHIFT_AFFINITY,
+                date: ['ALL'],
+                people1: [['P1', 'P2']],
+                people2: ['P1'],
+                shiftTypes: [['D', 'N']],
+                weight: 1,
+              },
+            ],
+          }),
+        },
+        'Import YAML'
+      );
+    }
+
+    render(createElement(SchedulingDataProvider, null, createElement(Importer)));
+
+    act(() => {
+      screen.getByRole('button', { name: 'Import YAML' }).click();
+    });
+
+    expect(screen.getByText('Imported YAML contains advanced backend syntax.')).toBeInTheDocument();
+    expect(screen.getByText(/preferences\[0\]\.people1/)).toBeInTheDocument();
+    expect(screen.getByText(/preferences\[0\]\.shiftTypes/)).toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole('button', { name: 'Dismiss' }).click();
+    });
+
+    expect(screen.queryByText('Imported YAML contains advanced backend syntax.')).not.toBeInTheDocument();
+  });
+
   it('ignores storage events for unrelated keys and storage areas', async () => {
     render(createElement(SchedulingDataProvider));
 
@@ -3389,6 +3439,230 @@ describe('useSchedulingData', () => {
       expect(count?.countDates).toEqual(['01']);
       expect(count?.countShiftTypes).toEqual(['10', '11']);
       expect(count?.countShiftTypeCoefficients).toEqual([['10', 2], ['11', 3]]);
+    });
+  });
+
+  it('normalizes scalar YAML preference references into frontend arrays', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-04-01', endDate: '2026-04-01' },
+          items: [{ id: 1, description: '' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_REQUEST,
+            person: 'P1',
+            date: 1,
+            shiftType: 'D',
+            weight: 1,
+          },
+          {
+            type: SHIFT_TYPE_REQUIREMENT,
+            shiftType: 'D',
+            qualifiedPeople: 'P1',
+            requiredNumPeople: 1,
+            weight: 2,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    await waitFor(() => {
+      const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as
+        | { person: string[]; date: string[]; shiftType: string[] }
+        | undefined;
+      const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as
+        | { date: string[]; qualifiedPeople: string[]; shiftType: string[] }
+        | undefined;
+
+      expect(request).toMatchObject({
+        person: ['P1'],
+        date: ['01'],
+        shiftType: ['D'],
+      });
+      expect(requirement).toMatchObject({
+        date: [ALL],
+        qualifiedPeople: ['P1'],
+        shiftType: ['D'],
+      });
+      expect(result.current.yamlImportWarnings).toEqual([]);
+    });
+  });
+
+  it('warns for backend-compatible shift request shapes outside the frontend editing subset', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-04-01', endDate: '2026-04-01' },
+          items: [{ id: '01', description: '' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }, { id: 'P2', description: '', history: [] }],
+          groups: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }, { id: 'N', description: '' }],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_REQUEST,
+            person: ['P1', 'P2'],
+            date: ['01'],
+            shiftType: ['D', 'N'],
+            weight: 1,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    await waitFor(() => {
+      const request = result.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as
+        | { person: string[]; shiftType: string[] }
+        | undefined;
+
+      expect(request).toMatchObject({
+        person: ['P1', 'P2'],
+        shiftType: ['D', 'N'],
+      });
+      expect(result.current.yamlImportWarnings).toEqual([
+        expect.stringContaining('preferences[0].person'),
+        expect.stringContaining('preferences[0].shiftType'),
+      ]);
+    });
+  });
+
+  it('warns for backend-compatible shift count vector expressions outside the frontend editing subset', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2026-04-01', endDate: '2026-04-01' },
+          items: [{ id: '01', description: '' }],
+          groups: [],
+        },
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }],
+          groups: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_COUNT,
+            person: ['P1'],
+            countDates: ['01'],
+            countShiftTypes: ['D'],
+            expression: ['x >= T', 'x <= T'],
+            target: [1, 3],
+            weight: 1,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    await waitFor(() => {
+      const count = result.current.preferences.find(pref => pref.type === SHIFT_COUNT) as
+        | { expression: string[]; target: number[] }
+        | undefined;
+
+      expect(count).toMatchObject({
+        expression: ['x >= T', 'x <= T'],
+        target: [1, 3],
+      });
+      expect(result.current.yamlImportWarnings).toEqual([
+        expect.stringContaining('preferences[0].expression'),
+        expect.stringContaining('preferences[0].target'),
+      ]);
+    });
+  });
+
+  it('preserves nested YAML reference syntax and still updates nested references on rename', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        people: {
+          items: [{ id: 'P1', description: '', history: [] }, { id: 'P2', description: '', history: [] }],
+          groups: [],
+        },
+        shiftTypes: {
+          items: [{ id: 'D', description: '' }, { id: 'N', description: '' }],
+          groups: [],
+        },
+        preferences: [
+          {
+            type: SHIFT_TYPE_REQUIREMENT,
+            date: ['ALL'],
+            shiftType: [['D', 'N']],
+            qualifiedPeople: ['P1'],
+            requiredNumPeople: 1,
+            weight: 2,
+          },
+          {
+            type: SHIFT_AFFINITY,
+            date: ['ALL'],
+            people1: [['P1', 'P2']],
+            people2: ['P1'],
+            shiftTypes: [['D', 'N']],
+            weight: 1,
+          },
+        ],
+        export: { formatting: [] },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.yamlImportWarnings).toEqual([
+        expect.stringContaining('preferences[0].shiftType'),
+        expect.stringContaining('preferences[1].people1'),
+        expect.stringContaining('preferences[1].shiftTypes'),
+      ]);
+    });
+
+    act(() => {
+      result.current.updateItem(DataType.SHIFT_TYPES, result.current.shiftTypeData, 'D', 'Day');
+      result.current.updateItem(DataType.PEOPLE, result.current.peopleData, 'P1', 'Alice');
+    });
+
+    await waitFor(() => {
+      const requirement = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as
+        | { shiftType: string[][]; qualifiedPeople: string[] }
+        | undefined;
+      const affinity = result.current.preferences.find(pref => pref.type === SHIFT_AFFINITY) as
+        | { people1: string[][]; people2: string[]; shiftTypes: string[][] }
+        | undefined;
+
+      expect(requirement?.shiftType).toEqual([['Day', 'N']]);
+      expect(requirement?.qualifiedPeople).toEqual(['Alice']);
+      expect(affinity?.people1).toEqual([['Alice', 'P2']]);
+      expect(affinity?.people2).toEqual(['Alice']);
+      expect(affinity?.shiftTypes).toEqual([['Day', 'N']]);
     });
   });
 

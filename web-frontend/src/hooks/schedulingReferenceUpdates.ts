@@ -18,18 +18,14 @@
  */
 
 import { DataType, ShiftAffinityPreference, ShiftCountPreference, ShiftRequestPreference, ShiftTypeRequirementsPreference, ShiftTypeSuccessionsPreference, SHIFT_AFFINITY, SHIFT_COUNT, SHIFT_REQUEST, SHIFT_TYPE_REQUIREMENT, SHIFT_TYPE_SUCCESSIONS } from '@/types/scheduling';
+import { filterReferenceIdTree, mapReferenceIdTree, ReferenceIdTree } from '@/utils/referenceIds';
 import { SchedulingState } from './schedulingState';
 
-type NestedReferenceId = string | NestedReferenceId[];
+const renameReferenceIds = (ids: ReferenceIdTree, oldId: string, newId: string): ReferenceIdTree =>
+  mapReferenceIdTree(ids, id => id === oldId ? newId : id);
 
-const renameReferenceIds = (ids: NestedReferenceId, oldId: string, newId: string): NestedReferenceId =>
-  Array.isArray(ids) ? ids.map(id => renameReferenceIds(id, oldId, newId)) : ids === oldId ? newId : ids;
-
-const filterReferenceIds = (ids: NestedReferenceId, deletedIdsSet: Set<string>): NestedReferenceId =>
-  Array.isArray(ids)
-    ? ids.map(id => filterReferenceIds(id, deletedIdsSet))
-      .filter(id => Array.isArray(id) ? id.length > 0 : !deletedIdsSet.has(id))
-    : deletedIdsSet.has(ids) ? [] : ids;
+const filterReferenceIds = (ids: ReferenceIdTree, deletedIdsSet: Set<string>): ReferenceIdTree =>
+  filterReferenceIdTree(ids, id => !deletedIdsSet.has(id));
 
 export const applyPeopleHistoryForIdChange = (
   state: SchedulingState,
@@ -113,7 +109,7 @@ export const applyPreferencesForIdChange = (
         const fieldName = shiftTypeReqFieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
         const updatedPref: ShiftTypeRequirementsPreference = {
           ...pref,
-          [fieldName]: renameReferenceIds((pref as ShiftTypeRequirementsPreference)[fieldName] as NestedReferenceId, oldId, newId)
+          [fieldName]: renameReferenceIds((pref as ShiftTypeRequirementsPreference)[fieldName] as ReferenceIdTree, oldId, newId)
         };
         if (dataType === DataType.SHIFT_TYPES && updatedPref.shiftTypeCoefficients) {
           updatedPref.shiftTypeCoefficients = updatedPref.shiftTypeCoefficients.map(([id, coefficient]) => [
@@ -126,19 +122,19 @@ export const applyPreferencesForIdChange = (
         const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
         return {
           ...pref,
-          [fieldName]: renameReferenceIds((pref as ShiftRequestPreference)[fieldName] as NestedReferenceId, oldId, newId)
+          [fieldName]: renameReferenceIds((pref as ShiftRequestPreference)[fieldName] as ReferenceIdTree, oldId, newId)
         };
       } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
         const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
         return {
           ...pref,
-          [fieldName]: renameReferenceIds((pref as ShiftTypeSuccessionsPreference)[fieldName] as NestedReferenceId, oldId, newId)
+          [fieldName]: renameReferenceIds((pref as ShiftTypeSuccessionsPreference)[fieldName] as ReferenceIdTree, oldId, newId)
         };
       } else if (pref.type === SHIFT_COUNT) {
         const fieldName = shiftCountFieldMap[dataType] as keyof ShiftCountPreference;
         const updatedPref: ShiftCountPreference = {
           ...pref,
-          [fieldName]: renameReferenceIds((pref as ShiftCountPreference)[fieldName] as NestedReferenceId, oldId, newId)
+          [fieldName]: renameReferenceIds((pref as ShiftCountPreference)[fieldName] as ReferenceIdTree, oldId, newId)
         };
         if (dataType === DataType.SHIFT_TYPES && updatedPref.countShiftTypeCoefficients) {
           updatedPref.countShiftTypeCoefficients = updatedPref.countShiftTypeCoefficients.map(([id, coefficient]) => [
@@ -154,7 +150,7 @@ export const applyPreferencesForIdChange = (
           const key = fieldName as keyof ShiftAffinityPreference;
           const value = (pref as ShiftAffinityPreference)[key];
           if (Array.isArray(value)) {
-            (updatedPref[key] as NestedReferenceId) = renameReferenceIds(value as NestedReferenceId, oldId, newId);
+            (updatedPref[key] as ReferenceIdTree) = renameReferenceIds(value as ReferenceIdTree, oldId, newId);
           }
         });
         return updatedPref;
@@ -213,7 +209,7 @@ export const applyPreferencesForIdDeletion = (
         const fieldName = shiftTypeReqFieldMap[dataType] as keyof ShiftTypeRequirementsPreference;
         const updatedPref: ShiftTypeRequirementsPreference = {
           ...pref,
-          [fieldName]: filterReferenceIds((pref as ShiftTypeRequirementsPreference)[fieldName] as NestedReferenceId, deletedIdsSet)
+          [fieldName]: filterReferenceIds((pref as ShiftTypeRequirementsPreference)[fieldName] as ReferenceIdTree, deletedIdsSet)
         };
         if (dataType === DataType.SHIFT_TYPES && updatedPref.shiftTypeCoefficients) {
           updatedPref.shiftTypeCoefficients = updatedPref.shiftTypeCoefficients.filter(
@@ -225,19 +221,19 @@ export const applyPreferencesForIdDeletion = (
         const fieldName = shiftRequestFieldMap[dataType] as keyof ShiftRequestPreference;
         return {
           ...pref,
-          [fieldName]: filterReferenceIds((pref as ShiftRequestPreference)[fieldName] as NestedReferenceId, deletedIdsSet)
+          [fieldName]: filterReferenceIds((pref as ShiftRequestPreference)[fieldName] as ReferenceIdTree, deletedIdsSet)
         };
       } else if (pref.type === SHIFT_TYPE_SUCCESSIONS) {
         const fieldName = shiftTypeSuccessionsFieldMap[dataType] as keyof ShiftTypeSuccessionsPreference;
         return {
           ...pref,
-          [fieldName]: filterReferenceIds((pref as ShiftTypeSuccessionsPreference)[fieldName] as NestedReferenceId, deletedIdsSet)
+          [fieldName]: filterReferenceIds((pref as ShiftTypeSuccessionsPreference)[fieldName] as ReferenceIdTree, deletedIdsSet)
         };
       } else if (pref.type === SHIFT_COUNT) {
         const fieldName = shiftCountFieldMap[dataType] as keyof ShiftCountPreference;
         const updatedPref: ShiftCountPreference = {
           ...pref,
-          [fieldName]: filterReferenceIds((pref as ShiftCountPreference)[fieldName] as NestedReferenceId, deletedIdsSet)
+          [fieldName]: filterReferenceIds((pref as ShiftCountPreference)[fieldName] as ReferenceIdTree, deletedIdsSet)
         };
         if (dataType === DataType.SHIFT_TYPES && updatedPref.countShiftTypeCoefficients) {
           updatedPref.countShiftTypeCoefficients = updatedPref.countShiftTypeCoefficients.filter(
@@ -252,7 +248,7 @@ export const applyPreferencesForIdDeletion = (
           const key = fieldName as keyof ShiftAffinityPreference;
           const value = (pref as ShiftAffinityPreference)[key];
           if (Array.isArray(value)) {
-            (updatedPref[key] as NestedReferenceId) = filterReferenceIds(value as NestedReferenceId, deletedIdsSet);
+            (updatedPref[key] as ReferenceIdTree) = filterReferenceIds(value as ReferenceIdTree, deletedIdsSet);
           }
         });
         return updatedPref;

@@ -306,7 +306,7 @@ export default function ShiftTypeRequirementsPage() {
       newErrors.shift_type_coefficients = coefficientValidation.overlapError;
       newErrors.shift_type_coefficients_by_id = {};
     } else if (formData.shift_type.length > 1) {
-      newErrors.shift_type_coefficients = 'Select exactly one shift type or group';
+      newErrors.shift_type = 'Select exactly one shift type or group';
       newErrors.shift_type_coefficients_by_id = {};
     }
 

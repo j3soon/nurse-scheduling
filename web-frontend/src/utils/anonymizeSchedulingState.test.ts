@@ -68,6 +68,32 @@ describe('anonymizeSchedulingState', () => {
     expect(state.people.items.map(item => item.id)).toEqual(['Alice', 'Bob']);
   });
 
+  it('replaces nested affinity people references in imported backend syntax', () => {
+    const nestedState: SchedulingState = {
+      ...state,
+      preferences: [
+        {
+          type: 'shift affinity',
+          people1: [['Alice', 'Team']] as unknown as string[],
+          people2: [['Bob']] as unknown as string[],
+          date: ['ALL'],
+          shiftTypes: ['D'],
+          weight: 5
+        }
+      ]
+    };
+
+    const result = anonymizeSchedulingState(nestedState, {
+      anonymizePeopleItems: true,
+      anonymizePeopleGroups: false
+    });
+
+    expect(result.preferences[0]).toMatchObject({
+      people1: [['P1', 'Team']],
+      people2: [['P2']],
+    });
+  });
+
   it('replaces people group IDs and references independently', () => {
     const result = anonymizeSchedulingState(state, {
       anonymizePeopleItems: false,

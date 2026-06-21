@@ -27,6 +27,7 @@ import {
 } from '@/types/scheduling';
 import type { Preference } from '@/types/scheduling';
 import type { SchedulingState } from '@/hooks/useSchedulingData';
+import { mapReferenceIdTree, ReferenceIdTree } from '@/utils/referenceIds';
 
 export interface SchedulingAnonymizationOptions {
   anonymizePeopleItems: boolean;
@@ -57,7 +58,7 @@ function buildIdMap(ids: string[], prefix: string, usedIds: Set<string>): Map<st
   return idMap;
 }
 
-function anonymizePreference(pref: Preference, anonymizeIds: (ids: string[]) => string[]): Preference {
+function anonymizePreference(pref: Preference, anonymizeIds: (ids: string[]) => string[], anonymizeId: (id: string) => string): Preference {
   if (pref.type === SHIFT_TYPE_REQUIREMENT) {
     return { ...pref, qualifiedPeople: anonymizeIds(pref.qualifiedPeople) };
   }
@@ -67,8 +68,8 @@ function anonymizePreference(pref: Preference, anonymizeIds: (ids: string[]) => 
   if (pref.type === SHIFT_AFFINITY) {
     return {
       ...pref,
-      people1: anonymizeIds(pref.people1),
-      people2: anonymizeIds(pref.people2)
+      people1: mapReferenceIdTree(pref.people1 as ReferenceIdTree, anonymizeId) as typeof pref.people1,
+      people2: mapReferenceIdTree(pref.people2 as ReferenceIdTree, anonymizeId) as typeof pref.people2
     };
   }
   return pref;
@@ -122,7 +123,7 @@ export function anonymizeSchedulingStateWithMapping(
         members: anonymizeIds(group.members)
       }))
     },
-    preferences: state.preferences.map(pref => anonymizePreference(pref, anonymizeIds)),
+    preferences: state.preferences.map(pref => anonymizePreference(pref, anonymizeIds, anonymizeId)),
     ...(state.export
       ? {
           export: {
