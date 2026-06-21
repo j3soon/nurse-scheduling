@@ -400,9 +400,7 @@ mkdocs build
 
 ## Acknowledgments
 
-This project would not have been possible without the contributions of [@ijsun](https://github.com/ijsun) and Jennifer Tzeng.
-
-You can find the full list of code contributors [here](https://github.com/j3soon/nurse-scheduling/graphs/contributors).
+This project would not have been possible without the contributors in [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## License
 
