@@ -182,6 +182,33 @@ describe('applyReferencesForIdChange', () => {
       countPeople: ['Alice'],
     });
   });
+
+  it('renames IDs inside nested preference reference groups', () => {
+    let state = createState();
+    (state.preferences[0] as ShiftTypeRequirementsPreference).shiftType = [['D', 'N']] as unknown as string[];
+    (state.preferences[4] as ShiftAffinityPreference).people1 = [['P1', 'Team']] as unknown as string[];
+    (state.preferences[4] as ShiftAffinityPreference).shiftTypes = [['D', 'N']] as unknown as string[];
+
+    state = applyReferencesForIdChange(state, DataType.SHIFT_TYPES, 'D', 'Day');
+    state = applyReferencesForIdChange(state, DataType.PEOPLE, 'P1', 'Alice');
+
+    expect((state.preferences[0] as ShiftTypeRequirementsPreference).shiftType).toEqual([['Day', 'N']]);
+    expect((state.preferences[4] as ShiftAffinityPreference).people1).toEqual([['Alice', 'Team']]);
+    expect((state.preferences[4] as ShiftAffinityPreference).shiftTypes).toEqual([['Day', 'N']]);
+  });
+
+  it('renames scalar preference reference fields from YAML-compatible state', () => {
+    let state = createState();
+    (state.preferences[0] as ShiftTypeRequirementsPreference).shiftType = 'D' as unknown as string[];
+    (state.preferences[1] as ShiftRequestPreference).shiftType = 'D' as unknown as string[];
+    (state.preferences[3] as ShiftCountPreference).countShiftTypes = 'D' as unknown as string[];
+
+    state = applyReferencesForIdChange(state, DataType.SHIFT_TYPES, 'D', 'Day');
+
+    expect((state.preferences[0] as ShiftTypeRequirementsPreference).shiftType).toBe('Day');
+    expect((state.preferences[1] as ShiftRequestPreference).shiftType).toBe('Day');
+    expect((state.preferences[3] as ShiftCountPreference).countShiftTypes).toBe('Day');
+  });
 });
 
 describe('applyReferencesForIdDeletion', () => {
@@ -244,5 +271,53 @@ describe('applyReferencesForIdDeletion', () => {
       shiftType: ['N'],
       shiftTypeCoefficients: [['N', 3]],
     });
+  });
+
+  it('removes IDs inside nested preference reference groups', () => {
+    const initialState = createState();
+    (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftType = [['D', 'N']] as unknown as string[];
+    (initialState.preferences[4] as ShiftAffinityPreference).shiftTypes = [['D', 'N']] as unknown as string[];
+
+    const state = applyReferencesForIdDeletion(initialState, DataType.SHIFT_TYPES, ['D']);
+    const requirement = state.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as ShiftTypeRequirementsPreference | undefined;
+    const count = state.preferences.find(pref => pref.type === SHIFT_COUNT) as ShiftCountPreference | undefined;
+    const affinity = state.preferences.find(pref => pref.type === SHIFT_AFFINITY) as ShiftAffinityPreference | undefined;
+
+    expect(requirement).toMatchObject({
+      shiftType: [['N']],
+    });
+    expect(count).toMatchObject({
+      countShiftTypes: ['N'],
+    });
+    expect(affinity).toMatchObject({
+      shiftTypes: [['N']],
+    });
+  });
+
+  it('removes nested affinity people references without dropping populated groups', () => {
+    const initialState = createState();
+    (initialState.preferences[4] as ShiftAffinityPreference).people1 = [['P1', 'Team']] as unknown as string[];
+
+    const state = applyReferencesForIdDeletion(initialState, DataType.PEOPLE, ['P1']);
+    const affinity = state.preferences.find(pref => pref.type === SHIFT_AFFINITY) as ShiftAffinityPreference | undefined;
+
+    expect(affinity).toMatchObject({
+      people1: [['Team']],
+      people2: ['P2'],
+    });
+  });
+
+  it('removes scalar preference reference fields from YAML-compatible state', () => {
+    const initialState = createState();
+    (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftType = 'D' as unknown as string[];
+    (initialState.preferences[1] as ShiftRequestPreference).shiftType = 'D' as unknown as string[];
+    (initialState.preferences[3] as ShiftCountPreference).countShiftTypes = 'N' as unknown as string[];
+
+    const state = applyReferencesForIdDeletion(initialState, DataType.SHIFT_TYPES, ['D']);
+    const count = state.preferences.find(pref => pref.type === SHIFT_COUNT) as ShiftCountPreference | undefined;
+
+    expect(state.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
+    expect(state.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
+    expect(count?.countShiftTypes).toBe('N');
   });
 });
