@@ -341,8 +341,8 @@ export default function ShiftTypeRequirementsPage() {
     if (preferredNumPeopleDiffersFromRequired(formData)) {
       if (!isValidWeightValue(formData.weight)) {
         newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
-      } else if (typeof formData.weight === 'number' && formData.weight > -1) {
-        newErrors.weight = 'Weight must be -1 or less (including -Infinity)';
+      } else if (typeof formData.weight === 'number' && formData.weight > 0) {
+        newErrors.weight = 'Weight must be 0 or less (including -Infinity)';
       }
     }
 

@@ -468,6 +468,32 @@ describe('ShiftTypeRequirementsPage', () => {
     expect(screen.getByPlaceholderText('e.g., -1, -10, ∞')).toBeInTheDocument();
   });
 
+  it('allows zero weight when preferred number of people is higher than required number', async () => {
+    const user = userEvent.setup();
+
+    renderShiftTypeRequirementsPage();
+
+    await user.click(screen.getByRole('button', { name: /add requirement/i }));
+    await user.click(screen.getByRole('radio', { name: 'D' }));
+    await user.click(screen.getByRole('checkbox', { name: 'P1' }));
+    await user.click(screen.getByRole('checkbox', { name: '01' }));
+
+    const preferredNumPeopleInput = screen.getAllByRole('spinbutton')[1];
+    await user.clear(preferredNumPeopleInput);
+    await user.type(preferredNumPeopleInput, '2');
+
+    const weightInput = screen.getByPlaceholderText('e.g., -1, -10, ∞');
+    await user.clear(weightInput);
+    await user.type(weightInput, '0');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(updatePreferencesByType).toHaveBeenCalledOnce();
+    expect(updatePreferencesByType.mock.calls[0][1][0]).toMatchObject({
+      preferredNumPeople: 2,
+      weight: 0,
+    });
+  });
+
   it('allows an empty required number while editing and clears its save error only after a value change', async () => {
     const user = userEvent.setup();
 

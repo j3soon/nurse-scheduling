@@ -64,6 +64,17 @@ def test_model_accepts_nested_shift_type_requirement_groups():
     assert data.preferences[1].shiftTypeCoefficients == [("D", 2)]
 
 
+def test_model_accepts_zero_float_weight():
+    payload = _base_payload()
+    payload["preferences"].append(
+        {"type": "shift request", "person": "n1", "date": "2025-01-01", "shiftType": "D", "weight": 0}
+    )
+
+    data = NurseSchedulingData.model_validate(payload)
+
+    assert data.preferences[2].weight == 0
+
+
 def test_model_rejects_invalid_date_range():
     payload = _base_payload()
     payload["dates"]["range"]["startDate"] = datetime.date(2025, 1, 2)
