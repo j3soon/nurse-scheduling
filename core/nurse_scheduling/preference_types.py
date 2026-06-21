@@ -18,6 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import itertools
+import logging
 import math
 from . import utils
 from .context import Context
@@ -106,9 +107,9 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
     #   shiftType: [[D, E]], requiredNumPeople: 1
     #   sum_{s in [D,E], p}(shifts[(d, s, p)]) == 1
     #
-    # Each concrete (date, shift type) may appear in only one requirement
-    # equation, including aggregate groups, so staffing demand has one source
-    # of truth.
+    # A concrete (date, shift type) may appear in more than one requirement
+    # equation, including aggregate groups. This can intentionally layer
+    # aggregate and concrete staffing requirements.
     #
     # Also note that this requirement is used in other preference types,
     # so this could not be implemented as a special case of shift_count.
@@ -130,19 +131,21 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
         for group_idx, ss in enumerate(shift_type_groups):
             for s in ss:
                 # A requirement expands through date and shift type groups into
-                # concrete (date, shift type) pairs. Each concrete pair must be
-                # defined by at most one preference, including aggregate groups.
+                # concrete (date, shift type) pairs. Duplicates are allowed
+                # because all matching constraints are applied.
                 coverage_key = (d, s)
                 if coverage_key in ctx.shift_type_requirement_coverage:
                     previous_preference_idx = ctx.shift_type_requirement_coverage[coverage_key]
                     date_id = str(ctx.dates.items[d])
                     shift_type_id = ctx.shiftTypes.items[s].id
-                    raise ValueError(
+                    logging.info(
                         "Duplicate shift type requirement coverage for "
                         f"date '{date_id}' and shift type '{shift_type_id}' "
-                        f"in preferences {previous_preference_idx} and {preference_idx}."
+                        f"in preferences {previous_preference_idx} and {preference_idx}; "
+                        "applying all matching requirements."
                     )
-                ctx.shift_type_requirement_coverage[coverage_key] = preference_idx
+                else:
+                    ctx.shift_type_requirement_coverage[coverage_key] = preference_idx
 
             # Get the set of people who can work each shift type in this
             # requirement group. Without explicit qualifiedPeople, eligibility

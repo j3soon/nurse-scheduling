@@ -547,7 +547,7 @@ export default function ShiftTypeRequirementsPage() {
           {coverageWarning.duplicateCells.length > 0 && (
             <div className="mt-2">
               <p>
-                Duplicate staffing requirements: {coverageWarning.duplicateCells.length} date/shift type pairs are covered by more than one requirement. The core solver will reject these.
+                Duplicate staffing requirements: {coverageWarning.duplicateCells.length} date/shift type pairs are covered by more than one requirement. The solver will apply all matching requirements.
               </p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {coverageWarning.duplicateCells.slice(0, warningExamplesLimit).map(cell => (

@@ -428,6 +428,7 @@ describe('ShiftTypeRequirementsPage', () => {
 
     expect(screen.getByText('Requirement coverage warnings')).toBeInTheDocument();
     expect(screen.getByText(/Duplicate staffing requirements: 1 date\/shift type pairs are covered by more than one requirement/)).toBeInTheDocument();
+    expect(screen.getByText(/The solver will apply all matching requirements/)).toBeInTheDocument();
     expect(screen.getByText('01 / D (requirements 1 and 2)')).toBeInTheDocument();
   });
 

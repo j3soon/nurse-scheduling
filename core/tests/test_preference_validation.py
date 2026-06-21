@@ -23,6 +23,7 @@ import os
 import sys
 from types import SimpleNamespace
 import datetime
+import logging
 
 import pytest
 
@@ -543,7 +544,7 @@ def test_shift_type_requirements_parse_grouped_and_top_level_shift_types(shift_t
     assert preference_types._parse_shift_type_requirement_groups(shift_type, map_sid_s) == expected
 
 
-def test_shift_type_requirements_rejects_duplicate_expanded_coverage():
+def test_shift_type_requirements_allows_duplicate_expanded_coverage(caplog):
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -571,14 +572,15 @@ preferences:
     date: 2025-01-01
     requiredNumPeople: 1
 """
-    with pytest.raises(
-        ValueError,
-        match="Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'D'",
-    ):
-        scheduler.schedule(yaml_content)
+    caplog.set_level(logging.INFO)
+
+    scheduler.schedule(yaml_content)
+
+    assert "Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'D'" in caplog.text
+    assert "applying all matching requirements" in caplog.text
 
 
-def test_shift_type_requirements_rejects_duplicate_nested_coverage():
+def test_shift_type_requirements_allows_duplicate_nested_coverage(caplog):
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -602,14 +604,15 @@ preferences:
     shiftType: [[E, N]]
     requiredNumPeople: 1
 """
-    with pytest.raises(
-        ValueError,
-        match="Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'",
-    ):
-        scheduler.schedule(yaml_content)
+    caplog.set_level(logging.INFO)
+
+    scheduler.schedule(yaml_content)
+
+    assert "Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'" in caplog.text
+    assert "applying all matching requirements" in caplog.text
 
 
-def test_shift_type_requirements_rejects_duplicate_nested_coverage_in_same_preference():
+def test_shift_type_requirements_allows_duplicate_nested_coverage_in_same_preference(caplog):
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -630,14 +633,15 @@ preferences:
     shiftType: [[D, E], [E, N]]
     requiredNumPeople: 1
 """
-    with pytest.raises(
-        ValueError,
-        match="Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'",
-    ):
-        scheduler.schedule(yaml_content)
+    caplog.set_level(logging.INFO)
+
+    scheduler.schedule(yaml_content)
+
+    assert "Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'" in caplog.text
+    assert "applying all matching requirements" in caplog.text
 
 
-def test_shift_type_requirements_rejects_duplicate_aggregate_and_scalar_coverage():
+def test_shift_type_requirements_allows_duplicate_aggregate_and_scalar_coverage(caplog):
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -660,11 +664,12 @@ preferences:
     shiftType: E
     requiredNumPeople: 0
 """
-    with pytest.raises(
-        ValueError,
-        match="Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'",
-    ):
-        scheduler.schedule(yaml_content)
+    caplog.set_level(logging.INFO)
+
+    scheduler.schedule(yaml_content)
+
+    assert "Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'" in caplog.text
+    assert "applying all matching requirements" in caplog.text
 
 
 def test_shift_type_requirements_rejects_coefficient_for_unselected_shift_type():
