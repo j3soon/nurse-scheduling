@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from nurse_scheduling.solver_interface import SolverProgress
 
 REAL_TESTCASE = Path(__file__).parents[1] / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 SMOKE_TEST_TIMEOUT_SECONDS = 300
+ZERO_CRITICAL_NOTES_STABILITY_SECONDS = 10
 EXPECTED_SOLUTION_SIZE = 30 * 11 * 87
 CRITICAL_REQUEST_NOTE_PREFIX = "Critical unsatisfied request:"
 CRITICAL_REQUEST_FORMATTING_RULES = [
@@ -83,17 +85,29 @@ def _critical_request_notes(cell_export_info) -> list[str]:
 
 def run_real_schedule_smoke_test(solver: str):
     file_content = _add_critical_request_formatting_rules(REAL_TESTCASE.read_bytes())
-    stop_after_zero_critical_notes = False
+    zero_critical_notes_since = None
 
     def track_critical_notes(payload):
-        nonlocal stop_after_zero_critical_notes
+        nonlocal zero_critical_notes_since
         comments = (
             payload.cell_export_info.get("comments")
             if isinstance(payload, SolverProgress) and isinstance(payload.cell_export_info, dict)
             else None
         )
         if isinstance(comments, dict):
-            stop_after_zero_critical_notes = not _critical_request_notes(payload.cell_export_info)
+            if _critical_request_notes(payload.cell_export_info):
+                zero_critical_notes_since = None
+            elif zero_critical_notes_since is None:
+                zero_critical_notes_since = time.monotonic()
+
+    def has_stable_zero_critical_notes():
+        # Handle the CP-SAT incumbent race where critical violations briefly
+        # become 0, but the next solution has non-zero violations. Waiting a
+        # while lets the zero-critical state become more stable before stopping.
+        return (
+            zero_critical_notes_since is not None
+            and time.monotonic() - zero_critical_notes_since >= ZERO_CRITICAL_NOTES_STABILITY_SECONDS
+        )
 
     supports_progress_stop = solver == "ortools/cp-sat"
 
@@ -103,7 +117,7 @@ def run_real_schedule_smoke_test(solver: str):
         solver=solver,
         timeout=None if supports_progress_stop else SMOKE_TEST_TIMEOUT_SECONDS,
         progress_callback=track_critical_notes if supports_progress_stop else None,
-        should_stop=(lambda: stop_after_zero_critical_notes) if supports_progress_stop else None,
+        should_stop=has_stable_zero_critical_notes if supports_progress_stop else None,
     )
 
     critical_notes = _critical_request_notes(cell_export_info)
