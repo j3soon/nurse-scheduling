@@ -1,0 +1,62 @@
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-06
+people:
+  items:
+    - id: j1
+      description: Junior nurse 1
+    - id: j2
+      description: Junior nurse 2
+    - id: s1
+      description: Senior nurse 1
+  groups:
+    - id: Junior
+      members: [j1, j2]
+    - id: Senior
+      members: [s1]
+shiftTypes:
+  items:
+    - id: J
+      description: Junior shift type
+    - id: S
+      description: Senior shift type
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    description: Should be staffed by 2 junior nurses or 1 senior nurse per day
+    shiftType: [[J, S]]
+    shiftTypeCoefficients:
+      - [J, 1]
+      - [S, 2]
+    requiredNumPeople: 2
+  - type: shift count
+    description: Junior nurses should not work any Senior shifts
+    person: Junior
+    countDates: ALL
+    countShiftTypes: [S]
+    expression: 'x = T'
+    target: 0
+    weight: .inf
+  - type: shift count
+    description: Senior nurses should not work any Junior shifts
+    person: Senior
+    countDates: ALL
+    countShiftTypes: [J]
+    expression: 'x = T'
+    target: 0
+    weight: .inf
+  - type: shift count
+    description: Balance shift counts across all nurses
+    person: ALL
+    countDates: ALL
+    countShiftTypes: ALL
+    expression: '|x - T|^2'
+    target: 3
+    weight: -1000
+  - type: shift request
+    person: Senior
+    date: [1, 3, 5]
+    shiftType: S
+    weight: 1

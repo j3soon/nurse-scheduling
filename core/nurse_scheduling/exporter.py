@@ -231,20 +231,20 @@ def _build_custom_export_style_info(
 
 
 def _parse_extra_column_coefficients(ctx: Context, rule, count_shift_types: list[int]) -> dict[int, int]:
-    selected_shift_type_ids = set(utils.ensure_list(rule.countShiftTypes))
     coefficients = dict.fromkeys(count_shift_types, 1)
     coefficient_entries = rule.countShiftTypeCoefficients or []
+    selected_sids = set(count_shift_types)
     coefficient_sids = set()
 
     for shift_type_id, coefficient in coefficient_entries:
-        if shift_type_id not in selected_shift_type_ids:
-            raise ValueError(
-                f"Export extra column coefficient for '{shift_type_id}' must reference a shift type in countShiftTypes."
-            )
         if coefficient < 1:
             raise ValueError(f"Export extra column coefficient for '{shift_type_id}' must be at least 1.")
 
         expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
+        if not set(expanded_sids).issubset(selected_sids):
+            raise ValueError(
+                f"Export extra column coefficient for '{shift_type_id}' must be covered by countShiftTypes."
+            )
         duplicate_sids = coefficient_sids.intersection(expanded_sids)
         if duplicate_sids:
             raise ValueError(f"Duplicate export extra column coefficient for '{shift_type_id}'.")

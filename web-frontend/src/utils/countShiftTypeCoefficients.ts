@@ -34,22 +34,54 @@ export function getCoefficientForShiftType(
   return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? 1;
 }
 
+function getExpandedShiftTypeIdsById(shiftTypeData: { items: Item[]; groups: Group[] }): Map<string, readonly string[]> {
+  return new Map([
+    ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
+    ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
+  ]);
+}
+
+export function getCoefficientShiftTypeIds(
+  selectedShiftTypeIds: string[],
+  shiftTypeData: { items: Item[]; groups: Group[] }
+): string[] {
+  const expandedShiftTypeIdsById = getExpandedShiftTypeIdsById(shiftTypeData);
+  const selectedExpandedShiftTypeIds = new Set(
+    selectedShiftTypeIds.flatMap(shiftTypeId => expandedShiftTypeIdsById.get(shiftTypeId) ?? [])
+  );
+
+  return [
+    ...shiftTypeData.items
+      .filter(shiftType => selectedExpandedShiftTypeIds.has(shiftType.id))
+      .map(shiftType => shiftType.id),
+    ...shiftTypeData.groups
+      .filter(group => group.members.length > 0 && group.members.every(member => selectedExpandedShiftTypeIds.has(member)))
+      .map(group => group.id),
+  ];
+}
+
 export function syncCoefficientPairs(
   selectedShiftTypeIds: string[],
-  coefficients: DraftShiftCountTypeCoefficient[]
+  coefficients: DraftShiftCountTypeCoefficient[],
+  shiftTypeData: { items: Item[]; groups: Group[] }
 ): DraftShiftCountTypeCoefficient[] {
-  return selectedShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
+  const coefficientShiftTypeIds = getCoefficientShiftTypeIds(selectedShiftTypeIds, shiftTypeData);
+  if (coefficientShiftTypeIds.length < 1) {
+    return [];
+  }
+
+  return coefficientShiftTypeIds.map(id => [id, getCoefficientForShiftType(coefficients, id)]);
 }
 
 export function updateCoefficientPair(
-  selectedShiftTypeIds: string[],
+  coefficientShiftTypeIds: string[],
   coefficients: DraftShiftCountTypeCoefficient[],
   shiftTypeId: string,
   coefficient: number | string
 ): DraftShiftCountTypeCoefficient[] {
-  return syncCoefficientPairs(selectedShiftTypeIds, [
-    ...coefficients.filter(([id]) => id !== shiftTypeId),
-    [shiftTypeId, coefficient],
+  return coefficientShiftTypeIds.map((id): DraftShiftCountTypeCoefficient => [
+    id,
+    id === shiftTypeId ? coefficient : getCoefficientForShiftType(coefficients, id),
   ]);
 }
 
@@ -57,10 +89,7 @@ function getCoefficientOverlapError(
   coefficientPairs: ShiftCountTypeCoefficient[],
   shiftTypeData: { items: Item[]; groups: Group[] }
 ): string | undefined {
-  const expandedShiftTypeIdsById = new Map([
-    ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
-    ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
-  ]);
+  const expandedShiftTypeIdsById = getExpandedShiftTypeIdsById(shiftTypeData);
 
   const sourceShiftTypeIdByExpandedId = new Map<string, string>();
   for (const [shiftTypeId] of coefficientPairs) {
@@ -81,7 +110,7 @@ export function validateCoefficientPairs(
   coefficients: DraftShiftCountTypeCoefficient[],
   shiftTypeData: { items: Item[]; groups: Group[] }
 ): ShiftCountTypeCoefficientValidation {
-  const syncedCoefficients = syncCoefficientPairs(selectedShiftTypeIds, coefficients);
+  const syncedCoefficients = syncCoefficientPairs(selectedShiftTypeIds, coefficients, shiftTypeData);
   const errorsById: Record<string, string> = {};
 
   for (const [shiftTypeId, coefficient] of syncedCoefficients) {

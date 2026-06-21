@@ -203,7 +203,7 @@ test('preference duplicate actions insert copied cards for each preference page'
   await page.goto('/shift-type-requirements');
   await openAddForm(page, 'Add Requirement', 'Add New Requirement');
   await page.getByPlaceholder('e.g., Night shifts need senior nurses').fill('requirement rule');
-  await page.getByRole('checkbox', { name: 'D', exact: true }).check();
+  await page.getByRole('radio', { name: 'D', exact: true }).check();
   await page.getByRole('checkbox', { name: 'Alice', exact: true }).check();
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByRole('button', { name: 'Add', exact: true }).click();

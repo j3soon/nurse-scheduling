@@ -23,6 +23,7 @@ import os
 import sys
 from types import SimpleNamespace
 import datetime
+import logging
 
 import pytest
 
@@ -255,6 +256,47 @@ preferences:
     scheduler.schedule(yaml_content)
 
 
+def test_shift_count_accepts_coefficients_covered_by_selected_group():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: Work
+      members: [D, A]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+    date: 2025-01-01
+  - type: shift type requirement
+    shiftType: A
+    requiredNumPeople: 1
+    date: 2025-01-02
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: Work
+    countShiftTypeCoefficients:
+      - [D, 2]
+      - [A, 3]
+    expression: x = T
+    target: 5
+    weight: .inf
+"""
+    scheduler.schedule(yaml_content)
+
+
 def test_shift_count_rejects_invalid_shift_type_coefficients():
     coefficient_not_selected_yaml = b"""
 apiVersion: alpha
@@ -284,7 +326,7 @@ preferences:
     target: 1
     weight: .inf
 """
-    with pytest.raises(ValueError, match="must reference a shift type in countShiftTypes"):
+    with pytest.raises(ValueError, match="must be covered by countShiftTypes"):
         scheduler.schedule(coefficient_not_selected_yaml)
 
     for invalid_coefficient in (0, -1):
@@ -466,7 +508,43 @@ def test_shift_type_requirements_rejects_empty_shift_types():
         preference_types.utils.parse_sids = original_parse_sids
 
 
-def test_shift_type_requirements_rejects_duplicate_expanded_coverage():
+def test_shift_type_requirements_parse_all_scalar_and_list_forms():
+    map_sid_s = {
+        "D": [0],
+        "E": [1],
+        "N": [2],
+        "ALL": [0, 1, 2],
+    }
+
+    assert preference_types._parse_shift_type_requirement_groups("ALL", map_sid_s) == [[0, 1, 2]]
+    assert preference_types._parse_shift_type_requirement_groups(["ALL"], map_sid_s) == [[0, 1, 2]]
+    assert preference_types._parse_shift_type_requirement_groups([["ALL"]], map_sid_s) == [[0, 1, 2]]
+
+
+@pytest.mark.parametrize(
+    ("shift_type", "expected"),
+    [
+        ("D", [[0]]),
+        ("Weekend", [[0, 2]]),
+        (["D", "E"], [[0], [1]]),
+        (["Weekend", "E"], [[0, 2], [1]]),
+        ([["D", "E"]], [[0, 1]]),
+        ([["Weekend", "E"]], [[0, 1, 2]]),
+        ([["Weekend", "D"]], [[0, 2]]),
+    ],
+)
+def test_shift_type_requirements_parse_grouped_and_top_level_shift_types(shift_type, expected):
+    map_sid_s = {
+        "D": [0],
+        "E": [1],
+        "N": [2],
+        "Weekend": [0, 2],
+    }
+
+    assert preference_types._parse_shift_type_requirement_groups(shift_type, map_sid_s) == expected
+
+
+def test_shift_type_requirements_allows_duplicate_expanded_coverage(caplog):
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -494,9 +572,216 @@ preferences:
     date: 2025-01-01
     requiredNumPeople: 1
 """
+    caplog.set_level(logging.INFO)
+
+    scheduler.schedule(yaml_content)
+
+    assert "Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'D'" in caplog.text
+    assert "applying all matching requirements" in caplog.text
+
+
+def test_shift_type_requirements_allows_duplicate_nested_coverage(caplog):
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+    - id: N
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[D, E]]
+    requiredNumPeople: 1
+  - type: shift type requirement
+    shiftType: [[E, N]]
+    requiredNumPeople: 1
+"""
+    caplog.set_level(logging.INFO)
+
+    scheduler.schedule(yaml_content)
+
+    assert "Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'" in caplog.text
+    assert "applying all matching requirements" in caplog.text
+
+
+def test_shift_type_requirements_allows_duplicate_nested_coverage_in_same_preference(caplog):
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+    - id: N
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[D, E], [E, N]]
+    requiredNumPeople: 1
+"""
+    caplog.set_level(logging.INFO)
+
+    scheduler.schedule(yaml_content)
+
+    assert "Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'" in caplog.text
+    assert "applying all matching requirements" in caplog.text
+
+
+def test_shift_type_requirements_allows_duplicate_aggregate_and_scalar_coverage(caplog):
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[D, E]]
+    requiredNumPeople: 1
+  - type: shift type requirement
+    shiftType: E
+    requiredNumPeople: 0
+"""
+    caplog.set_level(logging.INFO)
+
+    scheduler.schedule(yaml_content)
+
+    assert "Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'E'" in caplog.text
+    assert "applying all matching requirements" in caplog.text
+
+
+def test_shift_type_requirements_rejects_coefficient_for_unselected_shift_type():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    shiftTypeCoefficients:
+      - [E, 2]
+    requiredNumPeople: 1
+"""
     with pytest.raises(
         ValueError,
-        match="Duplicate shift type requirement coverage for date '2025-01-01' and shift type 'D'",
+        match="Shift type requirement coefficient for 'E' must be covered by shiftType",
+    ):
+        scheduler.schedule(yaml_content)
+
+
+def test_shift_type_requirements_rejects_invalid_coefficient():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    shiftTypeCoefficients:
+      - [D, 0]
+    requiredNumPeople: 1
+"""
+    with pytest.raises(ValueError, match="Shift type requirement coefficient for 'D' must be at least 1"):
+        scheduler.schedule(yaml_content)
+
+
+def test_shift_type_requirements_rejects_duplicate_expanded_coefficients():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: Work
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[Work, D]]
+    shiftTypeCoefficients:
+      - [Work, 2]
+      - [D, 3]
+    requiredNumPeople: 1
+"""
+    with pytest.raises(ValueError, match="Duplicate shift type requirement coefficient for 'D'"):
+        scheduler.schedule(yaml_content)
+
+
+def test_shift_type_requirements_rejects_coefficients_for_multiple_requirement_groups():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+    - id: n2
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [D, E]
+    shiftTypeCoefficients:
+      - [D, 2]
+    requiredNumPeople: 1
+"""
+    with pytest.raises(
+        ValueError,
+        match="Shift type requirement coefficients are only supported when shiftType normalizes to one requirement group",
     ):
         scheduler.schedule(yaml_content)
 

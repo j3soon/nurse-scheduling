@@ -171,6 +171,7 @@ export interface ShiftTypeRequirementsPreference extends BasePreference {
   type: typeof SHIFT_TYPE_REQUIREMENT;
   description?: string;
   shiftType: string[];
+  shiftTypeCoefficients?: ShiftCountTypeCoefficient[];
   requiredNumPeople: number;
   // Backend input accepts either null/missing or the reserved ALL selector for
   // all people. Frontend state intentionally stores the explicit ALL selector

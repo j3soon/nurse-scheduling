@@ -155,6 +155,295 @@ preferences:
     assert status_name == "FEASIBLE"
 
 
+def test_scheduler_shift_type_requirement_nested_group_counts_across_shift_types():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[D, E]]
+    requiredNumPeople: 1
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] + solution[(0, 1, 0)] == 1
+
+
+def test_scheduler_shift_type_requirement_coefficient_scales_effective_people():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    shiftTypeCoefficients:
+      - [D, 2]
+    requiredNumPeople: 2
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] == 1
+
+
+def test_scheduler_shift_type_requirement_coefficient_scales_aggregate_group():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[D, E]]
+    shiftTypeCoefficients:
+      - [D, 2]
+    requiredNumPeople: 2
+  - type: shift request
+    person: n1
+    date: 2025-01-01
+    shiftType: E
+    weight: 100
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] == 1
+    assert solution[(0, 1, 0)] == 0
+
+
+def test_scheduler_shift_type_requirement_coefficient_can_reference_selected_group_member():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: Work
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: Work
+    shiftTypeCoefficients:
+      - [D, 2]
+    requiredNumPeople: 2
+  - type: shift request
+    person: n1
+    date: 2025-01-01
+    shiftType: E
+    weight: 100
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] == 1
+    assert solution[(0, 1, 0)] == 0
+
+
+def test_scheduler_shift_type_requirement_flat_list_keeps_independent_counts():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [D, E]
+    requiredNumPeople: 1
+"""
+
+    df, solution, score, status_name, cell_export_info = scheduler.schedule(content)
+
+    assert (df, solution, score, cell_export_info) == (None, None, None, None)
+    assert status_name == "INFEASIBLE"
+
+
+def test_scheduler_shift_type_requirement_nested_group_id_counts_across_members():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: DayOrEvening
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[DayOrEvening]]
+    requiredNumPeople: 1
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] + solution[(0, 1, 0)] == 1
+
+
+def test_scheduler_shift_type_requirement_scalar_group_counts_across_members():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: DayOrEvening
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: DayOrEvening
+    requiredNumPeople: 1
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] + solution[(0, 1, 0)] == 1
+
+
+def test_scheduler_shift_type_requirement_flat_group_list_counts_across_members():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: DayOrEvening
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [DayOrEvening]
+    requiredNumPeople: 1
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] + solution[(0, 1, 0)] == 1
+
+
+def test_scheduler_shift_type_requirement_qualified_people_applies_to_aggregate_group():
+    content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+    - id: n2
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[D, E]]
+    requiredNumPeople: 1
+    qualifiedPeople: n1
+  - type: shift request
+    person: n2
+    date: 2025-01-01
+    shiftType: [D, E]
+    weight: 100
+"""
+
+    df, solution, _score, status_name, _cell_export_info = scheduler.schedule(content)
+
+    assert df is not None
+    assert status_name in {"FEASIBLE", "OPTIMAL"}
+    assert solution[(0, 0, 0)] + solution[(0, 1, 0)] == 1
+    assert solution[(0, 0, 1)] == 0
+    assert solution[(0, 1, 1)] == 0
+
+
 def test_scheduler_model_build_stats_callback_reports_build_steps(monkeypatch):
     content = _load_valid_yaml_bytes()
     events = []

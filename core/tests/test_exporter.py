@@ -862,6 +862,43 @@ export:
     assert df.iloc[2, 3] == 7
 
 
+def test_export_extra_column_applies_member_coefficient_covered_by_selected_group():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: WORK
+      members: [D, A]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    requiredNumPeople: 1
+export:
+  extraColumns:
+    - type: count
+      header: Work Score
+      countShiftTypes: [WORK]
+      countShiftTypeCoefficients:
+        - [D, 7]
+      countDates: [ALL]
+"""
+    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
+    df = styled_df.data
+
+    assert df.iloc[2, 3] == 7
+
+
 def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
     ctx = SimpleNamespace(
         export=SimpleNamespace(

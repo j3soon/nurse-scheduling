@@ -26,7 +26,8 @@ export function getOrderedEntries(data: { items: OrderedEntry[]; groups: Ordered
 }
 
 export function sortIdsByEntryOrder(ids: string[] | undefined, entries: OrderedEntry[]): string[] {
-  if (!Array.isArray(ids)) return [];
+  if (ids === undefined || ids === null) return [];
+  if (!Array.isArray(ids)) return [String(ids)];
 
   const entryOrder = new Map(entries.map((entry, index) => [entry.id, index]));
   return [...ids].sort((a, b) => {

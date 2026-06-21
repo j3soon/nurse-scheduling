@@ -90,4 +90,16 @@ describe('randomizeConcreteDateShiftRequests', () => {
     expect(() => randomizeConcreteDateShiftRequests(state, dateItems, [], () => 0))
       .toThrow('Date "01" must belong to exactly one of WEEKDAY or WEEKEND.');
   });
+
+  it('rejects backend-compatible multi-person or multi-shift requests', () => {
+    const multiTargetState: SchedulingState = {
+      ...state,
+      preferences: [
+        { type: 'shift request', person: ['Alice', 'Team'], date: ['01'], shiftType: ['D'], weight: 1 },
+      ],
+    };
+
+    expect(() => randomizeConcreteDateShiftRequests(multiTargetState, dateItems, dateGroups, () => 0))
+      .toThrow('Cannot scatter shift requests with multiple people or multiple shift types.');
+  });
 });

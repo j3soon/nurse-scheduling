@@ -25,9 +25,14 @@ from tests.real import schedule_real_helper
 
 def test_ortools_real_smoke_test_stops_after_progress_has_no_critical_notes(monkeypatch):
     seen = {}
+    monotonic_time = 100.0
     final_export_info = {"comments": {}}
 
+    def fake_monotonic():
+        return monotonic_time
+
     def fake_schedule(_file_content, **kwargs):
+        nonlocal monotonic_time
         seen.update(kwargs)
         critical_export_info = {"comments": {"cell": [f"{schedule_real_helper.CRITICAL_REQUEST_NOTE_PREFIX} D"]}}
         kwargs["progress_callback"](SolverProgress("test", 0, 0.5))
@@ -37,10 +42,13 @@ def test_ortools_real_smoke_test_stops_after_progress_has_no_critical_notes(monk
         assert not kwargs["should_stop"]()
 
         kwargs["progress_callback"](SolverProgress("test", 2, 2.0, cell_export_info=final_export_info))
+        assert not kwargs["should_stop"]()
+        monotonic_time += schedule_real_helper.ZERO_CRITICAL_NOTES_STABILITY_SECONDS
         assert kwargs["should_stop"]()
         return object(), {(0, 0, 0): 1}, 2, "FEASIBLE", final_export_info
 
     monkeypatch.setattr(schedule_real_helper.nurse_scheduling, "schedule", fake_schedule)
+    monkeypatch.setattr(schedule_real_helper.time, "monotonic", fake_monotonic)
     monkeypatch.setattr(schedule_real_helper, "EXPECTED_SOLUTION_SIZE", 1)
 
     schedule_real_helper.run_real_schedule_smoke_test("ortools/cp-sat")

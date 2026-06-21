@@ -1,0 +1,27 @@
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-02
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[D, E]]
+    requiredNumPeople: 1
+  - type: shift request
+    person: n1
+    date: 2025-01-01
+    shiftType: D
+    weight: 1
+  - type: shift request
+    person: n1
+    date: 2025-01-02
+    shiftType: E
+    weight: 1

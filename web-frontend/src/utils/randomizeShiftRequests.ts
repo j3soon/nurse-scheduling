@@ -178,6 +178,10 @@ export function randomizeConcreteDateShiftRequests(
   const movableByPerson = new Map<string, ShiftRequestPreference[]>();
 
   state.preferences.forEach(pref => {
+    if (pref.type === SHIFT_REQUEST && (pref.person.length !== 1 || pref.shiftType.length !== 1)) {
+      throw new Error('Cannot scatter shift requests with multiple people or multiple shift types.');
+    }
+
     // Only scatter requests for one concrete person and concrete dates. Leave group
     // requests such as ALL, WORKDAY, or a people team exactly as written.
     if (

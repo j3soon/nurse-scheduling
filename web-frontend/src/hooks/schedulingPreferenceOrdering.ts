@@ -20,6 +20,7 @@
 import { ShiftTypeRequirementsPreference, ShiftRequestPreference, Preference, AT_MOST_ONE_SHIFT_PER_DAY, SHIFT_TYPE_REQUIREMENT, SHIFT_REQUEST, SHIFT_TYPE_SUCCESSIONS, SHIFT_COUNT, SHIFT_AFFINITY } from '@/types/scheduling';
 import { ALL } from '@/utils/keywords';
 import { compareFirstIdByEntryOrder, getOrderedEntries, sortIdsByEntryOrder, sortPairsByFirstIdEntryOrder } from '@/utils/entityOrdering';
+import { hasNestedReferenceIds, ReferenceIdTree } from '@/utils/referenceIds';
 import { SchedulingState } from './schedulingState';
 
 export type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
@@ -34,7 +35,16 @@ export function normalizeQualifiedPeopleForFrontend(
   // Normalize the backend's implicit all-people representation into the
   // frontend's explicit selector. Keeping [ALL] in client state is intentional;
   // the backend knows to interpret null as [ALL].
-  return qualifiedPeople === null || qualifiedPeople === undefined ? [ALL] : qualifiedPeople;
+  if (qualifiedPeople === null || qualifiedPeople === undefined) return [ALL];
+  return Array.isArray(qualifiedPeople) ? qualifiedPeople : [String(qualifiedPeople)];
+}
+
+function sortFlatOrPreserveNestedReferenceIds<T extends ReferenceIdTree[] | undefined>(
+  value: T,
+  entries: { id: string }[]
+): T {
+  if (hasNestedReferenceIds(value)) return value;
+  return sortIdsByEntryOrder(value as string[] | undefined, entries) as T;
 }
 
 export function normalizePreferenceOrder(pref: Preference, state: SchedulingState): Preference {
@@ -46,7 +56,8 @@ export function normalizePreferenceOrder(pref: Preference, state: SchedulingStat
     const requirementPref = pref as NullableShiftTypeRequirementsPreference;
     return {
       ...requirementPref,
-      shiftType: sortIdsByEntryOrder(requirementPref.shiftType, shiftTypeEntries),
+      shiftType: sortFlatOrPreserveNestedReferenceIds(requirementPref.shiftType as ReferenceIdTree[] | undefined, shiftTypeEntries) as ShiftTypeRequirementsPreference['shiftType'],
+      shiftTypeCoefficients: sortPairsByFirstIdEntryOrder(requirementPref.shiftTypeCoefficients, shiftTypeEntries),
       qualifiedPeople: sortIdsByEntryOrder(normalizeQualifiedPeopleForFrontend(requirementPref.qualifiedPeople), peopleEntries),
       date: sortIdsByEntryOrder(requirementPref.date, dateEntries),
     };
@@ -79,9 +90,9 @@ export function normalizePreferenceOrder(pref: Preference, state: SchedulingStat
     return {
       ...pref,
       date: sortIdsByEntryOrder(pref.date, dateEntries),
-      people1: sortIdsByEntryOrder(pref.people1, peopleEntries),
-      people2: sortIdsByEntryOrder(pref.people2, peopleEntries),
-      shiftTypes: sortIdsByEntryOrder(pref.shiftTypes, shiftTypeEntries),
+      people1: sortFlatOrPreserveNestedReferenceIds(pref.people1 as ReferenceIdTree[] | undefined, peopleEntries) as typeof pref.people1,
+      people2: sortFlatOrPreserveNestedReferenceIds(pref.people2 as ReferenceIdTree[] | undefined, peopleEntries) as typeof pref.people2,
+      shiftTypes: sortFlatOrPreserveNestedReferenceIds(pref.shiftTypes as ReferenceIdTree[] | undefined, shiftTypeEntries) as typeof pref.shiftTypes,
     };
   }
   return pref;
