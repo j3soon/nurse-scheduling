@@ -106,6 +106,39 @@ describe('DataTable', () => {
     expect(row.getAttribute('draggable')).toBe('false');
   });
 
+  it('calls onRowClick when a row is clicked', () => {
+    const onRowClick = vi.fn();
+    const data: Row[] = [{ id: 'a', name: 'Alpha' }];
+
+    render(
+      <DataTable<Row>
+        title="Rows"
+        columns={columns}
+        data={data}
+        onRowClick={onRowClick}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Alpha').closest('tr') as HTMLTableRowElement);
+
+    expect(onRowClick).toHaveBeenCalledWith({ id: 'a', name: 'Alpha' }, 0);
+  });
+
+  it('renders footer content below the table', () => {
+    const data: Row[] = [{ id: 'a', name: 'Alpha' }];
+
+    render(
+      <DataTable<Row>
+        title="Rows"
+        columns={columns}
+        data={data}
+        footer={<div>Footer action</div>}
+      />,
+    );
+
+    expect(screen.getByText('Footer action')).toBeInTheDocument();
+  });
+
   it('keeps order unchanged when dropping onto the same row index', () => {
     const onReorder = vi.fn();
     const data: Row[] = [
