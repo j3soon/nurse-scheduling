@@ -59,6 +59,6 @@ test('extra column coefficients persist through Save and Load YAML and page navi
     'xpath=ancestor::div[contains(@class, "px-4 py-2")][1]'
   );
   await extraColumnCard.getByRole('button', { name: 'Edit' }).click();
-  await expect(page.getByRole('spinbutton', { name: 'D' })).toHaveValue('1');
+  await expect(page.getByRole('spinbutton', { name: 'D' })).toHaveValue('');
   await expect(page.getByRole('spinbutton', { name: 'N' })).toHaveValue('3');
 });

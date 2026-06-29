@@ -481,6 +481,40 @@ export:
         schedule(yaml_content, prettify=True)
 
 
+def test_export_extra_column_rejects_overlapping_explicit_coefficient_one():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: WORK
+      members: [D, A]
+preferences:
+  - type: at most one shift per day
+export:
+  extraColumns:
+    - type: count
+      header: Invalid overlap
+      countDates: [ALL]
+      countShiftTypes: [D, WORK]
+      countShiftTypeCoefficients:
+        - [D, 1]
+        - [WORK, 2]
+"""
+
+    with pytest.raises(ValueError, match="Duplicate export extra column coefficient"):
+        schedule(yaml_content, prettify=True)
+
+
 def test_export_xlsx_handles_unequal_trimmed_history_columns():
     yaml_content = b"""
 apiVersion: alpha
