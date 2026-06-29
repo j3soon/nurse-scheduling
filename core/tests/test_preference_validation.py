@@ -361,6 +361,40 @@ preferences:
         scheduler.schedule(duplicate_coefficient_yaml)
 
 
+def test_shift_count_rejects_overlapping_explicit_coefficient_one():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: A
+  groups:
+    - id: G
+      members: [D, A]
+preferences:
+  - type: at most one shift per day
+  - type: shift count
+    person: n1
+    countDates: ALL
+    countShiftTypes: [D, G]
+    countShiftTypeCoefficients:
+      - [D, 1]
+      - [G, 2]
+    expression: x = T
+    target: 1
+    weight: .inf
+"""
+    with pytest.raises(ValueError, match="Duplicate shift count coefficient"):
+        scheduler.schedule(yaml_content)
+
+
 def test_shift_type_successions_rejects_history_all_and_group_ids():
     history_all_yaml = b"""
 apiVersion: alpha
@@ -753,6 +787,36 @@ preferences:
     requiredNumPeople: 1
 """
     with pytest.raises(ValueError, match="Duplicate shift type requirement coefficient for 'D'"):
+        scheduler.schedule(yaml_content)
+
+
+def test_shift_type_requirements_rejects_overlapping_explicit_coefficient_one():
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+    - id: E
+  groups:
+    - id: Work
+      members: [D, E]
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: [[Work, D]]
+    shiftTypeCoefficients:
+      - [D, 1]
+      - [Work, 2]
+    requiredNumPeople: 1
+"""
+    with pytest.raises(ValueError, match="Duplicate shift type requirement coefficient for 'Work'"):
         scheduler.schedule(yaml_content)
 
 

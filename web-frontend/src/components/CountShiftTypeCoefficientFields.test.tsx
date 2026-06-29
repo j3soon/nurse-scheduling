@@ -61,7 +61,7 @@ describe('CountShiftTypeCoefficientFields', () => {
     );
 
     expect(screen.getByText('Count Shift Type Coefficients')).toBeInTheDocument();
-    expect(screen.getByRole('spinbutton', { name: 'D' })).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: 'D' })).toHaveValue(null);
   });
 
   it('shows coefficient inputs when more than one shift type is selected', () => {

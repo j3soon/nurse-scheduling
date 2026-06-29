@@ -152,6 +152,23 @@ describe('ShiftTypeRequirementsPage', () => {
     });
   });
 
+  it('blocks overlapping explicit coefficient one from a shift type and containing group', async () => {
+    const user = userEvent.setup();
+
+    renderShiftTypeRequirementsPage();
+
+    await user.click(screen.getByRole('button', { name: /add requirement/i }));
+    await user.click(screen.getByRole('radio', { name: 'Days' }));
+    await user.type(screen.getByRole('spinbutton', { name: 'D' }), '1');
+    await user.type(screen.getByRole('spinbutton', { name: 'Days' }), '2');
+    await user.click(screen.getByRole('checkbox', { name: 'P1' }));
+    await user.click(screen.getByRole('checkbox', { name: '01' }));
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('Shift type coefficients overlap: D, Days include D')).toBeInTheDocument();
+    expect(updatePreferencesByType).not.toHaveBeenCalled();
+  });
+
   it('replaces the selected shift type when another radio option is selected', async () => {
     const user = userEvent.setup();
     mockUseSchedulingData.mockReturnValue({

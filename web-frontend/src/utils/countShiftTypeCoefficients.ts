@@ -31,7 +31,7 @@ export function getCoefficientForShiftType(
   coefficients: DraftShiftCountTypeCoefficient[],
   shiftTypeId: string
 ): number | string {
-  return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? 1;
+  return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? '';
 }
 
 function getExpandedShiftTypeIdsById(shiftTypeData: { items: Item[]; groups: Group[] }): Map<string, readonly string[]> {
@@ -114,6 +114,10 @@ export function validateCoefficientPairs(
   const errorsById: Record<string, string> = {};
 
   for (const [shiftTypeId, coefficient] of syncedCoefficients) {
+    if (coefficient === '') {
+      continue;
+    }
+
     if (typeof coefficient !== 'number' || !Number.isInteger(coefficient) || coefficient < 1) {
       errorsById[shiftTypeId] = `Coefficient for ${shiftTypeId} must be an integer of at least 1`;
     }
@@ -124,7 +128,7 @@ export function validateCoefficientPairs(
   }
 
   const normalizedCoefficients = syncedCoefficients.filter(
-    ([, coefficient]) => coefficient !== 1
+    ([, coefficient]) => coefficient !== ''
   ) as ShiftCountTypeCoefficient[];
 
   return {

@@ -38,7 +38,7 @@ describe('countShiftTypeCoefficients', () => {
     const afterReselect = syncCoefficientPairs(['N', 'D'], afterDeselect, shiftTypeData);
 
     expect(afterDeselect).toEqual([['N', 2]]);
-    expect(afterReselect).toEqual([['D', 1], ['N', 2], ['WORK', 1]]);
+    expect(afterReselect).toEqual([['D', ''], ['N', 2], ['WORK', '']]);
   });
 
   it('uses selected item coverage to include fully covered groups', () => {
@@ -48,9 +48,17 @@ describe('countShiftTypeCoefficients', () => {
   it('expands selected groups into coefficient item options', () => {
     expect(syncCoefficientPairs(['WORK'], [['D', 2]], shiftTypeData)).toEqual([
       ['D', 2],
-      ['N', 1],
-      ['WORK', 1],
+      ['N', ''],
+      ['WORK', ''],
     ]);
+  });
+
+  it('leaves missing coefficients blank and omits them from output', () => {
+    expect(validateCoefficientPairs(['D', 'N'], [], shiftTypeData)).toEqual({
+      coefficients: [],
+      errorsById: {},
+      overlapError: undefined,
+    });
   });
 
   it('updates one coefficient while preserving selected pairs', () => {
@@ -69,9 +77,17 @@ describe('countShiftTypeCoefficients', () => {
     });
   });
 
-  it('omits defaults and detects overlap among non-default coefficients', () => {
+  it('detects overlap among explicit coefficients', () => {
     expect(validateCoefficientPairs(['D', 'WORK'], [['D', 2], ['WORK', 3]], shiftTypeData)).toEqual({
       coefficients: [['D', 2], ['WORK', 3]],
+      errorsById: {},
+      overlapError: 'Shift type coefficients overlap: D, WORK include D',
+    });
+  });
+
+  it('keeps explicit coefficient one and detects overlap against containing groups', () => {
+    expect(validateCoefficientPairs(['D', 'WORK'], [['D', 1], ['WORK', 2]], shiftTypeData)).toEqual({
+      coefficients: [['D', 1], ['WORK', 2]],
       errorsById: {},
       overlapError: 'Shift type coefficients overlap: D, WORK include D',
     });
