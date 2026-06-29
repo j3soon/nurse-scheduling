@@ -155,6 +155,18 @@ OPTIMIZE_JOB_TTL_SECONDS = optimize_jobs_state.OPTIMIZE_JOB_TTL_SECONDS
 OPTIMIZE_SSE_KEEPALIVE_SECONDS = optimize_jobs_state.OPTIMIZE_SSE_KEEPALIVE_SECONDS
 OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS
 OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS = optimize_jobs_state.OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS
+# Run at most one optimization job per backend process.
+#
+# Optimization jobs are CPU-heavy and should run without hidden contention from
+# another job in the same process. Keeping per-process concurrency at 1 gives
+# users more stable and explainable runtimes: the same input is less likely to
+# vary just because another optimization job happened to start concurrently.
+#
+# Horizontal scaling should happen at the process/deployment level after job
+# state, events, and XLSX artifacts are moved out of this process-local memory.
+# Until then, multiple Uvicorn workers are not safe because status, SSE, and
+# download requests may be routed to a different process than the one that
+# created the job.
 OPTIMIZE_MAX_WORKERS = 1
 CLIENT_UUID_COOKIE_NAME = "nurse_scheduling_client_uuid"
 CLIENT_UUID_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60

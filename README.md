@@ -380,13 +380,6 @@ python tests/test_serve.py
 pytest tests/test_serve.py --log-cli-level=INFO
 ```
 
-(TODO: Production mode instructions are not yet completed.)
-
-<!--
-# or in production mode
-fastapi run serve.py --port 8000 --workers 4
--->
-
 ### Documentation
 
 The commands below are tested on Linux only.
