@@ -158,7 +158,10 @@ test('optimize and export works against a real local HTTP server instead of Play
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
     await expect(page.getByText('Current YAML Preview')).toHaveCount(0);
 
-    await page.getByPlaceholder('http://localhost:8000').fill(`http://127.0.0.1:${port}`);
+    await page.getByText('Double-click to add URL').dblclick();
+    await page.getByPlaceholder('https://backend.example.test').fill(`http://127.0.0.1:${port}`);
+    await page.keyboard.press('Enter');
+
     await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
     await page.getByRole('button', { name: 'Optimize and Download' }).click();
 

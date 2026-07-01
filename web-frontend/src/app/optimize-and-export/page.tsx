@@ -436,7 +436,7 @@ export default function OptimizeAndExportPage() {
   const [anonymizeScheduleData, setAnonymizeScheduleData] = useState(true);
   const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
   const [timeoutError, setTimeoutError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [scheduleScore, setScheduleScore] = useState<number | null>(null);
@@ -492,12 +492,12 @@ export default function OptimizeAndExportPage() {
   const isRequiredDataMissing = isDateDataMissing || isPeopleDataMissing || isShiftTypeDataMissing;
   const isJobActive = Boolean(
     currentJobId &&
-    isLoading &&
+    isOptimizing &&
     scheduleStatus &&
     !TERMINAL_JOB_STATUSES.has(scheduleStatus.toLowerCase())
   );
   const isCancelling = scheduleStatus === 'cancelling';
-  const isOptimizeDisabled = isLoading || isRequiredDataMissing || activeServerStatus !== 'online';
+  const isOptimizeDisabled = isOptimizing || isRequiredDataMissing || activeServerStatus !== 'online';
   const optimizeDisabledReason = isRequiredDataMissing
     ? 'Complete the missing schedule configuration before optimizing.'
     : activeServerStatus !== 'online'
@@ -800,7 +800,7 @@ export default function OptimizeAndExportPage() {
 
     const runEndpoint = resolvedOptimizeEndpoint;
     setLockedOptimizeEndpoint(runEndpoint);
-    setIsLoading(true);
+    setIsOptimizing(true);
     setTimeoutError(null);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -901,7 +901,7 @@ export default function OptimizeAndExportPage() {
           : 'An unexpected error occurred during optimization'
       );
     } finally {
-      setIsLoading(false);
+      setIsOptimizing(false);
       setLockedOptimizeEndpoint(null);
     }
   };
@@ -956,7 +956,15 @@ export default function OptimizeAndExportPage() {
     if (!normalizedEndpoint) {
       setServerEntries(currentServers => currentServers.map(server => (
         server.endpoint === currentEndpoint
-          ? { ...server, status: 'unchecked', error: 'Backend URL is required.', health: null, pingMs: null }
+          ? {
+              ...server,
+              status: 'unchecked',
+              health: null,
+              error: 'Backend URL is required.',
+              lastCheckedAt: null,
+              pingMs: null,
+              healthProbeId: 0,
+            }
           : server
       )));
       return;
@@ -964,7 +972,15 @@ export default function OptimizeAndExportPage() {
     if (isDuplicateServerEndpoint(normalizedEndpoint, currentEndpoint)) {
       setServerEntries(currentServers => currentServers.map(server => (
         server.endpoint === currentEndpoint
-          ? { ...server, error: 'Backend URL already exists.' }
+          ? {
+              ...server,
+              status: 'unchecked',
+              health: null,
+              error: 'Backend URL already exists.',
+              lastCheckedAt: null,
+              pingMs: null,
+              healthProbeId: 0,
+            }
           : server
       )));
       return;
@@ -1066,7 +1082,7 @@ export default function OptimizeAndExportPage() {
       <button
         type="button"
         onClick={() => checkAllServers()}
-        disabled={isLoading}
+        disabled={isOptimizing}
         className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
       >
         <FiRefreshCw className="h-4 w-4" />
@@ -1075,7 +1091,7 @@ export default function OptimizeAndExportPage() {
       <button
         type="button"
         onClick={resetServers}
-        disabled={isLoading}
+        disabled={isOptimizing}
         className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
       >
         Reset
@@ -1093,7 +1109,7 @@ export default function OptimizeAndExportPage() {
                 type="radio"
                 checked={selectedServerEndpoint === 'auto'}
                 onChange={() => selectServer('auto')}
-                disabled={isLoading}
+                disabled={isOptimizing}
                 className="sr-only"
               />
               <span className={`min-w-0 border-l-4 pl-2 ${selectedServerEndpoint === 'auto' ? 'border-blue-500' : 'border-transparent'}`}>
@@ -1113,7 +1129,7 @@ export default function OptimizeAndExportPage() {
               type="radio"
               checked={selectedServerEndpoint === server.endpoint}
               onChange={() => selectServer(server.endpoint)}
-              disabled={isLoading}
+              disabled={isOptimizing}
               className="sr-only"
               aria-label={`Select ${server.endpoint}`}
             />
@@ -1126,7 +1142,7 @@ export default function OptimizeAndExportPage() {
                   updateServerEndpoint(server.endpoint, value);
                 }}
                 onCancel={finishBackendEndpointEdit}
-                onDoubleClick={isLoading ? undefined : () => setEditingServerEndpoint(server.endpoint)}
+                onDoubleClick={isOptimizing ? undefined : () => setEditingServerEndpoint(server.endpoint)}
                 className="min-w-0 truncate text-sm font-medium text-gray-900"
                 editClassName="w-full border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
               />
@@ -1183,7 +1199,7 @@ export default function OptimizeAndExportPage() {
                 event.stopPropagation();
                 startServerCheck(row.server);
               }}
-              disabled={isLoading}
+              disabled={isOptimizing}
               aria-label={`Check Backend ${row.server.endpoint}`}
               title="Check backend"
               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
@@ -1196,7 +1212,7 @@ export default function OptimizeAndExportPage() {
                 event.stopPropagation();
                 removeServer(row.server.endpoint);
               }}
-              disabled={isLoading}
+              disabled={isOptimizing}
               aria-label={`Remove Backend ${row.server.endpoint}`}
               title="Remove backend"
               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
@@ -1218,7 +1234,7 @@ export default function OptimizeAndExportPage() {
           setAddingServer(false);
           setAddServerError(null);
         }}
-        onDoubleClick={isLoading ? undefined : () => setAddingServer(true)}
+        onDoubleClick={isOptimizing ? undefined : () => setAddingServer(true)}
         placeholder="https://backend.example.test"
         emptyText="Double-click to add URL"
         className="min-w-0 truncate text-sm font-medium"
@@ -1240,10 +1256,10 @@ export default function OptimizeAndExportPage() {
 
   const runStatus = scheduleStatus
     ? formatRunStatus(scheduleStatus, currentJob?.queuePosition)
-    : isLoading
+    : isOptimizing
       ? 'Starting'
       : 'Idle';
-  const runStatusClasses = isLoading
+  const runStatusClasses = isOptimizing
     ? 'bg-blue-50 text-blue-700 ring-blue-200'
     : errorMessage
       ? 'bg-red-50 text-red-700 ring-red-200'
@@ -1326,7 +1342,7 @@ export default function OptimizeAndExportPage() {
                 title="Backend"
                 columns={backendTableColumns}
                 data={backendRows}
-                onReorder={isLoading || isEditingBackendServer ? undefined : reorderBackendRows}
+                onReorder={isOptimizing || isEditingBackendServer ? undefined : reorderBackendRows}
                 getRowClassName={(row) => (
                   row.kind === 'auto'
                     ? `${selectedServerEndpoint === 'auto' ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : ''} non-draggable`
@@ -1334,7 +1350,7 @@ export default function OptimizeAndExportPage() {
                       ? 'bg-blue-50 ring-1 ring-inset ring-blue-200'
                       : ''
                 )}
-                onRowClick={isEditingBackendServer
+                onRowClick={isOptimizing || isEditingBackendServer
                   ? undefined
                   : (row) => {
                       if (row.kind === 'auto') {
@@ -1457,7 +1473,7 @@ export default function OptimizeAndExportPage() {
                     : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500'
                 }`}
               >
-                {isLoading ? (
+                {isOptimizing ? (
                   <>
                     <FiLoader className="h-5 w-5 animate-spin" />
                     Optimizing...
@@ -1496,7 +1512,7 @@ export default function OptimizeAndExportPage() {
             <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="text-xs font-medium uppercase text-gray-500">
-                  {isLoading ? 'Live Incumbent Score' : scheduleScore !== null ? 'Final Score' : 'Score'}
+                  {isOptimizing ? 'Live Incumbent Score' : scheduleScore !== null ? 'Final Score' : 'Score'}
                 </p>
                 <p className="mt-1 text-4xl font-bold text-gray-900">
                   {scheduleScore !== null ? formatScore(scheduleScore) : 'No incumbent yet'}
@@ -1504,7 +1520,7 @@ export default function OptimizeAndExportPage() {
                 <p className="mt-1 text-xs text-gray-500">Higher scores are better.</p>
               </div>
               <span className={`inline-flex w-fit items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold ring-1 ${runStatusClasses}`}>
-                {isLoading ? <FiLoader className="h-4 w-4 animate-spin" /> : successMessage ? <FiCheckCircle className="h-4 w-4" /> : errorMessage ? <FiAlertCircle className="h-4 w-4" /> : <FiActivity className="h-4 w-4" />}
+                {isOptimizing ? <FiLoader className="h-4 w-4 animate-spin" /> : successMessage ? <FiCheckCircle className="h-4 w-4" /> : errorMessage ? <FiAlertCircle className="h-4 w-4" /> : <FiActivity className="h-4 w-4" />}
                 {runStatus}
               </span>
             </div>
@@ -1512,13 +1528,13 @@ export default function OptimizeAndExportPage() {
             <div className="text-sm text-gray-600">
               {!currentJobId ? (
                 <p>No optimization has been started.</p>
-              ) : isLoading && scheduleStatus === 'queued' ? (
+              ) : isOptimizing && scheduleStatus === 'queued' ? (
                 <p>
                   {currentJob?.queuePosition
                     ? `Waiting in optimization queue at position ${currentJob.queuePosition}.`
                     : 'Waiting in optimization queue.'}
                 </p>
-              ) : isLoading && !incumbentResult ? (
+              ) : isOptimizing && !incumbentResult ? (
                 <p>Waiting for first feasible solution...</p>
               ) : incumbentResult ? (
                 <p>
@@ -1601,7 +1617,7 @@ export default function OptimizeAndExportPage() {
         </section>
       </div>
 
-      <details open={isLoading || Boolean(errorMessage) || !successMessage} className="rounded-lg border border-gray-200 bg-white">
+      <details open={isOptimizing || Boolean(errorMessage) || !successMessage} className="rounded-lg border border-gray-200 bg-white">
         <summary className="flex cursor-pointer list-none items-center gap-2 border-b border-gray-200 px-5 py-4">
           <FiActivity className="h-4 w-4 text-gray-500" />
           <h2 className="text-base font-semibold text-gray-900">Optimization Events</h2>
@@ -1610,7 +1626,7 @@ export default function OptimizeAndExportPage() {
         <div ref={eventLogRef} data-testid="optimization-events-log" className="max-h-[28rem] overflow-auto bg-gray-50">
           {sseEvents.length === 0 ? (
             <div className="px-5 py-6 text-sm text-gray-500">
-              <p>{isLoading ? 'Waiting for optimization events...' : 'No optimization events yet.'}</p>
+              <p>{isOptimizing ? 'Waiting for optimization events...' : 'No optimization events yet.'}</p>
             </div>
           ) : (
             <ul className="space-y-0 p-5">
