@@ -17,8 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { compareVersionsDescending, CURRENT_APP_VERSION } from '@/utils/version';
-
 export interface ServerHealthResponse {
   status: string;
   version: string;
@@ -48,19 +46,5 @@ export function selectOfflineFallbackBackendApiUrl(candidates: string[]): string
 }
 
 export function selectPreferredServer(results: ServerHealthCheckResult[]): ServerHealthCheckResult | undefined {
-  return [...results].sort((a, b) => {
-    const aVersionMatches = a.health.appVersion === CURRENT_APP_VERSION;
-    const bVersionMatches = b.health.appVersion === CURRENT_APP_VERSION;
-
-    if (aVersionMatches !== bVersionMatches) {
-      return aVersionMatches ? -1 : 1;
-    }
-
-    const versionComparison = compareVersionsDescending(a.health.appVersion, b.health.appVersion);
-    if (versionComparison !== null && versionComparison !== 0) {
-      return versionComparison;
-    }
-
-    return a.index - b.index;
-  })[0];
+  return [...results].sort((a, b) => a.index - b.index)[0];
 }

@@ -34,10 +34,12 @@ interface DataTableProps<T> {
   data: T[];
   onReorder?: (newData: T[]) => void;
   getRowClassName?: (item: T, index: number) => string;
+  onRowClick?: (item: T, index: number) => void;
   headerAction?: ReactNode;
+  footer?: ReactNode;
 }
 
-export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, headerAction }: DataTableProps<T>) {
+export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, onRowClick, headerAction, footer }: DataTableProps<T>) {
   const draggedRowIndexRef = useRef<number | null>(null);
   const [dragOverState, setDragOverState] = useState<{ rowIndex: number; insertAfter: boolean } | null>(null);
 
@@ -133,7 +135,8 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                 onDragOver={isDraggable ? (e) => handleDragOver(e, rowIndex) : undefined}
                 onDragLeave={isDraggable ? handleDragLeave : undefined}
                 onDrop={isDraggable ? (e) => handleDrop(e, rowIndex) : undefined}
-                className={`${isDraggable ? 'cursor-move hover:bg-gray-50' : ''} ${
+                onClick={onRowClick ? () => onRowClick(item, rowIndex) : undefined}
+                className={`${onRowClick ? 'cursor-pointer' : isDraggable ? 'cursor-move' : ''} ${isDraggable || onRowClick ? 'hover:bg-gray-50' : ''} ${
                   dragOverState?.rowIndex === rowIndex
                     ? (dragOverState.insertAfter ? 'border-b-2 border-b-blue-500' : 'border-t-2 border-t-blue-500')
                     : ''
@@ -160,6 +163,7 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
             })}
           </tbody>
       </table>
+      {footer}
     </div>
   );
 }
