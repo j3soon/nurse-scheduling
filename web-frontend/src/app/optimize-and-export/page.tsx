@@ -272,6 +272,7 @@ export default function OptimizeAndExportPage() {
   const [apiEndpoint, setApiEndpoint] = useState(INITIAL_BACKEND_API_URL);
   const [prettifyArg, setPrettifyArg] = useState(true);
   const [anonymizeScheduleData, setAnonymizeScheduleData] = useState(true);
+  const [solverArg, setSolverArg] = useState('ortools/cp-sat');
   const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
   const [timeoutError, setTimeoutError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -655,6 +656,7 @@ export default function OptimizeAndExportPage() {
       }
 
       formData.append('timeout', String(timeoutArg));
+      formData.append('solver', solverArg);
 
       const createResponse = await fetch(`${normalizeEndpoint(apiEndpoint)}/optimize`, {
         method: 'POST',
@@ -880,6 +882,21 @@ export default function OptimizeAndExportPage() {
                   <span className="mt-1 block text-xs text-gray-500">Anonymize people IDs and remove descriptions before sending to the backend.</span>
                 </span>
               </label>
+
+              <div>
+                <label htmlFor="solver-select" className="block text-sm font-medium text-gray-700 mb-2">
+                  Solver
+                </label>
+                <select
+                  id="solver-select"
+                  value={solverArg}
+                  onChange={(e) => setSolverArg(e.target.value)}
+                  className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                >
+                  <option value="ortools/cp-sat">OR-Tools / CP-SAT (CPU)</option>
+                  <option value="pulp/cuopt">PuLP / cuOpt (GPU)</option>
+                </select>
+              </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">

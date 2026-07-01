@@ -624,6 +624,14 @@ describe('OptimizeAndExportPage error handling', () => {
       });
 
     render(<OptimizeAndExportPage />);
+    const solverSelect = screen.getByRole('combobox', { name: /solver/i });
+    const solverOptions = Array.from((solverSelect as HTMLSelectElement).options);
+    expect(solverSelect).toHaveValue('ortools/cp-sat');
+    expect(solverOptions.map(option => option.text)).toContain('OR-Tools / CP-SAT (CPU)');
+    expect(solverOptions.map(option => option.text)).toContain('PuLP / cuOpt (GPU)');
+    expect(solverOptions.map(option => option.value)).not.toContain('pulp/cbc');
+
+    await user.selectOptions(solverSelect, 'pulp/cuopt');
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
@@ -632,6 +640,11 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('OPTIMAL')).toBeInTheDocument();
 
     expect(fetch).toHaveBeenCalledWith('http://localhost:8000/optimize', expect.objectContaining({ method: 'POST' }));
+    const optimizePostCall = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([url, options]) => url === 'http://localhost:8000/optimize' && options?.method === 'POST'
+    );
+    expect(optimizePostCall?.[1].body).toBeInstanceOf(FormData);
+    expect((optimizePostCall?.[1].body as FormData).get('solver')).toBe('pulp/cuopt');
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/optimize/opt_test',
       expect.objectContaining({ method: 'GET' })
