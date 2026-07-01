@@ -1,5 +1,6 @@
 # Ref: https://docs.nvidia.com/cuopt/user-guide/latest/cuopt-server/quick-start.html#container-from-docker-hub
-FROM nvidia/cuopt:26.4.0-cuda13.0-py3.13
+# Ref: https://hub.docker.com/r/nvidia/cuopt/tags
+FROM nvidia/cuopt:26.6.0-cuda13.2-py3.14
 
 WORKDIR /app
 
