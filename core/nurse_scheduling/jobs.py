@@ -22,6 +22,7 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -479,6 +480,119 @@ def _optimize_job_response(job: OptimizeJob) -> dict[str, Any]:
             "xlsx": f"/optimize/{job.id}/xlsx",
         },
     }
+
+
+class InMemoryOptimizeJobStore:
+    """Process-local optimization job store.
+
+    This interface keeps FastAPI routes decoupled from the current module-level
+    dictionaries and locks. A later Redis-backed implementation should expose
+    the same operations while moving state, events, and artifacts out of process
+    memory.
+    """
+
+    def cleanup_expired_jobs(self, now: datetime | None = None) -> list[str]:
+        return _cleanup_expired_optimize_jobs(now)
+
+    def create_job(
+        self,
+        input_name: str,
+        client_uuid: str,
+        solver: str,
+        prettify: bool | None,
+        timeout: int | None,
+    ) -> OptimizeJob:
+        return _create_optimize_job(input_name, client_uuid, solver, prettify, timeout)
+
+    def get_job(self, job_id: str) -> OptimizeJob:
+        return _get_optimize_job(job_id)
+
+    def update_job(self, job_id: str, **updates) -> OptimizeJob:
+        return _update_optimize_job(job_id, **updates)
+
+    def finish_job(self, job_id: str, event: str, **updates) -> OptimizeJob:
+        return _finish_optimize_job(job_id, event, **updates)
+
+    def finish_job_if_present(self, job_id: str, event: str, **updates) -> OptimizeJob | None:
+        return _finish_optimize_job_if_present(job_id, event, **updates)
+
+    def refresh_queue_positions(self) -> None:
+        _refresh_queue_positions()
+
+    def publish_event(self, job: OptimizeJob, event: str, data: dict[str, Any]) -> None:
+        _publish_job_event(job, event, data)
+
+    def status_event_data(self, job: OptimizeJob) -> dict[str, Any]:
+        return _job_status_event_data(job)
+
+    def job_response(self, job: OptimizeJob) -> dict[str, Any]:
+        return _optimize_job_response(job)
+
+    def stream_events(self, job_id: str, keepalive_seconds: int) -> Iterator[dict[str, Any] | None]:
+        job = self.get_job(job_id)
+        event_index = 0
+        while True:
+            heartbeat = False
+            with job.condition:
+                while event_index >= len(job.events) and not _is_terminal_job_status(job.status):
+                    job.condition.wait(timeout=keepalive_seconds)
+                    if event_index >= len(job.events):
+                        heartbeat = True
+                        break
+
+                if heartbeat:
+                    event = None
+                elif event_index < len(job.events):
+                    event = job.events[event_index]
+                    event_index += 1
+                elif _is_terminal_job_status(job.status):
+                    terminal_event = "error" if job.status == OptimizeJobStatus.FAILED else "complete"
+                    event = {"event": terminal_event, "data": self.job_response(job)}
+                    event_index += 1
+                else:
+                    event = None
+
+            yield event
+            if event is not None and event["event"] in {"complete", "error"}:
+                return
+
+    def request_stop(self, job_id: str, *, finish_now: bool) -> OptimizeJob:
+        return _request_optimize_job_stop(job_id, finish_now=finish_now)
+
+    def record_client_heartbeat(self, job_id: str, now: datetime | None = None) -> OptimizeJob:
+        return _record_client_heartbeat(job_id, now)
+
+    def cancel_jobs_with_expired_heartbeats(self, now: datetime | None = None) -> list[str]:
+        return _cancel_jobs_with_expired_heartbeats(now)
+
+    def is_job_stop_requested(self, job_id: str) -> bool:
+        return _is_job_stop_requested(job_id)
+
+    def delete_job(self, job_id: str) -> OptimizeJob:
+        self.cleanup_expired_jobs()
+        with _optimize_jobs_lock:
+            job = _optimize_jobs.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="Optimization job not found")
+            if not _is_terminal_job_status(job.status):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Cannot delete a running optimization job.",
+                        "status": job.status.value,
+                    },
+                )
+            del _optimize_jobs[job_id]
+        server_logger.info(
+            "[server:job] deleted job_id=%s status=%s client_uuid=%s",
+            job.id,
+            job.status.value,
+            job.client_uuid,
+        )
+        return job
+
+
+optimize_job_store = InMemoryOptimizeJobStore()
 
 
 if OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS > OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS:

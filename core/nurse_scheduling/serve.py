@@ -40,23 +40,8 @@ from . import jobs as optimize_jobs_state
 from .jobs import (
     OptimizeJob,
     OptimizeJobStatus,
-    _cleanup_expired_optimize_jobs,
-    _create_optimize_job,
-    _finish_optimize_job,
-    _finish_optimize_job_if_present,
-    _get_optimize_job,
-    _is_job_stop_requested,
     _is_terminal_job_status,
-    _job_status_event_data,
-    _optimize_job_response,
-    _optimize_jobs,
-    _optimize_jobs_lock,
-    _publish_job_event,
-    _record_client_heartbeat,
-    _refresh_queue_positions,
-    _request_optimize_job_stop,
     _solver_supports_job_stop,
-    _update_optimize_job,
     utc_now,
 )
 from .solver_interface import (
@@ -175,8 +160,24 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
     "Older YAML may not work after breaking changes, though we try to preserve compatibility."
 )
 _optimize_executor = ThreadPoolExecutor(max_workers=OPTIMIZE_MAX_WORKERS)
+optimize_job_store = optimize_jobs_state.optimize_job_store
 uuid = optimize_jobs_state.uuid
-_cancel_jobs_with_expired_heartbeats = optimize_jobs_state._cancel_jobs_with_expired_heartbeats
+_optimize_jobs = optimize_jobs_state._optimize_jobs
+_optimize_jobs_lock = optimize_jobs_state._optimize_jobs_lock
+_cancel_jobs_with_expired_heartbeats = optimize_job_store.cancel_jobs_with_expired_heartbeats
+_cleanup_expired_optimize_jobs = optimize_job_store.cleanup_expired_jobs
+_create_optimize_job = optimize_job_store.create_job
+_finish_optimize_job = optimize_job_store.finish_job
+_finish_optimize_job_if_present = optimize_job_store.finish_job_if_present
+_get_optimize_job = optimize_job_store.get_job
+_is_job_stop_requested = optimize_job_store.is_job_stop_requested
+_job_status_event_data = optimize_job_store.status_event_data
+_optimize_job_response = optimize_job_store.job_response
+_publish_job_event = optimize_job_store.publish_event
+_record_client_heartbeat = optimize_job_store.record_client_heartbeat
+_refresh_queue_positions = optimize_job_store.refresh_queue_positions
+_request_optimize_job_stop = optimize_job_store.request_stop
+_update_optimize_job = optimize_job_store.update_job
 
 
 def _is_form_parser_size_error(exc: StarletteHTTPException) -> bool:
@@ -264,23 +265,23 @@ def _log_job_completed(job: OptimizeJob) -> None:
 
 
 def _run_optimize_job(job_id: str, content: bytes) -> None:
-    current_job = _get_optimize_job(job_id)
+    current_job = optimize_job_store.get_job(job_id)
     if current_job.cancel_requested:
         if _is_terminal_job_status(current_job.status):
             return
-        job = _finish_optimize_job(
+        job = optimize_job_store.finish_job(
             job_id,
             "complete",
             status=OptimizeJobStatus.CANCELLED,
             error=_job_cancellation_error(current_job),
             finished_at=utc_now(),
         )
-        _refresh_queue_positions()
+        optimize_job_store.refresh_queue_positions()
         _log_job_completed(job)
         return
 
-    job = _update_optimize_job(job_id, status=OptimizeJobStatus.RUNNING, started_at=utc_now())
-    _refresh_queue_positions()
+    job = optimize_job_store.update_job(job_id, status=OptimizeJobStatus.RUNNING, started_at=utc_now())
+    optimize_job_store.refresh_queue_positions()
     queue_wait_seconds = (job.started_at - job.created_at).total_seconds()
     server_logger.info(
         "[server:job] started job_id=%s solver=%s queue_wait_seconds=%.3f client_uuid=%s",
@@ -293,18 +294,20 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
     try:
 
         def publish_progress(payload: ScheduleProgress) -> None:
-            current_job = _get_optimize_job(job_id)
+            current_job = optimize_job_store.get_job(job_id)
             if isinstance(payload, SchedulePhaseProgress):
-                _publish_job_event(current_job, "phase", serialize_schedule_phase_progress(payload))
+                optimize_job_store.publish_event(current_job, "phase", serialize_schedule_phase_progress(payload))
                 return
-            _update_optimize_job(job_id, score=payload.currentBestScore)
-            _publish_job_event(current_job, "progress", serialize_solver_progress(payload, include_export_summary=True))
+            optimize_job_store.update_job(job_id, score=payload.currentBestScore)
+            optimize_job_store.publish_event(
+                current_job, "progress", serialize_solver_progress(payload, include_export_summary=True)
+            )
 
         should_stop = None
         if _solver_supports_job_stop(job.solver):
 
             def should_stop() -> bool:
-                return _is_job_stop_requested(job_id)
+                return optimize_job_store.is_job_stop_requested(job_id)
 
         df, _solution, score, solver_status, cell_export_info = scheduler.schedule(
             file_content=content,
@@ -315,28 +318,28 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             should_stop=should_stop,
         )
 
-        current_job = _get_optimize_job(job_id)
+        current_job = optimize_job_store.get_job(job_id)
         if current_job.cancel_requested:
-            job = _finish_optimize_job(
+            job = optimize_job_store.finish_job(
                 job_id,
                 "complete",
                 status=OptimizeJobStatus.CANCELLED,
                 error=_job_cancellation_error(current_job),
                 finished_at=utc_now(),
             )
-            _refresh_queue_positions()
+            optimize_job_store.refresh_queue_positions()
             _log_job_completed(job)
             return
 
         if df is None:
-            job = _finish_optimize_job(
+            job = optimize_job_store.finish_job(
                 job_id,
                 "complete",
                 status=OptimizeJobStatus.INFEASIBLE,
                 solver_status=solver_status,
                 finished_at=utc_now(),
             )
-            _refresh_queue_positions()
+            optimize_job_store.refresh_queue_positions()
             _log_job_completed(job)
             return
 
@@ -344,7 +347,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         exporter.export_to_excel(df, output_buffer, cell_export_info)
         output_filename = f"{job.input_name.rsplit('.', 1)[0]}.xlsx"
         final_status = _final_status_from_solver_status(str(solver_status))
-        job = _finish_optimize_job(
+        job = optimize_job_store.finish_job(
             job_id,
             "complete",
             status=final_status,
@@ -354,11 +357,11 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
             xlsx_bytes=output_buffer.getvalue(),
             xlsx_filename=output_filename,
         )
-        _refresh_queue_positions()
+        optimize_job_store.refresh_queue_positions()
         _log_job_completed(job)
     except Exception as e:
         capture_optimize_exception(job, content, e)
-        job = _finish_optimize_job_if_present(
+        job = optimize_job_store.finish_job_if_present(
             job_id,
             "error",
             status=OptimizeJobStatus.FAILED,
@@ -373,7 +376,7 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
                 current_job.client_uuid,
             )
             return
-        _refresh_queue_positions()
+        optimize_job_store.refresh_queue_positions()
         duration_seconds = (job.finished_at - (job.started_at or job.created_at)).total_seconds()
         server_logger.error(
             "[server:job] failed job_id=%s error=%s duration_seconds=%.3f client_uuid=%s",
@@ -389,35 +392,12 @@ def _format_sse_event(event: str, data: dict[str, Any]) -> str:
 
 
 def _stream_optimize_job_events(job: OptimizeJob):
-    event_index = 0
-    while True:
-        heartbeat = False
-        with job.condition:
-            while event_index >= len(job.events) and not _is_terminal_job_status(job.status):
-                job.condition.wait(timeout=OPTIMIZE_SSE_KEEPALIVE_SECONDS)
-                if event_index >= len(job.events):
-                    heartbeat = True
-                    break
-
-            if heartbeat:
-                event = None
-            elif event_index < len(job.events):
-                event = job.events[event_index]
-                event_index += 1
-            elif _is_terminal_job_status(job.status):
-                terminal_event = "error" if job.status == OptimizeJobStatus.FAILED else "complete"
-                event = {"event": terminal_event, "data": _optimize_job_response(job)}
-                event_index += 1
-            else:
-                event = None
-
+    for event in optimize_job_store.stream_events(job.id, OPTIMIZE_SSE_KEEPALIVE_SECONDS):
         if event is None:
             yield ": keepalive\n\n"
             continue
 
         yield _format_sse_event(event["event"], event["data"])
-        if event["event"] in {"complete", "error"}:
-            return
 
 
 # Regex to match allowed origins:
@@ -487,7 +467,7 @@ async def create_optimize_job(
             secure=request.url.scheme == "https",
             path="/",
         )
-    job = _create_optimize_job(
+    job = optimize_job_store.create_job(
         input_name=input_name,
         client_uuid=client_uuid,
         solver=solver,
@@ -495,18 +475,18 @@ async def create_optimize_job(
         timeout=timeout,
     )
     _optimize_executor.submit(_run_optimize_job, job.id, content)
-    return _optimize_job_response(job)
+    return optimize_job_store.job_response(job)
 
 
 @app.get("/optimize/{job_id}")
 async def get_optimize_job(job_id: str):
-    job = _get_optimize_job(job_id)
-    return _optimize_job_response(job)
+    job = optimize_job_store.get_job(job_id)
+    return optimize_job_store.job_response(job)
 
 
 @app.get("/optimize/{job_id}/events")
 async def stream_optimize_job_events(job_id: str):
-    job = _get_optimize_job(job_id)
+    job = optimize_job_store.get_job(job_id)
     return StreamingResponse(
         _stream_optimize_job_events(job),
         media_type="text/event-stream",
@@ -519,28 +499,28 @@ async def stream_optimize_job_events(job_id: str):
 
 @app.post("/optimize/{job_id}/heartbeat")
 async def heartbeat_optimize_job(job_id: str):
-    job = _record_client_heartbeat(job_id)
+    job = optimize_job_store.record_client_heartbeat(job_id)
     return {"jobId": job.id, "status": job.status.value}
 
 
 @app.post("/optimize/{job_id}/cancel")
 async def cancel_optimize_job(job_id: str):
-    job = _request_optimize_job_stop(job_id, finish_now=False)
-    return _optimize_job_response(job)
+    job = optimize_job_store.request_stop(job_id, finish_now=False)
+    return optimize_job_store.job_response(job)
 
 
 @app.post("/optimize/{job_id}/finish-now")
 async def finish_optimize_job_now(job_id: str):
-    job = _request_optimize_job_stop(job_id, finish_now=True)
-    event_data = _job_status_event_data(job)
+    job = optimize_job_store.request_stop(job_id, finish_now=True)
+    event_data = optimize_job_store.status_event_data(job)
     event_data["finishNowRequested"] = True
-    _publish_job_event(job, "status", event_data)
-    return _optimize_job_response(job)
+    optimize_job_store.publish_event(job, "status", event_data)
+    return optimize_job_store.job_response(job)
 
 
 @app.get("/optimize/{job_id}/xlsx")
 async def download_optimize_job_xlsx(job_id: str):
-    job = _get_optimize_job(job_id)
+    job = optimize_job_store.get_job(job_id)
     if job.xlsx_bytes is None:
         if _is_terminal_job_status(job.status):
             raise HTTPException(
@@ -571,23 +551,7 @@ async def download_optimize_job_xlsx(job_id: str):
 
 @app.delete("/optimize/{job_id}")
 async def delete_optimize_job(job_id: str):
-    _cleanup_expired_optimize_jobs()
-    with _optimize_jobs_lock:
-        job = _optimize_jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Optimization job not found")
-        if not _is_terminal_job_status(job.status):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "Cannot delete a running optimization job.",
-                    "status": job.status.value,
-                },
-            )
-        del _optimize_jobs[job_id]
-    server_logger.info(
-        "[server:job] deleted job_id=%s status=%s client_uuid=%s", job.id, job.status.value, job.client_uuid
-    )
+    optimize_job_store.delete_job(job_id)
     return {"deleted": True, "jobId": job_id}
 
 
