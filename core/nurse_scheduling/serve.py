@@ -161,23 +161,6 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
 )
 _optimize_executor = ThreadPoolExecutor(max_workers=OPTIMIZE_MAX_WORKERS)
 optimize_job_store = optimize_jobs_state.optimize_job_store
-uuid = optimize_jobs_state.uuid
-_optimize_jobs = optimize_jobs_state._optimize_jobs
-_optimize_jobs_lock = optimize_jobs_state._optimize_jobs_lock
-_cancel_jobs_with_expired_heartbeats = optimize_job_store.cancel_jobs_with_expired_heartbeats
-_cleanup_expired_optimize_jobs = optimize_job_store.cleanup_expired_jobs
-_create_optimize_job = optimize_job_store.create_job
-_finish_optimize_job = optimize_job_store.finish_job
-_finish_optimize_job_if_present = optimize_job_store.finish_job_if_present
-_get_optimize_job = optimize_job_store.get_job
-_is_job_stop_requested = optimize_job_store.is_job_stop_requested
-_job_status_event_data = optimize_job_store.status_event_data
-_optimize_job_response = optimize_job_store.job_response
-_publish_job_event = optimize_job_store.publish_event
-_record_client_heartbeat = optimize_job_store.record_client_heartbeat
-_refresh_queue_positions = optimize_job_store.refresh_queue_positions
-_request_optimize_job_stop = optimize_job_store.request_stop
-_update_optimize_job = optimize_job_store.update_job
 
 
 def _is_form_parser_size_error(exc: StarletteHTTPException) -> bool:

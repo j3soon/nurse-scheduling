@@ -109,11 +109,11 @@ class TestOptimizeJobs:
 
     @pytest.fixture(autouse=True)
     def clear_optimize_jobs(self):
-        with serve._optimize_jobs_lock:
-            serve._optimize_jobs.clear()
+        with serve.optimize_jobs_state._optimize_jobs_lock:
+            serve.optimize_jobs_state._optimize_jobs.clear()
         yield
-        with serve._optimize_jobs_lock:
-            serve._optimize_jobs.clear()
+        with serve.optimize_jobs_state._optimize_jobs_lock:
+            serve.optimize_jobs_state._optimize_jobs.clear()
 
     @pytest.fixture
     def fake_successful_scheduler(self, monkeypatch):
@@ -201,8 +201,8 @@ class TestOptimizeJobs:
 
         assert second.status_code == 202
         assert serve.CLIENT_UUID_COOKIE_NAME not in second.headers.get("set-cookie", "")
-        first_job = serve._get_optimize_job(first.json()["jobId"])
-        second_job = serve._get_optimize_job(second.json()["jobId"])
+        first_job = serve.optimize_job_store.get_job(first.json()["jobId"])
+        second_job = serve.optimize_job_store.get_job(second.json()["jobId"])
         assert first_job.client_uuid == client_uuid
         assert second_job.client_uuid == client_uuid
 
@@ -217,7 +217,7 @@ class TestOptimizeJobs:
         client_uuid = response.cookies[serve.CLIENT_UUID_COOKIE_NAME]
         uuid.UUID(client_uuid)
         assert client_uuid != "not-a-uuid"
-        job = serve._get_optimize_job(response.json()["jobId"])
+        job = serve.optimize_job_store.get_job(response.json()["jobId"])
         assert job.client_uuid == client_uuid
 
     def test_optimize_job_normalizes_client_uuid_cookie(self, fake_successful_scheduler):
@@ -229,7 +229,7 @@ class TestOptimizeJobs:
 
         assert response.status_code == 202
         assert serve.CLIENT_UUID_COOKIE_NAME not in response.headers.get("set-cookie", "")
-        job = serve._get_optimize_job(response.json()["jobId"])
+        job = serve.optimize_job_store.get_job(response.json()["jobId"])
         assert job.client_uuid == client_uuid.hex
 
     def test_optimize_job_streams_lifecycle_events(self, fake_successful_scheduler):
@@ -450,14 +450,14 @@ class TestOptimizeJobs:
         assert completed["xlsxReady"] is True
 
     def test_optimize_job_control_rejects_solver_without_stop_support(self):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="pulp.yaml",
             client_uuid="test-client",
             solver="pulp/cbc",
             prettify=True,
             timeout=60,
         )
-        serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
+        serve.optimize_job_store.update_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
 
         cancel_response = client.post(f"/optimize/{job.id}/cancel")
         finish_response = client.post(f"/optimize/{job.id}/finish-now")
@@ -484,14 +484,14 @@ class TestOptimizeJobs:
         assert '"jobId": "' + job_id + '"' in second_body
 
     def test_optimize_job_failed_fallback_streams_error_event(self):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="failed.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        serve._update_optimize_job(
+        serve.optimize_job_store.update_job(
             job.id,
             status=serve.OptimizeJobStatus.FAILED,
             error="solver failed",
@@ -506,14 +506,14 @@ class TestOptimizeJobs:
         assert '"status": "failed"' in body
 
     def test_optimize_job_terminal_update_and_event_are_atomic(self, monkeypatch):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="atomic.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
+        serve.optimize_job_store.update_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
         job.events.clear()
         finish_locked = threading.Event()
         original_finish_locked = serve.optimize_jobs_state._finish_optimize_job_locked
@@ -526,7 +526,7 @@ class TestOptimizeJobs:
 
         with job.condition:
             finish_thread = threading.Thread(
-                target=serve._finish_optimize_job,
+                target=serve.optimize_job_store.finish_job,
                 args=(job.id, "complete"),
                 kwargs={
                     "status": serve.OptimizeJobStatus.OPTIMAL,
@@ -565,14 +565,14 @@ class TestOptimizeJobs:
         )
 
     def test_optimize_job_expiration_removes_finished_jobs(self, caplog):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="expired.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=False,
             timeout=1,
         )
-        serve._update_optimize_job(
+        serve.optimize_job_store.update_job(
             job.id,
             status=serve.OptimizeJobStatus.OPTIMAL,
             finished_at=datetime.now(UTC) - timedelta(seconds=serve.OPTIMIZE_JOB_TTL_SECONDS + 1),
@@ -593,7 +593,7 @@ class TestOptimizeJobs:
                 types.SimpleNamespace(hex="fresh"),
             ]
         )
-        monkeypatch.setattr(serve.uuid, "uuid4", lambda: next(generated_ids))
+        monkeypatch.setattr(serve.optimize_jobs_state.uuid, "uuid4", lambda: next(generated_ids))
         existing_job = serve.OptimizeJob(
             id="opt_collision",
             status=serve.OptimizeJobStatus.OPTIMAL,
@@ -605,10 +605,10 @@ class TestOptimizeJobs:
             timeout=None,
             finished_at=datetime.now(UTC),
         )
-        with serve._optimize_jobs_lock:
-            serve._optimize_jobs[existing_job.id] = existing_job
+        with serve.optimize_jobs_state._optimize_jobs_lock:
+            serve.optimize_jobs_state._optimize_jobs[existing_job.id] = existing_job
 
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="new.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
@@ -617,21 +617,21 @@ class TestOptimizeJobs:
         )
 
         assert job.id == "opt_fresh"
-        assert "opt_collision" in serve._optimize_jobs
-        assert serve._optimize_jobs["opt_fresh"] is job
+        assert "opt_collision" in serve.optimize_jobs_state._optimize_jobs
+        assert serve.optimize_jobs_state._optimize_jobs["opt_fresh"] is job
 
     def test_optimize_executor_runs_one_job_at_a_time(self):
         assert serve.OPTIMIZE_MAX_WORKERS == 1
 
     def test_optimize_jobs_report_and_publish_updated_queue_positions(self):
-        first = serve._create_optimize_job(
+        first = serve.optimize_job_store.create_job(
             input_name="first.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        second = serve._create_optimize_job(
+        second = serve.optimize_job_store.create_job(
             input_name="second.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
@@ -639,28 +639,28 @@ class TestOptimizeJobs:
             timeout=60,
         )
 
-        assert serve._optimize_job_response(first)["queuePosition"] == 1
-        assert serve._optimize_job_response(second)["queuePosition"] == 2
+        assert serve.optimize_job_store.job_response(first)["queuePosition"] == 1
+        assert serve.optimize_job_store.job_response(second)["queuePosition"] == 2
 
-        serve._update_optimize_job(first.id, status=serve.OptimizeJobStatus.RUNNING)
-        serve._refresh_queue_positions()
+        serve.optimize_job_store.update_job(first.id, status=serve.OptimizeJobStatus.RUNNING)
+        serve.optimize_job_store.refresh_queue_positions()
 
-        assert serve._optimize_job_response(first)["queuePosition"] is None
-        assert serve._optimize_job_response(second)["queuePosition"] == 1
+        assert serve.optimize_job_store.job_response(first)["queuePosition"] is None
+        assert serve.optimize_job_store.job_response(second)["queuePosition"] == 1
         assert second.events[-1] == {
             "event": "status",
             "data": {"status": "queued", "queuePosition": 1},
         }
 
     def test_optimize_job_cancels_queued_job_immediately_for_any_solver(self, caplog):
-        first = serve._create_optimize_job(
+        first = serve.optimize_job_store.create_job(
             input_name="first.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        second = serve._create_optimize_job(
+        second = serve.optimize_job_store.create_job(
             input_name="second.yaml",
             client_uuid="test-client",
             solver="pulp/cbc",
@@ -673,7 +673,7 @@ class TestOptimizeJobs:
         assert response.status_code == 200
         assert response.json()["status"] == "cancelled"
         assert response.json()["queuePosition"] is None
-        assert serve._optimize_job_response(second)["queuePosition"] == 1
+        assert serve.optimize_job_store.job_response(second)["queuePosition"] == 1
         assert any(
             f"[server:job] cancel-requested job_id={first.id} status=cancelled client_uuid=" in message
             for message in caplog.messages
@@ -683,7 +683,7 @@ class TestOptimizeJobs:
         )
 
     def test_optimize_job_heartbeat_updates_client_liveness(self):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="heartbeat.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
@@ -701,14 +701,16 @@ class TestOptimizeJobs:
         assert job.last_client_heartbeat_at >= initial_heartbeat
 
     def test_optimize_job_heartbeat_rejects_terminal_job(self):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="finished.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
             prettify=True,
             timeout=60,
         )
-        serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.CANCELLED, finished_at=datetime.now(UTC))
+        serve.optimize_job_store.update_job(
+            job.id, status=serve.OptimizeJobStatus.CANCELLED, finished_at=datetime.now(UTC)
+        )
 
         response = client.post(f"/optimize/{job.id}/heartbeat")
 
@@ -716,7 +718,7 @@ class TestOptimizeJobs:
         assert response.json()["detail"]["status"] == "cancelled"
 
     def test_optimize_job_update_rejects_unknown_fields(self):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="invalid-update.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
@@ -725,12 +727,12 @@ class TestOptimizeJobs:
         )
 
         with pytest.raises(ValueError, match="Unknown optimization job fields: statuz"):
-            serve._update_optimize_job(job.id, statuz=serve.OptimizeJobStatus.RUNNING)
+            serve.optimize_job_store.update_job(job.id, statuz=serve.OptimizeJobStatus.RUNNING)
 
         assert not hasattr(job, "statuz")
 
     def test_job_is_cancelled_after_client_heartbeat_timeout(self, caplog):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="expired-heartbeat.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
@@ -740,12 +742,12 @@ class TestOptimizeJobs:
         last_heartbeat_at = job.last_client_heartbeat_at
         assert last_heartbeat_at is not None
 
-        expired = serve._cancel_jobs_with_expired_heartbeats(
+        expired = serve.optimize_job_store.cancel_jobs_with_expired_heartbeats(
             last_heartbeat_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS)
         )
 
         assert expired == [job.id]
-        response = serve._optimize_job_response(job)
+        response = serve.optimize_job_store.job_response(job)
         assert response["status"] == "cancelled"
         assert response["clientHeartbeatExpired"] is True
         assert response["error"] == "Optimization cancelled because the client heartbeat expired."
@@ -756,7 +758,7 @@ class TestOptimizeJobs:
         )
 
     def test_recent_client_heartbeat_prevents_job_cancellation(self):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="alive.yaml",
             client_uuid="test-client",
             solver="ortools/cp-sat",
@@ -764,9 +766,9 @@ class TestOptimizeJobs:
             timeout=60,
         )
         heartbeat_at = job.created_at + timedelta(seconds=30)
-        serve._record_client_heartbeat(job.id, heartbeat_at)
+        serve.optimize_job_store.record_client_heartbeat(job.id, heartbeat_at)
 
-        expired = serve._cancel_jobs_with_expired_heartbeats(
+        expired = serve.optimize_job_store.cancel_jobs_with_expired_heartbeats(
             job.created_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS)
         )
 
@@ -775,19 +777,19 @@ class TestOptimizeJobs:
         assert job.client_heartbeat_expired is False
 
     def test_expired_heartbeat_requests_running_job_stop_even_for_non_interruptible_solver(self):
-        job = serve._create_optimize_job(
+        job = serve.optimize_job_store.create_job(
             input_name="running.yaml",
             client_uuid="test-client",
             solver="pulp/cbc",
             prettify=True,
             timeout=60,
         )
-        serve._update_optimize_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
-        serve._refresh_queue_positions()
+        serve.optimize_job_store.update_job(job.id, status=serve.OptimizeJobStatus.RUNNING)
+        serve.optimize_job_store.refresh_queue_positions()
         last_heartbeat_at = job.last_client_heartbeat_at
         assert last_heartbeat_at is not None
 
-        serve._cancel_jobs_with_expired_heartbeats(
+        serve.optimize_job_store.cancel_jobs_with_expired_heartbeats(
             last_heartbeat_at + timedelta(seconds=serve.OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS)
         )
 
@@ -797,7 +799,7 @@ class TestOptimizeJobs:
 
     def test_optimize_job_rejects_when_pending_queue_is_full(self, caplog):
         pending_jobs = [
-            serve._create_optimize_job(
+            serve.optimize_job_store.create_job(
                 input_name=f"pending-{index}.yaml",
                 client_uuid="test-client",
                 solver="ortools/cp-sat",
@@ -811,7 +813,7 @@ class TestOptimizeJobs:
 
         assert response.status_code == 429
         assert "queued or running" in response.json()["detail"]
-        assert all(serve._get_optimize_job(job.id) is job for job in pending_jobs)
+        assert all(serve.optimize_job_store.get_job(job.id) is job for job in pending_jobs)
         assert (
             f"[server:queue] rejected reason=pending_limit pending_jobs={serve.OPTIMIZE_MAX_PENDING_JOBS} "
             f"limit={serve.OPTIMIZE_MAX_PENDING_JOBS}" in caplog.messages
@@ -819,7 +821,7 @@ class TestOptimizeJobs:
 
     def test_optimize_job_prunes_oldest_retained_terminal_job(self, fake_successful_scheduler):
         now = datetime.now(UTC)
-        with serve._optimize_jobs_lock:
+        with serve.optimize_jobs_state._optimize_jobs_lock:
             for index in range(serve.OPTIMIZE_MAX_RETAINED_JOBS):
                 job = serve.OptimizeJob(
                     id=f"opt_retained_{index}",
@@ -832,13 +834,13 @@ class TestOptimizeJobs:
                     timeout=60,
                     finished_at=now - timedelta(seconds=serve.OPTIMIZE_MAX_RETAINED_JOBS - index),
                 )
-                serve._optimize_jobs[job.id] = job
+                serve.optimize_jobs_state._optimize_jobs[job.id] = job
 
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
 
         assert response.status_code == 202
-        assert "opt_retained_0" not in serve._optimize_jobs
-        assert len(serve._optimize_jobs) == serve.OPTIMIZE_MAX_RETAINED_JOBS
+        assert "opt_retained_0" not in serve.optimize_jobs_state._optimize_jobs
+        assert len(serve.optimize_jobs_state._optimize_jobs) == serve.OPTIMIZE_MAX_RETAINED_JOBS
 
     def test_optimize_job_rejects_missing_input(self):
         response = client.post("/optimize")
