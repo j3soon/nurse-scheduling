@@ -952,8 +952,16 @@ export default function OptimizeAndExportPage() {
   };
 
   const updateServerEndpoint = (currentEndpoint: string, endpoint: string) => {
+    const invalidateCurrentProbe = () => {
+      serverProbeControllersRef.current.get(currentEndpoint)?.abort();
+      serverProbeControllersRef.current.delete(currentEndpoint);
+      latestHealthProbeIdRef.current += 1;
+      return latestHealthProbeIdRef.current;
+    };
+
     const normalizedEndpoint = normalizeEndpoint(endpoint);
     if (!normalizedEndpoint) {
+      const healthProbeId = invalidateCurrentProbe();
       setServerEntries(currentServers => currentServers.map(server => (
         server.endpoint === currentEndpoint
           ? {
@@ -963,13 +971,14 @@ export default function OptimizeAndExportPage() {
               error: 'Backend URL is required.',
               lastCheckedAt: null,
               pingMs: null,
-              healthProbeId: 0,
+              healthProbeId,
             }
           : server
       )));
       return;
     }
     if (isDuplicateServerEndpoint(normalizedEndpoint, currentEndpoint)) {
+      const healthProbeId = invalidateCurrentProbe();
       setServerEntries(currentServers => currentServers.map(server => (
         server.endpoint === currentEndpoint
           ? {
@@ -979,15 +988,14 @@ export default function OptimizeAndExportPage() {
               error: 'Backend URL already exists.',
               lastCheckedAt: null,
               pingMs: null,
-              healthProbeId: 0,
+              healthProbeId,
             }
           : server
       )));
       return;
     }
 
-    serverProbeControllersRef.current.get(currentEndpoint)?.abort();
-    serverProbeControllersRef.current.delete(currentEndpoint);
+    invalidateCurrentProbe();
 
     const nextSelectedServerEndpoint = selectedServerEndpoint === currentEndpoint
       ? normalizedEndpoint
