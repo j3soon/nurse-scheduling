@@ -133,14 +133,18 @@ docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 CPU solver:
 
 ```sh
-# persist Codex/OpenCode auth/config across containers
+# persist Codex/Claude Code/OpenCode auth/config across containers
 mkdir -p ~/docker/.codex
+mkdir -p ~/docker/.claude
+touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/OpenCode config
+# mount project files and Codex/Claude Code/OpenCode config
 docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
+  -v ~/docker/.claude:/root/.claude \
+  -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   -v /etc/localtime:/etc/localtime:ro \
@@ -151,14 +155,18 @@ docker run --rm -it --network=host \
 GPU solver:
 
 ```sh
-# persist Codex/OpenCode auth/config across containers
+# persist Codex/Claude Code/OpenCode auth/config across containers
 mkdir -p ~/docker/.codex
+mkdir -p ~/docker/.claude
+touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/OpenCode config
+# mount project files and Codex/Claude Code/OpenCode config
 docker run --rm -it --gpus all --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
+  -v ~/docker/.claude:/root/.claude \
+  -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   -v /etc/localtime:/etc/localtime:ro \
@@ -171,12 +179,16 @@ or with X11 forwarding for running Playwright interactive mode in the container:
 ```sh
 xhost +local:docker
 mkdir -p ~/docker/.codex
+mkdir -p ~/docker/.claude
+touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/OpenCode config, and forward X11 display
+# mount project files and Codex/Claude Code/OpenCode config, and forward X11 display
 docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
+  -v ~/docker/.claude:/root/.claude \
+  -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   -v /etc/localtime:/etc/localtime:ro \
