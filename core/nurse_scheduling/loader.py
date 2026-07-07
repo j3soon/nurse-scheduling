@@ -22,7 +22,7 @@ from ruamel.yaml import YAML
 from typing import Any
 from .models import NurseSchedulingData
 
-yaml = YAML(typ="safe")
+yaml = YAML()
 
 
 def _load_yaml(content: bytes) -> dict[str, Any]:
@@ -35,9 +35,11 @@ def _load_yaml(content: bytes) -> dict[str, Any]:
         dict[str, Any]: The loaded YAML data
     """
     stream = BytesIO(content)
-    # Use ruamel.yaml instead of PyYAML to support YAML 1.2
-    # This avoids the auto-conversion of special strings such as
-    # `Off` into boolean value `False`.
+    # Use ruamel.yaml default (YAML 1.2) instead of PyYAML to avoid
+    # auto-conversion of special strings such as `Off` into boolean
+    # value `False`. Note: typ="safe" uses YAML 1.1 and would still
+    # convert `Off`/`No`/`Yes` to booleans; only the default loader
+    # provides YAML 1.2 compliance.
     return yaml.load(stream)
 
 
