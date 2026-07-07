@@ -35,7 +35,7 @@ interface CheckboxItem {
 
 interface CheckboxListProps {
   items: CheckboxItem[];
-  selectedIds: string[];
+  selectedIds?: string[] | null;
   onToggle: (id: string) => void;
   label: string;
   inputType?: 'checkbox' | 'radio';
@@ -76,6 +76,7 @@ export function CheckboxList({
     onToggle(id);
   };
   const resolvedInputClassName = inputClassName ?? `form-${inputType} h-4 w-4 text-blue-600`;
+  const resolvedSelectedIds = selectedIds ?? [];
   const generatedInputName = useId();
   const radioInputName = inputType === 'radio'
     ? inputName ?? `checkbox-list-${generatedInputName}`
@@ -148,7 +149,7 @@ export function CheckboxList({
         {items.map((item, index) => (
           <label
             key={item.id}
-            className={`inline-flex items-center px-1 py-1 ${getItemClassName?.(item, selectedIds.includes(item.id)) ?? ''}`}
+            className={`inline-flex items-center px-1 py-1 ${getItemClassName?.(item, resolvedSelectedIds.includes(item.id)) ?? ''}`}
             style={getItemStyle?.(item, index)}
             title={item.description}
             onMouseEnter={inputType === 'checkbox' ? () => handleCheckboxMouseEnter(item.id) : undefined}
@@ -159,7 +160,7 @@ export function CheckboxList({
             <input
               type={inputType}
               name={radioInputName}
-              checked={selectedIds.includes(item.id)}
+              checked={resolvedSelectedIds.includes(item.id)}
               onChange={inputType === 'radio' ? () => handleToggle(item.id) : () => {}} // Keep native checkbox changes disabled so gesture logic stays fully in mouse handlers.
               className={resolvedInputClassName}
             />

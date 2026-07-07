@@ -23,6 +23,24 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { CheckboxList } from '@/components/CheckboxList';
 
 describe('CheckboxList', () => {
+  it('treats missing selected IDs as an empty selection', () => {
+    const getItemClassName = vi.fn(() => '');
+
+    render(
+      <CheckboxList
+        label="Items"
+        items={[{ id: 'A' }, { id: 'B' }]}
+        onToggle={vi.fn()}
+        getItemClassName={getItemClassName}
+      />,
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'A' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'B' })).not.toBeChecked();
+    expect(getItemClassName).toHaveBeenCalledWith({ id: 'A' }, false);
+    expect(getItemClassName).toHaveBeenCalledWith({ id: 'B' }, false);
+  });
+
   it('toggles one item on normal click sequence', () => {
     const onToggle = vi.fn();
 
