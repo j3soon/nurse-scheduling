@@ -32,6 +32,35 @@ import { anonymizeSchedulingState } from '@/utils/anonymizeSchedulingState';
 import { getMissingPreferredScatterDateGroups, randomizeConcreteDateShiftRequests } from '@/utils/randomizeShiftRequests';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
+const API_VERSION_KEY = 'apiVersion';
+const BOM_MOJIBAKE_API_VERSION_PREFIXES = [
+  'ï»¿apiVersion',
+  '嚜瘸piVersion',
+  '锘縜piVersion',
+];
+
+function recoverYamlTextPrefixWithConfirmation(content: string): string | null {
+  // Mojibake prefixes mean the original UTF-8 BOM bytes were decoded using
+  // another encoding before this app received the YAML text. Real UTF-8 BOM
+  // input is handled by FileReader/js-yaml and does not need repair here:
+  // - ï»¿apiVersion: UTF-8 BOM decoded as Latin-1/Windows-1252.
+  // - 嚜瘸piVersion: UTF-8 BOM plus the "a" from apiVersion decoded as Big5/CP950.
+  // - 锘縜piVersion: UTF-8 BOM plus the "a" from apiVersion decoded as GBK/GB18030.
+  const corruptedPrefix = BOM_MOJIBAKE_API_VERSION_PREFIXES.find(prefix => content.startsWith(prefix));
+  if (!corruptedPrefix) {
+    return content;
+  }
+
+  const proceed = confirm(
+    `Corrupted YAML header detected.\n\nThe file starts with "${corruptedPrefix}" instead of "${API_VERSION_KEY}". This can happen when a UTF-8 BOM YAML file is decoded with the wrong text encoding before being saved or uploaded.\n\nDo you want to automatically recover this header before loading the file?`
+  );
+  if (!proceed) {
+    return null;
+  }
+
+  return API_VERSION_KEY + content.slice(corruptedPrefix.length);
+}
+
 export default function SaveAndLoadPage() {
   const {
     apiVersionData,
@@ -171,8 +200,13 @@ export default function SaveAndLoadPage() {
 
   const handleSaveEdit = () => {
     try {
+      const recoveredYaml = recoverYamlTextPrefixWithConfirmation(editedYaml);
+      if (recoveredYaml === null) {
+        return;
+      }
+
       // Validate YAML by parsing it
-      const parsedData = yaml.load(editedYaml);
+      const parsedData = yaml.load(recoveredYaml);
 
       // Check for version mismatch and warn user
       const versionWarning = getVersionWarning(parsedData);
@@ -205,8 +239,13 @@ export default function SaveAndLoadPage() {
       }
 
       try {
+        const recoveredYaml = recoverYamlTextPrefixWithConfirmation(content);
+        if (recoveredYaml === null) {
+          return;
+        }
+
         // Validate YAML by parsing it
-        const parsedData = yaml.load(content);
+        const parsedData = yaml.load(recoveredYaml);
 
         // Check for version mismatch and warn user
         const versionWarning = getVersionWarning(parsedData);
@@ -227,7 +266,7 @@ export default function SaveAndLoadPage() {
       }
     };
 
-    reader.readAsText(file);
+    reader.readAsText(file, 'utf-8');
   };
 
   return (
