@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from io import BytesIO
+from io import StringIO
 from ruamel.yaml import YAML
 from typing import Any
 from .models import NurseSchedulingData
@@ -34,10 +34,13 @@ def _load_yaml(content: bytes) -> dict[str, Any]:
     Returns:
         dict[str, Any]: The loaded YAML data
     """
-    stream = BytesIO(content)
+    # Decode as utf-8-sig to automatically strip the UTF-8 BOM if present.
+    # This handles files saved by editors like Windows Notepad that prepend
+    # a BOM, which would otherwise corrupt the first YAML key.
     # Use ruamel.yaml instead of PyYAML to support YAML 1.2
     # This avoids the auto-conversion of special strings such as
     # `Off` into boolean value `False`.
+    stream = StringIO(content.decode("utf-8-sig"))
     return yaml.load(stream)
 
 
