@@ -148,7 +148,7 @@ export function CheckboxList({
         {items.map((item, index) => (
           <label
             key={item.id}
-            className={`inline-flex items-center px-1 py-1 ${getItemClassName?.(item, selectedIds.includes(item.id)) ?? ''}`}
+            className={`inline-flex items-center px-1 py-1 ${getItemClassName?.(item, (selectedIds ?? []).includes(item.id)) ?? ''}`}
             style={getItemStyle?.(item, index)}
             title={item.description}
             onMouseEnter={inputType === 'checkbox' ? () => handleCheckboxMouseEnter(item.id) : undefined}
@@ -159,7 +159,7 @@ export function CheckboxList({
             <input
               type={inputType}
               name={radioInputName}
-              checked={selectedIds.includes(item.id)}
+              checked={(selectedIds ?? []).includes(item.id)}
               onChange={inputType === 'radio' ? () => handleToggle(item.id) : () => {}} // Keep native checkbox changes disabled so gesture logic stays fully in mouse handlers.
               className={resolvedInputClassName}
             />
