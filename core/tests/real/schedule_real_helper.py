@@ -30,7 +30,7 @@ from nurse_scheduling.solver_interface import SolverProgress
 
 REAL_TESTCASE = Path(__file__).parents[1] / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 SMOKE_TEST_TIMEOUT_SECONDS = 300
-ZERO_CRITICAL_NOTES_STABILITY_SECONDS = 10
+ZERO_CRITICAL_NOTES_STABILITY_SECONDS = 60
 EXPECTED_SOLUTION_SIZE = 30 * 11 * 87
 CRITICAL_REQUEST_NOTE_PREFIX = "Critical unsatisfied request:"
 CRITICAL_REQUEST_FORMATTING_RULES = [
