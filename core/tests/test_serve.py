@@ -349,7 +349,13 @@ class TestOptimizeJobs:
 
     @pytest.mark.parametrize(
         "solver",
-        ["ortools/cp-sat", "ortools/mpsolver/scip", "ortools/mpsolver/sat", "ortools/mpsolver/bop"],
+        [
+            "ortools/cp-sat",
+            "ortools/mpsolver/scip",
+            "ortools/mpsolver/cp-sat",
+            "ortools/mpsolver/bop",
+            "ortools/mathopt/cp-sat",
+        ],
     )
     def test_optimize_job_cancel_requests_running_job_stop(self, monkeypatch, solver):
         solve_started = False
@@ -379,6 +385,35 @@ class TestOptimizeJobs:
         assert cancel_response.json()["status"] in {"cancelling", "cancelled"}
         completed = wait_for_job_status(job_id, "cancelled")
         assert solve_started
+        assert completed["error"] == "Optimization cancelled."
+        assert completed["xlsxReady"] is False
+
+    def test_optimize_job_cancel_without_incumbent_is_cancelled(self, monkeypatch):
+        solve_started = threading.Event()
+
+        def fake_schedule(*args, **kwargs):
+            solve_started.set()
+            wait_for_stop = kwargs["should_stop"]
+            for _ in range(100):
+                if wait_for_stop():
+                    raise ValueError("No solution found! Status: UNKNOWN")
+                time.sleep(0.01)
+            pytest.fail("cancel request was not observed")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+
+        response = client.post(
+            "/optimize",
+            data={"yaml_content": "apiVersion: alpha\n", "solver": "ortools/mathopt/cp-sat"},
+        )
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "running")
+        assert solve_started.wait(timeout=1)
+
+        cancel_response = client.post(f"/optimize/{job_id}/cancel")
+
+        assert cancel_response.status_code == 200
+        completed = wait_for_job_status(job_id, "cancelled")
         assert completed["error"] == "Optimization cancelled."
         assert completed["xlsxReady"] is False
 
@@ -461,15 +496,26 @@ class TestOptimizeJobs:
         [
             "ortools/cp-sat",
             "ortools/mpsolver/scip",
-            "ortools/mpsolver/sat",
+            "ortools/mpsolver/cp-sat",
             "ortools/mpsolver/bop",
+            "ortools/mathopt/cp-sat",
             " ORTOOLS/MPSOLVER/SCIP ",
+            " ORTOOLS/MATHOPT/CP-SAT ",
         ],
     )
     def test_solver_supports_running_job_stop(self, solver):
         assert serve._solver_supports_job_stop(solver)
 
-    @pytest.mark.parametrize("solver", ["pulp/cbc", "pulp/cuopt", "ortools/mpsolver/cbc"])
+    @pytest.mark.parametrize(
+        "solver",
+        [
+            "pulp/cbc",
+            "pulp/cuopt",
+            "ortools/mpsolver/cbc",
+            "ortools/mathopt/gscip",
+            "ortools/mathopt/highs",
+        ],
+    )
     def test_optimize_job_control_rejects_solver_without_stop_support(self, solver):
         job = serve._create_optimize_job(
             input_name="non-interruptible.yaml",

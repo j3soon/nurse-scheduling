@@ -34,7 +34,7 @@ from .solver_interface import SolverInterface, SolverProgress, SolverStatus
 ORTOOLS_MPSOLVER_MIP_ENGINES: dict[str, str] = {
     "cbc": "CBC",
     "scip": "SCIP",
-    "sat": "SAT",
+    "cp-sat": "SAT",
     "bop": "BOP",
 }
 ORTOOLS_MPSOLVER_LP_ONLY_ENGINES = frozenset({"glop", "pdlp", "clp"})

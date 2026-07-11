@@ -345,6 +345,25 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         _refresh_queue_positions()
         _log_job_completed(job)
     except Exception as e:
+        if current_job.cancel_requested:
+            job = _finish_optimize_job_if_present(
+                job_id,
+                "complete",
+                status=OptimizeJobStatus.CANCELLED,
+                error=_job_cancellation_error(current_job),
+                finished_at=utc_now(),
+            )
+            if job is None:
+                server_logger.warning(
+                    "[server:job] cancelled-after-deletion job_id=%s client_uuid=%s",
+                    job_id,
+                    current_job.client_uuid,
+                )
+                return
+            _refresh_queue_positions()
+            _log_job_completed(job)
+            return
+
         capture_optimize_exception(job, content, e)
         job = _finish_optimize_job_if_present(
             job_id,

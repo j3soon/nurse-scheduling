@@ -30,9 +30,11 @@ test paths when a narrower suite is known to be sufficient.
 - Primary suites are:
   `tests/test_solver_ortools_cp_sat.py`,
   `tests/test_solver_ortools_linear.py`,
+  `tests/test_solver_ortools_mathopt.py`,
   `tests/test_solver_pulp_cbc.py`,
   `tests/test_schedule_ortools_cp_sat.py`,
   `tests/test_schedule_ortools_mpsolver_cbc.py`,
+  `tests/test_schedule_ortools_mathopt_gscip.py`,
   `tests/test_schedule_pulp_cbc.py`, and `tests/test_serve.py`.
 - Add scheduling cases as fixture pairs under `tests/testcases/**`, typically a
   `.yaml` input with matching `.csv` or `.txt` expected output.

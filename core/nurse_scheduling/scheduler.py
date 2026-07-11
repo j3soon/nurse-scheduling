@@ -34,16 +34,27 @@ from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverSta
 
 ORTOOLS_CP_SAT_SOLVER = "ortools/cp-sat"
 ORTOOLS_MPSOLVER_API = "mpsolver"
-ORTOOLS_MPSOLVER_MIP_ENGINES = ("cbc", "scip", "sat", "bop")
+ORTOOLS_MPSOLVER_MIP_ENGINES = ("cbc", "scip", "cp-sat", "bop")
 ORTOOLS_MPSOLVER_CANONICAL_SOLVERS = tuple(
     f"ortools/{ORTOOLS_MPSOLVER_API}/{engine}" for engine in ORTOOLS_MPSOLVER_MIP_ENGINES
 )
+ORTOOLS_MATHOPT_API = "mathopt"
+ORTOOLS_MATHOPT_MIP_ENGINES = ("gscip", "cp-sat", "highs")
+ORTOOLS_MATHOPT_CANONICAL_SOLVERS = tuple(
+    f"ortools/{ORTOOLS_MATHOPT_API}/{engine}" for engine in ORTOOLS_MATHOPT_MIP_ENGINES
+)
 PULP_SOLVERS = ("pulp/cbc", "pulp/cuopt")
-CANONICAL_SOLVER_CHOICES = (ORTOOLS_CP_SAT_SOLVER, *ORTOOLS_MPSOLVER_CANONICAL_SOLVERS, *PULP_SOLVERS)
+CANONICAL_SOLVER_CHOICES = (
+    ORTOOLS_CP_SAT_SOLVER,
+    *ORTOOLS_MPSOLVER_CANONICAL_SOLVERS,
+    *ORTOOLS_MATHOPT_CANONICAL_SOLVERS,
+    *PULP_SOLVERS,
+)
 SUPPORTED_SOLVER_CHOICES = CANONICAL_SOLVER_CHOICES
 SOLVER_SELECTOR_HELP = (
     "Solver selector (ortools/cp-sat, ortools/mpsolver/cbc, ortools/mpsolver/scip, "
-    "ortools/mpsolver/sat, ortools/mpsolver/bop, pulp/cbc, or pulp/cuopt)."
+    "ortools/mpsolver/cp-sat, ortools/mpsolver/bop, ortools/mathopt/gscip, "
+    "ortools/mathopt/cp-sat, ortools/mathopt/highs, pulp/cbc, or pulp/cuopt)."
 )
 
 
@@ -75,6 +86,17 @@ def normalize_solver_selector(solver: str) -> SolverSelector:
                 canonical=f"ortools/{ORTOOLS_MPSOLVER_API}/{engine}",
             )
         raise ValueError(f"Unsupported OR-Tools MPSolver engine: {engine!r}")
+
+    if len(parts) == 3 and parts[:2] == ["ortools", ORTOOLS_MATHOPT_API]:
+        engine = parts[2]
+        if engine in ORTOOLS_MATHOPT_MIP_ENGINES:
+            return SolverSelector(
+                backend="ortools",
+                api=ORTOOLS_MATHOPT_API,
+                engine=engine,
+                canonical=f"ortools/{ORTOOLS_MATHOPT_API}/{engine}",
+            )
+        raise ValueError(f"Unsupported OR-Tools MathOpt engine: {engine!r}")
 
     if len(parts) == 2 and normalized in PULP_SOLVERS:
         return SolverSelector(backend="pulp", api=None, engine=parts[1], canonical=normalized)
@@ -207,6 +229,17 @@ def schedule(
             solver_selector.canonical,
         )
         ctx.solver = ORToolsLinearSolver(engine=solver_selector.engine)
+    elif solver_selector.backend == "ortools" and solver_selector.api == ORTOOLS_MATHOPT_API:
+        from .solver_ortools_mathopt import ORToolsMathOptSolver
+
+        logging.info(
+            "Using solver backend=%s api=%s engine=%s canonical=%s",
+            solver_selector.backend,
+            solver_selector.api,
+            solver_selector.engine,
+            solver_selector.canonical,
+        )
+        ctx.solver = ORToolsMathOptSolver(engine=solver_selector.engine)
     elif solver_selector.backend == "pulp" and solver_selector.engine == "cbc":
         from .solver_pulp_cbc import PuLPSolver
 
@@ -408,12 +441,13 @@ def schedule(
             logging.debug(f"  - {k}: {ctx.solver.get_value(v)}")
         except Exception as e:
             logging.debug(f"  - {k}: [Error: {e}]")
-    logging.debug("Reports:")
-    for report in ctx.reports:
-        val = ctx.solver.get_value(report.variable)
-        if report.skip_condition(val):
-            continue
-        logging.debug(f"  - {report.description}: {val}")
+    if found:
+        logging.debug("Reports:")
+        for report in ctx.reports:
+            val = ctx.solver.get_value(report.variable)
+            if report.skip_condition(val):
+                continue
+            logging.debug(f"  - {report.description}: {val}")
 
     logging.info("Done.")
 

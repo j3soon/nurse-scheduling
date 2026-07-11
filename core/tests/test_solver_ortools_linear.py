@@ -85,7 +85,7 @@ def test_mip_engines_preserve_integrality(engine: str):
 
 @pytest.mark.parametrize(
     ("engine", "supports_interrupt"),
-    [("cbc", False), ("scip", True), ("sat", True), ("bop", True)],
+    [("cbc", False), ("scip", True), ("cp-sat", True), ("bop", True)],
 )
 def test_mip_engine_interrupt_support(engine: str, supports_interrupt: bool):
     solver = ORToolsLinearSolver(engine=engine)

@@ -273,20 +273,22 @@ bun run lint -- --fix
 
 ### Core
 
-We currently support seven solver selectors across OR-Tools and PuLP.
+We currently support ten solver selectors across OR-Tools and PuLP.
 
 > All backends other than OR-Tools/CP-SAT are experimental.
 
 - `ortools/cp-sat` is the default solver and the most battle-tested one.
 - `ortools/mpsolver/cbc` uses CBC through the OR-Tools linear MIP API and is covered by the normal schedule regression suite.
-- `ortools/mpsolver/scip` and `ortools/mpsolver/sat` use SCIP and CP-SAT through the OR-Tools linear MIP API and are covered by the normal schedule regression suite.
+- `ortools/mpsolver/scip` and `ortools/mpsolver/cp-sat` use SCIP and CP-SAT through the OR-Tools linear MIP API and are covered by the normal schedule regression suite.
 - `ortools/mpsolver/bop` uses the legacy BOP engine. It has low-level and bounded schedule smoke coverage, but is not recommended for larger schedules because it can be substantially slower.
+- `ortools/mathopt/gscip`, `ortools/mathopt/cp-sat`, and `ortools/mathopt/highs` use the bundled integer-capable engines through the newer [OR-Tools MathOpt API](https://developers.google.com/optimization/math_opt) and are covered by the normal schedule regression suite.
 - `pulp/cbc` is covered by the normal schedule regression suite and opt-in real-world smoke checks.
 - `pulp/cuopt` is the GPU-accelerated solver. Its real-world smoke check is opt-in and skips when the backend is unavailable.
 
 Running optimization jobs can be cancelled or finished early with `ortools/cp-sat`,
-`ortools/mpsolver/scip`, `ortools/mpsolver/sat`, and `ortools/mpsolver/bop`.
-CBC and PuLP backends do not support cooperative interruption in this application.
+`ortools/mpsolver/scip`, `ortools/mpsolver/cp-sat`, `ortools/mpsolver/bop`, and
+`ortools/mathopt/cp-sat`. MathOpt/GSCIP, MathOpt/HiGHS, CBC, and PuLP backends do
+not support cooperative interruption in this application.
 
 ```sh
 cd core
@@ -313,8 +315,12 @@ python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver orto
 # run an OR-Tools MPSolver backend (experimental)
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/cbc
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/scip
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/sat
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/cp-sat
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/bop
+# run an OR-Tools MathOpt backend (experimental)
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mathopt/gscip
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mathopt/cp-sat
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mathopt/highs
 ```
 
 Run tests:
@@ -324,6 +330,7 @@ cd core
 # run low-level solver encoding tests
 pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py
 pytest --log-cli-level=INFO tests/test_solver_ortools_linear.py
+pytest --log-cli-level=INFO tests/test_solver_ortools_mathopt.py
 pytest --log-cli-level=INFO tests/test_solver_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
 # run schedule regression tests (OR-Tools / PuLP)
@@ -331,8 +338,12 @@ pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
 pytest --log-cli-level=INFO \
   tests/test_schedule_ortools_mpsolver_cbc.py \
   tests/test_schedule_ortools_mpsolver_scip.py \
-  tests/test_schedule_ortools_mpsolver_sat.py \
+  tests/test_schedule_ortools_mpsolver_cp_sat.py \
   tests/test_schedule_ortools_mpsolver_bop.py
+pytest --log-cli-level=INFO \
+  tests/test_schedule_ortools_mathopt_gscip.py \
+  tests/test_schedule_ortools_mathopt_cp_sat.py \
+  tests/test_schedule_ortools_mathopt_highs.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
 # run the normal core test suite

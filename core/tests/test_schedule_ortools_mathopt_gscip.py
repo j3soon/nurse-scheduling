@@ -1,4 +1,4 @@
-"""Schedule regression test wrapper for the OR-Tools/MPSolver SAT backend."""
+"""Schedule regression test wrapper for the OR-Tools/MathOpt GSCIP backend."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -22,5 +22,5 @@
 from .schedule_test_helper import run_schedule_regression_test
 
 
-def test_schedule_ortools_mpsolver_sat():
-    run_schedule_regression_test("ortools/mpsolver/sat")
+def test_schedule_ortools_mathopt_gscip():
+    run_schedule_regression_test("ortools/mathopt/gscip")

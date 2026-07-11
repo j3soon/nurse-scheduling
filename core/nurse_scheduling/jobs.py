@@ -98,8 +98,9 @@ _JOB_STOP_SOLVERS = frozenset(
     {
         "ortools/cp-sat",
         "ortools/mpsolver/scip",
-        "ortools/mpsolver/sat",
+        "ortools/mpsolver/cp-sat",
         "ortools/mpsolver/bop",
+        "ortools/mathopt/cp-sat",
     }
 )
 
