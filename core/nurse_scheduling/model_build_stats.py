@@ -118,6 +118,8 @@ def get_model_entity_counts(ctx: Context) -> tuple[int, int]:
         if hasattr(model, "Proto"):
             proto = model.Proto()
             return len(proto.variables), len(proto.constraints)
+        if hasattr(model, "NumVariables") and hasattr(model, "NumConstraints"):
+            return model.NumVariables(), model.NumConstraints()
         if hasattr(solver, "variables") and hasattr(model, "constraints"):
             return len(solver.variables), len(model.constraints)
 

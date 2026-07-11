@@ -459,7 +459,10 @@ async def create_optimize_job(
     yaml_content: str | None = Form(None, description="YAML content as a string"),
     prettify: bool | None = Form(None, description="Enable prettier output formatting"),
     timeout: int | None = Form(None, description="Max execution time in seconds"),
-    solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc, pulp/cuopt)"),
+    solver: str = Form(
+        "ortools/cp-sat",
+        description=scheduler.SOLVER_SELECTOR_HELP,
+    ),
 ):
     content, input_name = await _read_optimization_input(file, yaml_content)
     timeout = _normalize_optimization_timeout(timeout)

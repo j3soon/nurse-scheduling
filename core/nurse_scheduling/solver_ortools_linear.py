@@ -1,4 +1,4 @@
-"""Shared PuLP solver base implementation."""
+"""OR-Tools linear MIP solver implementation."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -18,34 +18,66 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
-import sys
-import tempfile
+import math
 import threading
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
-import pulp
+
+from ortools.linear_solver import pywraplp
+from ortools.linear_solver.python import linear_solver_natural_api
 
 from .constants import Operator
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus
 
 
-class BasePuLPSolver(SolverInterface):
-    """Shared PuLP solver implementation for engine-specific wrappers."""
+ORTOOLS_MPSOLVER_MIP_ENGINES: dict[str, str] = {
+    "cbc": "CBC",
+    "scip": "SCIP",
+    "sat": "SAT",
+    "bop": "BOP",
+}
+ORTOOLS_MPSOLVER_LP_ONLY_ENGINES = frozenset({"glop", "pdlp", "clp"})
 
-    def __init__(self, engine: str):
-        """Initialize a PuLP solver for a specific engine."""
+
+class ORToolsLinearSolver(SolverInterface):
+    """OR-Tools MPSolver wrapper for integer linear solver engines."""
+
+    _STATUS_NAMES = {
+        pywraplp.Solver.OPTIMAL: "OPTIMAL",
+        pywraplp.Solver.FEASIBLE: "FEASIBLE",
+        pywraplp.Solver.INFEASIBLE: "INFEASIBLE",
+        pywraplp.Solver.UNBOUNDED: "UNBOUNDED",
+        pywraplp.Solver.ABNORMAL: "ABNORMAL",
+        pywraplp.Solver.MODEL_INVALID: "MODEL_INVALID",
+        pywraplp.Solver.NOT_SOLVED: "NOT_SOLVED",
+    }
+
+    def __init__(self, engine: str = "cbc"):
+        """Initialize an OR-Tools linear MIP solver for a specific engine."""
         super().__init__()
-        self.model = pulp.LpProblem("NurseScheduling", pulp.LpMaximize)
-        self.solver = None
         self.engine = engine.lower()
-        self.status = None
+        self.solver_selector = f"ortools/mpsolver/{self.engine}"
+        if self.engine in ORTOOLS_MPSOLVER_LP_ONLY_ENGINES:
+            raise ValueError(
+                f"OR-Tools MPSolver/{self.engine} is an LP-only engine and cannot preserve integer nurse assignments."
+            )
+        if self.engine not in ORTOOLS_MPSOLVER_MIP_ENGINES:
+            raise ValueError(f"Unsupported OR-Tools MPSolver engine: {engine!r}")
+
+        solver_name = ORTOOLS_MPSOLVER_MIP_ENGINES[self.engine]
+        self.model = pywraplp.Solver.CreateSolver(solver_name)
+        if self.model is None:
+            raise RuntimeError(f"{self.solver_selector} backend is not available in this environment.")
+
+        self.status: int | None = None
         self.solver_status = SolverStatus.UNKNOWN
-        self.solve_time = 0
+        self.solve_time = 0.0
         # Track variables for solution retrieval
-        self.variables = {}
+        self.variables: dict[str, pywraplp.Variable] = {}
+        self._constraint_names: set[str] = set()
         self._name_counter = 0
+        self._has_objective = False
 
     @staticmethod
     def _normalize_numeric_value(value: Any, *, integer_tolerance: float = 1e-6) -> int | float | None:
@@ -57,17 +89,6 @@ class BasePuLPSolver(SolverInterface):
         if abs(value_f - rounded) <= integer_tolerance:
             return int(rounded)
         return value_f
-
-    def _has_feasible_solution(self) -> bool:
-        """Return True when the solver populated a usable incumbent (i.e., current best) solution."""
-        objective_value = pulp.value(self.model.objective) if self.model.objective is not None else None
-        if objective_value is not None:
-            return True
-        return any(pulp.value(var) is not None for var in self.variables.values())
-
-    def _parse_solver_log_progress(self, line: str, start_time: float) -> SolverProgress | None:
-        """Parse a solver log line into a normalized progress payload when possible."""
-        return None
 
     def _emit_progress(
         self,
@@ -82,100 +103,80 @@ class BasePuLPSolver(SolverInterface):
         except Exception:
             logging.exception("Progress callback failed")
 
-    def _tail_solver_log(
-        self,
-        log_path: Path,
-        stop_event: threading.Event,
-        progress_callback: Callable[[SolverProgress], None] | None,
-        start_time: float,
-        replay_output: bool,
-    ) -> None:
-        """Replay solver log output to stdout and parse progress events from the same stream."""
-        position = 0
-
-        while True:
-            if log_path.exists():
-                with log_path.open("r", encoding="utf-8", errors="replace") as log_file:
-                    log_file.seek(position)
-                    lines = log_file.readlines()
-                    position = log_file.tell()
-
-                for line in lines:
-                    if replay_output:
-                        sys.stdout.write(line)
-                        sys.stdout.flush()
-                    payload = self._parse_solver_log_progress(line, start_time)
-                    if payload is None:
-                        continue
-                    self._emit_progress(progress_callback, payload)
-
-            if stop_event.is_set():
-                if not log_path.exists():
-                    return
-                with log_path.open("r", encoding="utf-8", errors="replace") as log_file:
-                    log_file.seek(position)
-                    if log_file.read() == "":
-                        return
-                continue
-
-            time.sleep(0.05)
+    @staticmethod
+    def _finite_int_bound(value: float, name: str) -> int:
+        """Return a finite integer bound from an OR-Tools variable bound."""
+        value_f = float(value)
+        if not math.isfinite(value_f):
+            raise ValueError(f"Cannot infer bounds for unbounded variable: {name}")
+        rounded = round(value_f)
+        if abs(value_f - rounded) > 1e-9:
+            raise ValueError(f"Non-integer bound is not supported for bound inference: {value}")
+        return int(rounded)
 
     def _unique_name(self, base: str) -> str:
         """Return a model-unique name for variables/constraints."""
-        if base not in self.variables and base not in self.model.constraints:
+        if base not in self.variables and base not in self._constraint_names:
             return base
         while True:
             self._name_counter += 1
             candidate = f"{base}__{self._name_counter}"
-            if candidate not in self.variables and candidate not in self.model.constraints:
+            if candidate not in self.variables and candidate not in self._constraint_names:
                 return candidate
 
     def unique_constraint_name(self, base: str) -> str:
         """Return a generated constraint name using the current number of model constraints."""
-        return f"{base}_{len(self.model.constraints)}"
+        return f"{base}_{self.model.NumConstraints()}"
 
     def _infer_expr_bounds(self, expr: Any) -> tuple[int, int]:
         """Infer integer lower/upper bounds for a linear expression."""
         # We require the expression to work on integer domains here.
         if isinstance(expr, (int, float)):
-            val = int(expr)
-            return val, val
-        if isinstance(expr, pulp.LpVariable):
-            if expr.lowBound is None or expr.upBound is None:
-                raise ValueError(f"Cannot infer bounds for unbounded variable: {expr.name}")
-            return int(expr.lowBound), int(expr.upBound)
-        if isinstance(expr, pulp.LpAffineExpression):
-            lb = int(expr.constant)
-            ub = int(expr.constant)
-            for var, coeff in expr.items():
-                if var.lowBound is None or var.upBound is None:
-                    raise ValueError(f"Cannot infer bounds for unbounded variable in expression: {var.name}")
-                coeff_f = float(coeff)
-                if not coeff_f.is_integer():
-                    raise ValueError(f"Non-integer coefficient is not supported for bound inference: {coeff}")
-                var_lb = int(var.lowBound)
-                var_ub = int(var.upBound)
-                coeff_i = int(coeff_f)
-                if coeff_i >= 0:
-                    lb += coeff_i * var_lb
-                    ub += coeff_i * var_ub
-                else:
-                    lb += coeff_i * var_ub
-                    ub += coeff_i * var_lb
-            return lb, ub
-        raise TypeError(f"Unsupported expression type for bound inference: {type(expr)}")
+            value_f = float(expr)
+            if not value_f.is_integer():
+                raise ValueError(f"Non-integer constant is not supported for bound inference: {expr}")
+            value = int(value_f)
+            return value, value
 
-    def new_bool_var(self, name: str) -> pulp.LpVariable:
+        if isinstance(expr, pywraplp.Variable):
+            return self._finite_int_bound(expr.lb(), expr.name()), self._finite_int_bound(expr.ub(), expr.name())
+
+        if not hasattr(expr, "GetCoeffs"):
+            raise TypeError(f"Unsupported expression type for bound inference: {type(expr)}")
+
+        lb = 0
+        ub = 0
+        for var, coeff in expr.GetCoeffs().items():
+            coeff_f = float(coeff)
+            if not coeff_f.is_integer():
+                raise ValueError(f"Non-integer coefficient is not supported for bound inference: {coeff}")
+            coeff_i = int(coeff_f)
+            if var is linear_solver_natural_api.OFFSET_KEY:
+                lb += coeff_i
+                ub += coeff_i
+                continue
+
+            var_lb = self._finite_int_bound(var.lb(), var.name())
+            var_ub = self._finite_int_bound(var.ub(), var.name())
+            if coeff_i >= 0:
+                lb += coeff_i * var_lb
+                ub += coeff_i * var_ub
+            else:
+                lb += coeff_i * var_ub
+                ub += coeff_i * var_lb
+        return lb, ub
+
+    def new_bool_var(self, name: str) -> pywraplp.Variable:
         """Create a new boolean variable."""
         unique_name = self._unique_name(name)
-        var = pulp.LpVariable(unique_name, cat=pulp.LpBinary)
+        var = self.model.BoolVar(unique_name)
         self.variables[unique_name] = var
         return var
 
-    def new_int_var(self, lb: int, ub: int, name: str) -> pulp.LpVariable:
+    def new_int_var(self, lb: int, ub: int, name: str) -> pywraplp.Variable:
         """Create a new integer variable."""
         unique_name = self._unique_name(name)
-        var = pulp.LpVariable(unique_name, lowBound=lb, upBound=ub, cat=pulp.LpInteger)
+        var = self.model.IntVar(lb, ub, unique_name)
         self.variables[unique_name] = var
         return var
 
@@ -184,20 +185,17 @@ class BasePuLPSolver(SolverInterface):
         if name is None:
             name = self.unique_constraint_name("constraint")
         name = self._unique_name(name)
-        self.model += constraint, name
+        self.model.Add(constraint, name)
+        self._constraint_names.add(name)
 
     def add_bool_or(self, literals: list[Any]) -> None:
         """
         Add a boolean OR constraint (at least one literal must be true).
 
-        For PuLP, we convert OR(x1, x2, ..., xn) to sum(x1, x2, ..., xn) >= 1
-        Handle negations by converting ~xi to (1 - xi)
+        Convert OR(x1, x2, ..., xn) to sum(x1, x2, ..., xn) >= 1.
+        Affine negations are represented as (1 - xi).
         """
-        expr_sum = 0
-        for lit in literals:
-            expr_sum += lit
-
-        self.add_constraint(expr_sum >= 1, name=self.unique_constraint_name("bool_or"))
+        self.add_constraint(sum(literals) >= 1, name=self.unique_constraint_name("bool_or"))
 
     def create_bool_and_var(self, name: str, literals: list[Any]) -> Any:
         """Create a boolean variable equivalent to the AND of the literals."""
@@ -226,25 +224,18 @@ class BasePuLPSolver(SolverInterface):
         return var
 
     def should_use_bool_and_var(self, n_literals: int) -> bool:
-        """Return True only while PuLP's linear AND encoding stays compact."""
+        """Return True only while the linear AND encoding stays compact."""
         return n_literals <= 3
 
     def set_objective(self, expression, maximize: bool = True) -> None:
         """Set the objective function."""
         self.objective_expr = expression
         self.maximize = maximize
-
-        # Handle plain numeric values (e.g., 0) by converting to PuLP expression
-        if isinstance(expression, (int, float)):
-            # Create a constant expression using PuLP
-            expression = pulp.lpSum([expression])
-
+        self._has_objective = True
         if maximize:
-            self.model.sense = pulp.LpMaximize
-            self.model.setObjective(expression)
+            self.model.Maximize(expression)
         else:
-            self.model.sense = pulp.LpMinimize
-            self.model.setObjective(expression)
+            self.model.Minimize(expression)
 
     def solve(
         self,
@@ -254,111 +245,79 @@ class BasePuLPSolver(SolverInterface):
         progress_callback: Callable[[SolverProgress], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
     ) -> SolverStatus:
-        """Solve the model using PuLP."""
+        """Solve the model using OR-Tools MPSolver."""
         start_time = time.monotonic()
 
-        # Note: PuLP doesn't have built-in support for deterministic solving across all solvers
+        # Note: MPSolver doesn't have built-in support for deterministic solving across all engines
         if deterministic:
-            logging.info("Deterministic mode requested (support varies by solver)")
+            logging.info("Configuring deterministic mode for OR-Tools/%s where supported", self.engine)
+            try:
+                self.model.SetNumThreads(1)
+            except Exception:
+                logging.exception("Unable to force single-threaded solving for OR-Tools/%s", self.engine)
 
-        # Note: PuLP doesn't support solution callbacks in the same way as OR-Tools
+        if timeout is not None:
+            self.model.SetTimeLimit(int(timeout * 1000))
+            logging.info("Solver time limit set to %s seconds", timeout)
+
+        # Note: MPSolver doesn't support solution callbacks in the same way as CP-SAT
         if solution_callback is not None:
-            logging.warning("Solution callbacks are not fully supported with PuLP solver")
+            logging.warning("Solution callbacks are not supported with OR-Tools linear solvers")
+
+        stop_watcher_done = threading.Event()
+        stop_watcher = None
         if should_stop is not None:
-            raise NotImplementedError("PuLP solvers do not support cooperative stop callbacks.")
+
+            def watch_stop_request() -> None:
+                while not stop_watcher_done.wait(0.2):
+                    try:
+                        stop_requested = should_stop()
+                    except Exception:
+                        logging.exception("Stop callback failed")
+                        return
+                    if stop_requested:
+                        interrupted = self.model.InterruptSolve()
+                        if not interrupted:
+                            logging.warning("OR-Tools/%s did not accept solve interruption", self.engine)
+                        return
+
+            stop_watcher = threading.Thread(
+                target=watch_stop_request,
+                name=f"ortools-{self.engine}-stop-watcher",
+                daemon=True,
+            )
+            stop_watcher.start()
 
         # Solve the model.
-        # `msg=1` means verbose solve mode.
-        solver_kwargs = {"msg": 1}
-        if timeout is not None:
-            solver_kwargs["timeLimit"] = timeout
-
-        log_temp_file = tempfile.NamedTemporaryFile(
-            mode="w",
-            prefix=f"nurse-scheduling-pulp-{self.engine}-",
-            suffix=".log",
-            delete=False,
-        )
-        log_path = Path(log_temp_file.name)
-        log_temp_file.close()
-        solver_kwargs["logPath"] = str(log_path)
-        stop_log_tail = threading.Event()
-        log_tail_thread = threading.Thread(
-            target=self._tail_solver_log,
-            args=(log_path, stop_log_tail, progress_callback, start_time, self.engine == "cbc"),
-            daemon=True,
-        )
-        log_tail_thread.start()
-
         try:
-            if self.engine == "cbc":
-                solver_kwargs["msg"] = 0
-                solver_options = []
-                if deterministic:
-                    solver_options.append("randomS 0")
-                    solver_options.append("threads 1")
-                if solver_options:
-                    self.solver = pulp.PULP_CBC_CMD(options=solver_options, **solver_kwargs)
-                else:
-                    self.solver = pulp.PULP_CBC_CMD(**solver_kwargs)
-            elif self.engine == "cuopt":
-                if not hasattr(pulp, "CUOPT"):
-                    raise RuntimeError(
-                        "PuLP cuOpt backend is unavailable: pulp.CUOPT is not present. "
-                        "Install a PuLP build/version with cuOpt support."
-                    )
-                if deterministic:
-                    logging.warning("Deterministic mode is not implemented for PuLP/cuOpt; ignoring.")
-                self.solver = pulp.CUOPT(**solver_kwargs)
-            else:
-                raise ValueError(f"Unsupported PuLP solver engine: {self.engine!r}")
-
-            if hasattr(self.solver, "available"):
-                available = self.solver.available()
-                if not available:
-                    raise RuntimeError(
-                        f"PuLP/{self.engine} backend is not available in this environment. "
-                        "Ensure the required solver runtime is installed and configured."
-                    )
-
-            self.status = self.model.solve(self.solver)
+            self.status = self.model.Solve()
             self.solve_time = time.monotonic() - start_time
         finally:
-            stop_log_tail.set()
-            log_tail_thread.join(timeout=5)
-            try:
-                log_path.unlink()
-            except FileNotFoundError:
-                pass
+            stop_watcher_done.set()
+            if stop_watcher is not None:
+                stop_watcher.join(timeout=1)
 
-        # Convert PuLP status to our enum
-        # Ref: https://www.coin-or.org/PuLP/constants.html
-        if self.status == pulp.LpStatusOptimal:
+        # Convert OR-Tools status to our enum
+        if self.status == pywraplp.Solver.OPTIMAL:
             self.solver_status = SolverStatus.OPTIMAL
-        elif self.status == pulp.LpStatusNotSolved:
-            if self._has_feasible_solution():
-                logging.info(
-                    "Solver returned 'Not Solved' but produced a feasible incumbent; treating status as FEASIBLE."
-                )
-                self.solver_status = SolverStatus.FEASIBLE
-            else:
-                self.solver_status = SolverStatus.UNKNOWN
-        elif self.status == pulp.LpStatusInfeasible:
+        elif self.status == pywraplp.Solver.FEASIBLE:
+            self.solver_status = SolverStatus.FEASIBLE
+        elif self.status == pywraplp.Solver.INFEASIBLE:
             self.solver_status = SolverStatus.INFEASIBLE
-        elif self.status == pulp.LpStatusUnbounded:
-            logging.warning("Model is unbounded")
-            self.solver_status = SolverStatus.UNKNOWN
-        elif self.status == pulp.LpStatusUndefined:
-            logging.warning("Solver returned undefined status")
-            self.solver_status = SolverStatus.UNKNOWN
+        elif self.status == pywraplp.Solver.MODEL_INVALID:
+            self.solver_status = SolverStatus.MODEL_INVALID
         else:
+            if self.status == pywraplp.Solver.UNBOUNDED:
+                logging.warning("Model is unbounded")
+            elif self.status == pywraplp.Solver.ABNORMAL:
+                logging.warning("Solver returned abnormal status")
             self.solver_status = SolverStatus.UNKNOWN
 
         if self.solver_status in {SolverStatus.OPTIMAL, SolverStatus.FEASIBLE}:
             self._emit_progress(
                 progress_callback,
                 SolverProgress(
-                    source=f"pulp/{self.engine}:final-result",
+                    source=f"{self.solver_selector}:final-result",
                     currentBestScore=self.get_objective_value(),
                     elapsedSeconds=round(self.solve_time, 3),
                 ),
@@ -367,40 +326,47 @@ class BasePuLPSolver(SolverInterface):
         return self.solver_status
 
     def get_value(self, var: Any) -> int | float:
-        """Get the value of a variable in the solution."""
-        return self._normalize_numeric_value(pulp.value(var))
+        """Get the value of a variable or linear expression in the solution."""
+        if hasattr(var, "solution_value"):
+            return self._normalize_numeric_value(var.solution_value())
+        return self._normalize_numeric_value(var)
 
     def get_objective_value(self) -> int:
         """Get the objective value of the solution."""
-        # We use int here to follow ortools' CP-SAT solver behavior, but we could solve with float if needed.
+        # We use int here to follow OR-Tools' CP-SAT solver behavior, but we could solve with float if needed.
         # However, most of the constraints used here assume integer domains.
-        if self.model.objective is not None:
-            val = self._normalize_numeric_value(pulp.value(self.model.objective))
-            if val is None:
-                return 0
-            if not isinstance(val, int):
-                # This should not happen
-                raise ValueError(f"Objective value should be an integer, but got {val}.")
-            return val
-        return 0
+        if not self._has_objective:
+            return 0
+        value = self._normalize_numeric_value(self.model.Objective().Value())
+        if value is None:
+            return 0
+        if not isinstance(value, int):
+            # This should not happen
+            raise ValueError(f"Objective value should be an integer, but got {value}.")
+        return value
 
     def get_statistics(self) -> dict[str, Any]:
         """Get solver statistics."""
-        return {
-            "status": pulp.LpStatus[self.status],
+        statistics = {
+            "status": self._STATUS_NAMES.get(self.status, f"UNKNOWN_STATUS_{self.status}"),
             "wall_time": self.solve_time,
             "engine": self.engine,
-            "solver": str(self.solver) if self.solver else "None",
+            "solver": self.model.SolverVersion(),
         }
+        # BOP reports these statistics as unavailable and emits error-level native logs when queried.
+        if self.engine != "bop":
+            statistics["iterations"] = self.model.iterations()
+            statistics["nodes"] = self.model.nodes()
+        return statistics
 
     def validate_model(self) -> str:
         """Validate the model."""
-        # PuLP doesn't have built-in validation like OR-Tools
+        # MPSolver doesn't have built-in validation like CP-SAT
         # We can check basic things
         issues = []
-        if self.model.objective is None:
+        if not self._has_objective:
             issues.append("No objective function set")
-        if len(self.model.constraints) == 0:
+        if self.model.NumConstraints() == 0:
             issues.append("No constraints defined")
 
         if issues:
@@ -408,13 +374,13 @@ class BasePuLPSolver(SolverInterface):
         return "Model appears valid"
 
     def negate(self, var: Any) -> Any:
-        """Negate a boolean variable. For PuLP: (1 - var)."""
+        """Negate a boolean variable using a linear expression."""
         return 1 - var
 
     def create_bool_var_with_constraint(
         self, name: str, source_expr: Any, operator: Operator, target_value: int, source_expr_range: tuple[int, int]
     ) -> Any:
-        """Create a boolean variable with a constraint."""
+        """Create a boolean variable with a linear reified comparison encoding."""
         var = self.new_bool_var(name)
         m, M = int(source_expr_range[0]), int(source_expr_range[1])
         if m > M:
@@ -465,7 +431,6 @@ class BasePuLPSolver(SolverInterface):
 
             x_minus_k = source_expr - K
             side_var = self.new_bool_var(f"{name}_eq_side")
-
             # var = 1 => x == K
             self.add_constraint(
                 x_minus_k <= (M - K) * (1 - var),
@@ -475,7 +440,6 @@ class BasePuLPSolver(SolverInterface):
                 x_minus_k >= (m - K) * (1 - var),
                 name=f"bool_var_with_constraint_{name}_eq_imp_lb",
             )
-
             # var = 0 => x <= K - 1 OR x >= K + 1 (selected by side_var).
             self.add_constraint(
                 x_minus_k <= -1 + (M - K + 1) * side_var + var,
@@ -540,13 +504,13 @@ class BasePuLPSolver(SolverInterface):
             )
             return var
 
-        raise NotImplementedError(f"Operator {operator} not implemented for PuLP solver.")
+        raise NotImplementedError(f"Operator {operator} not implemented for OR-Tools linear solver.")
 
     def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: tuple[int, int]) -> None:
         """
         Add a constraint that target_var = |source_expr|.
 
-        For PuLP, we linearize with one binary branch variable and Big-M bounds.
+        Linearize the absolute value with one binary branch variable and Big-M bounds.
         """
         inferred_lb, inferred_ub = self._infer_expr_bounds(source_expr)
         lb, ub = source_expr_range
@@ -601,7 +565,7 @@ class BasePuLPSolver(SolverInterface):
         """
         Add a constraint that target_var = source_var^2.
 
-        For PuLP, we use an exact value-enumeration encoding on the bounded integer domain of source_var.
+        Use an exact value-enumeration encoding on the bounded integer domain of source_var.
         """
         if isinstance(source_var, (int, float)):
             self.add_constraint(
@@ -609,14 +573,13 @@ class BasePuLPSolver(SolverInterface):
                 name=self.unique_constraint_name("square_const"),
             )
             return
-        if not isinstance(source_var, pulp.LpVariable):
+        if not isinstance(source_var, pywraplp.Variable):
             raise NotImplementedError(
-                f"PuLP squared equality expects a bounded variable or constant, got {type(source_var)}."
+                f"OR-Tools linear squared equality expects a bounded variable or constant, got {type(source_var)}."
             )
-        if source_var.lowBound is None or source_var.upBound is None:
-            raise ValueError("Cannot linearize square for unbounded variable.")
 
-        inferred_lb, inferred_ub = int(source_var.lowBound), int(source_var.upBound)
+        inferred_lb = self._finite_int_bound(source_var.lb(), source_var.name())
+        inferred_ub = self._finite_int_bound(source_var.ub(), source_var.name())
         lb, ub = source_var_range
         lb = int(lb)
         ub = int(ub)
@@ -640,14 +603,14 @@ class BasePuLPSolver(SolverInterface):
         #   x = sum_i value_i * b_i
         #   t = sum_i (value_i^2) * b_i
         # Since exactly one selector is active, t = x^2 exactly.
-        selectors = [self.new_bool_var(f"square_{source_var.name}_{v}") for v in range(lb, ub + 1)]
-        self.add_constraint(pulp.lpSum(selectors) == 1, name=self.unique_constraint_name("square_sel_onehot"))
+        selectors = [self.new_bool_var(f"square_{source_var.name()}_{value}") for value in range(lb, ub + 1)]
+        self.add_constraint(sum(selectors) == 1, name=self.unique_constraint_name("square_sel_onehot"))
         self.add_constraint(
-            source_var == pulp.lpSum((lb + i) * selectors[i] for i in range(domain_size)),
+            source_var == sum((lb + i) * selectors[i] for i in range(domain_size)),
             name=self.unique_constraint_name("square_sel_bind_x"),
         )
         self.add_constraint(
-            target_var == pulp.lpSum(((lb + i) ** 2) * selectors[i] for i in range(domain_size)),
+            target_var == sum(((lb + i) ** 2) * selectors[i] for i in range(domain_size)),
             name=self.unique_constraint_name("square_bind_target"),
         )
 
@@ -665,8 +628,8 @@ class BasePuLPSolver(SolverInterface):
         """
         Create a solution callback for tracking intermediate solutions.
 
-        Note: PuLP does not support solution callbacks in the same way as OR-Tools.
+        Note: MPSolver does not expose solution callbacks through this wrapper.
         This method returns None.
         """
-        logging.info("Solution callbacks are not supported by PuLP solver")
+        logging.info("Solution callbacks are not supported by OR-Tools linear solvers")
         return None

@@ -347,7 +347,11 @@ class TestOptimizeJobs:
         assert '"code": "solving"' in body
         assert '"currentBestScore": 7' in body
 
-    def test_optimize_job_cancel_requests_running_job_stop(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "solver",
+        ["ortools/cp-sat", "ortools/mpsolver/scip", "ortools/mpsolver/sat", "ortools/mpsolver/bop"],
+    )
+    def test_optimize_job_cancel_requests_running_job_stop(self, monkeypatch, solver):
         solve_started = False
 
         def fake_schedule(*args, **kwargs):
@@ -362,7 +366,10 @@ class TestOptimizeJobs:
 
         monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
 
-        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        response = client.post(
+            "/optimize",
+            data={"yaml_content": "apiVersion: alpha\n", "solver": solver},
+        )
         job_id = response.json()["jobId"]
         wait_for_job_status(job_id, "running")
 
@@ -449,11 +456,25 @@ class TestOptimizeJobs:
         assert completed["score"] == 7
         assert completed["xlsxReady"] is True
 
-    def test_optimize_job_control_rejects_solver_without_stop_support(self):
+    @pytest.mark.parametrize(
+        "solver",
+        [
+            "ortools/cp-sat",
+            "ortools/mpsolver/scip",
+            "ortools/mpsolver/sat",
+            "ortools/mpsolver/bop",
+            " ORTOOLS/MPSOLVER/SCIP ",
+        ],
+    )
+    def test_solver_supports_running_job_stop(self, solver):
+        assert serve._solver_supports_job_stop(solver)
+
+    @pytest.mark.parametrize("solver", ["pulp/cbc", "pulp/cuopt", "ortools/mpsolver/cbc"])
+    def test_optimize_job_control_rejects_solver_without_stop_support(self, solver):
         job = serve._create_optimize_job(
-            input_name="pulp.yaml",
+            input_name="non-interruptible.yaml",
             client_uuid="test-client",
-            solver="pulp/cbc",
+            solver=solver,
             prettify=True,
             timeout=60,
         )
@@ -463,10 +484,10 @@ class TestOptimizeJobs:
         finish_response = client.post(f"/optimize/{job.id}/finish-now")
 
         assert cancel_response.status_code == 409
-        assert cancel_response.json()["detail"]["solver"] == "pulp/cbc"
+        assert cancel_response.json()["detail"]["solver"] == solver
         assert "does not support" in cancel_response.json()["detail"]["message"]
         assert finish_response.status_code == 409
-        assert finish_response.json()["detail"]["solver"] == "pulp/cbc"
+        assert finish_response.json()["detail"]["solver"] == solver
 
     def test_optimize_job_allows_multiple_sse_connections(self, fake_successful_scheduler):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})

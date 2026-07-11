@@ -102,6 +102,17 @@ def _solve_with_fixed_affine(
     return round(solver.get_value(y))
 
 
+def test_generated_variable_name_skips_existing_suffix():
+    solver = PuLPSolver()
+    first = solver.new_bool_var("duplicate")
+    occupied_suffix = solver.new_bool_var("duplicate__1")
+
+    generated = solver.new_bool_var("duplicate")
+
+    assert [first.name, occupied_suffix.name, generated.name] == ["duplicate", "duplicate__1", "duplicate__2"]
+    assert len(solver.variables) == 3
+
+
 @pytest.mark.parametrize("k", [0, 2, 4])
 def test_create_bool_var_with_constraint_eq_matches_truth_table(k: int):
     """EQ reification should match x == k for each x in-domain, including edge K values."""

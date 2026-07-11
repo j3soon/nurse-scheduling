@@ -20,7 +20,7 @@
 import logging
 import itertools
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from collections.abc import Callable
 from datetime import timedelta
 
@@ -31,6 +31,55 @@ from .utils import parse_dates
 from .loader import load_data
 from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
 from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
+
+ORTOOLS_CP_SAT_SOLVER = "ortools/cp-sat"
+ORTOOLS_MPSOLVER_API = "mpsolver"
+ORTOOLS_MPSOLVER_MIP_ENGINES = ("cbc", "scip", "sat", "bop")
+ORTOOLS_MPSOLVER_CANONICAL_SOLVERS = tuple(
+    f"ortools/{ORTOOLS_MPSOLVER_API}/{engine}" for engine in ORTOOLS_MPSOLVER_MIP_ENGINES
+)
+PULP_SOLVERS = ("pulp/cbc", "pulp/cuopt")
+CANONICAL_SOLVER_CHOICES = (ORTOOLS_CP_SAT_SOLVER, *ORTOOLS_MPSOLVER_CANONICAL_SOLVERS, *PULP_SOLVERS)
+SUPPORTED_SOLVER_CHOICES = CANONICAL_SOLVER_CHOICES
+SOLVER_SELECTOR_HELP = (
+    "Solver selector (ortools/cp-sat, ortools/mpsolver/cbc, ortools/mpsolver/scip, "
+    "ortools/mpsolver/sat, ortools/mpsolver/bop, pulp/cbc, or pulp/cuopt)."
+)
+
+
+@dataclass(frozen=True)
+class SolverSelector:
+    """Normalized solver selector components."""
+
+    backend: str
+    api: str | None
+    engine: str
+    canonical: str
+
+
+def normalize_solver_selector(solver: str) -> SolverSelector:
+    """Normalize a public solver selector."""
+    normalized = solver.strip().lower()
+    parts = normalized.split("/")
+
+    if parts == ["ortools", "cp-sat"]:
+        return SolverSelector(backend="ortools", api="cp-sat", engine="cp-sat", canonical=ORTOOLS_CP_SAT_SOLVER)
+
+    if len(parts) == 3 and parts[:2] == ["ortools", ORTOOLS_MPSOLVER_API]:
+        engine = parts[2]
+        if engine in ORTOOLS_MPSOLVER_MIP_ENGINES:
+            return SolverSelector(
+                backend="ortools",
+                api=ORTOOLS_MPSOLVER_API,
+                engine=engine,
+                canonical=f"ortools/{ORTOOLS_MPSOLVER_API}/{engine}",
+            )
+        raise ValueError(f"Unsupported OR-Tools MPSolver engine: {engine!r}")
+
+    if len(parts) == 2 and normalized in PULP_SOLVERS:
+        return SolverSelector(backend="pulp", api=None, engine=parts[1], canonical=normalized)
+
+    raise ValueError(f"Unsupported solver configuration: {solver!r}")
 
 
 def _emit_phase_progress(
@@ -134,26 +183,42 @@ def schedule(
     _emit_phase_progress(progress_callback, "initializing_solver", "Initializing solver model", progress_started_at)
     logging.info("Initializing solver model...")
 
-    solver_backend, solver_engine = solver.lower().split("/", maxsplit=1)
+    solver_selector = normalize_solver_selector(solver)
 
     # Initialize the solver based on backend provider + engine
-    if solver_backend == "ortools" and solver_engine == "cp-sat":
+    if solver_selector.canonical == ORTOOLS_CP_SAT_SOLVER:
         from .solver_ortools_cp_sat import ORToolsSolver
 
-        logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
+        logging.info(
+            "Using solver backend=%s api=%s engine=%s",
+            solver_selector.backend,
+            solver_selector.api,
+            solver_selector.engine,
+        )
         ctx.solver = ORToolsSolver()
-    elif solver_backend == "pulp" and solver_engine == "cbc":
+    elif solver_selector.backend == "ortools" and solver_selector.api == ORTOOLS_MPSOLVER_API:
+        from .solver_ortools_linear import ORToolsLinearSolver
+
+        logging.info(
+            "Using solver backend=%s api=%s engine=%s canonical=%s",
+            solver_selector.backend,
+            solver_selector.api,
+            solver_selector.engine,
+            solver_selector.canonical,
+        )
+        ctx.solver = ORToolsLinearSolver(engine=solver_selector.engine)
+    elif solver_selector.backend == "pulp" and solver_selector.engine == "cbc":
         from .solver_pulp_cbc import PuLPSolver
 
-        logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
+        logging.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
         ctx.solver = PuLPSolver()
-    elif solver_backend == "pulp" and solver_engine == "cuopt":
+    elif solver_selector.backend == "pulp" and solver_selector.engine == "cuopt":
         from .solver_pulp_cuopt import PuLPCuOptSolver
 
-        logging.info("Using solver backend=%s engine=%s", solver_backend, solver_engine)
+        logging.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
         ctx.solver = PuLPCuOptSolver()
     else:
-        raise ValueError(f"Unsupported solver configuration: backend={solver_backend!r}, engine={solver_engine!r}")
+        raise ValueError(f"Unsupported solver configuration: {solver!r}")
 
     _emit_phase_progress(progress_callback, "creating_shift_variables", "Creating shift variables", progress_started_at)
     logging.info("Creating shift variables...")

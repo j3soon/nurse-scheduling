@@ -273,13 +273,20 @@ bun run lint -- --fix
 
 ### Core
 
-We currently support three solvers: OR-Tools/CP-SAT, PuLP/CBC, and PuLP/cuOpt.
+We currently support seven solver selectors across OR-Tools and PuLP.
 
-> The PuLP/CBC and PuLP/cuOpt backends are experimental.
+> All backends other than OR-Tools/CP-SAT are experimental.
 
 - `ortools/cp-sat` is the default solver and the most battle-tested one.
+- `ortools/mpsolver/cbc` uses CBC through the OR-Tools linear MIP API and is covered by the normal schedule regression suite.
+- `ortools/mpsolver/scip` and `ortools/mpsolver/sat` use SCIP and CP-SAT through the OR-Tools linear MIP API and are covered by the normal schedule regression suite.
+- `ortools/mpsolver/bop` uses the legacy BOP engine. It has low-level and bounded schedule smoke coverage, but is not recommended for larger schedules because it can be substantially slower.
 - `pulp/cbc` is covered by the normal schedule regression suite and opt-in real-world smoke checks.
 - `pulp/cuopt` is the GPU-accelerated solver. Its real-world smoke check is opt-in and skips when the backend is unavailable.
+
+Running optimization jobs can be cancelled or finished early with `ortools/cp-sat`,
+`ortools/mpsolver/scip`, `ortools/mpsolver/sat`, and `ortools/mpsolver/bop`.
+CBC and PuLP backends do not support cooperative interruption in this application.
 
 ```sh
 cd core
@@ -303,6 +310,11 @@ python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cuopt
 # explicit OR-Tools/CP-SAT selector
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
+# run an OR-Tools MPSolver backend (experimental)
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/cbc
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/scip
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/sat
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/bop
 ```
 
 Run tests:
@@ -311,10 +323,16 @@ Run tests:
 cd core
 # run low-level solver encoding tests
 pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py
+pytest --log-cli-level=INFO tests/test_solver_ortools_linear.py
 pytest --log-cli-level=INFO tests/test_solver_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
 # run schedule regression tests (OR-Tools / PuLP)
 pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
+pytest --log-cli-level=INFO \
+  tests/test_schedule_ortools_mpsolver_cbc.py \
+  tests/test_schedule_ortools_mpsolver_scip.py \
+  tests/test_schedule_ortools_mpsolver_sat.py \
+  tests/test_schedule_ortools_mpsolver_bop.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
 # run the normal core test suite

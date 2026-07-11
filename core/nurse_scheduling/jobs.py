@@ -94,6 +94,14 @@ OPTIMIZE_CLIENT_HEARTBEAT_TIMEOUT_SECONDS = _positive_environment_integer(
 OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS = _positive_environment_integer("OPTIMIZE_CLIENT_LIVENESS_CHECK_SECONDS", 5)
 _optimize_jobs: dict[str, OptimizeJob] = {}
 _optimize_jobs_lock = threading.Lock()
+_JOB_STOP_SOLVERS = frozenset(
+    {
+        "ortools/cp-sat",
+        "ortools/mpsolver/scip",
+        "ortools/mpsolver/sat",
+        "ortools/mpsolver/bop",
+    }
+)
 
 
 def utc_now() -> datetime:
@@ -112,7 +120,7 @@ def _is_terminal_job_status(status: OptimizeJobStatus) -> bool:
 
 
 def _solver_supports_job_stop(solver: str) -> bool:
-    return solver == "ortools/cp-sat"
+    return solver.strip().lower() in _JOB_STOP_SOLVERS
 
 
 def _publish_job_event(job: OptimizeJob, event: str, data: dict[str, Any]) -> None:
