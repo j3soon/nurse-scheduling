@@ -21,6 +21,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from collections.abc import Callable
+import math
 from typing import Any
 
 from .constants import Operator
@@ -115,6 +116,18 @@ def assert_int_score(value: Any, *, label: str = "score", integer_tolerance: flo
     rounded = round(value_f)
     assert abs(value_f - rounded) <= integer_tolerance, f"{label} should be an integer, but got {value}."
     return int(rounded)
+
+
+def validate_square_constant(value: int | float, value_range: tuple[int, int]) -> int:
+    """Return a finite integral square constant within its declared range."""
+    value_f = float(value)
+    if not math.isfinite(value_f) or not value_f.is_integer():
+        raise ValueError(f"Square constant must be a finite integer, got {value!r}.")
+    value_i = int(value_f)
+    lb, ub = value_range
+    if not lb <= value_i <= ub:
+        raise ValueError(f"Square constant {value_i} is outside declared range [{lb}, {ub}].")
+    return value_i
 
 
 class SolverInterface(ABC):

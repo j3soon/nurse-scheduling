@@ -215,6 +215,16 @@ def test_mathopt_model_validation():
     assert solver.validate_model() == "Model appears valid"
 
 
+def test_mathopt_rejects_invalid_square_constants():
+    solver = ORToolsMathOptSolver()
+    target = solver.new_int_var(0, 100, "target")
+
+    with pytest.raises(ValueError, match="finite integer"):
+        solver.add_squared_equality(target, 1.5, (0, 2))
+    with pytest.raises(ValueError, match="outside declared range"):
+        solver.add_squared_equality(target, 6, (0, 5))
+
+
 @pytest.mark.parametrize(("constraint", "expected"), [(True, SolverStatus.OPTIMAL), (False, SolverStatus.INFEASIBLE)])
 def test_mathopt_constant_boolean_constraints(constraint: bool, expected: SolverStatus):
     solver = ORToolsMathOptSolver()

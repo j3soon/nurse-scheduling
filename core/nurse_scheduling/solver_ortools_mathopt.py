@@ -27,7 +27,7 @@ from typing import Any
 from ortools.math_opt.python import mathopt
 from ortools.util.python import solve_interrupter
 
-from .solver_interface import SolverInterface, SolverProgress, SolverStatus
+from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
 from .solver_ortools_linear import ORToolsLinearSolver
 
 
@@ -288,8 +288,9 @@ class ORToolsMathOptSolver(ORToolsLinearSolver):
     def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: tuple[int, int]) -> None:
         """Add an exact linearization of target_var = source_var^2."""
         if isinstance(source_var, (int, float)):
+            source_value = validate_square_constant(source_var, source_var_range)
             self.add_constraint(
-                target_var == int(source_var) * int(source_var),
+                target_var == source_value * source_value,
                 name=self.unique_constraint_name("square_const"),
             )
             return

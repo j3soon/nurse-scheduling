@@ -28,7 +28,7 @@ from typing import Any
 import pulp
 
 from .constants import Operator
-from .solver_interface import SolverInterface, SolverProgress, SolverStatus
+from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
 
 
 class BasePuLPSolver(SolverInterface):
@@ -604,8 +604,9 @@ class BasePuLPSolver(SolverInterface):
         For PuLP, we use an exact value-enumeration encoding on the bounded integer domain of source_var.
         """
         if isinstance(source_var, (int, float)):
+            source_value = validate_square_constant(source_var, source_var_range)
             self.add_constraint(
-                target_var == int(source_var) * int(source_var),
+                target_var == source_value * source_value,
                 name=self.unique_constraint_name("square_const"),
             )
             return

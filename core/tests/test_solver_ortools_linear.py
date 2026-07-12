@@ -19,10 +19,13 @@
 
 # This test is mostly AI generated.
 
+import logging
 import os
 import sys
+import threading
 
 import pytest
+from ortools.linear_solver import pywraplp
 
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -91,6 +94,47 @@ def test_mip_engine_interrupt_support(engine: str, supports_interrupt: bool):
     solver = ORToolsLinearSolver(engine=engine)
 
     assert solver.model.InterruptSolve() is supports_interrupt
+
+
+class _BlockingSolveModel:
+    def __init__(self, *, accepts_interrupt: bool):
+        self.accepts_interrupt = accepts_interrupt
+        self.solve_started = threading.Event()
+        self.interrupt_called = threading.Event()
+
+    def Solve(self):
+        self.solve_started.set()
+        assert self.interrupt_called.wait(timeout=2)
+        return pywraplp.Solver.NOT_SOLVED
+
+    def InterruptSolve(self):
+        self.interrupt_called.set()
+        return self.accepts_interrupt
+
+
+@pytest.mark.parametrize("engine", ["scip", "cp-sat", "bop"])
+def test_stop_watcher_interrupts_supported_engine(engine: str):
+    solver = ORToolsLinearSolver(engine=engine)
+    blocking_model = _BlockingSolveModel(accepts_interrupt=True)
+    solver.model = blocking_model
+
+    status = solver.solve(should_stop=blocking_model.solve_started.is_set)
+
+    assert blocking_model.interrupt_called.is_set()
+    assert status == SolverStatus.UNKNOWN
+
+
+def test_stop_watcher_warns_when_cbc_rejects_interrupt(caplog):
+    solver = ORToolsLinearSolver(engine="cbc")
+    blocking_model = _BlockingSolveModel(accepts_interrupt=False)
+    solver.model = blocking_model
+
+    with caplog.at_level(logging.WARNING):
+        status = solver.solve(should_stop=blocking_model.solve_started.is_set)
+
+    assert blocking_model.interrupt_called.is_set()
+    assert status == SolverStatus.UNKNOWN
+    assert "did not accept solve interruption" in caplog.text
 
 
 def test_generated_variable_name_skips_existing_suffix():
@@ -311,18 +355,19 @@ def test_bop_statistics_omit_unavailable_iteration_and_node_counts():
     assert "nodes" not in statistics
 
 
-def test_add_abs_equality_matches_truth_table():
+@pytest.mark.parametrize("source_value", range(-2, 3))
+def test_add_abs_equality_matches_truth_table(source_value: int):
     solver = ORToolsLinearSolver(engine="cbc")
     source = solver.new_int_var(-2, 2, "x")
     target = solver.new_int_var(0, 2, "abs_x")
     solver.add_abs_equality(target, source, (-2, 2))
-    solver.add_constraint(source == -2)
+    solver.add_constraint(source == source_value)
     solver.set_objective(target, maximize=True)
 
     status = solver.solve()
 
     assert status == SolverStatus.OPTIMAL
-    assert solver.get_value(target) == 2
+    assert solver.get_value(target) == abs(source_value)
 
 
 def test_add_squared_equality_variable_source():
@@ -347,6 +392,12 @@ def test_add_squared_equality_validation_errors():
 
     with pytest.raises(NotImplementedError, match="expects a bounded variable or constant"):
         solver.add_squared_equality(target, "bad-source", (0, 1))
+    with pytest.raises(ValueError, match="finite integer"):
+        solver.add_squared_equality(target, 1.5, (0, 2))
+    with pytest.raises(ValueError, match="finite integer"):
+        solver.add_squared_equality(target, float("inf"), (0, 2))
+    with pytest.raises(ValueError, match="outside declared range"):
+        solver.add_squared_equality(target, 6, (0, 5))
     with pytest.raises(ValueError, match="Invalid source variable bounds for square"):
         solver.add_squared_equality(target, bounded, (5, 4))
     with pytest.raises(ValueError, match="Negative lower bound"):
