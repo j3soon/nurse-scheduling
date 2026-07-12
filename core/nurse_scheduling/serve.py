@@ -346,6 +346,14 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         _log_job_completed(job)
     except Exception as e:
         if current_job.cancel_requested:
+            server_logger.info(
+                "[server:job] cancelled-after-exception job_id=%s exception_type=%s error=%s client_uuid=%s",
+                job_id,
+                type(e).__name__,
+                str(e),
+                current_job.client_uuid,
+                exc_info=True,
+            )
             job = _finish_optimize_job_if_present(
                 job_id,
                 "complete",

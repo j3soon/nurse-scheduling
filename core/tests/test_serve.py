@@ -388,7 +388,7 @@ class TestOptimizeJobs:
         assert completed["error"] == "Optimization cancelled."
         assert completed["xlsxReady"] is False
 
-    def test_optimize_job_cancel_without_incumbent_is_cancelled(self, monkeypatch):
+    def test_optimize_job_cancel_without_incumbent_is_cancelled(self, monkeypatch, caplog):
         solve_started = threading.Event()
 
         def fake_schedule(*args, **kwargs):
@@ -416,6 +416,11 @@ class TestOptimizeJobs:
         completed = wait_for_job_status(job_id, "cancelled")
         assert completed["error"] == "Optimization cancelled."
         assert completed["xlsxReady"] is False
+        assert any(
+            f"[server:job] cancelled-after-exception job_id={job_id} "
+            "exception_type=ValueError error=No solution found! Status: UNKNOWN client_uuid=" in message
+            for message in caplog.messages
+        )
 
     def test_optimize_job_finish_now_requests_best_available_result(self, monkeypatch, caplog):
         def fake_schedule(*args, **kwargs):

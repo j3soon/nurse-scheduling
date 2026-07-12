@@ -120,10 +120,13 @@ def assert_int_score(value: Any, *, label: str = "score", integer_tolerance: flo
 
 def validate_square_constant(value: int | float, value_range: tuple[int, int]) -> int:
     """Return a finite integral square constant within its declared range."""
-    value_f = float(value)
-    if not math.isfinite(value_f) or not value_f.is_integer():
-        raise ValueError(f"Square constant must be a finite integer, got {value!r}.")
-    value_i = int(value_f)
+    if isinstance(value, int):
+        value_i = value
+    else:
+        value_f = float(value)
+        if not math.isfinite(value_f) or not value_f.is_integer():
+            raise ValueError(f"Square constant must be a finite integer, got {value!r}.")
+        value_i = int(value_f)
     lb, ub = value_range
     if not lb <= value_i <= ub:
         raise ValueError(f"Square constant {value_i} is outside declared range [{lb}, {ub}].")
