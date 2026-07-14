@@ -350,4 +350,5 @@ def test_expired_worker_claim_fails_job_and_releases_capacity(store):
         "worker_lost",
         "The optimization worker stopped before the job completed.",
     )
+    assert recovery.is_stop_requested(abandoned.id, "lost-worker") is True
     assert _create(recovery).state == JobState.QUEUED

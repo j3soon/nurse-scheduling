@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -46,7 +47,7 @@ def _positive_float(name: str, default: float) -> float:
         ValueError: If the configured value is not a positive number.
     """
     value = float(os.getenv(name, default))
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be a positive number")
     return value
 
@@ -106,7 +107,7 @@ class ServerSettings:
             "maintenance_interval_seconds",
             "sse_keepalive_seconds",
         ):
-            if getattr(self, name) <= 0:
+            if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         if self.max_retained_jobs < self.max_pending_jobs:
             raise ValueError("max_retained_jobs must be at least max_pending_jobs")

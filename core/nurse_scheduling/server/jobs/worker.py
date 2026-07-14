@@ -119,15 +119,19 @@ class JobWorker:
         """Execute one claimed job and report its progress and outcome."""
         content = b""
         heartbeat_stop = threading.Event()
+        execution_stop = threading.Event()
+        stop_check_failed = threading.Event()
 
         def renew_claim() -> None:
             """Renew the worker claim until execution ends or the job disappears."""
             while not heartbeat_stop.wait(self._claim_heartbeat_seconds):
                 try:
                     renewed = self._controller.renew_claim(job.id, self._worker_id)
-                    if renewed.state.terminal:
+                    if renewed.state.terminal or renewed.worker_id != self._worker_id:
+                        execution_stop.set()
                         return
                 except JobNotFoundError:
+                    execution_stop.set()
                     return
                 except Exception:
                     server_logger.exception("[server:worker] failed to renew claim job_id=%s", job.id)
@@ -153,8 +157,24 @@ class JobWorker:
             if solver_supports_stop(job.request.solver):
 
                 def should_stop() -> bool:
-                    """Return whether shutdown or a job control requested a stop."""
-                    return self._stop.is_set() or self._controller.is_stop_requested(job.id)
+                    """Return whether shutdown, claim loss, or a job control requested a stop."""
+                    if self._stop.is_set() or execution_stop.is_set():
+                        return True
+                    try:
+                        stop_requested = self._controller.is_stop_requested(job.id, self._worker_id)
+                        stop_check_failed.clear()
+                        return stop_requested
+                    except JobNotFoundError:
+                        execution_stop.set()
+                        return True
+                    except Exception:
+                        # Claim renewal logs store outages and keeps retrying. Do
+                        # not let one failed control read permanently terminate
+                        # the solver's stop watcher while that retry is active.
+                        if not stop_check_failed.is_set():
+                            server_logger.exception("[server:worker] failed to check stop request job_id=%s", job.id)
+                            stop_check_failed.set()
+                        return False
 
             output = self._runner.run(
                 job,

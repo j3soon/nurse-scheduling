@@ -63,6 +63,17 @@ UNEXPECTED_ERROR_VERSION_ADVICE = (
 ORIGIN_REGEX = r"^(http://(localhost|127\.0\.0\.1):[0-9]+|https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 
 
+# Keep API output focused on server behavior. Solver progress is delivered to
+# clients through job events and remains available from the CLI's verbose logs.
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+server_logger = logging.getLogger("nurse_scheduling.server")
+server_logger.setLevel(logging.INFO)
+
+
 def get_app_version() -> str:
     """Return the current Git description without making startup depend on Git."""
     repo_root = Path(__file__).resolve().parents[3]
@@ -148,7 +159,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         """Own startup and shutdown of process-local background threads."""
-        logging.getLogger("nurse_scheduling.server").info(
+        server_logger.info(
             "[server:start] title=%s api_version=%s app_version=%s backend=%s",
             TITLE,
             API_VERSION,
@@ -238,7 +249,7 @@ def create_app(
         try:
             store.check_health()
         except Exception as error:
-            logging.getLogger("nurse_scheduling.server").warning(
+            server_logger.warning(
                 "[server:health] job store unavailable backend=%s error=%s",
                 settings.job_backend,
                 error,

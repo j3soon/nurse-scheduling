@@ -19,9 +19,13 @@
 
 # This test is mostly AI generated.
 
+import os
+import subprocess
+import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,7 +40,9 @@ from nurse_scheduling.server.jobs.models import (
     OptimizationOutcome,
     OptimizationResult,
     StoredArtifact,
+    StoreLimits,
 )
+from nurse_scheduling.server.jobs.controller import JobController
 from nurse_scheduling.server.jobs.runner import OptimizationRunner, RunOutput
 from nurse_scheduling.server.jobs.worker import JobWorker
 from nurse_scheduling.server.stores.memory import MemoryJobStore
@@ -82,11 +88,13 @@ class FailingRunner:
 class StoppableRunner:
     def __init__(self):
         self.started = threading.Event()
+        self.finished = threading.Event()
 
     def run(self, job, input_bytes, *, event_callback, should_stop):
         self.started.set()
         while should_stop is not None and not should_stop():
             time.sleep(0.005)
+        self.finished.set()
         return RunOutput(
             result=OptimizationResult(
                 outcome=OptimizationOutcome.FEASIBLE,
@@ -143,6 +151,29 @@ def test_health_and_readiness_report_status():
         assert client.get("/ready").json() == {"status": "ready"}
 
 
+def test_server_info_logging_is_visible_without_external_logging_configuration():
+    environment = os.environ.copy()
+    environment["DISABLE_SENTRY"] = "1"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import logging; "
+                "import nurse_scheduling.server.app; "
+                "logging.getLogger('nurse_scheduling.server').info('server-info-visible')"
+            ),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "server-info-visible" in completed.stderr
+
+
 def test_health_and_readiness_fail_when_job_store_is_unavailable():
     class UnhealthyStore(MemoryJobStore):
         def check_health(self):
@@ -197,6 +228,35 @@ def test_health_and_readiness_fail_when_job_worker_stops():
 def test_server_settings_reject_invalid_relationships(updates, message):
     with pytest.raises(ValueError, match=message):
         _settings(**updates)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "claim_poll_seconds",
+        "claim_lease_seconds",
+        "maintenance_interval_seconds",
+        "sse_keepalive_seconds",
+    ],
+)
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="positive-infinity"),
+        pytest.param(float("-inf"), id="negative-infinity"),
+    ],
+)
+def test_server_settings_reject_non_finite_float_values(name, value):
+    with pytest.raises(ValueError, match=rf"{name} must be positive"):
+        _settings(**{name: value})
+
+
+def test_server_settings_from_env_reject_non_finite_float(monkeypatch):
+    monkeypatch.setenv("JOB_CLAIM_POLL_SECONDS", "nan")
+
+    with pytest.raises(ValueError, match="JOB_CLAIM_POLL_SECONDS must be a positive number"):
+        ServerSettings.from_env()
 
 
 def test_server_settings_retain_up_to_128_jobs_for_24_hours_by_default():
@@ -376,6 +436,66 @@ def test_worker_renews_claim_during_long_running_job():
         assert running["state"] == "running"
         client.post(f"/optimize/{created['id']}/finish-now")
         assert _wait_for_terminal(client, created["id"])["state"] == "completed"
+
+
+def test_worker_stops_execution_after_its_claim_expires():
+    now = [datetime.now(timezone.utc)]
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=1, max_retained=2),
+        retention_seconds=60,
+        claim_lease_seconds=30,
+        clock=lambda: now[0],
+    )
+    created = controller.create_job(
+        input_name="input.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=True,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+
+    class ControllerWithTransientStopReadFailure:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.stop_read_failed = threading.Event()
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def is_stop_requested(self, job_id, worker_id):
+            if not self.stop_read_failed.is_set():
+                self.stop_read_failed.set()
+                raise ConnectionError("store temporarily unavailable")
+            return self.delegate.is_stop_requested(job_id, worker_id)
+
+    worker_controller = ControllerWithTransientStopReadFailure(controller)
+    runner = StoppableRunner()
+    worker = JobWorker(
+        worker_controller,
+        runner,
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        claim_lease_seconds=30,
+    )
+
+    worker.start()
+    try:
+        assert runner.started.wait(timeout=2)
+        assert worker_controller.stop_read_failed.wait(timeout=2)
+        now[0] += timedelta(seconds=31)
+        assert controller.expire_worker_claims() == [created.id]
+        assert runner.finished.wait(timeout=2)
+
+        failed = controller.get_job(created.id)
+        assert failed.state == JobState.FAILED
+        assert failed.failure is not None
+        assert failed.failure.code == "worker_lost"
+        assert worker.is_alive()
+    finally:
+        worker.stop()
 
 
 def test_event_stream_has_ids_and_domain_event_names():

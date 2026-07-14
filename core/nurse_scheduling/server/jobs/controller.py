@@ -385,14 +385,18 @@ class JobController:
 
         return self._update_job_with_retry(job_id, transition)
 
-    def is_stop_requested(self, job_id: str) -> bool:
-        """Return whether cancellation or early completion requested a solver stop.
+    def is_stop_requested(self, job_id: str, worker_id: str | None = None) -> bool:
+        """Return whether a worker should stop executing a job.
+
+        Terminal state and lost claim ownership stop stale workers after lease
+        expiry, in addition to explicit cancellation and early completion.
 
         Raises:
             JobNotFoundError: If the job does not exist.
         """
         job = self.get_job(job_id)
-        return job.cancel_requested or job.early_completion_requested
+        lost_claim = worker_id is not None and job.worker_id != worker_id
+        return job.state.terminal or lost_claim or job.cancel_requested or job.early_completion_requested
 
     def stream_events(
         self,
