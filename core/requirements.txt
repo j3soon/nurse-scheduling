@@ -12,5 +12,6 @@ ruff
 # For web backend
 fastapi[standard]
 python-multipart
+redis
 # For error tracking
 sentry-sdk

@@ -23,6 +23,7 @@ import time
 from dataclasses import replace
 from collections.abc import Callable
 from datetime import timedelta
+from typing import Any, NamedTuple
 
 from . import exporter, preference_types
 from .constants import ALL, OFF, OFF_sid, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
@@ -31,6 +32,16 @@ from .utils import parse_dates
 from .loader import load_data
 from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
 from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
+
+
+class ScheduleResult(NamedTuple):
+    """Typed result returned by the scheduling application service."""
+
+    dataframe: Any | None
+    solution: dict[tuple[int, int, int], int] | None
+    score: int | None
+    solver_status: str
+    cell_export_info: Any | None
 
 
 def _emit_phase_progress(
@@ -61,7 +72,7 @@ def schedule(
     progress_callback: Callable[[ScheduleProgress], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     model_build_stats_callback: Callable[[ModelBuildStats], None] | None = None,
-):
+) -> ScheduleResult:
     progress_started_at = time.monotonic()
     _emit_phase_progress(
         progress_callback,
@@ -328,14 +339,19 @@ def schedule(
         logging.info("Model invalid!")
         logging.info("Validation Info:")
         logging.info(ctx.solver.validate_model())
+    elif status == SolverStatus.UNKNOWN:
+        logging.info("No solution found before the solver stopped!")
     else:
-        logging.info("No solution found!")
-        raise ValueError(f"No solution found! Status: {ctx.solver_status}")
+        raise ValueError(f"Unexpected solver status: {ctx.solver_status}")
 
     logging.info("Statistics:")
     stats = ctx.solver.get_statistics()
     for key, value in stats.items():
         logging.info(f"  - {key}: {value}")
+
+    if not found:
+        logging.info("Done.")
+        return ScheduleResult(None, None, None, ctx.solver_status, None)
 
     logging.debug("Variables:")
     for k, v in ctx.model_vars.items():
@@ -352,13 +368,10 @@ def schedule(
 
     logging.info("Done.")
 
-    if not found:
-        return None, None, None, ctx.solver_status, None
-
     _emit_phase_progress(progress_callback, "exporting", "Preparing schedule output", progress_started_at)
     df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=prettify)
     solution = {}
     for d, s, p in ctx.shifts:
         solution[(d, s, p)] = ctx.solver.get_value(ctx.shifts[(d, s, p)])
     # TODO: Better way to return?
-    return df, solution, ctx.solver.get_objective_value(), ctx.solver_status, cell_export_info
+    return ScheduleResult(df, solution, ctx.solver.get_objective_value(), ctx.solver_status, cell_export_info)

@@ -1,0 +1,122 @@
+"""Adapter from a job request to the synchronous scheduler and XLSX exporter."""
+
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+#
+# Copyright (C) 2023-2026 Johnson Sun
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from io import BytesIO
+from typing import Any
+
+from ... import exporter, scheduler
+from ...solver_interface import (
+    SchedulePhaseProgress,
+    ScheduleProgress,
+    serialize_schedule_phase_progress,
+    serialize_solver_progress,
+)
+from ..errors import OptimizationExecutionError
+from .models import Job, OptimizationOutcome, OptimizationResult, StoredArtifact
+
+
+EventCallback = Callable[[str, dict[str, Any], int | None], None]
+StopCallback = Callable[[], bool]
+
+
+@dataclass(frozen=True)
+class RunOutput:
+    """Normalized result and optional artifact produced by one execution."""
+
+    result: OptimizationResult
+    """Normalized result for a completed scheduling run."""
+    artifact: StoredArtifact | None
+    """Generated XLSX artifact, absent when no schedule exists."""
+
+
+class OptimizationRunner:
+    """Run the scheduling engine without knowing job persistence or HTTP."""
+
+    def run(
+        self,
+        job: Job,
+        input_bytes: bytes,
+        *,
+        event_callback: EventCallback,
+        should_stop: StopCallback | None,
+    ) -> RunOutput:
+        """Run the scheduler and export any resulting schedule to XLSX.
+
+        Progress and phase changes are forwarded through `event_callback`.
+
+        Raises:
+            OptimizationExecutionError: If the model is invalid or no normal result is produced.
+        """
+
+        def publish_progress(payload: ScheduleProgress) -> None:
+            """Normalize scheduler progress into job-domain events."""
+            if isinstance(payload, SchedulePhaseProgress):
+                event_callback("job.phase_changed", serialize_schedule_phase_progress(payload), None)
+                return
+            data = serialize_solver_progress(payload, include_export_summary=True)
+            event_callback("job.progressed", data, payload.currentBestScore)
+
+        schedule_result = scheduler.schedule(
+            file_content=input_bytes,
+            prettify=job.request.prettify,
+            timeout=job.request.timeout_seconds,
+            solver=job.request.solver,
+            progress_callback=publish_progress,
+            should_stop=should_stop,
+        )
+
+        normalized_status = schedule_result.solver_status
+        if normalized_status == "INFEASIBLE":
+            return RunOutput(
+                result=OptimizationResult(
+                    outcome=OptimizationOutcome.INFEASIBLE,
+                    score=None,
+                    solver_status=normalized_status,
+                    termination_reason="infeasibility_proven",
+                ),
+                artifact=None,
+            )
+        if normalized_status == "MODEL_INVALID":
+            raise OptimizationExecutionError("invalid_model", "The generated solver model is invalid")
+        if normalized_status not in {"OPTIMAL", "FEASIBLE"} or schedule_result.dataframe is None:
+            raise OptimizationExecutionError(
+                "no_solution_found",
+                f"No schedule was produced. Solver status: {normalized_status}",
+            )
+
+        output_buffer = BytesIO()
+        exporter.export_to_excel(schedule_result.dataframe, output_buffer, schedule_result.cell_export_info)
+        output_filename = f"{job.request.input_name.rsplit('.', 1)[0]}.xlsx"
+        outcome = OptimizationOutcome.OPTIMAL if normalized_status == "OPTIMAL" else OptimizationOutcome.FEASIBLE
+        termination_reason = "optimality_proven" if outcome == OptimizationOutcome.OPTIMAL else "limit_or_stop"
+        return RunOutput(
+            result=OptimizationResult(
+                outcome=outcome,
+                score=schedule_result.score,
+                solver_status=normalized_status,
+                termination_reason=termination_reason,
+            ),
+            artifact=StoredArtifact(
+                name=output_filename,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                content=output_buffer.getvalue(),
+            ),
+        )

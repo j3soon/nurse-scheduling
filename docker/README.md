@@ -30,6 +30,18 @@ cd docker
 docker compose -f compose.backend.yml up -d --build
 ```
 
+The compose file starts Redis alongside the backend. The backend runs with:
+
+- `JOB_BACKEND=redis`
+- `JOB_REDIS_URL=redis://redis:6379/0`
+- `JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0`
+- `JOB_CLAIM_LEASE_SECONDS=90` by default
+
+The backend container runs multiple Uvicorn workers. Each worker claims jobs
+from Redis and runs at most one optimization job locally. Active workers renew
+their claims; a job is failed and its capacity is released if its worker stops
+renewing the claim.
+
 Check the API through Cloudflare:
 
 ```sh
@@ -48,11 +60,17 @@ Check the backend directly from the VM:
 docker compose -f compose.backend.yml exec backend curl -fsS http://127.0.0.1:8000/health
 ```
 
+Check Redis from the backend container:
+
+```sh
+docker compose -f compose.backend.yml exec backend redis-cli -u redis://redis:6379/0 ping
+```
+
 ## Frontend
 
 The frontend selects an available backend from its built-in candidate list at
 page load.
 
-The current backend keeps optimization jobs, SSE events, and XLSX outputs in
-process memory. Keep `uvicorn` at one worker and run one backend replica until
-job state is moved to a shared store.
+When `JOB_BACKEND=redis`, optimization jobs, SSE events, YAML inputs,
+and XLSX outputs are stored in Redis so status, event, and download requests can
+be served by any backend worker.

@@ -84,16 +84,19 @@ test('optimize and export works against a real local HTTP server instead of Play
         'Content-Type': 'application/json',
       });
       res.end(JSON.stringify({
-        jobId: 'http-job',
-        status: 'queued',
-        score: null,
-        solverStatus: null,
+        id: 'http-job',
+        state: 'queued',
+        terminal: false,
+        queue_position: 1,
+        result: null,
         error: null,
-        xlsxReady: false,
+        controls: { cancellable: true, early_completion_available: false },
         links: {
-          status: '/optimize/http-job',
+          self: '/optimize/http-job',
           events: '/optimize/http-job/events',
-          xlsx: '/optimize/http-job/xlsx',
+          cancellation: '/optimize/http-job/cancel',
+          early_completion: '/optimize/http-job/finish-now',
+          schedule: null,
         },
       }));
       return;
@@ -105,16 +108,24 @@ test('optimize and export works against a real local HTTP server instead of Play
         'Content-Type': 'application/json',
       });
       res.end(JSON.stringify({
-        jobId: 'http-job',
-        status: 'optimal',
-        score: 99,
-        solverStatus: 'OPTIMAL',
+        id: 'http-job',
+        state: 'completed',
+        terminal: true,
+        queue_position: null,
+        result: {
+          outcome: 'optimal',
+          score: 99,
+          solver_status: 'OPTIMAL',
+          termination_reason: null,
+        },
         error: null,
-        xlsxReady: true,
+        controls: { cancellable: false, early_completion_available: false },
         links: {
-          status: '/optimize/http-job',
+          self: '/optimize/http-job',
           events: '/optimize/http-job/events',
-          xlsx: '/optimize/http-job/xlsx',
+          cancellation: '/optimize/http-job/cancel',
+          early_completion: '/optimize/http-job/finish-now',
+          schedule: '/optimize/http-job/xlsx',
         },
       }));
       return;

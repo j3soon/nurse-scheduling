@@ -1,9 +1,34 @@
 services:
+  redis:
+    image: redis:8.8
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      JOB_BACKEND: redis
+      JOB_REDIS_URL: redis://redis:6379/0
+      JOB_REDIS_KEY_PREFIX: nurse_scheduling:jobs:v0
+    command:
+      - uvicorn
+      - nurse_scheduling.serve:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "3"
+      - --no-access-log
     expose:
       - "8000"
     volumes:
@@ -19,3 +44,6 @@ services:
       backend:
         condition: service_healthy
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+
+volumes:
+  redis-data:

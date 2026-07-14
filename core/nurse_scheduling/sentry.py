@@ -27,7 +27,7 @@ from fastapi.encoders import jsonable_encoder
 from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
 
 if TYPE_CHECKING:
-    from .jobs import OptimizeJob
+    from .server.jobs.models import Job
 
 
 def _should_enable_sentry() -> bool:
@@ -66,7 +66,7 @@ def init_sentry(app_version: str) -> None:
     sentry_sdk.set_tag("app", "backend")
 
 
-def capture_optimize_exception(job: "OptimizeJob", content: bytes, error: Exception) -> None:
+def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> None:
     if not _should_enable_sentry():
         return
 
@@ -82,14 +82,14 @@ def capture_optimize_exception(job: "OptimizeJob", content: bytes, error: Except
             {
                 "attached": True,
                 "content_sanitized": content_sanitized,
-                "input_name": job.input_name,
+                "input_name": job.request.input_name,
                 "job_id": job.id,
                 "size_bytes": len(anonymized_content),
             },
         )
         scope.add_attachment(
             bytes=anonymized_content,
-            filename=job.input_name,
+            filename=job.request.input_name,
             content_type="application/x-yaml",
         )
         sentry_sdk.capture_exception(error)

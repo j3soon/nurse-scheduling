@@ -136,30 +136,18 @@ test('optimize and export renders backend phase SSE messages in the event log', 
       __lastEventSource?: { emit: (type: string, data: unknown) => void };
     }).__lastEventSource;
 
-    eventSource?.emit('phase', {
+    eventSource?.emit('job.phase_changed', {
       source: 'scheduler:phase',
       code: 'creating_shift_variables',
       message: 'Creating shift variables',
       elapsedSeconds: 0.12,
     });
-    eventSource?.emit('complete', {
-      jobId: 'e2e-job',
-      status: 'optimal',
-      score: 99,
-      solverStatus: 'OPTIMAL',
-      error: null,
-      xlsxReady: true,
-      links: {
-        status: '/optimize/e2e-job',
-        events: '/optimize/e2e-job/events',
-        xlsx: '/optimize/e2e-job/xlsx',
-      },
-    });
+    eventSource?.emit('job.result_available', { outcome: 'optimal', score: 99 });
   });
 
   await downloadPromise;
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
   const eventLog = page.getByTestId('optimization-events-log');
-  await expect(eventLog).toContainText('phase');
+  await expect(eventLog).toContainText('job.phase_changed');
   await expect(eventLog).toContainText('Creating shift variables');
 });

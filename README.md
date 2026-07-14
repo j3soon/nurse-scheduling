@@ -174,6 +174,22 @@ docker run --rm -it --gpus all --network=host \
   j3soon/nurse-scheduling:dev-cuopt
 ```
 
+Inside either development container, start Redis and run the backend in Redis mode:
+
+```sh
+redis-server --daemonize yes
+redis-cli ping
+cd /app/core
+JOB_BACKEND=redis \
+JOB_REDIS_URL=redis://localhost:6379/0 \
+JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0 \
+uvicorn nurse_scheduling.serve:app --workers 3 --host 0.0.0.0 --port 8000 --no-access-log
+```
+
+Workers renew a 90-second execution lease while optimizing. Set
+`JOB_CLAIM_LEASE_SECONDS` to change how long the server waits before marking a
+job failed after its worker disappears.
+
 or with X11 forwarding for running Playwright interactive mode in the container:
 
 ```sh
@@ -378,6 +394,62 @@ cd ..
 python tests/test_serve.py
 # or
 pytest tests/test_serve.py --log-cli-level=INFO
+```
+
+By default, optimization job state is process-local memory:
+
+```sh
+cd core
+JOB_BACKEND=memory uvicorn nurse_scheduling.serve:app --no-access-log
+```
+
+For multiple Uvicorn workers or multiple backend machines, use Redis-backed job state. Redis stores job metadata,
+queued job IDs, YAML inputs, XLSX artifacts, and replayable optimization events. Each backend process still runs at
+most one optimization job locally, so `--workers 3` allows up to three simultaneous jobs across those worker processes.
+
+```sh
+cd core
+JOB_BACKEND=redis \
+JOB_REDIS_URL=redis://localhost:6379/0 \
+JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0 \
+uvicorn nurse_scheduling.serve:app --workers 3 --no-access-log
+```
+
+The optional `JOB_CLAIM_LEASE_SECONDS` setting defaults to 90 seconds. Keep it
+long enough to tolerate brief Redis interruptions; each active worker renews
+its lease every third of that interval.
+
+Without Docker, install and start Redis with your operating system package manager.
+
+Ubuntu/Debian:
+
+```sh
+sudo apt-get update
+sudo apt-get install redis-server
+redis-server --daemonize yes
+redis-cli ping
+```
+
+macOS with Homebrew:
+
+```sh
+brew install redis
+brew services start redis
+redis-cli ping
+```
+
+Run the Redis backend tests against a local Redis database:
+
+```sh
+cd core
+JOB_REDIS_TEST_URL=redis://localhost:6379/15 pytest --log-cli-level=INFO tests/test_optimize_job_backends.py
+```
+
+For Docker Compose deployment, `docker/compose.backend.yml` starts a Redis service and configures the backend to use it:
+
+```sh
+cd docker
+docker compose -f compose.backend.yml up -d --build
 ```
 
 ### Documentation

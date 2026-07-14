@@ -100,14 +100,12 @@ const createSchedulingData = (overrides = {}) => ({
 
 const healthyResponse = (overrides: Partial<{
   status: string;
-  version: string;
   apiVersion: string;
   appVersion: string;
 }> = {}) => ({
   ok: true,
   json: vi.fn().mockResolvedValue({
     status: 'ok',
-    version: 'alpha',
     apiVersion: 'alpha',
     appVersion: 'frontend-test',
     ...overrides,
@@ -117,6 +115,53 @@ const healthyResponse = (overrides: Partial<{
 const queueInitialLocalSelection = (fetchMock: ReturnType<typeof vi.fn>) => {
   fetchMock.mockResolvedValueOnce(healthyResponse());
   return fetchMock;
+};
+
+const optimizeJobResponse = ({
+  id,
+  state = 'queued',
+  queuePosition = null,
+  outcome = null,
+  score = null,
+  solverStatus = null,
+  error = null,
+  earlyCompletionAvailable = state === 'running',
+}: {
+  id: string;
+  state?: 'queued' | 'running' | 'cancelling' | 'completed' | 'cancelled' | 'failed';
+  queuePosition?: number | null;
+  outcome?: 'optimal' | 'feasible' | 'infeasible' | null;
+  score?: number | null;
+  solverStatus?: string | null;
+  error?: string | null;
+  earlyCompletionAvailable?: boolean;
+}) => {
+  const terminal = ['completed', 'cancelled', 'failed'].includes(state);
+  const scheduleReady = state === 'completed' && outcome !== null && outcome !== 'infeasible';
+  return {
+    id,
+    state,
+    terminal,
+    queue_position: queuePosition,
+    result: outcome && solverStatus ? {
+      outcome,
+      score,
+      solver_status: solverStatus,
+      termination_reason: null,
+    } : null,
+    error: error ? { code: state === 'cancelled' ? 'cancelled' : 'optimization_failed', message: error } : null,
+    controls: {
+      cancellable: !terminal && state !== 'cancelling',
+      early_completion_available: earlyCompletionAvailable && !terminal,
+    },
+    links: {
+      self: `/optimize/${id}`,
+      events: `/optimize/${id}/events`,
+      cancellation: `/optimize/${id}/cancel`,
+      early_completion: `/optimize/${id}/finish-now`,
+      schedule: scheduleReady ? `/optimize/${id}/xlsx` : null,
+    },
+  };
 };
 
 async function editBackendEndpoint(user: ReturnType<typeof userEvent.setup>, from: string, to: string) {
@@ -136,7 +181,6 @@ describe('optimize backend server selection', () => {
         index: 1,
         health: {
           status: 'ok',
-          version: 'alpha',
           apiVersion: 'alpha',
           appVersion: 'newer-backend',
         },
@@ -146,7 +190,6 @@ describe('optimize backend server selection', () => {
         index: 0,
         health: {
           status: 'ok',
-          version: 'alpha',
           apiVersion: 'alpha',
           appVersion: 'older-backend',
         },
@@ -220,6 +263,24 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Server error (422): {"error":"validation failed"}')).resolves.toBeInTheDocument();
+  });
+
+  it('surfaces messages from the backend application error envelope', async () => {
+    const user = userEvent.setup();
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          error: { code: 'job_capacity_exceeded', message: 'Too many jobs are queued or running' },
+        })),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+
+    await expect(screen.findByText('Server error (429): Too many jobs are queued or running')).resolves.toBeInTheDocument();
   });
 
   it('keeps showing the raw response text when JSON parsing itself fails', async () => {
@@ -669,32 +730,43 @@ describe('OptimizeAndExportPage error handling', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: vi.fn().mockResolvedValue({
-          jobId: 'opt_test',
-          status: 'queued',
-          score: null,
-          solverStatus: null,
+          id: 'opt_test',
+          state: 'queued',
+          terminal: false,
+          queue_position: 1,
+          result: null,
           error: null,
-          xlsxReady: false,
+          controls: { cancellable: true, early_completion_available: false },
           links: {
-            status: '/optimize/opt_test',
+            self: '/optimize/opt_test',
             events: '/optimize/opt_test/events',
-            xlsx: '/optimize/opt_test/xlsx',
+            cancellation: '/optimize/opt_test/cancel',
+            early_completion: '/optimize/opt_test/finish-now',
+            schedule: null,
           },
         }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: vi.fn().mockResolvedValue({
-          jobId: 'opt_test',
-          status: 'optimal',
-          score: 42000,
-          solverStatus: 'OPTIMAL',
+          id: 'opt_test',
+          state: 'completed',
+          terminal: true,
+          queue_position: null,
+          result: {
+            outcome: 'optimal',
+            score: 42000,
+            solver_status: 'OPTIMAL',
+            termination_reason: 'optimality_proven',
+          },
           error: null,
-          xlsxReady: true,
+          controls: { cancellable: false, early_completion_available: false },
           links: {
-            status: '/optimize/opt_test',
+            self: '/optimize/opt_test',
             events: '/optimize/opt_test/events',
-            xlsx: '/optimize/opt_test/xlsx',
+            cancellation: '/optimize/opt_test/cancel',
+            early_completion: '/optimize/opt_test/finish-now',
+            schedule: '/optimize/opt_test/xlsx',
           },
         }),
       })
@@ -751,19 +823,9 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_anonymous',
-          status: 'optimal',
-          score: 1,
-          solverStatus: 'OPTIMAL',
-          error: null,
-          xlsxReady: true,
-          links: {
-            status: '/optimize/opt_anonymous',
-            events: '/optimize/opt_anonymous/events',
-            xlsx: '/optimize/opt_anonymous/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_anonymous', state: 'completed', outcome: 'optimal', score: 1, solverStatus: 'OPTIMAL',
+        })),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -801,19 +863,9 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_named',
-          status: 'optimal',
-          score: 1,
-          solverStatus: 'OPTIMAL',
-          error: null,
-          xlsxReady: true,
-          links: {
-            status: '/optimize/opt_named',
-            events: '/optimize/opt_named/events',
-            xlsx: '/optimize/opt_named/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_named', state: 'completed', outcome: 'optimal', score: 1, solverStatus: 'OPTIMAL',
+        })),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -844,19 +896,13 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_sse',
-          status: 'queued',
-          score: null,
-          solverStatus: null,
-          error: null,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_sse',
-            events: '/optimize/opt_sse/events',
-            xlsx: '/optimize/opt_sse/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_sse' })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_sse', state: 'completed', outcome: 'optimal', score: 42, solverStatus: 'OPTIMAL',
+        })),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -876,14 +922,14 @@ describe('OptimizeAndExportPage error handling', () => {
     const eventSource = MockEventSource.instances[0];
     expect(eventSource.url).toBe('http://localhost:8000/optimize/opt_sse/events');
     act(() => {
-      eventSource.emit('status', { status: 'running' });
-      eventSource.emit('phase', {
+      eventSource.emit('job.state_changed', { state: 'running' });
+      eventSource.emit('job.phase_changed', {
         source: 'scheduler:phase',
         code: 'creating_shift_variables',
         message: 'Creating shift variables',
         elapsedSeconds: 0.12,
       });
-      eventSource.emit('progress', {
+      eventSource.emit('job.progressed', {
         source: 'ortools/cp-sat:solution-callback',
         currentBestScore: 12000,
         elapsedSeconds: 0.1,
@@ -895,34 +941,22 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.queryByRole('img', { name: /optimization progress chart/i })).not.toBeInTheDocument();
 
     act(() => {
-      eventSource.emit('progress', {
+      eventSource.emit('job.progressed', {
         source: 'ortools/cp-sat:solution-callback',
         currentBestScore: 10,
         elapsedSeconds: 0.2,
         solutionIndex: 3,
         commentCount: 3,
       });
-      eventSource.emit('complete', {
-        jobId: 'opt_sse',
-        status: 'optimal',
-        score: 42,
-        solverStatus: 'OPTIMAL',
-        error: null,
-        xlsxReady: true,
-        links: {
-          status: '/optimize/opt_sse',
-          events: '/optimize/opt_sse/events',
-          xlsx: '/optimize/opt_sse/xlsx',
-        },
-      });
+      eventSource.emit('job.result_available', { outcome: 'optimal', score: 42 });
     });
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
-    expect(screen.getByText('status')).toBeInTheDocument();
-    expect(screen.getByText('phase')).toBeInTheDocument();
+    expect(screen.getByText('job.state_changed')).toBeInTheDocument();
+    expect(screen.getByText('job.phase_changed')).toBeInTheDocument();
     expect(screen.getAllByText('Creating shift variables').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('progress')).toHaveLength(2);
-    expect(screen.getByText('complete')).toBeInTheDocument();
+    expect(screen.getAllByText('job.progressed')).toHaveLength(2);
+    expect(screen.getByText('job.result_available')).toBeInTheDocument();
     expect(screen.getAllByText(/Comments: 5/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Score: 12,000/).length).toBeGreaterThan(0);
     expect(screen.getByText(/"currentBestScore":12000/)).toBeInTheDocument();
@@ -937,20 +971,7 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_queued',
-          status: 'queued',
-          queuePosition: 3,
-          score: null,
-          solverStatus: null,
-          error: null,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_queued',
-            events: '/optimize/opt_queued/events',
-            xlsx: '/optimize/opt_queued/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_queued', queuePosition: 3 })),
       });
 
     render(<OptimizeAndExportPage />);
@@ -961,21 +982,21 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('Waiting in optimization queue at position 3.')).toBeInTheDocument();
 
     act(() => {
-      MockEventSource.instances[0].emit('status', { status: 'queued', queuePosition: 2 });
+      MockEventSource.instances[0].emit('job.state_changed', { state: 'queued', queue_position: 2 });
     });
 
     expect(screen.getByText('Queued, position 2')).toBeInTheDocument();
     expect(screen.getByText('Waiting in optimization queue at position 2.')).toBeInTheDocument();
 
     act(() => {
-      MockEventSource.instances[0].emit('status', { status: 'running', queuePosition: null });
+      MockEventSource.instances[0].emit('job.state_changed', { state: 'running', queue_position: null });
     });
 
     expect(screen.getByText('running')).toBeInTheDocument();
     expect(screen.getByText('Waiting for first feasible solution...')).toBeInTheDocument();
   });
 
-  it('sends heartbeats while an optimization job is active', async () => {
+  it('does not send client heartbeats for durable jobs', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
@@ -983,20 +1004,7 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetchMock)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_heartbeat',
-          status: 'queued',
-          queuePosition: 1,
-          score: null,
-          solverStatus: null,
-          error: null,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_heartbeat',
-            events: '/optimize/opt_heartbeat/events',
-            xlsx: '/optimize/opt_heartbeat/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_heartbeat', queuePosition: 1 })),
       })
       .mockResolvedValue({ ok: true });
 
@@ -1004,41 +1012,18 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
 
-    const heartbeatCallback = setIntervalSpy.mock.calls.find(([, delay]) => delay === 10_000)?.[0];
-    expect(heartbeatCallback).toBeDefined();
-
-    act(() => {
-      (heartbeatCallback as TimerHandler)();
-    });
-
-    expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/optimize/opt_heartbeat/heartbeat',
-      expect.objectContaining({ method: 'POST', cache: 'no-store' })
-    );
+    expect(setIntervalSpy.mock.calls.some(([, delay]) => delay === 10_000)).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/heartbeat'))).toBe(false);
   });
 
   it('disables endpoint editing while an optimization job is active', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
-    const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     queueInitialLocalSelection(fetchMock)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_active',
-          status: 'queued',
-          queuePosition: 1,
-          score: null,
-          solverStatus: null,
-          error: null,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_active',
-            events: '/optimize/opt_active/events',
-            xlsx: '/optimize/opt_active/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_active', queuePosition: 1 })),
       })
       .mockResolvedValue({ ok: true });
 
@@ -1052,17 +1037,6 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.dblClick(screen.getByTitle(LOCAL_API_URL));
     expect(screen.queryByDisplayValue(LOCAL_API_URL)).not.toBeInTheDocument();
 
-    const heartbeatCallback = setIntervalSpy.mock.calls.find(([, delay]) => delay === 10_000)?.[0];
-    expect(heartbeatCallback).toBeDefined();
-
-    act(() => {
-      (heartbeatCallback as TimerHandler)();
-    });
-
-    expect(fetch).toHaveBeenCalledWith(
-      `${LOCAL_API_URL}/optimize/opt_active/heartbeat`,
-      expect.objectContaining({ method: 'POST', cache: 'no-store' })
-    );
   });
 
   it('keeps a dropped SSE stream open for automatic reconnection', async () => {
@@ -1074,19 +1048,13 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_sse_drop',
-          status: 'queued',
-          score: null,
-          solverStatus: null,
-          error: null,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_sse_drop',
-            events: '/optimize/opt_sse_drop/events',
-            xlsx: '/optimize/opt_sse_drop/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_sse_drop' })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_sse_drop', state: 'completed', outcome: 'optimal', score: 77, solverStatus: 'OPTIMAL',
+        })),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -1113,19 +1081,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(MockEventSource.instances[0].close).not.toHaveBeenCalled();
 
     act(() => {
-      MockEventSource.instances[0].emit('complete', {
-        jobId: 'opt_sse_drop',
-        status: 'optimal',
-        score: 77,
-        solverStatus: 'OPTIMAL',
-        error: null,
-        xlsxReady: true,
-        links: {
-          status: '/optimize/opt_sse_drop',
-          events: '/optimize/opt_sse_drop/events',
-          xlsx: '/optimize/opt_sse_drop/xlsx',
-        },
-      });
+      MockEventSource.instances[0].emit('job.result_available', { outcome: 'optimal', score: 77 });
     });
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
@@ -1142,53 +1098,23 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_control',
-          status: 'queued',
-          score: null,
-          solverStatus: null,
-          error: null,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_control',
-            events: '/optimize/opt_control/events',
-            xlsx: '/optimize/opt_control/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_control' })),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_control',
-          status: 'running',
-          score: null,
-          solverStatus: null,
-          error: null,
-          finishNowRequested: true,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_control',
-            events: '/optimize/opt_control/events',
-            xlsx: '/optimize/opt_control/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_control', state: 'running', earlyCompletionAvailable: false,
+        })),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_control',
-          status: 'cancelling',
-          score: null,
-          solverStatus: null,
-          error: null,
-          cancelRequested: true,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_control',
-            events: '/optimize/opt_control/events',
-            xlsx: '/optimize/opt_control/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_control', state: 'cancelling' })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_control', state: 'cancelled', error: 'Optimization cancelled.',
+        })),
       });
 
     render(<OptimizeAndExportPage />);
@@ -1196,7 +1122,10 @@ describe('OptimizeAndExportPage error handling', () => {
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
 
     act(() => {
-      MockEventSource.instances[0].emit('status', { status: 'running' });
+      MockEventSource.instances[0].emit('job.state_changed', {
+        state: 'running',
+        controls: { cancellable: true, early_completion_available: true },
+      });
     });
 
     await user.click(screen.getByRole('button', { name: /get results now/i }));
@@ -1212,19 +1141,7 @@ describe('OptimizeAndExportPage error handling', () => {
     );
 
     act(() => {
-      MockEventSource.instances[0].emit('complete', {
-        jobId: 'opt_control',
-        status: 'cancelled',
-        score: null,
-        solverStatus: null,
-        error: 'Optimization cancelled.',
-        xlsxReady: false,
-        links: {
-          status: '/optimize/opt_control',
-          events: '/optimize/opt_control/events',
-          xlsx: '/optimize/opt_control/xlsx',
-        },
-      });
+      MockEventSource.instances[0].emit('job.state_changed', { state: 'cancelled' });
     });
 
     await expect(screen.findByText('Optimization cancelled.')).resolves.toBeInTheDocument();
@@ -1237,19 +1154,7 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_scroll',
-          status: 'queued',
-          score: null,
-          solverStatus: null,
-          error: null,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_scroll',
-            events: '/optimize/opt_scroll/events',
-            xlsx: '/optimize/opt_scroll/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_scroll' })),
       });
 
     render(<OptimizeAndExportPage />);
@@ -1262,7 +1167,7 @@ describe('OptimizeAndExportPage error handling', () => {
     eventLog.scrollTop = 0;
 
     act(() => {
-      MockEventSource.instances[0].emit('status', { status: 'running' });
+      MockEventSource.instances[0].emit('job.state_changed', { state: 'running' });
     });
 
     expect(eventLog.scrollTop).toBe(100);
@@ -1275,19 +1180,7 @@ describe('OptimizeAndExportPage error handling', () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         ok: true,
-        json: vi.fn().mockResolvedValue({
-          jobId: 'opt_scroll',
-          status: 'queued',
-          score: null,
-          solverStatus: null,
-          error: null,
-          xlsxReady: false,
-          links: {
-            status: '/optimize/opt_scroll',
-            events: '/optimize/opt_scroll/events',
-            xlsx: '/optimize/opt_scroll/xlsx',
-          },
-        }),
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_scroll' })),
       });
 
     render(<OptimizeAndExportPage />);
@@ -1300,7 +1193,7 @@ describe('OptimizeAndExportPage error handling', () => {
     eventLog.scrollTop = 50;
 
     act(() => {
-      MockEventSource.instances[0].emit('status', { status: 'running' });
+      MockEventSource.instances[0].emit('job.state_changed', { state: 'running' });
     });
 
     expect(eventLog.scrollTop).toBe(50);

@@ -21,11 +21,11 @@
 
 import sys
 import types
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
-from nurse_scheduling.jobs import OptimizeJob, OptimizeJobStatus
 from nurse_scheduling.loader import _load_yaml
 from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, init_sentry
+from nurse_scheduling.server.jobs.models import Job, JobRequest, JobState
 
 
 SCHEDULE_YAML = b"""\
@@ -67,6 +67,21 @@ export:
 """
 
 
+def _running_job(input_name: str) -> Job:
+    return Job(
+        id="job_test",
+        state=JobState.RUNNING,
+        created_at=datetime.now(timezone.utc),
+        request=JobRequest(
+            input_name=input_name,
+            client_id="client_test",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout_seconds=60,
+        ),
+    )
+
+
 def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
     attachments = []
     contexts = []
@@ -90,16 +105,7 @@ def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
     )
     monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
-    job = OptimizeJob(
-        id="opt_test",
-        status=OptimizeJobStatus.RUNNING,
-        created_at=datetime.now(UTC),
-        input_name="schedule.yaml",
-        client_uuid="client_test",
-        solver="ortools/cp-sat",
-        prettify=True,
-        timeout=60,
-    )
+    job = _running_job("schedule.yaml")
 
     capture_optimize_exception(job, SCHEDULE_YAML, ValueError("invalid"))
 
@@ -117,7 +123,7 @@ def test_capture_optimize_exception_attaches_anonymized_yaml(monkeypatch):
                 "attached": True,
                 "content_sanitized": True,
                 "input_name": "schedule.yaml",
-                "job_id": "opt_test",
+                "job_id": "job_test",
                 "size_bytes": len(attachment["bytes"]),
             },
         )
@@ -148,16 +154,7 @@ def test_capture_optimize_exception_attaches_unparseable_raw_yaml(monkeypatch):
     )
     monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
-    job = OptimizeJob(
-        id="opt_test",
-        status=OptimizeJobStatus.RUNNING,
-        created_at=datetime.now(UTC),
-        input_name="invalid.yaml",
-        client_uuid="client_test",
-        solver="ortools/cp-sat",
-        prettify=True,
-        timeout=60,
-    )
+    job = _running_job("invalid.yaml")
     error = ValueError("invalid")
 
     content = b"people: ["
@@ -177,7 +174,7 @@ def test_capture_optimize_exception_attaches_unparseable_raw_yaml(monkeypatch):
                 "attached": True,
                 "content_sanitized": False,
                 "input_name": "invalid.yaml",
-                "job_id": "opt_test",
+                "job_id": "job_test",
                 "size_bytes": len(content),
             },
         )

@@ -1,4 +1,4 @@
-"""ASGI entry point for the nurse scheduling server."""
+"""Server-sent event framing for optimization job events."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -17,13 +17,17 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from .server.app import create_app
+import json
+
+from ..jobs.models import JobEvent
 
 
-app = create_app()
+def format_sse_event(event: JobEvent) -> str:
+    """Serialize one persisted event using the SSE wire format.
 
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False)
+    Raises:
+        TypeError: If the event payload contains a value unsupported by JSON.
+    """
+    event_id = f"id: {event.id}\n" if event.id is not None else ""
+    payload = {"occurred_at": event.occurred_at.isoformat(), **event.data}
+    return f"{event_id}event: {event.type}\ndata: {json.dumps(payload)}\n\n"

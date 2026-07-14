@@ -187,7 +187,7 @@ def main():
                 progress_output_file,
                 print_to_stdout=not args.show_model_build_stats,
             )
-        df, solution, score, status, cell_export_info = scheduler.schedule(
+        schedule_result = scheduler.schedule(
             file_content,
             prettify=prettify,
             timeout=args.timeout,
@@ -195,6 +195,11 @@ def main():
             progress_callback=progress_callback,
             model_build_stats_callback=model_build_stats_callback,
         )
+        df = schedule_result.dataframe
+        solution = schedule_result.solution
+        score = schedule_result.score
+        status = schedule_result.solver_status
+        cell_export_info = schedule_result.cell_export_info
         if progress_output_file is not None and df is not None:
             progress_callback(
                 SolverProgress(
