@@ -539,6 +539,8 @@ class TestOptimizeJobs:
         [
             "pulp/cbc",
             "pulp/cuopt",
+            "pulp/highs",
+            "pulp/scip",
             "ortools/mpsolver/cbc",
             "ortools/mathopt/gscip",
             "ortools/mathopt/highs",

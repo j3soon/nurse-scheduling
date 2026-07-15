@@ -31,6 +31,13 @@ from .constants import Operator
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
 
 
+PULP_PYTHON_API_SOLVERS: dict[str, tuple[str, str]] = {
+    "highs": ("HiGHS", "highspy"),
+    "scip": ("SCIP_PY", "pyscipopt"),
+}
+PULP_LOG_TAIL_ENGINES = frozenset({"cbc", "cuopt"})
+
+
 class BasePuLPSolver(SolverInterface):
     """Shared PuLP solver implementation for engine-specific wrappers."""
 
@@ -273,22 +280,26 @@ class BasePuLPSolver(SolverInterface):
         if timeout is not None:
             solver_kwargs["timeLimit"] = timeout
 
-        log_temp_file = tempfile.NamedTemporaryFile(
-            mode="w",
-            prefix=f"nurse-scheduling-pulp-{self.engine}-",
-            suffix=".log",
-            delete=False,
-        )
-        log_path = Path(log_temp_file.name)
-        log_temp_file.close()
-        solver_kwargs["logPath"] = str(log_path)
-        stop_log_tail = threading.Event()
-        log_tail_thread = threading.Thread(
-            target=self._tail_solver_log,
-            args=(log_path, stop_log_tail, progress_callback, start_time, self.engine == "cbc"),
-            daemon=True,
-        )
-        log_tail_thread.start()
+        log_path = None
+        stop_log_tail = None
+        log_tail_thread = None
+        if self.engine in PULP_LOG_TAIL_ENGINES:
+            log_temp_file = tempfile.NamedTemporaryFile(
+                mode="w",
+                prefix=f"nurse-scheduling-pulp-{self.engine}-",
+                suffix=".log",
+                delete=False,
+            )
+            log_path = Path(log_temp_file.name)
+            log_temp_file.close()
+            solver_kwargs["logPath"] = str(log_path)
+            stop_log_tail = threading.Event()
+            log_tail_thread = threading.Thread(
+                target=self._tail_solver_log,
+                args=(log_path, stop_log_tail, progress_callback, start_time, self.engine == "cbc"),
+                daemon=True,
+            )
+            log_tail_thread.start()
 
         try:
             if self.engine == "cbc":
@@ -310,6 +321,32 @@ class BasePuLPSolver(SolverInterface):
                 if deterministic:
                     logging.warning("Deterministic mode is not implemented for PuLP/cuOpt; ignoring.")
                 self.solver = pulp.CUOPT(**solver_kwargs)
+            elif self.engine in PULP_PYTHON_API_SOLVERS:
+                solver_class_name, dependency_name = PULP_PYTHON_API_SOLVERS[self.engine]
+                solver_class = getattr(pulp, solver_class_name, None)
+                if solver_class is None:
+                    raise RuntimeError(
+                        f"PuLP/{self.engine} backend is unavailable: pulp.{solver_class_name} is not present. "
+                        f"Install the {dependency_name} package."
+                    )
+                # Schedule scores are integral, so do not accept a visibly worse integer objective through a
+                # backend's default relative gap when objective coefficients are large.
+                solver_kwargs.update(gapRel=0.0, gapAbs=0.0)
+                if deterministic:
+                    if self.engine == "highs":
+                        # Avoid changing HiGHS' process-global thread count after another solve initialized it.
+                        solver_kwargs.update(parallel="off", random_seed=0)
+                    else:
+                        solver_kwargs.update(
+                            threads=1,
+                            options=[
+                                "randomization/randomseedshift",
+                                0,
+                                "randomization/permutationseed",
+                                0,
+                            ],
+                        )
+                self.solver = solver_class(**solver_kwargs)
             else:
                 raise ValueError(f"Unsupported PuLP solver engine: {self.engine!r}")
 
@@ -324,12 +361,15 @@ class BasePuLPSolver(SolverInterface):
             self.status = self.model.solve(self.solver)
             self.solve_time = time.monotonic() - start_time
         finally:
-            stop_log_tail.set()
-            log_tail_thread.join(timeout=5)
-            try:
-                log_path.unlink()
-            except FileNotFoundError:
-                pass
+            if stop_log_tail is not None:
+                stop_log_tail.set()
+            if log_tail_thread is not None:
+                log_tail_thread.join(timeout=5)
+            if log_path is not None:
+                try:
+                    log_path.unlink()
+                except FileNotFoundError:
+                    pass
 
         # Convert PuLP status to our enum
         # Ref: https://www.coin-or.org/PuLP/constants.html

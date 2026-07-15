@@ -1,0 +1,34 @@
+"""PuLP Python-API solver wrappers."""
+
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+#
+# Copyright (C) 2023-2026 Johnson Sun
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+from .solver_pulp import BasePuLPSolver
+
+
+class PuLPHiGHSSolver(BasePuLPSolver):
+    """PuLP solver configured to use the HiGHS Python API."""
+
+    def __init__(self):
+        super().__init__(engine="highs")
+
+
+class PuLPSCIPSolver(BasePuLPSolver):
+    """PuLP solver configured to use the SCIP Python API."""
+
+    def __init__(self):
+        super().__init__(engine="scip")

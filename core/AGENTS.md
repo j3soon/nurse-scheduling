@@ -32,10 +32,13 @@ test paths when a narrower suite is known to be sufficient.
   `tests/test_solver_ortools_linear.py`,
   `tests/test_solver_ortools_mathopt.py`,
   `tests/test_solver_pulp_cbc.py`,
+  `tests/test_solver_pulp_python.py`,
   `tests/test_schedule_ortools_cp_sat.py`,
   `tests/test_schedule_ortools_mpsolver_cbc.py`,
   `tests/test_schedule_ortools_mathopt_gscip.py`,
   `tests/test_schedule_pulp_cbc.py`, and `tests/test_serve.py`.
+  PuLP Python-API schedule coverage also lives in
+  `tests/test_schedule_pulp_highs.py` and `tests/test_schedule_pulp_scip.py`.
 - Add scheduling cases as fixture pairs under `tests/testcases/**`, typically a
   `.yaml` input with matching `.csv` or `.txt` expected output.
 - Use `--show-model-build-stats` when checking or benchmarking model-building

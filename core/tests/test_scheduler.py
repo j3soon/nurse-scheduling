@@ -88,6 +88,8 @@ def test_scheduler_rejects_normalized_selector_without_backend(monkeypatch):
         ("ortools/mathopt/highs", "ortools/mathopt/highs", "mathopt", "highs"),
         ("pulp/cbc", "pulp/cbc", None, "cbc"),
         ("pulp/cuopt", "pulp/cuopt", None, "cuopt"),
+        ("pulp/highs", "pulp/highs", None, "highs"),
+        ("pulp/scip", "pulp/scip", None, "scip"),
     ],
 )
 def test_normalize_solver_selector(raw_selector, canonical, api, engine):
