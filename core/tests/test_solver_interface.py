@@ -94,6 +94,10 @@ def test_validate_square_constant_preserves_large_integer_exactness():
     assert validate_square_constant(value, (value, value)) == value
 
 
+def test_validate_square_constant_accepts_integral_float():
+    assert validate_square_constant(3.0, (0, 4)) == 3
+
+
 def test_validate_square_constant_rejects_oversized_out_of_range_integer():
     with pytest.raises(ValueError, match="outside declared range"):
         validate_square_constant(10**1000, (0, 10))

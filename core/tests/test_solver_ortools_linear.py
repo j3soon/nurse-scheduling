@@ -23,6 +23,7 @@ import logging
 import os
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 from ortools.linear_solver import pywraplp
@@ -31,6 +32,7 @@ from ortools.linear_solver import pywraplp
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling.constants import Operator
+from nurse_scheduling.model_build_stats import get_model_entity_counts
 from nurse_scheduling.solver_interface import SolverStatus
 from nurse_scheduling.solver_ortools_linear import ORTOOLS_MPSOLVER_MIP_ENGINES, ORToolsLinearSolver
 from tests.solver_test_utils import expected_bool_value
@@ -96,6 +98,37 @@ def test_mip_engine_interrupt_support(engine: str, supports_interrupt: bool):
     assert solver.model.InterruptSolve() is supports_interrupt
 
 
+def test_unsupported_engine_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported OR-Tools MPSolver engine"):
+        ORToolsLinearSolver(engine="unknown")
+
+
+def test_unavailable_engine_is_rejected(monkeypatch):
+    monkeypatch.setattr(pywraplp.Solver, "CreateSolver", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="backend is not available"):
+        ORToolsLinearSolver(engine="cbc")
+
+
+def test_numeric_and_bound_normalization_errors():
+    assert ORToolsLinearSolver._normalize_numeric_value(None) is None
+    assert ORToolsLinearSolver._normalize_numeric_value(1.25) == 1.25
+
+    with pytest.raises(ValueError, match="unbounded variable"):
+        ORToolsLinearSolver._finite_int_bound(float("inf"), "x")
+    with pytest.raises(ValueError, match="Non-integer bound"):
+        ORToolsLinearSolver._finite_int_bound(1.5, "x")
+
+
+def test_infer_expr_bounds_handles_negative_coefficients_and_invalid_constants():
+    solver = ORToolsLinearSolver(engine="cbc")
+    x = solver.new_int_var(-1, 4, "x")
+
+    assert solver._infer_expr_bounds(-2 * x + 3) == (-5, 5)
+    with pytest.raises(ValueError, match="Non-integer constant"):
+        solver._infer_expr_bounds(1.5)
+
+
 class _BlockingSolveModel:
     def __init__(self, *, accepts_interrupt: bool):
         self.accepts_interrupt = accepts_interrupt
@@ -135,6 +168,28 @@ def test_stop_watcher_warns_when_cbc_rejects_interrupt(caplog):
     assert blocking_model.interrupt_called.is_set()
     assert status == SolverStatus.UNKNOWN
     assert "did not accept solve interruption" in caplog.text
+
+
+def test_stop_watcher_isolates_callback_errors(caplog):
+    callback_called = threading.Event()
+
+    class CallbackWaitingModel:
+        def Solve(self):
+            assert callback_called.wait(timeout=2)
+            return pywraplp.Solver.NOT_SOLVED
+
+    def failing_should_stop():
+        callback_called.set()
+        raise RuntimeError("stop callback boom")
+
+    solver = ORToolsLinearSolver(engine="cbc")
+    solver.model = CallbackWaitingModel()
+
+    with caplog.at_level(logging.ERROR):
+        status = solver.solve(should_stop=failing_should_stop)
+
+    assert status == SolverStatus.UNKNOWN
+    assert "Stop callback failed" in caplog.text
 
 
 def test_generated_variable_name_skips_existing_suffix():
@@ -276,6 +331,18 @@ def test_create_bool_and_var_empty_literals_is_true():
     assert round(solver.get_value(y)) == 1
 
 
+def test_add_bool_or_requires_at_least_one_true_literal():
+    solver = ORToolsLinearSolver(engine="cbc")
+    x = solver.new_bool_var("x")
+    y = solver.new_bool_var("y")
+    solver.add_bool_or([x, y])
+    solver.add_constraint(x == 0)
+    solver.add_constraint(y == 1)
+    solver.set_objective(0)
+
+    assert solver.solve() == SolverStatus.OPTIMAL
+
+
 def test_should_use_bool_and_var_only_for_compact_literal_counts():
     solver = ORToolsLinearSolver(engine="cbc")
 
@@ -342,6 +409,97 @@ def test_solve_emits_final_progress_event():
     assert events[-1].currentBestScore == 1
 
 
+def test_solve_isolates_progress_callback_errors(caplog):
+    solver = ORToolsLinearSolver(engine="cbc")
+    x = solver.new_bool_var("x")
+    solver.add_constraint(x == 1)
+    solver.set_objective(x)
+
+    def failing_progress_callback(_payload):
+        raise RuntimeError("progress callback boom")
+
+    with caplog.at_level(logging.ERROR):
+        status = solver.solve(progress_callback=failing_progress_callback)
+
+    assert status == SolverStatus.OPTIMAL
+    assert "Progress callback failed" in caplog.text
+
+
+def test_solve_applies_options_and_isolates_deterministic_configuration_errors(caplog):
+    class ConfigurableModel:
+        def __init__(self):
+            self.time_limit_ms = None
+
+        def SetNumThreads(self, _threads):
+            raise RuntimeError("threads unsupported")
+
+        def SetTimeLimit(self, time_limit_ms):
+            self.time_limit_ms = time_limit_ms
+
+        def Solve(self):
+            return pywraplp.Solver.OPTIMAL
+
+    solver = ORToolsLinearSolver(engine="cbc")
+    model = ConfigurableModel()
+    solver.model = model
+
+    with caplog.at_level(logging.INFO):
+        status = solver.solve(timeout=3, deterministic=True, solution_callback=lambda _value: None)
+
+    assert status == SolverStatus.OPTIMAL
+    assert model.time_limit_ms == 3000
+    assert "Unable to force single-threaded solving" in caplog.text
+    assert "Solution callbacks are not supported" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("raw_status", "expected_status", "warning"),
+    [
+        (pywraplp.Solver.FEASIBLE, SolverStatus.FEASIBLE, None),
+        (pywraplp.Solver.INFEASIBLE, SolverStatus.INFEASIBLE, None),
+        (pywraplp.Solver.MODEL_INVALID, SolverStatus.MODEL_INVALID, None),
+        (pywraplp.Solver.UNBOUNDED, SolverStatus.UNKNOWN, "Model is unbounded"),
+        (pywraplp.Solver.ABNORMAL, SolverStatus.UNKNOWN, "Solver returned abnormal status"),
+    ],
+)
+def test_solve_maps_backend_statuses(raw_status, expected_status, warning, caplog):
+    solver = ORToolsLinearSolver(engine="cbc")
+    solver.model = SimpleNamespace(Solve=lambda: raw_status)
+
+    with caplog.at_level(logging.WARNING):
+        status = solver.solve()
+
+    assert status == expected_status
+    if warning is not None:
+        assert warning in caplog.text
+
+
+def test_value_objective_and_statistics_accessors():
+    solver = ORToolsLinearSolver(engine="cbc")
+
+    assert solver.get_value(1.25) == 1.25
+    assert solver.get_objective_value() == 0
+
+    x = solver.new_bool_var("x")
+    solver.add_constraint(x == 1)
+    solver.set_objective(x)
+    assert solver.solve() == SolverStatus.OPTIMAL
+    assert solver.get_statistics().keys() >= {"iterations", "nodes"}
+
+
+@pytest.mark.parametrize("objective_value", [None, 1.25])
+def test_objective_rejects_missing_or_fractional_values(objective_value):
+    solver = ORToolsLinearSolver(engine="cbc")
+    solver._has_objective = True
+    solver.model = SimpleNamespace(Objective=lambda: SimpleNamespace(Value=lambda: objective_value))
+
+    if objective_value is None:
+        assert solver.get_objective_value() == 0
+    else:
+        with pytest.raises(ValueError, match="should be an integer"):
+            solver.get_objective_value()
+
+
 def test_bop_statistics_omit_unavailable_iteration_and_node_counts():
     solver = ORToolsLinearSolver(engine="bop")
     x = solver.new_bool_var("x")
@@ -370,6 +528,17 @@ def test_add_abs_equality_matches_truth_table(source_value: int):
     assert solver.get_value(target) == abs(source_value)
 
 
+def test_add_abs_equality_rejects_invalid_ranges():
+    solver = ORToolsLinearSolver(engine="cbc")
+    source = solver.new_int_var(-2, 2, "x")
+    target = solver.new_int_var(0, 2, "abs_x")
+
+    with pytest.raises(ValueError, match="Invalid source expression bounds"):
+        solver.add_abs_equality(target, source, (2, -2))
+    with pytest.raises(ValueError, match="exceed inferred bounds"):
+        solver.add_abs_equality(target, source, (-3, 3))
+
+
 def test_add_squared_equality_variable_source():
     solver = ORToolsLinearSolver(engine="cbc")
     source = solver.new_int_var(0, 4, "x")
@@ -381,6 +550,16 @@ def test_add_squared_equality_variable_source():
     status = solver.solve()
 
     assert status == SolverStatus.OPTIMAL
+    assert solver.get_value(target) == 9
+
+
+def test_add_squared_equality_constant_source():
+    solver = ORToolsLinearSolver(engine="cbc")
+    target = solver.new_int_var(0, 16, "constant_squared")
+    solver.add_squared_equality(target, 3, (0, 4))
+    solver.set_objective(target)
+
+    assert solver.solve() == SolverStatus.OPTIMAL
     assert solver.get_value(target) == 9
 
 
@@ -414,3 +593,15 @@ def test_create_bool_var_with_constraint_rejects_unknown_operator():
 
     with pytest.raises(NotImplementedError, match="not implemented for OR-Tools linear solver"):
         solver.create_bool_var_with_constraint("cmp", x, "BAD", 0, (0, 1))
+
+
+def test_model_counts_and_unsupported_solution_callback(caplog):
+    solver = ORToolsLinearSolver(engine="cbc")
+    solver.new_bool_var("x")
+    solver.add_constraint(0 == 0)
+    context = SimpleNamespace(solver=solver, model_vars={})
+
+    assert get_model_entity_counts(context) == (1, 1)
+    with caplog.at_level(logging.INFO):
+        assert solver.create_solution_callback() is None
+    assert "Solution callbacks are not supported" in caplog.text

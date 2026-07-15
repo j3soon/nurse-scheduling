@@ -422,6 +422,29 @@ class TestOptimizeJobs:
             for message in caplog.messages
         )
 
+    def test_cancelled_job_exception_handles_concurrent_deletion(self, monkeypatch, caplog):
+        job = serve._create_optimize_job(
+            input_name="deleted.yaml",
+            client_uuid="test-client",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout=1,
+        )
+
+        def fail_after_cancellation(*_args, **_kwargs):
+            job.cancel_requested = True
+            raise ValueError("cancelled solve")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fail_after_cancellation)
+        monkeypatch.setattr(serve, "_finish_optimize_job_if_present", lambda *_args, **_kwargs: None)
+
+        serve._run_optimize_job(job.id, b"apiVersion: alpha\n")
+
+        assert any(
+            f"[server:job] cancelled-after-deletion job_id={job.id} client_uuid=test-client" in message
+            for message in caplog.messages
+        )
+
     def test_optimize_job_finish_now_requests_best_available_result(self, monkeypatch, caplog):
         def fake_schedule(*args, **kwargs):
             wait_for_stop = kwargs["should_stop"]

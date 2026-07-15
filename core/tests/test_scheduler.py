@@ -61,6 +61,20 @@ def test_scheduler_rejects_unsupported_solver_selector():
         scheduler.schedule(content, solver="invalid/backend")
 
 
+def test_scheduler_rejects_normalized_selector_without_backend(monkeypatch):
+    content = _load_valid_yaml_bytes()
+    unsupported = scheduler.SolverSelector(
+        backend="unsupported",
+        api=None,
+        engine="unsupported",
+        canonical="unsupported",
+    )
+    monkeypatch.setattr(scheduler, "normalize_solver_selector", lambda _solver: unsupported)
+
+    with pytest.raises(ValueError, match="Unsupported solver configuration"):
+        scheduler.schedule(content, solver="unsupported")
+
+
 @pytest.mark.parametrize(
     ("raw_selector", "canonical", "api", "engine"),
     [
