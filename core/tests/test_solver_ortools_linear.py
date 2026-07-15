@@ -331,16 +331,20 @@ def test_create_bool_and_var_empty_literals_is_true():
     assert round(solver.get_value(y)) == 1
 
 
-def test_add_bool_or_requires_at_least_one_true_literal():
+@pytest.mark.parametrize(
+    ("y_value", "expected_status"),
+    [(1, SolverStatus.OPTIMAL), (0, SolverStatus.INFEASIBLE)],
+)
+def test_add_bool_or_requires_at_least_one_true_literal(y_value, expected_status):
     solver = ORToolsLinearSolver(engine="cbc")
     x = solver.new_bool_var("x")
     y = solver.new_bool_var("y")
     solver.add_bool_or([x, y])
     solver.add_constraint(x == 0)
-    solver.add_constraint(y == 1)
+    solver.add_constraint(y == y_value)
     solver.set_objective(0)
 
-    assert solver.solve() == SolverStatus.OPTIMAL
+    assert solver.solve() == expected_status
 
 
 def test_should_use_bool_and_var_only_for_compact_literal_counts():

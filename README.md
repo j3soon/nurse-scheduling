@@ -284,8 +284,9 @@ We currently support thirteen solver selectors across OR-Tools and PuLP.
 - `ortools/mathopt/gscip`, `ortools/mathopt/cp-sat`, and `ortools/mathopt/highs` use the bundled integer-capable engines through the newer [OR-Tools MathOpt API](https://developers.google.com/optimization/math_opt) and are covered by the normal schedule regression suite.
 - `pulp/cbc` is covered by the normal schedule regression suite and opt-in real-world smoke checks.
 - `pulp/cuopt` is the GPU-accelerated solver. Its real-world smoke check is opt-in and skips when the backend is unavailable.
-- `pulp/glpk` uses the non-commercial GLPK command-line solver and has low-level and bounded schedule smoke coverage. Install `glpsol` with `apt install glpk-utils`, `brew install glpk`, or `choco install glpk` before selecting it. GLPK can be substantially slower than the other supported backends on larger scheduling models.
-- `pulp/highs` and `pulp/scip` use the non-commercial HiGHS and SCIP Python APIs and are covered by the normal schedule regression suite. The `highspy` version is pinned to the HiGHS ABI bundled with OR-Tools.
+- `pulp/glpk` uses the GLPK command-line solver and has low-level and bounded schedule smoke coverage. Install `glpsol` with `apt install glpk-utils`, `brew install glpk`, or `choco install glpk` before selecting it. GLPK can be substantially slower than the other supported backends on larger scheduling models.
+- `pulp/highs` uses the HiGHS Python API and is covered by the normal schedule regression suite. The `highspy` version is pinned to the HiGHS ABI bundled with OR-Tools.
+- `pulp/scip` uses the SCIP Python API and is covered by the normal schedule regression suite.
 
 Running optimization jobs can be cancelled or finished early with `ortools/cp-sat`,
 `ortools/mpsolver/scip`, `ortools/mpsolver/cp-sat`, `ortools/mpsolver/bop`, and
