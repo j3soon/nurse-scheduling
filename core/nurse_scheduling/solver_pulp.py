@@ -321,6 +321,14 @@ class BasePuLPSolver(SolverInterface):
                 if deterministic:
                     logging.warning("Deterministic mode is not implemented for PuLP/cuOpt; ignoring.")
                 self.solver = pulp.CUOPT(**solver_kwargs)
+            elif self.engine == "glpk":
+                solver_class = getattr(pulp, "GLPK_CMD", None)
+                if solver_class is None:
+                    raise RuntimeError(
+                        "PuLP/GLPK backend is unavailable: pulp.GLPK_CMD is not present. "
+                        "Install a PuLP build/version with GLPK support."
+                    )
+                self.solver = solver_class(**solver_kwargs)
             elif self.engine in PULP_PYTHON_API_SOLVERS:
                 solver_class_name, dependency_name = PULP_PYTHON_API_SOLVERS[self.engine]
                 solver_class = getattr(pulp, solver_class_name, None)

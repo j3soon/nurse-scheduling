@@ -273,7 +273,7 @@ bun run lint -- --fix
 
 ### Core
 
-We currently support twelve solver selectors across OR-Tools and PuLP.
+We currently support thirteen solver selectors across OR-Tools and PuLP.
 
 > All backends other than OR-Tools/CP-SAT are experimental.
 
@@ -284,6 +284,7 @@ We currently support twelve solver selectors across OR-Tools and PuLP.
 - `ortools/mathopt/gscip`, `ortools/mathopt/cp-sat`, and `ortools/mathopt/highs` use the bundled integer-capable engines through the newer [OR-Tools MathOpt API](https://developers.google.com/optimization/math_opt) and are covered by the normal schedule regression suite.
 - `pulp/cbc` is covered by the normal schedule regression suite and opt-in real-world smoke checks.
 - `pulp/cuopt` is the GPU-accelerated solver. Its real-world smoke check is opt-in and skips when the backend is unavailable.
+- `pulp/glpk` uses the non-commercial GLPK command-line solver and has low-level and bounded schedule smoke coverage. Install `glpsol` with `apt install glpk-utils`, `brew install glpk`, or `choco install glpk` before selecting it. GLPK can be substantially slower than the other supported backends on larger scheduling models.
 - `pulp/highs` and `pulp/scip` use the non-commercial HiGHS and SCIP Python APIs and are covered by the normal schedule regression suite. The `highspy` version is pinned to the HiGHS ABI bundled with OR-Tools.
 
 Running optimization jobs can be cancelled or finished early with `ortools/cp-sat`,
@@ -311,6 +312,8 @@ python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-20
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cbc
 # run CLI with PuLP/cuOpt solver (experimental) and GPU required
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cuopt
+# run PuLP/GLPK (experimental; requires glpsol on PATH)
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/glpk
 # run non-commercial PuLP Python-API solvers (experimental)
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/highs
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/scip
@@ -337,6 +340,7 @@ pytest --log-cli-level=INFO tests/test_solver_ortools_linear.py
 pytest --log-cli-level=INFO tests/test_solver_ortools_mathopt.py
 pytest --log-cli-level=INFO tests/test_solver_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
+pytest --log-cli-level=INFO tests/test_solver_pulp_glpk.py
 pytest --log-cli-level=INFO tests/test_solver_pulp_python.py
 # run schedule regression tests (OR-Tools / PuLP)
 pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
@@ -351,6 +355,7 @@ pytest --log-cli-level=INFO \
   tests/test_schedule_ortools_mathopt_highs.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
+pytest --log-cli-level=INFO tests/test_schedule_pulp_glpk.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_highs.py
 pytest --log-cli-level=INFO tests/test_schedule_pulp_scip.py
 # run the normal core test suite

@@ -43,7 +43,7 @@ ORTOOLS_MATHOPT_MIP_ENGINES = ("gscip", "cp-sat", "highs")
 ORTOOLS_MATHOPT_CANONICAL_SOLVERS = tuple(
     f"ortools/{ORTOOLS_MATHOPT_API}/{engine}" for engine in ORTOOLS_MATHOPT_MIP_ENGINES
 )
-PULP_ENGINES = ("cbc", "cuopt", "highs", "scip")
+PULP_ENGINES = ("cbc", "cuopt", "glpk", "highs", "scip")
 PULP_SOLVERS = tuple(f"pulp/{engine}" for engine in PULP_ENGINES)
 CANONICAL_SOLVER_CHOICES = (
     ORTOOLS_CP_SAT_SOLVER,
@@ -55,7 +55,8 @@ SUPPORTED_SOLVER_CHOICES = CANONICAL_SOLVER_CHOICES
 SOLVER_SELECTOR_HELP = (
     "Solver selector (ortools/cp-sat, ortools/mpsolver/cbc, ortools/mpsolver/scip, "
     "ortools/mpsolver/cp-sat, ortools/mpsolver/bop, ortools/mathopt/gscip, "
-    "ortools/mathopt/cp-sat, ortools/mathopt/highs, pulp/cbc, pulp/cuopt, pulp/highs, or pulp/scip)."
+    "ortools/mathopt/cp-sat, ortools/mathopt/highs, pulp/cbc, pulp/cuopt, pulp/glpk, pulp/highs, "
+    "or pulp/scip)."
 )
 
 
@@ -251,6 +252,11 @@ def schedule(
 
         logging.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
         ctx.solver = PuLPCuOptSolver()
+    elif solver_selector.backend == "pulp" and solver_selector.engine == "glpk":
+        from .solver_pulp_glpk import PuLPGLPKSolver
+
+        logging.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
+        ctx.solver = PuLPGLPKSolver()
     elif solver_selector.backend == "pulp" and solver_selector.engine in {"highs", "scip"}:
         from .solver_pulp_python import PuLPHiGHSSolver, PuLPSCIPSolver
 

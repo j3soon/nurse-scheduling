@@ -15,6 +15,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 RUN git config --system --add safe.directory /app
 
+# Optional solver support: install the GLPK command-line backend for PuLP.
+RUN apt-get update && apt-get install -y \
+    glpk-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY core/requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
