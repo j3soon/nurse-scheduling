@@ -2,6 +2,8 @@ services:
   redis:
     image: redis:8.8
     restart: unless-stopped
+    # Keep the image's default RDB policy; deployments needing a smaller
+    # crash-loss window can enable AOF as described in docker/README.md.
     volumes:
       - redis-data:/data
     healthcheck:

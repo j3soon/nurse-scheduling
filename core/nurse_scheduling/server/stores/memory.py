@@ -51,10 +51,14 @@ class _MemoryJobRecord:
 class MemoryJobStore:
     """Thread-safe process-local job metadata, queue, events, and blobs."""
 
-    def __init__(self):
+    def __init__(self, *, max_events_per_job: int = 1_000):
         """Initialize an empty store protected by a shared reentrant lock."""
+        if max_events_per_job <= 0:
+            raise ValueError("max_events_per_job must be positive")
         self._records: dict[str, _MemoryJobRecord] = {}
         """Job records indexed by job ID."""
+        self._max_events_per_job = max_events_per_job
+        """Maximum replayable events retained for any one job."""
         self._lock = threading.RLock()
         """Re-entrant lock guarding all record, queue, artifact, and event access."""
         self._changed = threading.Condition(self._lock)
@@ -320,12 +324,14 @@ class MemoryJobStore:
         ]
         return replace(job, queue_position=queued_ids.index(job.id) + 1)
 
-    @staticmethod
-    def _append_events(record: _MemoryJobRecord, events: Sequence[JobEvent]) -> None:
-        """Append events to a record with monotonically increasing IDs."""
+    def _append_events(self, record: _MemoryJobRecord, events: Sequence[JobEvent]) -> None:
+        """Append events with monotonic IDs and discard the oldest overflow."""
         for event in events:
             record.events.append(replace(event, id=str(record.next_event_id)))
             record.next_event_id += 1
+        overflow = len(record.events) - self._max_events_per_job
+        if overflow > 0:
+            del record.events[:overflow]
 
     @staticmethod
     def _with_initial_queue_position(

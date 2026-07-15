@@ -103,10 +103,15 @@ def _create_store(settings: ServerSettings) -> JobStore:
     Redis is imported lazily so memory-only deployments do not require startup access to it.
     """
     if settings.job_backend == "memory":
-        return MemoryJobStore()
+        return MemoryJobStore(max_events_per_job=settings.max_events_per_job)
     from .stores.redis import RedisJobStore
 
-    return RedisJobStore(url=settings.redis_url, key_prefix=settings.redis_key_prefix)
+    return RedisJobStore(
+        url=settings.redis_url,
+        key_prefix=settings.redis_key_prefix,
+        event_stream_keepalive_seconds=settings.sse_keepalive_seconds,
+        max_events_per_job=settings.max_events_per_job,
+    )
 
 
 def _format_unexpected_error(error: Exception) -> str:
@@ -227,7 +232,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=True,
-        expose_headers=["Content-Disposition", "Location", "Retry-After", "X-Schedule-Score", "X-Schedule-Status"],
+        expose_headers=["Content-Disposition", "Location", "Retry-After"],
     )
     app.include_router(optimize_router)
 

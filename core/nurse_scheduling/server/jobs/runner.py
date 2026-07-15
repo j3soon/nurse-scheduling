@@ -19,6 +19,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timezone
 from io import BytesIO
 from typing import Any
 
@@ -104,7 +105,8 @@ class OptimizationRunner:
 
         output_buffer = BytesIO()
         exporter.export_to_excel(schedule_result.dataframe, output_buffer, schedule_result.cell_export_info)
-        output_filename = f"{job.request.input_name.rsplit('.', 1)[0]}.xlsx"
+        created_at = job.created_at.astimezone(timezone.utc)
+        output_filename = f"nurse-scheduling-{created_at:%Y%m%dT%H%M%SZ}.xlsx"
         outcome = OptimizationOutcome.OPTIMAL if normalized_status == "OPTIMAL" else OptimizationOutcome.FEASIBLE
         termination_reason = "optimality_proven" if outcome == OptimizationOutcome.OPTIMAL else "limit_or_stop"
         return RunOutput(

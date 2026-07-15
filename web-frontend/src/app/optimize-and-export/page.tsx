@@ -698,6 +698,19 @@ export default function OptimizeAndExportPage() {
     if (typeof EventSource !== 'undefined') {
       return new Promise((resolve, reject) => {
         const eventSource = new EventSource(buildApiUrl(resolvedOptimizeEndpoint, job.links.events));
+        let finalizationStarted = false;
+
+        const finalizeJob = () => {
+          if (finalizationStarted) {
+            return;
+          }
+          finalizationStarted = true;
+          eventSource.close();
+          void getOptimizeJobStatus(job).then(completedJob => {
+            setCurrentJob(completedJob);
+            resolve(completedJob);
+          }).catch(reject);
+        };
 
         eventSource.addEventListener('job.state_changed', (event) => {
           const parsedData = parseSseEventData(event);
@@ -708,11 +721,7 @@ export default function OptimizeAndExportPage() {
           }
           setCurrentJob(currentJob => currentJob ? { ...currentJob, ...updatedJob } : currentJob);
           if (updatedJob.state && TERMINAL_JOB_STATES.has(updatedJob.state)) {
-            eventSource.close();
-            void getOptimizeJobStatus(job).then(completedJob => {
-              setCurrentJob(completedJob);
-              resolve(completedJob);
-            }).catch(reject);
+            finalizeJob();
           }
         });
 
@@ -742,13 +751,9 @@ export default function OptimizeAndExportPage() {
         });
 
         eventSource.addEventListener('job.result_available', (event) => {
-          eventSource.close();
           const parsedData = parseSseEventData(event);
           appendSseEvent('job.result_available', parsedData);
-          void getOptimizeJobStatus(job).then(completedJob => {
-            setCurrentJob(completedJob);
-            resolve(completedJob);
-          }).catch(reject);
+          finalizeJob();
         });
 
         eventSource.addEventListener('error', (event) => {
@@ -886,7 +891,7 @@ export default function OptimizeAndExportPage() {
 
       void fetch(buildApiUrl(runEndpoint, completedJob.links.self), {
         method: 'DELETE',
-      });
+      }).catch(() => undefined);
 
       setSuccessMessage('Schedule optimized and downloaded successfully!');
     } catch (error) {

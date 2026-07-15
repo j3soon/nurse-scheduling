@@ -18,6 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -48,7 +49,10 @@ from .models import (
 server_logger = logging.getLogger("nurse_scheduling.server")
 Clock = Callable[[], datetime]
 IdFactory = Callable[[], str]
+Transition = Callable[[Job, datetime], tuple[Job, list[JobEvent], StoredArtifact | None]]
 WriteResult = TypeVar("WriteResult")
+STORE_WRITE_RETRY_INITIAL_DELAY_SECONDS = 0.001
+STORE_WRITE_RETRY_MAX_DELAY_SECONDS = 0.05
 
 
 def utc_now() -> datetime:
@@ -192,42 +196,68 @@ class JobController:
             )
         return job
 
-    def record_event(self, job_id: str, event_type: str, data: dict[str, Any]) -> Job:
+    def record_event(
+        self,
+        job_id: str,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        worker_id: str | None = None,
+    ) -> Job:
         """Persist progress or phase data without changing lifecycle state.
 
         Raises:
             JobNotFoundError: If the job does not exist.
             JobOperationContentionError: If concurrent updates exhaust the retry limit.
         """
-        return self._update_job_with_retry(
-            job_id,
-            lambda job, now: (
-                job,
-                [JobEvent(type=event_type, data=data, occurred_at=now)],
-                None,
-            ),
-        )
 
-    def renew_claim(self, job_id: str, worker_id: str) -> Job:
+        def transition(job: Job, now: datetime) -> tuple[Job, list[JobEvent], StoredArtifact | None]:
+            """Append an event only while the reporting worker owns an active job."""
+            if job.state.terminal or (worker_id is not None and job.worker_id != worker_id):
+                return job, [], None
+            return job, [JobEvent(type=event_type, data=data, occurred_at=now)], None
+
+        return self._update_job_with_retry(job_id, transition)
+
+    def renew_claim(self, job_id: str, worker_id: str) -> Job | None:
         """Extend a live worker claim without emitting a client event.
 
-        A stale worker ID or inactive job is returned unchanged.
+        Return the renewed job, or `None` when the claim is inactive, expired,
+        or owned by another worker. An expired lease cannot be resurrected.
 
         Raises:
             JobNotFoundError: If the job does not exist.
             JobOperationContentionError: If concurrent updates exhaust the retry limit.
         """
 
+        did_renew = False
+
         def transition(job: Job, now: datetime):
             """Return a renewed job only while this worker owns the claim."""
-            if job.state not in {JobState.RUNNING, JobState.CANCELLING} or job.worker_id != worker_id:
+            nonlocal did_renew
+            did_renew = False
+            if (
+                job.state not in {JobState.RUNNING, JobState.CANCELLING}
+                or job.worker_id != worker_id
+                or job.claim_expires_at is None
+                or job.claim_expires_at <= now
+            ):
                 return job, [], None
+            did_renew = True
             renewed = replace(job, claim_expires_at=now + timedelta(seconds=self._claim_lease_seconds))
             return renewed, [], None
 
-        return self._update_job_with_retry(job_id, transition)
+        renewed = self._update_job_with_retry(job_id, transition)
+        return renewed if did_renew else None
 
-    def record_score_and_event(self, job_id: str, score: int, data: dict[str, Any]) -> Job:
+    def record_score_and_event(
+        self,
+        job_id: str,
+        score: int,
+        data: dict[str, Any],
+        *,
+        worker_id: str | None = None,
+    ) -> Job:
         """Persist the latest score as progress without manufacturing a result.
 
         Raises:
@@ -236,7 +266,7 @@ class JobController:
         """
         payload = dict(data)
         payload["score"] = score
-        return self.record_event(job_id, "job.progressed", payload)
+        return self.record_event(job_id, "job.progressed", payload, worker_id=worker_id)
 
     def complete_job(
         self,
@@ -396,7 +426,12 @@ class JobController:
         """
         job = self.get_job(job_id)
         lost_claim = worker_id is not None and job.worker_id != worker_id
-        return job.state.terminal or lost_claim or job.cancel_requested or job.early_completion_requested
+        expired_claim = worker_id is not None and (
+            job.claim_expires_at is None or job.claim_expires_at <= self._clock()
+        )
+        return (
+            job.state.terminal or lost_claim or expired_claim or job.cancel_requested or job.early_completion_requested
+        )
 
     def stream_events(
         self,
@@ -511,7 +546,7 @@ class JobController:
                 self._log_terminal_job(expired)
         return expired_ids
 
-    def _update_job_with_retry(self, job_id: str, transition, max_attempts: int = 20) -> Job:
+    def _update_job_with_retry(self, job_id: str, transition: Transition, max_attempts: int = 20) -> Job:
         """Compute and persist a job update, retrying optimistic write conflicts.
 
         Raises:
@@ -544,7 +579,13 @@ class JobController:
         Raises:
             JobOperationContentionError: If conflicts exhaust `max_attempts`.
         """
-        for _ in range(max_attempts):
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                delay_seconds = min(
+                    STORE_WRITE_RETRY_INITIAL_DELAY_SECONDS * (2 ** (attempt - 1)),
+                    STORE_WRITE_RETRY_MAX_DELAY_SECONDS,
+                )
+                time.sleep(delay_seconds)
             try:
                 return operation()
             except StoreWriteConflictError:

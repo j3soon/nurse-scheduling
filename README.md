@@ -419,6 +419,9 @@ The optional `JOB_CLAIM_LEASE_SECONDS` setting defaults to 90 seconds. Keep it
 long enough to tolerate brief Redis interruptions; each active worker renews
 its lease every third of that interval.
 
+Replayable event history is capped at 1,000 events per job; set
+`JOB_MAX_EVENTS_PER_JOB` to choose a different positive limit.
+
 Without Docker, install and start Redis with your operating system package manager.
 
 Ubuntu/Debian:
@@ -451,6 +454,10 @@ For Docker Compose deployment, `docker/compose.backend.yml` starts a Redis servi
 cd docker
 docker compose -f compose.backend.yml up -d --build
 ```
+
+The bundled Redis service uses its default RDB snapshot policy with a persistent
+volume. Enable AOF or use a managed persistence policy when the deployment
+requires a smaller data-loss window after an abrupt Redis or host failure.
 
 ### Documentation
 

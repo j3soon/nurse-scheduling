@@ -24,7 +24,7 @@ from collections.abc import Callable
 from ...sentry import capture_optimize_exception
 from ..errors import JobNotFoundError, OptimizationExecutionError
 from .controller import JobController
-from .models import JobFailure, solver_supports_stop
+from .models import Job, JobFailure, solver_supports_stop
 from .runner import OptimizationRunner
 
 
@@ -115,7 +115,7 @@ class JobWorker:
                 )
                 self._stop.wait(self._claim_poll_seconds)
 
-    def _execute(self, job) -> None:
+    def _execute(self, job: Job) -> None:
         """Execute one claimed job and report its progress and outcome."""
         content = b""
         heartbeat_stop = threading.Event()
@@ -127,7 +127,7 @@ class JobWorker:
             while not heartbeat_stop.wait(self._claim_heartbeat_seconds):
                 try:
                     renewed = self._controller.renew_claim(job.id, self._worker_id)
-                    if renewed.state.terminal or renewed.worker_id != self._worker_id:
+                    if renewed is None or renewed.state.terminal or renewed.worker_id != self._worker_id:
                         execution_stop.set()
                         return
                 except JobNotFoundError:
@@ -149,9 +149,9 @@ class JobWorker:
             def publish(event_type: str, data: dict, score: int | None) -> None:
                 """Persist one runner event and its score when available."""
                 if score is None:
-                    self._controller.record_event(job.id, event_type, data)
+                    self._controller.record_event(job.id, event_type, data, worker_id=self._worker_id)
                 else:
-                    self._controller.record_score_and_event(job.id, score, data)
+                    self._controller.record_score_and_event(job.id, score, data, worker_id=self._worker_id)
 
             should_stop = None
             if solver_supports_stop(job.request.solver):
@@ -188,12 +188,20 @@ class JobWorker:
         except JobNotFoundError:
             server_logger.warning("[server:worker] job disappeared while running job_id=%s", job.id)
         except Exception as error:
-            capture_optimize_exception(job, content, error)
+            try:
+                capture_optimize_exception(job, content, error)
+            except Exception:
+                server_logger.exception("[server:worker] failed to capture optimization error job_id=%s", job.id)
             self._controller.fail_job(
                 job.id,
                 JobFailure(code="optimization_failed", message=self._unexpected_error_formatter(error)),
             )
-            server_logger.exception("[server:worker] failed job_id=%s worker_id=%s", job.id, self._worker_id)
+            server_logger.exception(
+                "[server:worker] failed job_id=%s worker_id=%s",
+                job.id,
+                self._worker_id,
+                exc_info=(type(error), error, error.__traceback__),
+            )
         finally:
             heartbeat_stop.set()
             heartbeat_thread.join(timeout=1)

@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from ..config import ServerSettings
 from ..jobs.controller import JobController
@@ -65,9 +66,9 @@ async def _read_input(
         raise HTTPException(status_code=400, detail="Provide either 'file' or 'yaml_content', not both")
     if file is not None:
         filename = file.filename or "schedule.yaml"
-        if not filename.endswith((".yaml", ".yml")):
+        if not filename.lower().endswith((".yaml", ".yml")):
             raise HTTPException(status_code=400, detail="The uploaded file must be YAML")
-        content = await file.read()
+        content = await file.read(max_bytes + 1)
         input_name = filename
     else:
         assert yaml_content is not None
@@ -118,7 +119,11 @@ async def create_job(
             status_code=400,
             detail=f"Optimization timeout must be between 1 and {settings.max_timeout_seconds} seconds",
         )
-    job = _controller(request).create_job(
+    # Unlike the synchronous endpoints below, create_job must remain async for
+    # upload reading. Offload its synchronous controller/store write so it cannot
+    # block the ASGI event loop.
+    job = await run_in_threadpool(
+        _controller(request).create_job,
         input_name=input_name,
         client_id=_client_id(request, response),
         solver=solver,
@@ -132,13 +137,13 @@ async def create_job(
 
 
 @router.get("/optimize/{job_id}", response_model=JobResponse)
-async def get_job(request: Request, job_id: str):
+def get_job(request: Request, job_id: str):
     """Return the current job representation."""
     return JobResponse.from_job(_controller(request).get_job(job_id))
 
 
 @router.get("/optimize/{job_id}/events")
-async def stream_events(request: Request, job_id: str, last_event_id: str | None = Header(None)):
+def stream_events(request: Request, job_id: str, last_event_id: str | None = Header(None)):
     """Replay and stream job events after the client's last event ID.
 
     Disconnecting closes only this response stream; the durable job continues.
@@ -187,31 +192,28 @@ async def stream_events(request: Request, job_id: str, last_event_id: str | None
 
 
 @router.post("/optimize/{job_id}/cancel", status_code=202, response_model=JobResponse)
-async def cancel_job(request: Request, job_id: str):
+def cancel_job(request: Request, job_id: str):
     """Cancel a queued job or request cancellation of a running job."""
     return JobResponse.from_job(_controller(request).cancel_job(job_id))
 
 
 @router.post("/optimize/{job_id}/finish-now", status_code=202, response_model=JobResponse)
-async def finish_job_now(request: Request, job_id: str):
+def finish_job_now(request: Request, job_id: str):
     """Ask a supported running solver to return its current result."""
     return JobResponse.from_job(_controller(request).request_early_completion(job_id))
 
 
 @router.get("/optimize/{job_id}/xlsx")
-async def download_xlsx(request: Request, job_id: str):
+def download_xlsx(request: Request, job_id: str):
     """Download the XLSX artifact produced by a completed job."""
     job = _controller(request).get_job(job_id)
     artifact = _controller(request).get_artifact(job_id, job.artifact_name or "schedule.xlsx")
     headers = {"Content-Disposition": f'attachment; filename="{artifact.name}"'}
-    if job.result is not None:
-        headers["X-Schedule-Score"] = str(job.result.score)
-        headers["X-Schedule-Status"] = job.result.solver_status
     return StreamingResponse(BytesIO(artifact.content), media_type=artifact.media_type, headers=headers)
 
 
 @router.delete("/optimize/{job_id}", status_code=204)
-async def delete_job(request: Request, job_id: str):
+def delete_job(request: Request, job_id: str):
     """Delete a terminal job and all associated retained data."""
     _controller(request).delete_job(job_id)
     return Response(status_code=204)

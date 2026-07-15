@@ -721,7 +721,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText(/backend unavailable/i)).toBeInTheDocument();
   });
 
-  it('creates an optimization job, downloads the XLSX, and deletes the job', async () => {
+  it('keeps a successful download when best-effort job cleanup fails', async () => {
     const user = userEvent.setup();
     const appendChildSpy = vi.spyOn(document.body, 'appendChild');
     const removeChildSpy = vi.spyOn(document.body, 'removeChild');
@@ -777,9 +777,7 @@ describe('OptimizeAndExportPage error handling', () => {
           'Content-Disposition': 'attachment; filename=schedule.xlsx',
         }),
       })
-      .mockResolvedValueOnce({
-        ok: true,
-      });
+      .mockRejectedValueOnce(new Error('cleanup failed'));
 
     render(<OptimizeAndExportPage />);
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
@@ -892,8 +890,9 @@ describe('OptimizeAndExportPage error handling', () => {
   it('shows all received SSE event types in the optimization event log', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
 
-    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+    queueInitialLocalSelection(fetchMock)
       .mockResolvedValueOnce({
         ok: true,
         json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_sse' })),
@@ -948,11 +947,12 @@ describe('OptimizeAndExportPage error handling', () => {
         solutionIndex: 3,
         commentCount: 3,
       });
+      eventSource.emit('job.state_changed', { state: 'completed' });
       eventSource.emit('job.result_available', { outcome: 'optimal', score: 42 });
     });
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
-    expect(screen.getByText('job.state_changed')).toBeInTheDocument();
+    expect(screen.getAllByText('job.state_changed')).toHaveLength(2);
     expect(screen.getByText('job.phase_changed')).toBeInTheDocument();
     expect(screen.getAllByText('Creating shift variables').length).toBeGreaterThan(0);
     expect(screen.getAllByText('job.progressed')).toHaveLength(2);
@@ -961,7 +961,11 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getAllByText(/Score: 12,000/).length).toBeGreaterThan(0);
     expect(screen.getByText(/"currentBestScore":12000/)).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /optimization progress chart/i })).toBeInTheDocument();
-    expect(eventSource.close).toHaveBeenCalled();
+    expect(eventSource.close).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([url, init]) => (
+      url === 'http://localhost:8000/optimize/opt_sse'
+      && (init as RequestInit | undefined)?.method === 'GET'
+    ))).toHaveLength(1);
   });
 
   it('shows queued position updates received through SSE', async () => {

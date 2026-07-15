@@ -36,6 +36,7 @@ The compose file starts Redis alongside the backend. The backend runs with:
 - `JOB_REDIS_URL=redis://redis:6379/0`
 - `JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0`
 - `JOB_CLAIM_LEASE_SECONDS=90` by default
+- `JOB_MAX_EVENTS_PER_JOB=1000` by default
 
 The backend container runs multiple Uvicorn workers. Each worker claims jobs
 from Redis and runs at most one optimization job locally. Active workers renew
@@ -74,3 +75,11 @@ page load.
 When `JOB_BACKEND=redis`, optimization jobs, SSE events, YAML inputs,
 and XLSX outputs are stored in Redis so status, event, and download requests can
 be served by any backend worker.
+
+The bundled Redis service uses the image's default RDB snapshot policy and the
+`redis-data` volume. This is sufficient for multi-worker coordination, but an
+abrupt Redis or host failure can lose writes since the latest snapshot. A
+deployment that requires a smaller recovery-point window should enable Redis
+AOF persistence or use a managed Redis service with an appropriate persistence
+policy. AOF is not required for the backend's job-sharing behavior and adds
+disk I/O for stored YAML, event streams, and XLSX artifacts.

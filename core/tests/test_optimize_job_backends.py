@@ -20,14 +20,16 @@
 # This test is mostly AI generated.
 
 import os
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 import pytest
 
-from nurse_scheduling.server.errors import JobCapacityError, JobNotFoundError, StoreWriteConflictError
 from nurse_scheduling.server.config import DEFAULT_JOB_RETENTION_SECONDS, DEFAULT_MAX_RETAINED_JOBS
+from nurse_scheduling.server.errors import JobCapacityError, JobNotFoundError, StoreWriteConflictError
 from nurse_scheduling.server.jobs.controller import JobController, utc_now
 from nurse_scheduling.server.jobs.models import (
     JobFailure,
@@ -53,9 +55,9 @@ def _delete_redis_prefix(url: str, prefix: str) -> None:
 
 
 @pytest.fixture(params=["memory", "redis"])
-def store(request):
+def store_factory(request):
     if request.param == "memory":
-        yield MemoryJobStore()
+        yield lambda **kwargs: MemoryJobStore(**kwargs)
         return
     url = _redis_url()
     if url is None:
@@ -67,13 +69,24 @@ def store(request):
         pytest.skip(f"Redis is unavailable: {error}")
     from nurse_scheduling.server.stores.redis import RedisJobStore
 
-    prefix = f"nurse_scheduling:test:jobs:{uuid.uuid4().hex}"
-    _delete_redis_prefix(url, prefix)
-    instance = RedisJobStore(url=url, key_prefix=prefix)
-    try:
-        yield instance
-    finally:
+    prefixes: list[str] = []
+
+    def create_store(**kwargs):
+        prefix = f"nurse_scheduling:test:jobs:{uuid.uuid4().hex}"
+        prefixes.append(prefix)
         _delete_redis_prefix(url, prefix)
+        return RedisJobStore(url=url, key_prefix=prefix, **kwargs)
+
+    try:
+        yield create_store
+    finally:
+        for prefix in prefixes:
+            _delete_redis_prefix(url, prefix)
+
+
+@pytest.fixture
+def store(store_factory):
+    return store_factory()
 
 
 def _controller(store, *, max_pending=8, max_retained=32, now=None):
@@ -102,6 +115,27 @@ def _create(controller, input_name="input.yaml"):
 
 def test_utc_now_returns_timezone_aware_utc_datetime():
     assert utc_now().tzinfo is timezone.utc
+
+
+def test_redis_store_uses_default_connect_timeout_and_bounds_stream_reads(monkeypatch):
+    from nurse_scheduling.server.stores import redis as redis_store
+
+    client = Mock()
+    from_url = Mock(return_value=client)
+    monkeypatch.setattr(redis_store.redis.Redis, "from_url", from_url)
+
+    redis_store.RedisJobStore(
+        url="redis://redis.example/0",
+        key_prefix="test:jobs",
+        event_stream_keepalive_seconds=2.5,
+    )
+
+    from_url.assert_called_once_with(
+        "redis://redis.example/0",
+        decode_responses=False,
+        socket_timeout=7.5,
+    )
+    client.ping.assert_called_once_with()
 
 
 def test_store_round_trips_lifecycle_input_events_and_artifact(store):
@@ -139,6 +173,48 @@ def test_store_round_trips_lifecycle_input_events_and_artifact(store):
     assert all(event.id is not None for event in events if event is not None)
 
 
+def test_store_rejects_events_from_stale_workers_and_terminal_jobs(store):
+    controller = _controller(store)
+    created = _create(controller)
+    claimed = controller.claim_next_job("worker")
+    assert claimed is not None
+
+    accepted = controller.record_score_and_event(
+        claimed.id,
+        42,
+        {"source": "accepted"},
+        worker_id="worker",
+    )
+    stale = controller.record_event(
+        claimed.id,
+        "job.phase_changed",
+        {"source": "stale"},
+        worker_id="other-worker",
+    )
+    assert stale.revision == accepted.revision
+
+    terminal = controller.fail_job(claimed.id, JobFailure("solver_failed", "failed"))
+    late = controller.record_event(
+        claimed.id,
+        "job.phase_changed",
+        {"source": "late"},
+        worker_id="worker",
+    )
+    assert late.revision == terminal.revision
+
+    events = [
+        event
+        for event in controller.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
+        if event is not None
+    ]
+    assert [(event.type, event.data.get("source")) for event in events] == [
+        ("job.state_changed", None),
+        ("job.state_changed", None),
+        ("job.progressed", "accepted"),
+        ("job.state_changed", None),
+    ]
+
+
 def test_store_queue_positions_are_derived_from_queue_order(store):
     controller = _controller(store)
     first = _create(controller, "first.yaml")
@@ -148,6 +224,28 @@ def test_store_queue_positions_are_derived_from_queue_order(store):
 
     controller.claim_next_job("worker")
     assert controller.get_job(second.id).queue_position == 1
+
+
+def test_store_caps_replayable_events_per_job(store_factory):
+    controller = _controller(store_factory(max_events_per_job=4))
+    created = _create(controller)
+    for index in range(6):
+        controller.record_event(created.id, "job.test", {"index": index})
+    controller.cancel_job(created.id)
+
+    events = [
+        event
+        for event in controller.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
+        if event is not None
+    ]
+
+    assert len(events) == 4
+    assert [(event.type, event.data.get("index")) for event in events] == [
+        ("job.test", 3),
+        ("job.test", 4),
+        ("job.test", 5),
+        ("job.state_changed", None),
+    ]
 
 
 def test_controller_cancellation_policy_is_shared_by_stores(store):
@@ -243,6 +341,33 @@ def test_controller_retries_internal_store_conflict_during_delete():
         controller.get_job(created.id)
 
 
+def test_controller_backs_off_between_store_write_retries(monkeypatch):
+    trace: list[str] = []
+    attempts = 0
+
+    def operation():
+        nonlocal attempts
+        attempts += 1
+        trace.append(f"operation-{attempts}")
+        if attempts < 3:
+            raise StoreWriteConflictError("simulated write race")
+        return "saved"
+
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.controller.time.sleep",
+        lambda seconds: trace.append(f"sleep-{seconds}"),
+    )
+
+    assert JobController._retry_store_write(operation, max_attempts=3) == "saved"
+    assert trace == [
+        "operation-1",
+        "sleep-0.001",
+        "operation-2",
+        "sleep-0.002",
+        "operation-3",
+    ]
+
+
 def test_retention_cleanup_removes_old_terminal_jobs(store):
     now = datetime.now(timezone.utc)
     controller = _controller(store, now=now)
@@ -309,6 +434,25 @@ def test_completed_job_can_resume_after_client_sleeps(store):
     assert after_sleep.get_artifact(created.id, artifact.name) == artifact
 
 
+def test_terminal_event_stream_returns_immediately_when_cursor_is_caught_up(store):
+    controller = _controller(store)
+    created = _create(controller)
+    controller.cancel_job(created.id)
+    initial = [
+        event
+        for event in controller.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
+        if event is not None
+    ]
+    last_event_id = initial[-1].id
+    assert last_event_id is not None
+
+    started_at = time.monotonic()
+    resumed = list(controller.stream_events(created.id, after_id=last_event_id, keepalive_seconds=1))
+
+    assert resumed == []
+    assert time.monotonic() - started_at < 0.5
+
+
 def test_queue_position_events_track_queue_reordering(store):
     controller = _controller(store)
     first = _create(controller, "first.yaml")
@@ -343,6 +487,8 @@ def test_expired_worker_claim_fails_job_and_releases_capacity(store):
         clock=lambda: now + timedelta(seconds=11),
         id_factory=lambda: "job_replacement",
     )
+    assert recovery.renew_claim(abandoned.id, "lost-worker") is None
+    assert recovery.is_stop_requested(abandoned.id, "lost-worker") is True
     assert recovery.expire_worker_claims() == [abandoned.id]
     failed = recovery.get_job(abandoned.id)
     assert failed.state == JobState.FAILED
@@ -350,5 +496,4 @@ def test_expired_worker_claim_fails_job_and_releases_capacity(store):
         "worker_lost",
         "The optimization worker stopped before the job completed.",
     )
-    assert recovery.is_stop_requested(abandoned.id, "lost-worker") is True
     assert _create(recovery).state == JobState.QUEUED

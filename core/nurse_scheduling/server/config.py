@@ -26,6 +26,8 @@ DEFAULT_MAX_RETAINED_JOBS = 128
 """Default maximum number of jobs retained across all lifecycle states."""
 DEFAULT_JOB_RETENTION_SECONDS = 24 * 60 * 60
 """Default 24-hour retention period for terminal jobs."""
+DEFAULT_MAX_EVENTS_PER_JOB = 1_000
+"""Default maximum number of replayable events retained for one job."""
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -68,6 +70,8 @@ class ServerSettings:
     """Maximum total jobs retained, including terminal history."""
     job_retention_seconds: int = DEFAULT_JOB_RETENTION_SECONDS
     """Time terminal jobs remain available before maintenance deletes them."""
+    max_events_per_job: int = DEFAULT_MAX_EVENTS_PER_JOB
+    """Maximum replayable events retained for each job."""
     claim_poll_seconds: float = 1.0
     """Worker delay between attempts to claim a queued job."""
     claim_lease_seconds: float = 90.0
@@ -95,6 +99,7 @@ class ServerSettings:
             "max_pending_jobs",
             "max_retained_jobs",
             "job_retention_seconds",
+            "max_events_per_job",
             "max_yaml_bytes",
             "default_timeout_seconds",
             "max_timeout_seconds",
@@ -128,6 +133,7 @@ class ServerSettings:
             max_pending_jobs=_positive_int("JOB_MAX_PENDING", 8),
             max_retained_jobs=_positive_int("JOB_MAX_RETAINED", DEFAULT_MAX_RETAINED_JOBS),
             job_retention_seconds=_positive_int("JOB_RETENTION_SECONDS", DEFAULT_JOB_RETENTION_SECONDS),
+            max_events_per_job=_positive_int("JOB_MAX_EVENTS_PER_JOB", DEFAULT_MAX_EVENTS_PER_JOB),
             claim_poll_seconds=_positive_float("JOB_CLAIM_POLL_SECONDS", 1.0),
             claim_lease_seconds=_positive_float("JOB_CLAIM_LEASE_SECONDS", 90.0),
             maintenance_interval_seconds=_positive_float("JOB_MAINTENANCE_INTERVAL_SECONDS", 30.0),

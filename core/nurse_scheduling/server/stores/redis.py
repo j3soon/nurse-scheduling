@@ -18,6 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import json
+import math
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -45,6 +46,10 @@ from ..jobs.models import (
 )
 
 
+SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
+"""Additional socket time allowed beyond one blocking event-stream read."""
+
+
 @overload
 def _decode(value: bytes | str) -> str: ...
 
@@ -67,20 +72,37 @@ def _decode(value: bytes | str | None) -> str | None:
 class RedisJobStore:
     """Store jobs, queue state, events, input, and artifacts in Redis."""
 
-    def __init__(self, *, url: str, key_prefix: str):
+    def __init__(
+        self,
+        *,
+        url: str,
+        key_prefix: str,
+        event_stream_keepalive_seconds: float = 10.0,
+        max_events_per_job: int = 1_000,
+    ):
         """Connect to Redis and initialize namespaced index keys.
 
         Raises:
-            ValueError: If the Redis URL is invalid or the key prefix is empty.
+            ValueError: If a connection setting or the key prefix is invalid.
             redis.RedisError: If Redis cannot be reached.
         """
-        self._redis = redis.Redis.from_url(url, decode_responses=False)
-        """Binary-safe Redis client shared by all store operations."""
-        self._redis.ping()
         self._prefix = key_prefix.rstrip(":")
         """Namespace that isolates this store's keys from other applications."""
         if not self._prefix:
             raise ValueError("JOB_REDIS_KEY_PREFIX must not be empty")
+        if not math.isfinite(event_stream_keepalive_seconds) or event_stream_keepalive_seconds <= 0:
+            raise ValueError("event_stream_keepalive_seconds must be positive")
+        if max_events_per_job <= 0:
+            raise ValueError("max_events_per_job must be positive")
+        self._max_events_per_job = max_events_per_job
+        """Maximum entries retained in each replayable event stream."""
+        self._redis = redis.Redis.from_url(
+            url,
+            decode_responses=False,
+            socket_timeout=event_stream_keepalive_seconds + SOCKET_TIMEOUT_MARGIN_SECONDS,
+        )
+        """Binary-safe Redis client shared by all store operations."""
+        self._redis.ping()
         self._jobs_key = self._key("jobs")
         """Sorted-set key (`ZADD`) of retained job IDs scored by creation time."""
         self._pending_key = self._key("pending")
@@ -351,12 +373,16 @@ class RedisJobStore:
         last_id = after_id or "0-0"
         block_ms = max(1, int(keepalive_seconds * 1000))
         while True:
+            terminal = self.get(job_id).state.terminal
             try:
-                streams = self._redis.xread({self._events_key(job_id): last_id}, block=block_ms)
+                streams = self._redis.xread(
+                    {self._events_key(job_id): last_id},
+                    block=None if terminal else block_ms,
+                )
             except redis.exceptions.TimeoutError:
                 streams = []
             if not streams:
-                if self.get(job_id).state.terminal:
+                if terminal:
                     return
                 yield None
                 continue
@@ -369,7 +395,7 @@ class RedisJobStore:
                         data=json.loads(_decode(fields.get(b"data")) or "{}"),
                         occurred_at=datetime.fromisoformat(_decode(fields.get(b"occurred_at")) or ""),
                     )
-            if self.get(job_id).state.terminal:
+            if terminal or self.get(job_id).state.terminal:
                 return
 
     def find_finished_before(self, cutoff: datetime) -> list[Job]:
@@ -468,6 +494,8 @@ class RedisJobStore:
                     "data": json.dumps(event.data, separators=(",", ":")),  # eliminate whitespace for compact storage
                     "occurred_at": event.occurred_at.isoformat(),
                 },
+                maxlen=self._max_events_per_job,
+                approximate=False,
             )
 
     def _stage_job_deletion(self, transaction, job_id: str) -> None:

@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -27,12 +28,18 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from nurse_scheduling.scheduler import ScheduleResult
 from nurse_scheduling.server.app import create_app
-from nurse_scheduling.server.config import DEFAULT_JOB_RETENTION_SECONDS, DEFAULT_MAX_RETAINED_JOBS, ServerSettings
+from nurse_scheduling.server.config import (
+    DEFAULT_JOB_RETENTION_SECONDS,
+    DEFAULT_MAX_EVENTS_PER_JOB,
+    DEFAULT_MAX_RETAINED_JOBS,
+    ServerSettings,
+)
 from nurse_scheduling.server.jobs.models import (
     Job,
     JobRequest,
@@ -212,6 +219,92 @@ def test_health_and_readiness_fail_when_job_worker_stops():
     assert ready.json()["reason"] == "job_worker_unavailable"
 
 
+def test_synchronous_store_reads_do_not_block_the_asgi_event_loop():
+    class BlockingGetStore(MemoryJobStore):
+        def __init__(self):
+            super().__init__()
+            self.block_reads = False
+            self.read_started = threading.Event()
+            self.release_reads = threading.Event()
+
+        def get(self, job_id):
+            if self.block_reads:
+                self.read_started.set()
+                self.release_reads.wait(timeout=2)
+            return super().get(job_id)
+
+    store = BlockingGetStore()
+    app = create_app(
+        settings=_settings(),
+        store=store,
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+    created = app.state.job_controller.create_job(
+        input_name="input.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+    store.block_reads = True
+
+    async def exercise_requests():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            release_timer = threading.Timer(1, store.release_reads.set)
+            release_timer.start()
+            started_at = time.monotonic()
+            job_request = asyncio.create_task(client.get(f"/optimize/{created.id}"))
+            try:
+                await asyncio.sleep(0)
+                health = await client.get("/health")
+                health_elapsed = time.monotonic() - started_at
+            finally:
+                store.release_reads.set()
+                release_timer.cancel()
+            job_response = await job_request
+            return health, health_elapsed, job_response
+
+    health, health_elapsed, job_response = asyncio.run(exercise_requests())
+
+    assert store.read_started.is_set()
+    assert health.status_code == 200
+    assert health_elapsed < 0.5
+    assert job_response.status_code == 200
+
+
+def test_job_creation_offloads_the_synchronous_store_write():
+    class ThreadRecordingStore(MemoryJobStore):
+        create_thread_id = None
+
+        def create(self, *args, **kwargs):
+            self.create_thread_id = threading.get_ident()
+            return super().create(*args, **kwargs)
+
+    store = ThreadRecordingStore()
+    app = create_app(
+        settings=_settings(),
+        store=store,
+        runner=SuccessfulRunner(),
+        start_background=False,
+    )
+
+    async def create_job():
+        event_loop_thread_id = threading.get_ident()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        return event_loop_thread_id, response
+
+    event_loop_thread_id, response = asyncio.run(create_job())
+
+    assert response.status_code == 202
+    assert store.create_thread_id is not None
+    assert store.create_thread_id != event_loop_thread_id
+
+
 @pytest.mark.parametrize(
     ("updates", "message"),
     [
@@ -219,6 +312,7 @@ def test_health_and_readiness_fail_when_job_worker_stops():
         ({"claim_lease_seconds": 0}, "claim_lease_seconds must be positive"),
         ({"maintenance_interval_seconds": 0}, "maintenance_interval_seconds must be positive"),
         ({"sse_keepalive_seconds": 0}, "sse_keepalive_seconds must be positive"),
+        ({"max_events_per_job": 0}, "max_events_per_job must be positive"),
         (
             {"default_timeout_seconds": 61, "max_timeout_seconds": 60},
             "default_timeout_seconds must not exceed max_timeout_seconds",
@@ -264,6 +358,7 @@ def test_server_settings_retain_up_to_128_jobs_for_24_hours_by_default():
 
     assert settings.max_retained_jobs == DEFAULT_MAX_RETAINED_JOBS == 128
     assert settings.job_retention_seconds == DEFAULT_JOB_RETENTION_SECONDS == 24 * 60 * 60
+    assert settings.max_events_per_job == DEFAULT_MAX_EVENTS_PER_JOB == 1_000
 
 
 def test_create_complete_download_and_delete_job():
@@ -287,7 +382,8 @@ def test_create_complete_download_and_delete_job():
         download = client.get(completed["links"]["schedule"])
         assert download.status_code == 200
         assert download.content == b"fake xlsx"
-        assert download.headers["x-schedule-status"] == "OPTIMAL"
+        assert "x-schedule-score" not in download.headers
+        assert "x-schedule-status" not in download.headers
 
         assert client.delete(f"/optimize/{created['id']}").status_code == 204
         missing = client.get(f"/optimize/{created['id']}")
@@ -319,6 +415,21 @@ def test_unexpected_execution_error_becomes_structured_failure():
         assert "solver exploded" in failed["error"]["message"]
 
 
+def test_sentry_capture_failure_does_not_mask_job_failure(monkeypatch):
+    def fail_capture(*_args):
+        raise RuntimeError("Sentry unavailable")
+
+    monkeypatch.setattr("nurse_scheduling.server.jobs.worker.capture_optimize_exception", fail_capture)
+
+    with _client(FailingRunner()) as client:
+        created = _create(client).json()
+        failed = _wait_for_terminal(client, created["id"])
+
+    assert failed["state"] == "failed"
+    assert failed["error"]["code"] == "optimization_failed"
+    assert "solver exploded" in failed["error"]["message"]
+
+
 def test_unknown_scheduler_result_becomes_no_solution_failure(monkeypatch):
     monkeypatch.setattr(
         "nurse_scheduling.server.jobs.runner.scheduler.schedule",
@@ -334,6 +445,39 @@ def test_unknown_scheduler_result_becomes_no_solution_failure(monkeypatch):
         "code": "no_solution_found",
         "message": "No schedule was produced. Solver status: UNKNOWN",
     }
+
+
+def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.runner.scheduler.schedule",
+        lambda **_kwargs: ScheduleResult(object(), object(), 42, "OPTIMAL", None),
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.runner.exporter.export_to_excel",
+        lambda _dataframe, output, _cell_export_info: output.write(b"xlsx"),
+    )
+    job = Job(
+        id="job_timestamped",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name='unsafe"\r\nname.yaml',
+            client_id="client",
+            solver="ortools/cp-sat",
+            prettify=True,
+            timeout_seconds=60,
+        ),
+        created_at=datetime(2026, 7, 16, 14, 23, 5, tzinfo=timezone.utc),
+    )
+
+    output = OptimizationRunner().run(
+        job,
+        b"apiVersion: alpha\n",
+        event_callback=lambda *_args: None,
+        should_stop=None,
+    )
+
+    assert output.artifact is not None
+    assert output.artifact.name == "nurse-scheduling-20260716T142305Z.xlsx"
 
 
 def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
@@ -546,3 +690,13 @@ def test_input_and_timeout_validation():
         assert client.post("/optimize", data={"yaml_content": "a", "timeout": "0"}).status_code == 400
         assert client.post("/optimize", data={"yaml_content": "a", "timeout": "61"}).status_code == 400
         assert client.post("/optimize", data={"yaml_content": "x" * 11}).status_code == 413
+        accepted = client.post(
+            "/optimize",
+            files={"file": ("SCHEDULE.YAML", b"x" * 10, "application/x-yaml")},
+        )
+        assert accepted.status_code == 202
+        oversized = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * 11, "application/x-yaml")},
+        )
+        assert oversized.status_code == 413
