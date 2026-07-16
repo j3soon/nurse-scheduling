@@ -48,6 +48,7 @@ from nurse_scheduling.server.jobs.models import (
     OptimizationResult,
     StoredArtifact,
     StoreLimits,
+    solver_supports_stop,
 )
 from nurse_scheduling.server.jobs.controller import JobController
 from nurse_scheduling.server.jobs.runner import OptimizationRunner, RunOutput
@@ -540,6 +541,39 @@ def test_cancel_queued_job_is_immediately_terminal():
         assert response.json()["error"]["code"] == "cancelled"
 
 
+@pytest.mark.parametrize(
+    "solver",
+    [
+        "ortools/cp-sat",
+        "ortools/mpsolver/scip",
+        "ortools/mpsolver/cp-sat",
+        "ortools/mpsolver/bop",
+        "ortools/mathopt/cp-sat",
+        " ORTOOLS/MPSOLVER/SCIP ",
+        " ORTOOLS/MATHOPT/CP-SAT ",
+    ],
+)
+def test_solver_supports_running_job_stop(solver):
+    assert solver_supports_stop(solver)
+
+
+@pytest.mark.parametrize(
+    "solver",
+    [
+        "pulp/cbc",
+        "pulp/cuopt",
+        "pulp/glpk",
+        "pulp/highs",
+        "pulp/scip",
+        "ortools/mpsolver/cbc",
+        "ortools/mathopt/gscip",
+        "ortools/mathopt/highs",
+    ],
+)
+def test_solver_does_not_support_running_job_stop(solver):
+    assert not solver_supports_stop(solver)
+
+
 def test_cancel_running_job_stops_worker_and_discards_result():
     runner = StoppableRunner()
     with _client(runner) as client:
@@ -552,6 +586,45 @@ def test_cancel_running_job_stops_worker_and_discards_result():
         cancelled = _wait_for_terminal(client, created["id"])
         assert cancelled["state"] == "cancelled"
         assert cancelled["result"] is None
+
+
+def test_cancel_running_job_treats_solver_exception_as_cancellation(monkeypatch, caplog):
+    class FailingAfterStopRunner:
+        def __init__(self):
+            self.started = threading.Event()
+
+        def run(self, job, input_bytes, *, event_callback, should_stop):
+            self.started.set()
+            while should_stop is not None and not should_stop():
+                time.sleep(0.005)
+            raise ValueError("No solution found! Status: UNKNOWN")
+
+    runner = FailingAfterStopRunner()
+    captured = []
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.worker.capture_optimize_exception",
+        lambda *args: captured.append(args),
+    )
+
+    with _client(runner) as client:
+        created = _create(client, solver="ortools/mathopt/cp-sat").json()
+        assert runner.started.wait(timeout=2)
+        response = client.post(f"/optimize/{created['id']}/cancel")
+        assert response.status_code == 202
+
+        cancelled = _wait_for_terminal(client, created["id"])
+
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["error"] == {
+        "code": "cancelled",
+        "message": "Optimization cancelled.",
+    }
+    assert captured == []
+    assert any(
+        f"[server:worker] cancelled-after-exception job_id={created['id']} "
+        "exception_type=ValueError error=No solution found! Status: UNKNOWN worker_id=" in message
+        for message in caplog.messages
+    )
 
 
 def test_finish_now_completes_with_current_feasible_result():

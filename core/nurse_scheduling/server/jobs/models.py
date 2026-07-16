@@ -159,6 +159,18 @@ class StoreLimits:
     """Maximum total jobs retained, including terminal history."""
 
 
+STOPPABLE_SOLVERS = frozenset(
+    {
+        "ortools/cp-sat",
+        "ortools/mpsolver/scip",
+        "ortools/mpsolver/cp-sat",
+        "ortools/mpsolver/bop",
+        "ortools/mathopt/cp-sat",
+    }
+)
+"""Solvers that cooperatively observe cancellation and early-completion requests."""
+
+
 def solver_supports_stop(solver: str) -> bool:
     """Return whether a running solver can observe a stop request."""
-    return solver == "ortools/cp-sat"
+    return solver.strip().lower() in STOPPABLE_SOLVERS

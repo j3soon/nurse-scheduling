@@ -1,4 +1,4 @@
-"""Schedule regression test wrapper for the PuLP/cuOpt backend."""
+"""Bounded schedule smoke test for the PuLP/GLPK backend."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -17,15 +17,26 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import pulp
-import pytest
+# This test is mostly AI generated.
 
-from .schedule_test_helper import run_schedule_regression_test
+from pathlib import Path
+
+import nurse_scheduling
 
 
-def test_schedule_pulp_cuopt():
-    cuopt_available = hasattr(pulp, "CUOPT") and bool(pulp.CUOPT(msg=False).available())
-    if not cuopt_available:
-        pytest.skip("PuLP/cuOpt backend is not available")
+TESTCASE = (
+    Path(__file__).parent / "testcases" / "basics" / "02_2nurses_2shifts_6days_shift_count_coefficients_balance.yaml"
+)
+EXPECTED_CSV = TESTCASE.with_suffix(".csv")
 
-    run_schedule_regression_test("pulp/cuopt")
+
+def test_schedule_pulp_glpk_smoke():
+    df, _solution, _score, status, _cell_export_info = nurse_scheduling.schedule(
+        TESTCASE.read_bytes(),
+        solver="pulp/glpk",
+        timeout=5,
+    )
+
+    assert df is not None
+    assert df.to_csv(index=False, header=False, lineterminator="\n") == EXPECTED_CSV.read_text()
+    assert status == "OPTIMAL"

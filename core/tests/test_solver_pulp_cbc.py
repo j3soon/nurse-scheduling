@@ -102,6 +102,17 @@ def _solve_with_fixed_affine(
     return round(solver.get_value(y))
 
 
+def test_generated_variable_name_skips_existing_suffix():
+    solver = PuLPSolver()
+    first = solver.new_bool_var("duplicate")
+    occupied_suffix = solver.new_bool_var("duplicate__1")
+
+    generated = solver.new_bool_var("duplicate")
+
+    assert [first.name, occupied_suffix.name, generated.name] == ["duplicate", "duplicate__1", "duplicate__2"]
+    assert len(solver.variables) == 3
+
+
 @pytest.mark.parametrize("k", [0, 2, 4])
 def test_create_bool_var_with_constraint_eq_matches_truth_table(k: int):
     """EQ reification should match x == k for each x in-domain, including edge K values."""
@@ -416,6 +427,10 @@ def test_add_squared_equality_validation_errors():
 
     with pytest.raises(NotImplementedError, match="expects a bounded variable or constant"):
         solver.add_squared_equality(t, "bad-source", (0, 1))
+    with pytest.raises(ValueError, match="finite integer"):
+        solver.add_squared_equality(t, 1.5, (0, 2))
+    with pytest.raises(ValueError, match="outside declared range"):
+        solver.add_squared_equality(t, 6, (0, 5))
     with pytest.raises(ValueError, match="Cannot linearize square for unbounded variable"):
         solver.add_squared_equality(t, unbounded, (0, 10))
     with pytest.raises(ValueError, match="Invalid source variable bounds for square"):

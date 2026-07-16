@@ -66,10 +66,14 @@ interface ShiftTypeRequirementErrors {
   [key: string]: string | Record<string, string> | undefined;
 }
 
-type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
+type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'shiftType' | 'qualifiedPeople' | 'date'> & {
+  shiftType?: ShiftTypeRequirementsPreference['shiftType'] | null;
   // Backend input accepts both null/missing and the reserved ALL selector for
   // all people. The frontend form normalizes the implicit form to [ALL].
   qualifiedPeople?: ShiftTypeRequirementsPreference['qualifiedPeople'] | null;
+  // Backend input accepts both null/missing and the reserved ALL selector for
+  // all dates. The frontend form normalizes the implicit form to [ALL].
+  date?: ShiftTypeRequirementsPreference['date'] | null;
 };
 
 function preferredNumPeopleDiffersFromRequired(formData: ShiftTypeRequirementForm): boolean {
@@ -251,22 +255,27 @@ export default function ShiftTypeRequirementsPage() {
 
   const handleStartEdit = (index: number) => {
     const requirement = shiftTypeRequirements[index] as NullableShiftTypeRequirementsPreference;
+    const shiftType = requirement.shiftType ?? [];
+    const qualifiedPeople = requirement.qualifiedPeople === null || requirement.qualifiedPeople === undefined
+      ? [ALL]
+      : requirement.qualifiedPeople;
+    const date = requirement.date === null || requirement.date === undefined
+      ? [ALL]
+      : requirement.date;
     setFormData({
       description: requirement.description ?? '',
-      shift_type: requirement.shiftType,
+      shift_type: shiftType,
       shift_type_coefficients: syncCoefficientPairs(
-        requirement.shiftType,
+        shiftType,
         requirement.shiftTypeCoefficients ?? [],
         shiftTypeData
       ),
       required_num_people: requirement.requiredNumPeople,
       // Normalize the backend's implicit all-people representation for the UI.
       // Saving [ALL] back is intentional because the backend interprets null as [ALL].
-      qualified_people: requirement.qualifiedPeople === null || requirement.qualifiedPeople === undefined
-        ? [ALL]
-        : requirement.qualifiedPeople,
+      qualified_people: qualifiedPeople,
       preferred_num_people: requirement.preferredNumPeople,
-      date: requirement.date,
+      date,
       weight: requirement.weight
     });
     setEditingIndex(index);
@@ -864,48 +873,55 @@ export default function ShiftTypeRequirementsPage() {
         onDuplicate={handleDuplicate}
         onDelete={handleDelete}
         onReorder={handleReorder}
-        renderContent={(requirement) => (
-          <>
-            {requirement.description && (
-              <h4 className="font-medium text-gray-900 mb-3">{requirement.description}</h4>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
-              <div>
-                <span className="font-medium">Shift Types:</span>{' '}
-                {requirement.shiftType.join(', ')}
-              </div>
-              {requirement.shiftTypeCoefficients && (
-                <div>
-                  <span className="font-medium">Coefficients:</span>{' '}
-                  {requirement.shiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
-                </div>
+        renderContent={(requirement) => {
+          const nullableRequirement = requirement as NullableShiftTypeRequirementsPreference;
+          const shiftType = nullableRequirement.shiftType ?? [];
+          const qualifiedPeople = nullableRequirement.qualifiedPeople === null || nullableRequirement.qualifiedPeople === undefined
+            ? [ALL]
+            : nullableRequirement.qualifiedPeople;
+          const date = nullableRequirement.date === null || nullableRequirement.date === undefined
+            ? [ALL]
+            : nullableRequirement.date;
+
+          return (
+            <>
+              {requirement.description && (
+                <h4 className="font-medium text-gray-900 mb-3">{requirement.description}</h4>
               )}
-              <div>
-                <span className="font-medium">Required:</span> {requirement.requiredNumPeople}
-                {requirement.preferredNumPeople && (
-                  <span> (Preferred: {requirement.preferredNumPeople})</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
+                <div>
+                  <span className="font-medium">Shift Types:</span>{' '}
+                  {shiftType.join(', ')}
+                </div>
+                {requirement.shiftTypeCoefficients && (
+                  <div>
+                    <span className="font-medium">Coefficients:</span>{' '}
+                    {requirement.shiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
+                  </div>
                 )}
-              </div>
-              {requirement.preferredNumPeople !== undefined && requirement.preferredNumPeople !== requirement.requiredNumPeople && (
                 <div>
-                  <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
+                  <span className="font-medium">Required:</span> {requirement.requiredNumPeople}
+                  {requirement.preferredNumPeople && (
+                    <span> (Preferred: {requirement.preferredNumPeople})</span>
+                  )}
                 </div>
-              )}
-              {requirement.qualifiedPeople && (
+                {requirement.preferredNumPeople !== undefined && requirement.preferredNumPeople !== requirement.requiredNumPeople && (
+                  <div>
+                    <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
+                  </div>
+                )}
                 <div className="md:col-span-2 lg:col-span-3">
                   <span className="font-medium">Qualified:</span>{' '}
-                  {requirement.qualifiedPeople.join(', ')}
+                  {qualifiedPeople.join(', ')}
                 </div>
-              )}
-              {requirement.date && (
                 <div className="md:col-span-2 lg:col-span-3">
                   <span className="font-medium">Dates:</span>{' '}
-                  {requirement.date.join(', ')}
+                  {date.join(', ')}
                 </div>
-              )}
-            </div>
-          </>
-        )}
+              </div>
+            </>
+          );
+        }}
       />
     </div>
   );

@@ -114,8 +114,8 @@ def main():
         "--solver",
         type=str,
         default="ortools/cp-sat",
-        choices=["ortools/cp-sat", "pulp/cbc", "pulp/cuopt"],
-        help="Solver selector (e.g., 'ortools/cp-sat', 'pulp/cbc', or 'pulp/cuopt').",
+        choices=scheduler.SUPPORTED_SOLVER_CHOICES,
+        help=scheduler.SOLVER_SELECTOR_HELP,
     )
     parser.add_argument(
         "--show-model-build-stats",

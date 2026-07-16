@@ -1,4 +1,4 @@
-"""Schedule regression test wrapper for the PuLP/cuOpt backend."""
+"""Schedule regression test wrapper for the OR-Tools/MPSolver SCIP backend."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -17,15 +17,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import pulp
-import pytest
+# This test is mostly AI generated.
 
 from .schedule_test_helper import run_schedule_regression_test
 
 
-def test_schedule_pulp_cuopt():
-    cuopt_available = hasattr(pulp, "CUOPT") and bool(pulp.CUOPT(msg=False).available())
-    if not cuopt_available:
-        pytest.skip("PuLP/cuOpt backend is not available")
-
-    run_schedule_regression_test("pulp/cuopt")
+def test_schedule_ortools_mpsolver_scip():
+    run_schedule_regression_test("ortools/mpsolver/scip")

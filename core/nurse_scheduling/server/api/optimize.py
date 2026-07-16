@@ -26,6 +26,7 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Respo
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from ... import scheduler
 from ..config import ServerSettings
 from ..jobs.controller import JobController
 from ..jobs.models import JobState, solver_supports_stop
@@ -108,7 +109,7 @@ async def create_job(
     yaml_content: str | None = Form(None, description="YAML content as a string"),
     prettify: bool | None = Form(None),
     timeout: int | None = Form(None),
-    solver: str = Form("ortools/cp-sat"),
+    solver: str = Form("ortools/cp-sat", description=scheduler.SOLVER_SELECTOR_HELP),
 ):
     """Validate an optimization request and enqueue a durable job."""
     settings = _settings(request)

@@ -24,7 +24,7 @@ from collections.abc import Callable
 from ...sentry import capture_optimize_exception
 from ..errors import JobNotFoundError, OptimizationExecutionError
 from .controller import JobController
-from .models import Job, JobFailure, solver_supports_stop
+from .models import Job, JobFailure, JobState, solver_supports_stop
 from .runner import OptimizationRunner
 
 
@@ -188,14 +188,29 @@ class JobWorker:
         except JobNotFoundError:
             server_logger.warning("[server:worker] job disappeared while running job_id=%s", job.id)
         except Exception as error:
+            failure = JobFailure(code="optimization_failed", message=self._unexpected_error_formatter(error))
+            try:
+                failed = self._controller.fail_job(job.id, failure)
+            except Exception:
+                try:
+                    capture_optimize_exception(job, content, error)
+                except Exception:
+                    server_logger.exception("[server:worker] failed to capture optimization error job_id=%s", job.id)
+                raise
+            if failed.state == JobState.CANCELLED:
+                server_logger.info(
+                    "[server:worker] cancelled-after-exception job_id=%s exception_type=%s error=%s worker_id=%s",
+                    job.id,
+                    type(error).__name__,
+                    str(error),
+                    self._worker_id,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+                return
             try:
                 capture_optimize_exception(job, content, error)
             except Exception:
                 server_logger.exception("[server:worker] failed to capture optimization error job_id=%s", job.id)
-            self._controller.fail_job(
-                job.id,
-                JobFailure(code="optimization_failed", message=self._unexpected_error_formatter(error)),
-            )
             server_logger.exception(
                 "[server:worker] failed job_id=%s worker_id=%s",
                 job.id,

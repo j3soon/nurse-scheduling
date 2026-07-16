@@ -7,7 +7,7 @@ Run commands from `core/`:
 
 - `uv venv --python 3.12 && source .venv/bin/activate`
 - `uv pip install -r requirements.txt`
-- `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver ortools/cp-sat|pulp/cbc`
+- `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `../README.md`.
 - `pytest --log-cli-level=INFO`: run the normal core test suite.
 - `pytest --log-cli-level=INFO <affected_test_paths>`
 - `../scripts/test_core_affected.sh`: run changed test files with compact
@@ -29,9 +29,18 @@ test paths when a narrower suite is known to be sufficient.
   commands.
 - Primary suites are:
   `tests/test_solver_ortools_cp_sat.py`,
+  `tests/test_solver_ortools_linear.py`,
+  `tests/test_solver_ortools_mathopt.py`,
   `tests/test_solver_pulp_cbc.py`,
+  `tests/test_solver_pulp_glpk.py`,
+  `tests/test_solver_pulp_python.py`,
   `tests/test_schedule_ortools_cp_sat.py`,
+  `tests/test_schedule_ortools_mpsolver_cbc.py`,
+  `tests/test_schedule_ortools_mathopt_gscip.py`,
   `tests/test_schedule_pulp_cbc.py`, and `tests/test_serve.py`.
+  PuLP/GLPK has bounded schedule smoke coverage in
+  `tests/test_schedule_pulp_glpk.py`. PuLP Python-API schedule coverage lives
+  in `tests/test_schedule_pulp_highs.py` and `tests/test_schedule_pulp_scip.py`.
 - Add scheduling cases as fixture pairs under `tests/testcases/**`, typically a
   `.yaml` input with matching `.csv` or `.txt` expected output.
 - Use `--show-model-build-stats` when checking or benchmarking model-building
