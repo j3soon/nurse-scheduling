@@ -27,6 +27,7 @@ from nurse_scheduling.solver_interface import (
     assert_int_score,
     count_export_comments,
     serialize_solver_progress,
+    validate_square_constant,
 )
 
 
@@ -85,3 +86,18 @@ def test_assert_int_score_accepts_near_integral_values():
 def test_assert_int_score_rejects_fractional_values():
     with pytest.raises(AssertionError, match="objective should be an integer"):
         assert_int_score(4.25, label="objective")
+
+
+def test_validate_square_constant_preserves_large_integer_exactness():
+    value = 2**53 + 1
+
+    assert validate_square_constant(value, (value, value)) == value
+
+
+def test_validate_square_constant_accepts_integral_float():
+    assert validate_square_constant(3.0, (0, 4)) == 3
+
+
+def test_validate_square_constant_rejects_oversized_out_of_range_integer():
+    with pytest.raises(ValueError, match="outside declared range"):
+        validate_square_constant(10**1000, (0, 10))

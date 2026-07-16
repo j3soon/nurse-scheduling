@@ -22,6 +22,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install GLPK
+        run: sudo apt-get update && sudo apt-get install -y glpk-utils
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements.txt
       - name: Test with pytest and collect coverage

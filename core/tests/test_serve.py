@@ -347,7 +347,17 @@ class TestOptimizeJobs:
         assert '"code": "solving"' in body
         assert '"currentBestScore": 7' in body
 
-    def test_optimize_job_cancel_requests_running_job_stop(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "solver",
+        [
+            "ortools/cp-sat",
+            "ortools/mpsolver/scip",
+            "ortools/mpsolver/cp-sat",
+            "ortools/mpsolver/bop",
+            "ortools/mathopt/cp-sat",
+        ],
+    )
+    def test_optimize_job_cancel_requests_running_job_stop(self, monkeypatch, solver):
         solve_started = False
 
         def fake_schedule(*args, **kwargs):
@@ -362,7 +372,10 @@ class TestOptimizeJobs:
 
         monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
 
-        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+        response = client.post(
+            "/optimize",
+            data={"yaml_content": "apiVersion: alpha\n", "solver": solver},
+        )
         job_id = response.json()["jobId"]
         wait_for_job_status(job_id, "running")
 
@@ -374,6 +387,63 @@ class TestOptimizeJobs:
         assert solve_started
         assert completed["error"] == "Optimization cancelled."
         assert completed["xlsxReady"] is False
+
+    def test_optimize_job_cancel_without_incumbent_is_cancelled(self, monkeypatch, caplog):
+        solve_started = threading.Event()
+
+        def fake_schedule(*args, **kwargs):
+            solve_started.set()
+            wait_for_stop = kwargs["should_stop"]
+            for _ in range(100):
+                if wait_for_stop():
+                    raise ValueError("No solution found! Status: UNKNOWN")
+                time.sleep(0.01)
+            pytest.fail("cancel request was not observed")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fake_schedule)
+
+        response = client.post(
+            "/optimize",
+            data={"yaml_content": "apiVersion: alpha\n", "solver": "ortools/mathopt/cp-sat"},
+        )
+        job_id = response.json()["jobId"]
+        wait_for_job_status(job_id, "running")
+        assert solve_started.wait(timeout=1)
+
+        cancel_response = client.post(f"/optimize/{job_id}/cancel")
+
+        assert cancel_response.status_code == 200
+        completed = wait_for_job_status(job_id, "cancelled")
+        assert completed["error"] == "Optimization cancelled."
+        assert completed["xlsxReady"] is False
+        assert any(
+            f"[server:job] cancelled-after-exception job_id={job_id} "
+            "exception_type=ValueError error=No solution found! Status: UNKNOWN client_uuid=" in message
+            for message in caplog.messages
+        )
+
+    def test_cancelled_job_exception_handles_concurrent_deletion(self, monkeypatch, caplog):
+        job = serve._create_optimize_job(
+            input_name="deleted.yaml",
+            client_uuid="test-client",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout=1,
+        )
+
+        def fail_after_cancellation(*_args, **_kwargs):
+            job.cancel_requested = True
+            raise ValueError("cancelled solve")
+
+        monkeypatch.setattr(serve.scheduler, "schedule", fail_after_cancellation)
+        monkeypatch.setattr(serve, "_finish_optimize_job_if_present", lambda *_args, **_kwargs: None)
+
+        serve._run_optimize_job(job.id, b"apiVersion: alpha\n")
+
+        assert any(
+            f"[server:job] cancelled-after-deletion job_id={job.id} client_uuid=test-client" in message
+            for message in caplog.messages
+        )
 
     def test_optimize_job_finish_now_requests_best_available_result(self, monkeypatch, caplog):
         def fake_schedule(*args, **kwargs):
@@ -449,11 +519,39 @@ class TestOptimizeJobs:
         assert completed["score"] == 7
         assert completed["xlsxReady"] is True
 
-    def test_optimize_job_control_rejects_solver_without_stop_support(self):
+    @pytest.mark.parametrize(
+        "solver",
+        [
+            "ortools/cp-sat",
+            "ortools/mpsolver/scip",
+            "ortools/mpsolver/cp-sat",
+            "ortools/mpsolver/bop",
+            "ortools/mathopt/cp-sat",
+            " ORTOOLS/MPSOLVER/SCIP ",
+            " ORTOOLS/MATHOPT/CP-SAT ",
+        ],
+    )
+    def test_solver_supports_running_job_stop(self, solver):
+        assert serve._solver_supports_job_stop(solver)
+
+    @pytest.mark.parametrize(
+        "solver",
+        [
+            "pulp/cbc",
+            "pulp/cuopt",
+            "pulp/glpk",
+            "pulp/highs",
+            "pulp/scip",
+            "ortools/mpsolver/cbc",
+            "ortools/mathopt/gscip",
+            "ortools/mathopt/highs",
+        ],
+    )
+    def test_optimize_job_control_rejects_solver_without_stop_support(self, solver):
         job = serve._create_optimize_job(
-            input_name="pulp.yaml",
+            input_name="non-interruptible.yaml",
             client_uuid="test-client",
-            solver="pulp/cbc",
+            solver=solver,
             prettify=True,
             timeout=60,
         )
@@ -463,10 +561,10 @@ class TestOptimizeJobs:
         finish_response = client.post(f"/optimize/{job.id}/finish-now")
 
         assert cancel_response.status_code == 409
-        assert cancel_response.json()["detail"]["solver"] == "pulp/cbc"
+        assert cancel_response.json()["detail"]["solver"] == solver
         assert "does not support" in cancel_response.json()["detail"]["message"]
         assert finish_response.status_code == 409
-        assert finish_response.json()["detail"]["solver"] == "pulp/cbc"
+        assert finish_response.json()["detail"]["solver"] == solver
 
     def test_optimize_job_allows_multiple_sse_connections(self, fake_successful_scheduler):
         response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})

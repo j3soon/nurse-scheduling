@@ -1,4 +1,4 @@
-"""Schedule regression test wrapper for the PuLP/cuOpt backend."""
+"""PuLP Python-API solver wrappers."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -17,15 +17,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import pulp
-import pytest
-
-from .schedule_test_helper import run_schedule_regression_test
+from .solver_pulp import BasePuLPSolver
 
 
-def test_schedule_pulp_cuopt():
-    cuopt_available = hasattr(pulp, "CUOPT") and bool(pulp.CUOPT(msg=False).available())
-    if not cuopt_available:
-        pytest.skip("PuLP/cuOpt backend is not available")
+class PuLPHiGHSSolver(BasePuLPSolver):
+    """PuLP solver configured to use the HiGHS Python API."""
 
-    run_schedule_regression_test("pulp/cuopt")
+    def __init__(self):
+        super().__init__(engine="highs")
+
+
+class PuLPSCIPSolver(BasePuLPSolver):
+    """PuLP solver configured to use the SCIP Python API."""
+
+    def __init__(self):
+        super().__init__(engine="scip")

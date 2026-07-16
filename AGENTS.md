@@ -19,6 +19,10 @@ conventions in `core/AGENTS.md` or `web-frontend/AGENTS.md`.
 - Use Conventional Commits, scoped by module where applicable, for example:
   `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
 
+## Comment and Documentation Style
+- Keep comments and documentation minimal, concise, yet informative.
+- Do not use em-dash or semicolon to connect sentences.
+
 ## Cross-Module Requirements
 - When changing frontend rename/delete behavior for people, dates, or shift
   types, keep all references in sync, including preferences and export layout

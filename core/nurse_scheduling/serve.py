@@ -345,6 +345,33 @@ def _run_optimize_job(job_id: str, content: bytes) -> None:
         _refresh_queue_positions()
         _log_job_completed(job)
     except Exception as e:
+        if current_job.cancel_requested:
+            server_logger.info(
+                "[server:job] cancelled-after-exception job_id=%s exception_type=%s error=%s client_uuid=%s",
+                job_id,
+                type(e).__name__,
+                str(e),
+                current_job.client_uuid,
+                exc_info=True,
+            )
+            job = _finish_optimize_job_if_present(
+                job_id,
+                "complete",
+                status=OptimizeJobStatus.CANCELLED,
+                error=_job_cancellation_error(current_job),
+                finished_at=utc_now(),
+            )
+            if job is None:
+                server_logger.warning(
+                    "[server:job] cancelled-after-deletion job_id=%s client_uuid=%s",
+                    job_id,
+                    current_job.client_uuid,
+                )
+                return
+            _refresh_queue_positions()
+            _log_job_completed(job)
+            return
+
         capture_optimize_exception(job, content, e)
         job = _finish_optimize_job_if_present(
             job_id,
@@ -459,7 +486,10 @@ async def create_optimize_job(
     yaml_content: str | None = Form(None, description="YAML content as a string"),
     prettify: bool | None = Form(None, description="Enable prettier output formatting"),
     timeout: int | None = Form(None, description="Max execution time in seconds"),
-    solver: str = Form("ortools/cp-sat", description="Solver selector (e.g., ortools/cp-sat, pulp/cbc, pulp/cuopt)"),
+    solver: str = Form(
+        "ortools/cp-sat",
+        description=scheduler.SOLVER_SELECTOR_HELP,
+    ),
 ):
     content, input_name = await _read_optimization_input(file, yaml_content)
     timeout = _normalize_optimization_timeout(timeout)
