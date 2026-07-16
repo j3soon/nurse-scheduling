@@ -642,17 +642,68 @@ def test_finish_now_completes_with_current_feasible_result():
 
 
 def test_worker_renews_claim_during_long_running_job():
-    runner = StoppableRunner()
-    settings = _settings(claim_lease_seconds=0.06, maintenance_interval_seconds=0.005)
-    with _client(runner, settings=settings) as client:
-        created = _create(client).json()
-        assert runner.started.wait(timeout=2)
-        time.sleep(0.15)
+    now = [datetime.now(timezone.utc)]
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=1, max_retained=2),
+        retention_seconds=60,
+        claim_lease_seconds=0.06,
+        clock=lambda: now[0],
+    )
+    created = controller.create_job(
+        input_name="input.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=True,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
 
-        running = client.get(f"/optimize/{created['id']}").json()
-        assert running["state"] == "running"
-        client.post(f"/optimize/{created['id']}/finish-now")
-        assert _wait_for_terminal(client, created["id"])["state"] == "completed"
+    class ControllerWithRenewalSignal:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.renewal_allowed = threading.Event()
+            self.claim_renewed = threading.Event()
+            self.renewed_job = None
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def renew_claim(self, job_id, worker_id):
+            self.renewal_allowed.wait(timeout=2)
+            renewed = self.delegate.renew_claim(job_id, worker_id)
+            if renewed is not None:
+                self.renewed_job = renewed
+                self.claim_renewed.set()
+            return renewed
+
+    worker_controller = ControllerWithRenewalSignal(controller)
+    runner = StoppableRunner()
+    worker = JobWorker(
+        worker_controller,
+        runner,
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        claim_lease_seconds=0.06,
+    )
+
+    worker.start()
+    try:
+        assert runner.started.wait(timeout=2)
+        initial_claim = controller.get_job(created.id)
+        now[0] += timedelta(seconds=0.01)
+        worker_controller.renewal_allowed.set()
+        assert worker_controller.claim_renewed.wait(timeout=2)
+        assert worker_controller.renewed_job.claim_expires_at > initial_claim.claim_expires_at
+
+        running = controller.get_job(created.id)
+        assert running.state == JobState.RUNNING
+        controller.request_early_completion(created.id)
+        assert runner.finished.wait(timeout=2)
+        assert controller.get_job(created.id).state == JobState.COMPLETED
+    finally:
+        worker.stop()
 
 
 def test_worker_stops_execution_after_its_claim_expires():
