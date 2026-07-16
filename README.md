@@ -406,10 +406,10 @@ For more debugging output when a test fails:
 
 ```sh
 cd core
-pytest --log-cli-level=DEBUG tests/test_solver_ortools_cp_sat.py
-pytest --log-cli-level=DEBUG tests/test_solver_pulp_cbc.py
-pytest --log-cli-level=DEBUG tests/test_schedule_ortools_cp_sat.py
-pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
+pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py
+pytest --log-cli-level=INFO tests/test_solver_pulp_cbc.py
+pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
+pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 ```
 
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
