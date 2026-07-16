@@ -23,13 +23,22 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
+import fakeredis
 import pytest
+import redis
 
 from nurse_scheduling.server.config import DEFAULT_JOB_RETENTION_SECONDS, DEFAULT_MAX_RETAINED_JOBS
-from nurse_scheduling.server.errors import JobCapacityError, JobNotFoundError, StoreWriteConflictError
+from nurse_scheduling.server.errors import (
+    JobArtifactNotFoundError,
+    JobCapacityError,
+    JobInputNotFoundError,
+    JobNotFoundError,
+    StoreWriteConflictError,
+)
 from nurse_scheduling.server.jobs.controller import JobController, utc_now
 from nurse_scheduling.server.jobs.models import (
     JobFailure,
@@ -54,10 +63,34 @@ def _delete_redis_prefix(url: str, prefix: str) -> None:
         client.delete(*keys)
 
 
-@pytest.fixture(params=["memory", "redis"])
+@pytest.fixture
+def fake_redis_store_factory(monkeypatch):
+    from nurse_scheduling.server.stores import redis as redis_store
+
+    server = fakeredis.FakeServer()
+    monkeypatch.setattr(
+        redis_store.redis.Redis,
+        "from_url",
+        lambda url, **kwargs: fakeredis.FakeRedis.from_url(url, server=server, **kwargs),
+    )
+
+    def create_store(**kwargs):
+        return redis_store.RedisJobStore(
+            url="redis://localhost/0",
+            key_prefix=f"nurse_scheduling:test:jobs:{uuid.uuid4().hex}",
+            **kwargs,
+        )
+
+    return create_store
+
+
+@pytest.fixture(params=["memory", "fake-redis", "redis"])
 def store_factory(request):
     if request.param == "memory":
         yield lambda **kwargs: MemoryJobStore(**kwargs)
+        return
+    if request.param == "fake-redis":
+        yield request.getfixturevalue("fake_redis_store_factory")
         return
     url = _redis_url()
     if url is None:
@@ -113,6 +146,34 @@ def _create(controller, input_name="input.yaml"):
     )
 
 
+def _raise_watch_error_once(store, monkeypatch) -> None:
+    original_pipeline = store._redis.pipeline
+    error_pending = True
+
+    class WatchErrorPipeline:
+        def __init__(self, pipeline):
+            self.pipeline = pipeline
+
+        def __enter__(self):
+            self.pipeline.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.pipeline.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.pipeline, name)
+
+        def execute(self):
+            nonlocal error_pending
+            if error_pending:
+                error_pending = False
+                raise redis.WatchError
+            return self.pipeline.execute()
+
+    monkeypatch.setattr(store._redis, "pipeline", lambda: WatchErrorPipeline(original_pipeline()))
+
+
 def test_utc_now_returns_timezone_aware_utc_datetime():
     assert utc_now().tzinfo is timezone.utc
 
@@ -136,6 +197,28 @@ def test_redis_store_uses_default_connect_timeout_and_bounds_stream_reads(monkey
         socket_timeout=7.5,
     )
     client.ping.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"key_prefix": ":"},
+        {"event_stream_keepalive_seconds": 0},
+        {"event_stream_keepalive_seconds": float("inf")},
+        {"max_events_per_job": 0},
+    ],
+)
+def test_redis_store_rejects_invalid_configuration(settings):
+    from nurse_scheduling.server.stores.redis import RedisJobStore
+
+    configuration = {"url": "redis://localhost/0", "key_prefix": "test:jobs", **settings}
+    with pytest.raises(ValueError):
+        RedisJobStore(**configuration)
+
+
+def test_memory_store_rejects_nonpositive_event_limit():
+    with pytest.raises(ValueError, match="max_events_per_job must be positive"):
+        MemoryJobStore(max_events_per_job=0)
 
 
 def test_store_round_trips_lifecycle_input_events_and_artifact(store):
@@ -171,6 +254,195 @@ def test_store_round_trips_lifecycle_input_events_and_artifact(store):
         "job.result_available",
     ]
     assert all(event.id is not None for event in events if event is not None)
+
+
+def test_store_reports_missing_input_and_artifacts(store):
+    controller = _controller(store)
+    created = _create(controller)
+
+    with pytest.raises(JobArtifactNotFoundError):
+        store.get_artifact(created.id, "input.xlsx")
+
+    if isinstance(store, MemoryJobStore):
+        store._records[created.id].input_bytes = None
+    else:
+        store._redis.delete(store._input_key(created.id))
+    with pytest.raises(JobInputNotFoundError):
+        controller.get_input(created.id)
+
+    claimed = controller.claim_next_job("worker")
+    assert claimed is not None
+    artifact = StoredArtifact("input.xlsx", "application/test", b"xlsx")
+    controller.complete_job(
+        claimed.id,
+        OptimizationResult(OptimizationOutcome.OPTIMAL, 42, "OPTIMAL", "optimality_proven"),
+        artifact,
+    )
+    if isinstance(store, MemoryJobStore):
+        store._records[created.id].artifacts.clear()
+    else:
+        store._redis.delete(store._artifact_key(created.id))
+    with pytest.raises(JobArtifactNotFoundError):
+        controller.get_artifact(created.id, artifact.name)
+
+
+def test_store_handles_empty_queries_and_missing_jobs(store):
+    now = datetime.now(timezone.utc)
+
+    assert store.claim_next("worker", now, now + timedelta(seconds=30)) is None
+    assert store.find_finished_before(now) == []
+    assert store.find_claimed_before(now) == []
+    store.check_health()
+
+    with pytest.raises(JobNotFoundError):
+        store.get("missing")
+    with pytest.raises(JobNotFoundError):
+        store.get_input("missing")
+    with pytest.raises(JobNotFoundError):
+        store.get_artifact("missing", "input.xlsx")
+    with pytest.raises(JobNotFoundError):
+        store.delete("missing", 1)
+
+
+def test_store_rejects_duplicate_ids_and_prunes_terminal_jobs(store):
+    controller = _controller(store, max_pending=2, max_retained=1)
+    first = _create(controller, "first.yaml")
+    limits = StoreLimits(max_pending=2, max_retained=1)
+
+    with pytest.raises(StoreWriteConflictError):
+        store.create(first, b"duplicate", limits, [])
+    with pytest.raises(JobCapacityError, match="Too many jobs are retained"):
+        _create(controller, "blocked.yaml")
+
+    controller.cancel_job(first.id)
+    replacement = _create(controller, "replacement.yaml")
+
+    assert replacement.id != first.id
+    with pytest.raises(JobNotFoundError):
+        controller.get_job(first.id)
+
+
+def test_store_rejects_stale_delete_and_missing_save(store):
+    controller = _controller(store)
+    created = _create(controller)
+
+    with pytest.raises(StoreWriteConflictError):
+        store.delete(created.id, created.revision + 1)
+    store.delete(created.id, created.revision)
+    with pytest.raises(JobNotFoundError):
+        store.save(created, created.revision, [])
+
+
+def test_store_reorders_queue_when_saved_without_events(store):
+    now = datetime.now(timezone.utc)
+    controller = _controller(store, now=now)
+    first = _create(controller, "first.yaml")
+    second = _create(controller, "second.yaml")
+
+    cancelled = replace(first, state=JobState.CANCELLED, finished_at=now)
+    saved = store.save(cancelled, first.revision, [])
+
+    assert saved.state == JobState.CANCELLED
+    events = store.stream_events(second.id, after_id=None, keepalive_seconds=0.01)
+    assert [next(events).data["queue_position"], next(events).data["queue_position"]] == [2, 1]
+
+
+def test_live_event_stream_emits_keepalive_after_catching_up(store):
+    controller = _controller(store)
+    created = _create(controller)
+    events = store.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
+    initial = next(events)
+    assert initial is not None
+
+    resumed = store.stream_events(created.id, after_id=initial.id, keepalive_seconds=0.01)
+    assert next(resumed) is None
+    assert next(resumed) is None
+
+
+def test_memory_event_stream_replays_from_invalid_cursor():
+    store = MemoryJobStore()
+    controller = _controller(store)
+    created = _create(controller)
+
+    event = next(store.stream_events(created.id, after_id="invalid", keepalive_seconds=0.01))
+
+    assert event is not None
+    assert event.type == "job.state_changed"
+
+
+def test_redis_store_uses_artifact_metadata_defaults(fake_redis_store_factory):
+    store = fake_redis_store_factory()
+    controller = _controller(store)
+    created = _create(controller)
+    claimed = controller.claim_next_job("worker")
+    assert claimed is not None
+    artifact = StoredArtifact("input.xlsx", "application/test", b"xlsx")
+    controller.complete_job(
+        claimed.id,
+        OptimizationResult(OptimizationOutcome.OPTIMAL, 42, "OPTIMAL", "optimality_proven"),
+        artifact,
+    )
+
+    store._redis.delete(store._artifact_metadata_key(created.id))
+
+    assert store.get_artifact(created.id, artifact.name) == StoredArtifact(
+        "input.xlsx",
+        "application/octet-stream",
+        b"xlsx",
+    )
+
+
+def test_redis_store_removes_corrupt_queue_entries(fake_redis_store_factory):
+    store = fake_redis_store_factory()
+    now = datetime.now(timezone.utc)
+    store._redis.zadd(store._queue_key, {"orphan": now.timestamp()})
+
+    assert store.claim_next("worker", now, now + timedelta(seconds=30)) is None
+
+    controller = _controller(store, now=now)
+    created = _create(controller)
+    controller.cancel_job(created.id)
+    store._redis.zadd(store._queue_key, {created.id: now.timestamp()})
+
+    assert store.claim_next("worker", now, now + timedelta(seconds=30)) is None
+
+
+def test_redis_event_stream_treats_socket_timeout_as_keepalive(fake_redis_store_factory, monkeypatch):
+    store = fake_redis_store_factory()
+    controller = _controller(store)
+    created = _create(controller)
+    initial = next(store.stream_events(created.id, after_id=None, keepalive_seconds=0.01))
+    assert initial is not None
+    monkeypatch.setattr(store._redis, "xread", Mock(side_effect=redis.exceptions.TimeoutError))
+
+    resumed = store.stream_events(created.id, after_id=initial.id, keepalive_seconds=0.01)
+
+    assert next(resumed) is None
+
+
+@pytest.mark.parametrize("operation", ["create", "claim", "save", "delete"])
+def test_redis_store_retries_watch_errors(fake_redis_store_factory, monkeypatch, operation):
+    store = fake_redis_store_factory()
+    controller = _controller(store)
+
+    if operation == "create":
+        _raise_watch_error_once(store, monkeypatch)
+        assert _create(controller).state == JobState.QUEUED
+        return
+
+    created = _create(controller)
+    if operation == "delete":
+        created = controller.cancel_job(created.id)
+    _raise_watch_error_once(store, monkeypatch)
+
+    if operation == "claim":
+        assert controller.claim_next_job("worker").state == JobState.RUNNING
+    elif operation == "save":
+        assert controller.cancel_job(created.id).state == JobState.CANCELLED
+    else:
+        controller.delete_job(created.id)
+        with pytest.raises(JobNotFoundError):
+            controller.get_job(created.id)
 
 
 def test_store_rejects_events_from_stale_workers_and_terminal_jobs(store):

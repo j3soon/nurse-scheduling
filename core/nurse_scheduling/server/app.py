@@ -204,6 +204,13 @@ def create_app(
             status_code = 500
         if status_code < 500:
             capture_invalid_request(request, status_code, str(exc))
+        else:
+            server_logger.exception(
+                "[server:request] unexpected application error method=%s path=%s",
+                request.method,
+                request.url.path,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
         headers = {"Retry-After": "1"} if status_code == 429 else None
         return JSONResponse(
             status_code=status_code,

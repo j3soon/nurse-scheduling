@@ -8,6 +8,7 @@ jinja2 # For prettifying output
 # For CI
 pytest
 pytest-cov
+fakeredis
 ruff
 # For web backend
 fastapi[standard]
