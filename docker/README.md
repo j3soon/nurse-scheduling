@@ -2,13 +2,13 @@
 
 This deployment scaffold publishes the FastAPI backend through Cloudflare
 Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
-`cloudflared` connects outbound from the VM to the backend container.
+`cloudflared` connects outbound from the VM to the API container.
 
 ## Cloudflare Tunnel
 
 - Create a [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/setup/).
 - Add a public hostname for `api.nursescheduling.org`.
-- Point the hostname service to `http://backend:8000`.
+- Point the hostname service to `http://api:8000`.
 - Copy `.env.example` to `.env`.
 - Set `CLOUDFLARE_TUNNEL_TOKEN` in `.env` to the token from the dashboard.
 - Enable [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/).
@@ -30,7 +30,8 @@ cd docker
 docker compose -f compose.backend.yml up -d --build
 ```
 
-The compose file starts Redis alongside the backend. The backend runs with:
+The default compose file starts Redis alongside the backend. The backend runs
+with:
 
 - `JOB_BACKEND=redis`
 - `JOB_REDIS_URL=redis://redis:6379/0`
@@ -38,10 +39,20 @@ The compose file starts Redis alongside the backend. The backend runs with:
 - `JOB_CLAIM_LEASE_SECONDS=90` by default
 - `JOB_MAX_EVENTS_PER_JOB=1000` by default
 
-The backend container runs multiple Uvicorn workers. Each worker claims jobs
+The API container runs multiple Uvicorn workers. Each worker claims jobs
 from Redis and runs at most one optimization job locally. Active workers renew
 their claims; a job is failed and its capacity is released if its worker stops
 renewing the claim.
+
+To run one backend worker with process-local memory and no Redis service, use
+the pre-Redis deployment configuration:
+
+```sh
+docker compose -f compose.backend.memory.yml up -d --build
+```
+
+Use the same compose file name for later commands when running the memory
+configuration.
 
 Check the API through Cloudflare:
 
@@ -58,13 +69,13 @@ Run the public healthcheck test:
 Check the backend directly from the VM:
 
 ```sh
-docker compose -f compose.backend.yml exec backend curl -fsS http://127.0.0.1:8000/health
+docker compose -f compose.backend.yml exec api curl -fsS http://127.0.0.1:8000/health
 ```
 
-Check Redis from the backend container:
+Check Redis from the API container:
 
 ```sh
-docker compose -f compose.backend.yml exec backend redis-cli -u redis://redis:6379/0 ping
+docker compose -f compose.backend.yml exec api redis-cli -u redis://redis:6379/0 ping
 ```
 
 ## Frontend

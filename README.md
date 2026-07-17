@@ -496,11 +496,20 @@ cd core
 JOB_REDIS_TEST_URL=redis://localhost:6379/15 pytest --log-cli-level=INFO tests/test_optimize_job_backends.py
 ```
 
-For Docker Compose deployment, `docker/compose.backend.yml` starts a Redis service and configures the backend to use it:
+For Docker Compose deployment, `docker/compose.backend.yml` starts a Redis
+service and configures the backend to use it:
 
 ```sh
 cd docker
 docker compose -f compose.backend.yml up -d --build
+```
+
+To run one backend worker with process-local memory and no Redis service, use
+the pre-Redis deployment configuration:
+
+```sh
+cd docker
+docker compose -f compose.backend.memory.yml up -d --build
 ```
 
 The bundled Redis service uses its default RDB snapshot policy with a persistent

@@ -1,3 +1,5 @@
+name: nurse-scheduling-backend
+
 services:
   redis:
     image: redis:8.8
@@ -9,7 +11,7 @@ services:
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
 
-  backend:
+  api:
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -43,7 +45,7 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     depends_on:
-      backend:
+      api:
         condition: service_healthy
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
 
