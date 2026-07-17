@@ -123,14 +123,12 @@ For Linux only: to quickly set up all local environments (`core`, `web-frontend`
 
 For Docker-based development environment:
 
+CPU solver:
+
 ```sh
 # build image
 docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
-# or optionally with cuOpt
-docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 ```
-
-CPU solver:
 
 ```sh
 # persist Codex/Claude Code/OpenCode auth/config across containers
@@ -153,6 +151,14 @@ docker run --rm -it --network=host \
 ```
 
 GPU solver:
+
+```sh
+# or build image with cuOpt support
+docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
+```
+
+The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
+wheel. Use another environment for the `pulp/highs` solver.
 
 ```sh
 # persist Codex/Claude Code/OpenCode auth/config across containers
