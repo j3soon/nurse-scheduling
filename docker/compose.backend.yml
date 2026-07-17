@@ -13,8 +13,8 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: Dockerfile.backend
+      context: ${API_BUILD_CONTEXT:-.}
+      dockerfile: ${API_DOCKERFILE:-Dockerfile.api}
     restart: unless-stopped
     depends_on:
       redis:

@@ -12,7 +12,7 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 - Copy `.env.example` to `.env`.
 - Set `CLOUDFLARE_TUNNEL_TOKEN` in `.env` to the token from the dashboard.
 - Enable [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/).
-- Add a WAF/rate limit rule for `POST /optimize`.
+- (Optional) Add a WAF/rate limit rule for `POST /optimize`.
 - Keep ports `80` and `443` closed on the VM unless another service needs them.
 
 > We used Cloudflare Tunnel for ease of setup, but you can easily switch to NGINX and Certbot if you have a dedicated public IP and are comfortable exposing it to the internet.
@@ -21,13 +21,41 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 
 Run these commands from the `docker/` directory.
 
-The backend image clones the latest `dev` branch from GitHub during the Docker
-build. The checkout is expected to be clean, and the build reports an error if
+The production API image uses `Dockerfile.api` and clones the latest `dev`
+branch from GitHub during the Docker build. The checkout is expected to be
+clean, and the build reports an error if
 `git describe --tags --always --dirty` is empty or contains `dirty`.
 
 ```sh
 cd docker
 docker compose -f compose.backend.yml up -d --build
+```
+
+For staging, create a separate ignored environment file and use a staging-only
+Cloudflare Tunnel token:
+
+```sh
+cp .env.staging.example .env.staging
+# Set CLOUDFLARE_TUNNEL_TOKEN in .env.staging.
+docker compose --env-file .env.staging -f compose.backend.yml up -d --build
+```
+
+The staging environment selects `Dockerfile.api.staging`, which copies the
+current repository's `core/` directory into the image instead of cloning
+GitHub. It also sets
+`COMPOSE_PROJECT_NAME=nurse-scheduling-backend-staging`. This overrides the
+default `nurse-scheduling-backend` project name and gives staging its own
+containers, network, and `redis-data` volume. Production and staging can then
+run side by side on the same host.
+
+Always pass `--env-file .env.staging` for every staging command, including
+`ps`, `logs`, and `down`. Without it, Docker Compose loads `.env` and targets
+production by default.
+
+```sh
+docker compose --env-file .env.staging -f compose.backend.yml ps
+docker compose --env-file .env.staging -f compose.backend.yml logs -f
+docker compose --env-file .env.staging -f compose.backend.yml down
 ```
 
 The default compose file starts Redis alongside the backend. The backend runs
