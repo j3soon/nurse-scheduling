@@ -19,8 +19,7 @@
 
 export interface ServerHealthResponse {
   status: string;
-  version: string;
-  apiVersion?: string;
+  apiVersion: string;
   appVersion: string;
 }
 

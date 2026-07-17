@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl git redis-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY . /app/nurse-scheduling
+
+WORKDIR /app/nurse-scheduling/core
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+RUN useradd -m -u 1000 user \
+    && chown -R user:user /app/nurse-scheduling
+
+USER user
+
+EXPOSE 8000
+
+CMD ["uvicorn", "nurse_scheduling.serve:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]

@@ -685,7 +685,28 @@ def test_scheduler_ortools_prettify_progress_includes_export_info():
     assert all(sum(len(notes) for notes in event.cell_export_info["comments"].values()) == 1 for event in solver_events)
 
 
-def test_scheduler_unknown_status_raises(monkeypatch):
+def test_scheduler_unknown_status_returns_typed_no_result(monkeypatch):
+    content = _load_valid_yaml_bytes()
+
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.solve",
+        lambda *args, **kwargs: SolverStatus.UNKNOWN,
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_status_name",
+        lambda *args, **kwargs: SolverStatus.UNKNOWN.value,
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_statistics",
+        lambda *args, **kwargs: {"branches": 0, "conflicts": 0, "wall_time": 0.0},
+    )
+
+    result = scheduler.schedule(content)
+
+    assert result == scheduler.ScheduleResult(None, None, None, "UNKNOWN", None)
+
+
+def test_scheduler_rejects_unexpected_status(monkeypatch):
     content = _load_valid_yaml_bytes()
 
     monkeypatch.setattr("nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.solve", lambda *args, **kwargs: "MYSTERY")
@@ -693,7 +714,7 @@ def test_scheduler_unknown_status_raises(monkeypatch):
         "nurse_scheduling.solver_ortools_cp_sat.ORToolsSolver.get_status_name", lambda *args, **kwargs: "MYSTERY"
     )
 
-    with pytest.raises(ValueError, match="No solution found! Status: MYSTERY"):
+    with pytest.raises(ValueError, match="Unexpected solver status: MYSTERY"):
         scheduler.schedule(content)
 
 

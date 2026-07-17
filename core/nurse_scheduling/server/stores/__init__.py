@@ -1,4 +1,4 @@
-"""ASGI entry point for the nurse scheduling server."""
+"""Persistence implementations for optimization jobs."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -16,14 +16,3 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-from .server.app import create_app
-
-
-app = create_app()
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False)

@@ -1,0 +1,23 @@
+name: nurse-scheduling-backend
+
+services:
+  api:
+    build:
+      context: ${API_BUILD_CONTEXT:-.}
+      dockerfile: ${API_DOCKERFILE:-Dockerfile.api}
+    restart: unless-stopped
+    expose:
+      - "8000"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}

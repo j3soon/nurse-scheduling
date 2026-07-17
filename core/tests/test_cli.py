@@ -133,7 +133,9 @@ def test_cli_writes_csv_output_with_solver_and_timeout(tmp_path, monkeypatch, ca
             "progress_callback": progress_callback,
             "model_build_stats_callback": model_build_stats_callback,
         }
-        return "fake_df", {"solution": True}, 123, "OPTIMAL", {"styles": {}, "comments": {}}
+        return cli.scheduler.ScheduleResult(
+            "fake_df", {"solution": True}, 123, "OPTIMAL", {"styles": {}, "comments": {}}
+        )
 
     def fake_export_to_csv(df, buffer):
         seen["export_df"] = df
@@ -191,7 +193,13 @@ def test_cli_writes_progress_jsonl_output(tmp_path, monkeypatch, capsys):
                 cell_export_info={"comments": {(1, 2): ["a", "b"]}, "styles": {}},
             )
         )
-        return "fake_df", {"solution": True}, 12, "OPTIMAL", {"comments": {(1, 2): ["a", "b", "c"]}, "styles": {}}
+        return cli.scheduler.ScheduleResult(
+            "fake_df",
+            {"solution": True},
+            12,
+            "OPTIMAL",
+            {"comments": {(1, 2): ["a", "b", "c"]}, "styles": {}},
+        )
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
     monkeypatch.setattr(
@@ -253,7 +261,7 @@ def test_cli_no_solution_exits_zero(tmp_path, monkeypatch, capsys):
     input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
 
     def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
-        return None, None, None, "INFEASIBLE", {}
+        return cli.scheduler.ScheduleResult(None, None, None, "INFEASIBLE", {})
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
     monkeypatch.setattr(sys, "argv", ["nurse-scheduling", str(input_file)])
@@ -273,7 +281,9 @@ def test_cli_writes_xlsx_output(tmp_path, monkeypatch, capsys):
     seen = {}
 
     def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
-        return "df", {}, 0, "OPTIMAL", {"styles": {(1, 1): {"backgroundColor": "#ffffff"}}, "comments": {}}
+        return cli.scheduler.ScheduleResult(
+            "df", {}, 0, "OPTIMAL", {"styles": {(1, 1): {"backgroundColor": "#ffffff"}}, "comments": {}}
+        )
 
     def fake_export_to_excel(df, buffer, cell_export_info):
         seen["df"] = df
@@ -299,7 +309,9 @@ def test_cli_prints_final_comments_from_export_comments(tmp_path, monkeypatch, c
     input_file.write_text("apiVersion: alpha\n", encoding="utf-8")
 
     def fake_schedule(file_content, prettify, timeout, solver, progress_callback, model_build_stats_callback):
-        return "df", {}, 0, "OPTIMAL", {"styles": {}, "comments": {(1, 2): ["first", "second"], (3, 4): ["third"]}}
+        return cli.scheduler.ScheduleResult(
+            "df", {}, 0, "OPTIMAL", {"styles": {}, "comments": {(1, 2): ["first", "second"], (3, 4): ["third"]}}
+        )
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
     monkeypatch.setattr(sys, "argv", ["nurse-scheduling", str(input_file)])
@@ -350,7 +362,7 @@ def test_cli_show_model_build_stats_prints_scheduler_events(tmp_path, monkeypatc
                 preferenceType="shift request",
             )
         )
-        return "large dataframe", {"large": "solution"}, 123, "FEASIBLE", {}
+        return cli.scheduler.ScheduleResult("large dataframe", {"large": "solution"}, 123, "FEASIBLE", {})
 
     monkeypatch.setattr(cli.scheduler, "schedule", fake_schedule)
     monkeypatch.setattr(cli, "_get_app_version", lambda: "v9.8.7-test")

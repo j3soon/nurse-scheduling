@@ -12,9 +12,11 @@ pyscipopt==6.2.1
 # For CI
 pytest
 pytest-cov
+fakeredis
 ruff
 # For web backend
 fastapi[standard]
 python-multipart
+redis
 # For error tracking
 sentry-sdk

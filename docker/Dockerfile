@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     iputils-ping \
     jq \
+    redis-server \
+    redis-tools \
     ripgrep \
     unzip \
     && rm -rf /var/lib/apt/lists/*

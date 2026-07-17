@@ -1,9 +1,38 @@
+name: nurse-scheduling-backend
+
 services:
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
+  redis:
+    image: redis:8.8
     restart: unless-stopped
+    # Keep the image's default RDB policy; deployments needing a smaller
+    # crash-loss window can enable AOF as described in docker/README.md.
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+
+  api:
+    build:
+      context: ${API_BUILD_CONTEXT:-.}
+      dockerfile: ${API_DOCKERFILE:-Dockerfile.api}
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      JOB_BACKEND: redis
+      JOB_REDIS_URL: redis://redis:6379/0
+      JOB_REDIS_KEY_PREFIX: nurse_scheduling:jobs:v0
+    command:
+      - uvicorn
+      - nurse_scheduling.serve:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "3"
+      - --no-access-log
     expose:
       - "8000"
     volumes:
@@ -16,6 +45,9 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     depends_on:
-      backend:
+      api:
         condition: service_healthy
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+
+volumes:
+  redis-data:

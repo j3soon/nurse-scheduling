@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl git \
+    && apt-get install -y --no-install-recommends curl git redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # This remote URL changes when the dev branch advances, which invalidates the

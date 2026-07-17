@@ -30,7 +30,7 @@ jobs:
       - name: Test with pytest and collect coverage
         working-directory: core
         run: >-
-          pytest --cov=nurse_scheduling --log-cli-level=DEBUG tests
+          pytest --cov=nurse_scheduling --log-cli-level=INFO tests
           --ignore=tests/test_schedule_pulp_cuopt.py
           --ignore=tests/test_schedule_pulp_highs.py
       - name: Upload coverage to Codecov

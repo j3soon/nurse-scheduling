@@ -123,14 +123,12 @@ For Linux only: to quickly set up all local environments (`core`, `web-frontend`
 
 For Docker-based development environment:
 
+CPU solver:
+
 ```sh
 # build image
 docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
-# or optionally with cuOpt
-docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 ```
-
-CPU solver:
 
 ```sh
 # persist Codex/Claude Code/OpenCode auth/config across containers
@@ -155,6 +153,14 @@ docker run --rm -it --network=host \
 GPU solver:
 
 ```sh
+# or build image with cuOpt support
+docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
+```
+
+The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
+wheel. Use another environment for the `pulp/highs` solver.
+
+```sh
 # persist Codex/Claude Code/OpenCode auth/config across containers
 mkdir -p ~/docker/.codex
 mkdir -p ~/docker/.claude
@@ -173,6 +179,22 @@ docker run --rm -it --gpus all --network=host \
   -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev-cuopt
 ```
+
+Inside either development container, start Redis and run the backend in Redis mode:
+
+```sh
+redis-server --daemonize yes
+redis-cli ping
+cd /app/core
+JOB_BACKEND=redis \
+JOB_REDIS_URL=redis://localhost:6379/0 \
+JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0 \
+uvicorn nurse_scheduling.serve:app --workers 3 --host 0.0.0.0 --port 8000 --no-access-log
+```
+
+Workers renew a 90-second execution lease while optimizing. Set
+`JOB_CLAIM_LEASE_SECONDS` to change how long the server waits before marking a
+job failed after its worker disappears.
 
 or with X11 forwarding for running Playwright interactive mode in the container:
 
@@ -390,10 +412,10 @@ For more debugging output when a test fails:
 
 ```sh
 cd core
-pytest --log-cli-level=DEBUG tests/test_solver_ortools_cp_sat.py
-pytest --log-cli-level=DEBUG tests/test_solver_pulp_cbc.py
-pytest --log-cli-level=DEBUG tests/test_schedule_ortools_cp_sat.py
-pytest --log-cli-level=DEBUG tests/test_schedule_pulp_cbc.py
+pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py
+pytest --log-cli-level=INFO tests/test_solver_pulp_cbc.py
+pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
+pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
 ```
 
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
@@ -422,12 +444,129 @@ python tests/test_serve.py
 pytest tests/test_serve.py --log-cli-level=INFO
 ```
 
-(TODO: Production mode instructions are not yet completed.)
+By default, optimization job state is process-local memory:
 
-<!--
-# or in production mode
-fastapi run serve.py --port 8000 --workers 4
--->
+```sh
+cd core
+JOB_BACKEND=memory uvicorn nurse_scheduling.serve:app --no-access-log
+```
+
+For multiple Uvicorn workers or multiple backend machines, use Redis-backed job state. Redis stores job metadata,
+queued job IDs, YAML inputs, XLSX artifacts, and replayable optimization events. Each backend process still runs at
+most one optimization job locally, so `--workers 3` allows up to three simultaneous jobs across those worker processes.
+
+```sh
+cd core
+JOB_BACKEND=redis \
+JOB_REDIS_URL=redis://localhost:6379/0 \
+JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0 \
+uvicorn nurse_scheduling.serve:app --workers 3 --no-access-log
+```
+
+The optional `JOB_CLAIM_LEASE_SECONDS` setting defaults to 90 seconds. Keep it
+long enough to tolerate brief Redis interruptions; each active worker renews
+its lease every third of that interval.
+
+Replayable event history is capped at 1,000 events per job; set
+`JOB_MAX_EVENTS_PER_JOB` to choose a different positive limit.
+
+Without Docker, install and start Redis with your operating system package manager.
+
+Ubuntu/Debian:
+
+```sh
+sudo apt-get update
+sudo apt-get install redis-server
+redis-server --daemonize yes
+redis-cli ping
+```
+
+macOS with Homebrew:
+
+```sh
+brew install redis
+brew services start redis
+redis-cli ping
+```
+
+Run the Redis backend tests against a local Redis database:
+
+```sh
+cd core
+JOB_REDIS_TEST_URL=redis://localhost:6379/15 pytest --log-cli-level=INFO tests/test_optimize_job_backends.py
+```
+
+For Docker Compose deployment, `docker/compose.backend.yml` starts a Redis
+service and configures the backend to use it:
+
+```sh
+cd docker
+docker compose -f compose.backend.yml up -d --build
+```
+
+#### Inspect Redis Data
+
+The Compose deployment uses Redis database `0` and the key prefix
+`nurse_scheduling:jobs:v0`. Open `redis-cli` from the Redis container:
+
+```sh
+docker compose -f compose.backend.yml exec redis redis-cli -n 0
+```
+
+Useful inspection commands include:
+
+```text
+DBSIZE
+SCAN 0 MATCH nurse_scheduling:jobs:v0:* COUNT 100
+ZRANGE nurse_scheduling:jobs:v0:jobs 0 -1 WITHSCORES
+ZRANGE nurse_scheduling:jobs:v0:queue 0 -1 WITHSCORES
+SMEMBERS nurse_scheduling:jobs:v0:pending
+GET nurse_scheduling:jobs:v0:job:<job-id>
+GET nurse_scheduling:jobs:v0:job:<job-id>:input
+XRANGE nurse_scheduling:jobs:v0:job:<job-id>:events - + COUNT 20
+HGETALL nurse_scheduling:jobs:v0:job:<job-id>:artifact_metadata
+```
+
+Use `SCAN` instead of `KEYS *` on a busy database. Job artifacts are binary and
+are better inspected through the API download endpoint.
+
+For a graphical browser, run
+[Redis Insight](https://redis.io/docs/latest/operate/redisinsight/install/install-on-docker/)
+on the Compose network:
+
+```sh
+docker run -d \
+  --name redisinsight \
+  --network nurse-scheduling-backend_default \
+  -p 127.0.0.1:5540:5540 \
+  -v redisinsight:/data \
+  redis/redisinsight:latest
+```
+
+Open `http://localhost:5540` and add a database with `redis://default@redis:6379`. Filter the Browser view with
+`nurse_scheduling:jobs:v0:*`.
+
+When Redis Insight runs on a remote VM, forward its locally bound port before
+opening it in a local browser:
+
+```sh
+ssh -L 5540:127.0.0.1:5540 user@your-server
+```
+
+Keep Redis and Redis Insight off public interfaces. Redis Insight can modify or
+delete stored data.
+
+To run one backend worker with process-local memory and no Redis service, use
+the pre-Redis deployment configuration:
+
+```sh
+cd docker
+docker compose -f compose.backend.memory.yml up -d --build
+```
+
+The bundled Redis service uses its default RDB snapshot policy with a persistent
+volume. Enable AOF or use a managed persistence policy when the deployment
+requires a smaller data-loss window after an abrupt Redis or host failure.
 
 ### Documentation
 

@@ -1,0 +1,8 @@
+**
+!core/
+!core/**
+core/.coverage
+core/.pytest_cache/
+core/.ruff_cache/
+core/.venv/
+core/**/__pycache__/
