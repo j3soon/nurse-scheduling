@@ -24,7 +24,7 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims t
 
 ## Privacy Notice
 
-This early work-in-progress project provides basic privacy protections, including anonymizing individual people IDs, removing descriptions where possible, and privacy-masking Sentry session replays. The hosted application uses analytics and error reporting, and sends scheduling data to the selected backend when you click **Optimize**. Ad blockers may block analytics and error reporting, but not optimization submissions. Do not submit sensitive information. See [Privacy and Data Handling](PRIVACY.md) for details.
+This early work-in-progress project provides basic privacy protections, including anonymizing individual people IDs, removing descriptions where possible, and privacy-masking Sentry session replays. The hosted application uses analytics and error reporting, and sends scheduling data to the selected backend when you click **Optimize**. Ad blockers may block analytics and error reporting, but not optimization submissions. Do not submit sensitive information. See [Privacy and Data Handling](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for details.
 
 ## How to run
 
@@ -593,7 +593,7 @@ mkdocs build
 
 ## Acknowledgments
 
-This project would not have been possible without the contributors in [CONTRIBUTORS.md](CONTRIBUTORS.md).
+This project would not have been possible without the contributors in [CONTRIBUTORS.md](https://github.com/j3soon/nurse-scheduling/blob/dev/CONTRIBUTORS.md).
 
 ## License
 
