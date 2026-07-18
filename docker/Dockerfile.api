@@ -19,7 +19,8 @@ RUN version="$(git describe --tags --always --dirty)" \
     && case "$version" in *dirty*) echo "ERROR: backend image version is dirty: $version" >&2; exit 1 ;; esac
 
 RUN useradd -m -u 1000 user \
-    && chown -R user:user /app/nurse-scheduling
+    && mkdir -p /reports \
+    && chown -R user:user /app/nurse-scheduling /reports
 
 USER user
 

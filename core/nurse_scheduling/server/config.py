@@ -64,7 +64,7 @@ class ServerSettings:
     """Connection URL used by the Redis job store."""
     redis_key_prefix: str = "nurse_scheduling:jobs:v0"
     """Namespace and schema version prepended to every Redis key."""
-    max_pending_jobs: int = 8
+    max_pending_jobs: int = 32
     """Maximum number of queued, running, or cancelling jobs."""
     max_retained_jobs: int = DEFAULT_MAX_RETAINED_JOBS
     """Maximum total jobs retained, including terminal history."""
@@ -126,11 +126,12 @@ class ServerSettings:
         Raises:
             ValueError: If an environment value is invalid or inconsistent.
         """
+        job_backend = os.getenv("JOB_BACKEND", "memory").strip().lower()
         return cls(
-            job_backend=os.getenv("JOB_BACKEND", "memory").strip().lower(),
+            job_backend=job_backend,
             redis_url=os.getenv("JOB_REDIS_URL", "redis://localhost:6379/0"),
             redis_key_prefix=os.getenv("JOB_REDIS_KEY_PREFIX", "nurse_scheduling:jobs:v0"),
-            max_pending_jobs=_positive_int("JOB_MAX_PENDING", 8),
+            max_pending_jobs=_positive_int("JOB_MAX_PENDING", 32),
             max_retained_jobs=_positive_int("JOB_MAX_RETAINED", DEFAULT_MAX_RETAINED_JOBS),
             job_retention_seconds=_positive_int("JOB_RETENTION_SECONDS", DEFAULT_JOB_RETENTION_SECONDS),
             max_events_per_job=_positive_int("JOB_MAX_EVENTS_PER_JOB", DEFAULT_MAX_EVENTS_PER_JOB),

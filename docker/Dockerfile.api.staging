@@ -11,7 +11,8 @@ WORKDIR /app/nurse-scheduling/core
 RUN pip install --no-cache-dir -r requirements.txt
 
 RUN useradd -m -u 1000 user \
-    && chown -R user:user /app/nurse-scheduling
+    && mkdir -p /reports \
+    && chown -R user:user /app/nurse-scheduling /reports
 
 USER user
 

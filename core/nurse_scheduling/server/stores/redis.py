@@ -19,10 +19,11 @@
 
 import json
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from typing import Any, overload
+from uuid import uuid4
 
 import redis
 
@@ -44,6 +45,7 @@ from ..jobs.models import (
     StoredArtifact,
     StoreLimits,
 )
+from ..retry import retry_with_backoff
 
 
 SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
@@ -103,12 +105,40 @@ class RedisJobStore:
         )
         """Binary-safe Redis client shared by all store operations."""
         self._redis.ping()
+        self._store_id_key = self._key("metadata:store_id")
+        """Persistent UUID identifying this Redis database and key namespace."""
+        self._store_id = self._resolve_store_id()
+        """Latest identity read from Redis by startup or a health check."""
         self._jobs_key = self._key("jobs")
         """Sorted-set key (`ZADD`) of retained job IDs scored by creation time."""
         self._pending_key = self._key("pending")
         """Set key (`SADD`) of non-terminal job IDs used for pending-capacity checks."""
         self._queue_key = self._key("queue")
         """Sorted-set key (`ZADD`) of queued job IDs scored by creation time for FIFO claims."""
+
+    @property
+    def store_id(self) -> str:
+        """Return the persistent identity of this Redis database and namespace."""
+        return self._store_id
+
+    def _resolve_store_id(self) -> str:
+        """Atomically create or read the persistent Redis store identity."""
+        return retry_with_backoff(
+            self._resolve_store_id_once,
+            retry_on=redis.RedisError,
+        )
+
+    def _resolve_store_id_once(self) -> str:
+        """Create or read the store identity in one retryable attempt."""
+        value = _decode(self._redis.get(self._store_id_key))
+        if isinstance(value, str) and value.strip():
+            return value
+        candidate = str(uuid4())
+        self._redis.set(self._store_id_key, candidate, nx=True)
+        value = _decode(self._redis.get(self._store_id_key))
+        if isinstance(value, str) and value.strip():
+            return value
+        raise redis.RedisError("Redis job store identity could not be initialized")
 
     def create(
         self,
@@ -229,7 +259,13 @@ class RedisJobStore:
         media_type = _decode(metadata.get(b"media_type")) or "application/octet-stream"
         return StoredArtifact(name=stored_name, media_type=media_type, content=content)
 
-    def claim_next(self, worker_id: str, started_at: datetime, claim_expires_at: datetime) -> Job | None:
+    def claim_next(
+        self,
+        worker_id: str,
+        started_at: datetime,
+        claim_expires_at: datetime,
+        runtime_identity: Mapping[str, str] | None = None,
+    ) -> Job | None:
         """Atomically assign the oldest queued job to a worker.
 
         Return the claimed running job, or `None` when the queue is empty.
@@ -283,6 +319,8 @@ class RedisJobStore:
                             "queue_position": None,
                             "cancel_requested": False,
                             "early_completion_requested": False,
+                            "worker_id": worker_id,
+                            **({"runtime": dict(runtime_identity)} if runtime_identity is not None else {}),
                         },
                         occurred_at=started_at,
                     )
@@ -431,6 +469,7 @@ class RedisJobStore:
             redis.RedisError: If the Redis health check fails.
         """
         self._redis.ping()
+        self._store_id = self._resolve_store_id()
 
     def delete(self, job_id: str, expected_revision: int) -> None:
         """Delete a job and its Redis data if its revision still matches.

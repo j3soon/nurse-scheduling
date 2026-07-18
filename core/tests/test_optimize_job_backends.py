@@ -48,6 +48,7 @@ from nurse_scheduling.server.jobs.models import (
     StoredArtifact,
     StoreLimits,
 )
+from nurse_scheduling.server.retry import DEFAULT_RETRY_MAX_ATTEMPTS
 from nurse_scheduling.server.stores.memory import MemoryJobStore
 
 
@@ -75,9 +76,10 @@ def fake_redis_store_factory(monkeypatch):
     )
 
     def create_store(**kwargs):
+        key_prefix = kwargs.pop("key_prefix", f"nurse_scheduling:test:jobs:{uuid.uuid4().hex}")
         return redis_store.RedisJobStore(
             url="redis://localhost/0",
-            key_prefix=f"nurse_scheduling:test:jobs:{uuid.uuid4().hex}",
+            key_prefix=key_prefix,
             **kwargs,
         )
 
@@ -122,7 +124,7 @@ def store(store_factory):
     return store_factory()
 
 
-def _controller(store, *, max_pending=8, max_retained=32, now=None):
+def _controller(store, *, max_pending=8, max_retained=32, now=None, runtime_identity=None):
     clock = (lambda: now) if now is not None else (lambda: datetime.now(timezone.utc))
     sequence = iter(f"job_{index}" for index in range(100))
     return JobController(
@@ -130,6 +132,7 @@ def _controller(store, *, max_pending=8, max_retained=32, now=None):
         limits=StoreLimits(max_pending=max_pending, max_retained=max_retained),
         retention_seconds=60,
         claim_lease_seconds=30,
+        runtime_identity=runtime_identity,
         clock=clock,
         id_factory=lambda: next(sequence),
     )
@@ -182,6 +185,7 @@ def test_redis_store_uses_default_connect_timeout_and_bounds_stream_reads(monkey
     from nurse_scheduling.server.stores import redis as redis_store
 
     client = Mock()
+    client.get.return_value = b"existing-store-id"
     from_url = Mock(return_value=client)
     monkeypatch.setattr(redis_store.redis.Redis, "from_url", from_url)
 
@@ -197,6 +201,37 @@ def test_redis_store_uses_default_connect_timeout_and_bounds_stream_reads(monkey
         socket_timeout=7.5,
     )
     client.ping.assert_called_once_with()
+
+
+def test_redis_store_identity_is_shared_by_one_namespace(fake_redis_store_factory):
+    prefix = f"nurse_scheduling:test:identity:{uuid.uuid4().hex}"
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        shared = list(executor.map(lambda _index: fake_redis_store_factory(key_prefix=prefix), range(8)))
+    separate = fake_redis_store_factory(key_prefix=f"{prefix}:separate")
+
+    assert len({store.store_id for store in shared}) == 1
+    assert shared[0].store_id != separate.store_id
+
+
+def test_redis_store_identity_failure_is_fatal_during_construction(monkeypatch):
+    from nurse_scheduling.server.stores import redis as redis_store
+
+    client = Mock()
+    client.get.return_value = None
+    monkeypatch.setattr(redis_store.redis.Redis, "from_url", Mock(return_value=client))
+    monkeypatch.setattr("nurse_scheduling.server.retry.time.sleep", lambda _seconds: None)
+
+    with pytest.raises(redis.RedisError, match="identity could not be initialized"):
+        redis_store.RedisJobStore(url="redis://redis.example/0", key_prefix="test:jobs")
+
+    assert client.get.call_count == DEFAULT_RETRY_MAX_ATTEMPTS * 2
+
+
+def test_memory_store_identity_can_match_its_process_instance():
+    store = MemoryJobStore(store_id="instance-123")
+
+    assert store.store_id == "instance-123"
 
 
 @pytest.mark.parametrize(
@@ -221,8 +256,23 @@ def test_memory_store_rejects_nonpositive_event_limit():
         MemoryJobStore(max_events_per_job=0)
 
 
+def test_memory_store_rejects_empty_identity():
+    with pytest.raises(ValueError, match="store_id must not be empty"):
+        MemoryJobStore(store_id=" ")
+
+
 def test_store_round_trips_lifecycle_input_events_and_artifact(store):
-    controller = _controller(store)
+    runtime_identity = {
+        "service_name": "nurse-scheduling-api",
+        "api_version": "alpha",
+        "app_version": "v-test",
+        "deployment_id": "deployment-test",
+        "instance_id": "instance-test",
+        "started_at": datetime(2026, 7, 18, tzinfo=timezone.utc).isoformat(),
+        "job_backend": "redis",
+        "job_store_id": "store-test",
+    }
+    controller = _controller(store, runtime_identity=runtime_identity)
     created = _create(controller)
     assert created.state == JobState.QUEUED
     assert created.queue_position == 1
@@ -254,6 +304,10 @@ def test_store_round_trips_lifecycle_input_events_and_artifact(store):
         "job.result_available",
     ]
     assert all(event.id is not None for event in events if event is not None)
+    persisted_events = [event for event in events if event is not None]
+    assert persisted_events[0].data["runtime"] == runtime_identity
+    assert persisted_events[1].data["runtime"] == runtime_identity
+    assert persisted_events[1].data["worker_id"] == "worker"
 
 
 def test_store_reports_missing_input_and_artifacts(store):
@@ -626,11 +680,11 @@ def test_controller_backs_off_between_store_write_retries(monkeypatch):
         return "saved"
 
     monkeypatch.setattr(
-        "nurse_scheduling.server.jobs.controller.time.sleep",
+        "nurse_scheduling.server.retry.time.sleep",
         lambda seconds: trace.append(f"sleep-{seconds}"),
     )
 
-    assert JobController._retry_store_write(operation, max_attempts=3) == "saved"
+    assert JobController._retry_store_write(operation) == "saved"
     assert trace == [
         "operation-1",
         "sleep-0.001",

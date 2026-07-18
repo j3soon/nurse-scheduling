@@ -16,6 +16,7 @@ fakeredis
 ruff
 # For web backend
 fastapi[standard]
+httpx
 python-multipart
 redis
 # For error tracking

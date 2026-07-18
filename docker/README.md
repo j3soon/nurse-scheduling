@@ -31,12 +31,18 @@ cd docker
 docker compose -f compose.backend.yml up -d --build
 ```
 
+The API derives one deployment ID from its container and server-launch
+identity and shares it across all Uvicorn workers. Compose also starts the
+one-shot public diagnostic through the configured Cloudflare URL. The
+diagnostic can exit nonzero, but it does not stop or restart the API, Redis, or
+Cloudflare Tunnel containers.
+
 For staging, create a separate ignored environment file and use a staging-only
 Cloudflare Tunnel token:
 
 ```sh
 cp .env.staging.example .env.staging
-# Set CLOUDFLARE_TUNNEL_TOKEN in .env.staging.
+# Set CLOUDFLARE_TUNNEL_TOKEN and DIAGNOSTIC_TARGET_URL in .env.staging.
 docker compose --env-file .env.staging -f compose.backend.yml up -d --build
 ```
 
@@ -85,7 +91,8 @@ configuration.
 Check the API through Cloudflare:
 
 ```sh
-curl https://api.nursescheduling.org/health
+curl https://api.nursescheduling.org/ready
+curl https://api.nursescheduling.org/info
 ```
 
 Run the public healthcheck test:
@@ -97,7 +104,7 @@ Run the public healthcheck test:
 Check the backend directly from the VM:
 
 ```sh
-docker compose -f compose.backend.yml exec api curl -fsS http://127.0.0.1:8000/health
+docker compose -f compose.backend.yml exec api curl -fsS http://127.0.0.1:8000/ready
 ```
 
 Check Redis from the API container:
@@ -105,6 +112,98 @@ Check Redis from the API container:
 ```sh
 docker compose -f compose.backend.yml exec api redis-cli -u redis://redis:6379/0 ping
 ```
+
+`/ready` is the minimal deployment probe. `/info` performs the same readiness
+check and adds the app version, deployment ID, process instance ID, process
+start time, job backend, and opaque job store ID. Both responses disable
+caching. The frontend uses `/info` so one request provides readiness and
+version information.
+
+## Public Diagnostic
+
+The diagnostic starts automatically with `docker compose up`. Inspect its
+result after startup with:
+
+```sh
+docker compose -f compose.backend.yml logs diagnostic
+docker compose -f compose.backend.yml ps -a diagnostic
+```
+
+Run the same diagnostic manually against the configured public URL:
+
+```sh
+docker compose -f compose.backend.yml run --rm --no-deps diagnostic
+```
+
+Run it directly from a repository checkout, outside Docker Compose, after
+installing the core dependencies. From the repository root:
+
+```sh
+source core/.venv/bin/activate
+cd core
+python -m nurse_scheduling.server.diagnostic \
+  --target-url https://api.nursescheduling.org \
+  --report-dir ../docker/diagnostic-reports
+```
+
+The same `DIAGNOSTIC_*` environment variables configure direct runs. The
+`--target-url`, `--scenario`, and `--report-dir` arguments override their
+corresponding environment values.
+
+Set `DIAGNOSTIC_TARGET_URL` in the environment file to select production,
+staging, or another public backend. Relevant defaults are:
+
+- `DIAGNOSTIC_INFO_SAMPLES=100`
+- `DIAGNOSTIC_EXPECTED_CONCURRENCY=3` for the Redis deployment
+- `DIAGNOSTIC_MAX_JOBS=128`
+- `DIAGNOSTIC_QUEUE_STABLE_SECONDS=10`
+- `DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS=600`
+- `DIAGNOSTIC_JOB_TIMEOUT_SECONDS=3600`
+
+The workflow timeout bounds startup sampling, job submission, and queue
+transition checks. Cleanup and individual solver jobs have separate bounds.
+
+The diagnostic samples `/info`, then merges those identities with the API
+process recorded when each job is accepted and the actual runner recorded when
+it starts. It submits the real 87-person scenario until five jobs remain queued
+and measures the peak number of its own running jobs. It cancels the first
+running job and finishes the others using their feasible results. Queued jobs
+are then finished in batches matching the observed peak concurrency. Every
+submitted job has a one-hour solver timeout and bounded cleanup.
+
+The first report line is intentionally compact:
+
+```text
+PASS target=https://api.nursescheduling.org versions=1 deployments=1 instances=3 runners=3 stores=1 maxRunning=3 queue=PASS cleanup=PASS duration=48.0s
+```
+
+Timestamped JSON reports are written to the project-scoped
+`diagnostic-reports` named volume. The summary and findings appear first,
+followed by distinct sampled responses and job identities with occurrence
+counts, job transitions, request errors, and cleanup details. Exit codes are
+`0` for pass, `1` for a definite failure, and `2` for an inconclusive run. Copy
+reports to the host when needed:
+
+```sh
+mkdir -p diagnostic-reports
+docker compose -f compose.backend.yml cp diagnostic:/reports/. ./diagnostic-reports/
+```
+
+The image prepares `/reports` for its normal non-root user, so no `user`
+override is required. The volume survives normal `docker compose down`, but
+`down -v` removes it.
+
+Different app versions, deployment IDs, job backends, or automatically derived
+job store IDs behind one public URL are configuration failures. Redis stores
+persist a UUID inside their database and key namespace. Memory stores use the
+process instance ID. A cloned Redis snapshot can duplicate its UUID, so equal
+IDs remain evidence rather than proof of sharing. Cross-worker job visibility
+is the definitive shared-store check.
+
+Results are observational. Cloudflare routing can repeatedly select one
+instance, so discovered instances are a lower bound. Unrelated users can
+consume capacity or alter timing and make a run inconclusive without proving a
+code or deployment defect.
 
 ## Frontend
 

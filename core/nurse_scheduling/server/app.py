@@ -18,10 +18,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
-import os
-import socket
 import subprocess
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -51,10 +50,12 @@ from .jobs.models import StoreLimits
 from .jobs.runner import OptimizationRunner
 from .jobs.worker import JobWorker
 from .maintenance import JobMaintenance
+from .runtime_identity import get_deployment_id
 from .stores.memory import MemoryJobStore
 
 
 TITLE = "Nurse Scheduling API"
+SERVICE_NAME = "nurse-scheduling-api"
 API_VERSION = "alpha"
 UNEXPECTED_ERROR_VERSION_ADVICE = (
     "If this error was unexpected, check that your frontend and backend versions match. "
@@ -97,13 +98,13 @@ def get_app_version() -> str:
         return "v0.0.0-unknown"
 
 
-def _create_store(settings: ServerSettings) -> JobStore:
+def _create_store(settings: ServerSettings, instance_id: str) -> JobStore:
     """Construct the configured persistence adapter.
 
     Redis is imported lazily so memory-only deployments do not require startup access to it.
     """
     if settings.job_backend == "memory":
-        return MemoryJobStore(max_events_per_job=settings.max_events_per_job)
+        return MemoryJobStore(store_id=instance_id, max_events_per_job=settings.max_events_per_job)
     from .stores.redis import RedisJobStore
 
     return RedisJobStore(
@@ -137,8 +138,22 @@ def create_app(
     Explicit dependencies support isolated tests; omitted values come from configuration.
     """
     settings = settings or ServerSettings.from_env()
-    store = store or _create_store(settings)
+    deployment_id = get_deployment_id()
+    instance_id = str(uuid4())
+    store = store or _create_store(settings, instance_id)
     runner = runner or OptimizationRunner()
+    started_at = datetime.now(timezone.utc)
+    app_version = get_app_version()
+    runtime_identity = {
+        "service_name": SERVICE_NAME,
+        "api_version": API_VERSION,
+        "app_version": app_version,
+        "deployment_id": deployment_id,
+        "instance_id": instance_id,
+        "started_at": started_at.isoformat(),
+        "job_backend": settings.job_backend,
+        "job_store_id": store.store_id,
+    }
     controller = JobController(
         store,
         limits=StoreLimits(
@@ -147,29 +162,32 @@ def create_app(
         ),
         retention_seconds=settings.job_retention_seconds,
         claim_lease_seconds=settings.claim_lease_seconds,
+        runtime_identity=runtime_identity,
     )
-    worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex}"
     worker = JobWorker(
         controller,
         runner,
-        worker_id=worker_id,
+        worker_id=instance_id,
         claim_poll_seconds=settings.claim_poll_seconds,
         claim_lease_seconds=settings.claim_lease_seconds,
         unexpected_error_formatter=_format_unexpected_error,
     )
     maintenance = JobMaintenance(controller, interval_seconds=settings.maintenance_interval_seconds)
-    app_version = get_app_version()
     init_sentry(app_version)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         """Own startup and shutdown of process-local background threads."""
         server_logger.info(
-            "[server:start] title=%s api_version=%s app_version=%s backend=%s",
+            "[server:start] title=%s api_version=%s app_version=%s deployment_id=%s "
+            "instance_id=%s backend=%s job_store_id=%s",
             TITLE,
             API_VERSION,
             app_version,
+            deployment_id,
+            instance_id,
             settings.job_backend,
+            store.store_id,
         )
         if start_background:
             worker.start()
@@ -189,6 +207,10 @@ def create_app(
     app.state.job_worker = worker
     app.state.job_maintenance = maintenance
     app.state.app_version = app_version
+    app.state.deployment_id = deployment_id
+    app.state.instance_id = instance_id
+    app.state.started_at = started_at
+    app.state.runtime_identity = runtime_identity
 
     @app.exception_handler(ServerApplicationError)
     async def application_error_handler(request: Request, exc: ServerApplicationError):
@@ -246,15 +268,11 @@ def create_app(
     @app.get("/")
     async def root():
         """Return API identity and backend build version."""
-        return {"message": TITLE, "version": API_VERSION, "appVersion": app_version}
+        return {"message": TITLE, "api_version": API_VERSION, "app_version": app_version}
 
-    def health_payload(status: str):
-        """Build the common health response payload."""
-        return {
-            "status": status,
-            "apiVersion": API_VERSION,
-            "appVersion": app_version,
-        }
+    def info_payload(status: str):
+        """Build public service identity and job-store metadata."""
+        return {"status": status, **runtime_identity}
 
     def check_readiness() -> str | None:
         """Return the first unavailable dependency reason, or `None` when ready."""
@@ -262,7 +280,7 @@ def create_app(
             store.check_health()
         except Exception as error:
             server_logger.warning(
-                "[server:health] job store unavailable backend=%s error=%s",
+                "[server:readiness] job store unavailable backend=%s error=%s",
                 settings.job_backend,
                 error,
             )
@@ -271,26 +289,24 @@ def create_app(
             return "job_worker_unavailable"
         return None
 
-    @app.get("/health")
-    def health():
-        """Return readiness status with API and build versions for public clients.
-
-        Unlike `/ready`, this diagnostic response includes version metadata.
-        """
+    @app.get("/info")
+    def info():
+        """Return service identity and readiness for clients and diagnostics."""
         unavailable_reason = check_readiness()
         if unavailable_reason is not None:
             return JSONResponse(
                 status_code=503,
-                content={**health_payload("unavailable"), "reason": unavailable_reason},
+                content={**info_payload("unavailable"), "reason": unavailable_reason},
+                headers={"Cache-Control": "no-store"},
             )
-        return health_payload("ok")
+        return JSONResponse(
+            content=info_payload("ready"),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/ready")
     def ready():
-        """Return minimal readiness status for deployment and routing probes.
-
-        It uses the same dependency checks as `/health` but omits version metadata.
-        """
+        """Return minimal readiness status for deployment and routing probes."""
         unavailable_reason = check_readiness()
         if unavailable_reason is not None:
             return JSONResponse(
@@ -299,7 +315,11 @@ def create_app(
                     "status": "unavailable",
                     "reason": unavailable_reason,
                 },
+                headers={"Cache-Control": "no-store"},
             )
-        return {"status": "ready"}
+        return JSONResponse(
+            content={"status": "ready"},
+            headers={"Cache-Control": "no-store"},
+        )
 
     return app
