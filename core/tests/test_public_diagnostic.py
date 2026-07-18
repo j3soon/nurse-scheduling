@@ -267,6 +267,19 @@ def test_info_samples_and_job_snapshots_use_bounded_parallel_requests(tmp_path):
     info_barrier = threading.Barrier(3)
     snapshot_barrier = threading.Barrier(3)
     info_calls = 0
+    active = {"info": 0, "snapshot": 0}
+    peak_active = {"info": 0, "snapshot": 0}
+
+    def synchronize(kind: str, barrier: threading.Barrier) -> None:
+        with lock:
+            active[kind] += 1
+            peak_active[kind] = max(peak_active[kind], active[kind])
+        try:
+            barrier.wait(timeout=1)
+            time.sleep(0.01)
+        finally:
+            with lock:
+                active[kind] -= 1
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal info_calls
@@ -275,29 +288,69 @@ def test_info_samples_and_job_snapshots_use_bounded_parallel_requests(tmp_path):
                 info_calls += 1
                 call = info_calls
             if call > 1:
-                info_barrier.wait(timeout=1)
+                synchronize("info", info_barrier)
             return httpx.Response(
                 200,
                 headers={"Cache-Control": "no-store"},
                 json={"status": "ready", **QueueApi._identity(call)},
             )
         if request.url.path.startswith("/optimize/"):
-            snapshot_barrier.wait(timeout=1)
+            synchronize("snapshot", snapshot_barrier)
             return httpx.Response(200, json={"id": request.url.path.rsplit("/", 1)[-1], "state": "running"})
         return httpx.Response(404)
 
     diagnostic = PublicDiagnostic(
-        _config(scenario, tmp_path, info_samples=4, parallel_requests=3),
+        _config(scenario, tmp_path, info_samples=7, parallel_requests=3),
         transport=httpx.MockTransport(handler),
     )
 
     assert diagnostic._collect_info()
-    diagnostic.jobs = [DiagnosticJob(id=f"job-{index}", input_name="parallel.yaml") for index in range(3)]
+    diagnostic.jobs = [DiagnosticJob(id=f"job-{index}", input_name="parallel.yaml") for index in range(6)]
     snapshots = diagnostic._snapshot_jobs()
 
-    assert info_calls == 4
-    assert set(snapshots) == {"job-0", "job-1", "job-2"}
-    assert diagnostic.max_running == 3
+    assert info_calls == 7
+    assert set(snapshots) == {f"job-{index}" for index in range(6)}
+    assert diagnostic.max_running == 6
+    assert peak_active == {"info": 3, "snapshot": 3}
+
+
+def test_request_batches_stop_at_workflow_deadline(tmp_path, monkeypatch):
+    diagnostic = _diagnostic(tmp_path, info_samples=6, parallel_requests=3)
+    release = threading.Event()
+    completed = threading.Event()
+    started = threading.Barrier(3)
+    lock = threading.Lock()
+    timeouts: list[float] = []
+    completed_count = 0
+
+    def sample_info(*, timeout_seconds: float | None = None):
+        nonlocal completed_count
+        assert timeout_seconds is not None
+        with lock:
+            timeouts.append(timeout_seconds)
+        started.wait(timeout=1)
+        release.wait(timeout=1)
+        with lock:
+            completed_count += 1
+            if completed_count == 3:
+                completed.set()
+        return {"statusCode": 200, "body": {"status": "ready"}, "cacheControl": "no-store"}
+
+    monkeypatch.setattr(diagnostic, "_sample_info", sample_info)
+    diagnostic.workflow_deadline = time.monotonic() + 0.1
+
+    started_at = time.monotonic()
+    try:
+        samples = diagnostic._sample_info_concurrently(6)
+    finally:
+        release.set()
+    elapsed = time.monotonic() - started_at
+
+    assert samples == []
+    assert elapsed < 0.5
+    assert len(timeouts) == 3
+    assert all(0 < timeout <= 0.1 for timeout in timeouts)
+    assert completed.wait(timeout=1)
 
 
 def test_main_runs_without_creating_process_lock(tmp_path, monkeypatch):
@@ -766,6 +819,42 @@ def test_wait_and_finish_helpers_cover_incomplete_transitions(tmp_path, monkeypa
     assert diagnostic.queue_transition == "fail"
 
 
+def test_incomplete_job_snapshots_are_retried(tmp_path, monkeypatch):
+    diagnostic = _diagnostic(tmp_path)
+    jobs = [
+        DiagnosticJob(id="job-1", input_name="scenario.yaml"),
+        DiagnosticJob(id="job-2", input_name="scenario.yaml"),
+    ]
+    diagnostic.jobs = jobs
+    calls = 0
+
+    def get_jobs(job_ids: list[str]) -> dict[str, dict[str, str]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {job_ids[0]: {"state": "queued"}}
+        return {job_id: {"state": "queued"} for job_id in job_ids}
+
+    monkeypatch.setattr(diagnostic, "_get_jobs", get_jobs)
+
+    assert diagnostic._jobs_stay_queued(jobs)
+    assert calls >= 3
+
+    diagnostic.workflow_deadline = time.monotonic() + 1
+    diagnostic._get_jobs = Mock(
+        side_effect=[
+            {"job-1": {"state": "running"}},
+            {
+                "job-1": {"state": "running"},
+                "job-2": {"state": "running"},
+            },
+        ]
+    )
+
+    assert diagnostic._wait_for_running(["job-1", "job-2"], 0.1)
+    assert diagnostic._get_jobs.call_count == 2
+
+
 def test_queue_transition_reports_each_incomplete_control_stage(tmp_path):
     no_running = _diagnostic(tmp_path, expected_concurrency=1)
     no_running._snapshot_jobs = Mock(return_value={})
@@ -892,6 +981,20 @@ def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
     assert report["summary"]["outcome"] == "inconclusive"
     assert report["summary"]["job_backend"] == "unknown"
     assert report["findings"][-1]["code"] == "unexpected_error"
+
+    identity_failure = _diagnostic(tmp_path)
+    identity_failure._collect_info = Mock(return_value=False)
+    identity_failure._analyze_runtime_identities = Mock(side_effect=RuntimeError("identity failed"))
+    identity_failure._cleanup_jobs = Mock()
+
+    identity_report = identity_failure.run()
+
+    identity_failure._cleanup_jobs.assert_called_once_with()
+    assert identity_report["summary"]["outcome"] == "inconclusive"
+    assert identity_report["findings"][-1]["code"] == "identity_analysis_error"
+    assert identity_report["details"]["requestErrors"] == [
+        "unexpected identity analysis error: RuntimeError: identity failed"
+    ]
 
     report["findings"].append({"level": "warning", "code": "example", "message": "Example warning."})
     report_path = tmp_path / "report.json"

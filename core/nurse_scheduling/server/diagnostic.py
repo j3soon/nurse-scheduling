@@ -57,8 +57,8 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -311,6 +311,69 @@ class PublicDiagnostic:
         if remaining > 0:
             time.sleep(min(seconds, remaining))
 
+    def _workflow_request_timeout(self) -> float | None:
+        """Return a positive request timeout within the workflow deadline."""
+        remaining = self.workflow_deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        return max(0.001, min(self.config.request_timeout_seconds, remaining))
+
+    def _run_request_batch(
+        self,
+        count: int,
+        request: Callable[[int, float], Any],
+    ) -> dict[int, Any]:
+        """Run indexed requests with bounded concurrency and elapsed time."""
+        if count <= 0:
+            return {}
+        workers = min(count, self.config.parallel_requests)
+        results: dict[int, Any] = {}
+        if workers == 1:
+            for index in range(count):
+                timeout = self._workflow_request_timeout()
+                if timeout is None:
+                    break
+                results[index] = request(index, timeout)
+            return results
+
+        executor = ThreadPoolExecutor(max_workers=workers)
+        pending: dict[Future[Any], int] = {}
+        next_index = 0
+        try:
+            while next_index < count and len(pending) < workers:
+                timeout = self._workflow_request_timeout()
+                if timeout is None:
+                    break
+                pending[executor.submit(request, next_index, timeout)] = next_index
+                next_index += 1
+
+            while pending:
+                remaining = self.workflow_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                done, _ = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
+                if not done:
+                    break
+                for future in done:
+                    index = pending.pop(future)
+                    results[index] = future.result()
+                while next_index < count and len(pending) < workers:
+                    timeout = self._workflow_request_timeout()
+                    if timeout is None:
+                        break
+                    pending[executor.submit(request, next_index, timeout)] = next_index
+                    next_index += 1
+
+            for future, index in list(pending.items()):
+                if future.done():
+                    results[index] = future.result()
+                    del pending[future]
+        finally:
+            for future in pending:
+                future.cancel()
+            executor.shutdown(wait=not pending, cancel_futures=True)
+        return results
+
     @staticmethod
     def _json_object(response: httpx.Response) -> dict[str, Any] | None:
         """Decode a JSON object response without raising."""
@@ -357,7 +420,7 @@ class PublicDiagnostic:
         self.runners.append(runner)
         self.runner_identity_jobs.add(job_id)
 
-    def _sample_info(self) -> dict[str, Any]:
+    def _sample_info(self, *, timeout_seconds: float | None = None) -> dict[str, Any]:
         """Request one uncached info sample over a fresh connection pool."""
         sample: dict[str, Any] = {"statusCode": None, "body": None, "cacheControl": None}
         try:
@@ -366,6 +429,7 @@ class PublicDiagnostic:
                     "/info",
                     params={"diagnosticSample": uuid4().hex},
                     headers={"Cache-Control": "no-cache", "Connection": "close"},
+                    timeout=timeout_seconds or self.config.request_timeout_seconds,
                 )
             sample["statusCode"] = response.status_code
             sample["body"] = self._json_object(response)
@@ -389,14 +453,11 @@ class PublicDiagnostic:
 
     def _sample_info_concurrently(self, count: int) -> list[dict[str, Any]]:
         """Collect independent info samples with bounded concurrency."""
-        if count <= 0:
-            return []
-        workers = min(count, self.config.parallel_requests)
-        if workers == 1:
-            return [self._sample_info() for _ in range(count)]
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(self._sample_info) for _ in range(count)]
-            return [future.result() for future in futures]
+        samples = self._run_request_batch(
+            count,
+            lambda _index, timeout: self._sample_info(timeout_seconds=timeout),
+        )
+        return [samples[index] for index in sorted(samples)]
 
     def _collect_info(self) -> bool:
         """Wait for one ready response, then collect the configured sample count."""
@@ -589,13 +650,20 @@ class PublicDiagnostic:
         """Return local tracking for a submitted job ID."""
         return next(job for job in self.jobs if job.id == job_id)
 
-    def _get_job(self, job_id: str, *, cleanup: bool = False) -> dict[str, Any] | None:
+    def _get_job(
+        self,
+        job_id: str,
+        *,
+        cleanup: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any] | None:
         """Fetch one job and detect cross-route state loss."""
         try:
             with self._new_client() as client:
                 response = client.get(
                     f"/optimize/{job_id}",
                     headers={"Connection": "close"},
+                    timeout=timeout_seconds or self.config.request_timeout_seconds,
                 )
         except httpx.HTTPError as error:
             self._record_request_error(f"GET job {job_id}", error)
@@ -623,27 +691,28 @@ class PublicDiagnostic:
 
     def _get_jobs(self, job_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch independent job snapshots with bounded concurrency."""
-        if not job_ids:
-            return {}
-        workers = min(len(job_ids), self.config.parallel_requests)
-        if workers == 1:
-            bodies = [self._get_job(job_id) for job_id in job_ids]
-        else:
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = [executor.submit(self._get_job, job_id) for job_id in job_ids]
-                bodies = [future.result() for future in futures]
-        return {job_id: body for job_id, body in zip(job_ids, bodies, strict=True) if body is not None}
+        bodies = self._run_request_batch(
+            len(job_ids),
+            lambda index, timeout: self._get_job(job_ids[index], timeout_seconds=timeout),
+        )
+        return {job_ids[index]: bodies[index] for index in sorted(bodies) if bodies[index] is not None}
 
     def _jobs_stay_queued(self, jobs: list[DiagnosticJob]) -> bool:
         """Return whether all supplied jobs remain queued for the stable interval."""
         stable_started: float | None = None
+        job_ids = [job.id for job in jobs]
         while time.monotonic() < self.workflow_deadline:
             if stable_started is None:
                 snapshots = self._snapshot_jobs()
-                states = [snapshots.get(job.id, {}).get("state") for job in jobs]
             else:
-                snapshots = self._get_jobs([job.id for job in jobs])
-                states = [snapshots.get(job.id, {}).get("state") for job in jobs]
+                snapshots = self._get_jobs(job_ids)
+            if any(job_id not in snapshots for job_id in job_ids):
+                if self.visibility_split:
+                    return False
+                stable_started = None
+                self._sleep(self.config.poll_seconds)
+                continue
+            states = [snapshots[job_id].get("state") for job_id in job_ids]
             if states != ["queued"] * len(jobs):
                 return False
             if stable_started is None:
@@ -803,7 +872,10 @@ class PublicDiagnostic:
         while time.monotonic() < deadline:
             snapshots = self._get_jobs(job_ids)
             if len(snapshots) != len(job_ids):
-                return False
+                if self.visibility_split:
+                    return False
+                self._sleep(self.config.poll_seconds)
+                continue
             states = [str(snapshots[job_id].get("state")) for job_id in job_ids]
             if states and all(state == "running" for state in states):
                 return True
@@ -1016,15 +1088,30 @@ class PublicDiagnostic:
             self._record_request_error("unexpected diagnostic error", f"{type(error).__name__}: {error}")
             self._mark_inconclusive("unexpected_error", "The diagnostic stopped after an unexpected internal error.")
         finally:
-            with self._measure_phase("identity_analysis"):
-                for job in self.jobs:
-                    needs_accepted = job.id not in self.accepted_identity_jobs
-                    needs_runner = "running" in job.transitions and job.id not in self.runner_identity_jobs
-                    if needs_accepted or needs_runner:
-                        self._collect_job_identities(job.id)
-                self._analyze_runtime_identities()
-            with self._measure_phase("cleanup"):
-                self._cleanup_jobs()
+            try:
+                with self._measure_phase("identity_analysis"):
+                    for job in self.jobs:
+                        needs_accepted = job.id not in self.accepted_identity_jobs
+                        needs_runner = "running" in job.transitions and job.id not in self.runner_identity_jobs
+                        if needs_accepted or needs_runner:
+                            self._collect_job_identities(job.id)
+                    self._analyze_runtime_identities()
+            except Exception as error:
+                self._record_request_error("unexpected identity analysis error", f"{type(error).__name__}: {error}")
+                self._mark_inconclusive(
+                    "identity_analysis_error",
+                    "Runtime identity analysis stopped after an unexpected internal error.",
+                )
+            finally:
+                try:
+                    with self._measure_phase("cleanup"):
+                        self._cleanup_jobs()
+                except Exception as error:
+                    self._record_request_error("unexpected cleanup error", f"{type(error).__name__}: {error}")
+                    self._mark_inconclusive(
+                        "cleanup_error",
+                        "Diagnostic job cleanup stopped after an unexpected internal error.",
+                    )
         return self.build_report()
 
     def _identity_counts(self) -> dict[str, int]:
