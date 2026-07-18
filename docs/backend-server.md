@@ -22,10 +22,10 @@ Verify the process and its dependencies:
 export API_URL="${API_URL:-http://localhost:8000}"
 
 curl "$API_URL/ready"
-curl "$API_URL/health"
+curl "$API_URL/info"
 ```
 
-`/ready` returns a minimal readiness result. `/health` also includes the API and
+`/ready` returns a minimal readiness result. `/info` also includes the API and
 application versions. Interactive OpenAPI documentation is available at
 `$API_URL/docs`, with the schema at `$API_URL/openapi.json`.
 
@@ -139,9 +139,10 @@ forcibly terminates it and any solver executables it launched. A thread is not
 sufficient because Python cannot safely force-stop an arbitrary worker thread.
 
 A process that returns before the hard deadline follows its normal result path.
-Forced termination marks the job as `failed` with error code
-`timeout_forced` and produces no artifact, even if an incumbent score
-was reported earlier. The error message records the requested timeout, timeout
+A feasible result returned at the solver limit uses termination reason
+`solver_timeout`. Forced termination marks the job as `failed` with error code
+`timeout_forced` and produces no artifact, even if an incumbent score was
+reported earlier. The error message records the requested timeout, timeout
 grace, and forced termination. Preserving the last schedule would require
 checkpointing it outside the child process.
 
@@ -159,7 +160,7 @@ checkpointing it outside the child process.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | Return API identity and version information. |
-| `GET` | `/health` | Check the store and worker, including version information. |
+| `GET` | `/info` | Check the store and worker, including version information. |
 | `GET` | `/ready` | Return a minimal readiness result for routing and deployment probes. |
 | `POST` | `/optimize` | Validate multipart input and enqueue a job. |
 | `GET` | `/optimize/{job_id}` | Return the current job representation. |
@@ -250,7 +251,7 @@ All server settings are read once when the application is constructed.
 | `JOB_BACKEND` | `memory` | Select `memory` or `redis` storage. |
 | `JOB_REDIS_URL` | `redis://localhost:6379/0` | Set the Redis connection URL. |
 | `JOB_REDIS_KEY_PREFIX` | `nurse_scheduling:jobs:v0` | Namespace and schema version for Redis keys. |
-| `JOB_MAX_PENDING` | `8` | Limit queued, running, and cancelling jobs. |
+| `JOB_MAX_PENDING` | `32` | Limit queued, running, and cancelling jobs. |
 | `JOB_MAX_RETAINED` | `128` | Limit all retained jobs, including terminal jobs. |
 | `JOB_RETENTION_SECONDS` | `86400` | Retain terminal jobs for this duration. |
 | `JOB_MAX_EVENTS_PER_JOB` | `1000` | Limit replayable events retained per job. |

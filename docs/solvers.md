@@ -111,7 +111,9 @@ PuLP/cuOpt derive incumbent scores from solver logs. Other backends emit a
 score event only with their final feasible result. A solver-native time limit
 preserves a feasible schedule when one is available. A forced watchdog timeout
 fails without an artifact because the schedule is not checkpointed outside the
-child process.
+child process. These paths are reported as `solver_timeout` and
+`timeout_forced`, respectively. A solver registered for graceful timeout fails
+the capability probe if the watchdog must terminate it.
 
 Validate these capabilities against the large real scenario on the current
 platform:

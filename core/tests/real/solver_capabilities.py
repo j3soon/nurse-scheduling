@@ -281,7 +281,13 @@ def _evaluate_graceful_cancel(job: dict[str, Any], elapsed_seconds: float) -> Ro
     )
 
 
-def _evaluate_timeout(job: dict[str, Any], elapsed_seconds: float, config: ProbeConfig) -> RoundReport:
+def _evaluate_timeout(
+    job: dict[str, Any],
+    elapsed_seconds: float,
+    config: ProbeConfig,
+    *,
+    graceful_timeout: bool,
+) -> RoundReport:
     """Classify one terminal job observed during the timeout round."""
     if elapsed_seconds > config.timeout_seconds + config.timeout_grace_seconds:
         return _round_report(
@@ -300,20 +306,30 @@ def _evaluate_timeout(job: dict[str, Any], elapsed_seconds: float, config: Probe
     error = job.get("error") or {}
     exercised_timeout = elapsed_seconds >= config.timeout_seconds * MIN_TIMEOUT_EXERCISE_RATIO
     if error.get("code") == "timeout_forced" and exercised_timeout:
+        if graceful_timeout:
+            return _round_report(
+                "timeout",
+                "FAIL",
+                "timeout_forced: Expected solver_timeout from a solver registered for graceful timeout.",
+                solver_available=True,
+                elapsed_seconds=elapsed_seconds,
+                elapsed_from="solving_started",
+                job=job,
+            )
         return _round_report(
             "timeout",
             "PASS",
-            "The server watchdog terminated the solver after its grace period.",
+            "timeout_forced: The server watchdog terminated the solver after its grace period.",
             solver_available=True,
             elapsed_seconds=elapsed_seconds,
             elapsed_from="solving_started",
             job=job,
         )
-    if result.get("termination_reason") == "limit_or_stop" and exercised_timeout:
+    if result.get("termination_reason") == "solver_timeout" and exercised_timeout:
         return _round_report(
             "timeout",
             "PASS",
-            "Solver returned a feasible schedule within the timeout grace period.",
+            "solver_timeout: Solver returned a feasible schedule within the timeout grace period.",
             solver_available=True,
             elapsed_seconds=elapsed_seconds,
             elapsed_from="solving_started",
@@ -323,7 +339,7 @@ def _evaluate_timeout(job: dict[str, Any], elapsed_seconds: float, config: Probe
         return _round_report(
             "timeout",
             "PASS",
-            "Solver stopped on time before finding a feasible schedule.",
+            "solver_timeout: Solver stopped on time before finding a feasible schedule.",
             solver_available=True,
             elapsed_seconds=elapsed_seconds,
             elapsed_from="solving_started",
@@ -390,7 +406,15 @@ def _run_timeout_round(
             elapsed_seconds=elapsed_seconds,
             elapsed_from="solving_started",
         )
-    return _evaluate_timeout(job, elapsed_seconds, config)
+    capabilities = get_solver_capabilities(solver)
+    if capabilities is None:
+        raise ValueError(f"No capability configuration for solver: {solver}")
+    return _evaluate_timeout(
+        job,
+        elapsed_seconds,
+        config,
+        graceful_timeout=capabilities.graceful_timeout,
+    )
 
 
 def _run_intermediate_scores_round(
@@ -607,6 +631,7 @@ def _worker_settings(config: ProbeConfig) -> ServerSettings:
         sse_keepalive_seconds=0.05,
         default_timeout_seconds=config.control_timeout_seconds,
         max_timeout_seconds=max(config.control_timeout_seconds, config.timeout_seconds),
+        timeout_grace_seconds=config.timeout_grace_seconds,
     )
 
 

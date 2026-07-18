@@ -17,13 +17,15 @@ pytest --log-cli-level=INFO tests/real/schedule_pulp_cuopt.py
 
 ## Solver capability probe
 
-The capability probe uses four possible isolated rounds: graceful timeout,
-graceful cancel, finish-now, then intermediate scores. The graceful-timeout
-round is always exercised so it can record whether the solver returns on its
-own or requires server-enforced termination. Other traits run only when the
-server registry confirms them. Forced cancellation is a server guarantee and
-is covered by the server tests rather than this solver probe. Run one configured
-solver or all solvers with at least one confirmed trait:
+The capability probe uses four possible isolated rounds: timeout, graceful
+cancel, finish-now, then intermediate scores. The timeout round is always
+exercised so it can record whether the solver returns on its own with
+`solver_timeout` or requires `timeout_forced` server termination. A solver
+registered for graceful timeout fails that round if it requires
+`timeout_forced`. Other traits run only when the server registry confirms them.
+Forced cancellation is a server guarantee and is covered by the server tests
+rather than this solver probe. Run one configured solver or all solvers with at
+least one confirmed trait:
 
 ```sh
 cd core

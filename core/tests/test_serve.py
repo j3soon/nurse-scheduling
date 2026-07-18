@@ -225,7 +225,7 @@ class DelayedNativeTimeoutRunner:
                 outcome=OptimizationOutcome.FEASIBLE,
                 score=7,
                 solver_status="FEASIBLE",
-                termination_reason="limit_or_stop",
+                termination_reason="solver_timeout",
             ),
             artifact=StoredArtifact("schedule.xlsx", "application/test", b"partial"),
         )
@@ -709,7 +709,7 @@ def test_process_timeout_allows_model_building_within_timeout_grace():
         should_abort=lambda: False,
     )
 
-    assert output.result.termination_reason == "limit_or_stop"
+    assert output.result.termination_reason == "solver_timeout"
     assert output.artifact is not None
 
 
@@ -821,6 +821,45 @@ def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):
 
     assert output.artifact is not None
     assert output.artifact.name == "nurse-scheduling-20260716T142305Z.xlsx"
+
+
+@pytest.mark.parametrize(
+    ("stop_requested", "termination_reason"),
+    [
+        (False, "solver_timeout"),
+        (True, "user_requested"),
+    ],
+)
+def test_optimization_runner_classifies_feasible_termination(monkeypatch, stop_requested, termination_reason):
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.runner.scheduler.schedule",
+        lambda **_kwargs: ScheduleResult(object(), object(), 42, "FEASIBLE", None),
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.runner.exporter.export_to_excel",
+        lambda _dataframe, output, _cell_export_info: output.write(b"xlsx"),
+    )
+    job = Job(
+        id="job_feasible",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout_seconds=60,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    output = OptimizationRunner().run(
+        job,
+        b"apiVersion: alpha\n",
+        event_callback=lambda *_args: None,
+        should_stop=lambda: stop_requested,
+    )
+
+    assert output.result.termination_reason == termination_reason
 
 
 def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):

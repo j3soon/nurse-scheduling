@@ -108,7 +108,12 @@ class OptimizationRunner:
         created_at = job.created_at.astimezone(timezone.utc)
         output_filename = f"nurse-scheduling-{created_at:%Y%m%dT%H%M%SZ}.xlsx"
         outcome = OptimizationOutcome.OPTIMAL if normalized_status == "OPTIMAL" else OptimizationOutcome.FEASIBLE
-        termination_reason = "optimality_proven" if outcome == OptimizationOutcome.OPTIMAL else "limit_or_stop"
+        if outcome == OptimizationOutcome.OPTIMAL:
+            termination_reason = "optimality_proven"
+        elif should_stop is not None and should_stop():
+            termination_reason = "user_requested"
+        else:
+            termination_reason = "solver_timeout"
         return RunOutput(
             result=OptimizationResult(
                 outcome=outcome,

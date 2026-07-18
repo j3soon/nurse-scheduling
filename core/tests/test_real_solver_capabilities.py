@@ -125,7 +125,7 @@ def test_timeout_result_classification():
         result={
             "outcome": "feasible",
             "solver_status": "FEASIBLE",
-            "termination_reason": "limit_or_stop",
+            "termination_reason": "solver_timeout",
         }
     )
     optimal = _job(
@@ -151,11 +151,61 @@ def test_timeout_result_classification():
         schedule=None,
     )
 
-    assert solver_capabilities._evaluate_timeout(feasible, 10.2, config).status == "PASS"
-    assert solver_capabilities._evaluate_timeout(no_solution, 9.8, config).status == "PASS"
-    assert solver_capabilities._evaluate_timeout(watchdog, 14.9, config).status == "PASS"
-    assert solver_capabilities._evaluate_timeout(optimal, 1.0, config).status == "INCONCLUSIVE"
-    assert solver_capabilities._evaluate_timeout(feasible, 15.1, config).status == "FAIL"
+    assert solver_capabilities._evaluate_timeout(feasible, 10.2, config, graceful_timeout=True).status == "PASS"
+    assert solver_capabilities._evaluate_timeout(no_solution, 9.8, config, graceful_timeout=True).status == "PASS"
+    assert solver_capabilities._evaluate_timeout(watchdog, 14.9, config, graceful_timeout=False).status == "PASS"
+    forced_graceful = solver_capabilities._evaluate_timeout(
+        watchdog,
+        14.9,
+        config,
+        graceful_timeout=True,
+    )
+    assert forced_graceful.status == "FAIL"
+    assert forced_graceful.detail.startswith("timeout_forced:")
+    assert solver_capabilities._evaluate_timeout(optimal, 1.0, config, graceful_timeout=True).status == "INCONCLUSIVE"
+    assert solver_capabilities._evaluate_timeout(feasible, 15.1, config, graceful_timeout=True).status == "FAIL"
+
+
+def test_worker_settings_use_configured_timeout_grace():
+    config = solver_capabilities.ProbeConfig(timeout_grace_seconds=7.5)
+
+    settings = solver_capabilities._worker_settings(config)
+
+    assert settings.timeout_grace_seconds == 7.5
+
+
+def test_timeout_round_applies_registered_graceful_timeout(monkeypatch):
+    watchdog = _job(
+        state="failed",
+        result=None,
+        error={"code": "timeout_forced", "message": "Process terminated"},
+        schedule=None,
+    )
+    monkeypatch.setattr(solver_capabilities, "_submit_job", lambda *_args: {"id": "job"})
+    monkeypatch.setattr(
+        solver_capabilities,
+        "_wait_for_solving",
+        lambda *_args: (0.0, None, _job(state="running", result=None, schedule=None)),
+    )
+    monkeypatch.setattr(solver_capabilities, "_wait_for_terminal", lambda *_args: watchdog)
+    monkeypatch.setattr(solver_capabilities.time, "monotonic", lambda: 14.9)
+    config = solver_capabilities.ProbeConfig(timeout_seconds=10, timeout_grace_seconds=5)
+
+    graceful = solver_capabilities._run_timeout_round(
+        object(),
+        object(),
+        "ortools/cp-sat",
+        config,
+    )
+    unconfirmed = solver_capabilities._run_timeout_round(
+        object(),
+        object(),
+        "pulp/cbc",
+        config,
+    )
+
+    assert graceful.status == "FAIL"
+    assert unconfirmed.status == "PASS"
 
 
 def test_only_cbc_intermediate_round_uses_simple_testcase(monkeypatch):
@@ -289,7 +339,7 @@ def test_intermediate_score_round_requires_progress_event(monkeypatch):
         result={
             "outcome": "feasible",
             "solver_status": "FEASIBLE",
-            "termination_reason": "limit_or_stop",
+            "termination_reason": "solver_timeout",
         }
     )
     monkeypatch.setattr(
