@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -26,6 +26,11 @@ from .jobs.models import Job, JobEvent, StoredArtifact, StoreLimits
 
 class JobStore(Protocol):
     """Atomic persistence operations required by the job controller."""
+
+    @property
+    def store_id(self) -> str:
+        """Return the opaque identity shared by clients of this logical store."""
+        ...
 
     def create(
         self,
@@ -68,9 +73,16 @@ class JobStore(Protocol):
         """
         ...
 
-    def claim_next(self, worker_id: str, started_at: datetime, claim_expires_at: datetime) -> Job | None:
+    def claim_next(
+        self,
+        worker_id: str,
+        started_at: datetime,
+        claim_expires_at: datetime,
+        runtime_identity: Mapping[str, str] | None = None,
+    ) -> Job | None:
         """Atomically claim the next queued job for a worker.
 
+        Include runtime identity in the running event when supplied.
         Return the claimed running job, or `None` when the queue is empty.
         """
         ...

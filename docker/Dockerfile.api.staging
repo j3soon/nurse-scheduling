@@ -1,17 +1,43 @@
+FROM python:3.12-slim AS version
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY .git/ .git/
+
+# Reconstruct omitted tracked paths, then replace core with the build context.
+RUN git checkout-index --all
+
+RUN rm -rf /src/core
+
+COPY core/ core/
+
+RUN version="$(git describe --tags --always)" \
+    && if [ -n "$(git status --porcelain --untracked-files=all --ignored=matching -- core)" ]; then \
+        version="${version}-dirty"; \
+    fi \
+    && printf '%s\n' "$version" > /app-version
+
+
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl git redis-tools \
+    && apt-get install -y --no-install-recommends curl redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
-COPY . /app/nurse-scheduling
+RUN useradd -m -u 1000 user \
+    && mkdir -p /reports /app/nurse-scheduling \
+    && chown user:user /reports /app/nurse-scheduling
+
+COPY --chown=user:user core/ /app/nurse-scheduling/core/
+COPY --chown=user:user --from=version /app-version /app/nurse-scheduling/.app-version
 
 WORKDIR /app/nurse-scheduling/core
 
 RUN pip install --no-cache-dir -r requirements.txt
-
-RUN useradd -m -u 1000 user \
-    && chown -R user:user /app/nurse-scheduling
 
 USER user
 

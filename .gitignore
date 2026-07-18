@@ -140,6 +140,7 @@ venv.bak/
 
 # mkdocs documentation
 /site
+/docker/diagnostic-reports/
 
 # mypy
 .mypy_cache/

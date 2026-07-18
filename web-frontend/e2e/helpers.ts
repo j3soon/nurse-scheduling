@@ -134,7 +134,7 @@ export async function mockOptimizeAndExport(
     });
   }
 
-  await page.route('http://localhost:8000/health', async route => {
+  await page.route('http://localhost:8000/info', async route => {
     if (route.request().method() !== 'GET') {
       await route.fallback();
       return;
@@ -147,10 +147,9 @@ export async function mockOptimizeAndExport(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        status: 'ok',
-        version: 'test',
-        apiVersion: 'test',
-        appVersion: 'test',
+        status: 'ready',
+        api_version: 'test',
+        app_version: 'test',
       }),
     });
   });

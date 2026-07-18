@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import asyncio
+import json
 import multiprocessing
 import os
 import signal
@@ -58,7 +59,11 @@ from nurse_scheduling.server.jobs.controller import JobController
 from nurse_scheduling.server.jobs.process_executor import ProcessOptimizationExecutor
 from nurse_scheduling.server.jobs.runner import OptimizationRunner, RunOutput
 from nurse_scheduling.server.jobs.worker import JobWorker
-from nurse_scheduling.server.solver_capabilities import SOLVER_CAPABILITIES, solver_supports_graceful_cancel
+from nurse_scheduling.server.runtime_identity import get_deployment_id
+from nurse_scheduling.server.solver_capabilities import (
+    SOLVER_CAPABILITIES,
+    solver_supports_graceful_cancel,
+)
 from nurse_scheduling.server.stores.memory import MemoryJobStore
 
 
@@ -261,14 +266,47 @@ def _wait_for_terminal(client: TestClient, job_id: str) -> dict:
     raise AssertionError(f"Job did not finish: {job_id}")
 
 
-def test_health_and_readiness_report_status():
+def test_info_and_readiness_report_status_without_caching():
     with _client(start_background=False) as client:
-        assert client.get("/health").json() == {
-            "status": "ok",
-            "apiVersion": "alpha",
-            "appVersion": client.app.state.app_version,
+        info = client.get("/info")
+        ready = client.get("/ready")
+
+        assert info.json() == {
+            "status": "ready",
+            "service_name": "nurse-scheduling-api",
+            "api_version": "alpha",
+            "app_version": client.app.state.app_version,
+            "deployment_id": client.app.state.deployment_id,
+            "instance_id": client.app.state.instance_id,
+            "started_at": client.app.state.started_at.isoformat(),
+            "job_backend": "memory",
+            "job_store_id": client.app.state.job_store.store_id,
         }
-        assert client.get("/ready").json() == {"status": "ready"}
+        assert ready.json() == {"status": "ready"}
+        assert info.headers["cache-control"] == "no-store"
+        assert ready.headers["cache-control"] == "no-store"
+        assert client.get("/health").status_code == 404
+
+
+def test_default_memory_store_uses_the_process_instance_identity():
+    app = create_app(settings=_settings(), start_background=False)
+
+    assert app.state.job_store.store_id == app.state.instance_id
+
+
+def test_app_version_prefers_generated_build_artifact(tmp_path, monkeypatch):
+    from nurse_scheduling.server import app as server_app
+
+    version_file = tmp_path / ".app-version"
+    version_file.write_text("v9.8.7-generated\n", encoding="utf-8")
+    monkeypatch.setattr(server_app, "APP_VERSION_FILE", version_file)
+
+    def unexpected_git_call(*_args, **_kwargs):
+        raise AssertionError("Git should not run when the build artifact is available")
+
+    monkeypatch.setattr(server_app.subprocess, "check_output", unexpected_git_call)
+
+    assert server_app.get_app_version() == "v9.8.7-generated"
 
 
 def test_solver_capability_registry_matches_canonical_choices():
@@ -316,7 +354,7 @@ def test_server_info_logging_is_visible_without_external_logging_configuration()
     assert "server-info-visible" in completed.stderr
 
 
-def test_health_and_readiness_fail_when_job_store_is_unavailable():
+def test_info_and_readiness_fail_when_job_store_is_unavailable():
     class UnhealthyStore(MemoryJobStore):
         def check_health(self):
             raise ConnectionError("store unavailable")
@@ -328,16 +366,18 @@ def test_health_and_readiness_fail_when_job_store_is_unavailable():
         start_background=False,
     )
     with TestClient(app) as client:
-        health = client.get("/health")
+        info = client.get("/info")
         ready = client.get("/ready")
 
-    assert health.status_code == 503
-    assert health.json()["reason"] == "job_store_unavailable"
+    assert info.status_code == 503
+    assert info.json()["status"] == "unavailable"
+    assert info.json()["reason"] == "job_store_unavailable"
+    assert info.json()["instance_id"] == app.state.instance_id
     assert ready.status_code == 503
     assert ready.json()["reason"] == "job_store_unavailable"
 
 
-def test_health_and_readiness_fail_when_job_worker_stops():
+def test_info_and_readiness_fail_when_job_worker_stops():
     app = create_app(
         settings=_settings(),
         store=MemoryJobStore(),
@@ -345,11 +385,11 @@ def test_health_and_readiness_fail_when_job_worker_stops():
     )
     with TestClient(app) as client:
         app.state.job_worker.stop()
-        health = client.get("/health")
+        info = client.get("/info")
         ready = client.get("/ready")
 
-    assert health.status_code == 503
-    assert health.json()["reason"] == "job_worker_unavailable"
+    assert info.status_code == 503
+    assert info.json()["reason"] == "job_worker_unavailable"
     assert ready.status_code == 503
     assert ready.json()["reason"] == "job_worker_unavailable"
 
@@ -394,19 +434,19 @@ def test_synchronous_store_reads_do_not_block_the_asgi_event_loop():
             job_request = asyncio.create_task(client.get(f"/optimize/{created.id}"))
             try:
                 await asyncio.sleep(0)
-                health = await client.get("/health")
-                health_elapsed = time.monotonic() - started_at
+                info = await client.get("/info")
+                info_elapsed = time.monotonic() - started_at
             finally:
                 store.release_reads.set()
                 release_timer.cancel()
             job_response = await job_request
-            return health, health_elapsed, job_response
+            return info, info_elapsed, job_response
 
-    health, health_elapsed, job_response = asyncio.run(exercise_requests())
+    info, info_elapsed, job_response = asyncio.run(exercise_requests())
 
     assert store.read_started.is_set()
-    assert health.status_code == 200
-    assert health_elapsed < 0.5
+    assert info.status_code == 200
+    assert info_elapsed < 0.5
     assert job_response.status_code == 200
 
 
@@ -461,6 +501,29 @@ def test_server_settings_reject_invalid_relationships(updates, message):
         _settings(**updates)
 
 
+def test_runtime_deployment_identity_is_shared_within_one_server_launch(monkeypatch):
+    supervisor = type("Supervisor", (), {"pid": 123})()
+    monkeypatch.setattr("nurse_scheduling.server.runtime_identity.parent_process", lambda: supervisor)
+    monkeypatch.setattr("nurse_scheduling.server.runtime_identity.socket.gethostname", lambda: "container-123")
+    monkeypatch.setattr("nurse_scheduling.server.runtime_identity._boot_marker", lambda: "boot-123")
+    monkeypatch.setattr(
+        "nurse_scheduling.server.runtime_identity._process_start_marker",
+        lambda _pid: "start-123",
+    )
+
+    first = get_deployment_id()
+    second = get_deployment_id()
+
+    assert first == second
+    assert first.startswith("deployment-")
+
+    monkeypatch.setattr(
+        "nurse_scheduling.server.runtime_identity._process_start_marker",
+        lambda _pid: "start-456",
+    )
+    assert get_deployment_id() != first
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -495,6 +558,7 @@ def test_server_settings_from_env_reject_non_finite_float(monkeypatch):
 def test_server_settings_retain_up_to_128_jobs_for_24_hours_by_default():
     settings = ServerSettings()
 
+    assert settings.max_pending_jobs == 32
     assert settings.max_retained_jobs == DEFAULT_MAX_RETAINED_JOBS == 128
     assert settings.job_retention_seconds == DEFAULT_JOB_RETENTION_SECONDS == 24 * 60 * 60
     assert settings.max_events_per_job == DEFAULT_MAX_EVENTS_PER_JOB == 1_000
@@ -1109,6 +1173,14 @@ def test_event_stream_has_ids_and_domain_event_names():
         assert "event: job.phase_changed" in response.text
         assert "event: job.progressed" in response.text
         assert "event: job.result_available" in response.text
+        payloads = [
+            json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: ")
+        ]
+        queued = next(payload for payload in payloads if payload.get("state") == "queued")
+        running = next(payload for payload in payloads if payload.get("state") == "running")
+        assert queued["runtime"] == client.app.state.runtime_identity
+        assert running["runtime"] == client.app.state.runtime_identity
+        assert running["worker_id"] == client.app.state.instance_id
 
 
 def test_event_stream_replays_only_events_after_last_event_id():
