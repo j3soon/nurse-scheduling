@@ -85,6 +85,26 @@ interface OptimizePhaseEvent {
   message?: string;
 }
 
+interface JobReplayGapEvent {
+  reason: 'cursor_unavailable';
+  requested_last_event_id: string;
+  oldest_retained_event_id: string | null;
+  replay_checkpoint_id: string | null;
+  job: OptimizeJobResponse;
+}
+
+interface JobReplayErrorEvent {
+  code: 'malformed_cursor' | 'future_cursor';
+  message: string;
+  requested_last_event_id: string;
+  oldest_retained_event_id: string | null;
+  newest_retained_event_id: string | null;
+}
+
+interface JobControlChangedEvent {
+  early_completion_requested?: boolean;
+}
+
 interface OptimizeServerEntry {
   endpoint: string;
   status: ServerStatus;
@@ -108,7 +128,15 @@ interface StoredOptimizeServerOptions {
   selectedServerEndpoint: ServerSelection;
 }
 
-const TERMINAL_JOB_STATES = new Set(['completed', 'cancelled', 'failed']);
+const JOB_EVENT_TYPES = {
+  stateChanged: 'job.state_changed',
+  progressed: 'job.progressed',
+  phaseChanged: 'job.phase_changed',
+  resultAvailable: 'job.result_available',
+  controlChanged: 'job.control_changed',
+  replayGap: 'job.replay_gap',
+  replayError: 'job.replay_error',
+} as const;
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
 const INITIAL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 const SERVER_OPTIONS_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
@@ -335,6 +363,31 @@ function isPhaseEventData(data: unknown): data is OptimizePhaseEvent {
   return typeof data === 'object' && data !== null && 'message' in data;
 }
 
+function isReplayGapEventData(data: unknown): data is JobReplayGapEvent {
+  return typeof data === 'object'
+    && data !== null
+    && 'reason' in data
+    && data.reason === 'cursor_unavailable'
+    && 'job' in data
+    && typeof data.job === 'object'
+    && data.job !== null
+    && 'id' in data.job
+    && 'state' in data.job;
+}
+
+function isReplayErrorEventData(data: unknown): data is JobReplayErrorEvent {
+  return typeof data === 'object'
+    && data !== null
+    && 'code' in data
+    && (data.code === 'malformed_cursor' || data.code === 'future_cursor')
+    && 'message' in data
+    && typeof data.message === 'string';
+}
+
+function isControlChangedEventData(data: unknown): data is JobControlChangedEvent {
+  return typeof data === 'object' && data !== null && 'early_completion_requested' in data;
+}
+
 function formatScore(score: number): string {
   return new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 2,
@@ -378,17 +431,20 @@ function formatProgressSummary(data: OptimizeProgressEvent): string {
 }
 
 function getEventBadgeClasses(type: string): string {
-  if (type === 'job.result_available') {
+  if (type === JOB_EVENT_TYPES.resultAvailable) {
     return 'bg-green-50 text-green-700 ring-green-200';
   }
-  if (type === 'error') {
+  if (type === 'error' || type === JOB_EVENT_TYPES.replayError) {
     return 'bg-red-50 text-red-700 ring-red-200';
   }
-  if (type === 'job.progressed') {
+  if (type === JOB_EVENT_TYPES.progressed) {
     return 'bg-blue-50 text-blue-700 ring-blue-200';
   }
-  if (type === 'job.phase_changed') {
+  if (type === JOB_EVENT_TYPES.phaseChanged) {
     return 'bg-amber-50 text-amber-700 ring-amber-200';
+  }
+  if (type === JOB_EVENT_TYPES.replayGap) {
+    return 'bg-orange-50 text-orange-700 ring-orange-200';
   }
   return 'bg-gray-100 text-gray-700 ring-gray-200';
 }
@@ -699,35 +755,47 @@ export default function OptimizeAndExportPage() {
       return new Promise((resolve, reject) => {
         const eventSource = new EventSource(buildApiUrl(resolvedOptimizeEndpoint, job.links.events));
         let finalizationStarted = false;
+        let eventSourceClosed = false;
+        let completedStateObserved = false;
+
+        const closeEventSource = () => {
+          if (eventSourceClosed) {
+            return;
+          }
+          eventSourceClosed = true;
+          eventSource.close();
+        };
 
         const finalizeJob = () => {
           if (finalizationStarted) {
             return;
           }
           finalizationStarted = true;
-          eventSource.close();
+          closeEventSource();
           void getOptimizeJobStatus(job).then(completedJob => {
             setCurrentJob(completedJob);
             resolve(completedJob);
           }).catch(reject);
         };
 
-        eventSource.addEventListener('job.state_changed', (event) => {
+        eventSource.addEventListener(JOB_EVENT_TYPES.stateChanged, (event) => {
           const parsedData = parseSseEventData(event);
-          appendSseEvent('job.state_changed', parsedData);
+          appendSseEvent(JOB_EVENT_TYPES.stateChanged, parsedData);
           const updatedJob = parsedData as Partial<OptimizeJobResponse>;
           if (updatedJob.state) {
             setScheduleStatus(updatedJob.state);
           }
           setCurrentJob(currentJob => currentJob ? { ...currentJob, ...updatedJob } : currentJob);
-          if (updatedJob.state && TERMINAL_JOB_STATES.has(updatedJob.state)) {
+          if (updatedJob.state === 'completed') {
+            completedStateObserved = true;
+          } else if (updatedJob.state === 'cancelled' || updatedJob.state === 'failed') {
             finalizeJob();
           }
         });
 
-        eventSource.addEventListener('job.progressed', (event) => {
+        eventSource.addEventListener(JOB_EVENT_TYPES.progressed, (event) => {
           const parsedData = parseSseEventData(event);
-          appendSseEvent('job.progressed', parsedData);
+          appendSseEvent(JOB_EVENT_TYPES.progressed, parsedData);
           if (isProgressEventData(parsedData)) {
             setIncumbentResult(parsedData);
             if (typeof parsedData.currentBestScore === 'number') {
@@ -745,25 +813,68 @@ export default function OptimizeAndExportPage() {
           }
         });
 
-        eventSource.addEventListener('job.phase_changed', (event) => {
+        eventSource.addEventListener(JOB_EVENT_TYPES.phaseChanged, (event) => {
           const parsedData = parseSseEventData(event);
-          appendSseEvent('job.phase_changed', parsedData);
+          appendSseEvent(JOB_EVENT_TYPES.phaseChanged, parsedData);
         });
 
-        eventSource.addEventListener('job.result_available', (event) => {
+        eventSource.addEventListener(JOB_EVENT_TYPES.resultAvailable, (event) => {
           const parsedData = parseSseEventData(event);
-          appendSseEvent('job.result_available', parsedData);
+          appendSseEvent(JOB_EVENT_TYPES.resultAvailable, parsedData);
           finalizeJob();
+        });
+
+        eventSource.addEventListener(JOB_EVENT_TYPES.controlChanged, (event) => {
+          const parsedData = parseSseEventData(event);
+          appendSseEvent(JOB_EVENT_TYPES.controlChanged, parsedData);
+          if (isControlChangedEventData(parsedData) && parsedData.early_completion_requested) {
+            setCurrentJob(currentJob => currentJob ? {
+              ...currentJob,
+              controls: {
+                ...currentJob.controls,
+                early_completion_available: false,
+              },
+            } : currentJob);
+          }
+        });
+
+        eventSource.addEventListener(JOB_EVENT_TYPES.replayGap, (event) => {
+          const parsedData = parseSseEventData(event);
+          if (!isReplayGapEventData(parsedData)) {
+            return;
+          }
+          appendSseEvent(JOB_EVENT_TYPES.replayGap, parsedData);
+          if (parsedData.job.result?.score !== null && parsedData.job.result?.score !== undefined) {
+            setScheduleScore(parsedData.job.result.score);
+          }
+          setScheduleStatus(parsedData.job.state);
+          setCurrentJob(parsedData.job);
+          if (parsedData.job.terminal) {
+            finalizeJob();
+          }
+        });
+
+        eventSource.addEventListener(JOB_EVENT_TYPES.replayError, (event) => {
+          const parsedData = parseSseEventData(event);
+          if (!isReplayErrorEventData(parsedData)) {
+            return;
+          }
+          appendSseEvent(JOB_EVENT_TYPES.replayError, parsedData);
+          closeEventSource();
+          reject(new Error(parsedData.message));
         });
 
         eventSource.addEventListener('error', (event) => {
           if ('data' in event && typeof event.data === 'string' && event.data) {
-            eventSource.close();
+            closeEventSource();
             const parsedData = parseSseEventData(event as MessageEvent);
             appendSseEvent('error', parsedData);
             reject(new Error('Optimization event stream failed'));
           } else {
             appendSseEvent('error', 'Optimization event stream disconnected; waiting to reconnect');
+            if (completedStateObserved) {
+              finalizeJob();
+            }
           }
         });
       });
@@ -1653,10 +1764,18 @@ export default function OptimizeAndExportPage() {
                     {isProgressEventData(event.data) && (
                       <p className="font-semibold text-gray-900">{formatProgressSummary(event.data)}</p>
                     )}
-                    {event.type === 'job.phase_changed' && isPhaseEventData(event.data) && event.data.message && (
+                    {event.type === JOB_EVENT_TYPES.phaseChanged && isPhaseEventData(event.data) && event.data.message && (
                       <p className="font-semibold text-gray-900">{event.data.message}</p>
                     )}
-                    <details className={isProgressEventData(event.data) || event.type === 'job.phase_changed' ? 'mt-2' : ''}>
+                    {event.type === JOB_EVENT_TYPES.replayGap && (
+                      <p className="font-semibold text-orange-800">
+                        Some optimization events are missing because retained replay history is unavailable. Current job state was restored from a snapshot.
+                      </p>
+                    )}
+                    {event.type === JOB_EVENT_TYPES.replayError && isReplayErrorEventData(event.data) && (
+                      <p className="font-semibold text-red-800">{event.data.message}</p>
+                    )}
+                    <details className={isProgressEventData(event.data) || event.type === JOB_EVENT_TYPES.phaseChanged || event.type === JOB_EVENT_TYPES.replayGap || event.type === JOB_EVENT_TYPES.replayError ? 'mt-2' : ''}>
                       <summary className="cursor-pointer text-gray-500">Raw event data</summary>
                       <pre className="mt-2 whitespace-pre-wrap break-words">{formatSseEventData(event.data)}</pre>
                     </details>

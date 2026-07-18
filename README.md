@@ -470,6 +470,49 @@ its lease every third of that interval.
 Replayable event history is capped at 1,000 events per job; set
 `JOB_MAX_EVENTS_PER_JOB` to choose a different positive limit.
 
+#### Optimization Event Contract
+
+`GET /optimize/{job_id}/events` emits these event topics:
+
+- `job.state_changed` when the observable job state changes, including queue
+  position and available controls
+- `job.progressed` for solver progress
+- `job.phase_changed` for scheduler phase progress
+- `job.result_available` after a successful `completed` state event
+- `job.control_changed` when an execution control changes without a lifecycle
+  transition
+- `job.replay_gap` when a reconnect cursor is unavailable from retained history
+- `job.replay_error` when a reconnect cursor is malformed or points beyond the
+  newest retained event
+
+Successful jobs emit `job.state_changed` with `state: completed` followed by
+`job.result_available`. Failed and cancelled jobs finish with
+`job.state_changed` and do not emit a result event. Clients that want the result
+event should keep the stream open after a completed state. They may recover by
+fetching the current job resource if the stream disconnects before the result
+event arrives.
+
+Events are ordered per job and have store-specific opaque IDs. Reconnection
+uses `Last-Event-ID` and resumes after the supplied retained cursor. Delivery is
+best-effort at least once while that cursor remains retained, so clients should
+tolerate duplicates. When a cursor is unavailable, `job.replay_gap` supplies a
+current job snapshot and a resume checkpoint. Clients should preserve known
+history, mark the discontinuity, apply the snapshot, and continue with events
+after that checkpoint. Its payload identifies `requested_last_event_id`,
+`oldest_retained_event_id`, and `replay_checkpoint_id`. The SSE frame uses the
+checkpoint as its `id`.
+
+Malformed cursors produce `job.replay_error` with code `malformed_cursor`.
+Valid cursors newer than the newest retained event produce the same topic with
+code `future_cursor`. Replay errors end the stream. Their payload identifies
+the requested, oldest retained, and newest retained event IDs. Replay errors
+and gaps with no usable checkpoint send an empty `id` field to clear the
+browser's stale reconnect cursor.
+
+The current job resource is authoritative. Keepalive comments do not change
+job state, disconnecting does not cancel a job, and terminal events remain
+replayable until event or job retention removes them.
+
 Without Docker, install and start Redis with your operating system package manager.
 
 Ubuntu/Debian:

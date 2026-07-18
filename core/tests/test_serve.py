@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -778,6 +779,9 @@ def test_event_stream_has_ids_and_domain_event_names():
         assert "event: job.phase_changed" in response.text
         assert "event: job.progressed" in response.text
         assert "event: job.result_available" in response.text
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["cache-control"] == "no-cache"
+        assert response.headers["x-accel-buffering"] == "no"
 
 
 def test_event_stream_replays_only_events_after_last_event_id():
@@ -794,6 +798,98 @@ def test_event_stream_replays_only_events_after_last_event_id():
         resumed_ids = [line.removeprefix("id: ") for line in resumed.text.splitlines() if line.startswith("id: ")]
 
         assert resumed_ids == event_ids[-1:]
+
+
+def test_event_stream_returns_snapshot_gap_for_expired_cursor():
+    store = MemoryJobStore(max_events_per_job=4)
+    app = create_app(settings=_settings(max_events_per_job=4), store=store, start_background=False)
+    with TestClient(app) as client:
+        created = _create(client).json()
+        controller = app.state.job_controller
+        for index in range(6):
+            controller.record_event(created["id"], "job.test", {"index": index})
+        controller.cancel_job(created["id"])
+
+        response = client.get(
+            f"/optimize/{created['id']}/events",
+            headers={"Last-Event-ID": "1"},
+        )
+
+        data_line = next(line for line in response.text.splitlines() if line.startswith("data: "))
+        payload = json.loads(data_line.removeprefix("data: "))
+        assert response.status_code == 200
+        assert "event: job.replay_gap" in response.text
+        assert "event: job.test" not in response.text
+        assert payload["reason"] == "cursor_unavailable"
+        assert payload["requested_last_event_id"] == "1"
+        assert payload["oldest_retained_event_id"] is not None
+        assert payload["replay_checkpoint_id"] is not None
+        assert payload["job"]["state"] == "cancelled"
+        assert response.text.startswith(f"id: {payload['replay_checkpoint_id']}\n")
+
+
+def test_event_stream_clears_stale_cursor_when_no_events_remain():
+    store = MemoryJobStore(max_events_per_job=4)
+    app = create_app(settings=_settings(max_events_per_job=4), store=store, start_background=False)
+    with TestClient(app) as client:
+        created = _create(client).json()
+        app.state.job_controller.cancel_job(created["id"])
+        store._records[created["id"]].events.clear()
+
+        response = client.get(
+            f"/optimize/{created['id']}/events",
+            headers={"Last-Event-ID": "1"},
+        )
+
+        data_line = next(line for line in response.text.splitlines() if line.startswith("data: "))
+        payload = json.loads(data_line.removeprefix("data: "))
+        assert response.status_code == 200
+        assert response.text.startswith("id: \nevent: job.replay_gap\n")
+        assert payload["requested_last_event_id"] == "1"
+        assert payload["oldest_retained_event_id"] is None
+        assert payload["replay_checkpoint_id"] is None
+        assert payload["job"]["state"] == "cancelled"
+
+
+@pytest.mark.parametrize("cursor", ["invalid", "0", "01", "1-0"])
+def test_event_stream_returns_replay_error_for_malformed_cursor(cursor):
+    app = create_app(settings=_settings(), store=MemoryJobStore(), start_background=False)
+    with TestClient(app) as client:
+        created = _create(client).json()
+
+        response = client.get(
+            f"/optimize/{created['id']}/events",
+            headers={"Last-Event-ID": cursor},
+        )
+
+        data_line = next(line for line in response.text.splitlines() if line.startswith("data: "))
+        payload = json.loads(data_line.removeprefix("data: "))
+        assert response.status_code == 200
+        assert response.text.startswith("id: \nevent: job.replay_error\n")
+        assert payload["code"] == "malformed_cursor"
+        assert payload["requested_last_event_id"] == cursor
+        assert payload["oldest_retained_event_id"] == "1"
+        assert payload["newest_retained_event_id"] == "1"
+
+
+def test_event_stream_returns_replay_error_for_future_cursor():
+    app = create_app(settings=_settings(), store=MemoryJobStore(), start_background=False)
+    with TestClient(app) as client:
+        created = _create(client).json()
+
+        response = client.get(
+            f"/optimize/{created['id']}/events",
+            headers={"Last-Event-ID": "2"},
+        )
+
+        data_line = next(line for line in response.text.splitlines() if line.startswith("data: "))
+        payload = json.loads(data_line.removeprefix("data: "))
+        assert response.status_code == 200
+        assert response.text.startswith("id: \nevent: job.replay_error\n")
+        assert payload["code"] == "future_cursor"
+        assert payload["requested_last_event_id"] == "2"
+        assert payload["oldest_retained_event_id"] == "1"
+        assert payload["newest_retained_event_id"] == "1"
 
 
 def test_queue_capacity_is_reported_as_429():

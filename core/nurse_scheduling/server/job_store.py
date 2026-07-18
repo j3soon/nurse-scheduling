@@ -21,7 +21,7 @@ from collections.abc import Iterator, Sequence
 from datetime import datetime
 from typing import Protocol
 
-from .jobs.models import Job, JobEvent, StoredArtifact, StoreLimits
+from .jobs.models import Job, JobEvent, JobReplayError, JobReplayGap, StoredArtifact, StoreLimits
 
 
 class JobStore(Protocol):
@@ -95,10 +95,12 @@ class JobStore(Protocol):
         job_id: str,
         after_id: str | None,
         keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
+    ) -> Iterator[JobEvent | JobReplayError | JobReplayGap | None]:
         """Yield new job events, using `None` as a keepalive signal.
 
         Iteration blocks up to the keepalive interval when no newer event exists.
+        Yield a replay error or replay gap when the requested cursor cannot be
+        used for continuous replay.
 
         Raises:
             JobNotFoundError: If the job does not exist or is deleted while streaming.

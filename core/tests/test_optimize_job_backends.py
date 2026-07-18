@@ -42,6 +42,8 @@ from nurse_scheduling.server.errors import (
 from nurse_scheduling.server.jobs.controller import JobController, utc_now
 from nurse_scheduling.server.jobs.models import (
     JobFailure,
+    JobReplayError,
+    JobReplayGap,
     JobState,
     OptimizationOutcome,
     OptimizationResult,
@@ -359,15 +361,128 @@ def test_live_event_stream_emits_keepalive_after_catching_up(store):
     assert next(resumed) is None
 
 
-def test_memory_event_stream_replays_from_invalid_cursor():
-    store = MemoryJobStore()
+@pytest.mark.parametrize("cursor", ["invalid", "abc", "1-", "-1", "1-abc", "$"])
+def test_store_event_stream_rejects_malformed_cursor(store, cursor):
     controller = _controller(store)
     created = _create(controller)
 
-    event = next(store.stream_events(created.id, after_id="invalid", keepalive_seconds=0.01))
+    events = store.stream_events(created.id, after_id=cursor, keepalive_seconds=0.01)
+    replay_error = next(events)
 
-    assert event is not None
-    assert event.type == "job.state_changed"
+    assert isinstance(replay_error, JobReplayError)
+    assert replay_error.code == "malformed_cursor"
+    assert replay_error.requested_last_event_id == cursor
+    assert list(events) == []
+
+
+def test_active_store_event_stream_marks_an_expired_cursor_gap(store_factory):
+    store = store_factory(max_events_per_job=4)
+    controller = _controller(store)
+    created = _create(controller)
+    initial = next(store.stream_events(created.id, after_id=None, keepalive_seconds=0.01))
+    assert initial is not None
+    assert not isinstance(initial, JobReplayGap)
+    for index in range(6):
+        controller.record_event(created.id, "job.test", {"index": index})
+
+    resumed = store.stream_events(created.id, after_id=initial.id, keepalive_seconds=0.01)
+    gap = next(resumed)
+
+    assert isinstance(gap, JobReplayGap)
+    assert gap.requested_last_event_id == initial.id
+    assert gap.oldest_retained_event_id is not None
+    assert gap.replay_checkpoint_id is not None
+    assert gap.job.state == JobState.QUEUED
+    assert next(resumed) is None
+
+
+def test_terminal_store_event_stream_marks_an_expired_cursor_gap(store_factory):
+    store = store_factory(max_events_per_job=4)
+    controller = _controller(store)
+    created = _create(controller)
+    initial = next(store.stream_events(created.id, after_id=None, keepalive_seconds=0.01))
+    assert initial is not None
+    assert not isinstance(initial, JobReplayGap)
+    for index in range(6):
+        controller.record_event(created.id, "job.test", {"index": index})
+    controller.cancel_job(created.id)
+
+    resumed = store.stream_events(created.id, after_id=initial.id, keepalive_seconds=0.01)
+    gap = next(resumed)
+
+    assert isinstance(gap, JobReplayGap)
+    assert gap.job.state == JobState.CANCELLED
+    assert list(resumed) == []
+
+
+def test_store_event_stream_marks_a_gap_when_all_events_are_missing(store):
+    controller = _controller(store)
+    created = _create(controller)
+    initial = next(store.stream_events(created.id, after_id=None, keepalive_seconds=0.01))
+    assert initial is not None
+    assert not isinstance(initial, JobReplayGap)
+    if isinstance(store, MemoryJobStore):
+        store._records[created.id].events.clear()
+    else:
+        store._redis.delete(store._events_key(created.id))
+
+    resumed = store.stream_events(created.id, after_id=initial.id, keepalive_seconds=0.01)
+    gap = next(resumed)
+
+    assert isinstance(gap, JobReplayGap)
+    assert gap.oldest_retained_event_id is None
+    assert gap.replay_checkpoint_id is None
+    assert gap.job.state == JobState.QUEUED
+    assert next(resumed) is None
+
+
+def test_store_event_stream_marks_a_gap_for_missing_cursor_within_retained_range(store):
+    controller = _controller(store)
+    created = _create(controller)
+    controller.record_event(created.id, "job.test", {"index": 1})
+    controller.record_event(created.id, "job.test", {"index": 2})
+    events = store.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
+    retained = [next(events), next(events), next(events)]
+    missing_id = retained[1].id
+    assert missing_id is not None
+
+    if isinstance(store, MemoryJobStore):
+        record = store._records[created.id]
+        record.events = [event for event in record.events if event.id != missing_id]
+    else:
+        store._redis.xdel(store._events_key(created.id), missing_id)
+
+    resumed = store.stream_events(created.id, after_id=missing_id, keepalive_seconds=0.01)
+    gap = next(resumed)
+
+    assert isinstance(gap, JobReplayGap)
+    assert gap.requested_last_event_id == missing_id
+    assert gap.oldest_retained_event_id == retained[0].id
+    assert gap.replay_checkpoint_id == retained[2].id
+    assert next(resumed) is None
+
+
+def test_store_event_stream_rejects_future_cursor(store):
+    controller = _controller(store)
+    created = _create(controller)
+    initial = next(store.stream_events(created.id, after_id=None, keepalive_seconds=0.01))
+    assert initial is not None
+    assert initial.id is not None
+    if isinstance(store, MemoryJobStore):
+        future_id = str(int(initial.id) + 1)
+    else:
+        milliseconds, sequence = (int(part) for part in initial.id.split("-"))
+        future_id = f"{milliseconds + 1}-{sequence}"
+
+    events = store.stream_events(created.id, after_id=future_id, keepalive_seconds=0.01)
+    replay_error = next(events)
+
+    assert isinstance(replay_error, JobReplayError)
+    assert replay_error.code == "future_cursor"
+    assert replay_error.requested_last_event_id == future_id
+    assert replay_error.oldest_retained_event_id == initial.id
+    assert replay_error.newest_retained_event_id == initial.id
+    assert list(events) == []
 
 
 def test_redis_store_uses_artifact_metadata_defaults(fake_redis_store_factory):
@@ -532,6 +647,19 @@ def test_controller_cancellation_policy_is_shared_by_stores(store):
     assert cancelling.state == JobState.CANCELLING
     failed = controller.fail_job(running.id, JobFailure("solver_failed", "ignored after cancellation"))
     assert failed.state == JobState.CANCELLED
+
+
+def test_early_completion_control_event_payload_is_stable(store):
+    controller = _controller(store)
+    created = _create(controller)
+    claimed = controller.claim_next_job("worker")
+    assert claimed is not None
+
+    controller.request_early_completion(created.id)
+    events = controller.stream_events(created.id, after_id=None, keepalive_seconds=0.01)
+    control_event = next(event for event in events if event is not None and event.type == "job.control_changed")
+
+    assert control_event.data == {"early_completion_requested": True}
 
 
 def test_store_enforces_atomic_pending_capacity(store):

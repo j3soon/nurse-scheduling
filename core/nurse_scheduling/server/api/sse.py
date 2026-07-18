@@ -29,5 +29,5 @@ def format_sse_event(event: JobEvent) -> str:
         TypeError: If the event payload contains a value unsupported by JSON.
     """
     event_id = f"id: {event.id}\n" if event.id is not None else ""
-    payload = {"occurred_at": event.occurred_at.isoformat(), **event.data}
+    payload = {**event.data, "occurred_at": event.occurred_at.isoformat()}
     return f"{event_id}event: {event.type}\ndata: {json.dumps(payload)}\n\n"

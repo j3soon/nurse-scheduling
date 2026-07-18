@@ -31,7 +31,7 @@ from ...solver_interface import (
     serialize_solver_progress,
 )
 from ..errors import OptimizationExecutionError
-from .models import Job, OptimizationOutcome, OptimizationResult, StoredArtifact
+from .models import Job, JobEventType, OptimizationOutcome, OptimizationResult, StoredArtifact
 
 
 EventCallback = Callable[[str, dict[str, Any], int | None], None]
@@ -70,10 +70,10 @@ class OptimizationRunner:
         def publish_progress(payload: ScheduleProgress) -> None:
             """Normalize scheduler progress into job-domain events."""
             if isinstance(payload, SchedulePhaseProgress):
-                event_callback("job.phase_changed", serialize_schedule_phase_progress(payload), None)
+                event_callback(JobEventType.PHASE_CHANGED, serialize_schedule_phase_progress(payload), None)
                 return
             data = serialize_solver_progress(payload, include_export_summary=True)
-            event_callback("job.progressed", data, payload.currentBestScore)
+            event_callback(JobEventType.PROGRESSED, data, payload.currentBestScore)
 
         schedule_result = scheduler.schedule(
             file_content=input_bytes,
