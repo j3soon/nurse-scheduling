@@ -22,7 +22,8 @@
 # This production diagnostic exercises the configured public API endpoint:
 #
 # - Discovers runtime identities from three sources:
-#   1. /info responses sampled over 100 fresh connections by default.
+#   1. /info responses sampled concurrently over 100 fresh connections by
+#      default, with bounded request concurrency.
 #   2. Queued job.state_changed SSE events, whose runtime identifies the HTTP
 #      process that accepted each job.
 #   3. Running job.state_changed SSE events, whose runtime and worker_id identify
@@ -41,9 +42,10 @@
 #   early. Processes the originally queued jobs in batches matching the peak
 #   observed concurrency, waits for each batch to run, then finishes every job.
 # - Makes bounded cancellation and deletion attempts for every submitted job,
-#   even after failures. Prints a minimal pass, fail, or inconclusive summary and
-#   saves identity samples, job histories, findings, and request errors in a
-#   timestamped JSON report. The exit code does not control or stop the backend.
+#   even after failures. Prints an immediate connection confirmation, a minimal
+#   pass, fail, or inconclusive summary, and phase timings. Saves identity
+#   samples, job histories, findings, and request errors in a timestamped JSON
+#   report. The exit code does not control or stop the backend.
 # - Results are observational. Public routing and unrelated users can hide
 #   instances or interfere with capacity and queue timing, so unusual results do
 #   not by themselves prove that the code or deployment is incorrect.
@@ -54,7 +56,11 @@ import json
 import math
 import os
 import sys
+import threading
 import time
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,6 +77,15 @@ DEFAULT_SCENARIO_PATH = (
 )
 TERMINAL_STATES = {"completed", "cancelled", "failed"}
 QUEUED_JOB_TARGET = 5
+PHASE_NAMES = (
+    "readiness",
+    "info_sampling",
+    "info_analysis",
+    "queue_saturation",
+    "queue_transition",
+    "identity_analysis",
+    "cleanup",
+)
 RUNTIME_IDENTITY_FIELDS = {
     "service_name",
     "api_version",
@@ -107,6 +122,7 @@ class DiagnosticConfig:
     scenario_path: Path = DEFAULT_SCENARIO_PATH
     report_dir: Path = Path("/tmp/nurse-scheduling-diagnostics")
     info_samples: int = 100
+    parallel_requests: int = 10
     expected_concurrency: int = 3
     max_jobs: int = 128
     queue_stable_seconds: float = 10.0
@@ -131,7 +147,13 @@ class DiagnosticConfig:
             raise ValueError("DIAGNOSTIC_TARGET_URL must not contain a path, query, or fragment")
         if not self.scenario_path.is_file():
             raise ValueError(f"Diagnostic scenario was not found: {self.scenario_path}")
-        for name in ("info_samples", "expected_concurrency", "max_jobs", "job_timeout_seconds"):
+        for name in (
+            "info_samples",
+            "parallel_requests",
+            "expected_concurrency",
+            "max_jobs",
+            "job_timeout_seconds",
+        ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
         for name in (
@@ -163,6 +185,7 @@ class DiagnosticConfig:
             scenario_path=scenario_path or Path(os.getenv("DIAGNOSTIC_SCENARIO_PATH", str(DEFAULT_SCENARIO_PATH))),
             report_dir=report_dir or Path(os.getenv("DIAGNOSTIC_REPORT_DIR", "/tmp/nurse-scheduling-diagnostics")),
             info_samples=_positive_int_env("DIAGNOSTIC_INFO_SAMPLES", 100),
+            parallel_requests=_positive_int_env("DIAGNOSTIC_PARALLEL_REQUESTS", 10),
             expected_concurrency=_positive_int_env("DIAGNOSTIC_EXPECTED_CONCURRENCY", 3),
             max_jobs=_positive_int_env("DIAGNOSTIC_MAX_JOBS", 128),
             queue_stable_seconds=_positive_float_env("DIAGNOSTIC_QUEUE_STABLE_SECONDS", 10.0),
@@ -233,6 +256,9 @@ class PublicDiagnostic:
         self.batch_sizes: list[int] = []
         self.queue_transition = "not_run"
         self.cleanup = "not_run"
+        self.connection_announced = False
+        self.phase_durations_seconds = {name: 0.0 for name in PHASE_NAMES}
+        self._state_lock = threading.Lock()
 
     def _new_client(self) -> httpx.Client:
         """Create a client with an independent connection pool."""
@@ -247,8 +273,9 @@ class PublicDiagnostic:
     def _add_finding(self, level: str, code: str, message: str) -> None:
         """Append one deduplicated finding."""
         finding = Finding(level=level, code=code, message=message)
-        if finding not in self.findings:
-            self.findings.append(finding)
+        with self._state_lock:
+            if finding not in self.findings:
+                self.findings.append(finding)
 
     def _fail(self, code: str, message: str) -> None:
         """Record a definite diagnostic failure."""
@@ -266,8 +293,18 @@ class PublicDiagnostic:
     def _record_request_error(self, operation: str, error: object) -> None:
         """Retain bounded request details outside the concise findings."""
         detail = f"{operation}: {error}"
-        if detail not in self.request_errors and len(self.request_errors) < 100:
-            self.request_errors.append(detail)
+        with self._state_lock:
+            if detail not in self.request_errors and len(self.request_errors) < 100:
+                self.request_errors.append(detail)
+
+    @contextmanager
+    def _measure_phase(self, name: str) -> Iterator[None]:
+        """Accumulate elapsed time for one diagnostic phase."""
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            self.phase_durations_seconds[name] += time.monotonic() - started
 
     def _sleep(self, seconds: float) -> None:
         """Sleep without extending past the overall workflow deadline."""
@@ -339,22 +376,49 @@ class PublicDiagnostic:
             self._record_request_error("GET /info", error)
         return sample
 
+    def _announce_connection(self, sample: dict[str, Any]) -> None:
+        """Print once after receiving the first HTTP response from the target."""
+        if self.connection_announced or sample.get("statusCode") is None:
+            return
+        body = sample.get("body")
+        status = body.get("status") if isinstance(body, dict) else "unknown"
+        print(
+            f"CONNECTED target={self.config.target_url} http_status={sample['statusCode']} status={status}",
+            flush=True,
+        )
+        self.connection_announced = True
+
+    def _sample_info_concurrently(self, count: int) -> list[dict[str, Any]]:
+        """Collect independent info samples with bounded concurrency."""
+        if count <= 0:
+            return []
+        workers = min(count, self.config.parallel_requests)
+        if workers == 1:
+            return [self._sample_info() for _ in range(count)]
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(self._sample_info) for _ in range(count)]
+            return [future.result() for future in futures]
+
     def _collect_info(self) -> bool:
         """Wait for one ready response, then collect the configured sample count."""
-        startup_deadline = min(
-            self.workflow_deadline,
-            time.monotonic() + self.config.startup_timeout_seconds,
-        )
         ready_seen = False
-        while time.monotonic() < startup_deadline:
-            sample = self._sample_info()
-            body = sample.get("body")
-            ready_seen = sample.get("statusCode") == 200 and isinstance(body, dict) and body.get("status") == "ready"
-            if ready_seen:
-                self.info_samples.append(sample)
-                break
-            self.startup_attempts.append(sample)
-            self._sleep(min(2.0, self.config.poll_seconds))
+        with self._measure_phase("readiness"):
+            startup_deadline = min(
+                self.workflow_deadline,
+                time.monotonic() + self.config.startup_timeout_seconds,
+            )
+            while time.monotonic() < startup_deadline:
+                sample = self._sample_info()
+                self._announce_connection(sample)
+                body = sample.get("body")
+                ready_seen = (
+                    sample.get("statusCode") == 200 and isinstance(body, dict) and body.get("status") == "ready"
+                )
+                if ready_seen:
+                    self.info_samples.append(sample)
+                    break
+                self.startup_attempts.append(sample)
+                self._sleep(min(2.0, self.config.poll_seconds))
 
         if not ready_seen:
             self._mark_inconclusive(
@@ -363,8 +427,9 @@ class PublicDiagnostic:
             )
             return False
 
-        while len(self.info_samples) < self.config.info_samples and time.monotonic() < self.workflow_deadline:
-            self.info_samples.append(self._sample_info())
+        with self._measure_phase("info_sampling"):
+            remaining = self.config.info_samples - len(self.info_samples)
+            self.info_samples.extend(self._sample_info_concurrently(remaining))
         return True
 
     def _analyze_info(self) -> None:
@@ -557,6 +622,19 @@ class PublicDiagnostic:
         self._job_for_id(job_id).observe(str(body.get("state")) if body.get("state") is not None else None)
         return body
 
+    def _get_jobs(self, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetch independent job snapshots with bounded concurrency."""
+        if not job_ids:
+            return {}
+        workers = min(len(job_ids), self.config.parallel_requests)
+        if workers == 1:
+            bodies = [self._get_job(job_id) for job_id in job_ids]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(self._get_job, job_id) for job_id in job_ids]
+                bodies = [future.result() for future in futures]
+        return {job_id: body for job_id, body in zip(job_ids, bodies, strict=True) if body is not None}
+
     def _jobs_stay_queued(self, jobs: list[DiagnosticJob]) -> bool:
         """Return whether all supplied jobs remain queued for the stable interval."""
         stable_started: float | None = None
@@ -565,8 +643,8 @@ class PublicDiagnostic:
                 snapshots = self._snapshot_jobs()
                 states = [snapshots.get(job.id, {}).get("state") for job in jobs]
             else:
-                bodies = [self._get_job(job.id) for job in jobs]
-                states = [body.get("state") if body is not None else None for body in bodies]
+                snapshots = self._get_jobs([job.id for job in jobs])
+                states = [snapshots.get(job.id, {}).get("state") for job in jobs]
             if states != ["queued"] * len(jobs):
                 return False
             if stable_started is None:
@@ -603,11 +681,7 @@ class PublicDiagnostic:
 
     def _snapshot_jobs(self) -> dict[str, dict[str, Any]]:
         """Fetch one current snapshot of every tracked diagnostic job."""
-        snapshots: dict[str, dict[str, Any]] = {}
-        for job in self.jobs:
-            body = self._get_job(job.id)
-            if body is not None:
-                snapshots[job.id] = body
+        snapshots = self._get_jobs([job.id for job in self.jobs])
         running = sum(body.get("state") == "running" for body in snapshots.values())
         self.max_running = max(self.max_running, running)
         return snapshots
@@ -712,12 +786,11 @@ class PublicDiagnostic:
         deadline = min(self.workflow_deadline, time.monotonic() + timeout_seconds)
         terminal: dict[str, dict[str, Any]] = {}
         while time.monotonic() < deadline:
-            for job_id in job_ids:
-                if job_id in terminal:
-                    continue
-                body = self._get_job(job_id)
-                if body is not None and body.get("state") in TERMINAL_STATES:
-                    terminal[job_id] = body
+            pending_ids = [job_id for job_id in job_ids if job_id not in terminal]
+            snapshots = self._get_jobs(pending_ids)
+            terminal.update(
+                {job_id: body for job_id, body in snapshots.items() if body.get("state") in TERMINAL_STATES}
+            )
             if len(terminal) == len(job_ids):
                 return terminal
             if self.visibility_split:
@@ -729,12 +802,10 @@ class PublicDiagnostic:
         """Wait for all requested queued jobs to become running."""
         deadline = min(self.workflow_deadline, time.monotonic() + timeout_seconds)
         while time.monotonic() < deadline:
-            states: list[str] = []
-            for job_id in job_ids:
-                body = self._get_job(job_id)
-                if body is None:
-                    return False
-                states.append(str(body.get("state")))
+            snapshots = self._get_jobs(job_ids)
+            if len(snapshots) != len(job_ids):
+                return False
+            states = [str(snapshots[job_id].get("state")) for job_id in job_ids]
             if states and all(state == "running" for state in states):
                 return True
             if any(state in TERMINAL_STATES for state in states):
@@ -934,22 +1005,27 @@ class PublicDiagnostic:
         """Execute all diagnostic phases and return a structured final report."""
         try:
             ready = self._collect_info()
-            self._analyze_info()
+            with self._measure_phase("info_analysis"):
+                self._analyze_info()
             if ready and time.monotonic() < self.workflow_deadline:
-                queued_ids = self._submit_until_queue_is_stable()
+                with self._measure_phase("queue_saturation"):
+                    queued_ids = self._submit_until_queue_is_stable()
                 if len(queued_ids) >= QUEUED_JOB_TARGET and not self.visibility_split:
-                    self._exercise_queue_transition(queued_ids)
+                    with self._measure_phase("queue_transition"):
+                        self._exercise_queue_transition(queued_ids)
         except Exception as error:
             self._record_request_error("unexpected diagnostic error", f"{type(error).__name__}: {error}")
             self._mark_inconclusive("unexpected_error", "The diagnostic stopped after an unexpected internal error.")
         finally:
-            for job in self.jobs:
-                needs_accepted = job.id not in self.accepted_identity_jobs
-                needs_runner = "running" in job.transitions and job.id not in self.runner_identity_jobs
-                if needs_accepted or needs_runner:
-                    self._collect_job_identities(job.id)
-            self._analyze_runtime_identities()
-            self._cleanup_jobs()
+            with self._measure_phase("identity_analysis"):
+                for job in self.jobs:
+                    needs_accepted = job.id not in self.accepted_identity_jobs
+                    needs_runner = "running" in job.transitions and job.id not in self.runner_identity_jobs
+                    if needs_accepted or needs_runner:
+                        self._collect_job_identities(job.id)
+                self._analyze_runtime_identities()
+            with self._measure_phase("cleanup"):
+                self._cleanup_jobs()
         return self.build_report()
 
     def _identity_counts(self) -> dict[str, int]:
@@ -977,6 +1053,21 @@ class PublicDiagnostic:
             ),
         }
 
+    def _job_backend(self) -> str:
+        """Summarize the observed job store implementation."""
+        backends = sorted(
+            {
+                str(identity["job_backend"])
+                for identity in self._runtime_identities()
+                if identity.get("job_backend") is not None
+            }
+        )
+        if not backends:
+            return "unknown"
+        if len(backends) > 1:
+            return "mixed"
+        return backends[0]
+
     def _outcome(self) -> str:
         """Return pass, fail, or inconclusive from accumulated findings."""
         if any(finding.level == "error" for finding in self.findings):
@@ -992,6 +1083,8 @@ class PublicDiagnostic:
         summary = {
             "outcome": self._outcome(),
             "target": self.config.target_url,
+            "job_type": self.config.scenario_path.stem,
+            "job_backend": self._job_backend(),
             **counts,
             "maxRunning": self.max_running,
             "queueTransition": self.queue_transition,
@@ -1006,8 +1099,10 @@ class PublicDiagnostic:
                 "startedAt": self.started_at.isoformat(),
                 "finishedAt": finished_at.isoformat(),
                 "expectedConcurrency": self.config.expected_concurrency,
+                "parallelRequests": self.config.parallel_requests,
                 "submittedJobs": len(self.jobs),
                 "batchSizes": self.batch_sizes,
+                "phaseDurationsSeconds": {name: round(self.phase_durations_seconds[name], 3) for name in PHASE_NAMES},
                 "startupSampling": {
                     "attempts": len(self.startup_attempts),
                     "distinctReturns": self._sample_statistics(self.startup_attempts),
@@ -1040,12 +1135,19 @@ def format_summary(report: dict[str, Any]) -> str:
     """Format the minimal first line of a structured diagnostic report."""
     summary = report["summary"]
     return (
-        f"{str(summary['outcome']).upper()} target={summary['target']} "
+        f"{str(summary['outcome']).upper()} target={summary['target']} job_type={summary['job_type']} "
+        f"job_backend={summary['job_backend']} "
         f"versions={summary['versions']} deployments={summary['deployments']} "
         f"instances={summary['instances']} runners={summary['runners']} stores={summary['stores']} "
         f"maxRunning={summary['maxRunning']} queue={str(summary['queueTransition']).upper()} "
         f"cleanup={str(summary['cleanup']).upper()} duration={summary['durationSeconds']}s"
     )
+
+
+def format_phase_timings(report: dict[str, Any]) -> str:
+    """Format one compact line of phase durations."""
+    timings = report["details"]["phaseDurationsSeconds"]
+    return "TIMING " + " ".join(f"{name}={timings[name]}s" for name in PHASE_NAMES)
 
 
 def write_report(report: dict[str, Any], report_dir: Path) -> Path:
@@ -1061,6 +1163,7 @@ def write_report(report: dict[str, Any], report_dir: Path) -> Path:
 def print_report(report: dict[str, Any], report_path: Path | None = None) -> None:
     """Print the compact summary first and optional details afterward."""
     print(format_summary(report))
+    print(format_phase_timings(report))
     for finding in report["findings"]:
         print(f"{str(finding['level']).upper()} {finding['code']}: {finding['message']}")
     print("NOTE results are observational. Routing and unrelated users can make checks inconclusive.")

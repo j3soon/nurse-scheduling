@@ -20,14 +20,17 @@
 # This test is mostly AI generated.
 
 import json
+import threading
 from pathlib import Path
 
 import httpx
 
 from nurse_scheduling.server.diagnostic import (
     DiagnosticConfig,
+    DiagnosticJob,
     PublicDiagnostic,
     exit_code,
+    format_phase_timings,
     format_summary,
     write_report,
 )
@@ -152,6 +155,7 @@ def _config(scenario: Path, report_dir: Path, **updates) -> DiagnosticConfig:
         "scenario_path": scenario,
         "report_dir": report_dir,
         "info_samples": 3,
+        "parallel_requests": 3,
         "expected_concurrency": 3,
         "max_jobs": 8,
         "queue_stable_seconds": 0.002,
@@ -172,11 +176,12 @@ def test_public_diagnostic_defaults_cover_long_batched_workflow():
     config = DiagnosticConfig()
 
     assert config.info_samples == 100
+    assert config.parallel_requests == 10
     assert config.workflow_timeout_seconds == 600
     assert config.job_timeout_seconds == 60 * 60
 
 
-def test_public_diagnostic_exercises_queue_and_cleans_up(tmp_path):
+def test_public_diagnostic_exercises_queue_and_cleans_up(tmp_path, capsys):
     scenario = tmp_path / "scenario.yaml"
     scenario.write_text("apiVersion: alpha\n", encoding="utf-8")
     api = QueueApi()
@@ -190,6 +195,8 @@ def test_public_diagnostic_exercises_queue_and_cleans_up(tmp_path):
     assert report["summary"] == {
         "outcome": "pass",
         "target": "https://backend.example.test",
+        "job_type": "scenario",
+        "job_backend": "redis",
         "versions": 1,
         "deployments": 1,
         "instances": 3,
@@ -203,6 +210,16 @@ def test_public_diagnostic_exercises_queue_and_cleans_up(tmp_path):
     assert report["findings"] == []
     assert report["details"]["submittedJobs"] == 8
     assert report["details"]["batchSizes"] == [3, 2]
+    assert set(report["details"]["phaseDurationsSeconds"]) == {
+        "readiness",
+        "info_sampling",
+        "info_analysis",
+        "queue_saturation",
+        "queue_transition",
+        "identity_analysis",
+        "cleanup",
+    }
+    assert all(value >= 0 for value in report["details"]["phaseDurationsSeconds"].values())
     assert report["details"]["acceptedHttpWorkers"]["observedJobs"] == 8
     assert len(report["details"]["acceptedHttpWorkers"]["distinctIdentities"]) == 3
     assert report["details"]["runners"]["observedJobs"] == 8
@@ -222,11 +239,54 @@ def test_public_diagnostic_exercises_queue_and_cleans_up(tmp_path):
     assert api.jobs == {}
     assert exit_code(report) == 0
     assert format_summary(report).startswith(
-        "PASS target=https://backend.example.test versions=1 deployments=1 instances=3 runners=3 stores=1 maxRunning=3"
+        "PASS target=https://backend.example.test job_type=scenario "
+        "job_backend=redis versions=1 deployments=1 instances=3 runners=3 stores=1 maxRunning=3"
     )
+    assert format_phase_timings(report).startswith("TIMING readiness=")
+    assert capsys.readouterr().out == ("CONNECTED target=https://backend.example.test http_status=200 status=ready\n")
 
     report_path = write_report(report, tmp_path)
     assert report_path.read_text(encoding="utf-8").endswith("\n")
+
+
+def test_info_samples_and_job_snapshots_use_bounded_parallel_requests(tmp_path):
+    scenario = tmp_path / "parallel.yaml"
+    scenario.write_text("apiVersion: alpha\n", encoding="utf-8")
+    lock = threading.Lock()
+    info_barrier = threading.Barrier(3)
+    snapshot_barrier = threading.Barrier(3)
+    info_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal info_calls
+        if request.url.path == "/info":
+            with lock:
+                info_calls += 1
+                call = info_calls
+            if call > 1:
+                info_barrier.wait(timeout=1)
+            return httpx.Response(
+                200,
+                headers={"Cache-Control": "no-store"},
+                json={"status": "ready", **QueueApi._identity(call)},
+            )
+        if request.url.path.startswith("/optimize/"):
+            snapshot_barrier.wait(timeout=1)
+            return httpx.Response(200, json={"id": request.url.path.rsplit("/", 1)[-1], "state": "running"})
+        return httpx.Response(404)
+
+    diagnostic = PublicDiagnostic(
+        _config(scenario, tmp_path, info_samples=4, parallel_requests=3),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert diagnostic._collect_info()
+    diagnostic.jobs = [DiagnosticJob(id=f"job-{index}", input_name="parallel.yaml") for index in range(3)]
+    snapshots = diagnostic._snapshot_jobs()
+
+    assert info_calls == 4
+    assert set(snapshots) == {"job-0", "job-1", "job-2"}
+    assert diagnostic.max_running == 3
 
 
 def test_job_events_expand_identity_beyond_info_routing(tmp_path):
@@ -343,6 +403,7 @@ def test_info_sampling_reports_mixed_backends_and_stores(tmp_path):
 
     codes = {finding["code"] for finding in report["findings"]}
     assert report["summary"]["outcome"] == "fail"
+    assert report["summary"]["job_backend"] == "mixed"
     assert report["summary"]["stores"] == 2
     assert "mixed_job_backends" in codes
     assert "mixed_job_stores" in codes

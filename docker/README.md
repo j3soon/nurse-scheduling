@@ -154,6 +154,7 @@ Set `DIAGNOSTIC_TARGET_URL` in the environment file to select production,
 staging, or another public backend. Relevant defaults are:
 
 - `DIAGNOSTIC_INFO_SAMPLES=100`
+- `DIAGNOSTIC_PARALLEL_REQUESTS=10`
 - `DIAGNOSTIC_EXPECTED_CONCURRENCY=3` for the Redis deployment
 - `DIAGNOSTIC_MAX_JOBS=128`
 - `DIAGNOSTIC_QUEUE_STABLE_SECONDS=10`
@@ -163,26 +164,31 @@ staging, or another public backend. Relevant defaults are:
 The workflow timeout bounds startup sampling, job submission, and queue
 transition checks. Cleanup and individual solver jobs have separate bounds.
 
-The diagnostic samples `/info`, then merges those identities with the API
-process recorded when each job is accepted and the actual runner recorded when
-it starts. It submits the real 87-person scenario until five jobs remain queued
-and measures the peak number of its own running jobs. It cancels the first
-running job and finishes the others using their feasible results. Queued jobs
-are then finished in batches matching the observed peak concurrency. Every
-submitted job has a one-hour solver timeout and bounded cleanup.
+The diagnostic samples `/info` and job snapshots with bounded concurrency, then
+merges those identities with the API process recorded when each job is accepted
+and the actual runner recorded when it starts. It submits the real 87-person
+scenario until five jobs remain queued and measures the peak number of its own
+running jobs. It cancels the first running job and finishes the others using
+their feasible results. Queued jobs are then finished in batches matching the
+observed peak concurrency. Every submitted job has a one-hour solver timeout
+and bounded cleanup.
 
-The first report line is intentionally compact:
+The first successful response is printed immediately. The concluding summary
+includes the observed job backend. The example timing values below only show
+the output format and are not measured deployment performance:
 
 ```text
-PASS target=https://api.nursescheduling.org versions=1 deployments=1 instances=3 runners=3 stores=1 maxRunning=3 queue=PASS cleanup=PASS duration=48.0s
+CONNECTED target=https://api.nursescheduling.org http_status=200 status=ready
+PASS target=https://api.nursescheduling.org job_type=large-ward-with-87-people-2025-11 job_backend=redis versions=1 deployments=1 instances=3 runners=3 stores=1 maxRunning=3 queue=PASS cleanup=PASS duration=148.0s
+TIMING readiness=0.2s info_sampling=1.5s info_analysis=0.0s queue_saturation=12.0s queue_transition=132.0s identity_analysis=0.1s cleanup=2.2s
 ```
 
 Timestamped JSON reports are written to the project-scoped
 `diagnostic-reports` named volume. The summary and findings appear first,
-followed by distinct sampled responses and job identities with occurrence
-counts, job transitions, request errors, and cleanup details. Exit codes are
-`0` for pass, `1` for a definite failure, and `2` for an inconclusive run. Copy
-reports to the host when needed:
+followed by phase durations, distinct sampled responses, and job identities
+with occurrence counts, job transitions, request errors, and cleanup details.
+Exit codes are `0` for pass, `1` for a definite failure, and `2` for an
+inconclusive run. Copy reports to the host when needed:
 
 ```sh
 mkdir -p diagnostic-reports
