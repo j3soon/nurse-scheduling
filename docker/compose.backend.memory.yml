@@ -1,18 +1,27 @@
-name: nurse-scheduling-backend
+name: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}
+
+x-api-build: &api-build
+  context: ${API_BUILD_CONTEXT:-.}
+  dockerfile: ${API_DOCKERFILE:-Dockerfile.api}
 
 services:
   api:
-    build:
-      context: ${API_BUILD_CONTEXT:-.}
-      dockerfile: ${API_DOCKERFILE:-Dockerfile.api}
+    image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
+    build: *api-build
     restart: unless-stopped
+    environment:
+      JOB_BACKEND: memory
     expose:
       - "8000"
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/ready"]
+      # Docker's default interval waits too long during startup.
+      interval: 3s
+      timeout: 3s
+      retries: 30
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -21,3 +30,28 @@ services:
       api:
         condition: service_healthy
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+
+  diagnostic:
+    profiles: ["diagnostic"]
+    image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
+    build: *api-build
+    restart: "no"
+    depends_on:
+      cloudflared:
+        condition: service_started
+    environment:
+      DIAGNOSTIC_TARGET_URL: ${DIAGNOSTIC_TARGET_URL:-https://api.nursescheduling.org}
+      DIAGNOSTIC_INFO_SAMPLES: ${DIAGNOSTIC_INFO_SAMPLES:-100}
+      DIAGNOSTIC_PARALLEL_REQUESTS: ${DIAGNOSTIC_PARALLEL_REQUESTS:-10}
+      DIAGNOSTIC_EXPECTED_CONCURRENCY: ${DIAGNOSTIC_EXPECTED_CONCURRENCY:-1}
+      DIAGNOSTIC_MAX_JOBS: ${DIAGNOSTIC_MAX_JOBS:-128}
+      DIAGNOSTIC_QUEUE_STABLE_SECONDS: ${DIAGNOSTIC_QUEUE_STABLE_SECONDS:-10}
+      DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS: ${DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS:-600}
+      DIAGNOSTIC_JOB_TIMEOUT_SECONDS: ${DIAGNOSTIC_JOB_TIMEOUT_SECONDS:-3600}
+      DIAGNOSTIC_REPORT_DIR: /reports
+    command: ["python", "-m", "nurse_scheduling.server.diagnostic"]
+    volumes:
+      - diagnostic-reports:/reports
+
+volumes:
+  diagnostic-reports:

@@ -100,14 +100,14 @@ const createSchedulingData = (overrides = {}) => ({
 
 const healthyResponse = (overrides: Partial<{
   status: string;
-  apiVersion: string;
-  appVersion: string;
+  api_version: string;
+  app_version: string;
 }> = {}) => ({
   ok: true,
   json: vi.fn().mockResolvedValue({
-    status: 'ok',
-    apiVersion: 'alpha',
-    appVersion: 'frontend-test',
+    status: 'ready',
+    api_version: 'alpha',
+    app_version: 'frontend-test',
     ...overrides,
   }),
 });
@@ -180,18 +180,18 @@ describe('optimize backend server selection', () => {
         endpoint: PRODUCTION_API_URL,
         index: 1,
         health: {
-          status: 'ok',
-          apiVersion: 'alpha',
-          appVersion: 'newer-backend',
+          status: 'ready',
+          api_version: 'alpha',
+          app_version: 'newer-backend',
         },
       },
       {
         endpoint: LOCAL_API_URL,
         index: 0,
         health: {
-          status: 'ok',
-          apiVersion: 'alpha',
-          appVersion: 'older-backend',
+          status: 'ready',
+          api_version: 'alpha',
+          app_version: 'older-backend',
         },
       },
     ]);
@@ -309,14 +309,13 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.queryByText(/check that your frontend and backend versions match/i)).not.toBeInTheDocument();
   });
 
-  it('shows backend health status from the health endpoint', async () => {
+  it('shows backend readiness and version status from the info endpoint', async () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({
-        status: 'ok',
-        version: 'alpha',
-        apiVersion: 'alpha',
-        appVersion: 'v-test',
+        status: 'ready',
+        api_version: 'alpha',
+        app_version: 'v-test',
       }),
     });
 
@@ -423,19 +422,19 @@ describe('OptimizeAndExportPage error handling', () => {
     await expect(screen.findByTitle(LOCAL_API_URL)).resolves.toBeInTheDocument();
     await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
 
-    expect(fetch).toHaveBeenCalledWith(`${LOCAL_API_URL}/health`, expect.objectContaining({ method: 'GET' }));
-    expect(fetch).not.toHaveBeenCalledWith(`${PRODUCTION_API_URL}/health`, expect.anything());
+    expect(fetch).toHaveBeenCalledWith(`${LOCAL_API_URL}/info`, expect.objectContaining({ method: 'GET' }));
+    expect(fetch).not.toHaveBeenCalledWith(`${PRODUCTION_API_URL}/info`, expect.anything());
   });
 
   it('shows the local backend version mismatch without probing production during tests', async () => {
-    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(healthyResponse({ appVersion: 'backend-test' }));
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(healthyResponse({ app_version: 'backend-test' }));
 
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByTitle(LOCAL_API_URL)).resolves.toBeInTheDocument();
     await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
     expect(screen.getByText(/frontend and backend versions do not match/i)).toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalledWith(`${PRODUCTION_API_URL}/health`, expect.anything());
+    expect(fetch).not.toHaveBeenCalledWith(`${PRODUCTION_API_URL}/info`, expect.anything());
   });
 
   it('offers default backend candidates while allowing custom endpoint input', async () => {
@@ -456,7 +455,7 @@ describe('OptimizeAndExportPage error handling', () => {
 
   it('hydrates stored backend options before the initial health check', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockResolvedValue(healthyResponse({ appVersion: 'stored-backend' }));
+    fetchMock.mockResolvedValue(healthyResponse({ app_version: 'stored-backend' }));
     window.localStorage.setItem('nurse-scheduling-optimize-server-options', JSON.stringify({
       servers: [{ endpoint: 'https://stored-backend.example.test' }],
       selectedServerEndpoint: 'https://stored-backend.example.test',
@@ -466,10 +465,10 @@ describe('OptimizeAndExportPage error handling', () => {
 
     await expect(screen.findByTitle('https://stored-backend.example.test')).resolves.toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      'https://stored-backend.example.test/health',
+      'https://stored-backend.example.test/info',
       expect.objectContaining({ method: 'GET' })
     ));
-    expect(fetchMock).not.toHaveBeenCalledWith(`${LOCAL_API_URL}/health`, expect.anything());
+    expect(fetchMock).not.toHaveBeenCalledWith(`${LOCAL_API_URL}/info`, expect.anything());
   });
 
   it('selects a backend when clicking anywhere on its row', async () => {
@@ -492,7 +491,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByLabelText('Select https://second-backend.example.test')).toBeChecked();
     expect(screen.getByText('Server: Online').nextElementSibling).toHaveTextContent('https://second-backend.example.test');
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://second-backend.example.test/health',
+      'https://second-backend.example.test/info',
       expect.objectContaining({ method: 'GET' })
     );
   });
@@ -559,7 +558,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('Server: Checking')).toBeInTheDocument();
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
-      'https://backend.example.test/health',
+      'https://backend.example.test/info',
       expect.objectContaining({ method: 'GET' })
     ));
 
@@ -569,7 +568,7 @@ describe('OptimizeAndExportPage error handling', () => {
   it('keeps endpoint input available but disables manual health checks while initial backend selection is pending', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
-      if (url === `${LOCAL_API_URL}/health`) {
+      if (url === `${LOCAL_API_URL}/info`) {
         return new Promise((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => {
             reject(new DOMException('The operation was aborted.', 'AbortError'));
@@ -594,13 +593,13 @@ describe('OptimizeAndExportPage error handling', () => {
     let resolveDiscovery: (response: ReturnType<typeof healthyResponse>) => void = () => undefined;
 
     fetchMock.mockImplementation((url: string) => {
-      if (url === `${LOCAL_API_URL}/health`) {
+      if (url === `${LOCAL_API_URL}/info`) {
         return new Promise(resolve => {
           resolveDiscovery = resolve;
         });
       }
-      if (url === 'https://backend.example.test/health') {
-        return Promise.resolve(healthyResponse({ appVersion: 'custom-backend' }));
+      if (url === 'https://backend.example.test/info') {
+        return Promise.resolve(healthyResponse({ app_version: 'custom-backend' }));
       }
 
       return Promise.reject(new Error(`Unexpected URL: ${url}`));
@@ -626,18 +625,18 @@ describe('OptimizeAndExportPage error handling', () => {
     let resolveManualCheck: (response: ReturnType<typeof healthyResponse>) => void = () => undefined;
 
     fetchMock.mockImplementation((url: string) => {
-      if (url === `${LOCAL_API_URL}/health`) {
+      if (url === `${LOCAL_API_URL}/info`) {
         return Promise.resolve(healthyResponse());
       }
-      if (url === 'https://backend.example.test/health') {
+      if (url === 'https://backend.example.test/info') {
         return new Promise(resolve => {
           resolveManualCheck = resolve;
         });
       }
-      if (url === 'https://next-backend.example.test/health') {
+      if (url === 'https://next-backend.example.test/info') {
         return new Promise(() => undefined);
       }
-      if (url.startsWith('https://') && url.endsWith('/health')) {
+      if (url.startsWith('https://') && url.endsWith('/info')) {
         return new Promise(() => undefined);
       }
 
@@ -651,7 +650,7 @@ describe('OptimizeAndExportPage error handling', () => {
     await editBackendEndpoint(user, 'https://backend.example.test', 'https://next-backend.example.test');
 
     act(() => {
-      resolveManualCheck(healthyResponse({ appVersion: 'custom-backend' }));
+      resolveManualCheck(healthyResponse({ app_version: 'custom-backend' }));
     });
 
     await waitFor(() => {
@@ -664,10 +663,9 @@ describe('OptimizeAndExportPage error handling', () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({
-        status: 'ok',
-        version: 'alpha',
-        apiVersion: 'alpha',
-        appVersion: 'backend-test',
+        status: 'ready',
+        api_version: 'alpha',
+        app_version: 'backend-test',
       }),
     });
 
@@ -680,10 +678,9 @@ describe('OptimizeAndExportPage error handling', () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({
-        status: 'ok',
-        version: 'alpha',
-        apiVersion: 'alpha',
-        appVersion: 'frontend-test',
+        status: 'ready',
+        api_version: 'alpha',
+        app_version: 'frontend-test',
       }),
     });
 
@@ -698,10 +695,9 @@ describe('OptimizeAndExportPage error handling', () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({
-        status: 'ok',
-        version: 'alpha',
-        apiVersion: 'alpha',
-        appVersion: 'frontend-test-dirty',
+        status: 'ready',
+        api_version: 'alpha',
+        app_version: 'frontend-test-dirty',
       }),
     });
 

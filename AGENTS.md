@@ -13,6 +13,7 @@ conventions in `core/AGENTS.md` or `web-frontend/AGENTS.md`.
 ## Shared Workflow
 - For Linux environment setup, run `./scripts/setup_env.sh`.
 - Keep edits scoped to the requested module and preserve existing patterns.
+- Do not stage, unstage, or commit changes unless explicitly asked.
 - Keep commits focused by module (`core`, `web-frontend`, or `docs`).
 - Keep file endings clean: no trailing spaces and a newline at end of file.
 - Run affected tests and lint checks before finishing.

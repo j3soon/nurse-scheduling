@@ -18,9 +18,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from uuid import uuid4
 
 from ..errors import (
     JobArtifactNotFoundError,
@@ -51,10 +52,14 @@ class _MemoryJobRecord:
 class MemoryJobStore:
     """Thread-safe process-local job metadata, queue, events, and blobs."""
 
-    def __init__(self, *, max_events_per_job: int = 1_000):
+    def __init__(self, *, store_id: str | None = None, max_events_per_job: int = 1_000):
         """Initialize an empty store protected by a shared reentrant lock."""
         if max_events_per_job <= 0:
             raise ValueError("max_events_per_job must be positive")
+        self._store_id = str(uuid4()) if store_id is None else store_id
+        if not self._store_id.strip():
+            raise ValueError("store_id must not be empty")
+        """Opaque identity unique to this process-local store."""
         self._records: dict[str, _MemoryJobRecord] = {}
         """Job records indexed by job ID."""
         self._max_events_per_job = max_events_per_job
@@ -63,6 +68,11 @@ class MemoryJobStore:
         """Re-entrant lock guarding all record, queue, artifact, and event access."""
         self._changed = threading.Condition(self._lock)
         """Condition backed by `_lock` that adds `wait()` and `notify_all()` for job changes."""
+
+    @property
+    def store_id(self) -> str:
+        """Return this process-local store's opaque identity."""
+        return self._store_id
 
     def create(
         self,
@@ -139,7 +149,13 @@ class MemoryJobStore:
                 raise JobArtifactNotFoundError("Job artifact was not found")
             return artifact
 
-    def claim_next(self, worker_id: str, started_at: datetime, claim_expires_at: datetime) -> Job | None:
+    def claim_next(
+        self,
+        worker_id: str,
+        started_at: datetime,
+        claim_expires_at: datetime,
+        runtime_identity: Mapping[str, str] | None = None,
+    ) -> Job | None:
         """Atomically assign the oldest queued job to a worker.
 
         Return the claimed running job, or `None` when the queue is empty.
@@ -172,6 +188,8 @@ class MemoryJobStore:
                             "queue_position": None,
                             "cancel_requested": False,
                             "early_completion_requested": False,
+                            "worker_id": worker_id,
+                            **({"runtime": dict(runtime_identity)} if runtime_identity is not None else {}),
                         },
                         occurred_at=started_at,
                     )
