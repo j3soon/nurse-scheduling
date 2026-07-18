@@ -273,7 +273,7 @@ def create_app(
     app.include_router(optimize_router)
 
     @app.get("/")
-    async def root():
+    async def root() -> dict[str, str]:
         """Return API identity and backend build version."""
         return {"message": TITLE, "api_version": API_VERSION, "app_version": app_version}
 
@@ -297,7 +297,7 @@ def create_app(
         return None
 
     @app.get("/info")
-    def info():
+    def info() -> JSONResponse:
         """Return service identity and readiness for clients and diagnostics."""
         unavailable_reason = check_readiness()
         if unavailable_reason is not None:
@@ -312,7 +312,7 @@ def create_app(
         )
 
     @app.get("/ready")
-    def ready():
+    def ready() -> JSONResponse:
         """Return minimal readiness status for deployment and routing probes."""
         unavailable_reason = check_readiness()
         if unavailable_reason is not None:

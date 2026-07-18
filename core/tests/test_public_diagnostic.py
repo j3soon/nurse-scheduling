@@ -939,6 +939,59 @@ def test_queue_transition_reports_each_incomplete_control_stage(tmp_path):
     assert active_final.findings[-1].code == "diagnostic_jobs_still_active"
 
 
+def test_cleanup_cancellation_attempts_cover_every_active_job_with_bounded_concurrency(tmp_path):
+    lock = threading.Lock()
+    active_requests = 0
+    peak_requests = 0
+    cancelled_ids: set[str] = set()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active_requests, peak_requests
+        job_id = request.url.path.split("/")[2]
+        with lock:
+            active_requests += 1
+            peak_requests = max(peak_requests, active_requests)
+        try:
+            time.sleep(0.02)
+            with lock:
+                cancelled_ids.add(job_id)
+            return httpx.Response(202, json={"id": job_id, "state": "cancelling"})
+        finally:
+            with lock:
+                active_requests -= 1
+
+    diagnostic = _diagnostic(
+        tmp_path,
+        handler,
+        parallel_requests=3,
+        cleanup_timeout_seconds=0.03,
+    )
+    diagnostic.jobs = [
+        DiagnosticJob(id=f"active-{index}", input_name="scenario.yaml", transitions=["running"]) for index in range(10)
+    ]
+
+    diagnostic._request_cleanup_cancellations()
+
+    assert cancelled_ids == {job.id for job in diagnostic.jobs}
+    assert diagnostic.cleanup_cancel_attempted_jobs == cancelled_ids
+    assert peak_requests == 3
+
+
+def test_run_requests_cleanup_cancellation_before_identity_analysis(tmp_path):
+    diagnostic = _diagnostic(tmp_path)
+    diagnostic.jobs = [DiagnosticJob(id="active", input_name="scenario.yaml", transitions=["running"])]
+    steps: list[str] = []
+    diagnostic._collect_info = Mock(side_effect=RuntimeError("stop workflow"))
+    diagnostic._request_cleanup_cancellations = Mock(side_effect=lambda: steps.append("cancel"))
+    diagnostic._collect_job_identities = Mock()
+    diagnostic._analyze_runtime_identities = Mock(side_effect=lambda: steps.append("identity"))
+    diagnostic._cleanup_jobs = Mock(side_effect=lambda: steps.append("cleanup"))
+
+    diagnostic.run()
+
+    assert steps == ["cancel", "identity", "cleanup"]
+
+
 def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
     def cleanup_handler(request: httpx.Request) -> httpx.Response:
         job_id = request.url.path.split("/")[2]
@@ -971,6 +1024,7 @@ def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
 
     partial = _diagnostic(tmp_path, cleanup_timeout_seconds=0.001, poll_seconds=0.001)
     partial.jobs = [DiagnosticJob(id="remaining", input_name="scenario.yaml")]
+    partial._request_cleanup_cancellations = Mock()
     partial._cleanup_one_attempt = Mock()
     partial._cleanup_jobs()
     assert partial.cleanup == "partial"

@@ -22,9 +22,10 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 Run these commands from the `docker/` directory.
 
 The production API image uses `Dockerfile.api` and clones the latest `dev`
-branch from GitHub during the Docker build. The checkout is expected to be
-clean, and the build reports an error if
-`git describe --tags --always --dirty` is empty or contains `dirty`.
+branch from GitHub in a temporary build stage. The build records a clean
+`git describe --tags --always --dirty` value in `.app-version`, then copies only
+`core/` and that version file into the runtime image. Git metadata and the Git
+binary are excluded from the final image.
 
 ```sh
 cd docker
@@ -186,12 +187,16 @@ inconclusive run. Copy reports to the host when needed:
 
 ```sh
 mkdir -p diagnostic-reports
-docker compose -f compose.backend.yml cp diagnostic:/reports/. ./diagnostic-reports/
+docker compose -f compose.backend.yml run --rm --no-deps \
+  --user "$(id -u):$(id -g)" \
+  --volume "$(pwd)/diagnostic-reports:/export" \
+  --entrypoint sh diagnostic -c 'cp -R /reports/. /export/'
 ```
 
-The image prepares `/reports` for its normal non-root user, so no `user`
-override is required. The volume survives normal `docker compose down`, but
-`down -v` removes it.
+The image prepares `/reports` for its normal non-root user, so the diagnostic
+run needs no `user` override. The extraction command uses the host user only to
+write the bind-mounted destination. The volume survives normal
+`docker compose down`, but `down -v` removes it.
 
 Different app versions, deployment IDs, job backends, or automatically derived
 job store IDs behind one public URL are configuration failures. Redis stores

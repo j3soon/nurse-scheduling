@@ -255,6 +255,7 @@ class PublicDiagnostic:
         self.batch_sizes: list[int] = []
         self.queue_transition = "not_run"
         self.cleanup = "not_run"
+        self.cleanup_cancel_attempted_jobs: set[str] = set()
         self.connection_announced = False
         self.phase_durations_seconds = {name: 0.0 for name in PHASE_NAMES}
         self._state_lock = threading.Lock()
@@ -1003,6 +1004,60 @@ class PublicDiagnostic:
         remaining = deadline - time.monotonic()
         return max(0.001, min(self.config.request_timeout_seconds, remaining))
 
+    def _run_cleanup_attempts(
+        self,
+        jobs: list[DiagnosticJob],
+        deadline: float,
+        attempt: Callable[[DiagnosticJob, float], None],
+    ) -> None:
+        """Run cleanup requests for every supplied job with bounded concurrency."""
+        if not jobs:
+            return
+        workers = min(len(jobs), self.config.parallel_requests)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(attempt, job, deadline) for job in jobs]
+            for future in futures:
+                future.result()
+
+    def _cleanup_cancel_attempt(self, job: DiagnosticJob, deadline: float) -> None:
+        """Make one direct cancellation attempt for an active or unknown job."""
+        with self._state_lock:
+            self.cleanup_cancel_attempted_jobs.add(job.id)
+        try:
+            with self._new_client() as client:
+                response = client.post(
+                    f"/optimize/{job.id}/cancel",
+                    timeout=self._cleanup_request_timeout(deadline),
+                )
+        except httpx.HTTPError as error:
+            self._record_request_error(f"cleanup cancel {job.id}", error)
+            return
+        if response.status_code == 404:
+            return
+        if response.status_code != 202:
+            self._record_request_error(
+                f"cleanup cancel {job.id}",
+                f"HTTP {response.status_code}",
+            )
+            return
+        body = self._json_object(response)
+        if body is not None:
+            job.observe(str(body.get("state")) if body.get("state") is not None else None)
+
+    def _request_cleanup_cancellations(self) -> None:
+        """Attempt cancellation once for every job not known to be terminal."""
+        candidates = [
+            job
+            for job in self.jobs
+            if not job.deleted
+            and job.id not in self.cleanup_cancel_attempted_jobs
+            and (not job.transitions or job.transitions[-1] not in TERMINAL_STATES)
+        ]
+        if not candidates:
+            return
+        deadline = time.monotonic() + self.config.cleanup_timeout_seconds
+        self._run_cleanup_attempts(candidates, deadline, self._cleanup_cancel_attempt)
+
     def _cleanup_one_attempt(self, job: DiagnosticJob, deadline: float) -> None:
         """Try one fresh routed connection to cancel or delete a job."""
         try:
@@ -1051,13 +1106,11 @@ class PublicDiagnostic:
         if not self.jobs:
             self.cleanup = "pass"
             return
+        self._request_cleanup_cancellations()
         deadline = time.monotonic() + self.config.cleanup_timeout_seconds
         while time.monotonic() < deadline and not all(job.deleted for job in self.jobs):
-            for job in self.jobs:
-                if time.monotonic() >= deadline:
-                    break
-                if not job.deleted:
-                    self._cleanup_one_attempt(job, deadline)
+            pending_jobs = [job for job in self.jobs if not job.deleted]
+            self._run_cleanup_attempts(pending_jobs, deadline, self._cleanup_one_attempt)
             if not all(job.deleted for job in self.jobs):
                 remaining = deadline - time.monotonic()
                 if remaining > 0:
@@ -1088,6 +1141,15 @@ class PublicDiagnostic:
             self._record_request_error("unexpected diagnostic error", f"{type(error).__name__}: {error}")
             self._mark_inconclusive("unexpected_error", "The diagnostic stopped after an unexpected internal error.")
         finally:
+            try:
+                with self._measure_phase("cleanup"):
+                    self._request_cleanup_cancellations()
+            except Exception as error:
+                self._record_request_error("unexpected cleanup cancellation error", f"{type(error).__name__}: {error}")
+                self._mark_inconclusive(
+                    "cleanup_cancellation_error",
+                    "Initial diagnostic job cancellation stopped after an unexpected internal error.",
+                )
             try:
                 with self._measure_phase("identity_analysis"):
                     for job in self.jobs:
