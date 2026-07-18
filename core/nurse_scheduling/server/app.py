@@ -57,6 +57,8 @@ from .stores.memory import MemoryJobStore
 TITLE = "Nurse Scheduling API"
 SERVICE_NAME = "nurse-scheduling-api"
 API_VERSION = "alpha"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+APP_VERSION_FILE = REPO_ROOT / ".app-version"
 UNEXPECTED_ERROR_VERSION_ADVICE = (
     "If this error was unexpected, check that your frontend and backend versions match. "
     "Older YAML may not work after breaking changes, though we try to preserve compatibility."
@@ -76,16 +78,21 @@ server_logger.setLevel(logging.INFO)
 
 
 def get_app_version() -> str:
-    """Return the current Git description without making startup depend on Git."""
-    repo_root = Path(__file__).resolve().parents[3]
+    """Return the generated build version or the current Git description."""
+    try:
+        generated_version = APP_VERSION_FILE.read_text(encoding="utf-8").strip()
+        if generated_version:
+            return generated_version
+    except OSError:
+        pass
     try:
         return subprocess.check_output(
             [
                 "git",
                 "-c",
-                f"safe.directory={repo_root}",
+                f"safe.directory={REPO_ROOT}",
                 "-C",
-                str(repo_root),
+                str(REPO_ROOT),
                 "describe",
                 "--tags",
                 "--always",

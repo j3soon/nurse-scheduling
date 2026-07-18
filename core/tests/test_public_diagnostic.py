@@ -349,7 +349,9 @@ def test_request_batches_stop_at_workflow_deadline(tmp_path, monkeypatch):
     assert samples == []
     assert elapsed < 0.5
     assert len(timeouts) == 3
-    assert all(0 < timeout <= 0.1 for timeout in timeouts)
+    # Windows may round a monotonic deadline one clock tick above the requested duration.
+    clock_resolution = time.get_clock_info("monotonic").resolution
+    assert all(0 < timeout <= 0.1 + clock_resolution for timeout in timeouts)
     assert completed.wait(timeout=1)
 
 

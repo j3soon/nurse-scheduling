@@ -46,7 +46,8 @@ docker compose --env-file .env.staging -f compose.backend.yml up -d --build
 
 The staging environment selects `Dockerfile.api.staging`, which copies the
 current repository's `core/` directory into the image instead of cloning
-GitHub. It also sets
+GitHub. A temporary build stage derives `.app-version` from the repository and
+keeps `.git` out of the final image. Staging also sets
 `COMPOSE_PROJECT_NAME=nurse-scheduling-backend-staging`. This overrides the
 default `nurse-scheduling-backend` project name and gives staging its own
 containers, network, and `redis-data` volume. Production and staging can then

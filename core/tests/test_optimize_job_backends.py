@@ -25,7 +25,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import fakeredis
 import pytest
@@ -184,23 +184,39 @@ def test_utc_now_returns_timezone_aware_utc_datetime():
 def test_redis_store_uses_default_connect_timeout_and_bounds_stream_reads(monkeypatch):
     from nurse_scheduling.server.stores import redis as redis_store
 
-    client = Mock()
-    client.get.return_value = b"existing-store-id"
-    from_url = Mock(return_value=client)
+    operation_client = Mock()
+    operation_client.get.return_value = b"existing-store-id"
+    stream_client = Mock()
+    from_url = Mock(side_effect=[operation_client, stream_client])
     monkeypatch.setattr(redis_store.redis.Redis, "from_url", from_url)
 
-    redis_store.RedisJobStore(
+    store = redis_store.RedisJobStore(
         url="redis://redis.example/0",
         key_prefix="test:jobs",
         event_stream_keepalive_seconds=2.5,
     )
 
-    from_url.assert_called_once_with(
-        "redis://redis.example/0",
-        decode_responses=False,
-        socket_timeout=7.5,
-    )
-    client.ping.assert_called_once_with()
+    assert from_url.call_args_list == [
+        call(
+            "redis://redis.example/0",
+            decode_responses=False,
+            socket_connect_timeout=redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
+            socket_timeout=redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
+        ),
+        call(
+            "redis://redis.example/0",
+            decode_responses=False,
+            socket_connect_timeout=redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
+            socket_timeout=7.5,
+        ),
+    ]
+    operation_client.ping.assert_called_once_with()
+
+    operation_client.reset_mock()
+    store.check_health()
+
+    operation_client.get.assert_called_once_with(store._store_id_key)
+    operation_client.ping.assert_not_called()
 
 
 def test_redis_store_identity_is_shared_by_one_namespace(fake_redis_store_factory):
@@ -223,6 +239,17 @@ def test_redis_store_health_rejects_identity_change(fake_redis_store_factory):
         store.check_health()
 
     assert store.store_id == startup_store_id
+
+
+def test_redis_store_health_does_not_retry_failed_identity_reads(fake_redis_store_factory, monkeypatch):
+    store = fake_redis_store_factory()
+    get = Mock(side_effect=redis.TimeoutError("timed out"))
+    monkeypatch.setattr(store._redis, "get", get)
+
+    with pytest.raises(redis.TimeoutError, match="timed out"):
+        store.check_health()
+
+    get.assert_called_once_with(store._store_id_key)
 
 
 def test_redis_store_identity_failure_is_fatal_during_construction(monkeypatch):
@@ -478,7 +505,7 @@ def test_redis_event_stream_treats_socket_timeout_as_keepalive(fake_redis_store_
     created = _create(controller)
     initial = next(store.stream_events(created.id, after_id=None, keepalive_seconds=0.01))
     assert initial is not None
-    monkeypatch.setattr(store._redis, "xread", Mock(side_effect=redis.exceptions.TimeoutError))
+    monkeypatch.setattr(store._stream_redis, "xread", Mock(side_effect=redis.exceptions.TimeoutError))
 
     resumed = store.stream_events(created.id, after_id=initial.id, keepalive_seconds=0.01)
 

@@ -179,6 +179,21 @@ def test_default_memory_store_uses_the_process_instance_identity():
     assert app.state.job_store.store_id == app.state.instance_id
 
 
+def test_app_version_prefers_generated_build_artifact(tmp_path, monkeypatch):
+    from nurse_scheduling.server import app as server_app
+
+    version_file = tmp_path / ".app-version"
+    version_file.write_text("v9.8.7-generated\n", encoding="utf-8")
+    monkeypatch.setattr(server_app, "APP_VERSION_FILE", version_file)
+
+    def unexpected_git_call(*_args, **_kwargs):
+        raise AssertionError("Git should not run when the build artifact is available")
+
+    monkeypatch.setattr(server_app.subprocess, "check_output", unexpected_git_call)
+
+    assert server_app.get_app_version() == "v9.8.7-generated"
+
+
 def test_server_info_logging_is_visible_without_external_logging_configuration():
     environment = os.environ.copy()
     environment["DISABLE_SENTRY"] = "1"

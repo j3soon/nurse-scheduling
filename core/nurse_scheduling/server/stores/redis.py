@@ -50,6 +50,8 @@ from ..retry import retry_with_backoff
 
 SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
 """Additional socket time allowed beyond one blocking event-stream read."""
+REDIS_OPERATION_TIMEOUT_SECONDS = 2.0
+"""Short timeout for ordinary Redis operations and deployment probes."""
 
 
 @overload
@@ -98,12 +100,22 @@ class RedisJobStore:
             raise ValueError("max_events_per_job must be positive")
         self._max_events_per_job = max_events_per_job
         """Maximum entries retained in each replayable event stream."""
+        # Bound ordinary Redis waits without inheriting the longer timeout
+        # required by blocking event-stream reads.
         self._redis = redis.Redis.from_url(
             url,
             decode_responses=False,
+            socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            socket_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+        )
+        """Binary-safe Redis client for bounded ordinary operations."""
+        self._stream_redis = redis.Redis.from_url(
+            url,
+            decode_responses=False,
+            socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             socket_timeout=event_stream_keepalive_seconds + SOCKET_TIMEOUT_MARGIN_SECONDS,
         )
-        """Binary-safe Redis client shared by all store operations."""
+        """Redis client whose read timeout exceeds one blocking event-stream read."""
         self._redis.ping()
         self._store_id_key = self._key("metadata:store_id")
         """Persistent UUID identifying this Redis database and key namespace."""
@@ -413,7 +425,7 @@ class RedisJobStore:
         while True:
             terminal = self.get(job_id).state.terminal
             try:
-                streams = self._redis.xread(
+                streams = self._stream_redis.xread(
                     {self._events_key(job_id): last_id},
                     block=None if terminal else block_ms,
                 )
@@ -468,8 +480,9 @@ class RedisJobStore:
         Raises:
             redis.RedisError: If the Redis health check fails.
         """
-        self._redis.ping()
-        resolved_store_id = self._resolve_store_id()
+        # GET verifies connectivity and store identity in one bounded command.
+        # Avoid PING and retries so readiness uses one bounded Redis operation.
+        resolved_store_id = _decode(self._redis.get(self._store_id_key))
         if resolved_store_id != self._store_id:
             raise redis.RedisError("Redis job store identity changed")
 

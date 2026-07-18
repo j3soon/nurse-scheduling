@@ -1,10 +1,29 @@
+FROM python:3.12-slim AS version
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY .git/ .git/
+
+# Reconstruct omitted tracked paths so Git only reports actual changes as dirty.
+RUN git checkout-index --all
+
+COPY core/ core/
+
+RUN git describe --tags --always --dirty > /app-version
+
+
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl git redis-tools \
+    && apt-get install -y --no-install-recommends curl redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
-COPY . /app/nurse-scheduling
+COPY core/ /app/nurse-scheduling/core/
+COPY --from=version /app-version /app/nurse-scheduling/.app-version
 
 WORKDIR /app/nurse-scheduling/core
 
