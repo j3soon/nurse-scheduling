@@ -36,7 +36,10 @@ from ..retry import retry_with_backoff
 from .models import (
     Job,
     JobEvent,
+    JobEventType,
     JobFailure,
+    JobReplayError,
+    JobReplayGap,
     JobRequest,
     JobState,
     OptimizationResult,
@@ -274,7 +277,7 @@ class JobController:
         """
         payload = dict(data)
         payload["score"] = score
-        return self.record_event(job_id, "job.progressed", payload, worker_id=worker_id)
+        return self.record_event(job_id, JobEventType.PROGRESSED, payload, worker_id=worker_id)
 
     def complete_job(
         self,
@@ -415,7 +418,7 @@ class JobController:
                 raise JobOperationNotAllowedError("This solver does not support early completion")
             updated = replace(job, early_completion_requested=True)
             event = JobEvent(
-                type="job.control_changed",
+                type=JobEventType.CONTROL_CHANGED,
                 data={"early_completion_requested": True},
                 occurred_at=now,
             )
@@ -447,7 +450,7 @@ class JobController:
         *,
         after_id: str | None,
         keepalive_seconds: float,
-    ) -> Iterator[JobEvent | None]:
+    ) -> Iterator[JobEvent | JobReplayError | JobReplayGap | None]:
         """Stream persisted events after a cursor until the job becomes terminal.
 
         Iteration blocks up to the keepalive interval when no newer event exists.
@@ -605,7 +608,7 @@ class JobController:
         }
         if job.failure is not None:
             data["error"] = {"code": job.failure.code, "message": job.failure.message}
-        return JobEvent(type="job.state_changed", data=data, occurred_at=occurred_at)
+        return JobEvent(type=JobEventType.STATE_CHANGED, data=data, occurred_at=occurred_at)
 
     @staticmethod
     def _result_event(job: Job, occurred_at: datetime) -> JobEvent:
@@ -616,7 +619,7 @@ class JobController:
         """
         assert job.result is not None
         return JobEvent(
-            type="job.result_available",
+            type=JobEventType.RESULT_AVAILABLE,
             data={
                 "outcome": job.result.outcome.value,
                 "score": job.result.score,

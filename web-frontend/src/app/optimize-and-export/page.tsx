@@ -25,7 +25,10 @@ import Link from 'next/link';
 import { FiDownload, FiAlertCircle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity, FiTrash2 } from 'react-icons/fi';
 import { DataTable } from '@/components/DataTable';
 import { InlineEdit } from '@/components/InlineEdit';
-import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
+import OptimizationProgressChart, {
+  OptimizationProgressGap,
+  OptimizationProgressPoint,
+} from '@/components/OptimizationProgressChart';
 import NumberInput from '@/components/NumberInput';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizeSchedulingStateWithMapping } from '@/utils/anonymizeSchedulingState';
@@ -85,6 +88,26 @@ interface OptimizePhaseEvent {
   message?: string;
 }
 
+interface JobReplayGapEvent {
+  reason: 'cursor_unavailable';
+  requested_last_event_id: string;
+  oldest_retained_event_id: string | null;
+  replay_checkpoint_id: string | null;
+  job: OptimizeJobResponse;
+}
+
+interface JobReplayErrorEvent {
+  code: 'malformed_cursor' | 'future_cursor';
+  message: string;
+  requested_last_event_id: string;
+  oldest_retained_event_id: string | null;
+  newest_retained_event_id: string | null;
+}
+
+interface JobControlChangedEvent {
+  early_completion_requested?: boolean;
+}
+
 interface OptimizeServerEntry {
   endpoint: string;
   status: ServerStatus;
@@ -108,9 +131,21 @@ interface StoredOptimizeServerOptions {
   selectedServerEndpoint: ServerSelection;
 }
 
-const TERMINAL_JOB_STATES = new Set(['completed', 'cancelled', 'failed']);
+const JOB_EVENT_TYPES = {
+  stateChanged: 'job.state_changed',
+  progressed: 'job.progressed',
+  phaseChanged: 'job.phase_changed',
+  resultAvailable: 'job.result_available',
+  controlChanged: 'job.control_changed',
+  replayGap: 'job.replay_gap',
+  replayError: 'job.replay_error',
+} as const;
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
 const INITIAL_HEALTH_CHECK_TIMEOUT_MS = 3000;
+const OPTIMIZE_STATUS_TIMEOUT_MS = 5000;
+const OPTIMIZE_STATUS_RETRY_MS = 1000;
+const SSE_RECONNECT_DELAY_MS = 1000;
+const MAX_PROGRESS_GAPS = 100;
 const SERVER_OPTIONS_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -229,6 +264,14 @@ function buildApiUrl(endpoint: string, path: string): string {
   return `${normalizeEndpoint(endpoint)}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+function buildEventStreamUrl(endpoint: string, path: string, lastEventId: string | null): string {
+  const streamUrl = buildApiUrl(endpoint, path);
+  if (lastEventId === null) {
+    return streamUrl;
+  }
+  return `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}last_event_id=${encodeURIComponent(lastEventId)}`;
+}
+
 async function fetchServerInfo(
   endpoint: string,
   timeoutMs = HEALTH_CHECK_TIMEOUT_MS,
@@ -335,6 +378,31 @@ function isPhaseEventData(data: unknown): data is OptimizePhaseEvent {
   return typeof data === 'object' && data !== null && 'message' in data;
 }
 
+function isReplayGapEventData(data: unknown): data is JobReplayGapEvent {
+  return typeof data === 'object'
+    && data !== null
+    && 'reason' in data
+    && data.reason === 'cursor_unavailable'
+    && 'job' in data
+    && typeof data.job === 'object'
+    && data.job !== null
+    && 'id' in data.job
+    && 'state' in data.job;
+}
+
+function isReplayErrorEventData(data: unknown): data is JobReplayErrorEvent {
+  return typeof data === 'object'
+    && data !== null
+    && 'code' in data
+    && (data.code === 'malformed_cursor' || data.code === 'future_cursor')
+    && 'message' in data
+    && typeof data.message === 'string';
+}
+
+function isControlChangedEventData(data: unknown): data is JobControlChangedEvent {
+  return typeof data === 'object' && data !== null && 'early_completion_requested' in data;
+}
+
 function formatScore(score: number): string {
   return new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 2,
@@ -378,17 +446,20 @@ function formatProgressSummary(data: OptimizeProgressEvent): string {
 }
 
 function getEventBadgeClasses(type: string): string {
-  if (type === 'job.result_available') {
+  if (type === JOB_EVENT_TYPES.resultAvailable) {
     return 'bg-green-50 text-green-700 ring-green-200';
   }
-  if (type === 'error') {
+  if (type === 'error' || type === JOB_EVENT_TYPES.replayError) {
     return 'bg-red-50 text-red-700 ring-red-200';
   }
-  if (type === 'job.progressed') {
+  if (type === JOB_EVENT_TYPES.progressed) {
     return 'bg-blue-50 text-blue-700 ring-blue-200';
   }
-  if (type === 'job.phase_changed') {
+  if (type === JOB_EVENT_TYPES.phaseChanged) {
     return 'bg-amber-50 text-amber-700 ring-amber-200';
+  }
+  if (type === JOB_EVENT_TYPES.replayGap) {
+    return 'bg-orange-50 text-orange-700 ring-orange-200';
   }
   return 'bg-gray-100 text-gray-700 ring-gray-200';
 }
@@ -454,11 +525,13 @@ export default function OptimizeAndExportPage() {
   const [currentJob, setCurrentJob] = useState<OptimizeJobResponse | null>(null);
   const [incumbentResult, setIncumbentResult] = useState<OptimizeProgressEvent | null>(null);
   const [progressPoints, setProgressPoints] = useState<OptimizationProgressPoint[]>([]);
+  const [progressGaps, setProgressGaps] = useState<OptimizationProgressGap[]>([]);
   const [savedDownload, setSavedDownload] = useState<{ url: string; filename: string } | null>(null);
   const [sseEvents, setSseEvents] = useState<SseEventLogEntry[]>([]);
   const eventLogRef = useRef<HTMLDivElement | null>(null);
   const savedDownloadUrlRef = useRef<string | null>(null);
   const shouldScrollEventLogToBottomRef = useRef(true);
+  const latestProgressElapsedSecondsRef = useRef<number | null>(null);
   // pageMountId invalidates async work from earlier page visits; healthProbeId
   // orders repeated probes for the same endpoint within the current visit.
   const pageMountIdRef = useRef(0);
@@ -655,20 +728,28 @@ export default function OptimizeAndExportPage() {
   }, [startServerCheck]);
 
   const getOptimizeJobStatus = useCallback(async (job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
-    const response = await fetch(buildApiUrl(resolvedOptimizeEndpoint, job.links.self), {
-      method: 'GET',
-      cache: 'no-store',
-    });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), OPTIMIZE_STATUS_TIMEOUT_MS);
 
-    if (!response.ok) {
-      throw new Error(`Server error (${response.status}): ${await getErrorDetail(response)}`);
+    try {
+      const response = await fetch(buildApiUrl(resolvedOptimizeEndpoint, job.links.self), {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server error (${response.status}): ${await getErrorDetail(response)}`);
+      }
+
+      return await response.json() as OptimizeJobResponse;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-
-    return await response.json() as OptimizeJobResponse;
   }, [resolvedOptimizeEndpoint]);
 
   const pollOptimizeJob = useCallback((job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const poll = async () => {
         try {
           const updatedJob = await getOptimizeJobStatus(job);
@@ -681,8 +762,8 @@ export default function OptimizeAndExportPage() {
           }
 
           window.setTimeout(() => void poll(), 1000);
-        } catch (error) {
-          reject(error);
+        } catch {
+          window.setTimeout(() => void poll(), OPTIMIZE_STATUS_RETRY_MS);
         }
       };
 
@@ -697,80 +778,243 @@ export default function OptimizeAndExportPage() {
 
     if (typeof EventSource !== 'undefined') {
       return new Promise((resolve, reject) => {
-        const eventSource = new EventSource(buildApiUrl(resolvedOptimizeEndpoint, job.links.events));
         let finalizationStarted = false;
+        let completedStateObserved = false;
+        let eventSource: EventSource | null = null;
+        let lastEventId: string | null = null;
+        let reconnectTimeoutId: number | null = null;
+        let reconnecting = false;
+
+        const clearReconnect = () => {
+          if (reconnectTimeoutId !== null) {
+            window.clearTimeout(reconnectTimeoutId);
+            reconnectTimeoutId = null;
+          }
+        };
+
+        const closeEventSource = () => {
+          clearReconnect();
+          eventSource?.close();
+          eventSource = null;
+        };
+
+        const resolveJob = (completedJob: OptimizeJobResponse) => {
+          if (finalizationStarted) {
+            return;
+          }
+          finalizationStarted = true;
+          closeEventSource();
+          setCurrentJob(completedJob);
+          resolve(completedJob);
+        };
 
         const finalizeJob = () => {
           if (finalizationStarted) {
             return;
           }
           finalizationStarted = true;
-          eventSource.close();
-          void getOptimizeJobStatus(job).then(completedJob => {
+          closeEventSource();
+          void pollOptimizeJob(job).then(completedJob => {
             setCurrentJob(completedJob);
             resolve(completedJob);
-          }).catch(reject);
+          });
         };
 
-        eventSource.addEventListener('job.state_changed', (event) => {
+        const rejectJob = (error: Error) => {
+          if (finalizationStarted) {
+            return;
+          }
+          finalizationStarted = true;
+          closeEventSource();
+          reject(error);
+        };
+
+        const rememberLastEventId = (event: MessageEvent) => {
+          if (event.lastEventId) {
+            lastEventId = event.lastEventId;
+          }
+        };
+
+        const handleStateChanged = (event: MessageEvent) => {
+          rememberLastEventId(event);
           const parsedData = parseSseEventData(event);
-          appendSseEvent('job.state_changed', parsedData);
+          appendSseEvent(JOB_EVENT_TYPES.stateChanged, parsedData);
           const updatedJob = parsedData as Partial<OptimizeJobResponse>;
           if (updatedJob.state) {
             setScheduleStatus(updatedJob.state);
           }
           setCurrentJob(currentJob => currentJob ? { ...currentJob, ...updatedJob } : currentJob);
-          if (updatedJob.state && TERMINAL_JOB_STATES.has(updatedJob.state)) {
+          if (updatedJob.state === 'completed') {
+            completedStateObserved = true;
+          } else if (updatedJob.state === 'cancelled' || updatedJob.state === 'failed') {
             finalizeJob();
           }
-        });
+        };
 
-        eventSource.addEventListener('job.progressed', (event) => {
+        const handleProgressed = (event: MessageEvent) => {
+          rememberLastEventId(event);
           const parsedData = parseSseEventData(event);
-          appendSseEvent('job.progressed', parsedData);
+          appendSseEvent(JOB_EVENT_TYPES.progressed, parsedData);
           if (isProgressEventData(parsedData)) {
             setIncumbentResult(parsedData);
             if (typeof parsedData.currentBestScore === 'number') {
               setScheduleScore(parsedData.currentBestScore);
             }
             if (typeof parsedData.currentBestScore === 'number' && typeof parsedData.elapsedSeconds === 'number') {
+              const elapsedSeconds = parsedData.elapsedSeconds;
+              setProgressGaps(currentGaps => {
+                const openGap = currentGaps.at(-1);
+                if (!openGap || openGap.endElapsedSeconds !== null || elapsedSeconds <= openGap.startElapsedSeconds) {
+                  return currentGaps;
+                }
+                return [
+                  ...currentGaps.slice(0, -1),
+                  { ...openGap, endElapsedSeconds: elapsedSeconds },
+                ];
+              });
+              latestProgressElapsedSecondsRef.current = elapsedSeconds;
               setProgressPoints(currentPoints => [...currentPoints, {
                 currentBestScore: parsedData.currentBestScore as number,
-                elapsedSeconds: parsedData.elapsedSeconds as number,
+                elapsedSeconds,
                 commentCount: parsedData.commentCount,
                 solutionIndex: parsedData.solutionIndex,
                 source: parsedData.source,
               }]);
             }
           }
-        });
+        };
 
-        eventSource.addEventListener('job.phase_changed', (event) => {
+        const handlePhaseChanged = (event: MessageEvent) => {
+          rememberLastEventId(event);
           const parsedData = parseSseEventData(event);
-          appendSseEvent('job.phase_changed', parsedData);
-        });
+          appendSseEvent(JOB_EVENT_TYPES.phaseChanged, parsedData);
+        };
 
-        eventSource.addEventListener('job.result_available', (event) => {
+        const handleResultAvailable = (event: MessageEvent) => {
+          rememberLastEventId(event);
           const parsedData = parseSseEventData(event);
-          appendSseEvent('job.result_available', parsedData);
+          appendSseEvent(JOB_EVENT_TYPES.resultAvailable, parsedData);
           finalizeJob();
-        });
+        };
 
-        eventSource.addEventListener('error', (event) => {
+        const handleControlChanged = (event: MessageEvent) => {
+          rememberLastEventId(event);
+          const parsedData = parseSseEventData(event);
+          appendSseEvent(JOB_EVENT_TYPES.controlChanged, parsedData);
+          if (isControlChangedEventData(parsedData) && parsedData.early_completion_requested) {
+            setCurrentJob(currentJob => currentJob ? {
+              ...currentJob,
+              controls: {
+                ...currentJob.controls,
+                early_completion_available: false,
+              },
+            } : currentJob);
+          }
+        };
+
+        const handleReplayGap = (event: MessageEvent) => {
+          const parsedData = parseSseEventData(event);
+          if (!isReplayGapEventData(parsedData)) {
+            return;
+          }
+          lastEventId = parsedData.replay_checkpoint_id;
+          appendSseEvent(JOB_EVENT_TYPES.replayGap, parsedData);
+          const gapStart = latestProgressElapsedSecondsRef.current;
+          if (gapStart !== null) {
+            setProgressGaps(currentGaps => {
+              if (currentGaps.at(-1)?.endElapsedSeconds === null) {
+                return currentGaps;
+              }
+              return [
+                ...currentGaps,
+                { startElapsedSeconds: gapStart, endElapsedSeconds: null },
+              ].slice(-MAX_PROGRESS_GAPS);
+            });
+          }
+          if (parsedData.job.result?.score !== null && parsedData.job.result?.score !== undefined) {
+            setScheduleScore(parsedData.job.result.score);
+          }
+          setScheduleStatus(parsedData.job.state);
+          setCurrentJob(parsedData.job);
+          if (parsedData.job.terminal) {
+            resolveJob(parsedData.job);
+          }
+        };
+
+        const handleReplayError = (event: MessageEvent) => {
+          const parsedData = parseSseEventData(event);
+          if (!isReplayErrorEventData(parsedData)) {
+            return;
+          }
+          appendSseEvent(JOB_EVENT_TYPES.replayError, parsedData);
+          rejectJob(new Error(parsedData.message));
+        };
+
+        const scheduleReconnect = () => {
+          if (finalizationStarted || reconnectTimeoutId !== null) {
+            return;
+          }
+          reconnectTimeoutId = window.setTimeout(() => {
+            reconnectTimeoutId = null;
+            connect();
+          }, SSE_RECONNECT_DELAY_MS);
+        };
+
+        const handleError = (source: EventSource, event: Event) => {
+          if (eventSource !== source) {
+            return;
+          }
           if ('data' in event && typeof event.data === 'string' && event.data) {
-            eventSource.close();
             const parsedData = parseSseEventData(event as MessageEvent);
             appendSseEvent('error', parsedData);
-            reject(new Error('Optimization event stream failed'));
+            rejectJob(new Error('Optimization event stream failed'));
           } else {
-            appendSseEvent('error', 'Optimization event stream disconnected; waiting to reconnect');
+            appendSseEvent('error', 'Optimization event stream disconnected; retrying');
+            source.close();
+            if (eventSource === source) {
+              eventSource = null;
+            }
+            if (completedStateObserved) {
+              finalizeJob();
+              return;
+            }
+            reconnecting = true;
+            scheduleReconnect();
           }
-        });
+        };
+
+        function connect() {
+          if (finalizationStarted) {
+            return;
+          }
+          const source = new EventSource(buildEventStreamUrl(
+            resolvedOptimizeEndpoint,
+            job.links.events,
+            lastEventId,
+          ));
+          eventSource = source;
+          source.addEventListener('open', () => {
+            if (reconnecting) {
+              appendSseEvent('connection', 'Optimization event stream reconnected');
+              reconnecting = false;
+            }
+          });
+          source.addEventListener(JOB_EVENT_TYPES.stateChanged, handleStateChanged);
+          source.addEventListener(JOB_EVENT_TYPES.progressed, handleProgressed);
+          source.addEventListener(JOB_EVENT_TYPES.phaseChanged, handlePhaseChanged);
+          source.addEventListener(JOB_EVENT_TYPES.resultAvailable, handleResultAvailable);
+          source.addEventListener(JOB_EVENT_TYPES.controlChanged, handleControlChanged);
+          source.addEventListener(JOB_EVENT_TYPES.replayGap, handleReplayGap);
+          source.addEventListener(JOB_EVENT_TYPES.replayError, handleReplayError);
+          source.addEventListener('error', event => handleError(source, event));
+        }
+
+        connect();
       });
     }
 
     return pollOptimizeJob(job);
-  }, [appendSseEvent, getOptimizeJobStatus, pollOptimizeJob, resolvedOptimizeEndpoint]);
+  }, [appendSseEvent, pollOptimizeJob, resolvedOptimizeEndpoint]);
 
   const handleOptimizeAndDownload = async () => {
     if (isRequiredDataMissing) {
@@ -782,6 +1026,8 @@ export default function OptimizeAndExportPage() {
       setCurrentJob(null);
       setIncumbentResult(null);
       setProgressPoints([]);
+      setProgressGaps([]);
+      latestProgressElapsedSecondsRef.current = null;
       clearSavedDownload();
       setSseEvents([]);
       return;
@@ -811,6 +1057,8 @@ export default function OptimizeAndExportPage() {
     setCurrentJob(null);
     setIncumbentResult(null);
     setProgressPoints([]);
+    setProgressGaps([]);
+    latestProgressElapsedSecondsRef.current = null;
     clearSavedDownload();
     setSseEvents([]);
 
@@ -858,6 +1106,10 @@ export default function OptimizeAndExportPage() {
         setScheduleStatus(completedJob.result.solver_status);
       }
 
+      if (completedJob.state === 'cancelled') {
+        setSuccessMessage(completedJob.error?.message ?? 'Optimization cancelled.');
+        return;
+      }
       if (completedJob.error) {
         throw new Error(completedJob.error.message);
       }
@@ -1564,7 +1816,7 @@ export default function OptimizeAndExportPage() {
             </div>
 
             {progressPoints.length >= 2 && (
-              <OptimizationProgressChart points={progressPoints} isActive={isJobActive} />
+              <OptimizationProgressChart points={progressPoints} gaps={progressGaps} isActive={isJobActive} />
             )}
 
             {(savedDownload || isJobActive) && (
@@ -1653,10 +1905,18 @@ export default function OptimizeAndExportPage() {
                     {isProgressEventData(event.data) && (
                       <p className="font-semibold text-gray-900">{formatProgressSummary(event.data)}</p>
                     )}
-                    {event.type === 'job.phase_changed' && isPhaseEventData(event.data) && event.data.message && (
+                    {event.type === JOB_EVENT_TYPES.phaseChanged && isPhaseEventData(event.data) && event.data.message && (
                       <p className="font-semibold text-gray-900">{event.data.message}</p>
                     )}
-                    <details className={isProgressEventData(event.data) || event.type === 'job.phase_changed' ? 'mt-2' : ''}>
+                    {event.type === JOB_EVENT_TYPES.replayGap && (
+                      <p className="font-semibold text-orange-800">
+                        Some optimization events are missing because retained replay history is unavailable. Current job state was restored from a snapshot.
+                      </p>
+                    )}
+                    {event.type === JOB_EVENT_TYPES.replayError && isReplayErrorEventData(event.data) && (
+                      <p className="font-semibold text-red-800">{event.data.message}</p>
+                    )}
+                    <details className={isProgressEventData(event.data) || event.type === JOB_EVENT_TYPES.phaseChanged || event.type === JOB_EVENT_TYPES.replayGap || event.type === JOB_EVENT_TYPES.replayError ? 'mt-2' : ''}>
                       <summary className="cursor-pointer text-gray-500">Raw event data</summary>
                       <pre className="mt-2 whitespace-pre-wrap break-words">{formatSseEventData(event.data)}</pre>
                     </details>

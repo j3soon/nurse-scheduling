@@ -20,7 +20,19 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
+
+
+class JobEventType:
+    """Stable event topics exposed by the optimization job stream."""
+
+    STATE_CHANGED = "job.state_changed"
+    PROGRESSED = "job.progressed"
+    PHASE_CHANGED = "job.phase_changed"
+    RESULT_AVAILABLE = "job.result_available"
+    CONTROL_CHANGED = "job.control_changed"
+    REPLAY_GAP = "job.replay_gap"
+    REPLAY_ERROR = "job.replay_error"
 
 
 class JobState(str, Enum):
@@ -135,6 +147,34 @@ class JobEvent:
     """UTC time at which the event occurred."""
     id: str | None = None
     """Store-assigned replay cursor, absent before persistence."""
+
+
+@dataclass(frozen=True)
+class JobReplayGap:
+    """Connection-specific marker for unavailable event history."""
+
+    requested_last_event_id: str
+    """Last-Event-ID supplied by the reconnecting client."""
+    oldest_retained_event_id: str | None
+    """Oldest retained event ID, absent when no events remain."""
+    replay_checkpoint_id: str | None
+    """Event ID after which live delivery resumes."""
+    job: Job
+    """Authoritative job snapshot captured with the replay checkpoint."""
+
+
+@dataclass(frozen=True)
+class JobReplayError:
+    """Connection-specific error for an unusable replay cursor."""
+
+    code: Literal["malformed_cursor", "future_cursor"]
+    """Stable reason the requested cursor cannot be used."""
+    requested_last_event_id: str
+    """Last-Event-ID supplied by the reconnecting client."""
+    oldest_retained_event_id: str | None
+    """Oldest retained event ID, absent when no events remain."""
+    newest_retained_event_id: str | None
+    """Newest retained event ID, absent when no events remain."""
 
 
 @dataclass(frozen=True)

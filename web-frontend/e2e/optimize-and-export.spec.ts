@@ -22,6 +22,53 @@
 import { expect, test } from './test';
 import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState, setDateRange } from './helpers';
 
+test('direct navigation hydrates persisted schedule data without an attribute mismatch', async ({ page }) => {
+  const hydrationErrors: string[] = [];
+  page.on('console', message => {
+    if (message.type() === 'error' && message.text().toLowerCase().includes('hydrat')) {
+      hydrationErrors.push(message.text());
+    }
+  });
+  page.on('pageerror', error => {
+    if (error.message.toLowerCase().includes('hydrat')) {
+      hydrationErrors.push(error.message);
+    }
+  });
+
+  const state = {
+    apiVersion: 'test',
+    description: 'direct hydration seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: { items: [{ id: 'P1', description: 'Primary nurse', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  };
+  await page.addInitScript(({ persisted }) => {
+    const workerNamespace = window.__PLAYWRIGHT_WORKER_NAMESPACE__;
+    const storageKey = workerNamespace
+      ? `nurse-scheduling-data__${workerNamespace}`
+      : 'nurse-scheduling-data';
+    window.localStorage.setItem(storageKey, persisted);
+  }, {
+    persisted: JSON.stringify({ state, history: [state], currentHistoryIndex: 0 }),
+  });
+  await page.route('http://localhost:8000/info', route => route.fulfill({
+    status: 200,
+    headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'ready',
+      api_version: 'test',
+      app_version: 'test',
+    }),
+  }));
+
+  await page.goto('/optimize-and-export');
+
+  await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
+  expect(hydrationErrors).toEqual([]);
+});
+
 test('optimize and export submits YAML to the backend and renders success metadata', async ({ page }) => {
   /*
    * Steps:
@@ -150,4 +197,116 @@ test('optimize and export renders backend phase SSE messages in the event log', 
   const eventLog = page.getByTestId('optimization-events-log');
   await expect(eventLog).toContainText('job.phase_changed');
   await expect(eventLog).toContainText('Creating shift variables');
+});
+
+test('a two-event SSE replay window renders gray progress-gap bands', async ({ page }) => {
+  await disableModalDialogs(page);
+  await page.addInitScript(() => {
+    class MockEventSource extends EventTarget {
+      constructor(public url: string) {
+        super();
+        (window as unknown as { __lastEventSource?: MockEventSource }).__lastEventSource = this;
+      }
+
+      close() {}
+
+      emit(type: string, data: unknown) {
+        this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
+      }
+    }
+
+    Object.defineProperty(window, 'EventSource', {
+      configurable: true,
+      value: MockEventSource,
+    });
+  });
+
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'optimize SSE replay gap seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: { items: [{ id: 'P1', description: 'Primary nurse', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+  await setDateRange(page);
+  await mockOptimizeAndExport(page, { disableEventSource: false });
+
+  await page.goto('/optimize-and-export');
+  await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Optimize and Download' }).click();
+  await page.waitForFunction(() => Boolean((window as unknown as { __lastEventSource?: unknown }).__lastEventSource));
+
+  const maxRetainedSseEvents = 2;
+  const newestRetainedEventId = 5;
+  const oldestRetainedEventId = newestRetainedEventId - maxRetainedSseEvents + 1;
+  await page.evaluate(({ oldestRetainedEventId }) => {
+    const eventSource = (window as unknown as {
+      __lastEventSource?: { emit: (type: string, data: unknown) => void };
+    }).__lastEventSource;
+    const emitProgress = (currentBestScore: number, elapsedSeconds: number, solutionIndex: number) => {
+      eventSource?.emit('job.progressed', {
+        currentBestScore,
+        elapsedSeconds,
+        solutionIndex,
+        commentCount: solutionIndex,
+        source: 'e2e:replay-gap',
+      });
+    };
+
+    emitProgress(90, 1, 1);
+    emitProgress(95, 2, 2);
+    eventSource?.emit('job.replay_gap', {
+      reason: 'cursor_unavailable',
+      requested_last_event_id: '2',
+      oldest_retained_event_id: String(oldestRetainedEventId),
+      replay_checkpoint_id: String(oldestRetainedEventId - 1),
+      job: {
+        id: 'e2e-job',
+        state: 'running',
+        terminal: false,
+        queue_position: null,
+        result: null,
+        error: null,
+        controls: { cancellable: true, early_completion_available: true },
+        links: {
+          self: '/optimize/e2e-job',
+          events: '/optimize/e2e-job/events',
+          cancellation: '/optimize/e2e-job/cancel',
+          early_completion: '/optimize/e2e-job/finish-now',
+          schedule: null,
+        },
+      },
+    });
+    emitProgress(100, 5, 4);
+    emitProgress(101, 6, 5);
+  }, { oldestRetainedEventId });
+
+  const chart = page.getByTestId('optimization-progress-chart');
+  await expect(chart).toContainText('Gray bands mark intervals where SSE progress was not observed.');
+  const gapRects = chart.locator('.optimization-progress-gap .recharts-reference-area-rect');
+  await expect(gapRects).toHaveCount(2);
+  await expect(gapRects.first()).toHaveAttribute('fill', '#e5e7eb');
+  const gapDimensions = await gapRects.evaluateAll(elements => elements.map(element => {
+    const box = (element as SVGGraphicsElement).getBBox();
+    return { width: box.width, height: box.height };
+  }));
+  expect(gapDimensions).toEqual([
+    expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
+    expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
+  ]);
+  for (const dimensions of gapDimensions) {
+    expect(dimensions.width).toBeGreaterThan(0);
+    expect(dimensions.height).toBeGreaterThan(0);
+  }
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.evaluate(() => {
+    (window as unknown as {
+      __lastEventSource?: { emit: (type: string, data: unknown) => void };
+    }).__lastEventSource?.emit('job.result_available', { outcome: 'optimal', score: 101 });
+  });
+  await downloadPromise;
+  await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
 });

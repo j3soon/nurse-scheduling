@@ -19,9 +19,11 @@
 
 // This test is mostly AI generated.
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
+import { hydrateRoot, type Root } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import {
   selectOfflineFallbackBackendApiUrl,
@@ -62,8 +64,11 @@ class MockEventSource {
   static instances: MockEventSource[] = [];
 
   listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+  closed = false;
   url: string;
-  close = vi.fn();
+  close = vi.fn(() => {
+    this.closed = true;
+  });
 
   constructor(url: string) {
     this.url = url;
@@ -74,9 +79,13 @@ class MockEventSource {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
 
-  emit(type: string, data: unknown) {
+  emit(type: string, data: unknown, lastEventId = '') {
+    if (this.closed) {
+      return;
+    }
     const event = new MessageEvent(type, {
       data: typeof data === 'string' ? data : JSON.stringify(data),
+      lastEventId,
     });
     this.listeners.get(type)?.forEach(listener => listener(event));
   }
@@ -307,6 +316,37 @@ describe('OptimizeAndExportPage error handling', () => {
 
     expect(screen.queryByText(/this project is in active development/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/check that your frontend and backend versions match/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps schedule validation deterministic while hydrating client storage state', async () => {
+    mockUseSchedulingData.mockReturnValue(createSchedulingData({
+      dateData: {
+        range: {},
+        items: [],
+        groups: [],
+      },
+    }));
+    const serverHtml = renderToString(<OptimizeAndExportPage />);
+    const container = document.createElement('div');
+    container.innerHTML = serverHtml;
+    document.body.appendChild(container);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let root: Root | null = null;
+
+    await act(async () => {
+      root = hydrateRoot(container, <OptimizeAndExportPage />);
+    });
+
+    expect(within(container).getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+    expect(within(container).getByText(/please set up your dates first/i)).toBeInTheDocument();
+    expect(consoleError.mock.calls.some(call => (
+      call.some(argument => String(argument).includes('hydrated'))
+    ))).toBe(false);
+
+    await act(async () => {
+      root?.unmount();
+    });
+    container.remove();
   });
 
   it('shows backend readiness and version status from the info endpoint', async () => {
@@ -944,6 +984,12 @@ describe('OptimizeAndExportPage error handling', () => {
         commentCount: 3,
       });
       eventSource.emit('job.state_changed', { state: 'completed' });
+    });
+
+    expect(eventSource.close).not.toHaveBeenCalled();
+    expect(screen.queryByText('job.result_available')).not.toBeInTheDocument();
+
+    act(() => {
       eventSource.emit('job.result_available', { outcome: 'optimal', score: 42 });
     });
 
@@ -958,10 +1004,84 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText(/"currentBestScore":12000/)).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /optimization progress chart/i })).toBeInTheDocument();
     expect(eventSource.close).toHaveBeenCalledTimes(1);
+    expect(eventSource.closed).toBe(true);
+    act(() => {
+      eventSource.emit('job.control_changed', { early_completion_requested: true });
+    });
+    expect(screen.queryByText('job.control_changed')).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([url, init]) => (
       url === 'http://localhost:8000/optimize/opt_sse'
       && (init as RequestInit | undefined)?.method === 'GET'
     ))).toHaveLength(1);
+  });
+
+  it('falls back to the job snapshot when a completed stream ends before the result event', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_completed_fallback' })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_completed_fallback', state: 'completed', outcome: 'optimal', score: 24, solverStatus: 'OPTIMAL',
+        })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({ ok: true });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    const eventSource = MockEventSource.instances[0];
+    act(() => {
+      eventSource.emit('job.state_changed', { state: 'completed' });
+      eventSource.listeners.get('error')?.forEach(listener => listener(new Event('error') as MessageEvent));
+    });
+
+    await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
+    expect(screen.queryByText('job.result_available')).not.toBeInTheDocument();
+    expect(eventSource.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('finalizes a failed SSE job without waiting for a result event', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_failed' })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_failed', state: 'failed', error: 'Solver failed.',
+        })),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    act(() => {
+      MockEventSource.instances[0].emit('job.state_changed', {
+        state: 'failed',
+        error: { code: 'optimization_failed', message: 'Solver failed.' },
+      });
+    });
+
+    await expect(screen.findByText('Solver failed.')).resolves.toBeInTheDocument();
+    expect(screen.queryByText('job.result_available')).not.toBeInTheDocument();
+    expect(MockEventSource.instances[0].close).toHaveBeenCalledTimes(1);
   });
 
   it('shows queued position updates received through SSE', async () => {
@@ -1039,7 +1159,7 @@ describe('OptimizeAndExportPage error handling', () => {
 
   });
 
-  it('keeps a dropped SSE stream open for automatic reconnection', async () => {
+  it('recreates a dropped SSE stream from the last received event', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
     const appendChildSpy = vi.spyOn(document.body, 'appendChild');
@@ -1072,28 +1192,84 @@ describe('OptimizeAndExportPage error handling', () => {
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
 
     act(() => {
+      MockEventSource.instances[0].emit(
+        'job.progressed',
+        { currentBestScore: 70, elapsedSeconds: 1 },
+        '2',
+      );
       MockEventSource.instances[0].listeners.get('error')?.forEach(listener => {
         listener(new Event('error') as MessageEvent);
       });
     });
 
-    expect(screen.getByText('Optimization event stream disconnected; waiting to reconnect')).toBeInTheDocument();
-    expect(MockEventSource.instances[0].close).not.toHaveBeenCalled();
+    expect(screen.getByText('Optimization event stream disconnected; retrying')).toBeInTheDocument();
+    expect(MockEventSource.instances[0].close).toHaveBeenCalled();
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(2), { timeout: 2000 });
+    expect(MockEventSource.instances[1].url).toBe(
+      `${LOCAL_API_URL}/optimize/opt_sse_drop/events?last_event_id=2`,
+    );
 
     act(() => {
-      MockEventSource.instances[0].emit('job.result_available', { outcome: 'optimal', score: 77 });
+      MockEventSource.instances[1].emit('job.result_available', { outcome: 'optimal', score: 77 }, '4');
     });
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
     expect(screen.getByText('recovered.xlsx')).toBeInTheDocument();
     expect(appendChildSpy).toHaveBeenCalled();
     expect(removeChildSpy).toHaveBeenCalled();
-    expect(MockEventSource.instances[0].close).toHaveBeenCalled();
+    expect(MockEventSource.instances[1].close).toHaveBeenCalled();
   });
+
+  it('keeps retrying a dropped SSE stream without a finite attempt limit', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_sse_retry' })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_sse_retry', state: 'completed', outcome: 'optimal', score: 81, solverStatus: 'OPTIMAL',
+        })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
+        headers: new Headers({
+          'Content-Disposition': 'attachment; filename=recovered-by-status.xlsx',
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    for (let index = 0; index < 6; index += 1) {
+      act(() => {
+        MockEventSource.instances[index].listeners.get('error')?.forEach(listener => {
+          listener(new Event('error') as MessageEvent);
+        });
+      });
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(index + 2), { timeout: 2000 });
+    }
+
+    act(() => {
+      MockEventSource.instances[6].emit('job.result_available', { outcome: 'optimal', score: 81 }, '7');
+    });
+
+    await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
+    expect(screen.getByText('recovered-by-status.xlsx')).toBeInTheDocument();
+    expect(MockEventSource.instances[6].close).toHaveBeenCalled();
+  }, 10_000);
 
   it('can request current results or cancel an active SSE job', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
@@ -1145,6 +1321,120 @@ describe('OptimizeAndExportPage error handling', () => {
     });
 
     await expect(screen.findByText('Optimization cancelled.')).resolves.toBeInTheDocument();
+    expect(consoleError).not.toHaveBeenCalledWith('Error during optimization:', expect.anything());
+  });
+
+  it('applies passive early-completion control events', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_passive_control' })),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    act(() => {
+      MockEventSource.instances[0].emit('job.state_changed', {
+        state: 'running',
+        controls: { cancellable: true, early_completion_available: true },
+      });
+    });
+    expect(screen.getByRole('button', { name: /get results now/i })).toBeEnabled();
+
+    act(() => {
+      MockEventSource.instances[0].emit('job.control_changed', { early_completion_requested: true });
+    });
+
+    expect(screen.getByRole('button', { name: /get results now/i })).toBeDisabled();
+    expect(screen.getByText('job.control_changed')).toBeInTheDocument();
+  });
+
+  it('preserves history and applies the snapshot when replay has a gap', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_replay_gap' })),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    act(() => {
+      MockEventSource.instances[0].emit('job.progressed', {
+        currentBestScore: 99,
+        elapsedSeconds: 1,
+      });
+      MockEventSource.instances[0].emit('job.progressed', {
+        currentBestScore: 98,
+        elapsedSeconds: 2,
+      });
+    });
+    expect(screen.getAllByText('job.progressed')).toHaveLength(2);
+    expect(screen.getByRole('img', { name: /optimization progress chart/i })).toBeInTheDocument();
+
+    act(() => {
+      MockEventSource.instances[0].emit('job.replay_gap', {
+        reason: 'cursor_unavailable',
+        requested_last_event_id: '1',
+        oldest_retained_event_id: '10',
+        replay_checkpoint_id: '20',
+        job: optimizeJobResponse({
+          id: 'opt_replay_gap',
+          state: 'running',
+          earlyCompletionAvailable: false,
+        }),
+      });
+    });
+
+    expect(screen.getAllByText('job.progressed')).toHaveLength(2);
+    expect(screen.getByText('job.replay_gap')).toBeInTheDocument();
+    expect(screen.getByText(/some optimization events are missing/i)).toBeInTheDocument();
+    expect(screen.getByText(/gray bands mark intervals where sse progress was not observed/i)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /optimization progress chart/i })).toBeInTheDocument();
+    expect(screen.getByText('3 events')).toBeInTheDocument();
+    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /get results now/i })).toBeDisabled();
+    expect(MockEventSource.instances[0].close).not.toHaveBeenCalled();
+  });
+
+  it('reports replay cursor errors separately from transport errors', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_replay_error' })),
+      });
+
+    render(<OptimizeAndExportPage />);
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    const message = "The supplied Last-Event-ID is newer than this job's retained event history.";
+    act(() => {
+      MockEventSource.instances[0].emit('job.replay_error', {
+        code: 'future_cursor',
+        message,
+        requested_last_event_id: '30',
+        oldest_retained_event_id: '10',
+        newest_retained_event_id: '20',
+      });
+    });
+
+    await waitFor(() => expect(screen.getAllByText(message).length).toBeGreaterThan(0));
+    expect(screen.getByText('job.replay_error')).toBeInTheDocument();
+    expect(MockEventSource.instances[0].close).toHaveBeenCalledTimes(1);
+    expect(MockEventSource.instances[0].closed).toBe(true);
   });
 
   it('keeps the optimization event log pinned to bottom when new events arrive at bottom', async () => {

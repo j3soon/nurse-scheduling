@@ -17,19 +17,19 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import replace
 from io import BytesIO
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from ... import scheduler
 from ..config import ServerSettings
 from ..jobs.controller import JobController
-from ..jobs.models import JobState, solver_supports_stop
+from ..jobs.models import JobEvent, JobEventType, JobReplayError, JobReplayGap, JobState, solver_supports_stop
 from .schemas import JobResponse
 from .sse import format_sse_event
 
@@ -144,25 +144,65 @@ def get_job(request: Request, job_id: str):
 
 
 @router.get("/optimize/{job_id}/events")
-def stream_events(request: Request, job_id: str, last_event_id: str | None = Header(None)):
+def stream_events(
+    request: Request,
+    job_id: str,
+    last_event_id: str | None = Header(None),
+    last_event_id_query: str | None = Query(None, alias="last_event_id"),
+):
     """Replay and stream job events after the client's last event ID.
 
     Disconnecting closes only this response stream; the durable job continues.
     """
     controller = _controller(request)
     controller.get_job(job_id)
+    replay_cursor = last_event_id if last_event_id is not None else last_event_id_query
 
     def generate():
         """Yield SSE frames, blocking up to the configured keepalive interval."""
         for event in controller.stream_events(
             job_id,
-            after_id=last_event_id,
+            after_id=replay_cursor,
             keepalive_seconds=_settings(request).sse_keepalive_seconds,
         ):
             if event is None:
                 yield ": keepalive\n\n"
                 continue
-            if event.type == "job.state_changed":
+            if isinstance(event, JobReplayError):
+                message = (
+                    "The supplied Last-Event-ID is not valid for this job store."
+                    if event.code == "malformed_cursor"
+                    else "The supplied Last-Event-ID is newer than this job's retained event history."
+                )
+                event = JobEvent(
+                    id="",
+                    type=JobEventType.REPLAY_ERROR,
+                    data={
+                        "code": event.code,
+                        "message": message,
+                        "requested_last_event_id": event.requested_last_event_id,
+                        "oldest_retained_event_id": event.oldest_retained_event_id,
+                        "newest_retained_event_id": event.newest_retained_event_id,
+                    },
+                    occurred_at=datetime.now(timezone.utc),
+                )
+            # Replay gaps are synthetic store signals, not persisted JobEvent objects.
+            # Convert them here because this API layer owns JobResponse serialization.
+            elif isinstance(event, JobReplayGap):
+                event = JobEvent(
+                    # An empty id field clears the browser's stale Last-Event-ID.
+                    id=event.replay_checkpoint_id if event.replay_checkpoint_id is not None else "",
+                    type=JobEventType.REPLAY_GAP,
+                    data={
+                        "reason": "cursor_unavailable",
+                        "requested_last_event_id": event.requested_last_event_id,
+                        "oldest_retained_event_id": event.oldest_retained_event_id,
+                        "replay_checkpoint_id": event.replay_checkpoint_id,
+                        "job": JobResponse.from_job(event.job).model_dump(mode="json"),
+                    },
+                    occurred_at=datetime.now(timezone.utc),
+                )
+            elif event.type == JobEventType.STATE_CHANGED:
                 job = controller.get_job(job_id)
                 event_state = JobState(str(event.data["state"]))
                 supports_stop = solver_supports_stop(job.request.solver)
