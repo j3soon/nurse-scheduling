@@ -18,8 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
-import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
@@ -33,6 +32,7 @@ from ..errors import (
     StoreWriteConflictError,
 )
 from ..job_store import JobStore
+from ..retry import retry_with_backoff
 from .models import (
     Job,
     JobEvent,
@@ -54,8 +54,6 @@ Clock = Callable[[], datetime]
 IdFactory = Callable[[], str]
 Transition = Callable[[Job, datetime], tuple[Job, list[JobEvent], StoredArtifact | None]]
 WriteResult = TypeVar("WriteResult")
-STORE_WRITE_RETRY_INITIAL_DELAY_SECONDS = 0.001
-STORE_WRITE_RETRY_MAX_DELAY_SECONDS = 0.05
 
 
 def utc_now() -> datetime:
@@ -78,6 +76,7 @@ class JobController:
         limits: StoreLimits,
         retention_seconds: int,
         claim_lease_seconds: float,
+        runtime_identity: Mapping[str, str] | None = None,
         clock: Clock = utc_now,
         id_factory: IdFactory = new_job_id,
     ):
@@ -90,6 +89,8 @@ class JobController:
         """Age after which terminal job history is eligible for deletion."""
         self._claim_lease_seconds = claim_lease_seconds
         """Duration assigned to each new or renewed worker claim."""
+        self._runtime_identity = runtime_identity
+        """Identity recorded when this API process accepts or claims a job."""
         self._clock = clock
         """Clock used for lifecycle timestamps and deterministic tests."""
         self._id_factory = id_factory
@@ -129,7 +130,13 @@ class JobController:
                 ),
                 created_at=now,
             )
-            return self._store.create(job, input_bytes, self._limits, [self._state_event(job, now)])
+            initial_event = self._state_event(job, now)
+            if self._runtime_identity is not None:
+                initial_event = replace(
+                    initial_event,
+                    data={**initial_event.data, "runtime": dict(self._runtime_identity)},
+                )
+            return self._store.create(job, input_bytes, self._limits, [initial_event])
 
         created = self._retry_store_write(
             create,
@@ -188,6 +195,7 @@ class JobController:
             worker_id,
             now,
             now + timedelta(seconds=self._claim_lease_seconds),
+            self._runtime_identity,
         )
         if job is not None:
             server_logger.info(
@@ -549,12 +557,12 @@ class JobController:
                 self._log_terminal_job(expired)
         return expired_ids
 
-    def _update_job_with_retry(self, job_id: str, transition: Transition, max_attempts: int = 20) -> Job:
+    def _update_job_with_retry(self, job_id: str, transition: Transition) -> Job:
         """Compute and persist a job update, retrying optimistic write conflicts.
 
         Raises:
             JobNotFoundError: If the job does not exist.
-            JobOperationContentionError: If conflicts exhaust `max_attempts`.
+            JobOperationContentionError: If conflicts exhaust the shared retry policy.
         """
 
         def update() -> Job:
@@ -565,13 +573,12 @@ class JobController:
                 return current
             return self._store.save(replacement, current.revision, events, artifact)
 
-        return self._retry_store_write(update, max_attempts=max_attempts)
+        return self._retry_store_write(update)
 
     @staticmethod
     def _retry_store_write(
         operation: Callable[[], WriteResult],
         *,
-        max_attempts: int = 20,
         failure_message: str = "Job changed too frequently; retry the request",
     ) -> WriteResult:
         """Retry a complete store write after internal atomic-write conflicts.
@@ -580,21 +587,15 @@ class JobController:
         current revisions before each write attempt.
 
         Raises:
-            JobOperationContentionError: If conflicts exhaust `max_attempts`.
+            JobOperationContentionError: If conflicts exhaust the shared retry policy.
         """
-        for attempt in range(max_attempts):
-            if attempt > 0:
-                delay_seconds = min(
-                    STORE_WRITE_RETRY_INITIAL_DELAY_SECONDS * (2 ** (attempt - 1)),
-                    STORE_WRITE_RETRY_MAX_DELAY_SECONDS,
-                )
-                time.sleep(delay_seconds)
-            try:
-                return operation()
-            except StoreWriteConflictError:
-                # Retry the whole callback so it can regenerate IDs or re-read revisions.
-                continue
-        raise JobOperationContentionError(failure_message)
+        try:
+            return retry_with_backoff(
+                operation,
+                retry_on=StoreWriteConflictError,
+            )
+        except StoreWriteConflictError as error:
+            raise JobOperationContentionError(failure_message) from error
 
     @staticmethod
     def _state_event(job: Job, occurred_at: datetime) -> JobEvent:

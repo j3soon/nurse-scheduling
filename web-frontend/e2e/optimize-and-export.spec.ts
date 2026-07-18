@@ -53,14 +53,13 @@ test('direct navigation hydrates persisted schedule data without an attribute mi
   }, {
     persisted: JSON.stringify({ state, history: [state], currentHistoryIndex: 0 }),
   });
-  await page.route('http://localhost:8000/health', route => route.fulfill({
+  await page.route('http://localhost:8000/info', route => route.fulfill({
     status: 200,
     headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      status: 'ok',
-      version: 'test',
-      apiVersion: 'test',
-      appVersion: 'test',
+      status: 'ready',
+      api_version: 'test',
+      app_version: 'test',
     }),
   }));
 

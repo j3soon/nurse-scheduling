@@ -5,41 +5,12 @@ x-api-build: &api-build
   dockerfile: ${API_DOCKERFILE:-Dockerfile.api}
 
 services:
-  redis:
-    image: redis:8.8
-    restart: unless-stopped
-    # Keep the image's default RDB policy; deployments needing a smaller
-    # crash-loss window can enable AOF as described in docker/README.md.
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      # Docker's default interval waits too long during startup.
-      interval: 3s
-      timeout: 3s
-      retries: 30
-
   api:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
     environment:
-      JOB_BACKEND: redis
-      JOB_REDIS_URL: redis://redis:6379/0
-      JOB_REDIS_KEY_PREFIX: nurse_scheduling:jobs:v0
-    command:
-      - uvicorn
-      - nurse_scheduling.serve:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --workers
-      - "3"
-      - --no-access-log
+      JOB_BACKEND: memory
     expose:
       - "8000"
     volumes:
@@ -72,7 +43,7 @@ services:
       DIAGNOSTIC_TARGET_URL: ${DIAGNOSTIC_TARGET_URL:-https://api.nursescheduling.org}
       DIAGNOSTIC_INFO_SAMPLES: ${DIAGNOSTIC_INFO_SAMPLES:-100}
       DIAGNOSTIC_PARALLEL_REQUESTS: ${DIAGNOSTIC_PARALLEL_REQUESTS:-10}
-      DIAGNOSTIC_EXPECTED_CONCURRENCY: ${DIAGNOSTIC_EXPECTED_CONCURRENCY:-3}
+      DIAGNOSTIC_EXPECTED_CONCURRENCY: ${DIAGNOSTIC_EXPECTED_CONCURRENCY:-1}
       DIAGNOSTIC_MAX_JOBS: ${DIAGNOSTIC_MAX_JOBS:-128}
       DIAGNOSTIC_QUEUE_STABLE_SECONDS: ${DIAGNOSTIC_QUEUE_STABLE_SECONDS:-10}
       DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS: ${DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS:-600}
@@ -83,5 +54,4 @@ services:
       - diagnostic-reports:/reports
 
 volumes:
-  redis-data:
   diagnostic-reports:

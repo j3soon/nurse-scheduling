@@ -38,7 +38,7 @@ import { GITHUB_PRIVACY_URL } from '@/constants/urls';
 import {
   BACKEND_API_CANDIDATES,
   selectPreferredServer,
-  type ServerHealthResponse,
+  type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
 import { CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
 
@@ -111,7 +111,7 @@ interface JobControlChangedEvent {
 interface OptimizeServerEntry {
   endpoint: string;
   status: ServerStatus;
-  health: ServerHealthResponse | null;
+  health: ServerInfoResponse | null;
   error: string | null;
   lastCheckedAt: Date | null;
   pingMs: number | null;
@@ -272,18 +272,18 @@ function buildEventStreamUrl(endpoint: string, path: string, lastEventId: string
   return `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}last_event_id=${encodeURIComponent(lastEventId)}`;
 }
 
-async function fetchServerHealth(
+async function fetchServerInfo(
   endpoint: string,
   timeoutMs = HEALTH_CHECK_TIMEOUT_MS,
   signal?: AbortSignal,
-): Promise<ServerHealthResponse | null> {
+): Promise<ServerInfoResponse | null> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   const abortController = () => controller.abort();
   signal?.addEventListener('abort', abortController);
 
   try {
-    const response = await fetch(`${endpoint}/health`, {
+    const response = await fetch(`${endpoint}/info`, {
       method: 'GET',
       cache: 'no-store',
       signal: controller.signal,
@@ -293,8 +293,8 @@ async function fetchServerHealth(
       return null;
     }
 
-    const health = await response.json() as ServerHealthResponse;
-    return health.status === 'ok' ? health : null;
+    const info = await response.json() as ServerInfoResponse;
+    return info.status === 'ready' ? info : null;
   } catch {
     return null;
   } finally {
@@ -547,7 +547,7 @@ export default function OptimizeAndExportPage() {
       .map(({ server, index }) => ({
         endpoint: server.endpoint,
         index,
-        health: server.health as ServerHealthResponse,
+        health: server.health as ServerInfoResponse,
       }))
   );
   const resolvedServer = selectedServerEndpoint === 'auto'
@@ -567,7 +567,7 @@ export default function OptimizeAndExportPage() {
   const activeServerHealth = selectedServerEndpoint === 'auto'
     ? resolvedServer?.health ?? serverEntries.find(server => server.status === 'checking' && server.health)?.health ?? null
     : selectedServer?.health ?? null;
-  const hasVersionMismatch = Boolean(activeServerHealth && hasAppVersionMismatch(CURRENT_APP_VERSION, activeServerHealth.appVersion));
+  const hasVersionMismatch = Boolean(activeServerHealth && hasAppVersionMismatch(CURRENT_APP_VERSION, activeServerHealth.app_version));
   const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
   const isShiftTypeDataMissing = shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0;
@@ -677,7 +677,7 @@ export default function OptimizeAndExportPage() {
         : currentServer
     )));
 
-    void fetchServerHealth(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal).then(health => {
+    void fetchServerInfo(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal).then(health => {
       const pingMs = Math.round(performance.now() - startedAt);
       setServerEntries(currentServers => currentServers.map(currentServer => {
         if (
@@ -1640,7 +1640,7 @@ export default function OptimizeAndExportPage() {
                   {activeServerHealth && (
                     <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
                       <p>
-                        API version: {activeServerHealth.apiVersion} · Frontend version: {CURRENT_APP_VERSION} · Backend version: {activeServerHealth.appVersion}
+                        API version: {activeServerHealth.api_version} · Frontend version: {CURRENT_APP_VERSION} · Backend version: {activeServerHealth.app_version}
                       </p>
                       {hasVersionMismatch && (
                         <p className="mt-1 font-medium text-amber-700">

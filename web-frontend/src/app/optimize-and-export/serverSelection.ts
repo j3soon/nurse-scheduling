@@ -17,16 +17,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-export interface ServerHealthResponse {
+export interface ServerInfoResponse {
   status: string;
-  apiVersion: string;
-  appVersion: string;
+  api_version: string;
+  app_version: string;
 }
 
-export interface ServerHealthCheckResult {
+export interface ServerInfoCheckResult {
   endpoint: string;
   index: number;
-  health: ServerHealthResponse;
+  health: ServerInfoResponse;
 }
 
 export const LOCAL_BACKEND_API_URL = 'http://localhost:8000';
@@ -44,6 +44,6 @@ export function selectOfflineFallbackBackendApiUrl(candidates: string[]): string
     : candidates[0];
 }
 
-export function selectPreferredServer(results: ServerHealthCheckResult[]): ServerHealthCheckResult | undefined {
+export function selectPreferredServer(results: ServerInfoCheckResult[]): ServerInfoCheckResult | undefined {
   return [...results].sort((a, b) => a.index - b.index)[0];
 }

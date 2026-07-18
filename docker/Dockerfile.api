@@ -1,0 +1,40 @@
+FROM python:3.12-slim AS source
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+# This remote URL changes when the dev branch advances, which invalidates the
+# clone layer during normal Docker builds instead of reusing an older checkout.
+ADD https://api.github.com/repos/j3soon/nurse-scheduling/commits/dev /tmp/nurse-scheduling-dev-commit.json
+
+RUN git clone --branch dev https://github.com/j3soon/nurse-scheduling.git /app/nurse-scheduling \
+    && version="$(git -C /app/nurse-scheduling describe --tags --always --dirty)" \
+    && test -n "$version" \
+    && case "$version" in *dirty*) echo "ERROR: backend image version is dirty: $version" >&2; exit 1 ;; esac \
+    && printf '%s\n' "$version" > /app/nurse-scheduling/.app-version \
+    && rm -rf /app/nurse-scheduling/.git
+
+
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl redis-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 user \
+    && mkdir -p /reports /app/nurse-scheduling \
+    && chown user:user /reports /app/nurse-scheduling
+
+COPY --chown=user:user --from=source /app/nurse-scheduling/core/ /app/nurse-scheduling/core/
+COPY --chown=user:user --from=source /app/nurse-scheduling/.app-version /app/nurse-scheduling/.app-version
+
+WORKDIR /app/nurse-scheduling/core
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+USER user
+
+EXPOSE 8000
+
+CMD ["uvicorn", "nurse_scheduling.serve:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]

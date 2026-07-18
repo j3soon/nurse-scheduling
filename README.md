@@ -539,11 +539,72 @@ cd core
 JOB_REDIS_TEST_URL=redis://localhost:6379/15 pytest --log-cli-level=INFO tests/test_optimize_job_backends.py
 ```
 
-For Docker Compose deployment, `docker/compose.backend.yml` starts a Redis service and configures the backend to use it:
+For Docker Compose deployment, `docker/compose.backend.yml` starts a Redis
+service and configures the backend to use it:
 
 ```sh
 cd docker
 docker compose -f compose.backend.yml up -d --build
+```
+
+#### Inspect Redis Data
+
+The Compose deployment uses Redis database `0` and the key prefix
+`nurse_scheduling:jobs:v0`. Open `redis-cli` from the Redis container:
+
+```sh
+docker compose -f compose.backend.yml exec redis redis-cli -n 0
+```
+
+Useful inspection commands include:
+
+```text
+DBSIZE
+SCAN 0 MATCH nurse_scheduling:jobs:v0:* COUNT 100
+ZRANGE nurse_scheduling:jobs:v0:jobs 0 -1 WITHSCORES
+ZRANGE nurse_scheduling:jobs:v0:queue 0 -1 WITHSCORES
+SMEMBERS nurse_scheduling:jobs:v0:pending
+GET nurse_scheduling:jobs:v0:job:<job-id>
+GET nurse_scheduling:jobs:v0:job:<job-id>:input
+XRANGE nurse_scheduling:jobs:v0:job:<job-id>:events - + COUNT 20
+HGETALL nurse_scheduling:jobs:v0:job:<job-id>:artifact_metadata
+```
+
+Use `SCAN` instead of `KEYS *` on a busy database. Job artifacts are binary and
+are better inspected through the API download endpoint.
+
+For a graphical browser, run
+[Redis Insight](https://redis.io/docs/latest/operate/redisinsight/install/install-on-docker/)
+on the Compose network:
+
+```sh
+docker run -d \
+  --name redisinsight \
+  --network nurse-scheduling-backend_default \
+  -p 127.0.0.1:5540:5540 \
+  -v redisinsight:/data \
+  redis/redisinsight:latest
+```
+
+Open `http://localhost:5540` and add a database with `redis://default@redis:6379`. Filter the Browser view with
+`nurse_scheduling:jobs:v0:*`.
+
+When Redis Insight runs on a remote VM, forward its locally bound port before
+opening it in a local browser:
+
+```sh
+ssh -L 5540:127.0.0.1:5540 user@your-server
+```
+
+Keep Redis and Redis Insight off public interfaces. Redis Insight can modify or
+delete stored data.
+
+To run one backend worker with process-local memory and no Redis service, use
+the pre-Redis deployment configuration:
+
+```sh
+cd docker
+docker compose -f compose.backend.memory.yml up -d --build
 ```
 
 The bundled Redis service uses its default RDB snapshot policy with a persistent

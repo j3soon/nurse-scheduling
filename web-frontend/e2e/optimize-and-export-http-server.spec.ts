@@ -58,16 +58,15 @@ test('optimize and export works against a real local HTTP server instead of Play
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/health') {
+    if (req.method === 'GET' && req.url === '/info') {
       res.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Content-Type': 'application/json',
       });
       res.end(JSON.stringify({
-        status: 'ok',
-        version: 'alpha',
-        apiVersion: 'alpha',
-        appVersion: 'v-test',
+        status: 'ready',
+        api_version: 'alpha',
+        app_version: 'v-test',
       }));
       return;
     }
@@ -245,16 +244,15 @@ test('EventSource replays missed events after a 10-second network outage', async
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/health') {
+    if (req.method === 'GET' && req.url === '/info') {
       res.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Content-Type': 'application/json',
       });
       res.end(JSON.stringify({
-        status: 'ok',
-        version: 'alpha',
-        apiVersion: 'alpha',
-        appVersion: 'v-test',
+        status: 'ready',
+        api_version: 'alpha',
+        app_version: 'v-test',
       }));
       return;
     }
