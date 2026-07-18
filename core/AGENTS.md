@@ -14,6 +14,8 @@ Run commands from `core/`:
   output, or the compact normal suite when core source/helper files change.
 - `pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.
+- `python tests/real/solver_capabilities.py --solver ortools/cp-sat`: probe
+  timeout, cancel, and finish-now behavior on the large real scenario.
 - `pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run the primary solver/schedule suites.
 - `ruff check nurse_scheduling tests`
 - `ruff format nurse_scheduling tests`
@@ -24,6 +26,10 @@ test paths when a narrower suite is known to be sufficient.
 
 ## Testing
 - Normal tests live under `tests/`.
+- Keep server-facing solver traits in
+  `nurse_scheduling/server/solver_capabilities.py`. Runtime control checks and
+  `/optimize/options` must use that registry rather than duplicate selector
+  lists.
 - Real-world checks under `tests/real/` intentionally omit pytest's `test_`
   filename prefix. Run them explicitly; do not include them in normal test
   commands.

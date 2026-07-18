@@ -42,8 +42,8 @@ from .models import (
     OptimizationResult,
     StoredArtifact,
     StoreLimits,
-    solver_supports_stop,
 )
+from ..solver_capabilities import solver_supports_cancel, solver_supports_finish_now
 
 
 server_logger = logging.getLogger("nurse_scheduling.server")
@@ -372,7 +372,7 @@ class JobController:
                     queue_position=None,
                 )
                 return cancelled, [self._state_event(cancelled, now)], None
-            if not solver_supports_stop(job.request.solver):
+            if not solver_supports_cancel(job.request.solver):
                 raise JobOperationNotAllowedError("This solver does not support cancellation")
             cancelling = replace(job, state=JobState.CANCELLING, cancel_requested=True)
             return cancelling, [self._state_event(cancelling, now)], None
@@ -403,7 +403,7 @@ class JobController:
                 return job, [], None
             if job.state != JobState.RUNNING:
                 raise JobOperationNotAllowedError("Early completion is only available while a job is running")
-            if not solver_supports_stop(job.request.solver):
+            if not solver_supports_finish_now(job.request.solver):
                 raise JobOperationNotAllowedError("This solver does not support early completion")
             updated = replace(job, early_completion_requested=True)
             event = JobEvent(

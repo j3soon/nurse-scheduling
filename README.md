@@ -535,7 +535,7 @@ For a graphical browser, run
 on the Compose network:
 
 ```sh
-docker run -d \
+docker run --rm \
   --name redisinsight \
   --network nurse-scheduling-backend_default \
   -p 127.0.0.1:5540:5540 \

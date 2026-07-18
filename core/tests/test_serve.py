@@ -32,7 +32,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from nurse_scheduling.scheduler import ScheduleResult
+from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.config import (
     DEFAULT_JOB_RETENTION_SECONDS,
@@ -48,11 +48,11 @@ from nurse_scheduling.server.jobs.models import (
     OptimizationResult,
     StoredArtifact,
     StoreLimits,
-    solver_supports_stop,
 )
 from nurse_scheduling.server.jobs.controller import JobController
 from nurse_scheduling.server.jobs.runner import OptimizationRunner, RunOutput
 from nurse_scheduling.server.jobs.worker import JobWorker
+from nurse_scheduling.server.solver_capabilities import SOLVER_CAPABILITIES, solver_supports_stop
 from nurse_scheduling.server.stores.memory import MemoryJobStore
 
 
@@ -157,6 +157,28 @@ def test_health_and_readiness_report_status():
             "appVersion": client.app.state.app_version,
         }
         assert client.get("/ready").json() == {"status": "ready"}
+
+
+def test_solver_capability_registry_matches_canonical_choices():
+    assert tuple(item.value for item in SOLVER_CAPABILITIES) == CANONICAL_SOLVER_CHOICES
+
+    by_value = {item.value: item for item in SOLVER_CAPABILITIES}
+    expected = {
+        "ortools/cp-sat": (True, True, True, True),
+        "pulp/cbc": (False, False, False, True),
+        "pulp/cuopt": (True, False, False, True),
+    }
+    for selector, capabilities in by_value.items():
+        assert (
+            capabilities.timeout,
+            capabilities.cancel_running,
+            capabilities.finish_now,
+            capabilities.intermediate_scores,
+        ) == expected.get(selector, (False, False, False, False))
+
+    assert by_value["ortools/cp-sat"].label == "OR-Tools | CP-SAT"
+    assert by_value["pulp/cuopt"].label == "PuLP | cuOpt"
+    assert by_value["pulp/cuopt"].compute == "gpu"
 
 
 def test_server_info_logging_is_visible_without_external_logging_configuration():
@@ -545,12 +567,7 @@ def test_cancel_queued_job_is_immediately_terminal():
     "solver",
     [
         "ortools/cp-sat",
-        "ortools/mpsolver/scip",
-        "ortools/mpsolver/cp-sat",
-        "ortools/mpsolver/bop",
-        "ortools/mathopt/cp-sat",
-        " ORTOOLS/MPSOLVER/SCIP ",
-        " ORTOOLS/MATHOPT/CP-SAT ",
+        " ORTOOLS/CP-SAT ",
     ],
 )
 def test_solver_supports_running_job_stop(solver):
@@ -566,7 +583,11 @@ def test_solver_supports_running_job_stop(solver):
         "pulp/highs",
         "pulp/scip",
         "ortools/mpsolver/cbc",
+        "ortools/mpsolver/scip",
+        "ortools/mpsolver/cp-sat",
+        "ortools/mpsolver/bop",
         "ortools/mathopt/gscip",
+        "ortools/mathopt/cp-sat",
         "ortools/mathopt/highs",
     ],
 )
@@ -607,7 +628,7 @@ def test_cancel_running_job_treats_solver_exception_as_cancellation(monkeypatch,
     )
 
     with _client(runner) as client:
-        created = _create(client, solver="ortools/mathopt/cp-sat").json()
+        created = _create(client, solver="ortools/cp-sat").json()
         assert runner.started.wait(timeout=2)
         response = client.post(f"/optimize/{created['id']}/cancel")
         assert response.status_code == 202

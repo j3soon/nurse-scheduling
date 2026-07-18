@@ -21,7 +21,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from ..jobs.models import Job, JobState, OptimizationOutcome, solver_supports_stop
+from ..jobs.models import Job, JobState, OptimizationOutcome
+from ..solver_capabilities import solver_supports_cancel, solver_supports_finish_now
 
 
 class JobRequestResponse(BaseModel):
@@ -114,7 +115,8 @@ class JobResponse(BaseModel):
     @classmethod
     def from_job(cls, job: Job) -> "JobResponse":
         """Project a transport-independent job into its public API shape."""
-        supports_stop = solver_supports_stop(job.request.solver)
+        supports_cancel = solver_supports_cancel(job.request.solver)
+        supports_finish_now = solver_supports_finish_now(job.request.solver)
         return cls(
             id=job.id,
             state=job.state,
@@ -146,10 +148,10 @@ class JobResponse(BaseModel):
             ),
             controls=JobControlsResponse(
                 cancellable=not job.state.terminal
-                and (job.state == JobState.QUEUED or supports_stop)
+                and (job.state == JobState.QUEUED or supports_cancel)
                 and not job.cancel_requested,
                 early_completion_available=job.state == JobState.RUNNING
-                and supports_stop
+                and supports_finish_now
                 and not job.early_completion_requested,
             ),
             links=JobLinksResponse(

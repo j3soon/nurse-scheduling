@@ -36,6 +36,10 @@ Recommended is the default. Experimental is tested but not recommended.
 Limited is intended only for small or bounded cases.
 
 - Linux and Windows coverage is x86_64 only. ARM validation is pending.
+- PuLP/CBC is unsuitable for the large 87-person real scenario because it
+  cannot reliably find an incumbent within the bounded test window. Its timeout
+  capability is still tested on that scenario. Only its intermediate-score
+  capability uses a minimal testcase.
 - PuLP/cuOpt is tested on Linux and requires the NVIDIA cuOpt runtime and a
   supported GPU. macOS has no supported GPU runtime. Windows validation is
   pending.
@@ -45,6 +49,61 @@ Limited is intended only for small or bounded cases.
 - PuLP/HiGHS is skipped on macOS because its native library may conflict with the HiGHS library bundled with OR-Tools in the same Python process. Observed failure in GitHub runners, should investigate further in the future.
 - PuLP/SCIP validation on macOS is pending.
 - MPSolver/BOP is a legacy engine intended only for small cases.
+
+## Runtime capabilities
+
+The server exposes **Finish now** and **Cancel** controls for running jobs only
+when the selected solver supports cooperative interruption. Any queued job can
+be cancelled before its solver starts.
+
+| Selector | Timeout | Cancel while running | Finish now | Intermediate score events |
+| --- | --- | --- | --- | --- |
+| `ortools/cp-sat` | Yes | Yes | Yes | Yes |
+| `ortools/mpsolver/cbc` | No | No | No | No |
+| `ortools/mpsolver/scip` | No | No | No | No |
+| `ortools/mpsolver/cp-sat` | No | No | No | No |
+| `ortools/mpsolver/bop` | No | No | No | No |
+| `ortools/mathopt/gscip` | No | No | No | No |
+| `ortools/mathopt/cp-sat` | No | No | No | No |
+| `ortools/mathopt/highs` | No | No | No | No |
+| `pulp/cbc` | No | No | No | Yes |
+| `pulp/cuopt` | Yes | No | No | Yes |
+| `pulp/glpk` | No | No | No | No |
+| `pulp/highs` | No | No | No | No |
+| `pulp/scip` | No | No | No | No |
+
+Yes means the capability is confirmed and enabled in the server registry. No
+means it is not confirmed. It does not prove that the underlying solver cannot
+support the capability.
+
+**Finish now** asks the solver to stop and preserves its current feasible
+schedule. The job fails without an artifact if interruption occurs before a
+feasible schedule exists. **Cancel** discards any result and marks the job as
+cancelled. Both controls are cooperative, so the job becomes terminal only
+after the solver returns.
+
+Intermediate score events are emitted before the solver returns. Native
+OR-Tools CP-SAT reports incumbents through solution callbacks. PuLP/CBC and
+PuLP/cuOpt derive incumbent scores from solver logs. Other backends emit a
+score event only with their final feasible result. A confirmed time limit
+preserves a feasible schedule when one is available.
+
+Validate these capabilities against the large real scenario on the current
+platform:
+
+```sh
+cd core
+python tests/real/solver_capabilities.py --solver ortools/cp-sat
+python tests/real/solver_capabilities.py --all \
+  --json-output solver-capabilities.json
+```
+
+The probe always runs timeout and runs each other confirmed trait as a separate
+subprocess. This lets an unconfirmed timeout gather evidence without changing
+the registry first. The intermediate-score round uses the basic one-person,
+one-day testcase only for PuLP/CBC. Other solvers use the large real scenario.
+Missing platform runtimes are reported as `UNAVAILABLE` rather than stopping
+the remaining checks.
 
 ## Test coverage
 

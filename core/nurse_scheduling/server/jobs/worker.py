@@ -24,7 +24,8 @@ from collections.abc import Callable
 from ...sentry import capture_optimize_exception
 from ..errors import JobNotFoundError, OptimizationExecutionError
 from .controller import JobController
-from .models import Job, JobFailure, JobState, solver_supports_stop
+from ..solver_capabilities import solver_supports_stop
+from .models import Job, JobFailure, JobState
 from .runner import OptimizationRunner
 
 

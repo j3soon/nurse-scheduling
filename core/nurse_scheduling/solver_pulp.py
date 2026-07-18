@@ -67,10 +67,7 @@ class BasePuLPSolver(SolverInterface):
 
     def _has_feasible_solution(self) -> bool:
         """Return True when the solver populated a usable incumbent (i.e., current best) solution."""
-        objective_value = pulp.value(self.model.objective) if self.model.objective is not None else None
-        if objective_value is not None:
-            return True
-        return any(pulp.value(var) is not None for var in self.variables.values())
+        return bool(self.variables) and self.model.valid(eps=1e-6)
 
     def _parse_solver_log_progress(self, line: str, start_time: float) -> SolverProgress | None:
         """Parse a solver log line into a normalized progress payload when possible."""
