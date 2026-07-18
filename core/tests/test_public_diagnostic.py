@@ -21,10 +21,14 @@
 
 import json
 import threading
+import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import httpx
+import pytest
 
+from nurse_scheduling.server import diagnostic as diagnostic_module
 from nurse_scheduling.server.diagnostic import (
     DiagnosticConfig,
     DiagnosticJob,
@@ -172,6 +176,13 @@ def _config(scenario: Path, report_dir: Path, **updates) -> DiagnosticConfig:
     return DiagnosticConfig(**values)
 
 
+def _diagnostic(tmp_path, handler=None, **updates) -> PublicDiagnostic:
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("apiVersion: alpha\n", encoding="utf-8")
+    transport = httpx.MockTransport(handler) if handler is not None else None
+    return PublicDiagnostic(_config(scenario, tmp_path, **updates), transport=transport)
+
+
 def test_public_diagnostic_defaults_cover_long_batched_workflow():
     config = DiagnosticConfig()
 
@@ -287,6 +298,26 @@ def test_info_samples_and_job_snapshots_use_bounded_parallel_requests(tmp_path):
     assert info_calls == 4
     assert set(snapshots) == {"job-0", "job-1", "job-2"}
     assert diagnostic.max_running == 3
+
+
+def test_main_runs_without_creating_process_lock(tmp_path, monkeypatch):
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("apiVersion: alpha\n", encoding="utf-8")
+    config = _config(scenario, tmp_path)
+    report = {"summary": {"outcome": "pass"}}
+    runner = Mock()
+    runner.run.return_value = report
+    diagnostic_class = Mock(return_value=runner)
+    report_path = tmp_path / "report.json"
+
+    monkeypatch.setattr(diagnostic_module.DiagnosticConfig, "from_env", Mock(return_value=config))
+    monkeypatch.setattr(diagnostic_module, "PublicDiagnostic", diagnostic_class)
+    monkeypatch.setattr(diagnostic_module, "write_report", Mock(return_value=report_path))
+    monkeypatch.setattr(diagnostic_module, "print_report", Mock())
+
+    assert diagnostic_module.main([]) == 0
+    assert not (tmp_path / ".diagnostic.lock").exists()
+    runner.run.assert_called_once_with()
 
 
 def test_job_events_expand_identity_beyond_info_routing(tmp_path):
@@ -480,3 +511,411 @@ def test_public_diagnostic_adapts_queue_release_to_one_worker(tmp_path):
         ("finish-now", "job-6"),
     ]
     assert api.jobs == {}
+
+
+def test_diagnostic_config_loads_environment_and_rejects_invalid_numbers(tmp_path, monkeypatch):
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("apiVersion: alpha\n", encoding="utf-8")
+    monkeypatch.setenv("DIAGNOSTIC_INFO_SAMPLES", "4")
+    monkeypatch.setenv("DIAGNOSTIC_QUEUE_STABLE_SECONDS", "0.25")
+
+    config = DiagnosticConfig.from_env(
+        target_url="https://backend.example.test/",
+        scenario_path=scenario,
+        report_dir=tmp_path,
+    )
+
+    assert config.target_url == "https://backend.example.test"
+    assert config.info_samples == 4
+    assert config.queue_stable_seconds == 0.25
+
+    monkeypatch.setenv("DIAGNOSTIC_INFO_SAMPLES", "0")
+    with pytest.raises(ValueError, match="positive integer"):
+        DiagnosticConfig.from_env(scenario_path=scenario)
+
+    monkeypatch.setenv("DIAGNOSTIC_INFO_SAMPLES", "4")
+    monkeypatch.setenv("DIAGNOSTIC_QUEUE_STABLE_SECONDS", "nan")
+    with pytest.raises(ValueError, match="positive number"):
+        DiagnosticConfig.from_env(scenario_path=scenario)
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"target_url": "backend.example.test"}, "absolute HTTP"),
+        ({"target_url": "https://user:secret@backend.example.test"}, "credentials"),
+        ({"target_url": "https://backend.example.test/info"}, "path, query, or fragment"),
+        ({"info_samples": 0}, "info_samples must be positive"),
+        ({"queue_stable_seconds": float("nan")}, "queue_stable_seconds must be positive"),
+    ],
+)
+def test_diagnostic_config_rejects_invalid_settings(tmp_path, updates, message):
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("apiVersion: alpha\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        _config(scenario, tmp_path, **updates)
+
+
+def test_diagnostic_config_rejects_missing_scenario(tmp_path):
+    with pytest.raises(ValueError, match="scenario was not found"):
+        DiagnosticConfig(scenario_path=tmp_path / "missing.yaml")
+
+
+def test_analysis_reports_invalid_info_and_runtime_identities(tmp_path):
+    diagnostic = _diagnostic(tmp_path, expected_concurrency=2, info_samples=3)
+    first = {
+        **QueueApi._identity(1),
+        "service_name": "unexpected-api",
+        "api_version": "v1",
+        "app_version": "app-v1",
+        "deployment_id": "unmanaged",
+        "job_backend": "memory",
+        "job_store_id": "unconfigured",
+    }
+    second = {
+        **QueueApi._identity(2),
+        "api_version": "v2",
+        "app_version": "app-v2",
+        "deployment_id": "deployment-two",
+        "job_backend": "redis",
+        "job_store_id": "store-two",
+    }
+    third = {**QueueApi._identity(3), "job_backend": "memory"}
+    diagnostic.startup_attempts = [
+        {"statusCode": 404, "body": {"status": ""}, "cacheControl": "public"},
+    ]
+    diagnostic.info_samples = [
+        {"statusCode": 503, "body": first, "cacheControl": "no-store"},
+        {"statusCode": 200, "body": second, "cacheControl": "no-store"},
+    ]
+    diagnostic.accepted_http_workers = [third, {}]
+    diagnostic.runners = [{"worker_id": ""}]
+    diagnostic.jobs = [
+        DiagnosticJob(id="unchecked", input_name="scenario.yaml"),
+        DiagnosticJob(id="missing", input_name="scenario.yaml", transitions=["queued", "running"]),
+    ]
+    diagnostic.event_jobs_checked.add("missing")
+
+    diagnostic._analyze_info()
+    diagnostic._analyze_runtime_identities()
+
+    codes = {finding.code for finding in diagnostic.findings}
+    assert {
+        "info_endpoint_missing",
+        "incomplete_info",
+        "empty_info_identity",
+        "info_cache_control",
+        "intermittent_readiness",
+        "info_sampling_incomplete",
+        "incomplete_event_identity",
+        "empty_event_identity",
+        "job_identity_not_checked",
+        "accepted_identity_missing",
+        "runner_identity_missing",
+        "unexpected_service_identity",
+        "mixed_api_versions",
+        "mixed_app_versions",
+        "mixed_deployments",
+        "unmanaged_deployment",
+        "mixed_job_backends",
+        "mixed_job_stores",
+        "unconfigured_job_store",
+        "memory_with_multiple_workers",
+        "split_memory_instances",
+        "unexpected_instance_count",
+    } <= codes
+
+
+def test_info_helpers_handle_transport_and_payload_edge_cases(tmp_path, capsys, monkeypatch):
+    def fail_info(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("backend unavailable", request=request)
+
+    diagnostic = _diagnostic(tmp_path, fail_info, parallel_requests=1)
+
+    assert diagnostic._sample_info()["statusCode"] is None
+    assert diagnostic._sample_info_concurrently(0) == []
+
+    sample = {"statusCode": 200, "body": {"status": "ready"}, "cacheControl": "no-store"}
+    sample_info = Mock(return_value=sample)
+    monkeypatch.setattr(diagnostic, "_sample_info", sample_info)
+    assert diagnostic._sample_info_concurrently(2) == [sample, sample]
+    assert sample_info.call_count == 2
+
+    assert diagnostic._json_object(httpx.Response(200, text="not-json")) is None
+    identity = QueueApi._identity(1)
+    diagnostic._observe_event_identity("job", "1", {"state": "queued", "runtime": identity})
+    diagnostic._observe_event_identity("job", "1", {"state": "queued", "runtime": identity})
+    assert diagnostic.accepted_http_workers == [identity]
+
+    diagnostic._announce_connection({"statusCode": 200, "body": []})
+    diagnostic._announce_connection(sample)
+    assert "status=unknown" in capsys.readouterr().out
+
+
+def test_job_submission_and_reads_report_error_responses(tmp_path, monkeypatch):
+    responses = [
+        httpx.Response(429),
+        httpx.Response(500, text="server error"),
+        httpx.Response(202, json=[]),
+    ]
+
+    def submit_handler(_request: httpx.Request) -> httpx.Response:
+        return responses.pop(0)
+
+    diagnostic = _diagnostic(tmp_path, submit_handler)
+    assert diagnostic._create_job(1) is None
+    assert diagnostic._create_job(2) is None
+    assert diagnostic._create_job(3) is None
+
+    monkeypatch.setattr(Path, "read_bytes", Mock(side_effect=OSError("scenario unavailable")))
+    assert diagnostic._create_job(4) is None
+
+    codes = {finding.code for finding in diagnostic.findings}
+    assert {"job_capacity_reached", "job_submission_error", "invalid_job_response"} <= codes
+
+    read_responses = [
+        httpx.Response(500, text="server error"),
+        httpx.Response(200, text="not-json"),
+    ]
+
+    def read_handler(request: httpx.Request) -> httpx.Response:
+        if read_responses:
+            return read_responses.pop(0)
+        raise httpx.ConnectError("read failed", request=request)
+
+    reader = _diagnostic(tmp_path, read_handler, parallel_requests=1)
+    reader.jobs = [DiagnosticJob(id="job", input_name="scenario.yaml")]
+    assert reader._get_job("job") is None
+    assert reader._get_job("job") is None
+    assert reader._get_job("job") is None
+    assert reader._get_jobs([]) == {}
+
+    monkeypatch.setattr(reader, "_get_job", Mock(return_value={"state": "queued"}))
+    assert reader._get_jobs(["job"]) == {"job": {"state": "queued"}}
+
+
+def test_event_replay_and_controls_report_transport_errors(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        job_id = request.url.path.split("/")[2]
+        if request.method == "GET":
+            if job_id == "bad-status":
+                return httpx.Response(500)
+            if job_id == "invalid-event":
+                return httpx.Response(
+                    200,
+                    headers={"Content-Type": "text/event-stream"},
+                    text="event: job.progressed\ndata: {\n\n",
+                )
+            if job_id == "timeout":
+                raise httpx.ReadTimeout("stream timeout", request=request)
+            raise httpx.ConnectError("stream failed", request=request)
+        if job_id == "control-error":
+            raise httpx.ConnectError("control failed", request=request)
+        if job_id == "control-missing":
+            return httpx.Response(404)
+        return httpx.Response(500, text="control rejected")
+
+    diagnostic = _diagnostic(tmp_path, handler)
+
+    assert not diagnostic._replay_job_events("bad-status", stop_on_score=True, read_seconds=0.1)
+    assert not diagnostic._replay_job_events("invalid-event", stop_on_score=True, read_seconds=0.1)
+    assert not diagnostic._replay_job_events("timeout", stop_on_score=True, read_seconds=0.1)
+    assert not diagnostic._replay_job_events("stream-error", stop_on_score=True, read_seconds=0.1)
+    assert not diagnostic._post_control("control-error", "cancel")
+    assert not diagnostic._post_control("control-missing", "cancel")
+    diagnostic.visibility_split = False
+    assert not diagnostic._post_control("control-rejected", "cancel")
+
+    assert diagnostic.visibility_split is False
+    assert len(diagnostic.request_errors) == 4
+
+
+def test_wait_and_finish_helpers_cover_incomplete_transitions(tmp_path, monkeypatch):
+    diagnostic = _diagnostic(tmp_path)
+    diagnostic.visibility_split = True
+    monkeypatch.setattr(diagnostic, "_get_jobs", Mock(return_value={}))
+    assert diagnostic._wait_for_terminal(["job"], 0.1) == {}
+
+    diagnostic.visibility_split = False
+    diagnostic.workflow_deadline = time.monotonic() + 1
+    assert not diagnostic._wait_for_running(["job"], 0.1)
+
+    diagnostic.workflow_deadline = time.monotonic() + 1
+    diagnostic._get_jobs.return_value = {"job": {"state": "failed"}}
+    assert not diagnostic._wait_for_running(["job"], 0.1)
+
+    diagnostic.workflow_deadline = time.monotonic() - 1
+    assert diagnostic._wait_for_terminal(["job"], 0.1) == {}
+    assert not diagnostic._wait_for_running(["job"], 0.1)
+
+    assert diagnostic._finish_running_jobs([])
+    monkeypatch.setattr(diagnostic, "_select_jobs_with_incumbents", Mock(return_value=[]))
+    assert not diagnostic._finish_running_jobs(["job"])
+
+    diagnostic._select_jobs_with_incumbents.return_value = ["job"]
+    monkeypatch.setattr(diagnostic, "_post_control", Mock(return_value=False))
+    assert not diagnostic._finish_running_jobs(["job"])
+
+    diagnostic._post_control.return_value = True
+    monkeypatch.setattr(diagnostic, "_wait_for_terminal", Mock(return_value={}))
+    assert not diagnostic._finish_running_jobs(["job"])
+
+    diagnostic._wait_for_terminal.return_value = {"job": {"state": "failed"}}
+    assert not diagnostic._finish_running_jobs(["job"])
+    assert diagnostic.queue_transition == "fail"
+
+
+def test_queue_transition_reports_each_incomplete_control_stage(tmp_path):
+    no_running = _diagnostic(tmp_path, expected_concurrency=1)
+    no_running._snapshot_jobs = Mock(return_value={})
+    no_running._exercise_queue_transition([])
+    assert {finding.code for finding in no_running.findings} >= {
+        "insufficient_running_jobs",
+        "no_running_jobs",
+    }
+
+    changed = _diagnostic(tmp_path, expected_concurrency=2)
+    changed.max_running = 2
+    changed._snapshot_jobs = Mock(return_value={"run": {"state": "running"}})
+    changed._exercise_queue_transition([])
+    assert changed.findings[-1].code == "running_batch_changed"
+
+    no_score = _diagnostic(tmp_path, expected_concurrency=1)
+    no_score.max_running = 1
+    no_score._snapshot_jobs = Mock(return_value={"run": {"state": "running"}})
+    no_score._select_jobs_with_incumbents = Mock(return_value=[])
+    no_score._exercise_queue_transition([])
+    assert no_score.findings[-1].code == "incumbents_not_observed"
+
+    control_failed = _diagnostic(tmp_path, expected_concurrency=1)
+    control_failed.max_running = 1
+    control_failed._snapshot_jobs = Mock(return_value={"run": {"state": "running"}})
+    control_failed._select_jobs_with_incumbents = Mock(return_value=["run"])
+    control_failed._post_control = Mock(return_value=False)
+    control_failed._exercise_queue_transition([])
+    assert control_failed.queue_transition == "fail"
+
+    release_timeout = _diagnostic(tmp_path, expected_concurrency=1)
+    release_timeout.max_running = 1
+    release_timeout._snapshot_jobs = Mock(return_value={"run": {"state": "running"}})
+    release_timeout._select_jobs_with_incumbents = Mock(return_value=["run"])
+    release_timeout._post_control = Mock(return_value=True)
+    release_timeout._wait_for_terminal = Mock(return_value={})
+    release_timeout._exercise_queue_transition([])
+    assert release_timeout.findings[-1].code == "release_timeout"
+
+    cancel_failed = _diagnostic(tmp_path, expected_concurrency=1)
+    cancel_failed.max_running = 1
+    cancel_failed._snapshot_jobs = Mock(return_value={"run": {"state": "running"}})
+    cancel_failed._select_jobs_with_incumbents = Mock(return_value=["run"])
+    cancel_failed._post_control = Mock(return_value=True)
+    cancel_failed._wait_for_terminal = Mock(return_value={"run": {"state": "completed"}})
+    cancel_failed._exercise_queue_transition([])
+    assert cancel_failed.findings[-1].code == "running_cancel_failed"
+
+    finish_failed = _diagnostic(tmp_path, expected_concurrency=2)
+    finish_failed.max_running = 2
+    finish_failed._snapshot_jobs = Mock(return_value={"cancel": {"state": "running"}, "finish": {"state": "running"}})
+    finish_failed._select_jobs_with_incumbents = Mock(return_value=["cancel", "finish"])
+    finish_failed._post_control = Mock(return_value=True)
+    finish_failed._wait_for_terminal = Mock(
+        return_value={"cancel": {"state": "cancelled"}, "finish": {"state": "failed"}}
+    )
+    finish_failed._exercise_queue_transition([])
+    assert finish_failed.findings[-1].code == "finish_now_failed"
+
+    queued_timeout = _diagnostic(tmp_path, expected_concurrency=1)
+    queued_timeout.max_running = 1
+    queued_timeout._snapshot_jobs = Mock(return_value={"run": {"state": "running"}})
+    queued_timeout._select_jobs_with_incumbents = Mock(return_value=["run"])
+    queued_timeout._post_control = Mock(return_value=True)
+    queued_timeout._wait_for_terminal = Mock(return_value={"run": {"state": "cancelled"}})
+    queued_timeout._wait_for_running = Mock(return_value=False)
+    queued_timeout._exercise_queue_transition(["queued"])
+    assert queued_timeout.findings[-1].code == "queued_jobs_did_not_run"
+    assert queued_timeout.queue_transition == "inconclusive"
+
+    active_final = _diagnostic(tmp_path, expected_concurrency=1)
+    active_final.max_running = 1
+    active_final._snapshot_jobs = Mock(side_effect=[{"run": {"state": "running"}}, {"queued": {"state": "running"}}])
+    active_final._select_jobs_with_incumbents = Mock(return_value=["run"])
+    active_final._post_control = Mock(return_value=True)
+    active_final._wait_for_terminal = Mock(return_value={"run": {"state": "cancelled"}})
+    active_final._wait_for_running = Mock(return_value=True)
+    active_final._finish_running_jobs = Mock(return_value=True)
+    active_final._exercise_queue_transition(["queued"])
+    assert active_final.findings[-1].code == "diagnostic_jobs_still_active"
+
+
+def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
+    def cleanup_handler(request: httpx.Request) -> httpx.Response:
+        job_id = request.url.path.split("/")[2]
+        if job_id == "transport-error":
+            raise httpx.ConnectError("cleanup failed", request=request)
+        if request.method == "GET":
+            if job_id == "missing":
+                return httpx.Response(404)
+            if job_id == "invalid":
+                return httpx.Response(500)
+            if job_id == "active":
+                return httpx.Response(200, json={"state": "running"})
+            return httpx.Response(200, json={"state": "completed"})
+        return httpx.Response(500)
+
+    diagnostic = _diagnostic(tmp_path, cleanup_handler)
+    diagnostic.jobs = [
+        DiagnosticJob(id=job_id, input_name="scenario.yaml")
+        for job_id in ("missing", "invalid", "active", "terminal", "transport-error", "deadline")
+    ]
+    deadline = time.monotonic() + 1
+    for job in diagnostic.jobs[:-1]:
+        diagnostic._cleanup_one_attempt(job, deadline)
+    diagnostic._cleanup_one_attempt(diagnostic.jobs[-1], time.monotonic())
+    assert len(diagnostic.request_errors) == 4
+
+    empty = _diagnostic(tmp_path)
+    empty._cleanup_jobs()
+    assert empty.cleanup == "pass"
+
+    partial = _diagnostic(tmp_path, cleanup_timeout_seconds=0.001, poll_seconds=0.001)
+    partial.jobs = [DiagnosticJob(id="remaining", input_name="scenario.yaml")]
+    partial._cleanup_one_attempt = Mock()
+    partial._cleanup_jobs()
+    assert partial.cleanup == "partial"
+    assert partial.findings[-1].code == "cleanup_incomplete"
+
+    unexpected = _diagnostic(tmp_path)
+    unexpected._collect_info = Mock(side_effect=RuntimeError("unexpected"))
+    unexpected._analyze_runtime_identities = Mock()
+    report = unexpected.run()
+    assert report["summary"]["outcome"] == "inconclusive"
+    assert report["summary"]["job_backend"] == "unknown"
+    assert report["findings"][-1]["code"] == "unexpected_error"
+
+    report["findings"].append({"level": "warning", "code": "example", "message": "Example warning."})
+    report_path = tmp_path / "report.json"
+    diagnostic_module.print_report(report, report_path)
+    output = capsys.readouterr().out
+    assert "WARNING example: Example warning." in output
+    assert f"report={report_path}" in output
+
+    monkeypatch.setattr(
+        diagnostic_module.DiagnosticConfig,
+        "from_env",
+        Mock(side_effect=ValueError("invalid configuration")),
+    )
+    assert diagnostic_module.main([]) == 1
+    assert "FAIL configuration" in capsys.readouterr().err
+
+    config = unexpected.config
+    runner = Mock()
+    runner.run.return_value = report
+    monkeypatch.setattr(diagnostic_module.DiagnosticConfig, "from_env", Mock(return_value=config))
+    monkeypatch.setattr(diagnostic_module, "PublicDiagnostic", Mock(return_value=runner))
+    monkeypatch.setattr(diagnostic_module, "write_report", Mock(side_effect=OSError("disk full")))
+    print_report = Mock()
+    monkeypatch.setattr(diagnostic_module, "print_report", print_report)
+    assert diagnostic_module.main([]) == 2
+    assert "WARNING report_write_failed" in capsys.readouterr().err
+    print_report.assert_called_once_with(report, None)

@@ -214,6 +214,17 @@ def test_redis_store_identity_is_shared_by_one_namespace(fake_redis_store_factor
     assert shared[0].store_id != separate.store_id
 
 
+def test_redis_store_health_rejects_identity_change(fake_redis_store_factory):
+    store = fake_redis_store_factory()
+    startup_store_id = store.store_id
+    store._redis.set(store._store_id_key, "replacement-store-id")
+
+    with pytest.raises(redis.RedisError, match="identity changed"):
+        store.check_health()
+
+    assert store.store_id == startup_store_id
+
+
 def test_redis_store_identity_failure_is_fatal_during_construction(monkeypatch):
     from nurse_scheduling.server.stores import redis as redis_store
 

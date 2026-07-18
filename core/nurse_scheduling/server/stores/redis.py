@@ -108,7 +108,7 @@ class RedisJobStore:
         self._store_id_key = self._key("metadata:store_id")
         """Persistent UUID identifying this Redis database and key namespace."""
         self._store_id = self._resolve_store_id()
-        """Latest identity read from Redis by startup or a health check."""
+        """Persistent identity captured during startup."""
         self._jobs_key = self._key("jobs")
         """Sorted-set key (`ZADD`) of retained job IDs scored by creation time."""
         self._pending_key = self._key("pending")
@@ -463,13 +463,15 @@ class RedisJobStore:
         ]
 
     def check_health(self) -> None:
-        """Raise an error when Redis is unavailable.
+        """Raise an error when Redis is unavailable or its identity changed.
 
         Raises:
             redis.RedisError: If the Redis health check fails.
         """
         self._redis.ping()
-        self._store_id = self._resolve_store_id()
+        resolved_store_id = self._resolve_store_id()
+        if resolved_store_id != self._store_id:
+            raise redis.RedisError("Redis job store identity changed")
 
     def delete(self, job_id: str, expected_revision: int) -> None:
         """Delete a job and its Redis data if its revision still matches.

@@ -51,7 +51,6 @@
 #   not by themselves prove that the code or deployment is incorrect.
 
 import argparse
-import fcntl
 import json
 import math
 import os
@@ -1186,7 +1185,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run one mutually exclusive diagnostic process."""
+    """Run one diagnostic process."""
     args = _parse_args(argv)
     try:
         config = DiagnosticConfig.from_env(
@@ -1199,25 +1198,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL configuration: {error}", file=sys.stderr)
         return 1
 
-    lock_path = config.report_dir / ".diagnostic.lock"
+    report = PublicDiagnostic(config).run()
     try:
-        with lock_path.open("a+", encoding="utf-8") as lock_file:
-            try:
-                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                print("INCONCLUSIVE another diagnostic is already running on this machine")
-                return 2
-            report = PublicDiagnostic(config).run()
-            try:
-                report_path = write_report(report, config.report_dir)
-            except OSError as error:
-                report_path = None
-                print(f"WARNING report_write_failed: {error}", file=sys.stderr)
-            print_report(report, report_path)
-            return exit_code(report)
+        report_path = write_report(report, config.report_dir)
     except OSError as error:
-        print(f"FAIL diagnostic lock: {error}", file=sys.stderr)
-        return 1
+        report_path = None
+        print(f"WARNING report_write_failed: {error}", file=sys.stderr)
+    print_report(report, report_path)
+    return exit_code(report)
 
 
 if __name__ == "__main__":

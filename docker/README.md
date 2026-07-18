@@ -32,10 +32,8 @@ docker compose -f compose.backend.yml up -d --build
 ```
 
 The API derives one deployment ID from its container and server-launch
-identity and shares it across all Uvicorn workers. Compose also starts the
-one-shot public diagnostic through the configured Cloudflare URL. The
-diagnostic can exit nonzero, but it does not stop or restart the API, Redis, or
-Cloudflare Tunnel containers.
+identity and shares it across all Uvicorn workers. The one-shot public
+diagnostic is opt-in and does not start with the normal deployment command.
 
 For staging, create a separate ignored environment file and use a staging-only
 Cloudflare Tunnel token:
@@ -121,18 +119,13 @@ version information.
 
 ## Public Diagnostic
 
-The diagnostic starts automatically with `docker compose up`. Inspect its
-result after startup with:
+The diagnostic service uses the `diagnostic` Compose profile so normal backend
+startup does not submit diagnostic jobs. Run it explicitly against the
+configured public URL:
 
 ```sh
-docker compose -f compose.backend.yml logs diagnostic
-docker compose -f compose.backend.yml ps -a diagnostic
-```
-
-Run the same diagnostic manually against the configured public URL:
-
-```sh
-docker compose -f compose.backend.yml run --rm --no-deps diagnostic
+docker compose -f compose.backend.yml --profile diagnostic \
+  run --rm --no-deps diagnostic
 ```
 
 Run it directly from a repository checkout, outside Docker Compose, after
