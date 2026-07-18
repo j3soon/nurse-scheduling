@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test } from './test';
 import { createMockXlsxBuffer, disableModalDialogs, seedSchedulingState, setDateRange } from './helpers';
@@ -188,7 +188,7 @@ test('optimize and export works against a real local HTTP server instead of Play
   }
 });
 
-test('EventSource reconnects with the last event ID and finalizes a job once', async ({ page }) => {
+test('EventSource replays missed events after a 10-second network outage', async ({ page, context }) => {
   await disableModalDialogs(page);
   await seedSchedulingState(page, {
     apiVersion: 'test',
@@ -203,11 +203,13 @@ test('EventSource reconnects with the last event ID and finalizes a job once', a
 
   const xlsxBody = await createMockXlsxBuffer();
   const receivedLastEventIds: Array<string | undefined> = [];
+  const receivedCursorQueries: Array<string | null> = [];
   let eventConnections = 0;
   let submittedBytes = 0;
   let jobFetches = 0;
   let downloads = 0;
   let deletions = 0;
+  let firstEventResponse: ServerResponse | null = null;
 
   const completedJob = {
     id: 'reconnect-job',
@@ -277,25 +279,32 @@ test('EventSource reconnects with the last event ID and finalizes a job once', a
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/optimize/reconnect-job/events') {
+    const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (req.method === 'GET' && requestUrl.pathname === '/optimize/reconnect-job/events') {
       eventConnections += 1;
       receivedLastEventIds.push(
         Array.isArray(req.headers['last-event-id'])
           ? req.headers['last-event-id'][0]
           : req.headers['last-event-id'],
       );
+      const cursor = requestUrl.searchParams.get('last_event_id');
+      receivedCursorQueries.push(cursor);
       res.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
       });
-      res.write('retry: 10\n\n');
 
       if (eventConnections === 1) {
         res.write('id: 1\nevent: job.state_changed\ndata: {"state":"running"}\n\n');
         res.write('id: 2\nevent: job.progressed\ndata: {"currentBestScore":101,"elapsedSeconds":1}\n\n');
-        res.end();
+        firstEventResponse = res;
+        return;
+      }
+
+      if (cursor !== '2') {
+        res.end('event: error\ndata: {"message":"missing replay cursor"}\n\n');
         return;
       }
 
@@ -349,17 +358,33 @@ test('EventSource reconnects with the last event ID and finalizes a job once', a
     await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
     await page.getByRole('button', { name: 'Optimize and Download' }).click();
 
+    const eventLog = page.getByTestId('optimization-events-log');
+    await expect(eventLog).toContainText('job.progressed');
+    await expect(eventLog).toContainText('Score: 101');
+
+    await context.setOffline(true);
+    firstEventResponse?.destroy();
+    await expect(eventLog).toContainText('Optimization event stream disconnected');
+    await page.waitForTimeout(10_000);
+    await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
+
+    await context.setOffline(false);
+
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
     await expect(page.getByText('schedule-reconnected.xlsx')).toBeVisible();
+    await expect(eventLog).toContainText('job.result_available');
     await expect.poll(() => deletions).toBe(1);
 
     expect(eventConnections).toBe(2);
-    expect(receivedLastEventIds).toEqual([undefined, '2']);
+    expect(receivedLastEventIds).toEqual([undefined, undefined]);
+    expect(receivedCursorQueries).toEqual([null, '2']);
     expect(submittedBytes).toBeGreaterThan(0);
     expect(jobFetches).toBe(1);
     expect(downloads).toBe(1);
     expect(deletions).toBe(1);
   } finally {
+    await context.setOffline(false);
+    firstEventResponse?.destroy();
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
   }
 });

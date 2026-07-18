@@ -26,6 +26,7 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceArea,
   ReferenceDot,
   ResponsiveContainer,
   Tooltip,
@@ -43,9 +44,23 @@ export interface OptimizationProgressPoint {
   source?: string;
 }
 
+export interface OptimizationProgressGap {
+  startElapsedSeconds: number;
+  endElapsedSeconds: number | null;
+}
+
 interface OptimizationProgressChartProps {
   points: OptimizationProgressPoint[];
+  gaps?: OptimizationProgressGap[];
   isActive?: boolean;
+}
+
+interface OptimizationProgressChartDatum {
+  currentBestScore: number | null;
+  elapsedSeconds: number;
+  commentCount?: number | null;
+  solutionIndex?: number | null;
+  source?: string;
 }
 
 type RangePreset =
@@ -119,13 +134,38 @@ function getRangeStartIndex(points: OptimizationProgressPoint[], preset: RangePr
   return 0;
 }
 
+function resolveVisibleGaps(
+  gaps: OptimizationProgressGap[],
+  domain: [number, number],
+): Array<{ startElapsedSeconds: number; endElapsedSeconds: number }> {
+  return gaps.flatMap(gap => {
+    const startElapsedSeconds = Math.max(gap.startElapsedSeconds, domain[0]);
+    const endElapsedSeconds = Math.min(gap.endElapsedSeconds ?? domain[1], domain[1]);
+    return endElapsedSeconds > startElapsedSeconds
+      ? [{ startElapsedSeconds, endElapsedSeconds }]
+      : [];
+  });
+}
+
+function buildChartData(
+  points: OptimizationProgressPoint[],
+  gaps: Array<{ startElapsedSeconds: number; endElapsedSeconds: number }>,
+): OptimizationProgressChartDatum[] {
+  const gapBreaks = gaps.map(gap => ({
+    currentBestScore: null,
+    elapsedSeconds: (gap.startElapsedSeconds + gap.endElapsedSeconds) / 2,
+    commentCount: null,
+  }));
+  return [...points, ...gapBreaks].sort((left, right) => left.elapsedSeconds - right.elapsedSeconds);
+}
+
 function OptimizationProgressTooltip({
   active,
   payload,
 }: TooltipContentProps<TooltipValueType, number | string>) {
-  const point = payload?.[0]?.payload as OptimizationProgressPoint | undefined;
+  const point = payload?.[0]?.payload as OptimizationProgressChartDatum | undefined;
 
-  if (!active || !point) {
+  if (!active || !point || typeof point.currentBestScore !== 'number') {
     return null;
   }
 
@@ -168,6 +208,7 @@ function OptimizationProgressTooltip({
 
 export default function OptimizationProgressChart({
   points,
+  gaps = [],
   isActive = false,
 }: OptimizationProgressChartProps) {
   const syncId = useId();
@@ -206,6 +247,12 @@ export default function OptimizationProgressChart({
   ];
   const visiblePointCount = range.endIndex - range.startIndex + 1;
   const visiblePoints = points.slice(range.startIndex, range.endIndex + 1);
+  const visibleGaps = resolveVisibleGaps(gaps, xDomain);
+  const scoreChartData = buildChartData(visiblePoints, visibleGaps);
+  const commentChartData = buildChartData(
+    visiblePoints.filter(point => typeof point.commentCount === 'number'),
+    visibleGaps,
+  );
   const showDots = visiblePointCount <= DOT_LIMIT;
   const latestPoint = points.at(-1);
 
@@ -217,6 +264,12 @@ export default function OptimizationProgressChart({
           <p className="mt-0.5 text-xs text-gray-500">
             Higher scores are better. Hover to inspect a solution.
           </p>
+          {gaps.length > 0 && (
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+              <span className="h-2.5 w-4 rounded-sm border border-gray-300 bg-gray-200" aria-hidden="true" />
+              Gray bands mark intervals where SSE progress was not observed.
+            </p>
+          )}
         </div>
         <button
           type="button"
@@ -241,7 +294,7 @@ export default function OptimizationProgressChart({
         <div style={{ height: SCORE_CHART_HEIGHT }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={visiblePoints}
+              data={scoreChartData}
               syncId={syncId}
               syncMethod="value"
               accessibilityLayer={false}
@@ -250,6 +303,19 @@ export default function OptimizationProgressChart({
               margin={{ top: 8, right: 12, bottom: 0, left: 4 }}
             >
               <CartesianGrid vertical={false} stroke="#e5e7eb" strokeDasharray="3 5" />
+              {visibleGaps.map(gap => (
+                <ReferenceArea
+                  key={`${gap.startElapsedSeconds}-${gap.endElapsedSeconds}`}
+                  className="optimization-progress-gap"
+                  x1={gap.startElapsedSeconds}
+                  x2={gap.endElapsedSeconds}
+                  fill="#e5e7eb"
+                  fillOpacity={0.75}
+                  stroke="#9ca3af"
+                  strokeDasharray="3 3"
+                  ifOverflow="hidden"
+                />
+              ))}
               <XAxis
                 dataKey="elapsedSeconds"
                 type="number"
@@ -283,6 +349,7 @@ export default function OptimizationProgressChart({
                 name="Score"
                 stroke={SCORE_COLOR}
                 strokeWidth={2.5}
+                connectNulls={false}
                 dot={showDots ? { r: 3.5, fill: SCORE_COLOR, stroke: '#ffffff', strokeWidth: 2 } : false}
                 activeDot={{ r: 6, fill: SCORE_COLOR, stroke: '#ffffff', strokeWidth: 2 }}
                 isAnimationActive={false}
@@ -307,7 +374,7 @@ export default function OptimizationProgressChart({
           <div style={{ height: COMMENT_CHART_HEIGHT }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
-                data={visiblePoints}
+                data={commentChartData}
                 syncId={syncId}
                 syncMethod="value"
                 accessibilityLayer={false}
@@ -316,6 +383,19 @@ export default function OptimizationProgressChart({
                 margin={{ top: 8, right: 12, bottom: 0, left: 4 }}
               >
                 <CartesianGrid vertical={false} stroke="#e5e7eb" strokeDasharray="3 5" />
+                {visibleGaps.map(gap => (
+                  <ReferenceArea
+                    key={`${gap.startElapsedSeconds}-${gap.endElapsedSeconds}`}
+                    className="optimization-progress-gap"
+                    x1={gap.startElapsedSeconds}
+                    x2={gap.endElapsedSeconds}
+                    fill="#e5e7eb"
+                    fillOpacity={0.75}
+                    stroke="#9ca3af"
+                    strokeDasharray="3 3"
+                    ifOverflow="hidden"
+                  />
+                ))}
                 <XAxis
                   dataKey="elapsedSeconds"
                   type="number"
@@ -349,7 +429,7 @@ export default function OptimizationProgressChart({
                   name="Comments"
                   stroke={COMMENT_COLOR}
                   strokeWidth={2}
-                  connectNulls
+                  connectNulls={false}
                   dot={showDots ? { r: 3, fill: COMMENT_COLOR, stroke: '#ffffff', strokeWidth: 2 } : false}
                   activeDot={{ r: 5.5, fill: COMMENT_COLOR, stroke: '#ffffff', strokeWidth: 2 }}
                   isAnimationActive={false}

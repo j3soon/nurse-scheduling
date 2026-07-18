@@ -22,7 +22,7 @@ from dataclasses import replace
 from io import BytesIO
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -144,19 +144,25 @@ def get_job(request: Request, job_id: str):
 
 
 @router.get("/optimize/{job_id}/events")
-def stream_events(request: Request, job_id: str, last_event_id: str | None = Header(None)):
+def stream_events(
+    request: Request,
+    job_id: str,
+    last_event_id: str | None = Header(None),
+    last_event_id_query: str | None = Query(None, alias="last_event_id"),
+):
     """Replay and stream job events after the client's last event ID.
 
     Disconnecting closes only this response stream; the durable job continues.
     """
     controller = _controller(request)
     controller.get_job(job_id)
+    replay_cursor = last_event_id if last_event_id is not None else last_event_id_query
 
     def generate():
         """Yield SSE frames, blocking up to the configured keepalive interval."""
         for event in controller.stream_events(
             job_id,
-            after_id=last_event_id,
+            after_id=replay_cursor,
             keepalive_seconds=_settings(request).sse_keepalive_seconds,
         ):
             if event is None:

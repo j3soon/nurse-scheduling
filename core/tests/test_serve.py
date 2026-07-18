@@ -800,6 +800,22 @@ def test_event_stream_replays_only_events_after_last_event_id():
         assert resumed_ids == event_ids[-1:]
 
 
+def test_event_stream_accepts_last_event_id_query_for_explicit_reconnects():
+    with _client() as client:
+        created = _create(client).json()
+        _wait_for_terminal(client, created["id"])
+        initial = client.get(f"/optimize/{created['id']}/events")
+        event_ids = [line.removeprefix("id: ") for line in initial.text.splitlines() if line.startswith("id: ")]
+
+        resumed = client.get(
+            f"/optimize/{created['id']}/events",
+            params={"last_event_id": event_ids[-2]},
+        )
+        resumed_ids = [line.removeprefix("id: ") for line in resumed.text.splitlines() if line.startswith("id: ")]
+
+        assert resumed_ids == event_ids[-1:]
+
+
 def test_event_stream_returns_snapshot_gap_for_expired_cursor():
     store = MemoryJobStore(max_events_per_job=4)
     app = create_app(settings=_settings(max_events_per_job=4), store=store, start_background=False)

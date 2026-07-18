@@ -34,7 +34,7 @@ vi.mock('recharts', () => ({
     accessibilityLayer: boolean;
     children: ReactNode;
     className: string;
-    data: Array<{ currentBestScore: number; elapsedSeconds: number }>;
+    data: Array<{ currentBestScore: number | null; elapsedSeconds: number }>;
     style: { userSelect: string; outline: string };
   }) => (
     <div
@@ -43,14 +43,23 @@ vi.mock('recharts', () => ({
       data-point-count={data.length}
       data-first-elapsed={data[0]?.elapsedSeconds}
       data-first-score={data[0]?.currentBestScore}
+      data-gap-break-count={data.filter(point => point.currentBestScore === null).length}
       className={className}
       style={style}
     >
       {children}
     </div>
   ),
-  Line: ({ name, type, dot }: { name: string; type: string; dot: unknown }) => (
-    <div data-testid={`${name.toLowerCase()}-line`} data-type={type} data-dots={dot === false ? 'hidden' : 'shown'} />
+  Line: ({ name, type, dot, connectNulls }: { name: string; type: string; dot: unknown; connectNulls: boolean }) => (
+    <div
+      data-testid={`${name.toLowerCase()}-line`}
+      data-type={type}
+      data-dots={dot === false ? 'hidden' : 'shown'}
+      data-connect-nulls={connectNulls}
+    />
+  ),
+  ReferenceArea: ({ x1, x2 }: { x1: number; x2: number }) => (
+    <div data-testid="progress-gap-area" data-start={x1} data-end={x2} />
   ),
   ReferenceDot: ({ 'aria-label': ariaLabel }: { 'aria-label': string }) => <div aria-label={ariaLabel} />,
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -122,6 +131,22 @@ describe('OptimizationProgressChart', () => {
     expect(screen.queryByTestId('comments-line')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show comments' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByTestId('elapsed-axis')).toBeInTheDocument();
+  });
+
+  it('shades unobserved SSE intervals and breaks chart lines across them', () => {
+    render(<OptimizationProgressChart
+      points={points}
+      gaps={[{ startElapsedSeconds: 0.5, endElapsedSeconds: 1 }]}
+    />);
+
+    expect(screen.getByText(/gray bands mark intervals where sse progress was not observed/i)).toBeInTheDocument();
+    expect(screen.getAllByTestId('progress-gap-area')).toHaveLength(2);
+    expect(screen.getAllByTestId('progress-gap-area')[0]).toHaveAttribute('data-start', '0.5');
+    expect(screen.getAllByTestId('progress-gap-area')[0]).toHaveAttribute('data-end', '1');
+    expect(screen.getAllByTestId('composed-chart')[0]).toHaveAttribute('data-gap-break-count', '1');
+    expect(screen.getAllByTestId('composed-chart')[1]).toHaveAttribute('data-gap-break-count', '1');
+    expect(screen.getByTestId('score-line')).toHaveAttribute('data-connect-nulls', 'false');
+    expect(screen.getByTestId('comments-line')).toHaveAttribute('data-connect-nulls', 'false');
   });
 
   it('keeps the elapsed-time domain end after an active job completes', () => {
