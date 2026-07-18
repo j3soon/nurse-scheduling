@@ -39,10 +39,14 @@ flowchart TB
         API[<b>API routes</b><br/>HTTP job endpoints]
         Controller[<b>JobController</b><br/>Lifecycle policy<br/>Persistence]
         Worker[<b>JobWorker</b><br/>Claim and control jobs]
-        Runner[<b>OptimizationRunner</b><br/>Call scheduling engine<br/>Create XLSX]
-        Engine[<b>Scheduling engine</b><br/>Build and solve]
+        Executor[<b>ProcessOptimizationExecutor</b><br/>Spawn and supervise child]
         Store[<b>JobStore</b><br/>Atomic job, event,<br/>and artifact storage]
         Maintenance[<b>JobMaintenance</b><br/>Expire claims and jobs]
+
+        subgraph Child[Per-job child process tree]
+            Runner[<b>OptimizationRunner</b><br/>Call scheduling engine<br/>Create XLSX]
+            Engine[<b>Scheduling engine</b><br/>Build and solve]
+        end
     end
 
     Memory[<b>In-memory store</b><br/>Process-local]
@@ -52,7 +56,8 @@ flowchart TB
     API -->|JSON, SSE, XLSX| Client
     API -->|Commands| Controller
     Controller <--> Worker
-    Worker -->|Run| Runner
+    Worker -->|Run job| Executor
+    Executor <-->|Events, controls, result| Runner
     Runner -->|Schedule| Engine
     Controller -->|Persist| Store
     Maintenance -->|Cleanup| Controller
@@ -67,16 +72,19 @@ flowchart TB
 | `server/api/` | Translates HTTP requests and responses, including the SSE event stream. |
 | `server/jobs/controller.py` | Owns job lifecycle policy independently of HTTP and persistence. |
 | `server/job_store.py` | Defines the atomic persistence contract implemented by memory and Redis stores. |
-| `server/jobs/worker.py` | Owns the process-local claim loop. It renews leases, forwards controls and events, invokes the runner, and reports the terminal outcome. |
+| `server/jobs/worker.py` | Owns the process-local claim loop. It renews leases, coordinates the process executor, and reports the terminal outcome. |
+| `server/jobs/process_executor.py` | Runs one optimization in a spawned child process, bridges events and controls, and enforces timeout and cancellation boundaries without knowing about HTTP or persistence. |
 | `server/jobs/runner.py` | Adapts one blocking job execution to the synchronous scheduler. It normalizes progress and results and creates the XLSX artifact without knowing HTTP or persistence. |
 | `server/maintenance.py` | Expires lost worker claims and retained terminal jobs. |
 
 `nurse_scheduling.serve:app` is the public ASGI entry point. Each application
 process owns one worker thread and one maintenance thread. The worker renews its
-claim lease while a job is running.
+claim lease while a job is running. Each optimization runs in a separate child
+process.
 
-The worker owns job lifecycle orchestration. The runner owns one scheduler
-invocation and its output conversion.
+The worker owns job lifecycle orchestration. The process executor owns child
+process supervision. The runner owns one scheduler invocation and its output
+conversion.
 
 ## Job Lifecycle
 
@@ -88,7 +96,7 @@ stateDiagram-v2
     running --> completed: result
     running --> failed: failure
     running --> cancelling: cancel
-    cancelling --> cancelled: stopped
+    cancelling --> cancelled: process ends
     cancelling --> cancelled: claim expires
     completed --> [*]
     cancelled --> [*]
@@ -106,9 +114,45 @@ stateDiagram-v2
 be optimal, feasible, or infeasible. An XLSX artifact is available only when a
 schedule was produced.
 
-Cancellation of a running job and early completion require cooperative stop
-support. Early completion sets a control flag without adding another lifecycle
-state. If a current result is available, the job later becomes `completed`.
+Cancellation is available for every running job. A solver with graceful-cancel
+support receives a stop request and has 90 seconds by default to return. The
+server immediately terminates a solver without graceful-cancel support. It also
+terminates a graceful solver that exceeds the cancellation grace period.
+Early completion requires solver support and sets a control flag without adding
+another lifecycle state. If a current result is available, the job later
+becomes `completed`.
+
+Cooperative cancellation uses error code `cancelled`. Forced cancellation uses
+`cancelled_forced`. Both paths discard the result and artifact.
+
+### Timeout enforcement
+
+The server accepts a timeout for every solver and enforces it at two levels.
+The selected solver runs in a child process and first receives the requested
+limit so it can stop cleanly and return any result it supports. The hard server
+watchdog starts when the child process starts and does not depend on a
+`solving` phase event. Its deadline combines the requested timeout and a
+90-second timeout grace period by default. The grace period covers startup,
+model construction, and shutdown while still bounding a job that becomes stuck
+before solving. If the process has not returned by the deadline, the server
+forcibly terminates it and any solver executables it launched. A thread is not
+sufficient because Python cannot safely force-stop an arbitrary worker thread.
+
+A process that returns before the hard deadline follows its normal result path.
+Forced termination marks the job as `failed` with error code
+`timeout_forced` and produces no artifact, even if an incumbent score
+was reported earlier. The error message records the requested timeout, timeout
+grace, and forced termination. Preserving the last schedule would require
+checkpointing it outside the child process.
+
+```json
+{
+  "error": {
+    "code": "timeout_forced",
+    "message": "The optimization process did not return within the requested 300-second timeout and 90-second timeout grace period. The server terminated the process."
+  }
+}
+```
 
 ## HTTP API
 
@@ -120,7 +164,7 @@ state. If a current result is available, the job later becomes `completed`.
 | `POST` | `/optimize` | Validate multipart input and enqueue a job. |
 | `GET` | `/optimize/{job_id}` | Return the current job representation. |
 | `GET` | `/optimize/{job_id}/events` | Replay and stream job events over SSE. |
-| `POST` | `/optimize/{job_id}/cancel` | Cancel a queued job or request cooperative cancellation. |
+| `POST` | `/optimize/{job_id}/cancel` | Cancel a queued or running job. |
 | `POST` | `/optimize/{job_id}/finish-now` | Request the current feasible result when supported. |
 | `GET` | `/optimize/{job_id}/xlsx` | Download a completed schedule artifact. |
 | `DELETE` | `/optimize/{job_id}` | Delete a terminal job and its retained data. |
@@ -217,6 +261,8 @@ All server settings are read once when the application is constructed.
 | `OPTIMIZE_MAX_YAML_BYTES` | `2097152` | Limit the submitted YAML size. |
 | `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS` | `300` | Set the timeout used when a request omits one. |
 | `OPTIMIZE_MAX_TIMEOUT_SECONDS` | `3600` | Limit the timeout accepted from a request. |
+| `OPTIMIZE_TIMEOUT_GRACE_SECONDS` | `90` | Set the process grace added to the requested timeout before forced termination. |
+| `OPTIMIZE_CANCEL_GRACE_SECONDS` | `90` | Set how long the server waits for a graceful solver to return after cancellation. |
 | `DISABLE_SENTRY` | unset | Disable backend error reporting when set to a non-empty value. |
 | `SENTRY_RELEASE` | derived from the app version | Override the release reported to Sentry. |
 

@@ -28,6 +28,10 @@ DEFAULT_JOB_RETENTION_SECONDS = 24 * 60 * 60
 """Default 24-hour retention period for terminal jobs."""
 DEFAULT_MAX_EVENTS_PER_JOB = 1_000
 """Default maximum number of replayable events retained for one job."""
+DEFAULT_TIMEOUT_GRACE_SECONDS = 90.0
+"""Default grace period before forcibly terminating a timed-out solver."""
+DEFAULT_CANCEL_GRACE_SECONDS = 90.0
+"""Default grace period before forcibly terminating a cancelled solver."""
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -86,6 +90,10 @@ class ServerSettings:
     """Optimization timeout used when the request omits one."""
     max_timeout_seconds: int = 60 * 60
     """Largest optimization timeout accepted from a request."""
+    timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS
+    """Time allowed for a solver to return after its requested timeout."""
+    cancel_grace_seconds: float = DEFAULT_CANCEL_GRACE_SECONDS
+    """Time allowed for a graceful solver to return after cancellation."""
 
     def __post_init__(self) -> None:
         """Validate cross-field and direct-construction constraints.
@@ -111,6 +119,8 @@ class ServerSettings:
             "claim_lease_seconds",
             "maintenance_interval_seconds",
             "sse_keepalive_seconds",
+            "timeout_grace_seconds",
+            "cancel_grace_seconds",
         ):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -141,4 +151,12 @@ class ServerSettings:
             max_yaml_bytes=_positive_int("OPTIMIZE_MAX_YAML_BYTES", 2 * 1024 * 1024),
             default_timeout_seconds=_positive_int("OPTIMIZE_DEFAULT_TIMEOUT_SECONDS", 5 * 60),
             max_timeout_seconds=_positive_int("OPTIMIZE_MAX_TIMEOUT_SECONDS", 60 * 60),
+            timeout_grace_seconds=_positive_float(
+                "OPTIMIZE_TIMEOUT_GRACE_SECONDS",
+                DEFAULT_TIMEOUT_GRACE_SECONDS,
+            ),
+            cancel_grace_seconds=_positive_float(
+                "OPTIMIZE_CANCEL_GRACE_SECONDS",
+                DEFAULT_CANCEL_GRACE_SECONDS,
+            ),
         )

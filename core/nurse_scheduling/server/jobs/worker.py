@@ -22,14 +22,25 @@ import threading
 from collections.abc import Callable
 
 from ...sentry import capture_optimize_exception
+from ..config import (
+    DEFAULT_CANCEL_GRACE_SECONDS,
+    DEFAULT_TIMEOUT_GRACE_SECONDS,
+)
 from ..errors import JobNotFoundError, OptimizationExecutionError
 from .controller import JobController
-from ..solver_capabilities import solver_supports_stop
+from ..solver_capabilities import solver_supports_finish_now, solver_supports_graceful_cancel
 from .models import Job, JobFailure, JobState
+from .process_executor import (
+    OptimizationForcedCancellation,
+    OptimizationProcessAborted,
+    ProcessOptimizationExecutor,
+)
 from .runner import OptimizationRunner
 
 
 server_logger = logging.getLogger("nurse_scheduling.server")
+CONTROL_POLL_SECONDS = 0.05
+"""Maximum delay before forwarding a cooperative solver control."""
 
 
 class JobWorker:
@@ -43,6 +54,8 @@ class JobWorker:
         worker_id: str,
         claim_poll_seconds: float,
         claim_lease_seconds: float,
+        timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS,
+        cancel_grace_seconds: float = DEFAULT_CANCEL_GRACE_SECONDS,
         unexpected_error_formatter: Callable[[Exception], str] = str,
     ):
         """Configure a process-local worker without starting its thread."""
@@ -50,6 +63,11 @@ class JobWorker:
         """Controller used for claims, events, control requests, and outcomes."""
         self._runner = runner
         """Runner that performs one blocking optimization execution."""
+        self._process_executor = ProcessOptimizationExecutor(
+            timeout_grace_seconds=timeout_grace_seconds,
+            cancel_grace_seconds=cancel_grace_seconds,
+        )
+        """Child-process supervisor used for every optimization execution."""
         self._worker_id = worker_id
         """Stable identity recorded on jobs claimed by this worker."""
         self._claim_poll_seconds = claim_poll_seconds
@@ -119,20 +137,24 @@ class JobWorker:
     def _execute(self, job: Job) -> None:
         """Execute one claimed job and report its progress and outcome."""
         content = b""
-        heartbeat_stop = threading.Event()
-        execution_stop = threading.Event()
-        stop_check_failed = threading.Event()
+        # Stops the heartbeat and control threads, and aborts the child after claim loss.
+        # Its waits set how often the worker renews the claim and checks controls.
+        monitor_stop = threading.Event()
+        # Asks the solver to stop while preserving its current result.
+        finish_now_requested = threading.Event()
+        # Cancels the job and discards its result, forcing termination if needed.
+        cancellation_requested = threading.Event()
 
         def renew_claim() -> None:
             """Renew the worker claim until execution ends or the job disappears."""
-            while not heartbeat_stop.wait(self._claim_heartbeat_seconds):
+            while not monitor_stop.wait(self._claim_heartbeat_seconds):
                 try:
                     renewed = self._controller.renew_claim(job.id, self._worker_id)
                     if renewed is None or renewed.state.terminal or renewed.worker_id != self._worker_id:
-                        execution_stop.set()
+                        monitor_stop.set()
                         return
                 except JobNotFoundError:
-                    execution_stop.set()
+                    monitor_stop.set()
                     return
                 except Exception:
                     server_logger.exception("[server:worker] failed to renew claim job_id=%s", job.id)
@@ -144,6 +166,7 @@ class JobWorker:
             daemon=True,
         )
         heartbeat_thread.start()
+        control_thread: threading.Thread | None = None
         try:
             content = self._controller.get_input(job.id)
 
@@ -154,38 +177,70 @@ class JobWorker:
                 else:
                     self._controller.record_score_and_event(job.id, score, data, worker_id=self._worker_id)
 
-            should_stop = None
-            if solver_supports_stop(job.request.solver):
-
-                def should_stop() -> bool:
-                    """Return whether shutdown, claim loss, or a job control requested a stop."""
-                    if self._stop.is_set() or execution_stop.is_set():
-                        return True
+            def watch_controls() -> None:
+                """Poll cancellation, finish-now, and ownership controls."""
+                stop_check_error_logged = False
+                while not monitor_stop.is_set():
                     try:
-                        stop_requested = self._controller.is_stop_requested(job.id, self._worker_id)
-                        stop_check_failed.clear()
-                        return stop_requested
+                        if self._controller.is_stop_requested(job.id, self._worker_id):
+                            current = self._controller.get_job(job.id)
+                            if current.state.terminal or current.worker_id != self._worker_id:
+                                monitor_stop.set()
+                                return
+                            if current.cancel_requested:
+                                cancellation_requested.set()
+                                return
+                            elif current.early_completion_requested:
+                                finish_now_requested.set()
+                            else:
+                                monitor_stop.set()
+                                return
+                        stop_check_error_logged = False
                     except JobNotFoundError:
-                        execution_stop.set()
-                        return True
+                        monitor_stop.set()
+                        return
                     except Exception:
-                        # Claim renewal logs store outages and keeps retrying. Do
-                        # not let one failed control read permanently terminate
-                        # the solver's stop watcher while that retry is active.
-                        if not stop_check_failed.is_set():
-                            server_logger.exception("[server:worker] failed to check stop request job_id=%s", job.id)
-                            stop_check_failed.set()
-                        return False
+                        # Claim renewal logs store outages and keeps retrying.
+                        if not stop_check_error_logged:
+                            server_logger.exception(
+                                "[server:worker] failed to check stop request job_id=%s",
+                                job.id,
+                            )
+                            stop_check_error_logged = True
+                    monitor_stop.wait(CONTROL_POLL_SECONDS)
 
-            output = self._runner.run(
+            control_thread = threading.Thread(
+                target=watch_controls,
+                name=f"optimization-job-control-{job.id}",
+                daemon=True,
+            )
+            control_thread.start()
+            should_stop = finish_now_requested.is_set if solver_supports_finish_now(job.request.solver) else None
+
+            output = self._process_executor.run(
+                self._runner,
                 job,
                 content,
                 event_callback=publish,
                 should_stop=should_stop,
+                should_cancel=cancellation_requested.is_set,
+                graceful_cancel=solver_supports_graceful_cancel(job.request.solver),
+                should_abort=lambda: self._stop.is_set() or monitor_stop.is_set(),
             )
             self._controller.complete_job(job.id, output.result, output.artifact)
+        except OptimizationProcessAborted:
+            server_logger.info(
+                "[server:worker] stopped child execution job_id=%s worker_id=%s",
+                job.id,
+                self._worker_id,
+            )
+        except OptimizationForcedCancellation as error:
+            self._controller.force_cancel_job(job.id, str(error))
         except OptimizationExecutionError as error:
-            self._controller.fail_job(job.id, JobFailure(code=error.code, message=str(error)))
+            self._controller.fail_job(
+                job.id,
+                JobFailure(code=error.code, message=str(error)),
+            )
         except JobNotFoundError:
             server_logger.warning("[server:worker] job disappeared while running job_id=%s", job.id)
         except Exception as error:
@@ -219,5 +274,7 @@ class JobWorker:
                 exc_info=(type(error), error, error.__traceback__),
             )
         finally:
-            heartbeat_stop.set()
+            monitor_stop.set()
+            if control_thread is not None:
+                control_thread.join(timeout=1)
             heartbeat_thread.join(timeout=1)

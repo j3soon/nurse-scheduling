@@ -46,13 +46,11 @@ def test_probe_defaults_and_round_order():
     config = solver_capabilities._config_from_args(args)
 
     assert solver_capabilities.ROUND_ORDER == ("timeout", "cancel", "finish-now", "intermediate-scores")
-    assert solver_capabilities.CONFIRMED_SOLVER_CHOICES == (
-        "ortools/cp-sat",
-        "pulp/cbc",
-        "pulp/cuopt",
+    assert solver_capabilities.CONFIRMED_SOLVER_CHOICES == tuple(
+        capabilities.value for capabilities in solver_capabilities.SOLVER_CAPABILITIES
     )
     assert config.timeout_seconds == 10
-    assert config.timeout_grace_seconds == 50
+    assert config.timeout_grace_seconds == 90
     assert config.cbc_intermediate_score_testcase == solver_capabilities.CBC_INTERMEDIATE_SCORE_TESTCASE
     assert config.control_timeout_seconds == 60
     assert config.cancel_delay_seconds == 2
@@ -143,9 +141,19 @@ def test_timeout_result_classification():
         error={"code": "no_solution_found", "message": "No schedule"},
         schedule=None,
     )
+    watchdog = _job(
+        state="failed",
+        result=None,
+        error={
+            "code": "timeout_forced",
+            "message": "Process terminated",
+        },
+        schedule=None,
+    )
 
     assert solver_capabilities._evaluate_timeout(feasible, 10.2, config).status == "PASS"
     assert solver_capabilities._evaluate_timeout(no_solution, 9.8, config).status == "PASS"
+    assert solver_capabilities._evaluate_timeout(watchdog, 14.9, config).status == "PASS"
     assert solver_capabilities._evaluate_timeout(optimal, 1.0, config).status == "INCONCLUSIVE"
     assert solver_capabilities._evaluate_timeout(feasible, 15.1, config).status == "FAIL"
 
@@ -180,7 +188,7 @@ def test_only_cbc_intermediate_round_uses_simple_testcase(monkeypatch):
     ]
 
 
-def test_cancel_round_checks_terminal_result(monkeypatch):
+def test_graceful_cancel_round_checks_terminal_result(monkeypatch):
     monkeypatch.setattr(
         solver_capabilities,
         "_submit_job",
@@ -219,6 +227,21 @@ def test_cancel_round_checks_terminal_result(monkeypatch):
     assert report.status == "PASS"
     assert report.terminal_state == "cancelled"
     assert report.artifact_available is False
+
+
+def test_graceful_cancel_round_rejects_forced_cancellation():
+    report = solver_capabilities._evaluate_graceful_cancel(
+        _job(
+            state="cancelled",
+            result=None,
+            error={"code": "cancelled_forced", "message": "Process terminated"},
+            schedule=None,
+        ),
+        15.0,
+    )
+
+    assert report.status == "FAIL"
+    assert report.detail == ("The server forced cancellation, so the solver did not demonstrate graceful cancellation.")
 
 
 def test_finish_now_without_incumbent_is_inconclusive(monkeypatch):
@@ -305,6 +328,6 @@ def test_markdown_report_uses_requested_column_order():
     markdown = solver_capabilities.render_markdown([solver_capabilities.SolverReport("ortools/cp-sat", True, rounds)])
 
     assert markdown.splitlines()[0] == (
-        "| Selector | Available | Timeout | Cancel | Finish now | Intermediate scores | Notes |"
+        "| Selector | Available | Timeout | Graceful cancel | Finish now | Intermediate scores | Notes |"
     )
     assert "`ortools/cp-sat` | Yes | PASS | PASS | PASS | PASS" in markdown

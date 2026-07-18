@@ -55,17 +55,10 @@ CBC_INTERMEDIATE_SCORE_TESTCASE = CORE_ROOT / "tests" / "testcases" / "basics" /
 REAL_SCENARIO_UNSUITABLE_SOLVERS = frozenset({"pulp/cbc"})
 """Solvers that cannot reliably exercise every capability on the large scenario."""
 ROUND_ORDER = ("timeout", "cancel", "finish-now", "intermediate-scores")
-CONFIRMED_SOLVER_CHOICES = tuple(
-    capabilities.value
-    for capabilities in SOLVER_CAPABILITIES
-    if capabilities.timeout
-    or capabilities.cancel_running
-    or capabilities.finish_now
-    or capabilities.intermediate_scores
-)
+CONFIRMED_SOLVER_CHOICES = tuple(capabilities.value for capabilities in SOLVER_CAPABILITIES)
 RESULT_MARKER = "SOLVER_CAPABILITY_RESULT="
 DEFAULT_TIMEOUT_SECONDS = 10
-DEFAULT_TIMEOUT_GRACE_SECONDS = 50
+DEFAULT_TIMEOUT_GRACE_SECONDS = 90
 DEFAULT_CONTROL_TIMEOUT_SECONDS = 60
 DEFAULT_CANCEL_DELAY_SECONDS = 2.0
 DEFAULT_FINISH_WAIT_SECONDS = 10.0
@@ -249,6 +242,45 @@ def _early_terminal_report(name: str, job: dict[str, Any]) -> RoundReport:
     )
 
 
+def _evaluate_graceful_cancel(job: dict[str, Any], elapsed_seconds: float) -> RoundReport:
+    """Require solver cooperation rather than server-forced cancellation."""
+    error = job.get("error") or {}
+    if error.get("code") == "cancelled_forced":
+        return _round_report(
+            "cancel",
+            "FAIL",
+            "The server forced cancellation, so the solver did not demonstrate graceful cancellation.",
+            solver_available=True,
+            elapsed_seconds=elapsed_seconds,
+            elapsed_from="control_requested",
+            job=job,
+        )
+    if (
+        job["state"] == "cancelled"
+        and error.get("code") == "cancelled"
+        and job.get("result") is None
+        and not job["links"].get("schedule")
+    ):
+        return _round_report(
+            "cancel",
+            "PASS",
+            "Solver cancelled gracefully and produced no retained result.",
+            solver_available=True,
+            elapsed_seconds=elapsed_seconds,
+            elapsed_from="control_requested",
+            job=job,
+        )
+    return _round_report(
+        "cancel",
+        "FAIL",
+        "Graceful cancellation returned an unexpected terminal result.",
+        solver_available=True,
+        elapsed_seconds=elapsed_seconds,
+        elapsed_from="control_requested",
+        job=job,
+    )
+
+
 def _evaluate_timeout(job: dict[str, Any], elapsed_seconds: float, config: ProbeConfig) -> RoundReport:
     """Classify one terminal job observed during the timeout round."""
     if elapsed_seconds > config.timeout_seconds + config.timeout_grace_seconds:
@@ -267,6 +299,16 @@ def _evaluate_timeout(job: dict[str, Any], elapsed_seconds: float, config: Probe
     result = job.get("result") or {}
     error = job.get("error") or {}
     exercised_timeout = elapsed_seconds >= config.timeout_seconds * MIN_TIMEOUT_EXERCISE_RATIO
+    if error.get("code") == "timeout_forced" and exercised_timeout:
+        return _round_report(
+            "timeout",
+            "PASS",
+            "The server watchdog terminated the solver after its grace period.",
+            solver_available=True,
+            elapsed_seconds=elapsed_seconds,
+            elapsed_from="solving_started",
+            job=job,
+        )
     if result.get("termination_reason") == "limit_or_stop" and exercised_timeout:
         return _round_report(
             "timeout",
@@ -519,29 +561,7 @@ def _run_control_round(
         )
 
     if name == "cancel":
-        if (
-            terminal["state"] == "cancelled"
-            and terminal.get("result") is None
-            and not terminal["links"].get("schedule")
-        ):
-            return _round_report(
-                name,
-                "PASS",
-                "Running job was cancelled and produced no retained result.",
-                solver_available=True,
-                elapsed_seconds=elapsed_seconds,
-                elapsed_from="control_requested",
-                job=terminal,
-            )
-        return _round_report(
-            name,
-            "FAIL",
-            "Cancellation returned, but the terminal job retained an unexpected result.",
-            solver_available=True,
-            elapsed_seconds=elapsed_seconds,
-            elapsed_from="control_requested",
-            job=terminal,
-        )
+        return _evaluate_graceful_cancel(terminal, elapsed_seconds)
 
     if terminal["state"] == "completed" and terminal.get("result") is not None and terminal["links"].get("schedule"):
         detail = "Solver stopped and preserved its current feasible schedule."
@@ -707,10 +727,9 @@ def probe_solver(solver: str, config: ProbeConfig) -> SolverReport:
     if capabilities is None:
         raise ValueError(f"No capability configuration for solver: {selector}")
     enabled = {
-        # Always exercise timeout so an unconfirmed solver can gather evidence
-        # without changing the conservative server registry first.
+        # Server-enforced timeout is available for every configured solver.
         "timeout": True,
-        "cancel": capabilities.cancel_running,
+        "cancel": capabilities.graceful_cancel,
         "finish-now": capabilities.finish_now,
         "intermediate-scores": capabilities.intermediate_scores,
     }
@@ -763,7 +782,7 @@ def _status_cell(report: RoundReport) -> str:
 def render_markdown(reports: list[SolverReport]) -> str:
     """Render the human-readable capability summary."""
     lines = [
-        "| Selector | Available | Timeout | Cancel | Finish now | Intermediate scores | Notes |",
+        "| Selector | Available | Timeout | Graceful cancel | Finish now | Intermediate scores | Notes |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for report in reports:
@@ -824,7 +843,7 @@ def _positive_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     """Build the public and hidden worker CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Probe solver timeout, cancellation, and finish-now behavior on the large real scenario."
+        description="Probe solver timeout, graceful cancellation, and finish-now behavior on the large real scenario."
     )
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--solver", choices=CONFIRMED_SOLVER_CHOICES, help="Probe one configured solver selector.")

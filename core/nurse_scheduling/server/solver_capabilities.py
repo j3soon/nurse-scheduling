@@ -30,8 +30,8 @@ class SolverCapabilities:
     value: str
     label: str
     compute: Literal["cpu", "gpu"]
-    timeout: bool
-    cancel_running: bool
+    graceful_timeout: bool
+    graceful_cancel: bool
     finish_now: bool
     intermediate_scores: bool
 
@@ -41,8 +41,8 @@ def _capabilities(
     label: str,
     *,
     compute: Literal["cpu", "gpu"] = "cpu",
-    timeout: bool = False,
-    cancel_running: bool = False,
+    graceful_timeout: bool = False,
+    graceful_cancel: bool = False,
     finish_now: bool = False,
     intermediate_scores: bool = False,
 ) -> SolverCapabilities:
@@ -50,8 +50,8 @@ def _capabilities(
         value=value,
         label=label,
         compute=compute,
-        timeout=timeout,
-        cancel_running=cancel_running,
+        graceful_timeout=graceful_timeout,
+        graceful_cancel=graceful_cancel,
         finish_now=finish_now,
         intermediate_scores=intermediate_scores,
     )
@@ -61,8 +61,8 @@ SOLVER_CAPABILITIES = (
     _capabilities(
         "ortools/cp-sat",
         "OR-Tools | CP-SAT",
-        timeout=True,
-        cancel_running=True,
+        graceful_timeout=True,
+        graceful_cancel=True,
         finish_now=True,
         intermediate_scores=True,
     ),
@@ -78,7 +78,7 @@ SOLVER_CAPABILITIES = (
         "pulp/cuopt",
         "PuLP | cuOpt",
         compute="gpu",
-        timeout=True,
+        graceful_timeout=True,
         intermediate_scores=True,
     ),
     _capabilities("pulp/glpk", "PuLP | GLPK"),
@@ -98,19 +98,13 @@ def get_solver_capabilities(solver: str) -> SolverCapabilities | None:
     return SOLVER_CAPABILITIES_BY_VALUE.get(solver.strip().lower())
 
 
-def solver_supports_cancel(solver: str) -> bool:
-    """Return whether a running solver observes cancellation requests."""
+def solver_supports_graceful_cancel(solver: str) -> bool:
+    """Return whether a running solver observes graceful cancellation requests."""
     capabilities = get_solver_capabilities(solver)
-    return capabilities is not None and capabilities.cancel_running
+    return capabilities is not None and capabilities.graceful_cancel
 
 
 def solver_supports_finish_now(solver: str) -> bool:
     """Return whether a running solver can return its current result."""
     capabilities = get_solver_capabilities(solver)
     return capabilities is not None and capabilities.finish_now
-
-
-def solver_supports_stop(solver: str) -> bool:
-    """Return whether a solver observes either cooperative stop request."""
-    capabilities = get_solver_capabilities(solver)
-    return capabilities is not None and (capabilities.cancel_running or capabilities.finish_now)

@@ -30,7 +30,7 @@ from ... import scheduler
 from ..config import ServerSettings
 from ..jobs.controller import JobController
 from ..jobs.models import JobState
-from ..solver_capabilities import solver_supports_cancel, solver_supports_finish_now
+from ..solver_capabilities import solver_supports_finish_now
 from .schemas import JobResponse
 from .sse import format_sse_event
 
@@ -166,7 +166,6 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
             if event.type == "job.state_changed":
                 job = controller.get_job(job_id)
                 event_state = JobState(str(event.data["state"]))
-                supports_cancel = solver_supports_cancel(job.request.solver)
                 supports_finish_now = solver_supports_finish_now(job.request.solver)
                 cancel_requested = bool(event.data.get("cancel_requested", False))
                 early_completion_requested = bool(event.data.get("early_completion_requested", False))
@@ -176,9 +175,7 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
                         **event.data,
                         "terminal": event_state.terminal,
                         "controls": {
-                            "cancellable": not event_state.terminal
-                            and (event_state == JobState.QUEUED or supports_cancel)
-                            and not cancel_requested,
+                            "cancellable": not event_state.terminal and not cancel_requested,
                             "early_completion_available": event_state == JobState.RUNNING
                             and supports_finish_now
                             and not early_completion_requested,

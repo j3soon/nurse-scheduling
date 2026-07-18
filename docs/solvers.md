@@ -52,11 +52,10 @@ Limited is intended only for small or bounded cases.
 
 ## Runtime capabilities
 
-The server exposes **Finish now** and **Cancel** controls for running jobs only
-when the selected solver supports cooperative interruption. Any queued job can
-be cancelled before its solver starts.
+The server exposes **Cancel** for every running or queued job. **Finish now** is
+available only when the selected solver supports returning its current result.
 
-| Selector | Timeout | Cancel while running | Finish now | Intermediate score events |
+| Selector | Graceful timeout | Graceful cancel | Finish now | Intermediate score events |
 | --- | --- | --- | --- | --- |
 | `ortools/cp-sat` | Yes | Yes | Yes | Yes |
 | `ortools/mpsolver/cbc` | No | No | No | No |
@@ -72,21 +71,47 @@ be cancelled before its solver starts.
 | `pulp/highs` | No | No | No | No |
 | `pulp/scip` | No | No | No | No |
 
-Yes means the capability is confirmed and enabled in the server registry. No
-means it is not confirmed. It does not prove that the underlying solver cannot
-support the capability.
+Graceful timeout means the solver is confirmed to observe the requested limit
+and return on its own. Graceful cancel means the solver is confirmed to observe
+a cancellation request. Server-enforced timeout and forced cancellation are
+global, so neither is stored as a solver capability. A graceful solver gets a
+90-second cancellation grace period by default. The server immediately
+terminates a non-graceful solver when cancellation is requested. Yes means the
+trait is confirmed and enabled in the server registry. No means it is not
+confirmed and does not prove that the underlying solver cannot support it.
+
+### PuLP/CBC on the large scenario
+
+With the bundled CBC 2.10.3, the 87-person model has about 74,000 variables and
+100,000 constraints. A 10-second run spends its budget in the root relaxation
+and preprocessing without entering branch-and-bound or producing an integer
+incumbent. Default preprocessing has also reported the known-feasible model as
+infeasible or unbounded. Disabling preprocessing avoids that early report, but
+the solver can then overrun its internal time limit before integer search
+starts. The missing intermediate result is therefore solver behavior, not a
+progress-log parsing failure.
+
+Keep PuLP/CBC classified as unsuitable for this scenario until its formulation
+or runtime behavior improves. The capability probe intentionally uses the
+minimal testcase only to confirm that CBC intermediate-score reporting works
+on a model it can solve.
 
 **Finish now** asks the solver to stop and preserves its current feasible
 schedule. The job fails without an artifact if interruption occurs before a
 feasible schedule exists. **Cancel** discards any result and marks the job as
-cancelled. Both controls are cooperative, so the job becomes terminal only
-after the solver returns.
+cancelled. Graceful cancellation uses solver cooperation. If the solver does
+not return within the cancellation grace period, or does not support graceful
+cancellation, the server forcibly terminates its process.
+Cooperative cancellation uses error code `cancelled`. Forced cancellation uses
+`cancelled_forced`. Neither cancellation path preserves an artifact.
 
 Intermediate score events are emitted before the solver returns. Native
 OR-Tools CP-SAT reports incumbents through solution callbacks. PuLP/CBC and
 PuLP/cuOpt derive incumbent scores from solver logs. Other backends emit a
-score event only with their final feasible result. A confirmed time limit
-preserves a feasible schedule when one is available.
+score event only with their final feasible result. A solver-native time limit
+preserves a feasible schedule when one is available. A forced watchdog timeout
+fails without an artifact because the schedule is not checkpointed outside the
+child process.
 
 Validate these capabilities against the large real scenario on the current
 platform:
@@ -98,12 +123,11 @@ python tests/real/solver_capabilities.py --all \
   --json-output solver-capabilities.json
 ```
 
-The probe always runs timeout and runs each other confirmed trait as a separate
-subprocess. This lets an unconfirmed timeout gather evidence without changing
-the registry first. The intermediate-score round uses the basic one-person,
-one-day testcase only for PuLP/CBC. Other solvers use the large real scenario.
-Missing platform runtimes are reported as `UNAVAILABLE` rather than stopping
-the remaining checks.
+The probe runs timeout and each other confirmed trait as a separate subprocess.
+The intermediate-score round uses the basic one-person, one-day testcase only
+for PuLP/CBC. Other solvers use the large real scenario. Missing platform
+runtimes are reported as `UNAVAILABLE` rather than stopping the remaining
+checks.
 
 ## Test coverage
 
