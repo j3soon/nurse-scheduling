@@ -82,7 +82,6 @@ def _run_child(
     input_bytes: bytes,
     connection: Connection,
     stop_event: Any,
-    child_finished_event: Any,
     cooperative_stop_enabled: bool,
     expected_parent_pid: int,
 ) -> None:
@@ -94,6 +93,11 @@ def _run_child(
     def publish(event_type: str, data: dict[str, Any], score: int | None) -> None:
         connection.send(("event", event_type, data, score))
 
+    def publish_terminal(message: tuple[Any, ...]) -> None:
+        """Send one terminal message and remain the process-group leader."""
+        connection.send(message)
+        threading.Event().wait()
+
     should_stop = stop_event.is_set if cooperative_stop_enabled else None
     try:
         output = runner.run(
@@ -102,14 +106,11 @@ def _run_child(
             event_callback=publish,
             should_stop=should_stop,
         )
-        child_finished_event.set()
-        connection.send(("output", output))
+        publish_terminal(("output", output))
     except OptimizationExecutionError as error:
-        child_finished_event.set()
-        connection.send(("execution_error", error.code, str(error)))
+        publish_terminal(("execution_error", error.code, str(error)))
     except BaseException as error:
-        child_finished_event.set()
-        connection.send(
+        publish_terminal(
             (
                 "unexpected_error",
                 type(error).__name__,
@@ -139,9 +140,8 @@ def _kill_process_tree_by_pid(process_id: int) -> None:
 
 def _kill_process_tree(process: multiprocessing.Process) -> None:
     """Forcibly terminate a child and solver executables launched beneath it."""
-    if not process.is_alive():
-        return
-    _kill_process_tree_by_pid(process.pid)
+    if process.pid is not None:
+        _kill_process_tree_by_pid(process.pid)
     if process.is_alive():
         process.kill()
     process.join(timeout=1)
@@ -150,7 +150,7 @@ def _kill_process_tree(process: multiprocessing.Process) -> None:
 def _guard_process_tree(
     connection: Connection,
     child_process_id: int,
-    child_finished_event: Any,
+    process_tree_cleaned_event: Any,
 ) -> None:
     """Kill the solver process group if its supervising process disappears."""
     if os.name == "posix":
@@ -159,7 +159,7 @@ def _guard_process_tree(
         try:
             connection.recv()
         except (EOFError, OSError):
-            if not child_finished_event.is_set():
+            if not process_tree_cleaned_event.is_set():
                 _kill_process_tree_by_pid(child_process_id)
     finally:
         connection.close()
@@ -208,7 +208,7 @@ class ProcessOptimizationExecutor:
         """
         receive_connection, send_connection = self._context.Pipe(duplex=False)
         stop_event = self._context.Event()
-        child_finished_event = self._context.Event()
+        process_tree_cleaned_event = self._context.Event()
         process = self._context.Process(
             target=_run_child,
             args=(
@@ -217,7 +217,6 @@ class ProcessOptimizationExecutor:
                 input_bytes,
                 send_connection,
                 stop_event,
-                child_finished_event,
                 should_stop is not None or graceful_cancel,
                 os.getpid(),
             ),
@@ -248,7 +247,7 @@ class ProcessOptimizationExecutor:
             args=(
                 guard_receive_connection,
                 process.pid,
-                child_finished_event,
+                process_tree_cleaned_event,
             ),
             name=f"optimization-job-guard-{job.id}",
             daemon=True,
@@ -268,7 +267,7 @@ class ProcessOptimizationExecutor:
 
         def force_timeout() -> None:
             """Kill a child that has not returned by its hard deadline."""
-            if child_finished_event.is_set() or cancellation_started.is_set():
+            if cancellation_started.is_set():
                 return
             watchdog_fired.set()
             with process_stop_lock:
@@ -288,8 +287,6 @@ class ProcessOptimizationExecutor:
 
         def force_cancel() -> None:
             """Kill a child that cannot complete cancellation gracefully."""
-            if child_finished_event.is_set():
-                return
             cancellation_fired.set()
             with process_stop_lock:
                 _kill_process_tree(process)
@@ -347,7 +344,6 @@ class ProcessOptimizationExecutor:
                             event_callback(event_type, data, score)
                             continue
                         if message_type == "output":
-                            process.join(timeout=1)
                             return message[1]
                         if message_type == "execution_error":
                             _, code, error_message = message
@@ -387,8 +383,8 @@ class ProcessOptimizationExecutor:
             if cancellation_timer is not None:
                 cancellation_timer.cancel()
             with process_stop_lock:
-                if process.is_alive():
-                    _kill_process_tree(process)
+                _kill_process_tree(process)
+                process_tree_cleaned_event.set()
             receive_connection.close()
             if guard_send_connection is not None:
                 try:

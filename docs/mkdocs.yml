@@ -199,7 +199,6 @@ site_description: A user-friendly web app to automate the nurse scheduling task.
 nav:
   - Home: index.md
   - Backend Server: backend-server.md
-  - Scheduling Data: scheduling-data.md
   - Solvers: solvers.md
   - Design: design.md
   - timeline.md

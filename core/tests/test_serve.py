@@ -205,6 +205,42 @@ class DescendantHangingRunner:
             time.sleep(1)
 
 
+class DescendantSuccessfulRunner:
+    def run(self, job, input_bytes, *, event_callback, should_stop):
+        descendant = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+        )
+        event_callback(
+            "job.phase_changed",
+            {
+                "code": "exporting",
+                "message": "Exporting",
+                "descendant_pid": descendant.pid,
+            },
+            None,
+        )
+        return RunOutput(
+            result=OptimizationResult(
+                outcome=OptimizationOutcome.OPTIMAL,
+                score=7,
+                solver_status="OPTIMAL",
+                termination_reason="optimality_proven",
+            ),
+            artifact=StoredArtifact("schedule.xlsx", "application/test", b"complete"),
+        )
+
+
+class SlowTerminalMessage:
+    def __reduce__(self):
+        time.sleep(4)
+        return SlowTerminalMessage, ()
+
+
+class SlowTerminalMessageRunner:
+    def run(self, job, input_bytes, *, event_callback, should_stop):
+        return SlowTerminalMessage()
+
+
 class ParentDeathHangingRunner:
     def __init__(self, process_ids):
         self.process_ids = process_ids
@@ -731,6 +767,37 @@ def test_watchdog_terminates_solver_process_after_timeout_grace():
         }
 
 
+def test_watchdog_remains_armed_until_terminal_message_is_delivered():
+    job = Job(
+        id="job_slow_terminal_message",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="pulp/cbc",
+            prettify=False,
+            timeout_seconds=1,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(OptimizationExecutionError) as raised:
+        ProcessOptimizationExecutor(
+            timeout_grace_seconds=1,
+        ).run(
+            SlowTerminalMessageRunner(),
+            job,
+            b"apiVersion: alpha\n",
+            event_callback=lambda *_args: None,
+            should_stop=None,
+            should_cancel=lambda: False,
+            graceful_cancel=False,
+            should_abort=lambda: False,
+        )
+
+    assert raised.value.code == "timeout_forced"
+
+
 def test_process_timeout_allows_model_building_within_timeout_grace():
     job = Job(
         id="job_native_timeout",
@@ -835,6 +902,53 @@ def test_watchdog_kills_solver_descendants():
     else:
         os.kill(descendant_pid, signal.SIGKILL)
         pytest.fail("Solver descendant remained alive after watchdog termination")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process-group verification")
+def test_successful_execution_kills_solver_descendants():
+    job = Job(
+        id="job_descendant_success",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="pulp/cbc",
+            prettify=False,
+            timeout_seconds=5,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+    descendant_pid = None
+
+    def record_event(_event_type, data, _score):
+        nonlocal descendant_pid
+        descendant_pid = data.get("descendant_pid", descendant_pid)
+
+    try:
+        output = ProcessOptimizationExecutor(
+            timeout_grace_seconds=1,
+        ).run(
+            DescendantSuccessfulRunner(),
+            job,
+            b"apiVersion: alpha\n",
+            event_callback=record_event,
+            should_stop=None,
+            should_cancel=lambda: False,
+            graceful_cancel=False,
+            should_abort=lambda: False,
+        )
+
+        assert output.result.outcome == OptimizationOutcome.OPTIMAL
+        assert descendant_pid is not None
+        for _ in range(100):
+            if not _linux_process_is_active(descendant_pid):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("Solver descendant remained alive after successful execution")
+    finally:
+        if descendant_pid is not None and _linux_process_is_active(descendant_pid):
+            os.kill(descendant_pid, signal.SIGKILL)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree verification")
