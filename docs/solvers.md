@@ -71,6 +71,10 @@ available only when the selected solver supports returning its current result.
 | `pulp/highs` | No | No | No |
 | `pulp/scip` | No | No | No |
 
+> **Note:** Capabilities have been manually confirmed only for
+> `ortools/cp-sat`, `pulp/cuopt`, and `pulp/cbc`. Other backends remain
+> unconfirmed and are left for future verification.
+
 Graceful timeout means the solver is confirmed to observe the requested limit
 and return on its own. Server-enforced timeout is global, so it is not stored
 as a solver capability. Yes means the trait is confirmed and enabled in the

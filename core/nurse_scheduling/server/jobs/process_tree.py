@@ -42,11 +42,13 @@
 #   the isolated process group. Windows asks taskkill to terminate the process
 #   and its descendants. A direct process kill remains as a fallback.
 # - `ProcessTreeGuard` is a separate daemon process that waits on a pipe owned
-#   by the supervisor. Normal cleanup sets the shared completion event and
-#   sends a stop message. Abrupt supervisor death closes the pipe, so the guard
-#   kills the optimization process tree before exiting.
+#   by the supervisor. The executor releases the optimization child's startup
+#   gate only after this guard starts. Normal cleanup sets the shared completion
+#   event and sends a stop message. Abrupt supervisor death closes the pipe, so
+#   the guard kills the optimization process tree before exiting.
 # - The guard creates its own POSIX session so process-group cleanup never
-#   terminates the guard before it can finish its work.
+#   terminates the guard before it can finish its work. The executor also
+#   watches the guard and aborts the optimization if the guard exits early.
 
 import ctypes
 import multiprocessing
@@ -141,6 +143,16 @@ class ProcessTreeGuard:
     process: multiprocessing.Process
     send_connection: Connection
     process_tree_cleaned_event: Any
+
+    @property
+    def sentinel(self) -> int:
+        """Return the waitable handle that signals when the guard exits."""
+        return self.process.sentinel
+
+    @property
+    def exitcode(self) -> int | None:
+        """Return the guard process exit code when available."""
+        return self.process.exitcode
 
     @classmethod
     def start(

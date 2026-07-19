@@ -17,6 +17,22 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# Known cleanup limits and potential future hardening:
+#
+# - A POSIX descendant that creates a new session or process group escapes the
+#   managed process group. Current supported solvers do not do this.
+# - Simultaneous supervisor and guard loss can leave an external solver alive
+#   before either cleanup owner responds.
+# - A failed Windows taskkill leaves only the direct-child kill fallback.
+# - SIGKILL cannot remove a process in uninterruptible kernel sleep until its
+#   kernel operation returns.
+# - Forced group termination can leave dead descendants as zombies when the
+#   container's PID 1 does not reap them.
+#
+# Linux cgroups, Windows Job Objects, and an init reaper could close these gaps.
+# They are intentionally deferred because the active-process cases are unlikely
+# with the current solvers.
+
 import logging
 import multiprocessing
 import time
@@ -80,12 +96,22 @@ def _run_child(
     job: Job,
     input_bytes: bytes,
     connection: Connection,
+    start_connection: Connection,
     finish_now_event: Any,
     finish_now_enabled: bool,
     expected_parent_pid: int,
 ) -> None:
     """Execute the runner and send events or its terminal message to the parent."""
+    # Isolate the child first, then wait until the supervisor has installed its
+    # guard. This prevents a PuLP solver descendant from starting during the
+    # interval where abrupt supervisor death could leave it unprotected.
     process_tree.prepare_optimization_child(expected_parent_pid)
+    try:
+        start_connection.recv()
+    except (EOFError, OSError):
+        return
+    finally:
+        start_connection.close()
 
     def publish(event_type: str, data: dict[str, Any], score: int | None) -> None:
         connection.send(("event", event_type, data, score))
@@ -135,6 +161,9 @@ def run_optimization_process(
     """
     context = multiprocessing.get_context("spawn")
     receive_connection, send_connection = context.Pipe(duplex=False)
+    # The child owns the receive end. Closing the supervisor's send end before
+    # release makes the child exit without running the solver.
+    start_receive_connection, start_send_connection = context.Pipe(duplex=False)
     finish_now_event = context.Event()
     process = context.Process(
         target=_run_child,
@@ -143,6 +172,7 @@ def run_optimization_process(
             job,
             input_bytes,
             send_connection,
+            start_receive_connection,
             finish_now_event,
             finish_now_enabled,
             multiprocessing.current_process().pid,
@@ -155,19 +185,29 @@ def run_optimization_process(
     except BaseException:
         receive_connection.close()
         send_connection.close()
+        start_receive_connection.close()
+        start_send_connection.close()
         raise
     send_connection.close()
+    start_receive_connection.close()
     assert process.pid is not None
     try:
+        # The child is alive but blocked at its startup gate. Release it only
+        # after the detached guard can clean its complete process tree.
         process_tree_guard = process_tree.ProcessTreeGuard.start(
             context,
             process.pid,
             name=f"optimization-job-guard-{job.id}",
         )
+        start_send_connection.send("start")
     except BaseException:
+        start_send_connection.close()
         process_tree.kill_process_tree(process)
         receive_connection.close()
+        if process_tree_guard is not None:
+            process_tree_guard.close()
         raise
+    start_send_connection.close()
     hard_deadline = time.monotonic() + hard_timeout_seconds
     timeout_grace_seconds = hard_timeout_seconds - job.request.timeout_seconds
 
@@ -201,9 +241,21 @@ def run_optimization_process(
                 )
 
             ready = wait(
-                [receive_connection, process.sentinel],
+                [
+                    receive_connection,
+                    process.sentinel,
+                    process_tree_guard.sentinel,
+                ],
                 timeout=min(PROCESS_POLL_SECONDS, remaining_seconds),
             )
+            # Continuing without the guard would allow an abrupt supervisor
+            # death to orphan an external PuLP solver process.
+            if process_tree_guard.sentinel in ready:
+                raise ChildOptimizationError(
+                    "ProcessTreeGuardExit",
+                    (f"Optimization process-tree guard exited unexpectedly with code {process_tree_guard.exitcode}"),
+                    "",
+                )
             if receive_connection in ready:
                 try:
                     message = receive_connection.recv()
@@ -249,6 +301,9 @@ def run_optimization_process(
                 )
     finally:
         try:
+            # Stop the optimization tree before marking guard cleanup complete.
+            # This ordering keeps abrupt supervisor death covered until the tree
+            # no longer needs protection.
             process_tree.kill_process_tree(process)
         finally:
             receive_connection.close()
