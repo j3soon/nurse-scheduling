@@ -391,18 +391,23 @@ class JobController:
         )
         return job
 
-    def force_cancel_job(self, job_id: str, message: str) -> Job:
-        """Mark a job cancelled after its solver process was forcibly terminated."""
+    def complete_cancellation(self, job_id: str, worker_id: str) -> Job:
+        """Finish cancellation while the reporting worker still owns the job."""
 
         def transition(job: Job, now: datetime):
-            """Build the forced-cancellation terminal transition."""
-            if job.state.terminal:
+            """Build the terminal cancellation transition."""
+            if (
+                job.state.terminal
+                or job.state != JobState.CANCELLING
+                or not job.cancel_requested
+                or job.worker_id != worker_id
+            ):
                 return job, [], None
             cancelled = replace(
                 job,
                 state=JobState.CANCELLED,
                 cancel_requested=True,
-                failure=JobFailure(code="cancelled_forced", message=message),
+                failure=JobFailure(code="cancelled", message="Optimization cancelled."),
                 finished_at=now,
                 queue_position=None,
                 claim_expires_at=None,

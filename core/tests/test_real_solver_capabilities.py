@@ -92,14 +92,14 @@ def test_unavailable_timeout_skips_remaining_subprocesses(monkeypatch):
     assert calls == ["timeout"]
     assert [round_report.status for round_report in report.rounds] == [
         "UNAVAILABLE",
-        "NOT_CONFIRMED",
+        "UNAVAILABLE",
         "NOT_CONFIRMED",
         "UNAVAILABLE",
     ]
     assert report.available is False
 
 
-def test_probe_runs_only_capabilities_confirmed_by_registry(monkeypatch):
+def test_probe_runs_global_and_confirmed_capabilities(monkeypatch):
     calls = []
 
     def fake_round(name, _solver, _config):
@@ -110,10 +110,10 @@ def test_probe_runs_only_capabilities_confirmed_by_registry(monkeypatch):
 
     report = solver_capabilities.probe_solver("pulp/cbc", solver_capabilities.ProbeConfig())
 
-    assert calls == ["timeout", "intermediate-scores"]
+    assert calls == ["timeout", "cancel", "intermediate-scores"]
     assert [round_report.status for round_report in report.rounds] == [
         "PASS",
-        "NOT_CONFIRMED",
+        "PASS",
         "NOT_CONFIRMED",
         "PASS",
     ]
@@ -145,7 +145,7 @@ def test_timeout_result_classification():
         state="failed",
         result=None,
         error={
-            "code": "timeout_forced",
+            "code": "process_timeout",
             "message": "Process terminated",
         },
         schedule=None,
@@ -161,7 +161,7 @@ def test_timeout_result_classification():
         graceful_timeout=True,
     )
     assert forced_graceful.status == "FAIL"
-    assert forced_graceful.detail.startswith("timeout_forced:")
+    assert forced_graceful.detail.startswith("process_timeout:")
     assert solver_capabilities._evaluate_timeout(optimal, 1.0, config, graceful_timeout=True).status == "INCONCLUSIVE"
     assert solver_capabilities._evaluate_timeout(feasible, 15.1, config, graceful_timeout=True).status == "FAIL"
 
@@ -178,7 +178,7 @@ def test_timeout_round_applies_registered_graceful_timeout(monkeypatch):
     watchdog = _job(
         state="failed",
         result=None,
-        error={"code": "timeout_forced", "message": "Process terminated"},
+        error={"code": "process_timeout", "message": "Process terminated"},
         schedule=None,
     )
     monkeypatch.setattr(solver_capabilities, "_submit_job", lambda *_args: {"id": "job"})
@@ -238,7 +238,7 @@ def test_only_cbc_intermediate_round_uses_simple_testcase(monkeypatch):
     ]
 
 
-def test_graceful_cancel_round_checks_terminal_result(monkeypatch):
+def test_cancel_round_checks_terminal_result(monkeypatch):
     monkeypatch.setattr(
         solver_capabilities,
         "_submit_job",
@@ -279,19 +279,19 @@ def test_graceful_cancel_round_checks_terminal_result(monkeypatch):
     assert report.artifact_available is False
 
 
-def test_graceful_cancel_round_rejects_forced_cancellation():
-    report = solver_capabilities._evaluate_graceful_cancel(
+def test_cancel_round_rejects_retained_result():
+    report = solver_capabilities._evaluate_cancel(
         _job(
-            state="cancelled",
-            result=None,
-            error={"code": "cancelled_forced", "message": "Process terminated"},
-            schedule=None,
+            state="completed",
+            result={"outcome": "feasible"},
+            error=None,
+            schedule="/schedule.xlsx",
         ),
         15.0,
     )
 
     assert report.status == "FAIL"
-    assert report.detail == ("The server forced cancellation, so the solver did not demonstrate graceful cancellation.")
+    assert report.detail == "Cancellation returned an unexpected terminal result."
 
 
 def test_finish_now_without_incumbent_is_inconclusive(monkeypatch):
@@ -378,6 +378,6 @@ def test_markdown_report_uses_requested_column_order():
     markdown = solver_capabilities.render_markdown([solver_capabilities.SolverReport("ortools/cp-sat", True, rounds)])
 
     assert markdown.splitlines()[0] == (
-        "| Selector | Available | Timeout | Graceful cancel | Finish now | Intermediate scores | Notes |"
+        "| Selector | Available | Timeout | Cancel | Finish now | Intermediate scores | Notes |"
     )
     assert "`ortools/cp-sat` | Yes | PASS | PASS | PASS | PASS" in markdown

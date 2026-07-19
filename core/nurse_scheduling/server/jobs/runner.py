@@ -30,8 +30,7 @@ from ...solver_interface import (
     serialize_schedule_phase_progress,
     serialize_solver_progress,
 )
-from ..errors import OptimizationExecutionError
-from .models import Job, OptimizationOutcome, OptimizationResult, StoredArtifact
+from .models import Job, JobFailure, OptimizationOutcome, OptimizationResult, StoredArtifact
 
 
 EventCallback = Callable[[str, dict[str, Any], int | None], None]
@@ -48,6 +47,9 @@ class RunOutput:
     """Generated XLSX artifact, absent when no schedule exists."""
 
 
+RunResult = RunOutput | JobFailure
+
+
 class OptimizationRunner:
     """Run the scheduling engine without knowing job persistence or HTTP."""
 
@@ -58,13 +60,10 @@ class OptimizationRunner:
         *,
         event_callback: EventCallback,
         should_stop: StopCallback | None,
-    ) -> RunOutput:
-        """Run the scheduler and export any resulting schedule to XLSX.
+    ) -> RunResult:
+        """Run the scheduler and return its output or expected failure.
 
         Progress and phase changes are forwarded through `event_callback`.
-
-        Raises:
-            OptimizationExecutionError: If the model is invalid or no normal result is produced.
         """
 
         def publish_progress(payload: ScheduleProgress) -> None:
@@ -97,11 +96,11 @@ class OptimizationRunner:
                 artifact=None,
             )
         if normalized_status == "MODEL_INVALID":
-            raise OptimizationExecutionError("invalid_model", "The generated solver model is invalid")
+            return JobFailure(code="invalid_model", message="The generated solver model is invalid")
         if normalized_status not in {"OPTIMAL", "FEASIBLE"} or schedule_result.dataframe is None:
-            raise OptimizationExecutionError(
-                "no_solution_found",
-                f"No schedule was produced. Solver status: {normalized_status}",
+            return JobFailure(
+                code="no_solution_found",
+                message=f"No schedule was produced. Solver status: {normalized_status}",
             )
 
         output_buffer = BytesIO()

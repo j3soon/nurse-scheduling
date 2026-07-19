@@ -55,30 +55,27 @@ Limited is intended only for small or bounded cases.
 The server exposes **Cancel** for every running or queued job. **Finish now** is
 available only when the selected solver supports returning its current result.
 
-| Selector | Graceful timeout | Graceful cancel | Finish now | Intermediate score events |
-| --- | --- | --- | --- | --- |
-| `ortools/cp-sat` | Yes | Yes | Yes | Yes |
-| `ortools/mpsolver/cbc` | No | No | No | No |
-| `ortools/mpsolver/scip` | No | No | No | No |
-| `ortools/mpsolver/cp-sat` | No | No | No | No |
-| `ortools/mpsolver/bop` | No | No | No | No |
-| `ortools/mathopt/gscip` | No | No | No | No |
-| `ortools/mathopt/cp-sat` | No | No | No | No |
-| `ortools/mathopt/highs` | No | No | No | No |
-| `pulp/cbc` | No | No | No | Yes |
-| `pulp/cuopt` | Yes | No | No | Yes |
-| `pulp/glpk` | No | No | No | No |
-| `pulp/highs` | No | No | No | No |
-| `pulp/scip` | No | No | No | No |
+| Selector | Graceful timeout | Finish now | Intermediate score events |
+| --- | --- | --- | --- |
+| `ortools/cp-sat` | Yes | Yes | Yes |
+| `ortools/mpsolver/cbc` | No | No | No |
+| `ortools/mpsolver/scip` | No | No | No |
+| `ortools/mpsolver/cp-sat` | No | No | No |
+| `ortools/mpsolver/bop` | No | No | No |
+| `ortools/mathopt/gscip` | No | No | No |
+| `ortools/mathopt/cp-sat` | No | No | No |
+| `ortools/mathopt/highs` | No | No | No |
+| `pulp/cbc` | No | No | Yes |
+| `pulp/cuopt` | Yes | No | Yes |
+| `pulp/glpk` | No | No | No |
+| `pulp/highs` | No | No | No |
+| `pulp/scip` | No | No | No |
 
 Graceful timeout means the solver is confirmed to observe the requested limit
-and return on its own. Graceful cancel means the solver is confirmed to observe
-a cancellation request. Server-enforced timeout and forced cancellation are
-global, so neither is stored as a solver capability. A graceful solver gets a
-90-second cancellation grace period by default. The server immediately
-terminates a non-graceful solver when cancellation is requested. Yes means the
-trait is confirmed and enabled in the server registry. No means it is not
-confirmed and does not prove that the underlying solver cannot support it.
+and return on its own. Server-enforced timeout is global, so it is not stored
+as a solver capability. Yes means the trait is confirmed and enabled in the
+server registry. No means it is not confirmed and does not prove that the
+underlying solver cannot support it.
 
 ### PuLP/CBC on the large scenario
 
@@ -99,11 +96,8 @@ on a model it can solve.
 **Finish now** asks the solver to stop and preserves its current feasible
 schedule. The job fails without an artifact if interruption occurs before a
 feasible schedule exists. **Cancel** discards any result and marks the job as
-cancelled. Graceful cancellation uses solver cooperation. If the solver does
-not return within the cancellation grace period, or does not support graceful
-cancellation, the server forcibly terminates its process.
-Cooperative cancellation uses error code `cancelled`. Forced cancellation uses
-`cancelled_forced`. Neither cancellation path preserves an artifact.
+cancelled by immediately terminating its optimization process. Cancellation
+uses error code `cancelled` and never preserves an artifact.
 
 Intermediate score events are emitted before the solver returns. Native
 OR-Tools CP-SAT reports incumbents through solution callbacks. PuLP/CBC and
@@ -112,7 +106,7 @@ score event only with their final feasible result. A solver-native time limit
 preserves a feasible schedule when one is available. A forced watchdog timeout
 fails without an artifact because the schedule is not checkpointed outside the
 child process. These paths are reported as `solver_timeout` and
-`timeout_forced`, respectively. A solver registered for graceful timeout fails
+`process_timeout`, respectively. A solver registered for graceful timeout fails
 the capability probe if the watchdog must terminate it.
 
 Validate these capabilities against the large real scenario on the current

@@ -22,18 +22,15 @@ import threading
 from collections.abc import Callable
 
 from ...sentry import capture_optimize_exception
-from ..config import (
-    DEFAULT_CANCEL_GRACE_SECONDS,
-    DEFAULT_TIMEOUT_GRACE_SECONDS,
-)
-from ..errors import JobNotFoundError, OptimizationExecutionError
+from ..config import DEFAULT_TIMEOUT_GRACE_SECONDS
+from ..errors import JobNotFoundError
+from ..solver_capabilities import solver_supports_finish_now
 from .controller import JobController
-from ..solver_capabilities import solver_supports_finish_now, solver_supports_graceful_cancel
 from .models import Job, JobFailure, JobState
 from .process_executor import (
-    OptimizationForcedCancellation,
-    OptimizationProcessAborted,
-    ProcessOptimizationExecutor,
+    ProcessControl,
+    ProcessStatus,
+    run_optimization_process,
 )
 from .runner import OptimizationRunner
 
@@ -55,7 +52,6 @@ class JobWorker:
         claim_poll_seconds: float,
         claim_lease_seconds: float,
         timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS,
-        cancel_grace_seconds: float = DEFAULT_CANCEL_GRACE_SECONDS,
         unexpected_error_formatter: Callable[[Exception], str] = str,
     ):
         """Configure a process-local worker without starting its thread."""
@@ -63,11 +59,8 @@ class JobWorker:
         """Controller used for claims, events, control requests, and outcomes."""
         self._runner = runner
         """Runner that performs one blocking optimization execution."""
-        self._process_executor = ProcessOptimizationExecutor(
-            timeout_grace_seconds=timeout_grace_seconds,
-            cancel_grace_seconds=cancel_grace_seconds,
-        )
-        """Child-process supervisor used for every optimization execution."""
+        self._timeout_grace_seconds = timeout_grace_seconds
+        """Additional time before the server forcibly terminates a timed-out job."""
         self._worker_id = worker_id
         """Stable identity recorded on jobs claimed by this worker."""
         self._claim_poll_seconds = claim_poll_seconds
@@ -77,7 +70,7 @@ class JobWorker:
         self._unexpected_error_formatter = unexpected_error_formatter
         """Formatter used to produce unexpected failure messages."""
         self._stop = threading.Event()
-        """Signal that stops claiming jobs and cooperative solver execution."""
+        """Signal that stops claiming jobs and terminates the active child."""
         self._lock = threading.Lock()
         """Lock guarding worker-thread creation, inspection, and cleanup."""
         self._thread: threading.Thread | None = None
@@ -215,32 +208,49 @@ class JobWorker:
                 daemon=True,
             )
             control_thread.start()
-            should_stop = finish_now_requested.is_set if solver_supports_finish_now(job.request.solver) else None
+            finish_now_supported = solver_supports_finish_now(job.request.solver)
 
-            output = self._process_executor.run(
+            def process_control() -> ProcessControl | None:
+                """Return the highest-priority control for the optimization child."""
+                if self._stop.is_set() or monitor_stop.is_set():
+                    return ProcessControl.ABORT
+                if cancellation_requested.is_set():
+                    return ProcessControl.CANCEL
+                if finish_now_supported and finish_now_requested.is_set():
+                    return ProcessControl.FINISH
+                return None
+
+            process_result = run_optimization_process(
                 self._runner,
                 job,
                 content,
                 event_callback=publish,
-                should_stop=should_stop,
-                should_cancel=cancellation_requested.is_set,
-                graceful_cancel=solver_supports_graceful_cancel(job.request.solver),
-                should_abort=lambda: self._stop.is_set() or monitor_stop.is_set(),
+                control=process_control,
+                hard_timeout_seconds=job.request.timeout_seconds + self._timeout_grace_seconds,
+                finish_now_enabled=finish_now_supported,
             )
-            self._controller.complete_job(job.id, output.result, output.artifact)
-        except OptimizationProcessAborted:
-            server_logger.info(
-                "[server:worker] stopped child execution job_id=%s worker_id=%s",
-                job.id,
-                self._worker_id,
-            )
-        except OptimizationForcedCancellation as error:
-            self._controller.force_cancel_job(job.id, str(error))
-        except OptimizationExecutionError as error:
-            self._controller.fail_job(
-                job.id,
-                JobFailure(code=error.code, message=str(error)),
-            )
+            if process_result.status is ProcessStatus.COMPLETED:
+                if process_result.output is None:
+                    raise RuntimeError("Completed optimization process has no output")
+                self._controller.complete_job(
+                    job.id,
+                    process_result.output.result,
+                    process_result.output.artifact,
+                )
+            elif process_result.status is ProcessStatus.FAILED:
+                if process_result.failure is None:
+                    raise RuntimeError("Failed optimization process has no failure")
+                self._controller.fail_job(job.id, process_result.failure)
+            elif process_result.status is ProcessStatus.CANCELLED:
+                self._controller.complete_cancellation(job.id, self._worker_id)
+            elif process_result.status is ProcessStatus.ABORTED:
+                server_logger.info(
+                    "[server:worker] stopped child execution job_id=%s worker_id=%s",
+                    job.id,
+                    self._worker_id,
+                )
+            else:
+                raise RuntimeError(f"Unknown optimization process status: {process_result.status}")
         except JobNotFoundError:
             server_logger.warning("[server:worker] job disappeared while running job_id=%s", job.id)
         except Exception as error:

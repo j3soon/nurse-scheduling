@@ -17,42 +17,52 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import ctypes
 import logging
-import math
 import multiprocessing
-import os
-import signal
-import subprocess
-import sys
-import threading
 import time
 import traceback
-from multiprocessing.connection import Connection
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
+from multiprocessing.connection import Connection, wait
 from typing import Any
 
-from ..config import (
-    DEFAULT_CANCEL_GRACE_SECONDS,
-    DEFAULT_TIMEOUT_GRACE_SECONDS,
-)
-from ..errors import OptimizationExecutionError
-from .models import Job
-from .runner import EventCallback, OptimizationRunner, RunOutput, StopCallback
+from .models import Job, JobFailure
+from .runner import EventCallback, OptimizationRunner, RunOutput
 
 
 server_logger = logging.getLogger("nurse_scheduling.server")
 PROCESS_POLL_SECONDS = 0.05
 """Maximum delay for progress, controls, aborts, and watchdog checks."""
-PR_SET_PDEATHSIG = 1
-"""Linux prctl operation that configures a signal for parent process death."""
 
 
-class OptimizationProcessAborted(Exception):
-    """Internal signal that claim loss or server shutdown stopped execution."""
+class ProcessControl(str, Enum):
+    """Control requested by the worker while optimization is running."""
+
+    FINISH = "finish"
+    CANCEL = "cancel"
+    ABORT = "abort"
 
 
-class OptimizationForcedCancellation(Exception):
-    """Signal that cancellation required terminating the solver process."""
+class ProcessStatus(str, Enum):
+    """Normal terminal status of a supervised optimization process."""
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    ABORTED = "aborted"
+
+
+@dataclass(frozen=True)
+class ProcessResult:
+    """Terminal process status and its output or expected failure."""
+
+    status: ProcessStatus
+    output: RunOutput | None = None
+    failure: JobFailure | None = None
+
+
+ControlCallback = Callable[[], ProcessControl | None]
 
 
 class ChildOptimizationError(RuntimeError):
@@ -64,336 +74,160 @@ class ChildOptimizationError(RuntimeError):
         self.child_traceback = child_traceback
 
 
-def _set_parent_death_signal(expected_parent_pid: int) -> None:
-    """Ensure Linux kills the optimization child if its supervisor disappears."""
-    if sys.platform != "linux":
-        return
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
-        error_number = ctypes.get_errno()
-        raise OSError(error_number, os.strerror(error_number))
-    if os.getppid() != expected_parent_pid:
-        os.kill(os.getpid(), signal.SIGKILL)
-
-
 def _run_child(
     runner: OptimizationRunner,
     job: Job,
     input_bytes: bytes,
     connection: Connection,
-    stop_event: Any,
-    cooperative_stop_enabled: bool,
-    expected_parent_pid: int,
+    finish_now_event: Any,
+    finish_now_enabled: bool,
 ) -> None:
     """Execute the runner and send events or its terminal message to the parent."""
-    _set_parent_death_signal(expected_parent_pid)
-    if os.name == "posix":
-        os.setsid()
 
     def publish(event_type: str, data: dict[str, Any], score: int | None) -> None:
         connection.send(("event", event_type, data, score))
 
-    def publish_terminal(message: tuple[Any, ...]) -> None:
-        """Send one terminal message and remain the process-group leader."""
-        connection.send(message)
-        threading.Event().wait()
-
-    should_stop = stop_event.is_set if cooperative_stop_enabled else None
     try:
-        output = runner.run(
-            job,
-            input_bytes,
-            event_callback=publish,
-            should_stop=should_stop,
-        )
-        publish_terminal(("output", output))
-    except OptimizationExecutionError as error:
-        publish_terminal(("execution_error", error.code, str(error)))
-    except BaseException as error:
-        publish_terminal(
-            (
+        try:
+            result = runner.run(
+                job,
+                input_bytes,
+                event_callback=publish,
+                should_stop=finish_now_event.is_set if finish_now_enabled else None,
+            )
+            message = ("result", result)
+        except BaseException as error:
+            message = (
                 "unexpected_error",
                 type(error).__name__,
                 str(error),
                 traceback.format_exc(),
             )
-        )
+        connection.send(message)
     finally:
         connection.close()
 
 
-def _kill_process_tree_by_pid(process_id: int) -> None:
-    """Forcibly terminate a process group or Windows process tree by PID."""
-    if os.name == "posix":
-        try:
-            os.killpg(process_id, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    elif os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/PID", str(process_id), "/T", "/F"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+def run_optimization_process(
+    runner: OptimizationRunner,
+    job: Job,
+    input_bytes: bytes,
+    *,
+    event_callback: EventCallback,
+    control: ControlCallback,
+    hard_timeout_seconds: float,
+    finish_now_enabled: bool,
+) -> ProcessResult:
+    """Run one directly supervised child until it returns or must be stopped.
 
+    The finish-now control alone sets the cooperative solver event. Cancel and
+    abort both terminate the child immediately and return distinct statuses.
 
-def _kill_process_tree(process: multiprocessing.Process) -> None:
-    """Forcibly terminate a child and solver executables launched beneath it."""
-    if process.pid is not None:
-        _kill_process_tree_by_pid(process.pid)
-    if process.is_alive():
-        process.kill()
-    process.join(timeout=1)
+    Optimization runners own the cleanup of any subprocesses they launch.
 
-
-def _guard_process_tree(
-    connection: Connection,
-    child_process_id: int,
-    process_tree_cleaned_event: Any,
-) -> None:
-    """Kill the solver process group if its supervising process disappears."""
-    if os.name == "posix":
-        os.setsid()
+    Raises:
+        ChildOptimizationError: If the child raises or exits unexpectedly.
+    """
+    context = multiprocessing.get_context("spawn")
+    receive_connection, send_connection = context.Pipe(duplex=False)
+    finish_now_event = context.Event()
+    process = context.Process(
+        target=_run_child,
+        args=(
+            runner,
+            job,
+            input_bytes,
+            send_connection,
+            finish_now_event,
+            finish_now_enabled,
+        ),
+        name=f"optimization-job-{job.id}",
+    )
     try:
-        try:
-            connection.recv()
-        except (EOFError, OSError):
-            if not process_tree_cleaned_event.is_set():
-                _kill_process_tree_by_pid(child_process_id)
-    finally:
-        connection.close()
-
-
-class ProcessOptimizationExecutor:
-    """Supervise a spawned optimization process and enforce its hard deadline."""
-
-    def __init__(
-        self,
-        *,
-        timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS,
-        cancel_grace_seconds: float = DEFAULT_CANCEL_GRACE_SECONDS,
-    ):
-        """Configure forced-timeout and graceful-cancellation grace periods."""
-        if not math.isfinite(timeout_grace_seconds) or timeout_grace_seconds <= 0:
-            raise ValueError("timeout_grace_seconds must be positive")
-        if not math.isfinite(cancel_grace_seconds) or cancel_grace_seconds <= 0:
-            raise ValueError("cancel_grace_seconds must be positive")
-        self._timeout_grace_seconds = timeout_grace_seconds
-        self._cancel_grace_seconds = cancel_grace_seconds
-        self._context = multiprocessing.get_context("spawn")
-
-    def run(
-        self,
-        runner: OptimizationRunner,
-        job: Job,
-        input_bytes: bytes,
-        *,
-        event_callback: EventCallback,
-        should_stop: StopCallback | None,
-        should_cancel: StopCallback,
-        graceful_cancel: bool,
-        should_abort: StopCallback,
-    ) -> RunOutput:
-        """Run one job and enforce hard process deadlines.
-
-        The timeout deadline starts when the child process starts. It includes
-        the requested timeout and timeout grace period.
-
-        Raises:
-            OptimizationExecutionError: If execution fails or the watchdog fires.
-            OptimizationForcedCancellation: If cancellation requires process termination.
-            OptimizationProcessAborted: If shutdown or claim loss requires an immediate stop.
-            ChildOptimizationError: If the child raises an unexpected exception.
-        """
-        receive_connection, send_connection = self._context.Pipe(duplex=False)
-        stop_event = self._context.Event()
-        process_tree_cleaned_event = self._context.Event()
-        process = self._context.Process(
-            target=_run_child,
-            args=(
-                runner,
-                job,
-                input_bytes,
-                send_connection,
-                stop_event,
-                should_stop is not None or graceful_cancel,
-                os.getpid(),
-            ),
-            name=f"optimization-job-{job.id}",
-        )
-        guard_process: multiprocessing.Process | None = None
-        guard_send_connection: Connection | None = None
-        stop_forwarded = False
-        cancel_forwarded = False
-        watchdog_fired = threading.Event()
-        watchdog_timer: threading.Timer | None = None
-        cancellation_started = threading.Event()
-        cancellation_fired = threading.Event()
-        cancellation_timer: threading.Timer | None = None
-        process_stop_lock = threading.Lock()
-        try:
-            process.start()
-        except BaseException:
-            receive_connection.close()
-            send_connection.close()
-            raise
+        process.start()
+    except BaseException:
+        receive_connection.close()
         send_connection.close()
-        # The detached guard survives supervisor death long enough to kill the
-        # optimization process group, including external solver descendants.
-        guard_receive_connection, guard_send_connection = self._context.Pipe(duplex=False)
-        guard_process = self._context.Process(
-            target=_guard_process_tree,
-            args=(
-                guard_receive_connection,
-                process.pid,
-                process_tree_cleaned_event,
-            ),
-            name=f"optimization-job-guard-{job.id}",
-            daemon=True,
-        )
-        try:
-            guard_process.start()
-        except BaseException:
-            guard_receive_connection.close()
-            guard_send_connection.close()
-            with process_stop_lock:
-                _kill_process_tree(process)
-            receive_connection.close()
-            raise
-        guard_receive_connection.close()
-        process_started_at = time.monotonic()
-        hard_timeout_seconds = job.request.timeout_seconds + self._timeout_grace_seconds
+        raise
+    send_connection.close()
+    hard_deadline = time.monotonic() + hard_timeout_seconds
 
-        def force_timeout() -> None:
-            """Kill a child that has not returned by its hard deadline."""
-            if cancellation_started.is_set():
-                return
-            watchdog_fired.set()
-            with process_stop_lock:
-                _kill_process_tree(process)
+    try:
+        while True:
+            requested_control = control()
+            if requested_control is ProcessControl.FINISH:
+                if not finish_now_enabled:
+                    raise RuntimeError("Finish-now was requested for an unsupported solver")
+                finish_now_event.set()
+            elif requested_control is ProcessControl.CANCEL:
+                return ProcessResult(status=ProcessStatus.CANCELLED)
+            elif requested_control is ProcessControl.ABORT:
+                return ProcessResult(status=ProcessStatus.ABORTED)
+            elif requested_control is not None:
+                raise RuntimeError(f"Unknown optimization process control: {requested_control}")
 
-        def watchdog_error() -> OptimizationExecutionError:
-            """Build the stable failure exposed for forced termination."""
-            return OptimizationExecutionError(
-                "timeout_forced",
-                (
-                    f"The optimization process did not return within the requested "
-                    f"{job.request.timeout_seconds}-second timeout and "
-                    f"{self._timeout_grace_seconds:g}-second timeout grace period. "
-                    "The server terminated the process."
-                ),
-            )
-
-        def force_cancel() -> None:
-            """Kill a child that cannot complete cancellation gracefully."""
-            cancellation_fired.set()
-            with process_stop_lock:
-                _kill_process_tree(process)
-
-        def forced_cancellation_error() -> OptimizationForcedCancellation:
-            """Build the stable failure exposed for forced cancellation."""
-            if graceful_cancel:
-                message = (
-                    f"The solver did not stop within the {self._cancel_grace_seconds:g}-second "
-                    "cancellation grace period. The server terminated the solver process."
+            remaining_seconds = hard_deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                return ProcessResult(
+                    status=ProcessStatus.FAILED,
+                    failure=JobFailure(
+                        code="process_timeout",
+                        message=(
+                            f"The optimization process exceeded its {hard_timeout_seconds:g}-second "
+                            "hard timeout. The server terminated the process."
+                        ),
+                    ),
                 )
-            else:
-                message = "The solver does not support graceful cancellation. The server terminated the solver process."
-            return OptimizationForcedCancellation(message)
 
-        try:
-            watchdog_timer = threading.Timer(hard_timeout_seconds, force_timeout)
-            watchdog_timer.daemon = True
-            watchdog_timer.start()
-            while True:
-                if should_abort():
-                    raise OptimizationProcessAborted
-                if not cancel_forwarded and should_cancel():
-                    cancel_forwarded = True
-                    cancellation_started.set()
-                    if watchdog_timer is not None:
-                        watchdog_timer.cancel()
-                    if graceful_cancel:
-                        stop_event.set()
-                        cancellation_timer = threading.Timer(
-                            self._cancel_grace_seconds,
-                            force_cancel,
-                        )
-                        cancellation_timer.daemon = True
-                        cancellation_timer.start()
-                    else:
-                        force_cancel()
-                if cancellation_fired.is_set():
-                    raise forced_cancellation_error()
-                if watchdog_fired.is_set():
-                    raise watchdog_error()
-                if should_stop is not None and not stop_forwarded and should_stop():
-                    stop_event.set()
-                    stop_forwarded = True
-
-                if receive_connection.poll(PROCESS_POLL_SECONDS):
-                    try:
-                        message = receive_connection.recv()
-                    except EOFError:
-                        message = None
-                    if message is not None:
-                        message_type = message[0]
-                        if message_type == "event":
-                            _, event_type, data, score = message
-                            event_callback(event_type, data, score)
-                            continue
-                        if message_type == "output":
-                            return message[1]
-                        if message_type == "execution_error":
-                            _, code, error_message = message
-                            raise OptimizationExecutionError(code, error_message)
-                        if message_type == "unexpected_error":
-                            _, exception_type, error_message, child_traceback = message
-                            server_logger.error(
-                                "[server:worker-child] failed job_id=%s exception_type=%s\n%s",
-                                job.id,
-                                exception_type,
-                                child_traceback,
-                            )
-                            raise ChildOptimizationError(exception_type, error_message, child_traceback)
-                        raise RuntimeError(f"Unknown optimization child message: {message_type}")
-
-                hard_deadline = process_started_at + hard_timeout_seconds
-                if time.monotonic() >= hard_deadline:
-                    force_timeout()
-                    if watchdog_fired.is_set():
-                        raise watchdog_error()
-
-                if not process.is_alive():
-                    if cancellation_fired.is_set():
-                        raise forced_cancellation_error()
-                    if watchdog_fired.is_set():
-                        raise watchdog_error()
-                    if receive_connection.poll():
-                        continue
-                    raise ChildOptimizationError(
-                        "ChildProcessExit",
-                        f"Optimization process exited with code {process.exitcode}",
-                        "",
-                    )
-        finally:
-            if watchdog_timer is not None:
-                watchdog_timer.cancel()
-            if cancellation_timer is not None:
-                cancellation_timer.cancel()
-            with process_stop_lock:
-                _kill_process_tree(process)
-                process_tree_cleaned_event.set()
-            receive_connection.close()
-            if guard_send_connection is not None:
+            ready = wait(
+                [receive_connection, process.sentinel],
+                timeout=min(PROCESS_POLL_SECONDS, remaining_seconds),
+            )
+            if receive_connection in ready:
                 try:
-                    guard_send_connection.send("stop")
-                except (BrokenPipeError, EOFError, OSError):
-                    pass
-                guard_send_connection.close()
-            if guard_process is not None:
-                guard_process.join(timeout=1)
-                if guard_process.is_alive():
-                    guard_process.kill()
-                    guard_process.join(timeout=1)
+                    message = receive_connection.recv()
+                except EOFError:
+                    raise ChildOptimizationError(
+                        "ChildProcessCommunicationError",
+                        (
+                            "Optimization process closed its result channel without "
+                            f"a terminal message. Exit code: {process.exitcode}"
+                        ),
+                        "",
+                    ) from None
+                message_type = message[0]
+                if message_type == "event":
+                    _, event_type, data, score = message
+                    event_callback(event_type, data, score)
+                    continue
+                if message_type == "result":
+                    result = message[1]
+                    if isinstance(result, RunOutput):
+                        return ProcessResult(status=ProcessStatus.COMPLETED, output=result)
+                    if isinstance(result, JobFailure):
+                        return ProcessResult(status=ProcessStatus.FAILED, failure=result)
+                    raise RuntimeError(f"Unknown optimization runner result: {type(result).__name__}")
+                if message_type == "unexpected_error":
+                    _, exception_type, error_message, child_traceback = message
+                    server_logger.error(
+                        "[server:worker-child] failed job_id=%s exception_type=%s\n%s",
+                        job.id,
+                        exception_type,
+                        child_traceback,
+                    )
+                    raise ChildOptimizationError(exception_type, error_message, child_traceback)
+                raise RuntimeError(f"Unknown optimization child message: {message_type}")
+
+            if process.sentinel in ready:
+                if receive_connection.poll():
+                    continue
+                raise ChildOptimizationError(
+                    "ChildProcessExit",
+                    f"Optimization process exited with code {process.exitcode}",
+                    "",
+                )
+    finally:
+        if process.is_alive():
+            process.kill()
+        process.join()
+        receive_connection.close()

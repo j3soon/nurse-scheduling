@@ -178,7 +178,6 @@ def create_app(
         claim_poll_seconds=settings.claim_poll_seconds,
         claim_lease_seconds=settings.claim_lease_seconds,
         timeout_grace_seconds=settings.timeout_grace_seconds,
-        cancel_grace_seconds=settings.cancel_grace_seconds,
         unexpected_error_formatter=_format_unexpected_error,
     )
     maintenance = JobMaintenance(controller, interval_seconds=settings.maintenance_interval_seconds)

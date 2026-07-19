@@ -31,7 +31,6 @@ class SolverCapabilities:
     label: str
     compute: Literal["cpu", "gpu"]
     graceful_timeout: bool
-    graceful_cancel: bool
     finish_now: bool
     intermediate_scores: bool
 
@@ -42,7 +41,6 @@ def _capabilities(
     *,
     compute: Literal["cpu", "gpu"] = "cpu",
     graceful_timeout: bool = False,
-    graceful_cancel: bool = False,
     finish_now: bool = False,
     intermediate_scores: bool = False,
 ) -> SolverCapabilities:
@@ -51,7 +49,6 @@ def _capabilities(
         label=label,
         compute=compute,
         graceful_timeout=graceful_timeout,
-        graceful_cancel=graceful_cancel,
         finish_now=finish_now,
         intermediate_scores=intermediate_scores,
     )
@@ -62,7 +59,6 @@ SOLVER_CAPABILITIES = (
         "ortools/cp-sat",
         "OR-Tools | CP-SAT",
         graceful_timeout=True,
-        graceful_cancel=True,
         finish_now=True,
         intermediate_scores=True,
     ),
@@ -96,12 +92,6 @@ if tuple(SOLVER_CAPABILITIES_BY_VALUE) != CANONICAL_SOLVER_CHOICES:
 def get_solver_capabilities(solver: str) -> SolverCapabilities | None:
     """Return capabilities for a normalized selector, if it is registered."""
     return SOLVER_CAPABILITIES_BY_VALUE.get(solver.strip().lower())
-
-
-def solver_supports_graceful_cancel(solver: str) -> bool:
-    """Return whether a running solver observes graceful cancellation requests."""
-    capabilities = get_solver_capabilities(solver)
-    return capabilities is not None and capabilities.graceful_cancel
 
 
 def solver_supports_finish_now(solver: str) -> bool:

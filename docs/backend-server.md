@@ -39,11 +39,11 @@ flowchart TB
         API[<b>API routes</b><br/>HTTP job endpoints]
         Controller[<b>JobController</b><br/>Lifecycle policy<br/>Persistence]
         Worker[<b>JobWorker</b><br/>Claim and control jobs]
-        Executor[<b>ProcessOptimizationExecutor</b><br/>Spawn and supervise child]
+        Executor[<b>Process runner</b><br/>Spawn and supervise direct child]
         Store[<b>JobStore</b><br/>Atomic job, event,<br/>and artifact storage]
         Maintenance[<b>JobMaintenance</b><br/>Expire claims and jobs]
 
-        subgraph Child[Per-job child process tree]
+        subgraph Child[Per-job child process]
             Runner[<b>OptimizationRunner</b><br/>Call scheduling engine<br/>Create XLSX]
             Engine[<b>Scheduling engine</b><br/>Build and solve]
         end
@@ -114,16 +114,11 @@ stateDiagram-v2
 be optimal, feasible, or infeasible. An XLSX artifact is available only when a
 schedule was produced.
 
-Cancellation is available for every running job. A solver with graceful-cancel
-support receives a stop request and has 90 seconds by default to return. The
-server immediately terminates a solver without graceful-cancel support. It also
-terminates a graceful solver that exceeds the cancellation grace period.
-Early completion requires solver support and sets a control flag without adding
-another lifecycle state. If a current result is available, the job later
-becomes `completed`.
-
-Cooperative cancellation uses error code `cancelled`. Forced cancellation uses
-`cancelled_forced`. Both paths discard the result and artifact.
+Cancellation is available for every running job. It immediately terminates the
+optimization child, uses error code `cancelled`, and discards the result and
+artifact. Early completion requires solver support and sets a control flag
+without adding another lifecycle state. If a current result is available, the
+job later becomes `completed`.
 
 ### Timeout enforcement
 
@@ -135,13 +130,14 @@ watchdog starts when the child process starts and does not depend on a
 90-second timeout grace period by default. The grace period covers startup,
 model construction, and shutdown while still bounding a job that becomes stuck
 before solving. If the process has not returned by the deadline, the server
-forcibly terminates it and any solver executables it launched. A thread is not
-sufficient because Python cannot safely force-stop an arbitrary worker thread.
+terminates its direct optimization child. Solver adapters own cleanup of any
+subprocesses they launch. A thread is not sufficient because Python cannot
+safely force-stop an arbitrary worker thread.
 
 A process that returns before the hard deadline follows its normal result path.
 A feasible result returned at the solver limit uses termination reason
 `solver_timeout`. Forced termination marks the job as `failed` with error code
-`timeout_forced` and produces no artifact, even if an incumbent score was
+`process_timeout` and produces no artifact, even if an incumbent score was
 reported earlier. The error message records the requested timeout, timeout
 grace, and forced termination. Preserving the last schedule would require
 checkpointing it outside the child process.
@@ -149,7 +145,7 @@ checkpointing it outside the child process.
 ```json
 {
   "error": {
-    "code": "timeout_forced",
+    "code": "process_timeout",
     "message": "The optimization process did not return within the requested 300-second timeout and 90-second timeout grace period. The server terminated the process."
   }
 }
@@ -263,7 +259,6 @@ All server settings are read once when the application is constructed.
 | `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS` | `300` | Set the timeout used when a request omits one. |
 | `OPTIMIZE_MAX_TIMEOUT_SECONDS` | `3600` | Limit the timeout accepted from a request. |
 | `OPTIMIZE_TIMEOUT_GRACE_SECONDS` | `90` | Set the process grace added to the requested timeout before forced termination. |
-| `OPTIMIZE_CANCEL_GRACE_SECONDS` | `90` | Set how long the server waits for a graceful solver to return after cancellation. |
 | `DISABLE_SENTRY` | unset | Disable backend error reporting when set to a non-empty value. |
 | `SENTRY_RELEASE` | derived from the app version | Override the release reported to Sentry. |
 

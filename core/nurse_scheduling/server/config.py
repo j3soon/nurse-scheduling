@@ -30,8 +30,6 @@ DEFAULT_MAX_EVENTS_PER_JOB = 1_000
 """Default maximum number of replayable events retained for one job."""
 DEFAULT_TIMEOUT_GRACE_SECONDS = 90.0
 """Default grace period before forcibly terminating a timed-out solver."""
-DEFAULT_CANCEL_GRACE_SECONDS = 90.0
-"""Default grace period before forcibly terminating a cancelled solver."""
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -92,8 +90,6 @@ class ServerSettings:
     """Largest optimization timeout accepted from a request."""
     timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS
     """Time allowed for a solver to return after its requested timeout."""
-    cancel_grace_seconds: float = DEFAULT_CANCEL_GRACE_SECONDS
-    """Time allowed for a graceful solver to return after cancellation."""
 
     def __post_init__(self) -> None:
         """Validate cross-field and direct-construction constraints.
@@ -120,7 +116,6 @@ class ServerSettings:
             "maintenance_interval_seconds",
             "sse_keepalive_seconds",
             "timeout_grace_seconds",
-            "cancel_grace_seconds",
         ):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -155,9 +150,5 @@ class ServerSettings:
             timeout_grace_seconds=_positive_float(
                 "OPTIMIZE_TIMEOUT_GRACE_SECONDS",
                 DEFAULT_TIMEOUT_GRACE_SECONDS,
-            ),
-            cancel_grace_seconds=_positive_float(
-                "OPTIMIZE_CANCEL_GRACE_SECONDS",
-                DEFAULT_CANCEL_GRACE_SECONDS,
             ),
         )

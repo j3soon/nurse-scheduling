@@ -23,7 +23,6 @@ import asyncio
 import json
 import multiprocessing
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -38,16 +37,16 @@ from fastapi.testclient import TestClient
 from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.config import (
-    DEFAULT_CANCEL_GRACE_SECONDS,
     DEFAULT_JOB_RETENTION_SECONDS,
     DEFAULT_MAX_EVENTS_PER_JOB,
     DEFAULT_MAX_RETAINED_JOBS,
     DEFAULT_TIMEOUT_GRACE_SECONDS,
     ServerSettings,
 )
-from nurse_scheduling.server.errors import OptimizationExecutionError
+from nurse_scheduling.server.jobs.controller import JobController
 from nurse_scheduling.server.jobs.models import (
     Job,
+    JobFailure,
     JobRequest,
     JobState,
     OptimizationOutcome,
@@ -55,15 +54,16 @@ from nurse_scheduling.server.jobs.models import (
     StoredArtifact,
     StoreLimits,
 )
-from nurse_scheduling.server.jobs.controller import JobController
-from nurse_scheduling.server.jobs.process_executor import ProcessOptimizationExecutor
+from nurse_scheduling.server.jobs.process_executor import (
+    ChildOptimizationError,
+    ProcessControl,
+    ProcessStatus,
+    run_optimization_process,
+)
 from nurse_scheduling.server.jobs.runner import OptimizationRunner, RunOutput
 from nurse_scheduling.server.jobs.worker import JobWorker
 from nurse_scheduling.server.runtime_identity import get_deployment_id
-from nurse_scheduling.server.solver_capabilities import (
-    SOLVER_CAPABILITIES,
-    solver_supports_graceful_cancel,
-)
+from nurse_scheduling.server.solver_capabilities import SOLVER_CAPABILITIES
 from nurse_scheduling.server.stores.memory import MemoryJobStore
 
 
@@ -106,9 +106,9 @@ class FailingRunner:
 
 class NoSolutionRunner:
     def run(self, job, input_bytes, *, event_callback, should_stop):
-        raise OptimizationExecutionError(
-            "no_solution_found",
-            "No schedule was produced. Solver status: UNKNOWN",
+        return JobFailure(
+            code="no_solution_found",
+            message="No schedule was produced. Solver status: UNKNOWN",
         )
 
 
@@ -137,22 +137,6 @@ class StoppableRunner:
             ),
             artifact=StoredArtifact("schedule.xlsx", "application/test", b"partial"),
         )
-
-
-class FailingAfterStopRunner:
-    def __init__(self):
-        self.started = multiprocessing.get_context("spawn").Event()
-
-    def run(self, job, input_bytes, *, event_callback, should_stop):
-        self.started.set()
-        event_callback(
-            "job.phase_changed",
-            {"code": "solving", "message": "Solving"},
-            None,
-        )
-        while should_stop is not None and not should_stop():
-            time.sleep(0.005)
-        raise ValueError("No solution found! Status: UNKNOWN")
 
 
 class HangingRunner:
@@ -187,49 +171,6 @@ class IgnoringStopRunner:
             time.sleep(1)
 
 
-class DescendantHangingRunner:
-    def run(self, job, input_bytes, *, event_callback, should_stop):
-        descendant = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"],
-        )
-        event_callback(
-            "job.phase_changed",
-            {
-                "code": "solving",
-                "message": "Solving",
-                "descendant_pid": descendant.pid,
-            },
-            None,
-        )
-        while True:
-            time.sleep(1)
-
-
-class DescendantSuccessfulRunner:
-    def run(self, job, input_bytes, *, event_callback, should_stop):
-        descendant = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"],
-        )
-        event_callback(
-            "job.phase_changed",
-            {
-                "code": "exporting",
-                "message": "Exporting",
-                "descendant_pid": descendant.pid,
-            },
-            None,
-        )
-        return RunOutput(
-            result=OptimizationResult(
-                outcome=OptimizationOutcome.OPTIMAL,
-                score=7,
-                solver_status="OPTIMAL",
-                termination_reason="optimality_proven",
-            ),
-            artifact=StoredArtifact("schedule.xlsx", "application/test", b"complete"),
-        )
-
-
 class SlowTerminalMessage:
     def __reduce__(self):
         time.sleep(4)
@@ -241,52 +182,9 @@ class SlowTerminalMessageRunner:
         return SlowTerminalMessage()
 
 
-class ParentDeathHangingRunner:
-    def __init__(self, process_ids):
-        self.process_ids = process_ids
-
+class AbruptExitRunner:
     def run(self, job, input_bytes, *, event_callback, should_stop):
-        descendant = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"],
-        )
-        with self.process_ids.get_lock():
-            self.process_ids[:] = [os.getpid(), descendant.pid]
-        while True:
-            time.sleep(1)
-
-
-def _run_parent_death_executor(process_ids):
-    job = Job(
-        id="job_parent_death",
-        state=JobState.RUNNING,
-        request=JobRequest(
-            input_name="input.yaml",
-            client_id="client",
-            solver="pulp/cbc",
-            prettify=False,
-            timeout_seconds=60,
-        ),
-        created_at=datetime.now(timezone.utc),
-    )
-    ProcessOptimizationExecutor(timeout_grace_seconds=60).run(
-        ParentDeathHangingRunner(process_ids),
-        job,
-        b"apiVersion: alpha\n",
-        event_callback=lambda *_args: None,
-        should_stop=None,
-        should_cancel=lambda: False,
-        graceful_cancel=False,
-        should_abort=lambda: False,
-    )
-
-
-def _linux_process_is_active(process_id: int) -> bool:
-    try:
-        stat = Path(f"/proc/{process_id}/stat").read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return False
-    state = stat[stat.rfind(")") + 2 :].split(maxsplit=1)[0]
-    return state != "Z"
+        os._exit(7)
 
 
 class DelayedNativeTimeoutRunner:
@@ -398,17 +296,16 @@ def test_solver_capability_registry_matches_canonical_choices():
 
     by_value = {item.value: item for item in SOLVER_CAPABILITIES}
     expected = {
-        "ortools/cp-sat": (True, True, True, True),
-        "pulp/cbc": (False, False, False, True),
-        "pulp/cuopt": (True, False, False, True),
+        "ortools/cp-sat": (True, True, True),
+        "pulp/cbc": (False, False, True),
+        "pulp/cuopt": (True, False, True),
     }
     for selector, capabilities in by_value.items():
         assert (
             capabilities.graceful_timeout,
-            capabilities.graceful_cancel,
             capabilities.finish_now,
             capabilities.intermediate_scores,
-        ) == expected.get(selector, (False, False, False, False))
+        ) == expected.get(selector, (False, False, False))
 
     assert by_value["ortools/cp-sat"].label == "OR-Tools | CP-SAT"
     assert by_value["pulp/cuopt"].label == "PuLP | cuOpt"
@@ -572,7 +469,6 @@ def test_job_creation_offloads_the_synchronous_store_write():
         ({"maintenance_interval_seconds": 0}, "maintenance_interval_seconds must be positive"),
         ({"sse_keepalive_seconds": 0}, "sse_keepalive_seconds must be positive"),
         ({"timeout_grace_seconds": 0}, "timeout_grace_seconds must be positive"),
-        ({"cancel_grace_seconds": 0}, "cancel_grace_seconds must be positive"),
         ({"max_events_per_job": 0}, "max_events_per_job must be positive"),
         (
             {"default_timeout_seconds": 61, "max_timeout_seconds": 60},
@@ -616,7 +512,6 @@ def test_runtime_deployment_identity_is_shared_within_one_server_launch(monkeypa
         "maintenance_interval_seconds",
         "sse_keepalive_seconds",
         "timeout_grace_seconds",
-        "cancel_grace_seconds",
     ],
 )
 @pytest.mark.parametrize(
@@ -647,7 +542,6 @@ def test_server_settings_retain_up_to_128_jobs_for_24_hours_by_default():
     assert settings.job_retention_seconds == DEFAULT_JOB_RETENTION_SECONDS == 24 * 60 * 60
     assert settings.max_events_per_job == DEFAULT_MAX_EVENTS_PER_JOB == 1_000
     assert settings.timeout_grace_seconds == DEFAULT_TIMEOUT_GRACE_SECONDS == 90
-    assert settings.cancel_grace_seconds == DEFAULT_CANCEL_GRACE_SECONDS == 90
 
 
 def test_create_complete_download_and_delete_job():
@@ -758,11 +652,9 @@ def test_watchdog_terminates_solver_process_after_timeout_grace():
         assert failed["result"] is None
         assert failed["links"]["schedule"] is None
         assert failed["error"] == {
-            "code": "timeout_forced",
+            "code": "process_timeout",
             "message": (
-                "The optimization process did not return within the requested 1-second timeout "
-                "and 0.1-second timeout grace period. "
-                "The server terminated the process."
+                "The optimization process exceeded its 1.1-second hard timeout. The server terminated the process."
             ),
         }
 
@@ -781,21 +673,81 @@ def test_watchdog_remains_armed_until_terminal_message_is_delivered():
         created_at=datetime.now(timezone.utc),
     )
 
-    with pytest.raises(OptimizationExecutionError) as raised:
-        ProcessOptimizationExecutor(
-            timeout_grace_seconds=1,
-        ).run(
-            SlowTerminalMessageRunner(),
+    result = run_optimization_process(
+        SlowTerminalMessageRunner(),
+        job,
+        b"apiVersion: alpha\n",
+        event_callback=lambda *_args: None,
+        control=lambda: None,
+        hard_timeout_seconds=2,
+        finish_now_enabled=False,
+    )
+
+    assert result.status is ProcessStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.code == "process_timeout"
+
+
+def test_executor_reports_abrupt_child_exit_without_waiting_for_timeout():
+    job = Job(
+        id="job_abrupt_exit",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="pulp/cbc",
+            prettify=False,
+            timeout_seconds=60,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(ChildOptimizationError, match="ChildProcessCommunicationError"):
+        run_optimization_process(
+            AbruptExitRunner(),
             job,
             b"apiVersion: alpha\n",
             event_callback=lambda *_args: None,
-            should_stop=None,
-            should_cancel=lambda: False,
-            graceful_cancel=False,
-            should_abort=lambda: False,
+            control=lambda: None,
+            hard_timeout_seconds=61,
+            finish_now_enabled=False,
         )
 
-    assert raised.value.code == "timeout_forced"
+
+@pytest.mark.parametrize(
+    ("control", "expected_status"),
+    [
+        (ProcessControl.CANCEL, ProcessStatus.CANCELLED),
+        (ProcessControl.ABORT, ProcessStatus.ABORTED),
+    ],
+)
+def test_executor_returns_controlled_stop(control, expected_status):
+    job = Job(
+        id=f"job_{control.value}",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="pulp/cbc",
+            prettify=False,
+            timeout_seconds=60,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    result = run_optimization_process(
+        HangingRunner(),
+        job,
+        b"apiVersion: alpha\n",
+        event_callback=lambda *_args: None,
+        control=lambda: control,
+        hard_timeout_seconds=61,
+        finish_now_enabled=False,
+    )
+
+    assert result.status is expected_status
+    assert result.output is None
+    assert result.failure is None
 
 
 def test_process_timeout_allows_model_building_within_timeout_grace():
@@ -811,21 +763,20 @@ def test_process_timeout_allows_model_building_within_timeout_grace():
         ),
         created_at=datetime.now(timezone.utc),
     )
-    output = ProcessOptimizationExecutor(
-        timeout_grace_seconds=2,
-    ).run(
+    result = run_optimization_process(
         DelayedNativeTimeoutRunner(),
         job,
         b"apiVersion: alpha\n",
         event_callback=lambda *_args: None,
-        should_stop=None,
-        should_cancel=lambda: False,
-        graceful_cancel=True,
-        should_abort=lambda: False,
+        control=lambda: None,
+        hard_timeout_seconds=2.05,
+        finish_now_enabled=False,
     )
 
-    assert output.result.termination_reason == "solver_timeout"
-    assert output.artifact is not None
+    assert result.status is ProcessStatus.COMPLETED
+    assert result.output is not None
+    assert result.output.result.termination_reason == "solver_timeout"
+    assert result.output.artifact is not None
 
 
 def test_process_timeout_does_not_require_solving_phase_event():
@@ -842,166 +793,63 @@ def test_process_timeout_does_not_require_solving_phase_event():
         created_at=datetime.now(timezone.utc),
     )
 
-    with pytest.raises(OptimizationExecutionError) as raised:
-        ProcessOptimizationExecutor(
-            timeout_grace_seconds=1,
-        ).run(
-            PreSolveHangingRunner(),
-            job,
-            b"apiVersion: alpha\n",
-            event_callback=lambda *_args: None,
-            should_stop=None,
-            should_cancel=lambda: False,
-            graceful_cancel=True,
-            should_abort=lambda: False,
-        )
+    result = run_optimization_process(
+        PreSolveHangingRunner(),
+        job,
+        b"apiVersion: alpha\n",
+        event_callback=lambda *_args: None,
+        control=lambda: None,
+        hard_timeout_seconds=1.05,
+        finish_now_enabled=False,
+    )
 
-    assert raised.value.code == "timeout_forced"
+    assert result.status is ProcessStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.code == "process_timeout"
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux process-group verification")
-def test_watchdog_kills_solver_descendants():
+@pytest.mark.parametrize(
+    ("solver_status", "expected_failure"),
+    [
+        (
+            "MODEL_INVALID",
+            JobFailure(code="invalid_model", message="The generated solver model is invalid"),
+        ),
+        (
+            "UNKNOWN",
+            JobFailure(
+                code="no_solution_found",
+                message="No schedule was produced. Solver status: UNKNOWN",
+            ),
+        ),
+    ],
+)
+def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status, expected_failure):
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.runner.scheduler.schedule",
+        lambda **_kwargs: ScheduleResult(None, None, None, solver_status, None),
+    )
     job = Job(
-        id="job_descendant_timeout",
+        id="job_expected_failure",
         state=JobState.RUNNING,
         request=JobRequest(
             input_name="input.yaml",
             client_id="client",
-            solver="pulp/cbc",
+            solver="ortools/cp-sat",
             prettify=False,
-            timeout_seconds=0.05,
+            timeout_seconds=60,
         ),
         created_at=datetime.now(timezone.utc),
     )
-    descendant_pid = None
 
-    def record_event(_event_type, data, _score):
-        nonlocal descendant_pid
-        descendant_pid = data.get("descendant_pid", descendant_pid)
-
-    with pytest.raises(OptimizationExecutionError) as raised:
-        ProcessOptimizationExecutor(
-            timeout_grace_seconds=1,
-        ).run(
-            DescendantHangingRunner(),
-            job,
-            b"apiVersion: alpha\n",
-            event_callback=record_event,
-            should_stop=None,
-            should_cancel=lambda: False,
-            graceful_cancel=False,
-            should_abort=lambda: False,
-        )
-
-    assert raised.value.code == "timeout_forced"
-    assert descendant_pid is not None
-    for _ in range(100):
-        if not _linux_process_is_active(descendant_pid):
-            break
-        time.sleep(0.01)
-    else:
-        os.kill(descendant_pid, signal.SIGKILL)
-        pytest.fail("Solver descendant remained alive after watchdog termination")
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux process-group verification")
-def test_successful_execution_kills_solver_descendants():
-    job = Job(
-        id="job_descendant_success",
-        state=JobState.RUNNING,
-        request=JobRequest(
-            input_name="input.yaml",
-            client_id="client",
-            solver="pulp/cbc",
-            prettify=False,
-            timeout_seconds=5,
-        ),
-        created_at=datetime.now(timezone.utc),
+    result = OptimizationRunner().run(
+        job,
+        b"apiVersion: alpha\n",
+        event_callback=lambda *_args: None,
+        should_stop=None,
     )
-    descendant_pid = None
 
-    def record_event(_event_type, data, _score):
-        nonlocal descendant_pid
-        descendant_pid = data.get("descendant_pid", descendant_pid)
-
-    try:
-        output = ProcessOptimizationExecutor(
-            timeout_grace_seconds=1,
-        ).run(
-            DescendantSuccessfulRunner(),
-            job,
-            b"apiVersion: alpha\n",
-            event_callback=record_event,
-            should_stop=None,
-            should_cancel=lambda: False,
-            graceful_cancel=False,
-            should_abort=lambda: False,
-        )
-
-        assert output.result.outcome == OptimizationOutcome.OPTIMAL
-        assert descendant_pid is not None
-        for _ in range(100):
-            if not _linux_process_is_active(descendant_pid):
-                break
-            time.sleep(0.01)
-        else:
-            pytest.fail("Solver descendant remained alive after successful execution")
-    finally:
-        if descendant_pid is not None and _linux_process_is_active(descendant_pid):
-            os.kill(descendant_pid, signal.SIGKILL)
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree verification")
-def test_executor_parent_death_kills_solver_process_tree():
-    context = multiprocessing.get_context("spawn")
-    process_ids = context.Array("i", [0, 0])
-    supervisor = context.Process(
-        target=_run_parent_death_executor,
-        args=(process_ids,),
-    )
-    supervisor.start()
-    child_pid = 0
-    descendant_pid = 0
-    try:
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            with process_ids.get_lock():
-                child_pid, descendant_pid = process_ids[:]
-            if child_pid and descendant_pid:
-                break
-            if not supervisor.is_alive():
-                break
-            time.sleep(0.01)
-        assert child_pid and descendant_pid
-
-        supervisor.kill()
-        supervisor.join(timeout=2)
-        assert not supervisor.is_alive()
-
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline:
-            active = []
-            for process_id in (child_pid, descendant_pid):
-                if _linux_process_is_active(process_id):
-                    active.append(process_id)
-            if not active:
-                break
-            time.sleep(0.01)
-        assert active == []
-    finally:
-        if supervisor.is_alive():
-            supervisor.kill()
-            supervisor.join(timeout=2)
-        if child_pid:
-            try:
-                os.killpg(child_pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        if descendant_pid:
-            try:
-                os.kill(descendant_pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+    assert result == expected_failure
 
 
 def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):
@@ -1178,38 +1026,6 @@ def test_cancel_queued_job_is_immediately_terminal():
         assert response.json()["error"]["code"] == "cancelled"
 
 
-@pytest.mark.parametrize(
-    "solver",
-    [
-        "ortools/cp-sat",
-        " ORTOOLS/CP-SAT ",
-    ],
-)
-def test_solver_supports_graceful_cancel(solver):
-    assert solver_supports_graceful_cancel(solver)
-
-
-@pytest.mark.parametrize(
-    "solver",
-    [
-        "pulp/cbc",
-        "pulp/cuopt",
-        "pulp/glpk",
-        "pulp/highs",
-        "pulp/scip",
-        "ortools/mpsolver/cbc",
-        "ortools/mpsolver/scip",
-        "ortools/mpsolver/cp-sat",
-        "ortools/mpsolver/bop",
-        "ortools/mathopt/gscip",
-        "ortools/mathopt/cp-sat",
-        "ortools/mathopt/highs",
-    ],
-)
-def test_solver_does_not_support_graceful_cancel(solver):
-    assert not solver_supports_graceful_cancel(solver)
-
-
 def test_cancel_running_job_stops_worker_and_discards_result():
     runner = StoppableRunner()
     with _client(runner) as client:
@@ -1226,37 +1042,14 @@ def test_cancel_running_job_stops_worker_and_discards_result():
             "code": "cancelled",
             "message": "Optimization cancelled.",
         }
+        assert not runner.finished.is_set()
 
 
-def test_graceful_cancellation_forces_solver_process_after_grace():
-    runner = IgnoringStopRunner()
-    settings = _settings(
-        cancel_grace_seconds=0.1,
-    )
-    with _client(runner, settings=settings) as client:
-        created = _create(client, solver="ortools/cp-sat").json()
-        assert runner.started.wait(timeout=2)
-        response = client.post(f"/optimize/{created['id']}/cancel")
-        assert response.status_code == 202
-
-        cancelled = _wait_for_terminal(client, created["id"])
-
-    assert cancelled["state"] == "cancelled"
-    assert cancelled["result"] is None
-    assert cancelled["links"]["schedule"] is None
-    assert cancelled["error"] == {
-        "code": "cancelled_forced",
-        "message": (
-            "The solver did not stop within the 0.1-second cancellation grace period. "
-            "The server terminated the solver process."
-        ),
-    }
-
-
-def test_non_graceful_cancellation_forces_solver_process_immediately():
+@pytest.mark.parametrize("solver", ["ortools/cp-sat", "pulp/cbc"])
+def test_cancellation_immediately_terminates_the_solver_process(solver):
     runner = IgnoringStopRunner()
     with _client(runner) as client:
-        created = _create(client, solver="pulp/cbc").json()
+        created = _create(client, solver=solver).json()
         assert runner.started.wait(timeout=2)
         running = client.get(f"/optimize/{created['id']}").json()
         assert running["controls"]["cancellable"] is True
@@ -1269,39 +1062,9 @@ def test_non_graceful_cancellation_forces_solver_process_immediately():
     assert cancelled["result"] is None
     assert cancelled["links"]["schedule"] is None
     assert cancelled["error"] == {
-        "code": "cancelled_forced",
-        "message": ("The solver does not support graceful cancellation. The server terminated the solver process."),
-    }
-
-
-def test_cancel_running_job_treats_solver_exception_as_cancellation(monkeypatch, caplog):
-    runner = FailingAfterStopRunner()
-    captured = []
-    monkeypatch.setattr(
-        "nurse_scheduling.server.jobs.worker.capture_optimize_exception",
-        lambda *args: captured.append(args),
-    )
-
-    with _client(runner) as client:
-        created = _create(client, solver="ortools/cp-sat").json()
-        assert runner.started.wait(timeout=2)
-        response = client.post(f"/optimize/{created['id']}/cancel")
-        assert response.status_code == 202
-
-        cancelled = _wait_for_terminal(client, created["id"])
-
-    assert cancelled["state"] == "cancelled"
-    assert cancelled["error"] == {
         "code": "cancelled",
         "message": "Optimization cancelled.",
     }
-    assert captured == []
-    assert any(
-        f"[server:worker] cancelled-after-exception job_id={created['id']} "
-        "exception_type=ChildOptimizationError "
-        "error=ValueError: No solution found! Status: UNKNOWN worker_id=" in message
-        for message in caplog.messages
-    )
 
 
 def test_finish_now_completes_with_current_feasible_result():
@@ -1316,6 +1079,7 @@ def test_finish_now_completes_with_current_feasible_result():
         completed = _wait_for_terminal(client, created["id"])
         assert completed["state"] == "completed"
         assert completed["result"]["outcome"] == "feasible"
+        assert runner.finished.is_set()
 
 
 def test_worker_renews_claim_during_long_running_job():
@@ -1383,6 +1147,55 @@ def test_worker_renews_claim_during_long_running_job():
                 break
             time.sleep(0.005)
         assert controller.get_job(created.id).state == JobState.COMPLETED
+    finally:
+        worker.stop()
+
+
+def test_worker_shutdown_stops_child_and_leaves_claim_for_expiry():
+    now = [datetime.now(timezone.utc)]
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=1, max_retained=2),
+        retention_seconds=60,
+        claim_lease_seconds=30,
+        clock=lambda: now[0],
+    )
+    created = controller.create_job(
+        input_name="input.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=True,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+    runner = IgnoringStopRunner()
+    worker = JobWorker(
+        controller,
+        runner,
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        claim_lease_seconds=30,
+    )
+
+    worker.start()
+    try:
+        assert runner.started.wait(timeout=2)
+        worker.stop()
+
+        running = controller.get_job(created.id)
+        assert running.state == JobState.RUNNING
+        assert running.worker_id == "worker"
+        assert not any(
+            process.name == f"optimization-job-{created.id}" for process in multiprocessing.active_children()
+        )
+
+        now[0] += timedelta(seconds=31)
+        assert controller.expire_worker_claims() == [created.id]
+        failed = controller.get_job(created.id)
+        assert failed.state == JobState.FAILED
+        assert failed.failure is not None
+        assert failed.failure.code == "worker_lost"
     finally:
         worker.stop()
 

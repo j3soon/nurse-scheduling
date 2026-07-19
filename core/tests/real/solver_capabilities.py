@@ -242,19 +242,9 @@ def _early_terminal_report(name: str, job: dict[str, Any]) -> RoundReport:
     )
 
 
-def _evaluate_graceful_cancel(job: dict[str, Any], elapsed_seconds: float) -> RoundReport:
-    """Require solver cooperation rather than server-forced cancellation."""
+def _evaluate_cancel(job: dict[str, Any], elapsed_seconds: float) -> RoundReport:
+    """Require server cancellation to discard the solver result."""
     error = job.get("error") or {}
-    if error.get("code") == "cancelled_forced":
-        return _round_report(
-            "cancel",
-            "FAIL",
-            "The server forced cancellation, so the solver did not demonstrate graceful cancellation.",
-            solver_available=True,
-            elapsed_seconds=elapsed_seconds,
-            elapsed_from="control_requested",
-            job=job,
-        )
     if (
         job["state"] == "cancelled"
         and error.get("code") == "cancelled"
@@ -264,7 +254,7 @@ def _evaluate_graceful_cancel(job: dict[str, Any], elapsed_seconds: float) -> Ro
         return _round_report(
             "cancel",
             "PASS",
-            "Solver cancelled gracefully and produced no retained result.",
+            "Server cancelled the solver process and retained no result.",
             solver_available=True,
             elapsed_seconds=elapsed_seconds,
             elapsed_from="control_requested",
@@ -273,7 +263,7 @@ def _evaluate_graceful_cancel(job: dict[str, Any], elapsed_seconds: float) -> Ro
     return _round_report(
         "cancel",
         "FAIL",
-        "Graceful cancellation returned an unexpected terminal result.",
+        "Cancellation returned an unexpected terminal result.",
         solver_available=True,
         elapsed_seconds=elapsed_seconds,
         elapsed_from="control_requested",
@@ -305,12 +295,12 @@ def _evaluate_timeout(
     result = job.get("result") or {}
     error = job.get("error") or {}
     exercised_timeout = elapsed_seconds >= config.timeout_seconds * MIN_TIMEOUT_EXERCISE_RATIO
-    if error.get("code") == "timeout_forced" and exercised_timeout:
+    if error.get("code") == "process_timeout" and exercised_timeout:
         if graceful_timeout:
             return _round_report(
                 "timeout",
                 "FAIL",
-                "timeout_forced: Expected solver_timeout from a solver registered for graceful timeout.",
+                "process_timeout: Expected solver_timeout from a solver registered for graceful timeout.",
                 solver_available=True,
                 elapsed_seconds=elapsed_seconds,
                 elapsed_from="solving_started",
@@ -319,7 +309,7 @@ def _evaluate_timeout(
         return _round_report(
             "timeout",
             "PASS",
-            "timeout_forced: The server watchdog terminated the solver after its grace period.",
+            "process_timeout: The server watchdog terminated the solver after its grace period.",
             solver_available=True,
             elapsed_seconds=elapsed_seconds,
             elapsed_from="solving_started",
@@ -585,7 +575,7 @@ def _run_control_round(
         )
 
     if name == "cancel":
-        return _evaluate_graceful_cancel(terminal, elapsed_seconds)
+        return _evaluate_cancel(terminal, elapsed_seconds)
 
     if terminal["state"] == "completed" and terminal.get("result") is not None and terminal["links"].get("schedule"):
         detail = "Solver stopped and preserved its current feasible schedule."
@@ -754,7 +744,8 @@ def probe_solver(solver: str, config: ProbeConfig) -> SolverReport:
     enabled = {
         # Server-enforced timeout is available for every configured solver.
         "timeout": True,
-        "cancel": capabilities.graceful_cancel,
+        # Cancellation is enforced by terminating the optimization child.
+        "cancel": True,
         "finish-now": capabilities.finish_now,
         "intermediate-scores": capabilities.intermediate_scores,
     }
@@ -807,7 +798,7 @@ def _status_cell(report: RoundReport) -> str:
 def render_markdown(reports: list[SolverReport]) -> str:
     """Render the human-readable capability summary."""
     lines = [
-        "| Selector | Available | Timeout | Graceful cancel | Finish now | Intermediate scores | Notes |",
+        "| Selector | Available | Timeout | Cancel | Finish now | Intermediate scores | Notes |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for report in reports:
@@ -868,7 +859,7 @@ def _positive_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     """Build the public and hidden worker CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Probe solver timeout, graceful cancellation, and finish-now behavior on the large real scenario."
+        description="Probe solver timeout, cancellation, and finish-now behavior on the large real scenario."
     )
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--solver", choices=CONFIRMED_SOLVER_CHOICES, help="Probe one configured solver selector.")

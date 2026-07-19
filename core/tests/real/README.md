@@ -17,15 +17,14 @@ pytest --log-cli-level=INFO tests/real/schedule_pulp_cuopt.py
 
 ## Solver capability probe
 
-The capability probe uses four possible isolated rounds: timeout, graceful
-cancel, finish-now, then intermediate scores. The timeout round is always
-exercised so it can record whether the solver returns on its own with
-`solver_timeout` or requires `timeout_forced` server termination. A solver
-registered for graceful timeout fails that round if it requires
-`timeout_forced`. Other traits run only when the server registry confirms them.
-Forced cancellation is a server guarantee and is covered by the server tests
-rather than this solver probe. Run one configured solver or all solvers with at
-least one confirmed trait:
+The capability probe uses four isolated rounds: timeout, cancellation,
+finish-now, then intermediate scores. Timeout and cancellation are always
+exercised because the server enforces them for every solver. The timeout round
+records whether the solver returns on its own with `solver_timeout` or requires
+`process_timeout` server termination. A solver registered for graceful timeout
+fails that round if it requires `process_timeout`. Other traits run only when
+the server registry confirms them. Run one configured solver or all solvers
+with at least one confirmed trait:
 
 ```sh
 cd core
@@ -52,7 +51,7 @@ The graceful-timeout and intermediate-score rounds request a 10-second solver
 limit. The server's hard watchdog starts with the child process and allows the
 requested limit plus a 90-second timeout grace period before forced
 termination, for a maximum 100-second observation window after solving starts.
-Graceful cancel and finish-now use independent large-scenario jobs with a
+Cancellation and finish-now use independent large-scenario jobs with a
 60-second solver timeout. Cancellation is requested two seconds after solving
 starts. Finish-now waits up to 10 seconds for an incumbent before requesting
 the current result. Each enabled round also has its own outer subprocess as a
