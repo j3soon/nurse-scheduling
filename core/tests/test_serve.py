@@ -654,7 +654,8 @@ def test_watchdog_terminates_solver_process_after_timeout_grace():
         assert failed["error"] == {
             "code": "process_timeout",
             "message": (
-                "The optimization process exceeded its 1.1-second hard timeout. The server terminated the process."
+                "The optimization process did not return within the requested 1-second timeout "
+                "and 0.1-second timeout grace period. The server terminated the process."
             ),
         }
 

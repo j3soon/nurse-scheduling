@@ -151,6 +151,7 @@ def run_optimization_process(
         raise
     send_connection.close()
     hard_deadline = time.monotonic() + hard_timeout_seconds
+    timeout_grace_seconds = hard_timeout_seconds - job.request.timeout_seconds
 
     try:
         while True:
@@ -173,8 +174,10 @@ def run_optimization_process(
                     failure=JobFailure(
                         code="process_timeout",
                         message=(
-                            f"The optimization process exceeded its {hard_timeout_seconds:g}-second "
-                            "hard timeout. The server terminated the process."
+                            "The optimization process did not return within the requested "
+                            f"{job.request.timeout_seconds:g}-second timeout and "
+                            f"{timeout_grace_seconds:g}-second timeout grace period. "
+                            "The server terminated the process."
                         ),
                     ),
                 )
