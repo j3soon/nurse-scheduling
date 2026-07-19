@@ -73,13 +73,3 @@ class StoreWriteConflictError(Exception):
     `JobController` catches this error, re-reads current state, and retries the
     operation. It must not reach the HTTP adapter.
     """
-
-
-class OptimizationExecutionError(Exception):
-    """A scheduler result could not produce a normal optimization result."""
-
-    def __init__(self, code: str, message: str):
-        """Create an execution failure with a stable result code."""
-        super().__init__(message)
-        self.code = code
-        """Machine-readable reason that optimization could not complete normally."""

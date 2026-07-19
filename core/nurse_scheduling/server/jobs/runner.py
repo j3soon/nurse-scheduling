@@ -30,8 +30,7 @@ from ...solver_interface import (
     serialize_schedule_phase_progress,
     serialize_solver_progress,
 )
-from ..errors import OptimizationExecutionError
-from .models import Job, OptimizationOutcome, OptimizationResult, StoredArtifact
+from .models import Job, JobFailure, OptimizationOutcome, OptimizationResult, StoredArtifact
 
 
 EventCallback = Callable[[str, dict[str, Any], int | None], None]
@@ -48,6 +47,9 @@ class RunOutput:
     """Generated XLSX artifact, absent when no schedule exists."""
 
 
+RunResult = RunOutput | JobFailure
+
+
 class OptimizationRunner:
     """Run the scheduling engine without knowing job persistence or HTTP."""
 
@@ -58,13 +60,10 @@ class OptimizationRunner:
         *,
         event_callback: EventCallback,
         should_stop: StopCallback | None,
-    ) -> RunOutput:
-        """Run the scheduler and export any resulting schedule to XLSX.
+    ) -> RunResult:
+        """Run the scheduler and return its output or expected failure.
 
         Progress and phase changes are forwarded through `event_callback`.
-
-        Raises:
-            OptimizationExecutionError: If the model is invalid or no normal result is produced.
         """
 
         def publish_progress(payload: ScheduleProgress) -> None:
@@ -83,6 +82,7 @@ class OptimizationRunner:
             progress_callback=publish_progress,
             should_stop=should_stop,
         )
+        stop_requested_when_solver_returned = should_stop is not None and should_stop()
 
         normalized_status = schedule_result.solver_status
         if normalized_status == "INFEASIBLE":
@@ -96,11 +96,11 @@ class OptimizationRunner:
                 artifact=None,
             )
         if normalized_status == "MODEL_INVALID":
-            raise OptimizationExecutionError("invalid_model", "The generated solver model is invalid")
+            return JobFailure(code="invalid_model", message="The generated solver model is invalid")
         if normalized_status not in {"OPTIMAL", "FEASIBLE"} or schedule_result.dataframe is None:
-            raise OptimizationExecutionError(
-                "no_solution_found",
-                f"No schedule was produced. Solver status: {normalized_status}",
+            return JobFailure(
+                code="no_solution_found",
+                message=f"No schedule was produced. Solver status: {normalized_status}",
             )
 
         output_buffer = BytesIO()
@@ -108,7 +108,12 @@ class OptimizationRunner:
         created_at = job.created_at.astimezone(timezone.utc)
         output_filename = f"nurse-scheduling-{created_at:%Y%m%dT%H%M%SZ}.xlsx"
         outcome = OptimizationOutcome.OPTIMAL if normalized_status == "OPTIMAL" else OptimizationOutcome.FEASIBLE
-        termination_reason = "optimality_proven" if outcome == OptimizationOutcome.OPTIMAL else "limit_or_stop"
+        if outcome == OptimizationOutcome.OPTIMAL:
+            termination_reason = "optimality_proven"
+        elif stop_requested_when_solver_returned:
+            termination_reason = "user_requested"
+        else:
+            termination_reason = "solver_timeout"
         return RunOutput(
             result=OptimizationResult(
                 outcome=outcome,

@@ -7,16 +7,21 @@
 - `scripts/`: setup and development utilities.
 - `thirdparty/`: external calendar data and helpers.
 
-Before modifying core or frontend files, read the module-specific commands and
-conventions in `core/AGENTS.md` or `web-frontend/AGENTS.md`.
+Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Shared Workflow
-- For Linux environment setup, run `./scripts/setup_env.sh`.
+- For Linux setup, run `./scripts/setup_env.sh`.
 - Keep edits scoped to the requested module and preserve existing patterns.
 - Do not stage, unstage, or commit changes unless explicitly asked.
 - Keep commits focused by module (`core`, `web-frontend`, or `docs`).
-- Keep file endings clean: no trailing spaces and a newline at end of file.
+- Avoid trailing spaces and end files with a newline.
 - Run affected tests and lint checks before finishing.
+- Derive Git versions on the host for local Docker builds. Do not copy `.git`
+  into build contexts because linked worktrees store metadata elsewhere.
+- Record durable, generally applicable user guidance in the nearest relevant
+  `AGENTS.md`. Omit task-specific or temporary details.
+- Note potentially wasteful token use and uninformative tests, scripts, or runs.
+  Fix them when practical, otherwise report or document them for review.
 - Use Conventional Commits, scoped by module where applicable, for example:
   `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
 
@@ -25,9 +30,8 @@ conventions in `core/AGENTS.md` or `web-frontend/AGENTS.md`.
 - Do not use em-dash or semicolon to connect sentences.
 
 ## Cross-Module Requirements
-- When changing frontend rename/delete behavior for people, dates, or shift
-  types, keep all references in sync, including preferences and export layout
-  entries.
+- When renaming or deleting frontend people, dates, or shift types, sync all
+  references, including preferences and export layout entries.
 
 ## Pull Requests
 Include scope and rationale, linked issues when applicable, test/lint evidence,

@@ -622,8 +622,11 @@ def test_controller_cancellation_policy_is_shared_by_stores(store):
     controller.claim_next_job("worker")
     cancelling = controller.cancel_job(running.id)
     assert cancelling.state == JobState.CANCELLING
-    failed = controller.fail_job(running.id, JobFailure("solver_failed", "ignored after cancellation"))
-    assert failed.state == JobState.CANCELLED
+    stale = controller.complete_cancellation(running.id, "other-worker")
+    assert stale.state == JobState.CANCELLING
+    cancelled = controller.complete_cancellation(running.id, "worker")
+    assert cancelled.state == JobState.CANCELLED
+    assert cancelled.failure == JobFailure("cancelled", "Optimization cancelled.")
 
 
 def test_store_enforces_atomic_pending_capacity(store):

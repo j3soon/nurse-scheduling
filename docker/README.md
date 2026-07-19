@@ -42,13 +42,15 @@ Cloudflare Tunnel token:
 ```sh
 cp .env.staging.example .env.staging
 # Set CLOUDFLARE_TUNNEL_TOKEN and DIAGNOSTIC_TARGET_URL in .env.staging.
-docker compose --env-file .env.staging -f compose.backend.yml up -d --build
+APP_VERSION="$(git -C .. describe --tags --always --dirty)" \
+  docker compose --env-file .env.staging -f compose.backend.yml up -d --build
 ```
 
 The staging environment selects `Dockerfile.api.staging`, which copies the
 current repository's `core/` directory into the image instead of cloning
-GitHub. A temporary build stage derives `.app-version` from the repository and
-keeps `.git` out of the final image. Staging also sets
+GitHub. The host derives the app version before the build, and the Dockerfile
+writes it to `.app-version` in the image. Linked Git worktrees are supported
+and `.git` stays out of the build context and final image. Staging also sets
 `COMPOSE_PROJECT_NAME=nurse-scheduling-backend-staging`. This overrides the
 default `nurse-scheduling-backend` project name and gives staging its own
 containers, network, and `redis-data` volume. Production and staging can then

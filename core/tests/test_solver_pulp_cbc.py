@@ -393,6 +393,35 @@ def test_get_objective_value_raises_for_non_integer(monkeypatch):
         solver.get_objective_value()
 
 
+def test_feasible_solution_check_rejects_fractional_integer_relaxation():
+    solver = PuLPSolver()
+    x = solver.new_int_var(-1, 1, "x")
+    solver.add_constraint(x >= 0)
+
+    x.varValue = None
+    assert not solver._has_feasible_solution()
+
+    x.varValue = 0.5
+    assert not solver._has_feasible_solution()
+
+    x.varValue = -1
+    assert not solver._has_feasible_solution()
+
+    x.varValue = 1
+    assert solver._has_feasible_solution()
+
+
+def test_feasible_solution_check_allows_unset_zero_coefficient_variables():
+    solver = PuLPSolver()
+    used = solver.new_bool_var("used")
+    unused = solver.new_bool_var("unused")
+    solver.add_constraint(used + 0 * unused >= 0)
+
+    used.varValue = 1
+    assert unused.varValue is None
+    assert solver._has_feasible_solution()
+
+
 def test_get_objective_value_returns_zero_when_objective_missing():
     solver = PuLPSolver()
     assert solver.get_objective_value() == 0

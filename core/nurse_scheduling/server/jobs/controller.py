@@ -42,8 +42,8 @@ from .models import (
     OptimizationResult,
     StoredArtifact,
     StoreLimits,
-    solver_supports_stop,
 )
+from ..solver_capabilities import solver_supports_finish_now
 
 
 server_logger = logging.getLogger("nurse_scheduling.server")
@@ -356,13 +356,12 @@ class JobController:
         return failed
 
     def cancel_job(self, job_id: str) -> Job:
-        """Cancel a queued job or request cooperative cancellation of a running job.
+        """Cancel a queued job or request cancellation of a running job.
 
         Repeated cancellation and terminal jobs are returned unchanged.
 
         Raises:
             JobNotFoundError: If the job does not exist.
-            JobOperationNotAllowedError: If the solver does not support cancellation.
             JobOperationContentionError: If concurrent updates exhaust the retry limit.
         """
 
@@ -380,8 +379,6 @@ class JobController:
                     queue_position=None,
                 )
                 return cancelled, [self._state_event(cancelled, now)], None
-            if not solver_supports_stop(job.request.solver):
-                raise JobOperationNotAllowedError("This solver does not support cancellation")
             cancelling = replace(job, state=JobState.CANCELLING, cancel_requested=True)
             return cancelling, [self._state_event(cancelling, now)], None
 
@@ -393,6 +390,33 @@ class JobController:
             job.request.client_id,
         )
         return job
+
+    def complete_cancellation(self, job_id: str, worker_id: str) -> Job:
+        """Finish cancellation while the reporting worker still owns the job."""
+
+        def transition(job: Job, now: datetime):
+            """Build the terminal cancellation transition."""
+            if (
+                job.state.terminal
+                or job.state != JobState.CANCELLING
+                or not job.cancel_requested
+                or job.worker_id != worker_id
+            ):
+                return job, [], None
+            cancelled = replace(
+                job,
+                state=JobState.CANCELLED,
+                cancel_requested=True,
+                failure=JobFailure(code="cancelled", message="Optimization cancelled."),
+                finished_at=now,
+                queue_position=None,
+                claim_expires_at=None,
+            )
+            return cancelled, [self._state_event(cancelled, now)], None
+
+        cancelled = self._update_job_with_retry(job_id, transition)
+        self._log_terminal_job(cancelled)
+        return cancelled
 
     def request_early_completion(self, job_id: str) -> Job:
         """Ask a supported running solver to return its current result.
@@ -411,7 +435,7 @@ class JobController:
                 return job, [], None
             if job.state != JobState.RUNNING:
                 raise JobOperationNotAllowedError("Early completion is only available while a job is running")
-            if not solver_supports_stop(job.request.solver):
+            if not solver_supports_finish_now(job.request.solver):
                 raise JobOperationNotAllowedError("This solver does not support early completion")
             updated = replace(job, early_completion_requested=True)
             event = JobEvent(
