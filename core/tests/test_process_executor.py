@@ -425,6 +425,41 @@ def _run_process_cleanup_probe(name: str) -> dict:
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
+def test_cleanup_reaps_exited_child_before_signaling_process_group(monkeypatch):
+    calls = []
+
+    class ExitedProcess:
+        pid = 123
+        reaped = False
+
+        def join(self, timeout):
+            calls.append(("join", timeout))
+            self.reaped = True
+
+        def is_alive(self):
+            return False
+
+        def kill(self):
+            raise AssertionError("Exited process should not be killed directly")
+
+    process = ExitedProcess()
+
+    def kill_process_group(process_id):
+        if not process.reaped:
+            raise PermissionError("Darwin rejects signaling a zombie-only group")
+        calls.append(("kill_process_group", process_id))
+
+    monkeypatch.setattr(process_tree, "_kill_process_tree_by_pid", kill_process_group)
+
+    process_tree.kill_process_tree(process)
+
+    assert calls == [
+        ("join", 0),
+        ("kill_process_group", 123),
+        ("join", 1),
+    ]
+
+
 # Cancellation cleanup topology:
 #
 #   probe and executor

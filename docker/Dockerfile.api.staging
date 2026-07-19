@@ -14,12 +14,11 @@ WORKDIR /app/nurse-scheduling/core
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+USER user
+
 ARG APP_VERSION
 RUN : "${APP_VERSION:?Set APP_VERSION from git describe before building}" \
-    && printf '%s\n' "$APP_VERSION" > /app/nurse-scheduling/.app-version \
-    && chown user:user /app/nurse-scheduling/.app-version
-
-USER user
+    && printf '%s\n' "$APP_VERSION" > /app/nurse-scheduling/.app-version
 
 EXPOSE 8000
 

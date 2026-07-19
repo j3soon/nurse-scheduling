@@ -108,6 +108,9 @@ def _kill_process_tree_by_pid(process_id: int) -> None:
 
 def kill_process_tree(process: multiprocessing.Process) -> None:
     """Forcibly terminate a child and any external solver descendants."""
+    # Reap an exited direct child before signaling its group. Darwin returns
+    # EPERM when a process group contains only an unreaped zombie leader.
+    process.join(timeout=0)
     if process.pid is not None:
         _kill_process_tree_by_pid(process.pid)
     if process.is_alive():
