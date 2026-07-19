@@ -57,6 +57,7 @@ from nurse_scheduling.server.jobs.models import (
 from nurse_scheduling.server.jobs.process_executor import (
     ChildOptimizationError,
     ProcessControl,
+    ProcessResult,
     ProcessStatus,
     run_optimization_process,
 )
@@ -1231,6 +1232,71 @@ def test_worker_shutdown_stops_child_and_leaves_claim_for_expiry():
         assert failed.state == JobState.FAILED
         assert failed.failure is not None
         assert failed.failure.code == "worker_lost"
+    finally:
+        worker.stop()
+
+
+def test_worker_cancellation_takes_priority_over_concurrent_shutdown(monkeypatch):
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=1, max_retained=2),
+        retention_seconds=60,
+        claim_lease_seconds=30,
+    )
+    created = controller.create_job(
+        input_name="input.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=True,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+    process_started = threading.Event()
+    control_selected = threading.Event()
+    selected_controls = []
+
+    def fake_run_optimization_process(*_args, control, **_kwargs):
+        process_started.set()
+        deadline = time.monotonic() + 2
+        while control() is not ProcessControl.CANCEL:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Worker did not observe cancellation")
+            time.sleep(0.005)
+
+        # Emulate shutdown beginning after the worker observed cancellation but
+        # before the executor consumes the highest-priority pending control.
+        worker._stop.set()
+        selected = control()
+        selected_controls.append(selected)
+        control_selected.set()
+        status = ProcessStatus.CANCELLED if selected is ProcessControl.CANCEL else ProcessStatus.ABORTED
+        return ProcessResult(status=status)
+
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.worker.run_optimization_process",
+        fake_run_optimization_process,
+    )
+    worker = JobWorker(
+        controller,
+        SuccessfulRunner(),
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        claim_lease_seconds=30,
+    )
+
+    worker.start()
+    try:
+        assert process_started.wait(timeout=2)
+        controller.cancel_job(created.id)
+        assert control_selected.wait(timeout=2)
+        for _ in range(200):
+            if controller.get_job(created.id).state.terminal:
+                break
+            time.sleep(0.005)
+
+        assert selected_controls == [ProcessControl.CANCEL]
+        assert controller.get_job(created.id).state == JobState.CANCELLED
     finally:
         worker.stop()
 

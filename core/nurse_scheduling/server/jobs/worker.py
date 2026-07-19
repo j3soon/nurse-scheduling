@@ -212,10 +212,12 @@ class JobWorker:
 
             def process_control() -> ProcessControl | None:
                 """Return the highest-priority control for the optimization child."""
-                if self._stop.is_set() or monitor_stop.is_set():
+                if monitor_stop.is_set():
                     return ProcessControl.ABORT
                 if cancellation_requested.is_set():
                     return ProcessControl.CANCEL
+                if self._stop.is_set():
+                    return ProcessControl.ABORT
                 if finish_now_supported and finish_now_requested.is_set():
                     return ProcessControl.FINISH
                 return None
