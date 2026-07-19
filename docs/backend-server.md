@@ -115,8 +115,8 @@ be optimal, feasible, or infeasible. An XLSX artifact is available only when a
 schedule was produced.
 
 Cancellation is available for every running job. It immediately terminates the
-optimization child, uses error code `cancelled`, and discards the result and
-artifact. Early completion requires solver support and sets a control flag
+optimization process tree, uses error code `cancelled`, and discards the result
+and artifact. Early completion requires solver support and sets a control flag
 without adding another lifecycle state. If a current result is available, the
 job later becomes `completed`.
 
@@ -130,9 +130,11 @@ watchdog starts when the child process starts and does not depend on a
 90-second timeout grace period by default. The grace period covers startup,
 model construction, and shutdown while still bounding a job that becomes stuck
 before solving. If the process has not returned by the deadline, the server
-terminates its direct optimization child. Solver adapters own cleanup of any
-subprocesses they launch. A thread is not sufficient because Python cannot
-safely force-stop an arbitrary worker thread.
+terminates its optimization process tree. Tree cleanup is required for PuLP
+command-line backends because they launch external solver executables. OR-Tools
+runs inside the direct optimization child and does not require descendant
+cleanup. A thread is not sufficient because Python cannot safely force-stop an
+arbitrary worker thread.
 
 A process that returns before the hard deadline follows its normal result path.
 A feasible result returned at the solver limit uses termination reason

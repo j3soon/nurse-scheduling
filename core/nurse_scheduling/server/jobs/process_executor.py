@@ -28,6 +28,7 @@ from multiprocessing.connection import Connection, wait
 from typing import Any
 
 from .models import Job, JobFailure
+from . import process_tree
 from .runner import EventCallback, OptimizationRunner, RunOutput
 
 
@@ -81,8 +82,10 @@ def _run_child(
     connection: Connection,
     finish_now_event: Any,
     finish_now_enabled: bool,
+    expected_parent_pid: int,
 ) -> None:
     """Execute the runner and send events or its terminal message to the parent."""
+    process_tree.prepare_optimization_child(expected_parent_pid)
 
     def publish(event_type: str, data: dict[str, Any], score: int | None) -> None:
         connection.send(("event", event_type, data, score))
@@ -121,9 +124,11 @@ def run_optimization_process(
     """Run one directly supervised child until it returns or must be stopped.
 
     The finish-now control alone sets the cooperative solver event. Cancel and
-    abort both terminate the child immediately and return distinct statuses.
+    abort both terminate the process tree immediately and return distinct
+    statuses.
 
-    Optimization runners own the cleanup of any subprocesses they launch.
+    The process-tree guard provides forced cleanup of external solver
+    descendants.
 
     Raises:
         ChildOptimizationError: If the child raises or exits unexpectedly.
@@ -140,9 +145,11 @@ def run_optimization_process(
             send_connection,
             finish_now_event,
             finish_now_enabled,
+            multiprocessing.current_process().pid,
         ),
         name=f"optimization-job-{job.id}",
     )
+    process_tree_guard: process_tree.ProcessTreeGuard | None = None
     try:
         process.start()
     except BaseException:
@@ -150,6 +157,17 @@ def run_optimization_process(
         send_connection.close()
         raise
     send_connection.close()
+    assert process.pid is not None
+    try:
+        process_tree_guard = process_tree.ProcessTreeGuard.start(
+            context,
+            process.pid,
+            name=f"optimization-job-guard-{job.id}",
+        )
+    except BaseException:
+        process_tree.kill_process_tree(process)
+        receive_connection.close()
+        raise
     hard_deadline = time.monotonic() + hard_timeout_seconds
     timeout_grace_seconds = hard_timeout_seconds - job.request.timeout_seconds
 
@@ -230,7 +248,9 @@ def run_optimization_process(
                     "",
                 )
     finally:
-        if process.is_alive():
-            process.kill()
-        process.join()
-        receive_connection.close()
+        try:
+            process_tree.kill_process_tree(process)
+        finally:
+            receive_connection.close()
+            if process_tree_guard is not None:
+                process_tree_guard.close()

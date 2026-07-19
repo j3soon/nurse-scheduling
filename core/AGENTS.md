@@ -25,10 +25,13 @@ Prefer `../scripts/test_core_affected.sh` for routine validation. Pass explicit
 test paths when a narrower suite is known to be sufficient.
 
 ## Server Job Processes
-- `run_optimization_process` owns only its direct optimization child.
-  Solver adapters must clean up any subprocesses they launch.
+- `run_optimization_process` owns its optimization process tree through
+  `server/jobs/process_tree.py`. Tree cleanup is required for PuLP command-line
+  backends, which launch external solver executables. OR-Tools runs inside the
+  direct optimization child and does not require descendant cleanup.
 - The child finish-now event is exclusively for cooperative early completion.
-  Cancellation and internal aborts terminate the direct child immediately.
+  Cancellation and internal aborts terminate the optimization process tree
+  immediately.
 - Worker shutdown uses normal claim expiry recovery. Do not add a separate
   persisted shutdown failure unless immediate terminal state becomes required.
 
