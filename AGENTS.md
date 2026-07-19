@@ -16,6 +16,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Keep commits focused by module (`core`, `web-frontend`, or `docs`).
 - Avoid trailing spaces and end files with a newline.
 - Run affected tests and lint checks before finishing.
+- Derive Git versions on the host for local Docker builds. Do not copy `.git`
+  into build contexts because linked worktrees store metadata elsewhere.
 - Record durable, generally applicable user guidance in the nearest relevant
   `AGENTS.md`. Omit task-specific or temporary details.
 - Note potentially wasteful token use and uninformative tests, scripts, or runs.

@@ -3,6 +3,8 @@ name: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}
 x-api-build: &api-build
   context: ${API_BUILD_CONTEXT:-.}
   dockerfile: ${API_DOCKERFILE:-Dockerfile.api}
+  args:
+    - APP_VERSION
 
 services:
   redis:

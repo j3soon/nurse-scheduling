@@ -1,25 +1,9 @@
 FROM python:3.12-slim AS version
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
+ARG APP_VERSION
 
-WORKDIR /src
-
-COPY .git/ .git/
-
-# Reconstruct omitted tracked paths, then replace core with the build context.
-RUN git checkout-index --all
-
-RUN rm -rf /src/core
-
-COPY core/ core/
-
-RUN version="$(git describe --tags --always)" \
-    && if [ -n "$(git status --porcelain --untracked-files=all --ignored=matching -- core)" ]; then \
-        version="${version}-dirty"; \
-    fi \
-    && printf '%s\n' "$version" > /app-version
+RUN : "${APP_VERSION:?Set APP_VERSION from git describe before building}" \
+    && printf '%s\n' "$APP_VERSION" > /app-version
 
 
 FROM python:3.12-slim

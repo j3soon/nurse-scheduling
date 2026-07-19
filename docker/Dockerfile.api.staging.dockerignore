@@ -1,8 +1,6 @@
 **
 !core/
 !core/**
-!.git/
-!.git/**
 core/.coverage
 core/.pytest_cache/
 core/.ruff_cache/
