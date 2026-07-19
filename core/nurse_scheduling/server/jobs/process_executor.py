@@ -49,7 +49,7 @@ from .runner import EventCallback, OptimizationRunner, RunOutput
 
 
 server_logger = logging.getLogger("nurse_scheduling.server")
-PROCESS_POLL_SECONDS = 0.05
+PROCESS_POLL_SECONDS = 1.0
 """Maximum delay for progress, controls, aborts, and watchdog checks."""
 
 
@@ -211,19 +211,79 @@ def run_optimization_process(
     hard_deadline = time.monotonic() + hard_timeout_seconds
     timeout_grace_seconds = hard_timeout_seconds - job.request.timeout_seconds
 
+    def receive_child_message() -> ProcessResult | None:
+        """Process one child message and return its terminal result, if any."""
+        try:
+            message = receive_connection.recv()
+        except EOFError:
+            raise ChildOptimizationError(
+                "ChildProcessCommunicationError",
+                (
+                    "Optimization process closed its result channel without "
+                    f"a terminal message. Exit code: {process.exitcode}"
+                ),
+                "",
+            ) from None
+        message_type = message[0]
+        if message_type == "event":
+            _, event_type, data, score = message
+            event_callback(event_type, data, score)
+            return None
+        if message_type == "result":
+            result = message[1]
+            if isinstance(result, RunOutput):
+                return ProcessResult(status=ProcessStatus.COMPLETED, output=result)
+            if isinstance(result, JobFailure):
+                return ProcessResult(status=ProcessStatus.FAILED, failure=result)
+            raise RuntimeError(f"Unknown optimization runner result: {type(result).__name__}")
+        if message_type == "unexpected_error":
+            _, exception_type, error_message, child_traceback = message
+            server_logger.error(
+                "[server:worker-child] failed job_id=%s exception_type=%s\n%s",
+                job.id,
+                exception_type,
+                child_traceback,
+            )
+            raise ChildOptimizationError(exception_type, error_message, child_traceback)
+        raise RuntimeError(f"Unknown optimization child message: {message_type}")
+
     try:
         while True:
             requested_control = control()
-            if requested_control is ProcessControl.FINISH:
-                if not finish_now_enabled:
-                    raise RuntimeError("Finish-now was requested for an unsupported solver")
-                finish_now_event.set()
-            elif requested_control is ProcessControl.CANCEL:
+            if requested_control is ProcessControl.CANCEL:
                 return ProcessResult(status=ProcessStatus.CANCELLED)
+            if (
+                requested_control is not None
+                and requested_control is not ProcessControl.FINISH
+                and requested_control is not ProcessControl.ABORT
+            ):
+                raise RuntimeError(f"Unknown optimization process control: {requested_control}")
+            if requested_control is ProcessControl.FINISH and not finish_now_enabled:
+                raise RuntimeError("Finish-now was requested for an unsupported solver")
+
+            buffered_ready = wait(
+                [
+                    receive_connection,
+                    process_tree_guard.sentinel,
+                ],
+                timeout=0,
+            )
+            if process_tree_guard.sentinel in buffered_ready:
+                raise ChildOptimizationError(
+                    "ProcessTreeGuardExit",
+                    (f"Optimization process-tree guard exited unexpectedly with code {process_tree_guard.exitcode}"),
+                    "",
+                )
+            if receive_connection in buffered_ready:
+                buffered_result = receive_child_message()
+                if buffered_result is not None:
+                    return buffered_result
+                continue
+
+            if requested_control is ProcessControl.FINISH:
+                finish_now_event.set()
             elif requested_control is ProcessControl.ABORT:
                 return ProcessResult(status=ProcessStatus.ABORTED)
-            elif requested_control is not None:
-                raise RuntimeError(f"Unknown optimization process control: {requested_control}")
 
             remaining_seconds = hard_deadline - time.monotonic()
             if remaining_seconds <= 0:
@@ -257,39 +317,10 @@ def run_optimization_process(
                     "",
                 )
             if receive_connection in ready:
-                try:
-                    message = receive_connection.recv()
-                except EOFError:
-                    raise ChildOptimizationError(
-                        "ChildProcessCommunicationError",
-                        (
-                            "Optimization process closed its result channel without "
-                            f"a terminal message. Exit code: {process.exitcode}"
-                        ),
-                        "",
-                    ) from None
-                message_type = message[0]
-                if message_type == "event":
-                    _, event_type, data, score = message
-                    event_callback(event_type, data, score)
-                    continue
-                if message_type == "result":
-                    result = message[1]
-                    if isinstance(result, RunOutput):
-                        return ProcessResult(status=ProcessStatus.COMPLETED, output=result)
-                    if isinstance(result, JobFailure):
-                        return ProcessResult(status=ProcessStatus.FAILED, failure=result)
-                    raise RuntimeError(f"Unknown optimization runner result: {type(result).__name__}")
-                if message_type == "unexpected_error":
-                    _, exception_type, error_message, child_traceback = message
-                    server_logger.error(
-                        "[server:worker-child] failed job_id=%s exception_type=%s\n%s",
-                        job.id,
-                        exception_type,
-                        child_traceback,
-                    )
-                    raise ChildOptimizationError(exception_type, error_message, child_traceback)
-                raise RuntimeError(f"Unknown optimization child message: {message_type}")
+                child_result = receive_child_message()
+                if child_result is not None:
+                    return child_result
+                continue
 
             if process.sentinel in ready:
                 if receive_connection.poll():

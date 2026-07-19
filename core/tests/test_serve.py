@@ -751,6 +751,40 @@ def test_executor_returns_controlled_stop(control, expected_status):
     assert result.failure is None
 
 
+def test_executor_processes_buffered_success_before_abort():
+    abort_requested = False
+
+    def publish(*_args):
+        nonlocal abort_requested
+        abort_requested = True
+        time.sleep(0.2)
+
+    result = run_optimization_process(
+        SuccessfulRunner(),
+        Job(
+            id="job_buffered_success",
+            state=JobState.RUNNING,
+            request=JobRequest(
+                input_name="input.yaml",
+                client_id="client",
+                solver="pulp/cbc",
+                prettify=False,
+                timeout_seconds=60,
+            ),
+            created_at=datetime.now(timezone.utc),
+        ),
+        b"apiVersion: alpha\n",
+        event_callback=publish,
+        control=lambda: ProcessControl.ABORT if abort_requested else None,
+        hard_timeout_seconds=61,
+        finish_now_enabled=False,
+    )
+
+    assert result.status is ProcessStatus.COMPLETED
+    assert result.output is not None
+    assert result.output.result.outcome is OptimizationOutcome.OPTIMAL
+
+
 def test_process_timeout_allows_model_building_within_timeout_grace():
     job = Job(
         id="job_native_timeout",
