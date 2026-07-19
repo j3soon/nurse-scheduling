@@ -244,6 +244,15 @@ def _run_parent_death_executor(process_ids):
     )
 
 
+def _linux_process_is_active(process_id: int) -> bool:
+    try:
+        stat = Path(f"/proc/{process_id}/stat").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    state = stat[stat.rfind(")") + 2 :].split(maxsplit=1)[0]
+    return state != "Z"
+
+
 class DelayedNativeTimeoutRunner:
     def run(self, job, input_bytes, *, event_callback, should_stop):
         time.sleep(0.15)
@@ -819,9 +828,8 @@ def test_watchdog_kills_solver_descendants():
 
     assert raised.value.code == "timeout_forced"
     assert descendant_pid is not None
-    status_path = Path(f"/proc/{descendant_pid}/stat")
     for _ in range(100):
-        if not status_path.exists() or status_path.read_text().split()[2] == "Z":
+        if not _linux_process_is_active(descendant_pid):
             break
         time.sleep(0.01)
     else:
@@ -860,8 +868,7 @@ def test_executor_parent_death_kills_solver_process_tree():
         while time.monotonic() < deadline:
             active = []
             for process_id in (child_pid, descendant_pid):
-                status_path = Path(f"/proc/{process_id}/stat")
-                if status_path.exists() and status_path.read_text().split()[2] != "Z":
+                if _linux_process_is_active(process_id):
                     active.append(process_id)
             if not active:
                 break
