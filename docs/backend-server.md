@@ -168,7 +168,8 @@ checkpointing it outside the child process.
 | `GET` | `/optimize/{job_id}/xlsx` | Download a completed schedule artifact. |
 | `DELETE` | `/optimize/{job_id}` | Delete a terminal job and its retained data. |
 
-Prepare the input using the [Scheduling Data](scheduling-data.md) contract.
+Prepare the input as YAML. The repository includes a
+[minimal scheduling example](https://github.com/j3soon/nurse-scheduling/blob/dev/core/tests/testcases/basics/01_1nurse_1shift_1day.yaml).
 Submit either a YAML file or a YAML string, but not both:
 
 ```sh

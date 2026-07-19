@@ -232,11 +232,13 @@ def _guard_death_supervisor(
 
 def _probe_cancelled_descendant_cleanup() -> dict:
     process_ids: dict[str, int] = {}
+    descendant_pid: int | None = None
 
     def publish(_event_type, data, _score):
+        nonlocal descendant_pid
         process_ids.update(data)
+        descendant_pid = process_ids.get("descendant_pid", descendant_pid)
 
-    descendant_pid = None
     try:
         result = run_optimization_process(
             DescendantHangingRunner(),
@@ -248,7 +250,8 @@ def _probe_cancelled_descendant_cleanup() -> dict:
             finish_now_enabled=False,
         )
         wrapper_pid = process_ids["wrapper_pid"]
-        descendant_pid = process_ids["descendant_pid"]
+        if descendant_pid is None:
+            raise RuntimeError("Optimization child did not report its descendant PID")
         descendant_exited = _wait_for_linux_process_exit(descendant_pid)
         return {
             "executor_status": result.status.value,

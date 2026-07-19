@@ -48,9 +48,9 @@ APP_VERSION="$(git -C .. describe --tags --always --dirty)" \
 
 The staging environment selects `Dockerfile.api.staging`, which copies the
 current repository's `core/` directory into the image instead of cloning
-GitHub. The host derives `.app-version` before the build, so linked Git
-worktrees are supported and `.git` stays out of the build context and final
-image. Staging also sets
+GitHub. The host derives the app version before the build, and the Dockerfile
+writes it to `.app-version` in the image. Linked Git worktrees are supported
+and `.git` stays out of the build context and final image. Staging also sets
 `COMPOSE_PROJECT_NAME=nurse-scheduling-backend-staging`. This overrides the
 default `nurse-scheduling-backend` project name and gives staging its own
 containers, network, and `redis-data` volume. Production and staging can then
