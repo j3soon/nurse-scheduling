@@ -17,12 +17,14 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import ctypes
 import logging
 import math
 import multiprocessing
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -41,6 +43,8 @@ from .runner import EventCallback, OptimizationRunner, RunOutput, StopCallback
 server_logger = logging.getLogger("nurse_scheduling.server")
 PROCESS_POLL_SECONDS = 0.05
 """Maximum delay for progress, controls, aborts, and watchdog checks."""
+PR_SET_PDEATHSIG = 1
+"""Linux prctl operation that configures a signal for parent process death."""
 
 
 class OptimizationProcessAborted(Exception):
@@ -60,6 +64,18 @@ class ChildOptimizationError(RuntimeError):
         self.child_traceback = child_traceback
 
 
+def _set_parent_death_signal(expected_parent_pid: int) -> None:
+    """Ensure Linux kills the optimization child if its supervisor disappears."""
+    if sys.platform != "linux":
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+    if os.getppid() != expected_parent_pid:
+        os.kill(os.getpid(), signal.SIGKILL)
+
+
 def _run_child(
     runner: OptimizationRunner,
     job: Job,
@@ -68,8 +84,10 @@ def _run_child(
     stop_event: Any,
     child_finished_event: Any,
     cooperative_stop_enabled: bool,
+    expected_parent_pid: int,
 ) -> None:
     """Execute the runner and send events or its terminal message to the parent."""
+    _set_parent_death_signal(expected_parent_pid)
     if os.name == "posix":
         os.setsid()
 
@@ -103,25 +121,48 @@ def _run_child(
         connection.close()
 
 
-def _kill_process_tree(process: multiprocessing.Process) -> None:
-    """Forcibly terminate a child and solver executables launched beneath it."""
-    if not process.is_alive():
-        return
+def _kill_process_tree_by_pid(process_id: int) -> None:
+    """Forcibly terminate a process group or Windows process tree by PID."""
     if os.name == "posix":
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process_id, signal.SIGKILL)
         except ProcessLookupError:
             pass
     elif os.name == "nt":
         subprocess.run(
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            ["taskkill", "/PID", str(process_id), "/T", "/F"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+
+
+def _kill_process_tree(process: multiprocessing.Process) -> None:
+    """Forcibly terminate a child and solver executables launched beneath it."""
+    if not process.is_alive():
+        return
+    _kill_process_tree_by_pid(process.pid)
     if process.is_alive():
         process.kill()
     process.join(timeout=1)
+
+
+def _guard_process_tree(
+    connection: Connection,
+    child_process_id: int,
+    child_finished_event: Any,
+) -> None:
+    """Kill the solver process group if its supervising process disappears."""
+    if os.name == "posix":
+        os.setsid()
+    try:
+        try:
+            connection.recv()
+        except (EOFError, OSError):
+            if not child_finished_event.is_set():
+                _kill_process_tree_by_pid(child_process_id)
+    finally:
+        connection.close()
 
 
 class ProcessOptimizationExecutor:
@@ -178,9 +219,12 @@ class ProcessOptimizationExecutor:
                 stop_event,
                 child_finished_event,
                 should_stop is not None or graceful_cancel,
+                os.getpid(),
             ),
             name=f"optimization-job-{job.id}",
         )
+        guard_process: multiprocessing.Process | None = None
+        guard_send_connection: Connection | None = None
         stop_forwarded = False
         cancel_forwarded = False
         watchdog_fired = threading.Event()
@@ -196,6 +240,29 @@ class ProcessOptimizationExecutor:
             send_connection.close()
             raise
         send_connection.close()
+        # The detached guard survives supervisor death long enough to kill the
+        # optimization process group, including external solver descendants.
+        guard_receive_connection, guard_send_connection = self._context.Pipe(duplex=False)
+        guard_process = self._context.Process(
+            target=_guard_process_tree,
+            args=(
+                guard_receive_connection,
+                process.pid,
+                child_finished_event,
+            ),
+            name=f"optimization-job-guard-{job.id}",
+            daemon=True,
+        )
+        try:
+            guard_process.start()
+        except BaseException:
+            guard_receive_connection.close()
+            guard_send_connection.close()
+            with process_stop_lock:
+                _kill_process_tree(process)
+            receive_connection.close()
+            raise
+        guard_receive_connection.close()
         process_started_at = time.monotonic()
         hard_timeout_seconds = job.request.timeout_seconds + self._timeout_grace_seconds
 
@@ -323,3 +390,14 @@ class ProcessOptimizationExecutor:
                 if process.is_alive():
                     _kill_process_tree(process)
             receive_connection.close()
+            if guard_send_connection is not None:
+                try:
+                    guard_send_connection.send("stop")
+                except (BrokenPipeError, EOFError, OSError):
+                    pass
+                guard_send_connection.close()
+            if guard_process is not None:
+                guard_process.join(timeout=1)
+                if guard_process.is_alive():
+                    guard_process.kill()
+                    guard_process.join(timeout=1)

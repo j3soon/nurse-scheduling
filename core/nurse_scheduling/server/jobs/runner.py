@@ -83,6 +83,7 @@ class OptimizationRunner:
             progress_callback=publish_progress,
             should_stop=should_stop,
         )
+        stop_requested_when_solver_returned = should_stop is not None and should_stop()
 
         normalized_status = schedule_result.solver_status
         if normalized_status == "INFEASIBLE":
@@ -110,7 +111,7 @@ class OptimizationRunner:
         outcome = OptimizationOutcome.OPTIMAL if normalized_status == "OPTIMAL" else OptimizationOutcome.FEASIBLE
         if outcome == OptimizationOutcome.OPTIMAL:
             termination_reason = "optimality_proven"
-        elif should_stop is not None and should_stop():
+        elif stop_requested_when_solver_returned:
             termination_reason = "user_requested"
         else:
             termination_reason = "solver_timeout"

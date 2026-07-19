@@ -205,6 +205,45 @@ class DescendantHangingRunner:
             time.sleep(1)
 
 
+class ParentDeathHangingRunner:
+    def __init__(self, process_ids):
+        self.process_ids = process_ids
+
+    def run(self, job, input_bytes, *, event_callback, should_stop):
+        descendant = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+        )
+        with self.process_ids.get_lock():
+            self.process_ids[:] = [os.getpid(), descendant.pid]
+        while True:
+            time.sleep(1)
+
+
+def _run_parent_death_executor(process_ids):
+    job = Job(
+        id="job_parent_death",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="pulp/cbc",
+            prettify=False,
+            timeout_seconds=60,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+    ProcessOptimizationExecutor(timeout_grace_seconds=60).run(
+        ParentDeathHangingRunner(process_ids),
+        job,
+        b"apiVersion: alpha\n",
+        event_callback=lambda *_args: None,
+        should_stop=None,
+        should_cancel=lambda: False,
+        graceful_cancel=False,
+        should_abort=lambda: False,
+    )
+
+
 class DelayedNativeTimeoutRunner:
     def run(self, job, input_bytes, *, event_callback, should_stop):
         time.sleep(0.15)
@@ -790,6 +829,60 @@ def test_watchdog_kills_solver_descendants():
         pytest.fail("Solver descendant remained alive after watchdog termination")
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree verification")
+def test_executor_parent_death_kills_solver_process_tree():
+    context = multiprocessing.get_context("spawn")
+    process_ids = context.Array("i", [0, 0])
+    supervisor = context.Process(
+        target=_run_parent_death_executor,
+        args=(process_ids,),
+    )
+    supervisor.start()
+    child_pid = 0
+    descendant_pid = 0
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with process_ids.get_lock():
+                child_pid, descendant_pid = process_ids[:]
+            if child_pid and descendant_pid:
+                break
+            if not supervisor.is_alive():
+                break
+            time.sleep(0.01)
+        assert child_pid and descendant_pid
+
+        supervisor.kill()
+        supervisor.join(timeout=2)
+        assert not supervisor.is_alive()
+
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            active = []
+            for process_id in (child_pid, descendant_pid):
+                status_path = Path(f"/proc/{process_id}/stat")
+                if status_path.exists() and status_path.read_text().split()[2] != "Z":
+                    active.append(process_id)
+            if not active:
+                break
+            time.sleep(0.01)
+        assert active == []
+    finally:
+        if supervisor.is_alive():
+            supervisor.kill()
+            supervisor.join(timeout=2)
+        if child_pid:
+            try:
+                os.killpg(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if descendant_pid:
+            try:
+                os.kill(descendant_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):
     monkeypatch.setattr(
         "nurse_scheduling.server.jobs.runner.scheduler.schedule",
@@ -860,6 +953,48 @@ def test_optimization_runner_classifies_feasible_termination(monkeypatch, stop_r
     )
 
     assert output.result.termination_reason == termination_reason
+
+
+def test_optimization_runner_ignores_stop_requested_after_solver_returns(monkeypatch):
+    stop_requested = threading.Event()
+
+    def return_feasible(**_kwargs):
+        assert not stop_requested.is_set()
+        return ScheduleResult(object(), object(), 42, "FEASIBLE", None)
+
+    def request_stop_during_export(_dataframe, output, _cell_export_info):
+        stop_requested.set()
+        output.write(b"xlsx")
+
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.runner.scheduler.schedule",
+        return_feasible,
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.runner.exporter.export_to_excel",
+        request_stop_during_export,
+    )
+    job = Job(
+        id="job_late_stop",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout_seconds=60,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    output = OptimizationRunner().run(
+        job,
+        b"apiVersion: alpha\n",
+        event_callback=lambda *_args: None,
+        should_stop=stop_requested.is_set,
+    )
+
+    assert output.result.termination_reason == "solver_timeout"
 
 
 def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
