@@ -294,7 +294,25 @@ class JobWorker:
                     job.id,
                     self._worker_id,
                 )
-                self._stop.wait(self._claim_poll_seconds)
+                # The execution has ended, but its active-job association may
+                # still be stored. Stop new claims before dropping ownership.
+                self._ready.clear()
+                try:
+                    # Removing the lease makes the abandoned job eligible for
+                    # normal worker-loss expiry. The heartbeat then replaces
+                    # the missing lease and restores readiness.
+                    self._controller.unregister_worker(lease)
+                    self._controller.expire_worker_claims()
+                except Exception:
+                    # Do not keep this loop alive if ownership cleanup is
+                    # uncertain. The heartbeat will observe the stopped loop
+                    # and stop renewing the lease.
+                    server_logger.exception(
+                        "[server:worker] failed to release abandoned job job_id=%s worker_id=%s",
+                        job.id,
+                        self._worker_id,
+                    )
+                    return
             finally:
                 self._executing.clear()
 

@@ -1045,7 +1045,7 @@ def test_optimization_runner_ignores_stop_requested_after_solver_returns(monkeyp
     assert output.result.termination_reason == "solver_timeout"
 
 
-def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
+def test_worker_exits_when_unreportable_failure_cleanup_fails(monkeypatch):
     job = Job(
         id="job_store_failure",
         state=JobState.RUNNING,
@@ -1062,13 +1062,12 @@ def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
     class FailingController:
         def __init__(self):
             self.claim_calls = 0
-            self.next_claim_attempted = threading.Event()
+            self.cleanup_attempted = threading.Event()
 
         def claim_next_job(self, _lease):
             self.claim_calls += 1
             if self.claim_calls == 1:
                 return job
-            self.next_claim_attempted.set()
             return None
 
         def register_worker(self, worker_id):
@@ -1078,7 +1077,8 @@ def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
             return WorkerLease(lease.worker_id, lease.token, datetime.now(timezone.utc) + timedelta(seconds=60))
 
         def unregister_worker(self, _lease):
-            return None
+            self.cleanup_attempted.set()
+            raise ConnectionError("store still unavailable")
 
         def get_input(self, _job_id):
             raise ConnectionError("store unavailable")
@@ -1098,8 +1098,84 @@ def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
 
     worker.start()
     try:
-        assert controller.next_claim_attempted.wait(timeout=1)
+        assert controller.cleanup_attempted.wait(timeout=1)
+        deadline = time.monotonic() + 1
+        while worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert not worker.is_alive()
+        assert not worker.is_ready()
+    finally:
+        worker.stop()
+
+
+def test_worker_recovers_after_releasing_unreportable_failure_lease(monkeypatch):
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=2, max_retained=4),
+        retention_seconds=60,
+        worker_lease_seconds=0.15,
+    )
+    first = controller.create_job(
+        input_name="first.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=True,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+    second = controller.create_job(
+        input_name="second.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=True,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+
+    class ControllerWithReportingFailure:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.failure_write_attempted = threading.Event()
+            self.second_claimed = threading.Event()
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def claim_next_job(self, lease):
+            claimed = self.delegate.claim_next_job(lease)
+            if claimed is not None and claimed.id == second.id:
+                self.second_claimed.set()
+            return claimed
+
+        def get_input(self, job_id):
+            if job_id == first.id:
+                raise ConnectionError("input read failed")
+            return self.delegate.get_input(job_id)
+
+        def fail_job(self, job_id, failure, *, lease):
+            if job_id == first.id and not self.failure_write_attempted.is_set():
+                self.failure_write_attempted.set()
+                raise ConnectionError("failure write failed")
+            return self.delegate.fail_job(job_id, failure, lease=lease)
+
+    worker_controller = ControllerWithReportingFailure(controller)
+    monkeypatch.setattr("nurse_scheduling.server.jobs.worker.capture_optimize_exception", lambda *_args: None)
+    worker = JobWorker(
+        worker_controller,
+        SuccessfulRunner(),
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        worker_lease_seconds=0.15,
+    )
+
+    worker.start()
+    try:
+        assert worker_controller.failure_write_attempted.wait(timeout=1)
+        assert worker_controller.second_claimed.wait(timeout=2)
         assert worker.is_alive()
+        assert _wait_for_worker_ready(worker)
+        assert controller.get_job(first.id).state.terminal
     finally:
         worker.stop()
 
