@@ -1605,6 +1605,7 @@ def test_worker_recovers_after_presence_lease_expires():
         def __init__(self, delegate):
             self.delegate = delegate
             self.registration_count = 0
+            self.renewal_outage = threading.Event()
             self.recovered = threading.Event()
 
         def __getattr__(self, name):
@@ -1618,8 +1619,10 @@ def test_worker_recovers_after_presence_lease_expires():
                     self.recovered.set()
             return registered
 
-        def renew_worker(self, _lease):
-            raise ConnectionError("simulated heartbeat outage")
+        def renew_worker(self, lease):
+            if self.renewal_outage.is_set():
+                raise ConnectionError("simulated heartbeat outage")
+            return self.delegate.renew_worker(lease)
 
     worker_controller = ControllerWithRenewalOutage(controller)
     runner = IgnoringStopRunner()
@@ -1634,6 +1637,7 @@ def test_worker_recovers_after_presence_lease_expires():
     worker.start()
     try:
         assert runner.started.wait(timeout=2)
+        worker_controller.renewal_outage.set()
         assert worker_controller.recovered.wait(timeout=2)
         assert _wait_for_worker_ready(worker)
         failed = controller.get_job(created.id)
