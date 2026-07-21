@@ -72,13 +72,13 @@ with:
 - `JOB_BACKEND=redis`
 - `JOB_REDIS_URL=redis://redis:6379/0`
 - `JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0`
-- `JOB_CLAIM_LEASE_SECONDS=90` by default
+- `JOB_WORKER_LEASE_SECONDS=90` by default
 - `JOB_MAX_EVENTS_PER_JOB=1000` by default
 
 The API container runs multiple Uvicorn workers. Each worker claims jobs
-from Redis and runs at most one optimization job locally. Active workers renew
-their claims; a job is failed and its capacity is released if its worker stops
-renewing the claim.
+from Redis and runs at most one optimization job locally. Workers renew shared
+presence leases while idle and running. A job is failed and its capacity is
+released if its owning worker lease expires.
 
 To run one backend worker with process-local memory and no Redis service, use
 the pre-Redis deployment configuration:

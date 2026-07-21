@@ -27,12 +27,12 @@ server_logger = logging.getLogger("nurse_scheduling.server")
 
 
 class JobMaintenance:
-    """Periodically expire lost-worker claims and retained job history."""
+    """Periodically expire lost-worker jobs, leases, and retained history."""
 
     def __init__(self, controller: JobController, *, interval_seconds: float):
         """Configure periodic job cleanup without starting its thread."""
         self._controller = controller
-        """Controller that expires lost-worker claims and retained job history."""
+        """Controller that expires lost-worker jobs, leases, and retained history."""
         self._interval_seconds = interval_seconds
         """Delay between maintenance passes."""
         self._stop = threading.Event()
@@ -58,7 +58,7 @@ class JobMaintenance:
             self._thread = None
 
     def _run(self) -> None:
-        """Apply claim expiry and retention cleanup at each interval.
+        """Apply worker lease and retention cleanup at each interval.
 
         Failures are logged without terminating future maintenance passes.
         """

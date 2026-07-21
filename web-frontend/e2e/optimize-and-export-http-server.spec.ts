@@ -67,6 +67,8 @@ test('optimize and export works against a real local HTTP server instead of Play
         status: 'ready',
         api_version: 'alpha',
         app_version: 'v-test',
+        jobs: { running: 1, queued: 2, cancelling: 1 },
+        workers: { online: 3 },
       }));
       return;
     }
@@ -173,6 +175,8 @@ test('optimize and export works against a real local HTTP server instead of Play
     await page.keyboard.press('Enter');
 
     await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
+    await expect(page.getByText('2 active · 2 queued')).toHaveCount(2);
+    await expect(page.getByText('3 workers')).toHaveCount(2);
     await page.getByRole('button', { name: 'Optimize and Download' }).click();
 
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();

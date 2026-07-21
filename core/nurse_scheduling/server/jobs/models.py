@@ -107,8 +107,6 @@ class Job:
     """UTC time at which the job entered a terminal state."""
     worker_id: str | None = None
     """Identity of the worker holding the execution claim."""
-    claim_expires_at: datetime | None = None
-    """UTC deadline after which the worker is presumed lost."""
     queue_position: int | None = None
     """Derived one-based position while the job is queued."""
     result: OptimizationResult | None = None
@@ -157,3 +155,17 @@ class StoreLimits:
     """Maximum queued, running, or cancelling jobs accepted by the store."""
     max_retained: int
     """Maximum total jobs retained, including terminal history."""
+
+
+@dataclass(frozen=True)
+class ServerActivity:
+    """Aggregate job and worker activity exposed by the server."""
+
+    queued_jobs: int
+    """Jobs waiting for a worker."""
+    running_jobs: int
+    """Jobs actively executing."""
+    cancelling_jobs: int
+    """Jobs still occupying a worker while cancellation completes."""
+    online_workers: int
+    """Workers with an unexpired shared lease."""

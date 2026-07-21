@@ -20,6 +20,7 @@
 import logging
 import threading
 from collections.abc import Callable
+from datetime import datetime, timezone
 
 from ...sentry import capture_optimize_exception
 from ..config import DEFAULT_TIMEOUT_GRACE_SECONDS
@@ -50,7 +51,7 @@ class JobWorker:
         *,
         worker_id: str,
         claim_poll_seconds: float,
-        claim_lease_seconds: float,
+        worker_lease_seconds: float,
         timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS,
         unexpected_error_formatter: Callable[[Exception], str] = str,
     ):
@@ -65,25 +66,44 @@ class JobWorker:
         """Stable identity recorded on jobs claimed by this worker."""
         self._claim_poll_seconds = claim_poll_seconds
         """Delay between claim attempts and after recoverable loop errors."""
-        self._claim_heartbeat_seconds = claim_lease_seconds / 3
-        """Claim-renewal interval set to one third of the lease for retry margin."""
+        self._worker_lease_seconds = worker_lease_seconds
+        """Maximum time this worker remains live without a successful heartbeat."""
+        self._worker_heartbeat_seconds = worker_lease_seconds / 3
+        """Worker-renewal interval set to one third of the lease for retry margin."""
         self._unexpected_error_formatter = unexpected_error_formatter
         """Formatter used to produce unexpected failure messages."""
         self._stop = threading.Event()
         """Signal that stops claiming jobs and terminates the active child."""
+        self._ready = threading.Event()
+        """Whether this worker currently holds a live registered lease."""
+        self._executing = threading.Event()
+        """Whether the claim loop is still winding down an owned job."""
         self._lock = threading.Lock()
         """Lock guarding worker-thread creation, inspection, and cleanup."""
         self._thread: threading.Thread | None = None
         """Daemon claim-loop thread, or `None` when no thread is retained."""
+        self._heartbeat_thread: threading.Thread | None = None
+        """Always-running worker-presence heartbeat thread."""
 
     def start(self) -> None:
-        """Start the daemon claim loop unless it is already running."""
+        """Register this worker and start its claim and heartbeat loops."""
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return
+            lease_expires_at = self._controller.register_worker(self._worker_id)
+            if lease_expires_at is None:
+                raise RuntimeError(f"Unable to register optimization worker: {self._worker_id}")
             self._stop.clear()
+            self._ready.set()
             self._thread = threading.Thread(target=self._run, name="optimization-job-worker", daemon=True)
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat,
+                args=(lease_expires_at,),
+                name="optimization-worker-heartbeat",
+                daemon=True,
+            )
             self._thread.start()
+            self._heartbeat_thread.start()
         server_logger.info("[server:worker] started worker_id=%s", self._worker_id)
 
     def stop(self) -> None:
@@ -91,16 +111,107 @@ class JobWorker:
         self._stop.set()
         with self._lock:
             thread = self._thread
+            heartbeat_thread = self._heartbeat_thread
         if thread is not None:
             thread.join(timeout=5)
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=5)
+        try:
+            self._controller.unregister_worker(self._worker_id)
+        except Exception:
+            server_logger.exception("[server:worker] failed to unregister worker_id=%s", self._worker_id)
+        self._ready.clear()
         with self._lock:
             if self._thread is thread and (thread is None or not thread.is_alive()):
                 self._thread = None
+            if self._heartbeat_thread is heartbeat_thread and (
+                heartbeat_thread is None or not heartbeat_thread.is_alive()
+            ):
+                self._heartbeat_thread = None
 
     def is_alive(self) -> bool:
         """Return whether the worker thread is currently running."""
         with self._lock:
             return self._thread is not None and self._thread.is_alive()
+
+    def is_ready(self) -> bool:
+        """Return whether both worker loops are alive with a registered lease."""
+        with self._lock:
+            return bool(
+                self._ready.is_set()
+                and self._thread is not None
+                and self._thread.is_alive()
+                and self._heartbeat_thread is not None
+                and self._heartbeat_thread.is_alive()
+            )
+
+    def _heartbeat(self, lease_expires_at: datetime) -> None:
+        """Renew worker presence and recover safely after an expired lease."""
+        while not self._stop.is_set():
+            seconds_until_expiry = (lease_expires_at - datetime.now(timezone.utc)).total_seconds()
+            wait_seconds = min(self._worker_heartbeat_seconds, max(0.0, seconds_until_expiry))
+            if self._stop.wait(wait_seconds):
+                return
+            if not self._claim_loop_is_alive():
+                self._unregister_stopped_worker()
+                return
+
+            renewed_expires_at = self._renew_worker_lease(lease_expires_at)
+            if renewed_expires_at is not None:
+                lease_expires_at = renewed_expires_at
+                continue
+
+            recovered_expires_at = self._recover_worker_lease()
+            if recovered_expires_at is None:
+                return
+            lease_expires_at = recovered_expires_at
+
+    def _claim_loop_is_alive(self) -> bool:
+        """Return whether the job claim loop is still running."""
+        with self._lock:
+            return self._thread is not None and self._thread.is_alive()
+
+    def _unregister_stopped_worker(self) -> None:
+        """Clear readiness and unregister after the claim loop exits."""
+        self._ready.clear()
+        try:
+            self._controller.unregister_worker(self._worker_id)
+        except Exception:
+            server_logger.exception(
+                "[server:worker] failed to unregister stopped worker_id=%s",
+                self._worker_id,
+            )
+
+    def _renew_worker_lease(self, lease_expires_at: datetime) -> datetime | None:
+        """Renew once, retaining the current lease through a brief store outage."""
+        try:
+            return self._controller.renew_worker(self._worker_id)
+        except Exception:
+            server_logger.exception("[server:worker] failed to renew worker_id=%s", self._worker_id)
+            if datetime.now(timezone.utc) < lease_expires_at:
+                return lease_expires_at
+            return None
+
+    def _recover_worker_lease(self) -> datetime | None:
+        """Expire abandoned work and re-register after lease loss."""
+        self._ready.clear()
+        server_logger.error("[server:worker] worker lease expired worker_id=%s", self._worker_id)
+        while not self._stop.is_set():
+            if not self._claim_loop_is_alive():
+                self._unregister_stopped_worker()
+                return None
+            try:
+                self._controller.expire_worker_claims()
+                if not self._executing.is_set():
+                    lease_expires_at = self._controller.register_worker(self._worker_id)
+                    if lease_expires_at is not None:
+                        self._ready.set()
+                        server_logger.info("[server:worker] worker lease recovered worker_id=%s", self._worker_id)
+                        return lease_expires_at
+            except Exception:
+                server_logger.exception("[server:worker] failed to recover worker_id=%s", self._worker_id)
+            self._stop.wait(self._claim_poll_seconds)
+        return None
 
     def _run(self) -> None:
         """Claim and execute jobs until shutdown is requested.
@@ -108,6 +219,9 @@ class JobWorker:
         Recoverable claim and reporting failures are logged before retrying.
         """
         while not self._stop.is_set():
+            if not self._ready.is_set():
+                self._stop.wait(self._claim_poll_seconds)
+                continue
             try:
                 job = self._controller.claim_next_job(self._worker_id)
             except Exception:
@@ -117,6 +231,7 @@ class JobWorker:
             if job is None:
                 self._stop.wait(self._claim_poll_seconds)
                 continue
+            self._executing.set()
             try:
                 self._execute(job)
             except Exception:
@@ -126,39 +241,19 @@ class JobWorker:
                     self._worker_id,
                 )
                 self._stop.wait(self._claim_poll_seconds)
+            finally:
+                self._executing.clear()
 
     def _execute(self, job: Job) -> None:
         """Execute one claimed job and report its progress and outcome."""
         content = b""
-        # Stops the heartbeat and control threads, and aborts the child after claim loss.
-        # Its waits set how often the worker renews the claim and checks controls.
+        # Stops the control thread and aborts the child after ownership loss.
         monitor_stop = threading.Event()
         # Asks the solver to stop while preserving its current result.
         finish_now_requested = threading.Event()
         # Cancels the job and discards its result, forcing termination if needed.
         cancellation_requested = threading.Event()
 
-        def renew_claim() -> None:
-            """Renew the worker claim until execution ends or the job disappears."""
-            while not monitor_stop.wait(self._claim_heartbeat_seconds):
-                try:
-                    renewed = self._controller.renew_claim(job.id, self._worker_id)
-                    if renewed is None or renewed.state.terminal or renewed.worker_id != self._worker_id:
-                        monitor_stop.set()
-                        return
-                except JobNotFoundError:
-                    monitor_stop.set()
-                    return
-                except Exception:
-                    server_logger.exception("[server:worker] failed to renew claim job_id=%s", job.id)
-
-        # Lease renewal runs separately because optimization blocks this worker thread.
-        heartbeat_thread = threading.Thread(
-            target=renew_claim,
-            name=f"optimization-job-heartbeat-{job.id}",
-            daemon=True,
-        )
-        heartbeat_thread.start()
         control_thread: threading.Thread | None = None
         try:
             content = self._controller.get_input(job.id)
@@ -193,7 +288,7 @@ class JobWorker:
                         monitor_stop.set()
                         return
                     except Exception:
-                        # Claim renewal logs store outages and keeps retrying.
+                        # The worker heartbeat logs store outages and keeps retrying.
                         if not stop_check_error_logged:
                             server_logger.exception(
                                 "[server:worker] failed to check stop request job_id=%s",
@@ -213,6 +308,8 @@ class JobWorker:
             def process_control() -> ProcessControl | None:
                 """Return the highest-priority control for the optimization child."""
                 if monitor_stop.is_set():
+                    return ProcessControl.ABORT
+                if not self._ready.is_set():
                     return ProcessControl.ABORT
                 if cancellation_requested.is_set():
                     return ProcessControl.CANCEL
@@ -289,4 +386,3 @@ class JobWorker:
             monitor_stop.set()
             if control_thread is not None:
                 control_thread.join(timeout=1)
-            heartbeat_thread.join(timeout=1)

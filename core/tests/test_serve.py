@@ -264,11 +264,45 @@ def test_info_and_readiness_report_status_without_caching():
             "started_at": client.app.state.started_at.isoformat(),
             "job_backend": "memory",
             "job_store_id": client.app.state.job_store.store_id,
+            "jobs": {"running": 0, "queued": 0, "cancelling": 0},
+            "workers": {"online": 0},
         }
         assert ready.json() == {"status": "ready"}
         assert info.headers["cache-control"] == "no-store"
         assert ready.headers["cache-control"] == "no-store"
         assert client.get("/health").status_code == 404
+
+
+def test_info_reports_shared_job_and_worker_activity():
+    runner = StoppableRunner()
+    with _client(runner) as client:
+        first = _create(client).json()
+        assert runner.started.wait(timeout=2)
+        second = _create(client).json()
+
+        info = client.get("/info")
+
+        assert info.status_code == 200
+        assert info.json()["jobs"] == {"running": 1, "queued": 1, "cancelling": 0}
+        assert info.json()["workers"] == {"online": 1}
+
+        client.post(f"/optimize/{first['id']}/cancel")
+        client.post(f"/optimize/{second['id']}/cancel")
+        _wait_for_terminal(client, first["id"])
+
+
+def test_info_reports_cancelling_jobs_separately():
+    with _client(start_background=False) as client:
+        created = _create(client).json()
+        controller = client.app.state.job_controller
+        assert controller.register_worker("test-worker")
+        assert controller.claim_next_job("test-worker") is not None
+        controller.cancel_job(created["id"])
+
+        info = client.get("/info")
+
+        assert info.json()["jobs"] == {"running": 0, "queued": 0, "cancelling": 1}
+        assert info.json()["workers"] == {"online": 1}
 
 
 def test_default_memory_store_uses_the_process_instance_identity():
@@ -466,7 +500,7 @@ def test_job_creation_offloads_the_synchronous_store_write():
     ("updates", "message"),
     [
         ({"claim_poll_seconds": 0}, "claim_poll_seconds must be positive"),
-        ({"claim_lease_seconds": 0}, "claim_lease_seconds must be positive"),
+        ({"worker_lease_seconds": 0}, "worker_lease_seconds must be positive"),
         ({"maintenance_interval_seconds": 0}, "maintenance_interval_seconds must be positive"),
         ({"sse_keepalive_seconds": 0}, "sse_keepalive_seconds must be positive"),
         ({"timeout_grace_seconds": 0}, "timeout_grace_seconds must be positive"),
@@ -509,7 +543,7 @@ def test_runtime_deployment_identity_is_shared_within_one_server_launch(monkeypa
     "name",
     [
         "claim_poll_seconds",
-        "claim_lease_seconds",
+        "worker_lease_seconds",
         "maintenance_interval_seconds",
         "sse_keepalive_seconds",
         "timeout_grace_seconds",
@@ -1028,6 +1062,15 @@ def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
             self.next_claim_attempted.set()
             return None
 
+        def register_worker(self, _worker_id):
+            return datetime.now(timezone.utc) + timedelta(seconds=60)
+
+        def renew_worker(self, _worker_id):
+            return datetime.now(timezone.utc) + timedelta(seconds=60)
+
+        def unregister_worker(self, _worker_id):
+            return None
+
         def get_input(self, _job_id):
             raise ConnectionError("store unavailable")
 
@@ -1041,13 +1084,55 @@ def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
         SuccessfulRunner(),
         worker_id="worker",
         claim_poll_seconds=0.005,
-        claim_lease_seconds=60,
+        worker_lease_seconds=60,
     )
 
     worker.start()
     try:
         assert controller.next_claim_attempted.wait(timeout=1)
         assert worker.is_alive()
+    finally:
+        worker.stop()
+
+
+def test_worker_uses_registered_lease_expiration_as_heartbeat_deadline():
+    class LeaseController:
+        def __init__(self):
+            self.registration_count = 0
+            self.recovered = threading.Event()
+
+        def register_worker(self, _worker_id):
+            self.registration_count += 1
+            if self.registration_count > 1:
+                self.recovered.set()
+            lifetime_seconds = 0.03 if self.registration_count == 1 else 60
+            return datetime.now(timezone.utc) + timedelta(seconds=lifetime_seconds)
+
+        def renew_worker(self, _worker_id):
+            raise ConnectionError("simulated heartbeat outage")
+
+        def unregister_worker(self, _worker_id):
+            return None
+
+        def claim_next_job(self, _worker_id):
+            return None
+
+        def expire_worker_claims(self):
+            return []
+
+    controller = LeaseController()
+    worker = JobWorker(
+        controller,
+        SuccessfulRunner(),
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        worker_lease_seconds=60,
+    )
+
+    worker.start()
+    try:
+        assert controller.recovered.wait(timeout=1)
+        assert worker.is_ready()
     finally:
         worker.stop()
 
@@ -1118,14 +1203,14 @@ def test_finish_now_completes_with_current_feasible_result():
         assert runner.finished.is_set()
 
 
-def test_worker_renews_claim_during_long_running_job():
+def test_worker_renews_presence_during_long_running_job():
     now = [datetime.now(timezone.utc)]
     store = MemoryJobStore()
     controller = JobController(
         store,
         limits=StoreLimits(max_pending=1, max_retained=2),
         retention_seconds=60,
-        claim_lease_seconds=0.06,
+        worker_lease_seconds=0.06,
         clock=lambda: now[0],
     )
     created = controller.create_job(
@@ -1141,18 +1226,18 @@ def test_worker_renews_claim_during_long_running_job():
         def __init__(self, delegate):
             self.delegate = delegate
             self.renewal_allowed = threading.Event()
-            self.claim_renewed = threading.Event()
-            self.renewed_job = None
+            self.worker_renewed = threading.Event()
+            self.renewed_expiry = None
 
         def __getattr__(self, name):
             return getattr(self.delegate, name)
 
-        def renew_claim(self, job_id, worker_id):
+        def renew_worker(self, worker_id):
             self.renewal_allowed.wait(timeout=2)
-            renewed = self.delegate.renew_claim(job_id, worker_id)
-            if renewed is not None:
-                self.renewed_job = renewed
-                self.claim_renewed.set()
+            renewed = self.delegate.renew_worker(worker_id)
+            if renewed:
+                self.renewed_expiry = store._workers[worker_id].expires_at
+                self.worker_renewed.set()
             return renewed
 
     worker_controller = ControllerWithRenewalSignal(controller)
@@ -1162,17 +1247,17 @@ def test_worker_renews_claim_during_long_running_job():
         runner,
         worker_id="worker",
         claim_poll_seconds=0.005,
-        claim_lease_seconds=0.06,
+        worker_lease_seconds=0.06,
     )
 
     worker.start()
     try:
         assert runner.started.wait(timeout=2)
-        initial_claim = controller.get_job(created.id)
+        initial_expiry = store._workers["worker"].expires_at
         now[0] += timedelta(seconds=0.01)
         worker_controller.renewal_allowed.set()
-        assert worker_controller.claim_renewed.wait(timeout=2)
-        assert worker_controller.renewed_job.claim_expires_at > initial_claim.claim_expires_at
+        assert worker_controller.worker_renewed.wait(timeout=2)
+        assert worker_controller.renewed_expiry > initial_expiry
 
         running = controller.get_job(created.id)
         assert running.state == JobState.RUNNING
@@ -1187,14 +1272,14 @@ def test_worker_renews_claim_during_long_running_job():
         worker.stop()
 
 
-def test_worker_shutdown_stops_child_and_leaves_claim_for_expiry():
+def test_worker_shutdown_stops_child_and_releases_worker_lease():
     now = [datetime.now(timezone.utc)]
     store = MemoryJobStore()
     controller = JobController(
         store,
         limits=StoreLimits(max_pending=1, max_retained=2),
         retention_seconds=60,
-        claim_lease_seconds=30,
+        worker_lease_seconds=30,
         clock=lambda: now[0],
     )
     created = controller.create_job(
@@ -1211,7 +1296,7 @@ def test_worker_shutdown_stops_child_and_leaves_claim_for_expiry():
         runner,
         worker_id="worker",
         claim_poll_seconds=0.005,
-        claim_lease_seconds=30,
+        worker_lease_seconds=30,
     )
 
     worker.start()
@@ -1226,7 +1311,6 @@ def test_worker_shutdown_stops_child_and_leaves_claim_for_expiry():
             process.name == f"optimization-job-{created.id}" for process in multiprocessing.active_children()
         )
 
-        now[0] += timedelta(seconds=31)
         assert controller.expire_worker_claims() == [created.id]
         failed = controller.get_job(created.id)
         assert failed.state == JobState.FAILED
@@ -1242,7 +1326,7 @@ def test_worker_cancellation_takes_priority_over_concurrent_shutdown(monkeypatch
         store,
         limits=StoreLimits(max_pending=1, max_retained=2),
         retention_seconds=60,
-        claim_lease_seconds=30,
+        worker_lease_seconds=30,
     )
     created = controller.create_job(
         input_name="input.yaml",
@@ -1282,7 +1366,7 @@ def test_worker_cancellation_takes_priority_over_concurrent_shutdown(monkeypatch
         SuccessfulRunner(),
         worker_id="worker",
         claim_poll_seconds=0.005,
-        claim_lease_seconds=30,
+        worker_lease_seconds=30,
     )
 
     worker.start()
@@ -1301,14 +1385,14 @@ def test_worker_cancellation_takes_priority_over_concurrent_shutdown(monkeypatch
         worker.stop()
 
 
-def test_worker_stops_execution_after_its_claim_expires():
+def test_worker_stops_execution_after_its_lease_expires():
     now = [datetime.now(timezone.utc)]
     store = MemoryJobStore()
     controller = JobController(
         store,
         limits=StoreLimits(max_pending=1, max_retained=2),
         retention_seconds=60,
-        claim_lease_seconds=30,
+        worker_lease_seconds=30,
         clock=lambda: now[0],
     )
     created = controller.create_job(
@@ -1350,7 +1434,7 @@ def test_worker_stops_execution_after_its_claim_expires():
         runner,
         worker_id="worker",
         claim_poll_seconds=0.005,
-        claim_lease_seconds=30,
+        worker_lease_seconds=30,
     )
 
     worker.start()
@@ -1366,6 +1450,66 @@ def test_worker_stops_execution_after_its_claim_expires():
         assert failed.failure is not None
         assert failed.failure.code == "worker_lost"
         assert worker.is_alive()
+    finally:
+        worker.stop()
+
+
+def test_worker_recovers_after_presence_lease_expires():
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=1, max_retained=2),
+        retention_seconds=60,
+        worker_lease_seconds=0.06,
+    )
+    created = controller.create_job(
+        input_name="input.yaml",
+        client_id="client",
+        solver="ortools/cp-sat",
+        prettify=True,
+        timeout_seconds=60,
+        input_bytes=b"apiVersion: alpha\n",
+    )
+
+    class ControllerWithRenewalOutage:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.registration_count = 0
+            self.recovered = threading.Event()
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def register_worker(self, worker_id):
+            registered = self.delegate.register_worker(worker_id)
+            if registered:
+                self.registration_count += 1
+                if self.registration_count > 1:
+                    self.recovered.set()
+            return registered
+
+        def renew_worker(self, _worker_id):
+            raise ConnectionError("simulated heartbeat outage")
+
+    worker_controller = ControllerWithRenewalOutage(controller)
+    runner = IgnoringStopRunner()
+    worker = JobWorker(
+        worker_controller,
+        runner,
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        worker_lease_seconds=0.06,
+    )
+
+    worker.start()
+    try:
+        assert runner.started.wait(timeout=2)
+        assert worker_controller.recovered.wait(timeout=2)
+        assert worker.is_ready()
+        failed = controller.get_job(created.id)
+        assert failed.state == JobState.FAILED
+        assert failed.failure is not None
+        assert failed.failure.code == "worker_lost"
     finally:
         worker.stop()
 

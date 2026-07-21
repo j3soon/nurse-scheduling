@@ -76,10 +76,10 @@ class ServerSettings:
     """Maximum replayable events retained for each job."""
     claim_poll_seconds: float = 1.0
     """Worker delay between attempts to claim a queued job."""
-    claim_lease_seconds: float = 90.0
-    """Time a worker claim remains valid without renewal."""
+    worker_lease_seconds: float = 90.0
+    """Time a worker remains online without renewing its shared lease."""
     maintenance_interval_seconds: float = 30.0
-    """Delay between claim-expiry and retention maintenance passes."""
+    """Delay between worker-expiry and retention maintenance passes."""
     sse_keepalive_seconds: float = 10.0
     """Maximum SSE wait before emitting a keepalive comment."""
     max_yaml_bytes: int = 2 * 1024 * 1024
@@ -112,7 +112,7 @@ class ServerSettings:
                 raise ValueError(f"{name} must be positive")
         for name in (
             "claim_poll_seconds",
-            "claim_lease_seconds",
+            "worker_lease_seconds",
             "maintenance_interval_seconds",
             "sse_keepalive_seconds",
             "timeout_grace_seconds",
@@ -141,7 +141,7 @@ class ServerSettings:
             job_retention_seconds=_positive_int("JOB_RETENTION_SECONDS", DEFAULT_JOB_RETENTION_SECONDS),
             max_events_per_job=_positive_int("JOB_MAX_EVENTS_PER_JOB", DEFAULT_MAX_EVENTS_PER_JOB),
             claim_poll_seconds=_positive_float("JOB_CLAIM_POLL_SECONDS", 1.0),
-            claim_lease_seconds=_positive_float("JOB_CLAIM_LEASE_SECONDS", 90.0),
+            worker_lease_seconds=_positive_float("JOB_WORKER_LEASE_SECONDS", 90.0),
             maintenance_interval_seconds=_positive_float("JOB_MAINTENANCE_INTERVAL_SECONDS", 30.0),
             sse_keepalive_seconds=_positive_float("JOB_SSE_KEEPALIVE_SECONDS", 10.0),
             max_yaml_bytes=_positive_int("OPTIMIZE_MAX_YAML_BYTES", 2 * 1024 * 1024),

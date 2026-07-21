@@ -139,6 +139,26 @@ describe('DataTable', () => {
     expect(screen.getByText('Footer action')).toBeInTheDocument();
   });
 
+  it('only constrains a column width when the caller specifies one', () => {
+    const widthColumns = [
+      ...columns,
+      { header: 'Actions', accessor: () => 'Action', width: 80 },
+    ];
+
+    const { container } = render(
+      <DataTable<Row>
+        title="Rows"
+        columns={widthColumns}
+        data={[{ id: 'a', name: 'Alpha' }]}
+      />,
+    );
+
+    const headers = container.querySelectorAll('th');
+    expect(headers[0]).not.toHaveStyle({ width: '80px' });
+    expect(headers[1]).not.toHaveStyle({ width: '80px' });
+    expect(headers[2]).toHaveStyle({ width: '80px', minWidth: '80px', maxWidth: '80px' });
+  });
+
   it('keeps order unchanged when dropping onto the same row index', () => {
     const onReorder = vi.fn();
     const data: Row[] = [

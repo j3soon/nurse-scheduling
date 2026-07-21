@@ -26,8 +26,10 @@ curl "$API_URL/info"
 ```
 
 `/ready` returns a minimal readiness result. `/info` also includes the API and
-application versions. Interactive OpenAPI documentation is available at
-`$API_URL/docs`, with the schema at `$API_URL/openapi.json`.
+application versions plus current worker status and activities.
+
+Interactive OpenAPI documentation is available at `$API_URL/docs`, with the
+schema at `$API_URL/openapi.json`.
 
 ## Architecture
 
@@ -75,12 +77,12 @@ flowchart TB
 | `server/jobs/worker.py` | Owns the process-local claim loop. It renews leases, coordinates the process executor, and reports the terminal outcome. |
 | `server/jobs/process_executor.py` | Runs one optimization in a spawned child process, bridges events and controls, and enforces timeout and cancellation boundaries without knowing about HTTP or persistence. |
 | `server/jobs/runner.py` | Adapts one blocking job execution to the synchronous scheduler. It normalizes progress and results and creates the XLSX artifact without knowing HTTP or persistence. |
-| `server/maintenance.py` | Expires lost worker claims and retained terminal jobs. |
+| `server/maintenance.py` | Expires jobs owned by lost workers, worker leases, and retained terminal jobs. |
 
 `nurse_scheduling.serve:app` is the public ASGI entry point. Each application
 process owns one worker thread and one maintenance thread. The worker renews its
-claim lease while a job is running. Each optimization runs in a separate child
-process.
+shared presence lease whether idle or running. Each optimization runs in a
+separate child process.
 
 The worker owns job lifecycle orchestration. The process executor owns child
 process supervision. The runner owns one scheduler invocation and its output
@@ -97,7 +99,7 @@ stateDiagram-v2
     running --> failed: failure
     running --> cancelling: cancel
     cancelling --> cancelled: process ends
-    cancelling --> cancelled: claim expires
+    cancelling --> cancelled: worker lease expires
     completed --> [*]
     cancelled --> [*]
     failed --> [*]
@@ -158,7 +160,7 @@ checkpointing it outside the child process.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | Return API identity and version information. |
-| `GET` | `/info` | Check the store and worker, including version information. |
+| `GET` | `/info` | Check readiness and report versions, job activity, and online workers. |
 | `GET` | `/ready` | Return a minimal readiness result for routing and deployment probes. |
 | `POST` | `/optimize` | Validate multipart input and enqueue a job. |
 | `GET` | `/optimize/{job_id}` | Return the current job representation. |
@@ -255,7 +257,7 @@ All server settings are read once when the application is constructed.
 | `JOB_RETENTION_SECONDS` | `86400` | Retain terminal jobs for this duration. |
 | `JOB_MAX_EVENTS_PER_JOB` | `1000` | Limit replayable events retained per job. |
 | `JOB_CLAIM_POLL_SECONDS` | `1` | Set the delay between attempts to claim work. |
-| `JOB_CLAIM_LEASE_SECONDS` | `90` | Set how long a worker claim remains valid without renewal. |
+| `JOB_WORKER_LEASE_SECONDS` | `90` | Set how long a worker remains online without renewal. |
 | `JOB_MAINTENANCE_INTERVAL_SECONDS` | `30` | Set the delay between maintenance passes. |
 | `JOB_SSE_KEEPALIVE_SECONDS` | `10` | Set the maximum SSE wait before a keepalive. |
 | `OPTIMIZE_MAX_YAML_BYTES` | `2097152` | Limit the submitted YAML size. |
