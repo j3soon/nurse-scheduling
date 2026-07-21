@@ -250,6 +250,13 @@ def _wait_for_terminal(client: TestClient, job_id: str) -> dict:
     raise AssertionError(f"Job did not finish: {job_id}")
 
 
+def _wait_for_worker_ready(worker: JobWorker, timeout: float = 2) -> bool:
+    deadline = time.monotonic() + timeout
+    while not worker.is_ready() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    return worker.is_ready()
+
+
 def test_info_and_readiness_report_status_without_caching():
     with _client(start_background=False) as client:
         info = client.get("/info")
@@ -1138,7 +1145,7 @@ def test_worker_uses_registered_lease_expiration_as_heartbeat_deadline():
     worker.start()
     try:
         assert controller.recovered.wait(timeout=1)
-        assert worker.is_ready()
+        assert _wait_for_worker_ready(worker)
     finally:
         worker.stop()
 
@@ -1628,7 +1635,7 @@ def test_worker_recovers_after_presence_lease_expires():
     try:
         assert runner.started.wait(timeout=2)
         assert worker_controller.recovered.wait(timeout=2)
-        assert worker.is_ready()
+        assert _wait_for_worker_ready(worker)
         failed = controller.get_job(created.id)
         assert failed.state == JobState.FAILED
         assert failed.failure is not None
