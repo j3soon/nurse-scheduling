@@ -43,6 +43,7 @@ from .models import (
     ServerActivity,
     StoredArtifact,
     StoreLimits,
+    WorkerLease,
 )
 from ..solver_capabilities import solver_supports_finish_now
 
@@ -183,44 +184,47 @@ class JobController:
             raise JobArtifactNotReadyError("The schedule artifact is not ready")
         return self._store.get_artifact(job_id, name)
 
-    def register_worker(self, worker_id: str) -> datetime | None:
-        """Register an idle worker and return its lease expiration."""
+    def register_worker(self, worker_id: str) -> WorkerLease | None:
+        """Register an idle worker and return its lease."""
         now = self._clock()
-        lease_expires_at = now + timedelta(seconds=self._worker_lease_seconds)
-        registered = self._store.register_worker(
-            worker_id,
-            now,
-            lease_expires_at,
+        lease = WorkerLease(
+            worker_id=worker_id,
+            token=uuid4().hex,
+            expires_at=now + timedelta(seconds=self._worker_lease_seconds),
         )
-        return lease_expires_at if registered else None
+        if not self._store.register_worker(lease, now):
+            return None
+        return lease
 
-    def renew_worker(self, worker_id: str) -> datetime | None:
-        """Renew a worker presence lease and return its new expiration."""
+    def renew_worker(self, lease: WorkerLease) -> WorkerLease | None:
+        """Renew a worker presence lease and return its updated value."""
         now = self._clock()
         lease_expires_at = now + timedelta(seconds=self._worker_lease_seconds)
         renewed = self._store.renew_worker(
-            worker_id,
+            lease,
             now,
             lease_expires_at,
         )
-        return lease_expires_at if renewed else None
+        if not renewed:
+            return None
+        return replace(lease, expires_at=lease_expires_at)
 
-    def unregister_worker(self, worker_id: str) -> None:
+    def unregister_worker(self, lease: WorkerLease) -> None:
         """Remove a worker presence lease and active-job association."""
-        self._store.unregister_worker(worker_id)
+        self._store.unregister_worker(lease)
 
     def get_activity(self) -> ServerActivity:
         """Return current aggregate job and worker activity."""
         return self._store.get_activity(self._clock())
 
-    def claim_next_job(self, worker_id: str) -> Job | None:
+    def claim_next_job(self, lease: WorkerLease) -> Job | None:
         """Claim the next queued job for a registered idle worker.
 
         Return the claimed running job, or `None` when the queue is empty.
         """
         now = self._clock()
         job = self._store.claim_next_job(
-            worker_id,
+            lease,
             now,
             self._runtime_identity,
         )
@@ -240,7 +244,7 @@ class JobController:
         event_type: str,
         data: dict[str, Any],
         *,
-        worker_id: str | None = None,
+        lease: WorkerLease | None = None,
     ) -> Job:
         """Persist progress or phase data without changing lifecycle state.
 
@@ -251,14 +255,11 @@ class JobController:
 
         def transition(job: Job, now: datetime) -> tuple[Job, list[JobEvent], StoredArtifact | None]:
             """Append an event only while the reporting worker owns an active job."""
-            if job.state.terminal or (
-                worker_id is not None
-                and (job.worker_id != worker_id or not self._store.worker_owns_job(worker_id, job.id, now))
-            ):
+            if job.state.terminal or (lease is not None and job.worker_id != lease.worker_id):
                 return job, [], None
             return job, [JobEvent(type=event_type, data=data, occurred_at=now)], None
 
-        return self._update_job_with_retry(job_id, transition)
+        return self._update_job_with_retry(job_id, transition, lease=lease)
 
     def record_score_and_event(
         self,
@@ -266,7 +267,7 @@ class JobController:
         score: int,
         data: dict[str, Any],
         *,
-        worker_id: str | None = None,
+        lease: WorkerLease | None = None,
     ) -> Job:
         """Persist the latest score as progress without manufacturing a result.
 
@@ -276,13 +277,15 @@ class JobController:
         """
         payload = dict(data)
         payload["score"] = score
-        return self.record_event(job_id, "job.progressed", payload, worker_id=worker_id)
+        return self.record_event(job_id, "job.progressed", payload, lease=lease)
 
     def complete_job(
         self,
         job_id: str,
         result: OptimizationResult,
         artifact: StoredArtifact | None,
+        *,
+        lease: WorkerLease,
     ) -> Job:
         """Complete a job unless a cancellation request takes precedence.
 
@@ -294,8 +297,6 @@ class JobController:
         def transition(job: Job, now: datetime):
             """Build the terminal completion or cancellation transition."""
             if job.state.terminal:
-                return job, [], None
-            if job.worker_id is not None and not self._store.worker_owns_job(job.worker_id, job.id, now):
                 return job, [], None
             if job.cancel_requested:
                 cancelled = replace(
@@ -317,11 +318,11 @@ class JobController:
             )
             return completed, [self._state_event(completed, now), self._result_event(completed, now)], artifact
 
-        completed = self._update_job_with_retry(job_id, transition)
+        completed = self._update_job_with_retry(job_id, transition, lease=lease)
         self._log_terminal_job(completed)
         return completed
 
-    def fail_job(self, job_id: str, failure: JobFailure) -> Job:
+    def fail_job(self, job_id: str, failure: JobFailure, *, lease: WorkerLease) -> Job:
         """Fail a job unless a cancellation request takes precedence.
 
         Raises:
@@ -332,8 +333,6 @@ class JobController:
         def transition(job: Job, now: datetime):
             """Build the terminal failure or cancellation transition."""
             if job.state.terminal:
-                return job, [], None
-            if job.worker_id is not None and not self._store.worker_owns_job(job.worker_id, job.id, now):
                 return job, [], None
             if job.cancel_requested:
                 failed = replace(
@@ -353,7 +352,7 @@ class JobController:
                 )
             return failed, [self._state_event(failed, now)], None
 
-        failed = self._update_job_with_retry(job_id, transition)
+        failed = self._update_job_with_retry(job_id, transition, lease=lease)
         self._log_terminal_job(failed)
         return failed
 
@@ -393,7 +392,7 @@ class JobController:
         )
         return job
 
-    def complete_cancellation(self, job_id: str, worker_id: str) -> Job:
+    def complete_cancellation(self, job_id: str, lease: WorkerLease) -> Job:
         """Finish cancellation while the reporting worker still owns the job."""
 
         def transition(job: Job, now: datetime):
@@ -402,8 +401,7 @@ class JobController:
                 job.state.terminal
                 or job.state != JobState.CANCELLING
                 or not job.cancel_requested
-                or job.worker_id != worker_id
-                or not self._store.worker_owns_job(worker_id, job.id, now)
+                or job.worker_id != lease.worker_id
             ):
                 return job, [], None
             cancelled = replace(
@@ -416,7 +414,7 @@ class JobController:
             )
             return cancelled, [self._state_event(cancelled, now)], None
 
-        cancelled = self._update_job_with_retry(job_id, transition)
+        cancelled = self._update_job_with_retry(job_id, transition, lease=lease)
         self._log_terminal_job(cancelled)
         return cancelled
 
@@ -449,7 +447,7 @@ class JobController:
 
         return self._update_job_with_retry(job_id, transition)
 
-    def is_stop_requested(self, job_id: str, worker_id: str | None = None) -> bool:
+    def is_stop_requested(self, job_id: str, lease: WorkerLease) -> bool:
         """Return whether a worker should stop executing a job.
 
         Terminal state and lost claim ownership stop stale workers after lease
@@ -459,12 +457,8 @@ class JobController:
             JobNotFoundError: If the job does not exist.
         """
         job = self.get_job(job_id)
-        lost_claim = worker_id is not None and job.worker_id != worker_id
-        expired_claim = worker_id is not None and not self._store.worker_owns_job(
-            worker_id,
-            job.id,
-            self._clock(),
-        )
+        lost_claim = job.worker_id != lease.worker_id
+        expired_claim = not self._store.lease_owns_job(lease, job.id, self._clock())
         return (
             job.state.terminal or lost_claim or expired_claim or job.cancel_requested or job.early_completion_requested
         )
@@ -579,7 +573,13 @@ class JobController:
         self._store.remove_expired_worker_leases(now)
         return expired_ids
 
-    def _update_job_with_retry(self, job_id: str, transition: Transition) -> Job:
+    def _update_job_with_retry(
+        self,
+        job_id: str,
+        transition: Transition,
+        *,
+        lease: WorkerLease | None = None,
+    ) -> Job:
         """Compute and persist a job update, retrying optimistic write conflicts.
 
         Raises:
@@ -590,10 +590,18 @@ class JobController:
         def update() -> Job:
             """Recompute and persist the transition from the latest job revision."""
             current = self._store.get(job_id)
-            replacement, events, artifact = transition(current, self._clock())
+            transition_time = self._clock()
+            replacement, events, artifact = transition(current, transition_time)
             if replacement is current and not events and artifact is None:
                 return current
-            return self._store.update_job(replacement, current.revision, events, artifact)
+            return self._store.update_job(
+                replacement,
+                current.revision,
+                events,
+                artifact,
+                worker_lease=lease,
+                worker_lease_observed_at=transition_time if lease is not None else None,
+            )
 
         return self._retry_store_write(update)
 

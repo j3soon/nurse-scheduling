@@ -53,6 +53,7 @@ from nurse_scheduling.server.jobs.models import (
     OptimizationResult,
     StoredArtifact,
     StoreLimits,
+    WorkerLease,
 )
 from nurse_scheduling.server.jobs.process_executor import (
     ChildOptimizationError,
@@ -295,8 +296,9 @@ def test_info_reports_cancelling_jobs_separately():
     with _client(start_background=False) as client:
         created = _create(client).json()
         controller = client.app.state.job_controller
-        assert controller.register_worker("test-worker")
-        assert controller.claim_next_job("test-worker") is not None
+        lease = controller.register_worker("test-worker")
+        assert lease is not None
+        assert controller.claim_next_job(lease) is not None
         controller.cancel_job(created["id"])
 
         info = client.get("/info")
@@ -1055,26 +1057,26 @@ def test_worker_survives_when_failure_persistence_also_fails(monkeypatch):
             self.claim_calls = 0
             self.next_claim_attempted = threading.Event()
 
-        def claim_next_job(self, _worker_id):
+        def claim_next_job(self, _lease):
             self.claim_calls += 1
             if self.claim_calls == 1:
                 return job
             self.next_claim_attempted.set()
             return None
 
-        def register_worker(self, _worker_id):
-            return datetime.now(timezone.utc) + timedelta(seconds=60)
+        def register_worker(self, worker_id):
+            return WorkerLease(worker_id, "lease-token", datetime.now(timezone.utc) + timedelta(seconds=60))
 
-        def renew_worker(self, _worker_id):
-            return datetime.now(timezone.utc) + timedelta(seconds=60)
+        def renew_worker(self, lease):
+            return WorkerLease(lease.worker_id, lease.token, datetime.now(timezone.utc) + timedelta(seconds=60))
 
-        def unregister_worker(self, _worker_id):
+        def unregister_worker(self, _lease):
             return None
 
         def get_input(self, _job_id):
             raise ConnectionError("store unavailable")
 
-        def fail_job(self, _job_id, _failure):
+        def fail_job(self, _job_id, _failure, *, lease):
             raise ConnectionError("store still unavailable")
 
     controller = FailingController()
@@ -1101,20 +1103,24 @@ def test_worker_uses_registered_lease_expiration_as_heartbeat_deadline():
             self.registration_count = 0
             self.recovered = threading.Event()
 
-        def register_worker(self, _worker_id):
+        def register_worker(self, worker_id):
             self.registration_count += 1
             if self.registration_count > 1:
                 self.recovered.set()
             lifetime_seconds = 0.03 if self.registration_count == 1 else 60
-            return datetime.now(timezone.utc) + timedelta(seconds=lifetime_seconds)
+            return WorkerLease(
+                worker_id,
+                f"lease-token-{self.registration_count}",
+                datetime.now(timezone.utc) + timedelta(seconds=lifetime_seconds),
+            )
 
-        def renew_worker(self, _worker_id):
+        def renew_worker(self, _lease):
             raise ConnectionError("simulated heartbeat outage")
 
-        def unregister_worker(self, _worker_id):
+        def unregister_worker(self, _lease):
             return None
 
-        def claim_next_job(self, _worker_id):
+        def claim_next_job(self, _lease):
             return None
 
         def expire_worker_claims(self):
@@ -1133,6 +1139,67 @@ def test_worker_uses_registered_lease_expiration_as_heartbeat_deadline():
     try:
         assert controller.recovered.wait(timeout=1)
         assert worker.is_ready()
+    finally:
+        worker.stop()
+
+
+def test_worker_reconciles_renewal_that_committed_before_response_was_lost():
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=1, max_retained=2),
+        retention_seconds=60,
+        worker_lease_seconds=0.15,
+    )
+
+    class ControllerWithLostRenewalResponse:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.registration_count = 0
+            self.initial_expiry = None
+            self.response_lost = threading.Event()
+            self.renewal_reconciled = threading.Event()
+            self.reregistered = threading.Event()
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def register_worker(self, worker_id):
+            registered = self.delegate.register_worker(worker_id)
+            if registered is not None:
+                self.registration_count += 1
+                self.initial_expiry = registered.expires_at
+                if self.registration_count > 1:
+                    self.reregistered.set()
+            return registered
+
+        def renew_worker(self, lease):
+            renewed = self.delegate.renew_worker(lease)
+            if not self.response_lost.is_set():
+                assert self.initial_expiry is not None
+                while datetime.now(timezone.utc) < self.initial_expiry:
+                    time.sleep(0.001)
+                self.response_lost.set()
+                raise ConnectionError("renewal committed but response was lost")
+            self.renewal_reconciled.set()
+            return renewed
+
+    worker_controller = ControllerWithLostRenewalResponse(controller)
+    worker = JobWorker(
+        worker_controller,
+        SuccessfulRunner(),
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        worker_lease_seconds=0.15,
+    )
+
+    worker.start()
+    try:
+        assert worker_controller.response_lost.wait(timeout=1)
+        assert worker_controller.renewal_reconciled.wait(timeout=1)
+        assert not worker_controller.reregistered.is_set()
+        assert worker.is_ready()
+        assert worker_controller.registration_count == 1
     finally:
         worker.stop()
 
@@ -1232,11 +1299,11 @@ def test_worker_renews_presence_during_long_running_job():
         def __getattr__(self, name):
             return getattr(self.delegate, name)
 
-        def renew_worker(self, worker_id):
+        def renew_worker(self, lease):
             self.renewal_allowed.wait(timeout=2)
-            renewed = self.delegate.renew_worker(worker_id)
+            renewed = self.delegate.renew_worker(lease)
             if renewed:
-                self.renewed_expiry = store._workers[worker_id].expires_at
+                self.renewed_expiry = store._workers[lease.worker_id].expires_at
                 self.worker_renewed.set()
             return renewed
 
@@ -1414,18 +1481,18 @@ def test_worker_stops_execution_after_its_lease_expires():
         def __getattr__(self, name):
             return getattr(self.delegate, name)
 
-        def claim_next_job(self, worker_id):
+        def claim_next_job(self, lease):
             self.claim_calls += 1
-            claimed = self.delegate.claim_next_job(worker_id)
+            claimed = self.delegate.claim_next_job(lease)
             if self.claim_calls > 1:
                 self.next_claim_attempted.set()
             return claimed
 
-        def is_stop_requested(self, job_id, worker_id):
+        def is_stop_requested(self, job_id, lease):
             if not self.stop_read_failed.is_set():
                 self.stop_read_failed.set()
                 raise ConnectionError("store temporarily unavailable")
-            return self.delegate.is_stop_requested(job_id, worker_id)
+            return self.delegate.is_stop_requested(job_id, lease)
 
     worker_controller = ControllerWithTransientStopReadFailure(controller)
     runner = StoppableRunner()
@@ -1488,7 +1555,7 @@ def test_worker_recovers_after_presence_lease_expires():
                     self.recovered.set()
             return registered
 
-        def renew_worker(self, _worker_id):
+        def renew_worker(self, _lease):
             raise ConnectionError("simulated heartbeat outage")
 
     worker_controller = ControllerWithRenewalOutage(controller)

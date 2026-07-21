@@ -30,7 +30,7 @@ from ..errors import (
     JobNotFoundError,
     StoreWriteConflictError,
 )
-from ..jobs.models import Job, JobEvent, JobState, ServerActivity, StoredArtifact, StoreLimits
+from ..jobs.models import Job, JobEvent, JobState, ServerActivity, StoredArtifact, StoreLimits, WorkerLease
 
 
 @dataclass
@@ -53,6 +53,7 @@ class _MemoryJobRecord:
 class _MemoryWorkerLease:
     """Process-local worker presence and exclusive job association."""
 
+    token: str
     expires_at: datetime
     active_job_id: str | None = None
 
@@ -161,7 +162,7 @@ class MemoryJobStore:
 
     def claim_next_job(
         self,
-        worker_id: str,
+        lease: WorkerLease,
         started_at: datetime,
         runtime_identity: Mapping[str, str] | None = None,
     ) -> Job | None:
@@ -170,8 +171,13 @@ class MemoryJobStore:
         Return the claimed running job, or `None` when the queue is empty.
         """
         with self._changed:
-            worker = self._workers.get(worker_id)
-            if worker is None or worker.expires_at <= started_at or worker.active_job_id is not None:
+            worker = self._workers.get(lease.worker_id)
+            if (
+                worker is None
+                or worker.token != lease.token
+                or worker.expires_at <= started_at
+                or worker.active_job_id is not None
+            ):
                 return None
             queued = sorted(
                 (record for record in self._records.values() if record.job.state == JobState.QUEUED),
@@ -184,7 +190,7 @@ class MemoryJobStore:
                 record.job,
                 state=JobState.RUNNING,
                 started_at=started_at,
-                worker_id=worker_id,
+                worker_id=lease.worker_id,
                 queue_position=None,
                 revision=record.job.revision + 1,
             )
@@ -200,7 +206,7 @@ class MemoryJobStore:
                             "queue_position": None,
                             "cancel_requested": False,
                             "early_completion_requested": False,
-                            "worker_id": worker_id,
+                            "worker_id": lease.worker_id,
                             **({"runtime": dict(runtime_identity)} if runtime_identity is not None else {}),
                         },
                         occurred_at=started_at,
@@ -212,30 +218,32 @@ class MemoryJobStore:
             self._changed.notify_all()
             return claimed
 
-    def register_worker(self, worker_id: str, registered_at: datetime, lease_expires_at: datetime) -> bool:
+    def register_worker(self, lease: WorkerLease, registered_at: datetime) -> bool:
         """Register an idle worker without replacing a live or unresolved lease."""
         with self._changed:
-            existing = self._workers.get(worker_id)
+            existing = self._workers.get(lease.worker_id)
             if existing is not None and (existing.expires_at > registered_at or existing.active_job_id is not None):
                 return False
-            self._workers[worker_id] = _MemoryWorkerLease(expires_at=lease_expires_at)
+            self._workers[lease.worker_id] = _MemoryWorkerLease(token=lease.token, expires_at=lease.expires_at)
             self._changed.notify_all()
             return True
 
-    def renew_worker(self, worker_id: str, renewed_at: datetime, lease_expires_at: datetime) -> bool:
+    def renew_worker(self, lease: WorkerLease, renewed_at: datetime, lease_expires_at: datetime) -> bool:
         """Renew an existing lease only before its current expiry."""
         with self._changed:
-            worker = self._workers.get(worker_id)
-            if worker is None or worker.expires_at <= renewed_at:
+            worker = self._workers.get(lease.worker_id)
+            if worker is None or worker.token != lease.token or worker.expires_at <= renewed_at:
                 return False
             worker.expires_at = lease_expires_at
             self._changed.notify_all()
             return True
 
-    def unregister_worker(self, worker_id: str) -> None:
-        """Remove worker presence and ownership state."""
+    def unregister_worker(self, lease: WorkerLease) -> None:
+        """Remove matching worker presence and ownership state."""
         with self._changed:
-            self._workers.pop(worker_id, None)
+            worker = self._workers.get(lease.worker_id)
+            if worker is not None and worker.token == lease.token:
+                del self._workers[lease.worker_id]
             self._changed.notify_all()
 
     def worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
@@ -243,6 +251,17 @@ class MemoryJobStore:
         with self._lock:
             worker = self._workers.get(worker_id)
             return bool(worker is not None and worker.expires_at > observed_at and worker.active_job_id == job_id)
+
+    def lease_owns_job(self, lease: WorkerLease, job_id: str, observed_at: datetime) -> bool:
+        """Return whether this exact live lease is associated with the job."""
+        with self._lock:
+            worker = self._workers.get(lease.worker_id)
+            return bool(
+                worker is not None
+                and worker.token == lease.token
+                and worker.expires_at > observed_at
+                and worker.active_job_id == job_id
+            )
 
     def get_activity(self, observed_at: datetime) -> ServerActivity:
         """Return aggregate job states and unexpired worker leases."""
@@ -261,8 +280,15 @@ class MemoryJobStore:
         expected_revision: int,
         events: Sequence[JobEvent],
         artifact: StoredArtifact | None = None,
+        *,
+        worker_lease: WorkerLease | None = None,
+        worker_lease_observed_at: datetime | None = None,
     ) -> Job:
-        """Update a job only if no concurrent update has occurred.
+        """Update a job if its revision and optional worker lease still match.
+
+        Omit `worker_lease` only for server-authorized API or maintenance
+        transitions. Worker-originated updates must include the lease and its
+        observation time.
 
         Raises:
             JobNotFoundError: If the job does not exist.
@@ -272,6 +298,18 @@ class MemoryJobStore:
             record = self._record(job.id)
             if record.job.revision != expected_revision:
                 raise StoreWriteConflictError(f"Job revision changed: {job.id}")
+            if worker_lease is not None:
+                if worker_lease_observed_at is None:
+                    raise ValueError("worker_lease_observed_at is required with a worker lease")
+                worker = self._workers.get(worker_lease.worker_id)
+                if (
+                    record.job.worker_id != worker_lease.worker_id
+                    or worker is None
+                    or worker.token != worker_lease.token
+                    or worker.expires_at <= worker_lease_observed_at
+                    or worker.active_job_id != job.id
+                ):
+                    return self._with_queue_position(record.job)
             was_queued = record.job.state == JobState.QUEUED
             updated_job = replace(job, revision=expected_revision + 1, queue_position=None)
             record.job = updated_job

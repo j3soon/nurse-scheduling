@@ -522,6 +522,7 @@ ZRANGE nurse_scheduling:jobs:v0:jobs 0 -1 WITHSCORES
 ZRANGE nurse_scheduling:jobs:v0:queue 0 -1 WITHSCORES
 SMEMBERS nurse_scheduling:jobs:v0:pending
 ZRANGE nurse_scheduling:jobs:v0:workers:leases 0 -1 WITHSCORES
+HGETALL nurse_scheduling:jobs:v0:workers:tokens
 HGETALL nurse_scheduling:jobs:v0:workers:active
 GET nurse_scheduling:jobs:v0:job:<job-id>
 GET nurse_scheduling:jobs:v0:job:<job-id>:input

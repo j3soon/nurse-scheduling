@@ -39,10 +39,10 @@ flowchart TB
 
     subgraph Process[FastAPI process]
         API[<b>API routes</b><br/>HTTP job endpoints]
-        Controller[<b>JobController</b><br/>Lifecycle policy<br/>Persistence]
-        Worker[<b>JobWorker</b><br/>Claim and control jobs]
+        Controller[<b>JobController</b><br/>Job use cases<br/>Lifecycle policy]
+        Worker[<b>JobWorker</b><br/>Claim and execute jobs]
         Executor[<b>Process runner</b><br/>Spawn and supervise direct child]
-        Store[<b>JobStore</b><br/>Atomic job, event,<br/>and artifact storage]
+        Store[<b>JobStore</b><br/>Atomic job, lease,<br/>event, and artifact storage]
         Maintenance[<b>JobMaintenance</b><br/>Expire claims and jobs]
 
         subgraph Child[Per-job child process]
@@ -57,7 +57,7 @@ flowchart TB
     Client -->|Submit and control| API
     API -->|JSON, SSE, XLSX| Client
     API -->|Commands| Controller
-    Controller <--> Worker
+    Worker -->|Commands and outcomes| Controller
     Worker -->|Run job| Executor
     Executor <-->|Events, controls, result| Runner
     Runner -->|Schedule| Engine
@@ -68,25 +68,25 @@ flowchart TB
     Memory ~~~ Redis
 ```
 
-| Component | Responsibility |
-| --- | --- |
-| `server/app.py` | Constructs the FastAPI app, dependencies, background services, health checks, and error handlers. |
-| `server/api/` | Translates HTTP requests and responses, including the SSE event stream. |
-| `server/jobs/controller.py` | Owns job lifecycle policy independently of HTTP and persistence. |
-| `server/job_store.py` | Defines the atomic persistence contract implemented by memory and Redis stores. |
-| `server/jobs/worker.py` | Owns the process-local claim loop. It renews leases, coordinates the process executor, and reports the terminal outcome. |
-| `server/jobs/process_executor.py` | Runs one optimization in a spawned child process, bridges events and controls, and enforces timeout and cancellation boundaries without knowing about HTTP or persistence. |
-| `server/jobs/runner.py` | Adapts one blocking job execution to the synchronous scheduler. It normalizes progress and results and creates the XLSX artifact without knowing HTTP or persistence. |
-| `server/maintenance.py` | Expires jobs owned by lost workers, worker leases, and retained terminal jobs. |
+| Component | Control-flow role | Responsibility |
+| --- | --- | --- |
+| `server/app.py` | Bootstrap | Constructs the FastAPI app, dependencies, background services, health checks, and error handlers. |
+| `server/api/` | Reactive driver | Translates incoming HTTP requests into controller operations and returns HTTP or SSE responses. |
+| `server/jobs/controller.py` | Passive application service | Defines job use cases and lifecycle policy independently of HTTP, worker loops, and persistence implementations. |
+| `server/job_store.py` | Passive persistence boundary | Defines the atomic job and lease contract implemented by memory and Redis stores. |
+| `server/jobs/worker.py` | Active background driver | Owns the process-local claim and heartbeat loops, carries its current lease, coordinates execution, and reports outcomes through the controller. |
+| `server/jobs/process_executor.py` | Invoked service | Runs one optimization in a spawned child process, bridges events and controls, and enforces timeout and cancellation boundaries without knowing about HTTP or persistence. |
+| `server/jobs/runner.py` | Invoked adapter | Adapts one blocking job execution to the synchronous scheduler. It normalizes progress and results and creates the XLSX artifact without knowing HTTP or persistence. |
+| `server/maintenance.py` | Active background driver | Periodically asks the controller to expire jobs owned by lost workers, worker leases, and retained terminal jobs. |
 
 `nurse_scheduling.serve:app` is the public ASGI entry point. Each application
 process owns one worker thread and one maintenance thread. The worker renews its
 shared presence lease whether idle or running. Each optimization runs in a
 separate child process.
 
-The worker owns job lifecycle orchestration. The process executor owns child
-process supervision. The runner owns one scheduler invocation and its output
-conversion.
+The controller owns job lifecycle policy. The worker owns execution
+orchestration. The process executor owns child process supervision. The runner
+owns one scheduler invocation and its output conversion.
 
 ## Job Lifecycle
 
@@ -229,6 +229,9 @@ operations, `413` for oversized YAML, and `429` when job capacity is exhausted.
 Do not use memory mode with multiple Uvicorn workers. A later request may reach
 a different process that does not contain the job. Redis mode coordinates job
 claims across processes. Each process still executes at most one job at a time.
+Opaque lease tokens fence stale workers. Stores validate the job revision,
+lease, and active-job association together before accepting worker updates.
+Each execution retains the exact lease used to claim its job.
 
 Example with three server processes:
 

@@ -265,6 +265,7 @@ function useBaseTableColumns(
         );
       },
       align: 'center' as const,
+      width: 80,
     });
   }
 

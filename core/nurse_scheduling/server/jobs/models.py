@@ -158,6 +158,15 @@ class StoreLimits:
 
 
 @dataclass(frozen=True)
+class WorkerLease:
+    """Opaque worker identity used to fence job ownership."""
+
+    worker_id: str
+    token: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
 class ServerActivity:
     """Aggregate job and worker activity exposed by the server."""
 

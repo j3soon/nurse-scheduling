@@ -47,6 +47,7 @@ from nurse_scheduling.server.jobs.models import (
     OptimizationResult,
     StoredArtifact,
     StoreLimits,
+    WorkerLease,
 )
 from nurse_scheduling.server.retry import DEFAULT_RETRY_MAX_ATTEMPTS
 from nurse_scheduling.server.stores.memory import MemoryJobStore
@@ -150,8 +151,9 @@ def _create(controller, input_name="input.yaml"):
 
 
 def _claim(controller, worker_id="worker"):
-    assert controller.register_worker(worker_id)
-    return controller.claim_next_job(worker_id)
+    lease = controller.register_worker(worker_id)
+    assert lease is not None
+    return lease, controller.claim_next_job(lease)
 
 
 def _raise_watch_error_once(store, monkeypatch) -> None:
@@ -332,17 +334,18 @@ def test_store_round_trips_lifecycle_input_events_and_artifact(store):
     assert created.queue_position == 1
     assert controller.get_input(created.id) == b"apiVersion: alpha\n"
 
-    claimed = _claim(controller)
+    lease, claimed = _claim(controller)
     assert claimed is not None
     assert claimed.state == JobState.RUNNING
     assert claimed.worker_id == "worker"
 
-    controller.record_event(claimed.id, "job.phase_changed", {"message": "Solving"})
+    controller.record_event(claimed.id, "job.phase_changed", {"message": "Solving"}, lease=lease)
     artifact = StoredArtifact("input.xlsx", "application/test", b"xlsx")
     completed = controller.complete_job(
         claimed.id,
         OptimizationResult(OptimizationOutcome.OPTIMAL, 42, "OPTIMAL", "optimality_proven"),
         artifact,
+        lease=lease,
     )
     assert completed.state == JobState.COMPLETED
     assert completed.result is not None
@@ -378,13 +381,14 @@ def test_store_reports_missing_input_and_artifacts(store):
     with pytest.raises(JobInputNotFoundError):
         controller.get_input(created.id)
 
-    claimed = _claim(controller)
+    lease, claimed = _claim(controller)
     assert claimed is not None
     artifact = StoredArtifact("input.xlsx", "application/test", b"xlsx")
     controller.complete_job(
         claimed.id,
         OptimizationResult(OptimizationOutcome.OPTIMAL, 42, "OPTIMAL", "optimality_proven"),
         artifact,
+        lease=lease,
     )
     if isinstance(store, MemoryJobStore):
         store._records[created.id].artifacts.clear()
@@ -396,9 +400,10 @@ def test_store_reports_missing_input_and_artifacts(store):
 
 def test_store_handles_empty_queries_and_missing_jobs(store):
     now = datetime.now(timezone.utc)
+    lease = WorkerLease("worker", "token", now + timedelta(seconds=30))
 
-    assert store.register_worker("worker", now, now + timedelta(seconds=30))
-    assert store.claim_next_job("worker", now) is None
+    assert store.register_worker(lease, now)
+    assert store.claim_next_job(lease, now) is None
     assert store.find_finished_before(now) == []
     assert store.find_jobs_without_live_workers(now) == []
     store.check_health()
@@ -483,13 +488,14 @@ def test_redis_store_uses_artifact_metadata_defaults(fake_redis_store_factory):
     store = fake_redis_store_factory()
     controller = _controller(store)
     created = _create(controller)
-    claimed = _claim(controller)
+    lease, claimed = _claim(controller)
     assert claimed is not None
     artifact = StoredArtifact("input.xlsx", "application/test", b"xlsx")
     controller.complete_job(
         claimed.id,
         OptimizationResult(OptimizationOutcome.OPTIMAL, 42, "OPTIMAL", "optimality_proven"),
         artifact,
+        lease=lease,
     )
 
     store._redis.delete(store._artifact_metadata_key(created.id))
@@ -504,17 +510,18 @@ def test_redis_store_uses_artifact_metadata_defaults(fake_redis_store_factory):
 def test_redis_store_removes_corrupt_queue_entries(fake_redis_store_factory):
     store = fake_redis_store_factory()
     now = datetime.now(timezone.utc)
-    assert store.register_worker("worker", now, now + timedelta(seconds=30))
+    lease = WorkerLease("worker", "token", now + timedelta(seconds=30))
+    assert store.register_worker(lease, now)
     store._redis.zadd(store._queue_key, {"orphan": now.timestamp()})
 
-    assert store.claim_next_job("worker", now) is None
+    assert store.claim_next_job(lease, now) is None
 
     controller = _controller(store, now=now)
     created = _create(controller)
     controller.cancel_job(created.id)
     store._redis.zadd(store._queue_key, {created.id: now.timestamp()})
 
-    assert store.claim_next_job("worker", now) is None
+    assert store.claim_next_job(lease, now) is None
 
 
 def test_redis_event_stream_treats_socket_timeout_as_keepalive(fake_redis_store_factory, monkeypatch):
@@ -546,20 +553,22 @@ def test_redis_store_retries_watch_errors(fake_redis_store_factory, monkeypatch,
         return
 
     if operation == "renew":
-        assert controller.register_worker("worker")
+        lease = controller.register_worker("worker")
+        assert lease is not None
         _raise_watch_error_once(store, monkeypatch)
-        assert controller.renew_worker("worker")
+        assert controller.renew_worker(lease)
         return
 
     created = _create(controller)
     if operation == "delete":
         created = controller.cancel_job(created.id)
     if operation == "claim":
-        assert controller.register_worker("worker")
+        lease = controller.register_worker("worker")
+        assert lease is not None
     _raise_watch_error_once(store, monkeypatch)
 
     if operation == "claim":
-        assert controller.claim_next_job("worker").state == JobState.RUNNING
+        assert controller.claim_next_job(lease).state == JobState.RUNNING
     elif operation == "update":
         assert controller.cancel_job(created.id).state == JobState.CANCELLED
     else:
@@ -571,29 +580,29 @@ def test_redis_store_retries_watch_errors(fake_redis_store_factory, monkeypatch,
 def test_store_rejects_events_from_stale_workers_and_terminal_jobs(store):
     controller = _controller(store)
     created = _create(controller)
-    claimed = _claim(controller)
+    lease, claimed = _claim(controller)
     assert claimed is not None
 
     accepted = controller.record_score_and_event(
         claimed.id,
         42,
         {"source": "accepted"},
-        worker_id="worker",
+        lease=lease,
     )
     stale = controller.record_event(
         claimed.id,
         "job.phase_changed",
         {"source": "stale"},
-        worker_id="other-worker",
+        lease=WorkerLease("worker", "stale", lease.expires_at),
     )
     assert stale.revision == accepted.revision
 
-    terminal = controller.fail_job(claimed.id, JobFailure("solver_failed", "failed"))
+    terminal = controller.fail_job(claimed.id, JobFailure("solver_failed", "failed"), lease=lease)
     late = controller.record_event(
         claimed.id,
         "job.phase_changed",
         {"source": "late"},
-        worker_id="worker",
+        lease=lease,
     )
     assert late.revision == terminal.revision
 
@@ -650,12 +659,15 @@ def test_controller_cancellation_policy_is_shared_by_stores(store):
     assert cancelled.state == JobState.CANCELLED
 
     running = _create(controller, "running.yaml")
-    _claim(controller)
+    lease, _claimed = _claim(controller)
     cancelling = controller.cancel_job(running.id)
     assert cancelling.state == JobState.CANCELLING
-    stale = controller.complete_cancellation(running.id, "other-worker")
+    stale = controller.complete_cancellation(
+        running.id,
+        WorkerLease("other-worker", "stale", lease.expires_at),
+    )
     assert stale.state == JobState.CANCELLING
-    cancelled = controller.complete_cancellation(running.id, "worker")
+    cancelled = controller.complete_cancellation(running.id, lease)
     assert cancelled.state == JobState.CANCELLED
     assert cancelled.failure == JobFailure("cancelled", "Optimization cancelled.")
 
@@ -699,8 +711,9 @@ def test_store_claims_each_job_at_most_once_under_concurrency(store):
     created_ids = {_create(controller, f"{index}.yaml").id for index in range(6)}
 
     with ThreadPoolExecutor(max_workers=6) as executor:
-        claimed = list(executor.map(lambda index: _claim(controller, f"worker-{index}"), range(6)))
+        claims = list(executor.map(lambda index: _claim(controller, f"worker-{index}"), range(6)))
 
+    claimed = [job for _lease, job in claims]
     claimed_ids = {job.id for job in claimed if job is not None}
     assert claimed_ids == created_ids
     assert len(claimed_ids) == len(claimed)
@@ -713,8 +726,8 @@ def test_store_reports_job_and_worker_activity_across_lifecycle(store):
     _create(controller, "second.yaml")
     _create(controller, "third.yaml")
 
-    first_running = _claim(controller, "worker-1")
-    second_running = _claim(controller, "worker-2")
+    first_lease, first_running = _claim(controller, "worker-1")
+    _second_lease, second_running = _claim(controller, "worker-2")
     assert first_running is not None
     assert second_running is not None
     controller.cancel_job(first.id)
@@ -725,8 +738,8 @@ def test_store_reports_job_and_worker_activity_across_lifecycle(store):
     assert activity.cancelling_jobs == 1
     assert activity.online_workers == 2
 
-    controller.complete_cancellation(first.id, "worker-1")
-    third_running = controller.claim_next_job("worker-1")
+    controller.complete_cancellation(first.id, first_lease)
+    third_running = controller.claim_next_job(first_lease)
     assert third_running is not None
     activity = controller.get_activity()
     assert activity.queued_jobs == 0
@@ -745,12 +758,16 @@ def test_expired_worker_lease_cannot_be_renewed_and_can_be_replaced(store):
         clock=lambda: now[0],
     )
 
-    assert controller.register_worker("worker") == now[0] + timedelta(seconds=10)
+    lease = controller.register_worker("worker")
+    assert lease is not None
+    assert lease.expires_at == now[0] + timedelta(seconds=10)
     now[0] += timedelta(seconds=10)
-    assert controller.renew_worker("worker") is None
+    assert controller.renew_worker(lease) is None
     assert controller.get_activity().online_workers == 0
     assert store.remove_expired_worker_leases(now[0]) == ["worker"]
-    assert controller.register_worker("worker") == now[0] + timedelta(seconds=10)
+    replacement = controller.register_worker("worker")
+    assert replacement is not None
+    assert replacement.expires_at == now[0] + timedelta(seconds=10)
     assert controller.get_activity().online_workers == 1
 
 
@@ -764,7 +781,7 @@ def test_expired_worker_lease_rejects_late_terminal_outcomes(store):
         clock=lambda: now[0],
     )
     created = _create(controller)
-    claimed = _claim(controller)
+    lease, claimed = _claim(controller)
     assert claimed is not None
     now[0] += timedelta(seconds=11)
 
@@ -773,19 +790,75 @@ def test_expired_worker_lease_rejects_late_terminal_outcomes(store):
         created.id,
         OptimizationResult(OptimizationOutcome.OPTIMAL, 42, "OPTIMAL", "optimality_proven"),
         artifact,
+        lease=lease,
     )
-    after_failure = controller.fail_job(created.id, JobFailure("late_failure", "late"))
+    after_failure = controller.fail_job(created.id, JobFailure("late_failure", "late"), lease=lease)
 
     assert after_completion.state == JobState.RUNNING
     assert after_failure.state == JobState.RUNNING
     assert after_failure.revision == claimed.revision
     cancelling = controller.cancel_job(created.id)
-    after_cancellation = controller.complete_cancellation(created.id, "worker")
+    after_cancellation = controller.complete_cancellation(created.id, lease)
     assert cancelling.state == JobState.CANCELLING
     assert after_cancellation.state == JobState.CANCELLING
     assert after_cancellation.revision == cancelling.revision
     with pytest.raises(JobArtifactNotFoundError):
         store.get_artifact(created.id, artifact.name)
+
+
+def test_worker_completion_is_rejected_when_ownership_is_lost_before_atomic_update():
+    class OwnershipLostBeforeUpdateStore(MemoryJobStore):
+        lose_ownership_before_update = False
+
+        def update_job(self, job, expected_revision, events, artifact=None, **kwargs):
+            if self.lose_ownership_before_update and job.worker_id is not None:
+                self.lose_ownership_before_update = False
+                self.unregister_worker(kwargs["worker_lease"])
+            return super().update_job(job, expected_revision, events, artifact, **kwargs)
+
+    store = OwnershipLostBeforeUpdateStore()
+    controller = _controller(store)
+    created = _create(controller)
+    lease, claimed = _claim(controller)
+    assert claimed is not None
+    store.lose_ownership_before_update = True
+
+    after_completion = controller.complete_job(
+        created.id,
+        OptimizationResult(OptimizationOutcome.OPTIMAL, 42, "OPTIMAL", "optimality_proven"),
+        StoredArtifact("late.xlsx", "application/test", b"late"),
+        lease=lease,
+    )
+
+    assert after_completion.state == JobState.RUNNING
+    assert after_completion.revision == claimed.revision
+    with pytest.raises(JobArtifactNotFoundError):
+        store.get_artifact(created.id, "late.xlsx")
+
+
+def test_store_atomically_rejects_an_owned_update_after_lease_removal(store):
+    now = datetime.now(timezone.utc)
+    controller = _controller(store)
+    created = _create(controller)
+    lease = WorkerLease("worker", "lease-token", now + timedelta(seconds=30))
+    assert store.register_worker(lease, now)
+    claimed = store.claim_next_job(lease, now)
+    assert claimed is not None
+    store.unregister_worker(lease)
+
+    after_update = store.update_job(
+        replace(claimed, state=JobState.COMPLETED, finished_at=now),
+        claimed.revision,
+        [],
+        StoredArtifact("late.xlsx", "application/test", b"late"),
+        worker_lease=lease,
+        worker_lease_observed_at=now,
+    )
+
+    assert after_update.state == JobState.RUNNING
+    assert after_update.revision == claimed.revision
+    with pytest.raises(JobArtifactNotFoundError):
+        store.get_artifact(created.id, "late.xlsx")
 
 
 def test_revision_prevents_late_overwrite(store):
@@ -874,7 +947,7 @@ def test_completed_job_can_resume_after_client_sleeps(store):
         clock=lambda: now,
     )
     created = _create(controller)
-    running = _claim(controller)
+    lease, running = _claim(controller)
     assert running is not None
 
     event_stream = controller.stream_events(running.id, after_id=None, keepalive_seconds=0.01)
@@ -889,6 +962,7 @@ def test_completed_job_can_resume_after_client_sleeps(store):
         running.id,
         OptimizationResult(OptimizationOutcome.OPTIMAL, 42, "OPTIMAL", "optimality_proven"),
         artifact,
+        lease=lease,
     )
 
     after_sleep = JobController(
@@ -957,7 +1031,7 @@ def test_expired_worker_lease_fails_job_and_releases_capacity(store):
         id_factory=lambda: "job_abandoned",
     )
     abandoned = _create(controller)
-    _claim(controller, "lost-worker")
+    lost_lease, _running = _claim(controller, "lost-worker")
 
     recovery = JobController(
         store,
@@ -968,7 +1042,7 @@ def test_expired_worker_lease_fails_job_and_releases_capacity(store):
         id_factory=lambda: "job_replacement",
     )
     assert recovery.register_worker("lost-worker") is None
-    assert recovery.is_stop_requested(abandoned.id, "lost-worker") is True
+    assert recovery.is_stop_requested(abandoned.id, lost_lease) is True
     assert recovery.expire_worker_claims() == [abandoned.id]
     failed = recovery.get_job(abandoned.id)
     assert failed.state == JobState.FAILED

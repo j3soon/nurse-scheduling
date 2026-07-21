@@ -21,7 +21,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
-from .jobs.models import Job, JobEvent, ServerActivity, StoredArtifact, StoreLimits
+from .jobs.models import Job, JobEvent, ServerActivity, StoredArtifact, StoreLimits, WorkerLease
 
 
 class JobStore(Protocol):
@@ -75,7 +75,7 @@ class JobStore(Protocol):
 
     def claim_next_job(
         self,
-        worker_id: str,
+        lease: WorkerLease,
         started_at: datetime,
         runtime_identity: Mapping[str, str] | None = None,
     ) -> Job | None:
@@ -86,20 +86,24 @@ class JobStore(Protocol):
         """
         ...
 
-    def register_worker(self, worker_id: str, registered_at: datetime, lease_expires_at: datetime) -> bool:
+    def register_worker(self, lease: WorkerLease, registered_at: datetime) -> bool:
         """Register an idle worker unless its unresolved prior lease prevents it."""
         ...
 
-    def renew_worker(self, worker_id: str, renewed_at: datetime, lease_expires_at: datetime) -> bool:
+    def renew_worker(self, lease: WorkerLease, renewed_at: datetime, lease_expires_at: datetime) -> bool:
         """Renew an unexpired worker lease without resurrecting an expired lease."""
         ...
 
-    def unregister_worker(self, worker_id: str) -> None:
-        """Remove a worker lease and its active-job association."""
+    def unregister_worker(self, lease: WorkerLease) -> None:
+        """Remove a matching worker lease and its active-job association."""
         ...
 
     def worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
         """Return whether a live worker lease is associated with the job."""
+        ...
+
+    def lease_owns_job(self, lease: WorkerLease, job_id: str, observed_at: datetime) -> bool:
+        """Return whether this exact live lease is associated with the job."""
         ...
 
     def get_activity(self, observed_at: datetime) -> ServerActivity:
@@ -112,8 +116,15 @@ class JobStore(Protocol):
         expected_revision: int,
         events: Sequence[JobEvent],
         artifact: StoredArtifact | None = None,
+        *,
+        worker_lease: WorkerLease | None = None,
+        worker_lease_observed_at: datetime | None = None,
     ) -> Job:
-        """Update a job only if no concurrent update has occurred.
+        """Update a job if its revision and optional worker lease still match.
+
+        Omit `worker_lease` only for server-authorized API or maintenance
+        transitions. Worker-originated updates must include the lease and its
+        observation time.
 
         Raises:
             JobNotFoundError: If the job does not exist.

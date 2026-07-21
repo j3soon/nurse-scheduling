@@ -27,7 +27,7 @@ from ..config import DEFAULT_TIMEOUT_GRACE_SECONDS
 from ..errors import JobNotFoundError
 from ..solver_capabilities import solver_supports_finish_now
 from .controller import JobController
-from .models import Job, JobFailure, JobState
+from .models import Job, JobFailure, JobState, WorkerLease
 from .process_executor import (
     ProcessControl,
     ProcessStatus,
@@ -80,6 +80,8 @@ class JobWorker:
         """Whether the claim loop is still winding down an owned job."""
         self._lock = threading.Lock()
         """Lock guarding worker-thread creation, inspection, and cleanup."""
+        self._lease: WorkerLease | None = None
+        """Current lease used to claim new work."""
         self._thread: threading.Thread | None = None
         """Daemon claim-loop thread, or `None` when no thread is retained."""
         self._heartbeat_thread: threading.Thread | None = None
@@ -90,15 +92,16 @@ class JobWorker:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return
-            lease_expires_at = self._controller.register_worker(self._worker_id)
-            if lease_expires_at is None:
+            lease = self._controller.register_worker(self._worker_id)
+            if lease is None:
                 raise RuntimeError(f"Unable to register optimization worker: {self._worker_id}")
+            self._lease = lease
             self._stop.clear()
             self._ready.set()
             self._thread = threading.Thread(target=self._run, name="optimization-job-worker", daemon=True)
             self._heartbeat_thread = threading.Thread(
                 target=self._heartbeat,
-                args=(lease_expires_at,),
+                args=(lease,),
                 name="optimization-worker-heartbeat",
                 daemon=True,
             )
@@ -116,8 +119,11 @@ class JobWorker:
             thread.join(timeout=5)
         if heartbeat_thread is not None:
             heartbeat_thread.join(timeout=5)
+        with self._lock:
+            lease = self._lease
         try:
-            self._controller.unregister_worker(self._worker_id)
+            if lease is not None:
+                self._controller.unregister_worker(lease)
         except Exception:
             server_logger.exception("[server:worker] failed to unregister worker_id=%s", self._worker_id)
         self._ready.clear()
@@ -128,6 +134,8 @@ class JobWorker:
                 heartbeat_thread is None or not heartbeat_thread.is_alive()
             ):
                 self._heartbeat_thread = None
+            if self._lease == lease:
+                self._lease = None
 
     def is_alive(self) -> bool:
         """Return whether the worker thread is currently running."""
@@ -145,10 +153,10 @@ class JobWorker:
                 and self._heartbeat_thread.is_alive()
             )
 
-    def _heartbeat(self, lease_expires_at: datetime) -> None:
+    def _heartbeat(self, lease: WorkerLease) -> None:
         """Renew worker presence and recover safely after an expired lease."""
         while not self._stop.is_set():
-            seconds_until_expiry = (lease_expires_at - datetime.now(timezone.utc)).total_seconds()
+            seconds_until_expiry = (lease.expires_at - datetime.now(timezone.utc)).total_seconds()
             wait_seconds = min(self._worker_heartbeat_seconds, max(0.0, seconds_until_expiry))
             if self._stop.wait(wait_seconds):
                 return
@@ -156,15 +164,21 @@ class JobWorker:
                 self._unregister_stopped_worker()
                 return
 
-            renewed_expires_at = self._renew_worker_lease(lease_expires_at)
-            if renewed_expires_at is not None:
-                lease_expires_at = renewed_expires_at
+            renewed_lease = self._renew_worker_lease(lease)
+            if renewed_lease is not None:
+                with self._lock:
+                    if self._lease == lease:
+                        self._lease = renewed_lease
+                lease = renewed_lease
                 continue
 
-            recovered_expires_at = self._recover_worker_lease()
-            if recovered_expires_at is None:
+            recovered_lease = self._recover_worker_lease(lease)
+            if recovered_lease is None:
                 return
-            lease_expires_at = recovered_expires_at
+            with self._lock:
+                self._lease = recovered_lease
+            self._ready.set()
+            lease = recovered_lease
 
     def _claim_loop_is_alive(self) -> bool:
         """Return whether the job claim loop is still running."""
@@ -174,26 +188,44 @@ class JobWorker:
     def _unregister_stopped_worker(self) -> None:
         """Clear readiness and unregister after the claim loop exits."""
         self._ready.clear()
+        with self._lock:
+            lease = self._lease
         try:
-            self._controller.unregister_worker(self._worker_id)
+            if lease is not None:
+                self._controller.unregister_worker(lease)
         except Exception:
             server_logger.exception(
                 "[server:worker] failed to unregister stopped worker_id=%s",
                 self._worker_id,
             )
+        with self._lock:
+            if self._lease == lease:
+                self._lease = None
 
-    def _renew_worker_lease(self, lease_expires_at: datetime) -> datetime | None:
+    def _renew_worker_lease(self, lease: WorkerLease) -> WorkerLease | None:
         """Renew once, retaining the current lease through a brief store outage."""
         try:
-            return self._controller.renew_worker(self._worker_id)
+            return self._controller.renew_worker(lease)
         except Exception:
             server_logger.exception("[server:worker] failed to renew worker_id=%s", self._worker_id)
-            if datetime.now(timezone.utc) < lease_expires_at:
-                return lease_expires_at
+            if datetime.now(timezone.utc) < lease.expires_at:
+                return lease
             return None
 
-    def _recover_worker_lease(self) -> datetime | None:
-        """Expire abandoned work and re-register after lease loss."""
+    def _recover_worker_lease(self, lease: WorkerLease) -> WorkerLease | None:
+        """Reconcile an uncertain renewal before replacing a lost lease."""
+        try:
+            renewed_lease = self._controller.renew_worker(lease)
+        except Exception:
+            server_logger.exception(
+                "[server:worker] failed to reconcile worker lease worker_id=%s",
+                self._worker_id,
+            )
+        else:
+            if renewed_lease is not None:
+                server_logger.info("[server:worker] worker lease reconciled worker_id=%s", self._worker_id)
+                return renewed_lease
+
         self._ready.clear()
         server_logger.error("[server:worker] worker lease expired worker_id=%s", self._worker_id)
         while not self._stop.is_set():
@@ -203,11 +235,10 @@ class JobWorker:
             try:
                 self._controller.expire_worker_claims()
                 if not self._executing.is_set():
-                    lease_expires_at = self._controller.register_worker(self._worker_id)
-                    if lease_expires_at is not None:
-                        self._ready.set()
+                    recovered_lease = self._controller.register_worker(self._worker_id)
+                    if recovered_lease is not None:
                         server_logger.info("[server:worker] worker lease recovered worker_id=%s", self._worker_id)
-                        return lease_expires_at
+                        return recovered_lease
             except Exception:
                 server_logger.exception("[server:worker] failed to recover worker_id=%s", self._worker_id)
             self._stop.wait(self._claim_poll_seconds)
@@ -222,8 +253,13 @@ class JobWorker:
             if not self._ready.is_set():
                 self._stop.wait(self._claim_poll_seconds)
                 continue
+            with self._lock:
+                lease = self._lease
+            if lease is None:
+                self._stop.wait(self._claim_poll_seconds)
+                continue
             try:
-                job = self._controller.claim_next_job(self._worker_id)
+                job = self._controller.claim_next_job(lease)
             except Exception:
                 server_logger.exception("[server:worker] failed to claim job worker_id=%s", self._worker_id)
                 self._stop.wait(self._claim_poll_seconds)
@@ -233,7 +269,7 @@ class JobWorker:
                 continue
             self._executing.set()
             try:
-                self._execute(job)
+                self._execute(job, lease)
             except Exception:
                 server_logger.exception(
                     "[server:worker] failed to report execution outcome job_id=%s worker_id=%s",
@@ -244,7 +280,7 @@ class JobWorker:
             finally:
                 self._executing.clear()
 
-    def _execute(self, job: Job) -> None:
+    def _execute(self, job: Job, lease: WorkerLease) -> None:
         """Execute one claimed job and report its progress and outcome."""
         content = b""
         # Stops the control thread and aborts the child after ownership loss.
@@ -261,18 +297,18 @@ class JobWorker:
             def publish(event_type: str, data: dict, score: int | None) -> None:
                 """Persist one runner event and its score when available."""
                 if score is None:
-                    self._controller.record_event(job.id, event_type, data, worker_id=self._worker_id)
+                    self._controller.record_event(job.id, event_type, data, lease=lease)
                 else:
-                    self._controller.record_score_and_event(job.id, score, data, worker_id=self._worker_id)
+                    self._controller.record_score_and_event(job.id, score, data, lease=lease)
 
             def watch_controls() -> None:
                 """Poll cancellation, finish-now, and ownership controls."""
                 stop_check_error_logged = False
                 while not monitor_stop.is_set():
                     try:
-                        if self._controller.is_stop_requested(job.id, self._worker_id):
+                        if self._controller.is_stop_requested(job.id, lease):
                             current = self._controller.get_job(job.id)
-                            if current.state.terminal or current.worker_id != self._worker_id:
+                            if current.state.terminal or current.worker_id != lease.worker_id:
                                 monitor_stop.set()
                                 return
                             if current.cancel_requested:
@@ -335,13 +371,14 @@ class JobWorker:
                     job.id,
                     process_result.output.result,
                     process_result.output.artifact,
+                    lease=lease,
                 )
             elif process_result.status is ProcessStatus.FAILED:
                 if process_result.failure is None:
                     raise RuntimeError("Failed optimization process has no failure")
-                self._controller.fail_job(job.id, process_result.failure)
+                self._controller.fail_job(job.id, process_result.failure, lease=lease)
             elif process_result.status is ProcessStatus.CANCELLED:
-                self._controller.complete_cancellation(job.id, self._worker_id)
+                self._controller.complete_cancellation(job.id, lease)
             elif process_result.status is ProcessStatus.ABORTED:
                 server_logger.info(
                     "[server:worker] stopped child execution job_id=%s worker_id=%s",
@@ -355,7 +392,7 @@ class JobWorker:
         except Exception as error:
             failure = JobFailure(code="optimization_failed", message=self._unexpected_error_formatter(error))
             try:
-                failed = self._controller.fail_job(job.id, failure)
+                failed = self._controller.fail_job(job.id, failure, lease=lease)
             except Exception:
                 try:
                     capture_optimize_exception(job, content, error)
