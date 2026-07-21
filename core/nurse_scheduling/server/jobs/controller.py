@@ -541,7 +541,8 @@ class JobController:
                 nonlocal did_expire
                 did_expire = False
                 if job.state not in {JobState.RUNNING, JobState.CANCELLING} or (
-                    job.worker_id is not None and self._store.worker_owns_job(job.worker_id, job.id, transition_time)
+                    job.worker_id is not None
+                    and self._store.live_worker_owns_job(job.worker_id, job.id, transition_time)
                 ):
                     return job, [], None
                 if job.cancel_requested:

@@ -1204,6 +1204,62 @@ def test_worker_reconciles_renewal_that_committed_before_response_was_lost():
         worker.stop()
 
 
+def test_worker_discards_recovery_lease_if_shutdown_wins_race(monkeypatch):
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=1, max_retained=2),
+        retention_seconds=60,
+        worker_lease_seconds=0.03,
+    )
+
+    class ControllerWithBlockedRecovery:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.registration_count = 0
+            self.recovery_started = threading.Event()
+            self.recovery_allowed = threading.Event()
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def register_worker(self, worker_id):
+            self.registration_count += 1
+            if self.registration_count > 1:
+                self.recovery_started.set()
+                self.recovery_allowed.wait(timeout=1)
+            return self.delegate.register_worker(worker_id)
+
+        def renew_worker(self, _lease):
+            raise ConnectionError("simulated heartbeat outage")
+
+    worker_controller = ControllerWithBlockedRecovery(controller)
+    worker = JobWorker(
+        worker_controller,
+        SuccessfulRunner(),
+        worker_id="worker",
+        claim_poll_seconds=0.005,
+        worker_lease_seconds=0.03,
+    )
+
+    worker.start()
+    try:
+        assert worker_controller.recovery_started.wait(timeout=1)
+        heartbeat_thread = worker._heartbeat_thread
+        assert heartbeat_thread is not None
+        monkeypatch.setattr(heartbeat_thread, "join", lambda timeout=None: None)
+
+        worker.stop()
+        worker_controller.recovery_allowed.set()
+        threading.Thread.join(heartbeat_thread, timeout=1)
+
+        assert not heartbeat_thread.is_alive()
+        assert controller.get_activity().online_workers == 0
+    finally:
+        worker_controller.recovery_allowed.set()
+        worker.stop()
+
+
 def test_cancel_queued_job_is_immediately_terminal():
     with _client(start_background=False) as client:
         created = _create(client).json()

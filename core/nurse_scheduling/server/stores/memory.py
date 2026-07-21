@@ -160,6 +160,17 @@ class MemoryJobStore:
                 raise JobArtifactNotFoundError("Job artifact was not found")
             return artifact
 
+    def _get_worker_for_live_lease_locked(
+        self,
+        lease: WorkerLease,
+        observed_at: datetime,
+    ) -> _MemoryWorkerLease | None:
+        """Return the matching live lease while the caller holds `_lock`."""
+        worker = self._workers.get(lease.worker_id)
+        if worker is None or worker.token != lease.token or worker.expires_at <= observed_at:
+            return None
+        return worker
+
     def claim_next_job(
         self,
         lease: WorkerLease,
@@ -171,13 +182,8 @@ class MemoryJobStore:
         Return the claimed running job, or `None` when the queue is empty.
         """
         with self._changed:
-            worker = self._workers.get(lease.worker_id)
-            if (
-                worker is None
-                or worker.token != lease.token
-                or worker.expires_at <= started_at
-                or worker.active_job_id is not None
-            ):
+            worker = self._get_worker_for_live_lease_locked(lease, started_at)
+            if worker is None or worker.active_job_id is not None:
                 return None
             queued = sorted(
                 (record for record in self._records.values() if record.job.state == JobState.QUEUED),
@@ -231,8 +237,8 @@ class MemoryJobStore:
     def renew_worker(self, lease: WorkerLease, renewed_at: datetime, lease_expires_at: datetime) -> bool:
         """Renew an existing lease only before its current expiry."""
         with self._changed:
-            worker = self._workers.get(lease.worker_id)
-            if worker is None or worker.token != lease.token or worker.expires_at <= renewed_at:
+            worker = self._get_worker_for_live_lease_locked(lease, renewed_at)
+            if worker is None:
                 return False
             worker.expires_at = lease_expires_at
             self._changed.notify_all()
@@ -246,7 +252,7 @@ class MemoryJobStore:
                 del self._workers[lease.worker_id]
             self._changed.notify_all()
 
-    def worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
+    def live_worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
         """Return whether a live worker is associated with the job."""
         with self._lock:
             worker = self._workers.get(worker_id)
@@ -255,13 +261,8 @@ class MemoryJobStore:
     def lease_owns_job(self, lease: WorkerLease, job_id: str, observed_at: datetime) -> bool:
         """Return whether this exact live lease is associated with the job."""
         with self._lock:
-            worker = self._workers.get(lease.worker_id)
-            return bool(
-                worker is not None
-                and worker.token == lease.token
-                and worker.expires_at > observed_at
-                and worker.active_job_id == job_id
-            )
+            worker = self._get_worker_for_live_lease_locked(lease, observed_at)
+            return worker is not None and worker.active_job_id == job_id
 
     def get_activity(self, observed_at: datetime) -> ServerActivity:
         """Return aggregate job states and unexpired worker leases."""
@@ -301,14 +302,8 @@ class MemoryJobStore:
             if worker_lease is not None:
                 if worker_lease_observed_at is None:
                     raise ValueError("worker_lease_observed_at is required with a worker lease")
-                worker = self._workers.get(worker_lease.worker_id)
-                if (
-                    record.job.worker_id != worker_lease.worker_id
-                    or worker is None
-                    or worker.token != worker_lease.token
-                    or worker.expires_at <= worker_lease_observed_at
-                    or worker.active_job_id != job.id
-                ):
+                worker = self._get_worker_for_live_lease_locked(worker_lease, worker_lease_observed_at)
+                if record.job.worker_id != worker_lease.worker_id or worker is None or worker.active_job_id != job.id:
                     return self._with_queue_position(record.job)
             was_queued = record.job.state == JobState.QUEUED
             updated_job = replace(job, revision=expected_revision + 1, queue_position=None)
@@ -395,7 +390,7 @@ class MemoryJobStore:
                 if record.job.state in {JobState.RUNNING, JobState.CANCELLING}
                 and (
                     record.job.worker_id is None
-                    or not self.worker_owns_job(record.job.worker_id, record.job.id, observed_at)
+                    or not self.live_worker_owns_job(record.job.worker_id, record.job.id, observed_at)
                 )
             ]
 

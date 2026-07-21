@@ -79,7 +79,7 @@ class JobWorker:
         self._executing = threading.Event()
         """Whether the claim loop is still winding down an owned job."""
         self._lock = threading.Lock()
-        """Lock guarding worker-thread creation, inspection, and cleanup."""
+        """Lock guarding the current lease and worker-thread state."""
         self._lease: WorkerLease | None = None
         """Current lease used to claim new work."""
         self._thread: threading.Thread | None = None
@@ -119,8 +119,7 @@ class JobWorker:
             thread.join(timeout=5)
         if heartbeat_thread is not None:
             heartbeat_thread.join(timeout=5)
-        with self._lock:
-            lease = self._lease
+        lease = self._pop_lease()
         try:
             if lease is not None:
                 self._controller.unregister_worker(lease)
@@ -134,8 +133,6 @@ class JobWorker:
                 heartbeat_thread is None or not heartbeat_thread.is_alive()
             ):
                 self._heartbeat_thread = None
-            if self._lease == lease:
-                self._lease = None
 
     def is_alive(self) -> bool:
         """Return whether the worker thread is currently running."""
@@ -153,6 +150,26 @@ class JobWorker:
                 and self._heartbeat_thread.is_alive()
             )
 
+    def _current_lease(self) -> WorkerLease | None:
+        """Return the lease currently available for new claims."""
+        with self._lock:
+            return self._lease
+
+    def _replace_lease(self, expected: WorkerLease, replacement: WorkerLease) -> bool:
+        """Replace the current lease unless shutdown or another replacement won."""
+        with self._lock:
+            if self._stop.is_set() or self._lease != expected:
+                return False
+            self._lease = replacement
+            return True
+
+    def _pop_lease(self) -> WorkerLease | None:
+        """Atomically clear and return the current lease."""
+        with self._lock:
+            lease = self._lease
+            self._lease = None
+            return lease
+
     def _heartbeat(self, lease: WorkerLease) -> None:
         """Renew worker presence and recover safely after an expired lease."""
         while not self._stop.is_set():
@@ -166,17 +183,23 @@ class JobWorker:
 
             renewed_lease = self._renew_worker_lease(lease)
             if renewed_lease is not None:
-                with self._lock:
-                    if self._lease == lease:
-                        self._lease = renewed_lease
+                if not self._replace_lease(lease, renewed_lease):
+                    return
                 lease = renewed_lease
                 continue
 
             recovered_lease = self._recover_worker_lease(lease)
             if recovered_lease is None:
                 return
-            with self._lock:
-                self._lease = recovered_lease
+            if not self._replace_lease(lease, recovered_lease):
+                try:
+                    self._controller.unregister_worker(recovered_lease)
+                except Exception:
+                    server_logger.exception(
+                        "[server:worker] failed to discard recovered lease worker_id=%s",
+                        self._worker_id,
+                    )
+                return
             self._ready.set()
             lease = recovered_lease
 
@@ -188,8 +211,7 @@ class JobWorker:
     def _unregister_stopped_worker(self) -> None:
         """Clear readiness and unregister after the claim loop exits."""
         self._ready.clear()
-        with self._lock:
-            lease = self._lease
+        lease = self._pop_lease()
         try:
             if lease is not None:
                 self._controller.unregister_worker(lease)
@@ -198,9 +220,6 @@ class JobWorker:
                 "[server:worker] failed to unregister stopped worker_id=%s",
                 self._worker_id,
             )
-        with self._lock:
-            if self._lease == lease:
-                self._lease = None
 
     def _renew_worker_lease(self, lease: WorkerLease) -> WorkerLease | None:
         """Renew once, retaining the current lease through a brief store outage."""
@@ -253,8 +272,7 @@ class JobWorker:
             if not self._ready.is_set():
                 self._stop.wait(self._claim_poll_seconds)
                 continue
-            with self._lock:
-                lease = self._lease
+            lease = self._current_lease()
             if lease is None:
                 self._stop.wait(self._claim_poll_seconds)
                 continue

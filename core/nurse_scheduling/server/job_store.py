@@ -98,7 +98,7 @@ class JobStore(Protocol):
         """Remove a matching worker lease and its active-job association."""
         ...
 
-    def worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
+    def live_worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
         """Return whether a live worker lease is associated with the job."""
         ...
 
