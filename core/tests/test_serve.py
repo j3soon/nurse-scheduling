@@ -282,10 +282,12 @@ def test_info_and_readiness_report_status_without_caching():
 
 
 def test_info_reports_shared_job_and_worker_activity():
-    runner = StoppableRunner()
-    with _client(runner) as client:
+    with _client(start_background=False) as client:
         first = _create(client).json()
-        assert runner.started.wait(timeout=2)
+        controller = client.app.state.job_controller
+        lease = controller.register_worker("test-worker")
+        assert lease is not None
+        assert controller.claim_next_job(lease) is not None
         second = _create(client).json()
 
         info = client.get("/info")
@@ -296,7 +298,7 @@ def test_info_reports_shared_job_and_worker_activity():
 
         client.post(f"/optimize/{first['id']}/cancel")
         client.post(f"/optimize/{second['id']}/cancel")
-        _wait_for_terminal(client, first["id"])
+        controller.complete_cancellation(first["id"], lease)
 
 
 def test_info_reports_cancelling_jobs_separately():
@@ -1110,11 +1112,13 @@ def test_worker_exits_when_unreportable_failure_cleanup_fails(monkeypatch):
 
 def test_worker_recovers_after_releasing_unreportable_failure_lease(monkeypatch):
     store = MemoryJobStore()
+    job_ids = iter(["job_first", "job_second"])
     controller = JobController(
         store,
         limits=StoreLimits(max_pending=2, max_retained=4),
         retention_seconds=60,
         worker_lease_seconds=0.15,
+        id_factory=lambda: next(job_ids),
     )
     first = controller.create_job(
         input_name="first.yaml",
