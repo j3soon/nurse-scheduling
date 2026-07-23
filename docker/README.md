@@ -132,6 +132,14 @@ docker compose -f compose.backend.yml --profile diagnostic \
   run --rm --no-deps diagnostic
 ```
 
+After starting the staging deployment, run the diagnostic against its
+configured public URL with the staging environment:
+
+```sh
+docker compose --env-file .env.staging -f compose.backend.yml \
+  --profile diagnostic run --rm --no-deps diagnostic
+```
+
 Run it directly from a repository checkout, outside Docker Compose, after
 installing the core dependencies. From the repository root:
 
