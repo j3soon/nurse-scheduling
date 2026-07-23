@@ -74,14 +74,17 @@ class OptimizationRunner:
             data = serialize_solver_progress(payload, include_export_summary=True)
             event_callback("job.progressed", data, payload.currentBestScore)
 
-        schedule_result = scheduler.schedule(
-            file_content=input_bytes,
-            prettify=job.request.prettify,
-            timeout=job.request.timeout_seconds,
-            solver=job.request.solver,
-            progress_callback=publish_progress,
-            should_stop=should_stop,
-        )
+        try:
+            schedule_result = scheduler.schedule(
+                file_content=input_bytes,
+                prettify=job.request.prettify,
+                timeout=job.request.timeout_seconds,
+                solver=job.request.solver,
+                progress_callback=publish_progress,
+                should_stop=should_stop,
+            )
+        except ValueError as e:
+            return JobFailure(code="invalid_model", message=str(e))
         stop_requested_when_solver_returned = should_stop is not None and should_stop()
 
         normalized_status = schedule_result.solver_status
