@@ -26,6 +26,7 @@ interface Column<T> {
   header: string;
   accessor: ((item: T, index: number) => ReactNode) | keyof T;
   align?: 'left' | 'center' | 'right';
+  width?: number;
 }
 
 interface DataTableProps<T> {
@@ -107,14 +108,14 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
           <tr>
             {columns.map((column, index) => {
               const isFirstColumn = index === 0;
-              const isThirdColumn = index === 2;
+              const width = column.width;
               return (
                 <th
                   key={index}
                   className={`px-2 ${isFirstColumn ? 'pl-4' : ''} py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${
                     column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
                   }`}
-                  style={isThirdColumn ? { width: '80px', minWidth: '80px', maxWidth: '80px' } : undefined}
+                  style={width ? { width, minWidth: width, maxWidth: width } : undefined}
                 >
                   {column.header}
                 </th>
@@ -143,14 +144,14 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                 } ${customClassName}`}
               >
               {columns.map((column, colIndex) => {
-                const isThirdColumn = colIndex === 2;
+                const width = column.width;
                 return (
                   <td
                     key={colIndex}
                     className={`${colIndex === 0 ? 'pl-4 pr-2' : 'px-2'} py-1 whitespace-nowrap text-sm font-medium text-gray-900 ${
                       column.align === 'right' ? 'text-right' : column.align === 'center' ? 'text-center' : 'text-left'
                     }`}
-                    style={isThirdColumn ? { width: '80px', minWidth: '80px', maxWidth: '80px' } : undefined}
+                    style={width ? { width, minWidth: width, maxWidth: width } : undefined}
                   >
                     {typeof column.accessor === 'function'
                       ? column.accessor(item, rowIndex)

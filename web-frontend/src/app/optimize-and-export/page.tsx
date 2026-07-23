@@ -111,6 +111,7 @@ interface StoredOptimizeServerOptions {
 const TERMINAL_JOB_STATES = new Set(['completed', 'cancelled', 'failed']);
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
 const INITIAL_HEALTH_CHECK_TIMEOUT_MS = 3000;
+const SERVER_ACTIVITY_REFRESH_MS = 15000;
 const SERVER_OPTIONS_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -464,6 +465,7 @@ export default function OptimizeAndExportPage() {
   const pageMountIdRef = useRef(0);
   const latestHealthProbeIdRef = useRef(0);
   const serverProbeControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const serverEntriesRef = useRef(serverEntries);
   const selectedServer = selectedServerEndpoint === 'auto'
     ? null
     : serverEntries.find(server => server.endpoint === selectedServerEndpoint) ?? null;
@@ -577,7 +579,11 @@ export default function OptimizeAndExportPage() {
     persistServerOptions(servers, nextSelectedServerEndpoint);
   }, [selectedServerEndpoint]);
 
-  const startServerCheck = useCallback((server: OptimizeServerEntry) => {
+  useEffect(() => {
+    serverEntriesRef.current = serverEntries;
+  }, [serverEntries]);
+
+  const startServerCheck = useCallback((server: OptimizeServerEntry, silent = false) => {
     const endpoint = normalizeEndpoint(server.endpoint);
     if (!endpoint) {
       return;
@@ -597,7 +603,7 @@ export default function OptimizeAndExportPage() {
         ? {
             ...currentServer,
             endpoint,
-            status: 'checking',
+            status: silent && currentServer.status !== 'unchecked' ? currentServer.status : 'checking',
             error: null,
             healthProbeId,
           }
@@ -651,6 +657,23 @@ export default function OptimizeAndExportPage() {
       if (pageMountIdRef.current === pageMountId) {
         pageMountIdRef.current += 1;
       }
+    };
+  }, [startServerCheck]);
+
+  useEffect(() => {
+    const refreshActivity = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      serverEntriesRef.current.forEach(server => {
+        startServerCheck(server, true);
+      });
+    };
+    const intervalId = window.setInterval(refreshActivity, SERVER_ACTIVITY_REFRESH_MS);
+    document.addEventListener('visibilitychange', refreshActivity);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refreshActivity);
     };
   }, [startServerCheck]);
 
@@ -1161,7 +1184,7 @@ export default function OptimizeAndExportPage() {
               <span className="mt-1 block truncate text-xs text-gray-500">
                 Last checked: {formatCheckedTime(server.lastCheckedAt)}
                 {server.pingMs !== null ? ` · ${server.pingMs} ms` : ''}
-                {server.error ? ` · ${server.error}` : ''}
+                {server.error && server.error !== 'Backend is not responding.' ? ` · ${server.error}` : ''}
               </span>
             </span>
           </label>
@@ -1169,8 +1192,42 @@ export default function OptimizeAndExportPage() {
       },
     },
     {
+      header: 'Activity',
+      accessor: (row: BackendTableRow) => {
+        const server = row.kind === 'auto' ? resolvedServer : row.server;
+        const status = row.kind === 'auto' ? autoServerStatus : row.server.status;
+        if (status === 'offline') {
+          return <span className="text-sm font-normal text-red-600">Not responding</span>;
+        }
+        if (status === 'checking' && !server?.health) {
+          return <span className="text-sm font-normal text-gray-500">Checking...</span>;
+        }
+        if (!server?.health?.jobs || !server.health.workers) {
+          return (
+            <span className="text-sm font-normal text-gray-500">
+              {status === 'unchecked' ? 'Not checked' : 'Activity unavailable'}
+            </span>
+          );
+        }
+
+        const activeJobs = server.health.jobs.running + server.health.jobs.cancelling;
+        const onlineWorkers = server.health.workers.online;
+        return (
+          <span className="block min-h-10 font-normal">
+            <span className="block text-sm text-gray-800">
+              {activeJobs} active · {server.health.jobs.queued} queued
+            </span>
+            <span className="mt-0.5 block text-xs text-gray-500">
+              {onlineWorkers} {onlineWorkers === 1 ? 'worker' : 'workers'}
+            </span>
+          </span>
+        );
+      },
+    },
+    {
       header: 'Status',
       align: 'center' as const,
+      width: 80,
       accessor: (row: BackendTableRow) => {
         const status = row.kind === 'auto' ? autoServerStatus : row.server.status;
         const label = row.kind === 'auto'
@@ -1198,6 +1255,7 @@ export default function OptimizeAndExportPage() {
     {
       header: 'Actions',
       align: 'center' as const,
+      width: 80,
       accessor: (row: BackendTableRow) => {
         if (row.kind === 'auto') {
           return <span />;
@@ -1383,29 +1441,18 @@ export default function OptimizeAndExportPage() {
                 <p className="text-xs text-gray-500">Checking API endpoints...</p>
               )}
 
-              {(activeServerHealth || activeServerStatus === 'offline') && (
+              {activeServerHealth && (
                 <div className="space-y-2">
-                  {activeServerHealth && (
-                    <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                      <p>
-                        API version: {activeServerHealth.api_version} · Frontend version: {CURRENT_APP_VERSION} · Backend version: {activeServerHealth.app_version}
+                  <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                    <p>
+                      API version: {activeServerHealth.api_version} · Frontend version: {CURRENT_APP_VERSION} · Backend version: {activeServerHealth.app_version}
+                    </p>
+                    {hasVersionMismatch && (
+                      <p className="mt-1 font-medium text-amber-700">
+                        Frontend and backend versions do not match. If nothing breaks, you can continue.
                       </p>
-                      {hasVersionMismatch && (
-                        <p className="mt-1 font-medium text-amber-700">
-                          Frontend and backend versions do not match. If nothing breaks, you can continue.
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {activeServerStatus === 'offline' && (
-                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                      <div className="flex gap-2">
-                        <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>Backend is not responding at the configured endpoint.</span>
-                      </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               )}
             </div>

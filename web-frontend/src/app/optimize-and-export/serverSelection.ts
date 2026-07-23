@@ -21,6 +21,14 @@ export interface ServerInfoResponse {
   status: string;
   api_version: string;
   app_version: string;
+  jobs?: {
+    running: number;
+    queued: number;
+    cancelling: number;
+  };
+  workers?: {
+    online: number;
+  };
 }
 
 export interface ServerInfoCheckResult {

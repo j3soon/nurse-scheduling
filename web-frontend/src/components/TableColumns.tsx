@@ -175,6 +175,7 @@ function useBaseTableColumns(
     header: string;
     accessor: (entity: Item | Group, index: number) => React.ReactElement;
     align?: 'left' | 'center' | 'right';
+    width?: number;
   }> = [
     {
       header: 'ID',
@@ -265,6 +266,7 @@ function useBaseTableColumns(
         );
       },
       align: 'center' as const,
+      width: 80,
     });
   }
 

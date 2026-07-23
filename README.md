@@ -192,9 +192,9 @@ JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0 \
 uvicorn nurse_scheduling.serve:app --workers 3 --host 0.0.0.0 --port 8000 --no-access-log
 ```
 
-Workers renew a 90-second execution lease while optimizing. Set
-`JOB_CLAIM_LEASE_SECONDS` to change how long the server waits before marking a
-job failed after its worker disappears.
+Workers renew a 90-second presence lease while idle and optimizing. Set
+`JOB_WORKER_LEASE_SECONDS` to change how long the server waits before marking a
+worker offline and failing its active job.
 
 or with X11 forwarding for running Playwright interactive mode in the container:
 
@@ -463,11 +463,11 @@ JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0 \
 uvicorn nurse_scheduling.serve:app --workers 3 --no-access-log
 ```
 
-The optional `JOB_CLAIM_LEASE_SECONDS` setting defaults to 90 seconds. Keep it
-long enough to tolerate brief Redis interruptions; each active worker renews
-its lease every third of that interval.
+The optional `JOB_WORKER_LEASE_SECONDS` setting defaults to 90 seconds. Keep it
+long enough to tolerate brief Redis interruptions. Every worker renews its
+presence lease every third of that interval, including while idle.
 
-Replayable event history is capped at 1,000 events per job; set
+Replayable event history is capped at 1,000 events per job. Set
 `JOB_MAX_EVENTS_PER_JOB` to choose a different positive limit.
 
 Without Docker, install and start Redis with your operating system package manager.
@@ -521,6 +521,9 @@ SCAN 0 MATCH nurse_scheduling:jobs:v0:* COUNT 100
 ZRANGE nurse_scheduling:jobs:v0:jobs 0 -1 WITHSCORES
 ZRANGE nurse_scheduling:jobs:v0:queue 0 -1 WITHSCORES
 SMEMBERS nurse_scheduling:jobs:v0:pending
+ZRANGE nurse_scheduling:jobs:v0:workers:leases 0 -1 WITHSCORES
+HGETALL nurse_scheduling:jobs:v0:workers:tokens
+HGETALL nurse_scheduling:jobs:v0:workers:active
 GET nurse_scheduling:jobs:v0:job:<job-id>
 GET nurse_scheduling:jobs:v0:job:<job-id>:input
 XRANGE nurse_scheduling:jobs:v0:job:<job-id>:events - + COUNT 20

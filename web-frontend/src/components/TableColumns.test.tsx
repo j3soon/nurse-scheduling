@@ -103,6 +103,24 @@ function GroupTableHarness({
 }
 
 describe('TableColumns', () => {
+  it('keeps the shared Actions column constrained to 80 pixels', () => {
+    render(
+      <ItemTableHarness
+        items={[{ id: 'A', description: '' }]}
+        groups={[]}
+        onInlineEdit={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Actions' })).toHaveStyle({
+      width: '80px',
+      minWidth: '80px',
+      maxWidth: '80px',
+    });
+  });
+
   it('triggers inline edit callback on double-clicking item ID', async () => {
     const user = userEvent.setup();
     const onInlineEdit = vi.fn();

@@ -168,7 +168,7 @@ def create_app(
             max_retained=settings.max_retained_jobs,
         ),
         retention_seconds=settings.job_retention_seconds,
-        claim_lease_seconds=settings.claim_lease_seconds,
+        worker_lease_seconds=settings.worker_lease_seconds,
         runtime_identity=runtime_identity,
     )
     worker = JobWorker(
@@ -176,7 +176,7 @@ def create_app(
         runner,
         worker_id=instance_id,
         claim_poll_seconds=settings.claim_poll_seconds,
-        claim_lease_seconds=settings.claim_lease_seconds,
+        worker_lease_seconds=settings.worker_lease_seconds,
         timeout_grace_seconds=settings.timeout_grace_seconds,
         unexpected_error_formatter=_format_unexpected_error,
     )
@@ -293,7 +293,7 @@ def create_app(
                 error,
             )
             return "job_store_unavailable"
-        if start_background and not worker.is_alive():
+        if start_background and not worker.is_ready():
             return "job_worker_unavailable"
         return None
 
@@ -307,8 +307,29 @@ def create_app(
                 content={**info_payload("unavailable"), "reason": unavailable_reason},
                 headers={"Cache-Control": "no-store"},
             )
+        try:
+            activity = controller.get_activity()
+        except Exception as error:
+            server_logger.warning(
+                "[server:info] job activity unavailable backend=%s error=%s",
+                settings.job_backend,
+                error,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={**info_payload("unavailable"), "reason": "job_store_unavailable"},
+                headers={"Cache-Control": "no-store"},
+            )
         return JSONResponse(
-            content=info_payload("ready"),
+            content={
+                **info_payload("ready"),
+                "jobs": {
+                    "running": activity.running_jobs,
+                    "queued": activity.queued_jobs,
+                    "cancelling": activity.cancelling_jobs,
+                },
+                "workers": {"online": activity.online_workers},
+            },
             headers={"Cache-Control": "no-store"},
         )
 

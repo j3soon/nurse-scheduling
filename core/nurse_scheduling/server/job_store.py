@@ -21,7 +21,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
-from .jobs.models import Job, JobEvent, StoredArtifact, StoreLimits
+from .jobs.models import Job, JobEvent, ServerActivity, StoredArtifact, StoreLimits, WorkerLease
 
 
 class JobStore(Protocol):
@@ -73,11 +73,10 @@ class JobStore(Protocol):
         """
         ...
 
-    def claim_next(
+    def claim_next_job(
         self,
-        worker_id: str,
+        lease: WorkerLease,
         started_at: datetime,
-        claim_expires_at: datetime,
         runtime_identity: Mapping[str, str] | None = None,
     ) -> Job | None:
         """Atomically claim the next queued job for a worker.
@@ -87,14 +86,45 @@ class JobStore(Protocol):
         """
         ...
 
-    def save(
+    def register_worker(self, lease: WorkerLease, registered_at: datetime) -> bool:
+        """Register an idle worker unless its unresolved prior lease prevents it."""
+        ...
+
+    def renew_worker(self, lease: WorkerLease, renewed_at: datetime, lease_expires_at: datetime) -> bool:
+        """Renew an unexpired worker lease without resurrecting an expired lease."""
+        ...
+
+    def unregister_worker(self, lease: WorkerLease) -> None:
+        """Remove a matching worker lease and its active-job association."""
+        ...
+
+    def live_worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
+        """Return whether a live worker lease is associated with the job."""
+        ...
+
+    def lease_owns_job(self, lease: WorkerLease, job_id: str, observed_at: datetime) -> bool:
+        """Return whether this exact live lease is associated with the job."""
+        ...
+
+    def get_activity(self, observed_at: datetime) -> ServerActivity:
+        """Return aggregate current job states and live workers."""
+        ...
+
+    def update_job(
         self,
         job: Job,
         expected_revision: int,
         events: Sequence[JobEvent],
         artifact: StoredArtifact | None = None,
+        *,
+        worker_lease: WorkerLease | None = None,
+        worker_lease_observed_at: datetime | None = None,
     ) -> Job:
-        """Save a job update only if no concurrent update has occurred.
+        """Update a job if its revision and optional worker lease still match.
+
+        Omit `worker_lease` only for server-authorized API or maintenance
+        transitions. Worker-originated updates must include the lease and its
+        observation time.
 
         Raises:
             JobNotFoundError: If the job does not exist.
@@ -124,11 +154,15 @@ class JobStore(Protocol):
         """
         ...
 
-    def find_claimed_before(self, cutoff: datetime) -> list[Job]:
-        """Return active jobs whose worker claim expired by the cutoff.
+    def find_jobs_without_live_workers(self, observed_at: datetime) -> list[Job]:
+        """Return active jobs without a matching live worker lease.
 
         Maintenance terminates them because their worker is presumed lost.
         """
+        ...
+
+    def remove_expired_worker_leases(self, observed_at: datetime) -> list[str]:
+        """Remove expired worker leases and return their worker IDs."""
         ...
 
     def check_health(self) -> None:

@@ -34,6 +34,8 @@ test paths when a narrower suite is known to be sufficient.
   immediately.
 - Worker shutdown uses normal claim expiry recovery. Do not add a separate
   persisted shutdown failure unless immediate terminal state becomes required.
+- A worker that cannot persist an execution outcome must relinquish its lease.
+  Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Testing
 - Normal tests live under `tests/`.

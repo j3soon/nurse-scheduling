@@ -150,6 +150,8 @@ export async function mockOptimizeAndExport(
         status: 'ready',
         api_version: 'test',
         app_version: 'test',
+        jobs: { running: 0, queued: 0, cancelling: 0 },
+        workers: { online: 1 },
       }),
     });
   });

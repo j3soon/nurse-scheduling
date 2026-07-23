@@ -26,6 +26,7 @@ import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import {
   selectOfflineFallbackBackendApiUrl,
   selectPreferredServer,
+  type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
 
 const mockUseSchedulingData = vi.hoisted(() => vi.fn());
@@ -98,16 +99,14 @@ const createSchedulingData = (overrides = {}) => ({
   ...overrides,
 });
 
-const healthyResponse = (overrides: Partial<{
-  status: string;
-  api_version: string;
-  app_version: string;
-}> = {}) => ({
+const healthyResponse = (overrides: Partial<ServerInfoResponse> = {}) => ({
   ok: true,
   json: vi.fn().mockResolvedValue({
     status: 'ready',
     api_version: 'alpha',
     app_version: 'frontend-test',
+    jobs: { running: 0, queued: 0, cancelling: 0 },
+    workers: { online: 1 },
     ...overrides,
   }),
 });
@@ -316,14 +315,77 @@ describe('OptimizeAndExportPage error handling', () => {
         status: 'ready',
         api_version: 'alpha',
         app_version: 'v-test',
+        jobs: { running: 2, queued: 4, cancelling: 1 },
+        workers: { online: 5 },
       }),
     });
 
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.getAllByRole('columnheader').map(header => header.textContent)).toEqual([
+      'Server',
+      'Activity',
+      'Status',
+      'Actions',
+    ]);
     expect(screen.getByText(/API version: alpha · Frontend version: frontend-test · Backend version: v-test/)).toBeInTheDocument();
     expect(screen.getByText(/Last checked: .* · \d+ ms/)).toBeInTheDocument();
+    expect(screen.getAllByText('3 active · 4 queued')).toHaveLength(2);
+    expect(screen.getAllByText('5 workers')).toHaveLength(2);
+  });
+
+  it('shows unavailable activity for an older healthy backend response', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: 'ready',
+        api_version: 'alpha',
+        app_version: 'frontend-test',
+      }),
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.getAllByText('Activity unavailable')).toHaveLength(2);
+  });
+
+  it('silently refreshes activity while preserving the previous online snapshot', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    let resolveRefresh: (response: ReturnType<typeof healthyResponse>) => void = () => undefined;
+    fetchMock
+      .mockResolvedValueOnce(healthyResponse({
+        jobs: { running: 1, queued: 2, cancelling: 0 },
+        workers: { online: 3 },
+      }))
+      .mockImplementationOnce(() => new Promise(resolve => {
+        resolveRefresh = resolve;
+      }));
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.getAllByText('1 active · 2 queued')).toHaveLength(2);
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15000);
+
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(screen.getByText('Server: Online')).toBeInTheDocument();
+    expect(screen.getAllByText('1 active · 2 queued')).toHaveLength(2);
+
+    act(() => {
+      resolveRefresh(healthyResponse({
+        jobs: { running: 2, queued: 1, cancelling: 1 },
+        workers: { online: 4 },
+      }));
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText('3 active · 1 queued')).toHaveLength(2);
+      expect(screen.getAllByText('4 workers')).toHaveLength(2);
+    });
   });
 
   it('allows an empty solver timeout while editing and clears its run error only after a value change', async () => {
@@ -712,7 +774,7 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
-    expect(screen.getByText(/backend is not responding at the configured endpoint/i)).toBeInTheDocument();
+    expect(screen.getAllByText('Not responding')).toHaveLength(2);
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
     expect(screen.getByText(/backend unavailable/i)).toBeInTheDocument();
   });

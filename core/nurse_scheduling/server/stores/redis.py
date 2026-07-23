@@ -42,8 +42,10 @@ from ..jobs.models import (
     JobState,
     OptimizationOutcome,
     OptimizationResult,
+    ServerActivity,
     StoredArtifact,
     StoreLimits,
+    WorkerLease,
 )
 from ..retry import retry_with_backoff
 
@@ -127,6 +129,12 @@ class RedisJobStore:
         """Set key (`SADD`) of non-terminal job IDs used for pending-capacity checks."""
         self._queue_key = self._key("queue")
         """Sorted-set key (`ZADD`) of queued job IDs scored by creation time for FIFO claims."""
+        self._workers_key = self._key("workers", "leases")
+        """Sorted-set key of worker IDs scored by lease expiration time."""
+        self._worker_tokens_key = self._key("workers", "tokens")
+        """Hash mapping worker IDs to their current opaque lease tokens."""
+        self._worker_active_jobs_key = self._key("workers", "active")
+        """Hash mapping worker IDs to their exclusively owned active job IDs."""
 
     @property
     def store_id(self) -> str:
@@ -271,11 +279,22 @@ class RedisJobStore:
         media_type = _decode(metadata.get(b"media_type")) or "application/octet-stream"
         return StoredArtifact(name=stored_name, media_type=media_type, content=content)
 
-    def claim_next(
+    @staticmethod
+    def _lease_is_live(
+        lease: WorkerLease,
+        observed_at: datetime,
+        stored_expiry: float | None,
+        stored_token: str | None,
+    ) -> bool:
+        """Return whether stored values describe this exact live lease."""
+        return bool(
+            stored_expiry is not None and stored_expiry > observed_at.timestamp() and stored_token == lease.token
+        )
+
+    def claim_next_job(
         self,
-        worker_id: str,
+        lease: WorkerLease,
         started_at: datetime,
-        claim_expires_at: datetime,
         runtime_identity: Mapping[str, str] | None = None,
     ) -> Job | None:
         """Atomically assign the oldest queued job to a worker.
@@ -288,7 +307,21 @@ class RedisJobStore:
         while True:
             try:
                 with self._redis.pipeline() as transaction:
-                    transaction.watch(self._queue_key)
+                    transaction.watch(
+                        self._queue_key,
+                        self._workers_key,
+                        self._worker_tokens_key,
+                        self._worker_active_jobs_key,
+                    )
+                    worker_expiry = transaction.zscore(self._workers_key, lease.worker_id)
+                    worker_token = _decode(transaction.hget(self._worker_tokens_key, lease.worker_id))
+                    active_job_id = _decode(transaction.hget(self._worker_active_jobs_key, lease.worker_id))
+                    if (
+                        not self._lease_is_live(lease, started_at, worker_expiry, worker_token)
+                        or active_job_id is not None
+                    ):
+                        transaction.unwatch()
+                        return None
                     queued = transaction.zrange(self._queue_key, 0, 0)
                     if not queued:
                         transaction.unwatch()
@@ -319,8 +352,7 @@ class RedisJobStore:
                         current,
                         state=JobState.RUNNING,
                         started_at=started_at,
-                        worker_id=worker_id,
-                        claim_expires_at=claim_expires_at,
+                        worker_id=lease.worker_id,
                         revision=current.revision + 1,
                         queue_position=None,
                     )
@@ -331,7 +363,7 @@ class RedisJobStore:
                             "queue_position": None,
                             "cancel_requested": False,
                             "early_completion_requested": False,
-                            "worker_id": worker_id,
+                            "worker_id": lease.worker_id,
                             **({"runtime": dict(runtime_identity)} if runtime_identity is not None else {}),
                         },
                         occurred_at=started_at,
@@ -340,6 +372,7 @@ class RedisJobStore:
                     transaction.multi()
                     transaction.set(job_key, self._serialize_job(claimed))
                     transaction.zrem(self._queue_key, job_id)
+                    transaction.hset(self._worker_active_jobs_key, lease.worker_id, job_id)
                     self._stage_event_appends(transaction, job_id, [event])
                     self._stage_queue_position_events(transaction, remaining_ids, started_at)
                     transaction.execute()
@@ -347,14 +380,115 @@ class RedisJobStore:
             except redis.WatchError:
                 continue
 
-    def save(
+    def register_worker(self, lease: WorkerLease, registered_at: datetime) -> bool:
+        """Register an idle worker without overwriting live or unresolved ownership."""
+        while True:
+            try:
+                with self._redis.pipeline() as transaction:
+                    transaction.watch(self._workers_key, self._worker_tokens_key, self._worker_active_jobs_key)
+                    current_expiry = transaction.zscore(self._workers_key, lease.worker_id)
+                    active_job_id = transaction.hget(self._worker_active_jobs_key, lease.worker_id)
+                    if (
+                        current_expiry is not None and current_expiry > registered_at.timestamp()
+                    ) or active_job_id is not None:
+                        transaction.unwatch()
+                        return False
+                    transaction.multi()
+                    transaction.zadd(self._workers_key, {lease.worker_id: lease.expires_at.timestamp()})
+                    transaction.hset(self._worker_tokens_key, lease.worker_id, lease.token)
+                    transaction.hdel(self._worker_active_jobs_key, lease.worker_id)
+                    transaction.execute()
+                    return True
+            except redis.WatchError:
+                continue
+
+    def renew_worker(self, lease: WorkerLease, renewed_at: datetime, lease_expires_at: datetime) -> bool:
+        """Renew a worker lease only while its current lease is unexpired."""
+        while True:
+            try:
+                with self._redis.pipeline() as transaction:
+                    transaction.watch(self._workers_key, self._worker_tokens_key)
+                    current_expiry = transaction.zscore(self._workers_key, lease.worker_id)
+                    current_token = _decode(transaction.hget(self._worker_tokens_key, lease.worker_id))
+                    if not self._lease_is_live(lease, renewed_at, current_expiry, current_token):
+                        transaction.unwatch()
+                        return False
+                    transaction.multi()
+                    transaction.zadd(self._workers_key, {lease.worker_id: lease_expires_at.timestamp()})
+                    transaction.execute()
+                    return True
+            except redis.WatchError:
+                continue
+
+    def unregister_worker(self, lease: WorkerLease) -> None:
+        """Remove matching worker presence and its active-job association."""
+        while True:
+            try:
+                with self._redis.pipeline() as transaction:
+                    transaction.watch(self._worker_tokens_key)
+                    current_token = _decode(transaction.hget(self._worker_tokens_key, lease.worker_id))
+                    if current_token != lease.token:
+                        transaction.unwatch()
+                        return
+                    transaction.multi()
+                    transaction.zrem(self._workers_key, lease.worker_id)
+                    transaction.hdel(self._worker_tokens_key, lease.worker_id)
+                    transaction.hdel(self._worker_active_jobs_key, lease.worker_id)
+                    transaction.execute()
+                    return
+            except redis.WatchError:
+                continue
+
+    def live_worker_owns_job(self, worker_id: str, job_id: str, observed_at: datetime) -> bool:
+        """Return whether a live worker lease points to the supplied job."""
+        with self._redis.pipeline() as transaction:
+            transaction.zscore(self._workers_key, worker_id)
+            transaction.hget(self._worker_active_jobs_key, worker_id)
+            current_expiry, active_job_id = transaction.execute()
+        return bool(
+            current_expiry is not None and current_expiry > observed_at.timestamp() and _decode(active_job_id) == job_id
+        )
+
+    def lease_owns_job(self, lease: WorkerLease, job_id: str, observed_at: datetime) -> bool:
+        """Return whether this exact live lease points to the supplied job."""
+        with self._redis.pipeline() as transaction:
+            transaction.zscore(self._workers_key, lease.worker_id)
+            transaction.hget(self._worker_tokens_key, lease.worker_id)
+            transaction.hget(self._worker_active_jobs_key, lease.worker_id)
+            current_expiry, current_token, active_job_id = transaction.execute()
+        return (
+            self._lease_is_live(lease, observed_at, current_expiry, _decode(current_token))
+            and _decode(active_job_id) == job_id
+        )
+
+    def get_activity(self, observed_at: datetime) -> ServerActivity:
+        """Return aggregate current job states and unexpired worker leases."""
+        raw_ids = self._redis.smembers(self._pending_key)
+        raw_jobs = self._redis.mget([self._job_key(_decode(raw_id)) for raw_id in raw_ids]) if raw_ids else []
+        states = [self._deserialize_job(raw).state for raw in raw_jobs if raw is not None]
+        online_workers = self._redis.zcount(self._workers_key, f"({observed_at.timestamp()}", "+inf")
+        return ServerActivity(
+            queued_jobs=states.count(JobState.QUEUED),
+            running_jobs=states.count(JobState.RUNNING),
+            cancelling_jobs=states.count(JobState.CANCELLING),
+            online_workers=online_workers,
+        )
+
+    def update_job(
         self,
         job: Job,
         expected_revision: int,
         events: Sequence[JobEvent],
         artifact: StoredArtifact | None = None,
+        *,
+        worker_lease: WorkerLease | None = None,
+        worker_lease_observed_at: datetime | None = None,
     ) -> Job:
-        """Save a job update only if no concurrent update has occurred.
+        """Update a job if its revision and optional worker lease still match.
+
+        Omit `worker_lease` only for server-authorized API or maintenance
+        transitions. Worker-originated updates must include the lease and its
+        observation time.
 
         Raises:
             JobNotFoundError: If the job does not exist.
@@ -365,7 +499,10 @@ class RedisJobStore:
         while True:
             try:
                 with self._redis.pipeline() as transaction:
-                    transaction.watch(job_key)
+                    watched_keys = [job_key]
+                    if worker_lease is not None:
+                        watched_keys.extend([self._workers_key, self._worker_tokens_key, self._worker_active_jobs_key])
+                    transaction.watch(*watched_keys)
                     raw = transaction.get(job_key)
                     if raw is None:
                         transaction.unwatch()
@@ -374,6 +511,25 @@ class RedisJobStore:
                     if current.revision != expected_revision:
                         transaction.unwatch()
                         raise StoreWriteConflictError(f"Job revision changed: {job.id}")
+                    if worker_lease is not None:
+                        if worker_lease_observed_at is None:
+                            transaction.unwatch()
+                            raise ValueError("worker_lease_observed_at is required with a worker lease")
+                        worker_expiry = transaction.zscore(self._workers_key, worker_lease.worker_id)
+                        worker_token = _decode(transaction.hget(self._worker_tokens_key, worker_lease.worker_id))
+                        active_job_id = _decode(transaction.hget(self._worker_active_jobs_key, worker_lease.worker_id))
+                        if (
+                            current.worker_id != worker_lease.worker_id
+                            or not self._lease_is_live(
+                                worker_lease,
+                                worker_lease_observed_at,
+                                worker_expiry,
+                                worker_token,
+                            )
+                            or active_job_id != job.id
+                        ):
+                            transaction.unwatch()
+                            return self.get(job.id)
                     updated_job = replace(job, revision=expected_revision + 1, queue_position=None)
                     remaining_queue_ids: list[str] = []
                     if current.state == JobState.QUEUED and updated_job.state != JobState.QUEUED:
@@ -383,12 +539,20 @@ class RedisJobStore:
                             for raw_id in transaction.zrange(self._queue_key, 0, -1)
                             if (queued_id := _decode(raw_id)) != updated_job.id
                         ]
+                    worker_id_to_release: str | None = None
+                    if updated_job.state.terminal and updated_job.worker_id is not None:
+                        transaction.watch(self._worker_active_jobs_key)
+                        active_job_id = _decode(transaction.hget(self._worker_active_jobs_key, updated_job.worker_id))
+                        if active_job_id == updated_job.id:
+                            worker_id_to_release = updated_job.worker_id
                     transaction.multi()
                     transaction.set(job_key, self._serialize_job(updated_job))
                     if updated_job.state != JobState.QUEUED:
                         transaction.zrem(self._queue_key, updated_job.id)
                     if updated_job.state.terminal:
                         transaction.srem(self._pending_key, updated_job.id)
+                    if worker_id_to_release is not None:
+                        transaction.hdel(self._worker_active_jobs_key, worker_id_to_release)
                     if artifact is not None:
                         transaction.set(self._artifact_key(updated_job.id), artifact.content)
                         transaction.hset(
@@ -458,8 +622,8 @@ class RedisJobStore:
         """
         return [job for job in self._all_jobs() if job.finished_at is not None and job.finished_at < cutoff]
 
-    def find_claimed_before(self, cutoff: datetime) -> list[Job]:
-        """Return active jobs whose worker claim expired by the cutoff.
+    def find_jobs_without_live_workers(self, observed_at: datetime) -> list[Job]:
+        """Return active jobs without a matching live worker association.
 
         Maintenance terminates them because their worker is presumed lost.
 
@@ -470,9 +634,32 @@ class RedisJobStore:
             job
             for job in self._all_jobs()
             if job.state in {JobState.RUNNING, JobState.CANCELLING}
-            and job.claim_expires_at is not None
-            and job.claim_expires_at <= cutoff
+            and (job.worker_id is None or not self.live_worker_owns_job(job.worker_id, job.id, observed_at))
         ]
+
+    def remove_expired_worker_leases(self, observed_at: datetime) -> list[str]:
+        """Atomically remove worker leases that cannot be renewed anymore."""
+        while True:
+            try:
+                with self._redis.pipeline() as transaction:
+                    transaction.watch(self._workers_key, self._worker_tokens_key, self._worker_active_jobs_key)
+                    raw_ids = transaction.zrangebyscore(
+                        self._workers_key,
+                        "-inf",
+                        observed_at.timestamp(),
+                    )
+                    worker_ids = [_decode(raw_id) for raw_id in raw_ids]
+                    if not worker_ids:
+                        transaction.unwatch()
+                        return []
+                    transaction.multi()
+                    transaction.zrem(self._workers_key, *worker_ids)
+                    transaction.hdel(self._worker_tokens_key, *worker_ids)
+                    transaction.hdel(self._worker_active_jobs_key, *worker_ids)
+                    transaction.execute()
+                    return worker_ids
+            except redis.WatchError:
+                continue
 
     def check_health(self) -> None:
         """Raise an error when Redis is unavailable or its identity changed.
@@ -583,7 +770,6 @@ class RedisJobStore:
             "started_at": job.started_at.isoformat() if job.started_at is not None else None,
             "finished_at": job.finished_at.isoformat() if job.finished_at is not None else None,
             "worker_id": job.worker_id,
-            "claim_expires_at": job.claim_expires_at.isoformat() if job.claim_expires_at is not None else None,
             "result": (
                 {
                     "outcome": job.result.outcome.value,
@@ -625,9 +811,6 @@ class RedisJobStore:
             started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,
             finished_at=datetime.fromisoformat(data["finished_at"]) if data.get("finished_at") else None,
             worker_id=data.get("worker_id"),
-            claim_expires_at=(
-                datetime.fromisoformat(data["claim_expires_at"]) if data.get("claim_expires_at") else None
-            ),
             result=(
                 OptimizationResult(
                     outcome=OptimizationOutcome(result["outcome"]),
