@@ -136,6 +136,15 @@ function createDefaultServerEntries(): OptimizeServerEntry[] {
   }));
 }
 
+function hasCustomServerOptions(
+  servers: OptimizeServerEntry[],
+  selectedServerEndpoint: ServerSelection,
+): boolean {
+  return selectedServerEndpoint !== 'auto'
+    || servers.length !== BACKEND_API_CANDIDATES.length
+    || servers.some((server, index) => normalizeEndpoint(server.endpoint) !== BACKEND_API_CANDIDATES[index]);
+}
+
 function toStoredServerOptions(
   servers: OptimizeServerEntry[],
   selectedServerEndpoint: ServerSelection,
@@ -1108,6 +1117,7 @@ export default function OptimizeAndExportPage() {
     { kind: 'auto' },
     ...serverEntries.map(server => ({ kind: 'server' as const, server })),
   ];
+  const hasCustomBackendSettings = hasCustomServerOptions(serverEntries, selectedServerEndpoint);
   const isEditingBackendServer = Boolean(editingServerEndpoint || addingServer);
   const finishBackendEndpointEdit = () => {
     setEditingServerEndpoint(null);
@@ -1126,10 +1136,17 @@ export default function OptimizeAndExportPage() {
       <button
         type="button"
         onClick={resetServers}
-        disabled={isOptimizing}
-        className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+        disabled={isOptimizing || !hasCustomBackendSettings}
+        aria-label={hasCustomBackendSettings
+          ? 'Reset server settings to defaults. Custom server settings active.'
+          : 'Reset server settings to defaults'}
+        title={hasCustomBackendSettings ? 'Custom server settings active' : undefined}
+        className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
       >
         Reset
+        {hasCustomBackendSettings && (
+          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-amber-500" />
+        )}
       </button>
     </div>
   );
