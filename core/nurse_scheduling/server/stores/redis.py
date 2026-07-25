@@ -75,6 +75,27 @@ def _decode(value: bytes | str | None) -> str | None:
     return value.decode("utf-8") if isinstance(value, bytes) else value
 
 
+def _normalize_stream_id(after_id: str | None) -> str:
+    """Return a valid Redis stream ID from *after_id*, falling back to '0-0'.
+
+    Redis requires stream IDs to be of the form '<ms>-<seq>' where both parts
+    are non-negative integers.  When *after_id* is ``None``, empty, or does not
+    conform to that format, return ``'0-0'`` so that streaming replays from the
+    beginning — matching the behaviour of :class:`MemoryJobStore`.
+    """
+    if not after_id:
+        return "0-0"
+    parts = after_id.split("-")
+    if len(parts) == 2:
+        try:
+            int(parts[0])
+            int(parts[1])
+            return after_id
+        except ValueError:
+            pass
+    return "0-0"
+
+
 class RedisJobStore:
     """Store jobs, queue state, events, input, and artifacts in Redis."""
 
@@ -584,7 +605,7 @@ class RedisJobStore:
             redis.RedisError: If a Redis operation fails.
         """
         self.get(job_id)
-        last_id = after_id or "0-0"
+        last_id = _normalize_stream_id(after_id)
         block_ms = max(1, int(keepalive_seconds * 1000))
         while True:
             terminal = self.get(job_id).state.terminal
