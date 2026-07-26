@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+            write
 
 jobs:
   lint-web-frontend:
@@ -14,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          persist-credentials: true
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
