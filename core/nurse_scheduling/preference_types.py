@@ -22,6 +22,7 @@ import logging
 import math
 from . import utils
 from .context import Context
+from .exceptions import InputValidationError
 from .report import Report
 from . import models
 from . import constants
@@ -409,7 +410,7 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
     c_ds = utils.parse_dates(preference.countDates, ctx.map_did_d, ctx.dates.range)
     c_ss = utils.parse_sids(preference.countShiftTypes, ctx.map_sid_s)
     if len(c_ss) == 0:
-        raise ValueError(f"Non-empty count shift types are required, but got {preference.countShiftTypes}")
+        raise InputValidationError(f"Non-empty count shift types are required, but got {preference.countShiftTypes}")
     coefficients = _parse_shift_count_coefficients(ctx, preference, c_ss)
 
     expressions = utils.ensure_list(preference.expression)
