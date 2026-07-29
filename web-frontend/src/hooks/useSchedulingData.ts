@@ -600,7 +600,7 @@ export function useSchedulingDataInternal() {
         ...prevState.people,
         items: prevState.people.items.map(person => {
           if (person.id === personId) {
-            const newHistory = [shiftTypeId, ...person.history!];
+            const newHistory = [shiftTypeId, ...(person.history ?? [])];
             return { ...person, history: newHistory };
           }
           return person;
@@ -621,9 +621,10 @@ export function useSchedulingDataInternal() {
         ...prevState.people,
         items: prevState.people.items.map(person => {
           if (person.id === personId) {
+            const currentHistory = person.history ?? [];
             if (shiftTypeId !== undefined) {
               // Update the specific position
-              const newHistory = [...person.history!];
+              const newHistory = [...currentHistory];
               if (position >= newHistory.length) {
                 console.error(`Position ${position} is out of bounds for person ${personId}. ${ERROR_SHOULD_NOT_HAPPEN}`);
                 return person;
@@ -632,7 +633,7 @@ export function useSchedulingDataInternal() {
               return { ...person, history: newHistory };
             } else {
               // Clear all history entries before the specified position
-              const newHistory = person.history!.slice(position + 1);
+              const newHistory = currentHistory.slice(position + 1);
               return { ...person, history: newHistory };
             }
           }

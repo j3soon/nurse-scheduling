@@ -118,6 +118,20 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     );
   });
 
+  it('renders missing person history as an empty history', () => {
+    const schedulingData = mockUseSchedulingData();
+    mockUseSchedulingData.mockReturnValue({
+      ...schedulingData,
+      peopleData: {
+        ...schedulingData.peopleData,
+        items: [{ id: 'Person 1', description: '' }],
+      },
+    });
+
+    expect(() => renderShiftRequestsPage()).not.toThrow();
+    expect(screen.getByText(/No history entries defined yet/)).toBeInTheDocument();
+  });
+
   it('processes valid people-history CSV and updates people history', async () => {
     const user = userEvent.setup();
     fileContentsByName.set('people-history.csv', 'Person 1,D,2\n');

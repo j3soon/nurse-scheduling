@@ -3369,6 +3369,39 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('normalizes missing people history across import and undo history', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        description: 'missing history',
+        people: {
+          items: [{ id: 'P1', description: '' }],
+          groups: [],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual([]);
+    });
+
+    act(() => {
+      result.current.addPersonHistory('P1', 'D');
+    });
+    expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['D']);
+
+    act(() => {
+      result.current.undo();
+    });
+    expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual([]);
+
+    act(() => {
+      result.current.redo();
+    });
+    expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['D']);
+  });
+
   it('keeps persisted history length capped with mixed mutators', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
@@ -4013,6 +4046,27 @@ describe('useSchedulingData', () => {
     }));
 
     expect(loadStateFromStorage().currentHistoryIndex).toBe(0);
+  });
+
+  it('normalizes missing people history in persisted current and undo states', () => {
+    const stateWithoutHistory = {
+      apiVersion: 'alpha',
+      description: 'missing history',
+      dates: { range: {}, groups: [] },
+      people: { items: [{ id: 'P1', description: '' }], groups: [] },
+      shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+      preferences: [],
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      state: stateWithoutHistory,
+      history: [stateWithoutHistory],
+      currentHistoryIndex: 0,
+    }));
+
+    const restored = loadStateFromStorage();
+
+    expect(restored.state.people.items.find(item => item.id === 'P1')?.history).toEqual([]);
+    expect(restored.history[0].people.items.find(item => item.id === 'P1')?.history).toEqual([]);
   });
 
   it('renames a shift-type group consistently across group-referenced preferences', async () => {
