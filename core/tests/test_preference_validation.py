@@ -19,11 +19,11 @@
 
 # This test is mostly AI generated.
 
+import datetime
+import logging
 import os
 import sys
 from types import SimpleNamespace
-import datetime
-import logging
 
 import pytest
 
@@ -31,7 +31,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import preference_types, scheduler
-from nurse_scheduling.models import ShiftTypeSuccessionsPreference, ShiftAffinityPreference
+from nurse_scheduling.models import ShiftAffinityPreference, ShiftTypeSuccessionsPreference
 
 
 def test_shift_type_requirements_rejects_inf_weight_with_preferred_num_people():

@@ -69,7 +69,6 @@ from uuid import uuid4
 
 import httpx
 
-
 DEFAULT_TARGET_URL = "https://api.nursescheduling.org"
 DEFAULT_SCENARIO_PATH = (
     Path(__file__).resolve().parents[2] / "tests/testcases/real/large-ward-with-87-people-2025-11.yaml"
@@ -764,49 +763,51 @@ class PublicDiagnostic:
             self.config.request_timeout_seconds, read=min(read_seconds, self.config.request_timeout_seconds)
         )
         try:
-            with self._new_client() as client:
-                with client.stream(
+            with (
+                self._new_client() as client,
+                client.stream(
                     "GET",
                     f"/optimize/{job_id}/events",
                     headers={"Accept": "text/event-stream", "Connection": "close"},
                     timeout=timeout,
-                ) as response:
-                    if response.status_code == 404:
-                        self.visibility_split = True
-                        self._fail(
-                            "job_visibility_split",
-                            "A newly created job event stream returned 404 through the public endpoint.",
-                        )
-                        return False
-                    if response.status_code != 200:
-                        self._record_request_error(f"GET events {job_id}", f"HTTP {response.status_code}")
-                        return False
-                    self.event_jobs_checked.add(job_id)
-                    for line in response.iter_lines():
-                        if line.startswith("id:"):
-                            event_id = line.partition(":")[2].strip()
-                        elif line.startswith("event:"):
-                            event_type = line.partition(":")[2].strip()
-                        elif line.startswith("data:"):
-                            data_lines.append(line.partition(":")[2].lstrip())
-                        elif not line:
-                            payload: Any = None
-                            if data_lines:
-                                try:
-                                    payload = json.loads("\n".join(data_lines))
-                                except json.JSONDecodeError:
-                                    pass
-                            if isinstance(payload, dict):
-                                self._observe_event_identity(job_id, event_id, payload)
-                                if (
-                                    stop_on_score
-                                    and event_type == "job.progressed"
-                                    and isinstance(payload.get("score"), (int, float))
-                                ):
-                                    return True
-                            event_id = None
-                            event_type = None
-                            data_lines = []
+                ) as response,
+            ):
+                if response.status_code == 404:
+                    self.visibility_split = True
+                    self._fail(
+                        "job_visibility_split",
+                        "A newly created job event stream returned 404 through the public endpoint.",
+                    )
+                    return False
+                if response.status_code != 200:
+                    self._record_request_error(f"GET events {job_id}", f"HTTP {response.status_code}")
+                    return False
+                self.event_jobs_checked.add(job_id)
+                for line in response.iter_lines():
+                    if line.startswith("id:"):
+                        event_id = line.partition(":")[2].strip()
+                    elif line.startswith("event:"):
+                        event_type = line.partition(":")[2].strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line.partition(":")[2].lstrip())
+                    elif not line:
+                        payload: Any = None
+                        if data_lines:
+                            try:
+                                payload = json.loads("\n".join(data_lines))
+                            except json.JSONDecodeError:
+                                pass
+                        if isinstance(payload, dict):
+                            self._observe_event_identity(job_id, event_id, payload)
+                            if (
+                                stop_on_score
+                                and event_type == "job.progressed"
+                                and isinstance(payload.get("score"), (int, float))
+                            ):
+                                return True
+                        event_id = None
+                        event_type = None
+                        data_lines = []
         except httpx.ReadTimeout:
             return False
         except httpx.HTTPError as error:
@@ -1137,14 +1138,14 @@ class PublicDiagnostic:
                 if len(queued_ids) >= QUEUED_JOB_TARGET and not self.visibility_split:
                     with self._measure_phase("queue_transition"):
                         self._exercise_queue_transition(queued_ids)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             self._record_request_error("unexpected diagnostic error", f"{type(error).__name__}: {error}")
             self._mark_inconclusive("unexpected_error", "The diagnostic stopped after an unexpected internal error.")
         finally:
             try:
                 with self._measure_phase("cleanup"):
                     self._request_cleanup_cancellations()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 self._record_request_error("unexpected cleanup cancellation error", f"{type(error).__name__}: {error}")
                 self._mark_inconclusive(
                     "cleanup_cancellation_error",
@@ -1158,7 +1159,7 @@ class PublicDiagnostic:
                         if needs_accepted or needs_runner:
                             self._collect_job_identities(job.id)
                     self._analyze_runtime_identities()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 self._record_request_error("unexpected identity analysis error", f"{type(error).__name__}: {error}")
                 self._mark_inconclusive(
                     "identity_analysis_error",
@@ -1168,7 +1169,7 @@ class PublicDiagnostic:
                 try:
                     with self._measure_phase("cleanup"):
                         self._cleanup_jobs()
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001
                     self._record_request_error("unexpected cleanup error", f"{type(error).__name__}: {error}")
                     self._mark_inconclusive(
                         "cleanup_error",

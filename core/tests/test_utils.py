@@ -28,8 +28,8 @@ import pytest
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nurse_scheduling.models import DateRange
 from nurse_scheduling import utils
+from nurse_scheduling.models import DateRange
 
 
 def test_ensure_list_handles_none():

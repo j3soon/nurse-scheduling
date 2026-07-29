@@ -53,7 +53,6 @@ from .maintenance import JobMaintenance
 from .runtime_identity import get_deployment_id
 from .stores.memory import MemoryJobStore
 
-
 TITLE = "Nurse Scheduling API"
 SERVICE_NAME = "nurse-scheduling-api"
 API_VERSION = "alpha"
@@ -286,7 +285,7 @@ def create_app(
         """Return the first unavailable dependency reason, or `None` when ready."""
         try:
             store.check_health()
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             server_logger.warning(
                 "[server:readiness] job store unavailable backend=%s error=%s",
                 settings.job_backend,
@@ -309,7 +308,7 @@ def create_app(
             )
         try:
             activity = controller.get_activity()
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             server_logger.warning(
                 "[server:info] job activity unavailable backend=%s error=%s",
                 settings.job_backend,

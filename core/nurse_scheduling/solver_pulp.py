@@ -25,11 +25,13 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
 import pulp
 
 from .constants import Operator
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
 
+logger = logging.getLogger(__name__)
 
 PULP_PYTHON_API_SOLVERS: dict[str, tuple[str, str]] = {
     "highs": ("HiGHS", "highspy"),
@@ -84,7 +86,7 @@ class BasePuLPSolver(SolverInterface):
         try:
             progress_callback(payload)
         except Exception:
-            logging.exception("Progress callback failed")
+            logger.exception("Progress callback failed")
 
     def _tail_solver_log(
         self,
@@ -183,7 +185,7 @@ class BasePuLPSolver(SolverInterface):
         self.variables[unique_name] = var
         return var
 
-    def add_constraint(self, constraint, name: str = None) -> None:
+    def add_constraint(self, constraint, name: str | None = None) -> None:
         """Add a constraint to the model."""
         if name is None:
             name = self.unique_constraint_name("constraint")
@@ -263,11 +265,11 @@ class BasePuLPSolver(SolverInterface):
 
         # Note: PuLP doesn't have built-in support for deterministic solving across all solvers
         if deterministic:
-            logging.info("Deterministic mode requested (support varies by solver)")
+            logger.info("Deterministic mode requested (support varies by solver)")
 
         # Note: PuLP doesn't support solution callbacks in the same way as OR-Tools
         if solution_callback is not None:
-            logging.warning("Solution callbacks are not fully supported with PuLP solver")
+            logger.warning("Solution callbacks are not fully supported with PuLP solver")
         if should_stop is not None:
             raise NotImplementedError("PuLP solvers do not support cooperative stop callbacks.")
 
@@ -281,7 +283,7 @@ class BasePuLPSolver(SolverInterface):
         stop_log_tail = None
         log_tail_thread = None
         if self.engine in PULP_LOG_TAIL_ENGINES:
-            log_temp_file = tempfile.NamedTemporaryFile(
+            log_temp_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
                 mode="w",
                 prefix=f"nurse-scheduling-pulp-{self.engine}-",
                 suffix=".log",
@@ -316,7 +318,7 @@ class BasePuLPSolver(SolverInterface):
                         "Install a PuLP build/version with cuOpt support."
                     )
                 if deterministic:
-                    logging.warning("Deterministic mode is not implemented for PuLP/cuOpt; ignoring.")
+                    logger.warning("Deterministic mode is not implemented for PuLP/cuOpt; ignoring.")
                 self.solver = pulp.CUOPT(**solver_kwargs)
             elif self.engine == "glpk":
                 solver_class = getattr(pulp, "GLPK_CMD", None)
@@ -382,7 +384,7 @@ class BasePuLPSolver(SolverInterface):
             self.solver_status = SolverStatus.OPTIMAL
         elif self.status == pulp.LpStatusNotSolved:
             if self._has_feasible_solution():
-                logging.info(
+                logger.info(
                     "Solver returned 'Not Solved' but produced a feasible incumbent; treating status as FEASIBLE."
                 )
                 self.solver_status = SolverStatus.FEASIBLE
@@ -391,10 +393,10 @@ class BasePuLPSolver(SolverInterface):
         elif self.status == pulp.LpStatusInfeasible:
             self.solver_status = SolverStatus.INFEASIBLE
         elif self.status == pulp.LpStatusUnbounded:
-            logging.warning("Model is unbounded")
+            logger.warning("Model is unbounded")
             self.solver_status = SolverStatus.UNKNOWN
         elif self.status == pulp.LpStatusUndefined:
-            logging.warning("Solver returned undefined status")
+            logger.warning("Solver returned undefined status")
             self.solver_status = SolverStatus.UNKNOWN
         else:
             self.solver_status = SolverStatus.UNKNOWN
@@ -714,5 +716,5 @@ class BasePuLPSolver(SolverInterface):
         Note: PuLP does not support solution callbacks in the same way as OR-Tools.
         This method returns None.
         """
-        logging.info("Solution callbacks are not supported by PuLP solver")
+        logger.info("Solution callbacks are not supported by PuLP solver")
         return None

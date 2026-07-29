@@ -23,7 +23,6 @@ from pathlib import Path
 
 import nurse_scheduling
 
-
 TESTCASE = Path(__file__).parent / "testcases" / "basics" / "01_1nurse_1shift_1day.yaml"
 
 

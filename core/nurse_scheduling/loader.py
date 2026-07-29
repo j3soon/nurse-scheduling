@@ -18,8 +18,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from io import BytesIO
-from ruamel.yaml import YAML
 from typing import Any
+
+from ruamel.yaml import YAML
+
 from .models import NurseSchedulingData
 
 yaml = YAML(typ="safe")

@@ -17,16 +17,17 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import sys
 import argparse
 import json
 import logging
 import os.path
 import subprocess
+import sys
 import time
 from io import BytesIO
 from pathlib import Path
-from . import scheduler, exporter
+
+from . import exporter, scheduler
 from .model_build_stats import ModelBuildStatsSummary
 from .solver_interface import (
     SchedulePhaseProgress,
@@ -180,7 +181,7 @@ def main():
     solve_started_at = time.monotonic()
     try:
         if args.progress_output:
-            progress_output_file = open(args.progress_output, "w", encoding="utf-8")
+            progress_output_file = open(args.progress_output, "w", encoding="utf-8")  # noqa: SIM115
         progress_callback = None
         if not args.show_model_build_stats or progress_output_file is not None:
             progress_callback = _create_cli_progress_callback(

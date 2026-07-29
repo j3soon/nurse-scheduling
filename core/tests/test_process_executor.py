@@ -217,7 +217,7 @@ def _guard_death_supervisor(
             hard_timeout_seconds=61,
             finish_now_enabled=False,
         )
-    except BaseException as error:
+    except BaseException as error:  # noqa: BLE001
         outcome_connection.send(
             {
                 "exception_type": type(error).__name__,

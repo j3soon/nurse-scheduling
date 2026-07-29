@@ -68,7 +68,6 @@ from nurse_scheduling.server.runtime_identity import get_deployment_id
 from nurse_scheduling.server.solver_capabilities import SOLVER_CAPABILITIES
 from nurse_scheduling.server.stores.memory import MemoryJobStore
 
-
 PROCESS_START_TIMEOUT_SECONDS = 10
 
 

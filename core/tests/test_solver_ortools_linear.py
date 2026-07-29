@@ -601,8 +601,8 @@ def test_create_bool_var_with_constraint_rejects_unknown_operator():
 
 def test_model_counts_and_unsupported_solution_callback(caplog):
     solver = ORToolsLinearSolver(engine="cbc")
-    solver.new_bool_var("x")
-    solver.add_constraint(0 == 0)
+    x = solver.new_bool_var("x")
+    solver.add_constraint(x >= 0)
     context = SimpleNamespace(solver=solver, model_vars={})
 
     assert get_model_entity_counts(context) == (1, 1)

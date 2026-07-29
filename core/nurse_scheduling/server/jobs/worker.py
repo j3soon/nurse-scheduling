@@ -35,7 +35,6 @@ from .process_executor import (
 )
 from .runner import OptimizationRunner
 
-
 server_logger = logging.getLogger("nurse_scheduling.server")
 CONTROL_POLL_SECONDS = 1.0
 """Maximum delay before forwarding a cooperative solver control."""

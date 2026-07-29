@@ -22,7 +22,6 @@ import threading
 
 from .jobs.controller import JobController
 
-
 server_logger = logging.getLogger("nurse_scheduling.server")
 
 

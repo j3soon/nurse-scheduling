@@ -21,7 +21,6 @@ import math
 import os
 from dataclasses import dataclass
 
-
 DEFAULT_MAX_RETAINED_JOBS = 128
 """Default maximum number of jobs retained across all lifecycle states."""
 DEFAULT_JOB_RETENTION_SECONDS = 24 * 60 * 60

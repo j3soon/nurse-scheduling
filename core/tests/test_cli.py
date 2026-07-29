@@ -19,9 +19,9 @@
 
 # This test is mostly AI generated.
 
+import json
 import os
 import sys
-import json
 from pathlib import Path
 
 import pytest

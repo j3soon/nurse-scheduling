@@ -20,11 +20,12 @@
 import itertools
 import logging
 import math
-from . import utils
+
+from . import constants, models, utils
 from .context import Context
 from .report import Report
-from . import models
-from . import constants
+
+logger = logging.getLogger(__name__)
 
 # Leave most parsing to the caller, keep the function here simple.
 
@@ -138,7 +139,7 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
                     previous_preference_idx = ctx.shift_type_requirement_coverage[coverage_key]
                     date_id = str(ctx.dates.items[d])
                     shift_type_id = ctx.shiftTypes.items[s].id
-                    logging.info(
+                    logger.info(
                         "Duplicate shift type requirement coverage for "
                         f"date '{date_id}' and shift type '{shift_type_id}' "
                         f"in preferences {previous_preference_idx} and {preference_idx}; "
@@ -252,7 +253,7 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
     # where actual_n_matched = sum_{(d, s)}(shifts[(d, s, p)]), for all satisfying (d, s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     if not isinstance(preference.pattern, list):
-        raise ValueError(f"Pattern must be a list, but got {type(preference.pattern)}")
+        raise ValueError(f"Pattern must be a list, but got {type(preference.pattern)}")  # noqa: TRY004
     # Convert each pattern element to a list and parse shift IDs
     flattened_pattern = [
         sorted(
@@ -530,9 +531,9 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
 
     ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
     if not isinstance(preference.people1, list):
-        raise ValueError(f"People1 must be a list, but got {type(preference.people1)}")
+        raise ValueError(f"People1 must be a list, but got {type(preference.people1)}")  # noqa: TRY004
     if not isinstance(preference.people2, list):
-        raise ValueError(f"People2 must be a list, but got {type(preference.people2)}")
+        raise ValueError(f"People2 must be a list, but got {type(preference.people2)}")  # noqa: TRY004
     # Convert each people1 element to a list and parse person IDs
     flattened_people1 = [
         sorted(
@@ -558,7 +559,7 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
         for element in preference.people2
     ]
     if not isinstance(preference.shiftTypes, list):
-        raise ValueError(f"Shift types must be a list, but got {type(preference.shiftTypes)}")
+        raise ValueError(f"Shift types must be a list, but got {type(preference.shiftTypes)}")  # noqa: TRY004
     # Convert each shift type element to a list and parse shift type IDs
     flattened_shift_types = [
         sorted(

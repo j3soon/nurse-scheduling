@@ -28,6 +28,8 @@ from typing import Any
 
 from .context import Context
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class ModelBuildStats:
@@ -156,7 +158,7 @@ def emit_model_build_stats(
             )
         )
     except Exception:
-        logging.exception("Model build stats callback failed")
+        logger.exception("Model build stats callback failed")
 
 
 def start_model_build_step(

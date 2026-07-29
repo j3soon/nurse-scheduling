@@ -43,10 +43,9 @@ from enum import Enum
 from multiprocessing.connection import Connection, wait
 from typing import Any
 
-from .models import Job, JobFailure
 from . import process_tree
+from .models import Job, JobFailure
 from .runner import EventCallback, OptimizationRunner, RunOutput
-
 
 server_logger = logging.getLogger("nurse_scheduling.server")
 PROCESS_POLL_SECONDS = 1.0
@@ -125,7 +124,7 @@ def _run_child(
                 should_stop=finish_now_event.is_set if finish_now_enabled else None,
             )
             message = ("result", result)
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001
             message = (
                 "unexpected_error",
                 type(error).__name__,

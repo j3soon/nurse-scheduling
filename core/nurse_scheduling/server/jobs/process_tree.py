@@ -61,7 +61,6 @@ from multiprocessing.connection import Connection
 from multiprocessing.context import BaseContext
 from typing import Any
 
-
 PR_SET_PDEATHSIG = 1
 """Linux prctl operation that configures a signal for parent process death."""
 

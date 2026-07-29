@@ -27,7 +27,6 @@ from nurse_scheduling.loader import _load_yaml
 from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, init_sentry
 from nurse_scheduling.server.jobs.models import Job, JobRequest, JobState
 
-
 SCHEDULE_YAML = b"""\
 apiVersion: alpha
 description: Sensitive schedule

@@ -34,21 +34,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 CORE_ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(CORE_ROOT))
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from nurse_scheduling.scheduler import normalize_solver_selector  # noqa: E402
-from nurse_scheduling.server.app import create_app  # noqa: E402
-from nurse_scheduling.server.config import ServerSettings  # noqa: E402
-from nurse_scheduling.server.solver_capabilities import (  # noqa: E402
+from nurse_scheduling.scheduler import normalize_solver_selector
+from nurse_scheduling.server.app import create_app
+from nurse_scheduling.server.config import ServerSettings
+from nurse_scheduling.server.solver_capabilities import (
     SOLVER_CAPABILITIES,
     get_solver_capabilities,
 )
-from nurse_scheduling.server.stores.memory import MemoryJobStore  # noqa: E402
-
+from nurse_scheduling.server.stores.memory import MemoryJobStore
 
 REAL_TESTCASE = CORE_ROOT / "tests" / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 CBC_INTERMEDIATE_SCORE_TESTCASE = CORE_ROOT / "tests" / "testcases" / "basics" / "01_1nurse_1shift_1day.yaml"
@@ -910,7 +908,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--worker-round requires --solver")
         try:
             report = _run_worker_round(args.worker_round, args.solver, _config_from_args(args))
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             traceback.print_exc()
             report = _round_report(args.worker_round, "FAIL", f"Unhandled worker error: {error}")
         print(f"{RESULT_MARKER}{json.dumps(asdict(report), sort_keys=True)}", flush=True)

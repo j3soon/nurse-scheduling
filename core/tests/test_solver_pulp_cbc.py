@@ -28,9 +28,9 @@ import pytest
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from nurse_scheduling import solver_pulp as solver_pulp_module
 from nurse_scheduling.constants import Operator
 from nurse_scheduling.solver_interface import SolverStatus
-from nurse_scheduling import solver_pulp as solver_pulp_module
 from nurse_scheduling.solver_pulp_cbc import PuLPSolver
 from tests.solver_test_utils import expected_bool_value
 

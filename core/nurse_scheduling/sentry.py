@@ -34,9 +34,7 @@ def _should_enable_sentry() -> bool:
     if os.getenv("DISABLE_SENTRY"):
         return False
     # Avoid sending errors from local/unit test runs by default.
-    if "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules:
-        return False
-    return True
+    return "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules
 
 
 def init_sentry(app_version: str) -> None:

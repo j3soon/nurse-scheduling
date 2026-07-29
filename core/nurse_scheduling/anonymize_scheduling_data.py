@@ -114,5 +114,5 @@ def anonymize_scheduling_data_in_yaml(content: bytes) -> bytes:
     """Return YAML with supported sensitive scheduling data anonymized, or the original on failure."""
     try:
         return _anonymize_yaml_content(content)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return content

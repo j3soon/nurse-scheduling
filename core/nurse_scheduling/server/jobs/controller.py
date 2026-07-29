@@ -33,6 +33,7 @@ from ..errors import (
 )
 from ..job_store import JobStore
 from ..retry import retry_with_backoff
+from ..solver_capabilities import solver_supports_finish_now
 from .models import (
     Job,
     JobEvent,
@@ -45,8 +46,6 @@ from .models import (
     StoreLimits,
     WorkerLease,
 )
-from ..solver_capabilities import solver_supports_finish_now
-
 
 server_logger = logging.getLogger("nurse_scheduling.server")
 Clock = Callable[[], datetime]

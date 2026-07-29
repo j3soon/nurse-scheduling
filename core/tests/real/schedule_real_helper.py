@@ -23,10 +23,10 @@ import time
 from io import BytesIO
 from pathlib import Path
 
-import nurse_scheduling
 from ruamel.yaml import YAML
-from nurse_scheduling.solver_interface import SolverProgress
 
+import nurse_scheduling
+from nurse_scheduling.solver_interface import SolverProgress
 
 REAL_TESTCASE = Path(__file__).parents[1] / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 SMOKE_TEST_TIMEOUT_SECONDS = 300

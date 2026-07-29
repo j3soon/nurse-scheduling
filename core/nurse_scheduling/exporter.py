@@ -17,17 +17,16 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from io import BytesIO, StringIO
 from copy import copy
+from io import BytesIO, StringIO
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
-from openpyxl.styles import Border
+from openpyxl.styles import Border, PatternFill
 from openpyxl.styles.borders import Side
 
+from . import constants, models, utils
 from .context import Context
-from . import utils, models, constants
 
 
 def _get_font_color_for_background(hex_color: str) -> str:
@@ -320,7 +319,7 @@ def _get_shift_request_shape(ctx: Context, person_target, date_target) -> str:
     return f"{person_shape}-to-{date_shape}"
 
 
-def _render_export_template(template: str, *, pref, requested_shift_type: str, total_abs_weight: int | float) -> str:
+def _render_export_template(template: str, *, pref, requested_shift_type: str, total_abs_weight: float) -> str:
     return (
         template.replace("{shiftType}", requested_shift_type)
         .replace("{weight}", str(pref.weight))
@@ -388,10 +387,11 @@ def _export_preference_condition_matches(ctx: Context, condition, pref, *, reque
             raise ValueError("export formatting preference weightRange minimum must be less than or equal to maximum")
         if pref.weight < min_weight or pref.weight > max_weight:
             return False
-    if pref_condition.requestShape is not None and constants.ALL not in pref_condition.requestShape:
-        if request_shape not in pref_condition.requestShape:
-            return False
-    return True
+    return (
+        pref_condition.requestShape is None
+        or constants.ALL in pref_condition.requestShape
+        or request_shape in pref_condition.requestShape
+    )
 
 
 def _iter_expanded_shift_request_targets(ctx: Context, pref):
@@ -578,7 +578,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Set cell values based on solver results
     solver = ctx.solver
 
-    for d, p in ctx.map_dp_s.keys():
+    for d, p in ctx.map_dp_s:
         col_idx = n_leading_cols + n_history_cols + d
         assert df.iloc[n_leading_rows + p, col_idx] == ""
         cell_value = ""
@@ -605,7 +605,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 
     # Sanity check with offs variables
     if not prettify:
-        for d, p in ctx.offs.keys():
+        for d, p in ctx.offs:
             col_idx = n_leading_cols + n_history_cols + d
             if solver.get_value(ctx.offs[(d, p)]) == 1:
                 assert df.iloc[n_leading_rows + p, col_idx] == ""

@@ -17,21 +17,23 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import logging
 import itertools
+import logging
 import time
-from dataclasses import dataclass, replace
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, NamedTuple
 
 from . import exporter, preference_types
-from .constants import ALL, OFF, OFF_sid, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
+from .constants import ALL, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR, OFF, OFF_sid
 from .context import Context
-from .utils import parse_dates
 from .loader import load_data
 from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
 from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
+from .utils import parse_dates
+
+logger = logging.getLogger(__name__)
 
 ORTOOLS_CP_SAT_SOLVER = "ortools/cp-sat"
 ORTOOLS_MPSOLVER_API = "mpsolver"
@@ -153,11 +155,11 @@ def schedule(
         "Loading schedule configuration",
         progress_started_at,
     )
-    logging.info("Loading scenario from file content...")
+    logger.info("Loading scenario from file content...")
     scenario = load_data(file_content)
 
     _emit_phase_progress(progress_callback, "parsing_data", "Parsing schedule data", progress_started_at)
-    logging.info("Extracting scenario data...")
+    logger.info("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
         raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
     ctx = Context(**dict(scenario))
@@ -216,7 +218,7 @@ def schedule(
         ctx.map_did_d[group.id] = sorted(set(date_indices))
 
     _emit_phase_progress(progress_callback, "initializing_solver", "Initializing solver model", progress_started_at)
-    logging.info("Initializing solver model...")
+    logger.info("Initializing solver model...")
 
     solver_selector = normalize_solver_selector(solver)
 
@@ -224,7 +226,7 @@ def schedule(
     if solver_selector.canonical == ORTOOLS_CP_SAT_SOLVER:
         from .solver_ortools_cp_sat import ORToolsSolver
 
-        logging.info(
+        logger.info(
             "Using solver backend=%s api=%s engine=%s",
             solver_selector.backend,
             solver_selector.api,
@@ -234,7 +236,7 @@ def schedule(
     elif solver_selector.backend == "ortools" and solver_selector.api == ORTOOLS_MPSOLVER_API:
         from .solver_ortools_linear import ORToolsLinearSolver
 
-        logging.info(
+        logger.info(
             "Using solver backend=%s api=%s engine=%s canonical=%s",
             solver_selector.backend,
             solver_selector.api,
@@ -245,7 +247,7 @@ def schedule(
     elif solver_selector.backend == "ortools" and solver_selector.api == ORTOOLS_MATHOPT_API:
         from .solver_ortools_mathopt import ORToolsMathOptSolver
 
-        logging.info(
+        logger.info(
             "Using solver backend=%s api=%s engine=%s canonical=%s",
             solver_selector.backend,
             solver_selector.api,
@@ -256,17 +258,17 @@ def schedule(
     elif solver_selector.backend == "pulp" and solver_selector.engine == "cbc":
         from .solver_pulp_cbc import PuLPSolver
 
-        logging.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
+        logger.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
         ctx.solver = PuLPSolver()
     elif solver_selector.backend == "pulp" and solver_selector.engine == "cuopt":
         from .solver_pulp_cuopt import PuLPCuOptSolver
 
-        logging.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
+        logger.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
         ctx.solver = PuLPCuOptSolver()
     elif solver_selector.backend == "pulp" and solver_selector.engine == "glpk":
         from .solver_pulp_glpk import PuLPGLPKSolver
 
-        logging.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
+        logger.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
         ctx.solver = PuLPGLPKSolver()
     elif solver_selector.backend == "pulp" and solver_selector.engine in {"highs", "scip"}:
         from .solver_pulp_python import PuLPHiGHSSolver, PuLPSCIPSolver
@@ -275,13 +277,13 @@ def schedule(
             "highs": PuLPHiGHSSolver,
             "scip": PuLPSCIPSolver,
         }
-        logging.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
+        logger.info("Using solver backend=%s engine=%s", solver_selector.backend, solver_selector.engine)
         ctx.solver = solver_classes[solver_selector.engine]()
     else:
         raise ValueError(f"Unsupported solver configuration: {solver!r}")
 
     _emit_phase_progress(progress_callback, "creating_shift_variables", "Creating shift variables", progress_started_at)
-    logging.info("Creating shift variables...")
+    logger.info("Creating shift variables...")
     step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     # Ref: https://developers.google.com/optimization/scheduling/employee_scheduling
     # In the following code, we always use the convention of (d, s, p)
@@ -303,7 +305,7 @@ def schedule(
     if avoid_solution is not None:
         step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
         avoid_solution_vars = []
-        logging.info("Avoiding solution...")
+        logger.info("Avoiding solution...")
         for d, s, p in ctx.shifts:
             if avoid_solution[(d, s, p)] == 0:
                 avoid_solution_vars.append(ctx.shifts[(d, s, p)])
@@ -322,7 +324,7 @@ def schedule(
         )
 
     _emit_phase_progress(progress_callback, "creating_off_variables", "Creating off variables", progress_started_at)
-    logging.info("Creating off variables...")
+    logger.info("Creating off variables...")
     step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     for d in range(ctx.n_days):
         for p in range(ctx.n_people):
@@ -346,7 +348,7 @@ def schedule(
     )
 
     _emit_phase_progress(progress_callback, "creating_lookup_maps", "Creating lookup indexes", progress_started_at)
-    logging.info("Creating maps for faster lookup...")
+    logger.info("Creating maps for faster lookup...")
     step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
     # TODO: All shift combinations exist, so these membership checks can be removed
     # if model-build overhead becomes significant.
@@ -392,7 +394,7 @@ def schedule(
         "Adding preferences and constraints",
         progress_started_at,
     )
-    logging.info("Adding preferences (including constraints)...")
+    logger.info("Adding preferences (including constraints)...")
     # TODO: Check no duplicated preferences
     # TODO: Check no overlapping preferences
     for i, preference in enumerate(ctx.preferences):
@@ -414,7 +416,7 @@ def schedule(
     # Define objective (i.e., soft constraints)
     ctx.solver.set_objective(ctx.objective, maximize=True)
 
-    logging.info("Initializing solver...")
+    logger.info("Initializing solver...")
 
     if prettify and progress_callback is not None:
 
@@ -429,7 +431,7 @@ def schedule(
         progress_callback_with_export = progress_callback
 
     _emit_phase_progress(progress_callback, "solving", "Solving schedule", progress_started_at)
-    logging.info("Solving and showing partial results...")
+    logger.info("Solving and showing partial results...")
     status = ctx.solver.solve(
         timeout=timeout,
         deterministic=deterministic,
@@ -439,49 +441,49 @@ def schedule(
 
     # Get status name
     ctx.solver_status = ctx.solver.get_status_name()
-    logging.info(f"Status: {ctx.solver_status}")
+    logger.info(f"Status: {ctx.solver_status}")
 
     found = status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
     # Ref: https://developers.google.com/optimization/cp/cp_solver
     if status == SolverStatus.OPTIMAL:
-        logging.info("Optimal solution found!")
+        logger.info("Optimal solution found!")
     elif status == SolverStatus.FEASIBLE:
-        logging.info("Feasible solution found!")
+        logger.info("Feasible solution found!")
     elif status == SolverStatus.INFEASIBLE:
-        logging.info("Proven infeasible!")
+        logger.info("Proven infeasible!")
     elif status == SolverStatus.MODEL_INVALID:
-        logging.info("Model invalid!")
-        logging.info("Validation Info:")
-        logging.info(ctx.solver.validate_model())
+        logger.info("Model invalid!")
+        logger.info("Validation Info:")
+        logger.info(ctx.solver.validate_model())
     elif status == SolverStatus.UNKNOWN:
-        logging.info("No solution found before the solver stopped!")
+        logger.info("No solution found before the solver stopped!")
     else:
         raise ValueError(f"Unexpected solver status: {ctx.solver_status}")
 
-    logging.info("Statistics:")
+    logger.info("Statistics:")
     stats = ctx.solver.get_statistics()
     for key, value in stats.items():
-        logging.info(f"  - {key}: {value}")
+        logger.info(f"  - {key}: {value}")
 
     if not found:
-        logging.info("Done.")
+        logger.info("Done.")
         return ScheduleResult(None, None, None, ctx.solver_status, None)
 
-    logging.debug("Variables:")
+    logger.debug("Variables:")
     for k, v in ctx.model_vars.items():
         try:
-            logging.debug(f"  - {k}: {ctx.solver.get_value(v)}")
-        except Exception as e:
-            logging.debug(f"  - {k}: [Error: {e}]")
+            logger.debug(f"  - {k}: {ctx.solver.get_value(v)}")
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"  - {k}: [Error: {e}]")
     if found:
-        logging.debug("Reports:")
+        logger.debug("Reports:")
         for report in ctx.reports:
             val = ctx.solver.get_value(report.variable)
             if report.skip_condition(val):
                 continue
-            logging.debug(f"  - {report.description}: {val}")
+            logger.debug(f"  - {report.description}: {val}")
 
-    logging.info("Done.")
+    logger.info("Done.")
 
     _emit_phase_progress(progress_callback, "exporting", "Preparing schedule output", progress_started_at)
     df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=prettify)

@@ -32,7 +32,6 @@ from ...solver_interface import (
 )
 from .models import Job, JobFailure, OptimizationOutcome, OptimizationResult, StoredArtifact
 
-
 EventCallback = Callable[[str, dict[str, Any], int | None], None]
 StopCallback = Callable[[], bool]
 
