@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
@@ -531,6 +531,38 @@ describe('OptimizeAndExportPage error handling', () => {
       expect.objectContaining({ method: 'GET' })
     ));
     expect(fetchMock).not.toHaveBeenCalledWith(`${LOCAL_API_URL}/info`, expect.anything());
+  });
+
+  it('highlights custom server settings and disables Reset after restoring defaults', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(healthyResponse());
+    window.localStorage.setItem('nurse-scheduling-optimize-server-options', JSON.stringify({
+      servers: [{ endpoint: 'https://stored-backend.example.test' }],
+      selectedServerEndpoint: 'https://stored-backend.example.test',
+    }));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle('https://stored-backend.example.test')).resolves.toBeInTheDocument();
+    const customResetButton = screen.getByRole('button', {
+      name: /reset server settings to defaults.*custom server settings active/i,
+    });
+    expect(customResetButton).toBeEnabled();
+    expect(customResetButton).toHaveAttribute('title', 'Custom server settings active');
+    expect(customResetButton.querySelector('[aria-hidden="true"]')).toHaveClass('bg-amber-500');
+
+    await user.dblClick(screen.getByTitle('https://stored-backend.example.test'));
+    expect(screen.getByDisplayValue('https://stored-backend.example.test')).toHaveFocus();
+    fireEvent.click(customResetButton);
+
+    const defaultBackend = await screen.findByTitle(LOCAL_API_URL);
+    expect(defaultBackend.closest('tr')).toHaveAttribute('draggable', 'true');
+    const defaultResetButton = screen.getByRole('button', { name: 'Reset server settings to defaults' });
+    expect(defaultResetButton).toBeDisabled();
+    expect(defaultResetButton).not.toHaveAttribute('title');
+    expect(defaultResetButton.querySelector('[aria-hidden="true"]')).toBeNull();
+    expect(window.localStorage.getItem('nurse-scheduling-optimize-server-options')).toBeNull();
   });
 
   it('selects a backend when clicking anywhere on its row', async () => {
