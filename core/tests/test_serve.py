@@ -27,7 +27,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -67,7 +67,6 @@ from nurse_scheduling.server.jobs.worker import JobWorker
 from nurse_scheduling.server.runtime_identity import get_deployment_id
 from nurse_scheduling.server.solver_capabilities import SOLVER_CAPABILITIES
 from nurse_scheduling.server.stores.memory import MemoryJobStore
-
 
 PROCESS_START_TIMEOUT_SECONDS = 10
 
@@ -748,7 +747,7 @@ def test_watchdog_remains_armed_until_terminal_message_is_delivered():
             prettify=False,
             timeout_seconds=1,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     result = run_optimization_process(
@@ -777,7 +776,7 @@ def test_executor_reports_abrupt_child_exit_without_waiting_for_timeout():
             prettify=False,
             timeout_seconds=60,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     with pytest.raises(ChildOptimizationError, match="ChildProcessCommunicationError"):
@@ -810,7 +809,7 @@ def test_executor_returns_controlled_stop(control, expected_status):
             prettify=False,
             timeout_seconds=60,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     result = run_optimization_process(
@@ -848,7 +847,7 @@ def test_executor_processes_buffered_success_before_abort():
                 prettify=False,
                 timeout_seconds=60,
             ),
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         ),
         b"apiVersion: alpha\n",
         event_callback=publish,
@@ -873,7 +872,7 @@ def test_process_timeout_allows_model_building_within_timeout_grace():
             prettify=False,
             timeout_seconds=0.05,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     result = run_optimization_process(
         DelayedNativeTimeoutRunner(),
@@ -902,7 +901,7 @@ def test_process_timeout_does_not_require_solving_phase_event():
             prettify=False,
             timeout_seconds=0.05,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     result = run_optimization_process(
@@ -951,7 +950,7 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
             prettify=False,
             timeout_seconds=60,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     result = OptimizationRunner().run(
@@ -983,7 +982,7 @@ def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):
             prettify=True,
             timeout_seconds=60,
         ),
-        created_at=datetime(2026, 7, 16, 14, 23, 5, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 16, 14, 23, 5, tzinfo=UTC),
     )
 
     output = OptimizationRunner().run(
@@ -1023,7 +1022,7 @@ def test_optimization_runner_classifies_feasible_termination(monkeypatch, stop_r
             prettify=False,
             timeout_seconds=60,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     output = OptimizationRunner().run(
@@ -1065,7 +1064,7 @@ def test_optimization_runner_ignores_stop_requested_after_solver_returns(monkeyp
             prettify=False,
             timeout_seconds=60,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     output = OptimizationRunner().run(
@@ -1089,7 +1088,7 @@ def test_worker_exits_when_unreportable_failure_cleanup_fails(monkeypatch):
             prettify=True,
             timeout_seconds=60,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     class FailingController:
@@ -1104,10 +1103,10 @@ def test_worker_exits_when_unreportable_failure_cleanup_fails(monkeypatch):
             return None
 
         def register_worker(self, worker_id):
-            return WorkerLease(worker_id, "lease-token", datetime.now(timezone.utc) + timedelta(seconds=60))
+            return WorkerLease(worker_id, "lease-token", datetime.now(UTC) + timedelta(seconds=60))
 
         def renew_worker(self, lease):
-            return WorkerLease(lease.worker_id, lease.token, datetime.now(timezone.utc) + timedelta(seconds=60))
+            return WorkerLease(lease.worker_id, lease.token, datetime.now(UTC) + timedelta(seconds=60))
 
         def unregister_worker(self, _lease):
             self.cleanup_attempted.set()
@@ -1229,7 +1228,7 @@ def test_worker_uses_registered_lease_expiration_as_heartbeat_deadline():
             return WorkerLease(
                 worker_id,
                 f"lease-token-{self.registration_count}",
-                datetime.now(timezone.utc) + timedelta(seconds=lifetime_seconds),
+                datetime.now(UTC) + timedelta(seconds=lifetime_seconds),
             )
 
         def renew_worker(self, _lease):
@@ -1277,7 +1276,7 @@ def test_worker_reconciles_renewal_that_committed_before_response_was_lost():
             return WorkerLease(
                 worker_id,
                 f"lease-token-{self.registration_count}",
-                datetime.now(timezone.utc) - timedelta(seconds=1),
+                datetime.now(UTC) - timedelta(seconds=1),
             )
 
         def renew_worker(self, lease):
@@ -1285,7 +1284,7 @@ def test_worker_reconciles_renewal_that_committed_before_response_was_lost():
                 self.committed_lease = WorkerLease(
                     lease.worker_id,
                     lease.token,
-                    datetime.now(timezone.utc) + timedelta(seconds=60),
+                    datetime.now(UTC) + timedelta(seconds=60),
                 )
                 self.response_lost.set()
                 raise ConnectionError("renewal committed but response was lost")
@@ -1518,7 +1517,7 @@ def test_worker_renews_presence_during_long_running_job(monkeypatch):
 
 
 def test_worker_shutdown_stops_child_and_releases_worker_lease():
-    now = [datetime.now(timezone.utc)]
+    now = [datetime.now(UTC)]
     store = MemoryJobStore()
     controller = JobController(
         store,
@@ -1631,7 +1630,7 @@ def test_worker_cancellation_takes_priority_over_concurrent_shutdown(monkeypatch
 
 
 def test_worker_stops_execution_after_its_lease_expires(monkeypatch):
-    now = [datetime.now(timezone.utc)]
+    now = [datetime.now(UTC)]
     store = MemoryJobStore()
     controller = JobController(
         store,

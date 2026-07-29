@@ -17,16 +17,17 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import sys
 import argparse
 import json
 import logging
 import os.path
 import subprocess
+import sys
 import time
 from io import BytesIO
 from pathlib import Path
-from . import scheduler, exporter
+
+from . import exporter, scheduler
 from .model_build_stats import ModelBuildStatsSummary
 from .solver_interface import (
     SchedulePhaseProgress,

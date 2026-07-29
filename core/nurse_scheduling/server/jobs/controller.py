@@ -20,7 +20,7 @@
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 from uuid import uuid4
 
@@ -33,6 +33,7 @@ from ..errors import (
 )
 from ..job_store import JobStore
 from ..retry import retry_with_backoff
+from ..solver_capabilities import solver_supports_finish_now
 from .models import (
     Job,
     JobEvent,
@@ -45,8 +46,6 @@ from .models import (
     StoreLimits,
     WorkerLease,
 )
-from ..solver_capabilities import solver_supports_finish_now
-
 
 server_logger = logging.getLogger("nurse_scheduling.server")
 Clock = Callable[[], datetime]
@@ -57,7 +56,7 @@ WriteResult = TypeVar("WriteResult")
 
 def utc_now() -> datetime:
     """Return a timezone-aware UTC timestamp."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def new_job_id() -> str:

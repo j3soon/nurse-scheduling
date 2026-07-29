@@ -17,15 +17,14 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import math
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from collections.abc import Callable
-import math
 from typing import Any
 
 from .constants import Operator
-
 
 # TODO: The current interface is based on ortools, can change it to be more general
 
@@ -118,7 +117,7 @@ def assert_int_score(value: Any, *, label: str = "score", integer_tolerance: flo
     return int(rounded)
 
 
-def validate_square_constant(value: int | float, value_range: tuple[int, int]) -> int:
+def validate_square_constant(value: float, value_range: tuple[int, int]) -> int:
     """Return a finite integral square constant within its declared range."""
     if isinstance(value, int):
         value_i = value
@@ -156,7 +155,6 @@ class SolverInterface(ABC):
         Returns:
             A solver-specific boolean variable.
         """
-        pass
 
     @abstractmethod
     def new_int_var(self, lb: int, ub: int, name: str) -> Any:
@@ -171,7 +169,6 @@ class SolverInterface(ABC):
         Returns:
             A solver-specific integer variable.
         """
-        pass
 
     @abstractmethod
     def add_constraint(self, constraint) -> None:
@@ -181,7 +178,6 @@ class SolverInterface(ABC):
         Args:
             constraint: A constraint expression.
         """
-        pass
 
     @abstractmethod
     def add_bool_or(self, literals: list[Any]) -> None:
@@ -191,7 +187,6 @@ class SolverInterface(ABC):
         Args:
             literals: List of boolean variables or their negations.
         """
-        pass
 
     @abstractmethod
     def create_bool_and_var(self, name: str, literals: list[Any]) -> Any:
@@ -205,7 +200,6 @@ class SolverInterface(ABC):
         Returns:
             A solver-specific boolean variable.
         """
-        pass
 
     @abstractmethod
     def should_use_bool_and_var(self, n_literals: int) -> bool:
@@ -215,7 +209,6 @@ class SolverInterface(ABC):
         This lets model-building code avoid backend-specific checks while still
         accounting for native Boolean backends versus linear encodings.
         """
-        pass
 
     @abstractmethod
     def set_objective(self, expression, maximize: bool = True) -> None:
@@ -226,7 +219,6 @@ class SolverInterface(ABC):
             expression: The objective expression to optimize.
             maximize: If True, maximize; if False, minimize.
         """
-        pass
 
     @abstractmethod
     def solve(
@@ -251,12 +243,10 @@ class SolverInterface(ABC):
         Returns:
             The solver status.
         """
-        pass
 
     @abstractmethod
     def get_status_name(self) -> str:
         """Get the generic solver status name."""
-        pass
 
     @abstractmethod
     def get_value(self, var: Any) -> int | float:
@@ -269,7 +259,6 @@ class SolverInterface(ABC):
         Returns:
             The value of the variable in the solution.
         """
-        pass
 
     @abstractmethod
     def get_objective_value(self) -> int:
@@ -279,7 +268,6 @@ class SolverInterface(ABC):
         Returns:
             The objective value as an integer.
         """
-        pass
 
     @abstractmethod
     def get_statistics(self) -> dict[str, Any]:
@@ -289,7 +277,6 @@ class SolverInterface(ABC):
         Returns:
             A dictionary containing solver statistics.
         """
-        pass
 
     @abstractmethod
     def validate_model(self) -> str:
@@ -299,7 +286,6 @@ class SolverInterface(ABC):
         Returns:
             Validation information as a string.
         """
-        pass
 
     @abstractmethod
     def negate(self, var: Any) -> Any:
@@ -312,7 +298,6 @@ class SolverInterface(ABC):
         Returns:
             The negation of the variable.
         """
-        pass
 
     @abstractmethod
     def create_bool_var_with_constraint(
@@ -331,7 +316,6 @@ class SolverInterface(ABC):
             target_value: Right-hand-side comparison value.
             source_expr_range: Lower/upper bound of source_expr.
         """
-        pass
 
     @abstractmethod
     def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: tuple[int, int]) -> None:
@@ -343,7 +327,6 @@ class SolverInterface(ABC):
             source_expr: The expression whose absolute value is computed.
             source_expr_range: Lower/upper bound of source_expr.
         """
-        pass
 
     @abstractmethod
     def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: tuple[int, int]) -> None:
@@ -355,7 +338,6 @@ class SolverInterface(ABC):
             source_var: The variable or constant to square.
             source_var_range: Lower/upper bound of source_var.
         """
-        pass
 
     @abstractmethod
     def create_solution_callback(
@@ -378,4 +360,3 @@ class SolverInterface(ABC):
         Returns:
             A solver-specific solution callback object, or None if not supported.
         """
-        pass

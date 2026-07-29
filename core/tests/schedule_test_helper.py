@@ -26,11 +26,11 @@ import sys
 # Add the project root to the Python path so imports will work when running directly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import nurse_scheduling
 import pandas
 import pytest
 from pydantic import ValidationError
 
+import nurse_scheduling
 
 CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
 TESTCASES_DIR = f"{CURRENT_DIR}/testcases"
@@ -76,9 +76,9 @@ def run_schedule_regression_test(solver: str) -> None:
                 nurse_scheduling.schedule(file_content, solver=solver)
             # Then verify the error message contains the expected text
             logging.info(f"Expected error: {expected_err.strip()}")
-            logging.info(f"Actual error: {str(exc_info.value)}")
+            logging.info(f"Actual error: {exc_info.value!s}")
             assert expected_err.strip() in str(exc_info.value), (
-                f"Expected error '{expected_err.strip()}' not found in actual error: {str(exc_info.value)}"
+                f"Expected error '{expected_err.strip()}' not found in actual error: {exc_info.value!s}"
             )
             continue
 

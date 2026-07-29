@@ -18,6 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from typing import Any
+
 from pydantic import ConfigDict, Field
 
 from .models import (

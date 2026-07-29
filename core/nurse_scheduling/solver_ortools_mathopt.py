@@ -30,7 +30,6 @@ from ortools.util.python import solve_interrupter
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
 from .solver_ortools_linear import ORToolsLinearSolver
 
-
 ORTOOLS_MATHOPT_MIP_ENGINES: dict[str, mathopt.SolverType] = {
     "gscip": mathopt.SolverType.GSCIP,
     "cp-sat": mathopt.SolverType.CP_SAT,

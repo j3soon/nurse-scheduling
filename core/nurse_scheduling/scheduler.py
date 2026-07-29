@@ -17,21 +17,21 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import logging
 import itertools
+import logging
 import time
-from dataclasses import dataclass, replace
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, NamedTuple
 
 from . import exporter, preference_types
-from .constants import ALL, OFF, OFF_sid, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR
+from .constants import ALL, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR, OFF, OFF_sid
 from .context import Context
-from .utils import parse_dates
 from .loader import load_data
 from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
 from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
+from .utils import parse_dates
 
 ORTOOLS_CP_SAT_SOLVER = "ortools/cp-sat"
 ORTOOLS_MPSOLVER_API = "mpsolver"

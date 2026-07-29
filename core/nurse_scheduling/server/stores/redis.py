@@ -49,7 +49,6 @@ from ..jobs.models import (
 )
 from ..retry import retry_with_backoff
 
-
 SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
 """Additional socket time allowed beyond one blocking event-stream read."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 2.0

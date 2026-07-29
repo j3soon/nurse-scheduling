@@ -21,7 +21,6 @@ import time
 from collections.abc import Callable
 from typing import TypeVar
 
-
 RetryResult = TypeVar("RetryResult")
 DEFAULT_RETRY_MAX_ATTEMPTS = 20
 """Default attempts used by backend read and write retries."""

@@ -17,8 +17,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from datetime import datetime
 from dataclasses import replace
+from datetime import datetime
 from io import BytesIO
 from uuid import UUID, uuid4
 
@@ -33,7 +33,6 @@ from ..jobs.models import JobState
 from ..solver_capabilities import solver_supports_finish_now
 from .schemas import JobResponse
 from .sse import format_sse_event
-
 
 router = APIRouter()
 CLIENT_ID_COOKIE_NAME = "nurse_scheduling_client_id"

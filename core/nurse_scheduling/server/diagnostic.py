@@ -61,14 +61,13 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
-
 
 DEFAULT_TARGET_URL = "https://api.nursescheduling.org"
 DEFAULT_SCENARIO_PATH = (
@@ -235,7 +234,7 @@ class PublicDiagnostic:
         self.config = config
         self.transport = transport
         self.run_id = uuid4().hex
-        self.started_at = datetime.now(timezone.utc)
+        self.started_at = datetime.now(UTC)
         self.started_monotonic = time.monotonic()
         self.workflow_deadline = self.started_monotonic + config.workflow_timeout_seconds
         self.startup_attempts: list[dict[str, Any]] = []
@@ -764,49 +763,48 @@ class PublicDiagnostic:
             self.config.request_timeout_seconds, read=min(read_seconds, self.config.request_timeout_seconds)
         )
         try:
-            with self._new_client() as client:
-                with client.stream(
-                    "GET",
-                    f"/optimize/{job_id}/events",
-                    headers={"Accept": "text/event-stream", "Connection": "close"},
-                    timeout=timeout,
-                ) as response:
-                    if response.status_code == 404:
-                        self.visibility_split = True
-                        self._fail(
-                            "job_visibility_split",
-                            "A newly created job event stream returned 404 through the public endpoint.",
-                        )
-                        return False
-                    if response.status_code != 200:
-                        self._record_request_error(f"GET events {job_id}", f"HTTP {response.status_code}")
-                        return False
-                    self.event_jobs_checked.add(job_id)
-                    for line in response.iter_lines():
-                        if line.startswith("id:"):
-                            event_id = line.partition(":")[2].strip()
-                        elif line.startswith("event:"):
-                            event_type = line.partition(":")[2].strip()
-                        elif line.startswith("data:"):
-                            data_lines.append(line.partition(":")[2].lstrip())
-                        elif not line:
-                            payload: Any = None
-                            if data_lines:
-                                try:
-                                    payload = json.loads("\n".join(data_lines))
-                                except json.JSONDecodeError:
-                                    pass
-                            if isinstance(payload, dict):
-                                self._observe_event_identity(job_id, event_id, payload)
-                                if (
-                                    stop_on_score
-                                    and event_type == "job.progressed"
-                                    and isinstance(payload.get("score"), (int, float))
-                                ):
-                                    return True
-                            event_id = None
-                            event_type = None
-                            data_lines = []
+            with self._new_client() as client, client.stream(
+                "GET",
+                f"/optimize/{job_id}/events",
+                headers={"Accept": "text/event-stream", "Connection": "close"},
+                timeout=timeout,
+            ) as response:
+                if response.status_code == 404:
+                    self.visibility_split = True
+                    self._fail(
+                        "job_visibility_split",
+                        "A newly created job event stream returned 404 through the public endpoint.",
+                    )
+                    return False
+                if response.status_code != 200:
+                    self._record_request_error(f"GET events {job_id}", f"HTTP {response.status_code}")
+                    return False
+                self.event_jobs_checked.add(job_id)
+                for line in response.iter_lines():
+                    if line.startswith("id:"):
+                        event_id = line.partition(":")[2].strip()
+                    elif line.startswith("event:"):
+                        event_type = line.partition(":")[2].strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line.partition(":")[2].lstrip())
+                    elif not line:
+                        payload: Any = None
+                        if data_lines:
+                            try:
+                                payload = json.loads("\n".join(data_lines))
+                            except json.JSONDecodeError:
+                                pass
+                        if isinstance(payload, dict):
+                            self._observe_event_identity(job_id, event_id, payload)
+                            if (
+                                stop_on_score
+                                and event_type == "job.progressed"
+                                and isinstance(payload.get("score"), (int, float))
+                            ):
+                                return True
+                        event_id = None
+                        event_type = None
+                        data_lines = []
         except httpx.ReadTimeout:
             return False
         except httpx.HTTPError as error:
@@ -1226,7 +1224,7 @@ class PublicDiagnostic:
 
     def build_report(self) -> dict[str, Any]:
         """Build a concise summary followed by detailed diagnostic evidence."""
-        finished_at = datetime.now(timezone.utc)
+        finished_at = datetime.now(UTC)
         counts = self._identity_counts()
         summary = {
             "outcome": self._outcome(),

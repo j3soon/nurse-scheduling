@@ -22,8 +22,8 @@
 import os
 import sys
 
-import pytest
 import pulp
+import pytest
 
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

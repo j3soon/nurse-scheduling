@@ -24,7 +24,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, call
 
 import fakeredis
@@ -126,7 +126,7 @@ def store(store_factory):
 
 
 def _controller(store, *, max_pending=8, max_retained=32, now=None, runtime_identity=None):
-    clock = (lambda: now) if now is not None else (lambda: datetime.now(timezone.utc))
+    clock = (lambda: now) if now is not None else (lambda: datetime.now(UTC))
     sequence = iter(f"job_{index}" for index in range(100))
     return JobController(
         store,
@@ -185,7 +185,7 @@ def _raise_watch_error_once(store, monkeypatch) -> None:
 
 
 def test_utc_now_returns_timezone_aware_utc_datetime():
-    assert utc_now().tzinfo is timezone.utc
+    assert utc_now().tzinfo is UTC
 
 
 def test_redis_store_uses_default_connect_timeout_and_bounds_stream_reads(monkeypatch):
@@ -324,7 +324,7 @@ def test_store_round_trips_lifecycle_input_events_and_artifact(store):
         "app_version": "v-test",
         "deployment_id": "deployment-test",
         "instance_id": "instance-test",
-        "started_at": datetime(2026, 7, 18, tzinfo=timezone.utc).isoformat(),
+        "started_at": datetime(2026, 7, 18, tzinfo=UTC).isoformat(),
         "job_backend": "redis",
         "job_store_id": "store-test",
     }
@@ -399,7 +399,7 @@ def test_store_reports_missing_input_and_artifacts(store):
 
 
 def test_store_handles_empty_queries_and_missing_jobs(store):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     lease = WorkerLease("worker", "token", now + timedelta(seconds=30))
 
     assert store.register_worker(lease, now)
@@ -448,7 +448,7 @@ def test_store_rejects_stale_delete_and_missing_update(store):
 
 
 def test_store_reorders_queue_when_updated_without_events(store):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     controller = _controller(store, now=now)
     first = _create(controller, "first.yaml")
     second = _create(controller, "second.yaml")
@@ -509,7 +509,7 @@ def test_redis_store_uses_artifact_metadata_defaults(fake_redis_store_factory):
 
 def test_redis_store_removes_corrupt_queue_entries(fake_redis_store_factory):
     store = fake_redis_store_factory()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     lease = WorkerLease("worker", "token", now + timedelta(seconds=30))
     assert store.register_worker(lease, now)
     store._redis.zadd(store._queue_key, {"orphan": now.timestamp()})
@@ -720,7 +720,7 @@ def test_store_claims_each_job_at_most_once_under_concurrency(store):
 
 
 def test_store_reports_job_and_worker_activity_across_lifecycle(store):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     controller = _controller(store, now=now)
     first = _create(controller, "first.yaml")
     _create(controller, "second.yaml")
@@ -749,7 +749,7 @@ def test_store_reports_job_and_worker_activity_across_lifecycle(store):
 
 
 def test_expired_worker_lease_cannot_be_renewed_and_can_be_replaced(store):
-    now = [datetime.now(timezone.utc)]
+    now = [datetime.now(UTC)]
     controller = JobController(
         store,
         limits=StoreLimits(max_pending=2, max_retained=4),
@@ -772,7 +772,7 @@ def test_expired_worker_lease_cannot_be_renewed_and_can_be_replaced(store):
 
 
 def test_expired_worker_lease_rejects_late_terminal_outcomes(store):
-    now = [datetime.now(timezone.utc)]
+    now = [datetime.now(UTC)]
     controller = JobController(
         store,
         limits=StoreLimits(max_pending=1, max_retained=2),
@@ -837,7 +837,7 @@ def test_worker_completion_is_rejected_when_ownership_is_lost_before_atomic_upda
 
 
 def test_store_atomically_rejects_an_owned_update_after_lease_removal(store):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     controller = _controller(store)
     created = _create(controller)
     lease = WorkerLease("worker", "lease-token", now + timedelta(seconds=30))
@@ -922,7 +922,7 @@ def test_controller_backs_off_between_store_write_retries(monkeypatch):
 
 
 def test_retention_cleanup_removes_old_terminal_jobs(store):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     controller = _controller(store, now=now)
     created = _create(controller)
     controller.cancel_job(created.id)
@@ -938,7 +938,7 @@ def test_retention_cleanup_removes_old_terminal_jobs(store):
 
 
 def test_completed_job_can_resume_after_client_sleeps(store):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     controller = JobController(
         store,
         limits=StoreLimits(max_pending=8, max_retained=DEFAULT_MAX_RETAINED_JOBS),
@@ -1021,7 +1021,7 @@ def test_queue_position_events_track_queue_reordering(store):
 
 
 def test_expired_worker_lease_fails_job_and_releases_capacity(store):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     controller = JobController(
         store,
         limits=StoreLimits(max_pending=1, max_retained=2),

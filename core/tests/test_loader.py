@@ -30,7 +30,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling.loader import _load_yaml, load_data
 
-
 SENTRY_MOJIBAKE_YAML = """\
 嚜瘸piVersion: alpha
 description: ''

@@ -19,9 +19,10 @@
 
 import logging
 import threading
-from collections.abc import Callable
 from _thread import LockType
+from collections.abc import Callable
 from typing import Any
+
 from ortools.sat.python import cp_model
 
 from .constants import Operator

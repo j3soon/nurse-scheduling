@@ -27,7 +27,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -98,7 +98,7 @@ def _job(job_id: str) -> Job:
             prettify=False,
             timeout_seconds=60,
         ),
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

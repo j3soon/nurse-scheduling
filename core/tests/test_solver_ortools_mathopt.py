@@ -321,7 +321,7 @@ def test_mathopt_unsolved_value_objective_and_statistics_accessors():
 def test_mathopt_rejects_missing_expression_and_fractional_objective_values(monkeypatch):
     result = SimpleNamespace(
         has_primal_feasible_solution=lambda: True,
-        variable_values=lambda: {},
+        variable_values=dict,
         objective_value=lambda: 1.25,
     )
     solver = ORToolsMathOptSolver()

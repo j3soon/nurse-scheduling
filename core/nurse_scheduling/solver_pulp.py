@@ -25,11 +25,11 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
 import pulp
 
 from .constants import Operator
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
-
 
 PULP_PYTHON_API_SOLVERS: dict[str, tuple[str, str]] = {
     "highs": ("HiGHS", "highspy"),

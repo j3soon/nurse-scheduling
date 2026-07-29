@@ -20,11 +20,10 @@
 import itertools
 import logging
 import math
-from . import utils
+
+from . import constants, models, utils
 from .context import Context
 from .report import Report
-from . import models
-from . import constants
 
 # Leave most parsing to the caller, keep the function here simple.
 

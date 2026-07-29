@@ -20,7 +20,7 @@
 import logging
 import subprocess
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -52,7 +52,6 @@ from .jobs.worker import JobWorker
 from .maintenance import JobMaintenance
 from .runtime_identity import get_deployment_id
 from .stores.memory import MemoryJobStore
-
 
 TITLE = "Nurse Scheduling API"
 SERVICE_NAME = "nurse-scheduling-api"
@@ -149,7 +148,7 @@ def create_app(
     instance_id = str(uuid4())
     store = store or _create_store(settings, instance_id)
     runner = runner or OptimizationRunner()
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     app_version = get_app_version()
     runtime_identity = {
         "service_name": SERVICE_NAME,

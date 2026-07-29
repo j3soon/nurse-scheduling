@@ -27,11 +27,12 @@ from io import BytesIO
 # Add the project root to the Python path so imports will work when running directly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import nurse_scheduling
-import nurse_scheduling.exporter as exporter
 import pytest
 from openpyxl import load_workbook
 from pydantic import ValidationError
+
+import nurse_scheduling
+from nurse_scheduling import exporter
 
 from .schedule_test_helper import CONTINUE_ON_ERROR, IGNORE_TESTS, TESTCASES_DIR, get_regression_testcases
 
@@ -157,9 +158,9 @@ def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
             with pytest.raises((ValidationError, ValueError)) as exc_info:
                 nurse_scheduling.schedule(file_content, solver=solver, prettify=prettify)
             logging.info(f"Expected error: {expected_err.strip()}")
-            logging.info(f"Actual error: {str(exc_info.value)}")
+            logging.info(f"Actual error: {exc_info.value!s}")
             assert expected_err.strip() in str(exc_info.value), (
-                f"Expected error '{expected_err.strip()}' not found in actual error: {str(exc_info.value)}"
+                f"Expected error '{expected_err.strip()}' not found in actual error: {exc_info.value!s}"
             )
             continue
 

@@ -30,25 +30,23 @@ import sys
 import time
 import traceback
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 CORE_ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(CORE_ROOT))
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from nurse_scheduling.scheduler import normalize_solver_selector  # noqa: E402
-from nurse_scheduling.server.app import create_app  # noqa: E402
-from nurse_scheduling.server.config import ServerSettings  # noqa: E402
-from nurse_scheduling.server.solver_capabilities import (  # noqa: E402
+from nurse_scheduling.scheduler import normalize_solver_selector
+from nurse_scheduling.server.app import create_app
+from nurse_scheduling.server.config import ServerSettings
+from nurse_scheduling.server.solver_capabilities import (
     SOLVER_CAPABILITIES,
     get_solver_capabilities,
 )
-from nurse_scheduling.server.stores.memory import MemoryJobStore  # noqa: E402
-
+from nurse_scheduling.server.stores.memory import MemoryJobStore
 
 REAL_TESTCASE = CORE_ROOT / "tests" / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 CBC_INTERMEDIATE_SCORE_TESTCASE = CORE_ROOT / "tests" / "testcases" / "basics" / "01_1nurse_1shift_1day.yaml"
@@ -828,7 +826,7 @@ def render_markdown(reports: list[SolverReport]) -> str:
 def _json_payload(reports: list[SolverReport], config: ProbeConfig) -> dict[str, Any]:
     """Build a machine-readable report with runtime context."""
     return {
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "generatedAt": datetime.now(UTC).isoformat(),
         "platform": platform.platform(),
         "pythonVersion": platform.python_version(),
         "testcase": str(config.testcase),

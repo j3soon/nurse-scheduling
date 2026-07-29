@@ -20,11 +20,11 @@
 import datetime
 import math
 import re
-from typing import Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
-from typing_extensions import Annotated, Self
-from .constants import ALL, OFF, MAP_WEEKDAY_TO_STR, MAP_DATE_KEYWORD_TO_FILTER
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .constants import ALL, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR, OFF
 
 AT_MOST_ONE_SHIFT_PER_DAY = "at most one shift per day"
 SHIFT_TYPE_REQUIREMENT = "shift type requirement"
@@ -34,7 +34,7 @@ SHIFT_COUNT = "shift count"
 SHIFT_AFFINITY = "shift affinity"
 
 
-def validate_weight(weight: int | float) -> int | float:
+def validate_weight(weight: float) -> int | float:
     """Validate that float weights can only be positive or negative infinity."""
     if isinstance(weight, float):
         if weight != math.inf and weight != -math.inf:

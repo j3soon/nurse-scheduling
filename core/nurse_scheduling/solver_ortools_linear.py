@@ -30,7 +30,6 @@ from ortools.linear_solver.python import linear_solver_natural_api
 from .constants import Operator
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
 
-
 ORTOOLS_MPSOLVER_MIP_ENGINES: dict[str, str] = {
     "cbc": "CBC",
     "scip": "SCIP",

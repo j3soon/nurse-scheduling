@@ -20,7 +20,7 @@
 import logging
 import threading
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from ...sentry import capture_optimize_exception
 from ..config import DEFAULT_TIMEOUT_GRACE_SECONDS
@@ -34,7 +34,6 @@ from .process_executor import (
     run_optimization_process,
 )
 from .runner import OptimizationRunner
-
 
 server_logger = logging.getLogger("nurse_scheduling.server")
 CONTROL_POLL_SECONDS = 1.0
@@ -173,7 +172,7 @@ class JobWorker:
     def _heartbeat(self, lease: WorkerLease) -> None:
         """Renew worker presence and recover safely after an expired lease."""
         while not self._stop.is_set():
-            seconds_until_expiry = (lease.expires_at - datetime.now(timezone.utc)).total_seconds()
+            seconds_until_expiry = (lease.expires_at - datetime.now(UTC)).total_seconds()
             wait_seconds = min(self._worker_heartbeat_seconds, max(0.0, seconds_until_expiry))
             if self._stop.wait(wait_seconds):
                 return
@@ -227,7 +226,7 @@ class JobWorker:
             return self._controller.renew_worker(lease)
         except Exception:
             server_logger.exception("[server:worker] failed to renew worker_id=%s", self._worker_id)
-            if datetime.now(timezone.utc) < lease.expires_at:
+            if datetime.now(UTC) < lease.expires_at:
                 return lease
             return None
 

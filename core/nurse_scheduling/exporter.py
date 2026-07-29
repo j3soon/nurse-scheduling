@@ -17,17 +17,16 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from io import BytesIO, StringIO
 from copy import copy
+from io import BytesIO, StringIO
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
-from openpyxl.styles import Border
+from openpyxl.styles import Border, PatternFill
 from openpyxl.styles.borders import Side
 
+from . import constants, models, utils
 from .context import Context
-from . import utils, models, constants
 
 
 def _get_font_color_for_background(hex_color: str) -> str:
@@ -320,7 +319,7 @@ def _get_shift_request_shape(ctx: Context, person_target, date_target) -> str:
     return f"{person_shape}-to-{date_shape}"
 
 
-def _render_export_template(template: str, *, pref, requested_shift_type: str, total_abs_weight: int | float) -> str:
+def _render_export_template(template: str, *, pref, requested_shift_type: str, total_abs_weight: float) -> str:
     return (
         template.replace("{shiftType}", requested_shift_type)
         .replace("{weight}", str(pref.weight))

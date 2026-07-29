@@ -43,10 +43,9 @@ from enum import Enum
 from multiprocessing.connection import Connection, wait
 from typing import Any
 
-from .models import Job, JobFailure
 from . import process_tree
+from .models import Job, JobFailure
 from .runner import EventCallback, OptimizationRunner, RunOutput
-
 
 server_logger = logging.getLogger("nurse_scheduling.server")
 PROCESS_POLL_SECONDS = 1.0
