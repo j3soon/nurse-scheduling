@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
@@ -552,9 +552,12 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(customResetButton).toHaveAttribute('title', 'Custom server settings active');
     expect(customResetButton.querySelector('[aria-hidden="true"]')).toHaveClass('bg-amber-500');
 
-    await user.click(customResetButton);
+    await user.dblClick(screen.getByTitle('https://stored-backend.example.test'));
+    expect(screen.getByDisplayValue('https://stored-backend.example.test')).toHaveFocus();
+    fireEvent.click(customResetButton);
 
-    await expect(screen.findByTitle(LOCAL_API_URL)).resolves.toBeInTheDocument();
+    const defaultBackend = await screen.findByTitle(LOCAL_API_URL);
+    expect(defaultBackend.closest('tr')).toHaveAttribute('draggable', 'true');
     const defaultResetButton = screen.getByRole('button', { name: 'Reset server settings to defaults' });
     expect(defaultResetButton).toBeDisabled();
     expect(defaultResetButton).not.toHaveAttribute('title');

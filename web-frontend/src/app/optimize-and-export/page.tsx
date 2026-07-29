@@ -1106,6 +1106,7 @@ export default function OptimizeAndExportPage() {
     const nextServers = createDefaultServerEntries();
     setServerEntries(nextServers);
     setSelectedServerEndpoint('auto');
+    setEditingServerEndpoint(null);
     setAddingServer(false);
     setAddServerError(null);
     nextServers.forEach(server => {
