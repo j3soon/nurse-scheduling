@@ -32,6 +32,8 @@ from pydantic import ValidationError
 
 import nurse_scheduling
 
+logger = logging.getLogger(__name__)
+
 CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
 TESTCASES_DIR = f"{CURRENT_DIR}/testcases"
 
@@ -61,7 +63,7 @@ def run_schedule_regression_test(solver: str) -> None:
         test_dir = os.path.dirname(filepath)
         if base_filepath in IGNORE_TESTS:
             continue
-        logging.info(f"[{solver}] Testing '{relative_filepath}' ...")
+        logger.info(f"[{solver}] Testing '{relative_filepath}' ...")
 
         # Read file content
         with open(filepath, "rb") as f:
@@ -75,8 +77,8 @@ def run_schedule_regression_test(solver: str) -> None:
             with pytest.raises((ValidationError, ValueError)) as exc_info:
                 nurse_scheduling.schedule(file_content, solver=solver)
             # Then verify the error message contains the expected text
-            logging.info(f"Expected error: {expected_err.strip()}")
-            logging.info(f"Actual error: {exc_info.value!s}")
+            logger.info(f"Expected error: {expected_err.strip()}")
+            logger.info(f"Actual error: {exc_info.value!s}")
             assert expected_err.strip() in str(exc_info.value), (
                 f"Expected error '{expected_err.strip()}' not found in actual error: {exc_info.value!s}"
             )
@@ -98,14 +100,14 @@ def run_schedule_regression_test(solver: str) -> None:
                 solver=solver,
             )
         except ValidationError as e:
-            logging.debug(f"Validation error for '{base_filepath}': {e}")
+            logger.debug(f"Validation error for '{base_filepath}': {e}")
             error_count += 1
             failed_cases.append(f"{relative_filepath} [validation error]")
             if not CONTINUE_ON_ERROR:
                 pytest.fail(f"Validation error for '{base_filepath}'")
             continue
-        except Exception as e:
-            logging.debug(f"Unexpected error for '{base_filepath}': {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"Unexpected error for '{base_filepath}': {e}")
             error_count += 1
             failed_cases.append(f"{relative_filepath} [unexpected error]")
             if not CONTINUE_ON_ERROR:
@@ -125,12 +127,12 @@ def run_schedule_regression_test(solver: str) -> None:
         # Check if the optimal solution is unique by running the solver again with the previous solution avoided
         not_unique_optimal = df2 is not None and score == score2
         if not_unique_optimal:
-            logging.warning("The optimal solution is not unique")
+            logger.warning("The optimal solution is not unique")
 
         if actual_csv != expected_csv:
-            logging.debug(f"Actual CSV:\n{actual_csv}")
-            logging.debug(f"Actual output:\n{df}")
-            logging.debug(
+            logger.debug(f"Actual CSV:\n{actual_csv}")
+            logger.debug(f"Actual output:\n{df}")
+            logger.debug(
                 "Expected output:\n%s",
                 pandas.read_csv(io.StringIO(expected_csv), header=None, keep_default_na=False),
             )
@@ -141,8 +143,8 @@ def run_schedule_regression_test(solver: str) -> None:
             continue
 
         if not_unique_optimal:
-            logging.debug(f"Optimal Solution 1:\n{df}")
-            logging.debug(f"Optimal Solution 2:\n{df2}")
+            logger.debug(f"Optimal Solution 1:\n{df}")
+            logger.debug(f"Optimal Solution 2:\n{df2}")
             error_count += 1
             failed_cases.append(f"{relative_filepath} [non-unique optimal]")
             if not CONTINUE_ON_ERROR:
@@ -152,9 +154,9 @@ def run_schedule_regression_test(solver: str) -> None:
             continue
 
     if error_count > 0:
-        logging.error("Found %s/%s errors during testing:", error_count, total_tests)
+        logger.error("Found %s/%s errors during testing:", error_count, total_tests)
         for failed_case in failed_cases:
-            logging.error("  - %s", failed_case)
+            logger.error("  - %s", failed_case)
         pytest.fail(f"Found {error_count}/{total_tests} errors during testing:\n- " + "\n- ".join(failed_cases))
     else:
-        logging.info(f"All {total_tests} tests passed for solver={solver}")
+        logger.info(f"All {total_tests} tests passed for solver={solver}")

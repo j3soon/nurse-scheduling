@@ -21,7 +21,7 @@
 
 import sys
 import types
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from nurse_scheduling.loader import _load_yaml
 from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, init_sentry
@@ -70,7 +70,7 @@ def _running_job(input_name: str) -> Job:
     return Job(
         id="job_test",
         state=JobState.RUNNING,
-        created_at=datetime.now(UTC),
+        created_at=datetime.now(timezone.utc),
         request=JobRequest(
             input_name=input_name,
             client_id="client_test",

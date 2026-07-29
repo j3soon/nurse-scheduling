@@ -20,9 +20,10 @@
 import datetime
 import math
 import re
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing_extensions import Self
 
 from .constants import ALL, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR, OFF
 
@@ -36,9 +37,8 @@ SHIFT_AFFINITY = "shift affinity"
 
 def validate_weight(weight: float) -> int | float:
     """Validate that float weights can only be positive or negative infinity."""
-    if isinstance(weight, float):
-        if weight != math.inf and weight != -math.inf:
-            raise ValueError("Float weights can only be positive infinity or negative infinity.")
+    if isinstance(weight, float) and weight != math.inf and weight != -math.inf:
+        raise ValueError("Float weights can only be positive infinity or negative infinity.")
     return weight
 
 

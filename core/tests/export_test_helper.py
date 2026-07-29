@@ -36,6 +36,8 @@ from nurse_scheduling import exporter
 
 from .schedule_test_helper import CONTINUE_ON_ERROR, IGNORE_TESTS, TESTCASES_DIR, get_regression_testcases
 
+logger = logging.getLogger(__name__)
+
 WRITE_XLSX_GOLDEN = os.getenv("WRITE_XLSX_GOLDEN") == "1"
 
 
@@ -141,7 +143,7 @@ def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
         test_dir = os.path.dirname(filepath)
         if base_filepath in IGNORE_TESTS:
             continue
-        logging.info(
+        logger.info(
             "[%s][prettify=%s] Testing XLSX '%s' ...",
             solver,
             prettify,
@@ -157,8 +159,8 @@ def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
                 expected_err = f.read()
             with pytest.raises((ValidationError, ValueError)) as exc_info:
                 nurse_scheduling.schedule(file_content, solver=solver, prettify=prettify)
-            logging.info(f"Expected error: {expected_err.strip()}")
-            logging.info(f"Actual error: {exc_info.value!s}")
+            logger.info(f"Expected error: {expected_err.strip()}")
+            logger.info(f"Actual error: {exc_info.value!s}")
             assert expected_err.strip() in str(exc_info.value), (
                 f"Expected error '{expected_err.strip()}' not found in actual error: {exc_info.value!s}"
             )
@@ -190,13 +192,13 @@ def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
 
             _assert_workbook_matches_golden(output.getvalue(), golden_xlsx_path)
         except ValidationError as e:
-            logging.debug(f"Validation error for '{base_filepath}': {e}")
+            logger.debug(f"Validation error for '{base_filepath}': {e}")
             error_count += 1
             if not CONTINUE_ON_ERROR:
                 pytest.fail(f"Validation error for '{base_filepath}'")
             continue
-        except Exception as e:
-            logging.debug(f"Unexpected error for '{base_filepath}': {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"Unexpected error for '{base_filepath}': {e}")
             error_count += 1
             if not CONTINUE_ON_ERROR:
                 pytest.fail(f"Unexpected error for '{base_filepath}'")
@@ -205,4 +207,4 @@ def run_export_xlsx_regression_test(solver: str, prettify: bool) -> None:
     if error_count > 0:
         pytest.fail(f"Found {error_count}/{total_tests} errors during XLSX export testing")
     else:
-        logging.info("All %s tests passed for solver=%s prettify=%s", total_tests, solver, prettify)
+        logger.info("All %s tests passed for solver=%s prettify=%s", total_tests, solver, prettify)

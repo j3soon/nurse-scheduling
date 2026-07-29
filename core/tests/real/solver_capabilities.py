@@ -30,7 +30,7 @@ import sys
 import time
 import traceback
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -826,7 +826,7 @@ def render_markdown(reports: list[SolverReport]) -> str:
 def _json_payload(reports: list[SolverReport], config: ProbeConfig) -> dict[str, Any]:
     """Build a machine-readable report with runtime context."""
     return {
-        "generatedAt": datetime.now(UTC).isoformat(),
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
         "platform": platform.platform(),
         "pythonVersion": platform.python_version(),
         "testcase": str(config.testcase),
@@ -908,7 +908,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--worker-round requires --solver")
         try:
             report = _run_worker_round(args.worker_round, args.solver, _config_from_args(args))
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             traceback.print_exc()
             report = _round_report(args.worker_round, "FAIL", f"Unhandled worker error: {error}")
         print(f"{RESULT_MARKER}{json.dumps(asdict(report), sort_keys=True)}", flush=True)

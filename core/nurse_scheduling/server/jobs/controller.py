@@ -20,7 +20,7 @@
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
 from uuid import uuid4
 
@@ -56,7 +56,7 @@ WriteResult = TypeVar("WriteResult")
 
 def utc_now() -> datetime:
     """Return a timezone-aware UTC timestamp."""
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def new_job_id() -> str:

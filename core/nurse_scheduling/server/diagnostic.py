@@ -61,7 +61,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -234,7 +234,7 @@ class PublicDiagnostic:
         self.config = config
         self.transport = transport
         self.run_id = uuid4().hex
-        self.started_at = datetime.now(UTC)
+        self.started_at = datetime.now(timezone.utc)
         self.started_monotonic = time.monotonic()
         self.workflow_deadline = self.started_monotonic + config.workflow_timeout_seconds
         self.startup_attempts: list[dict[str, Any]] = []
@@ -763,12 +763,15 @@ class PublicDiagnostic:
             self.config.request_timeout_seconds, read=min(read_seconds, self.config.request_timeout_seconds)
         )
         try:
-            with self._new_client() as client, client.stream(
-                "GET",
-                f"/optimize/{job_id}/events",
-                headers={"Accept": "text/event-stream", "Connection": "close"},
-                timeout=timeout,
-            ) as response:
+            with (
+                self._new_client() as client,
+                client.stream(
+                    "GET",
+                    f"/optimize/{job_id}/events",
+                    headers={"Accept": "text/event-stream", "Connection": "close"},
+                    timeout=timeout,
+                ) as response,
+            ):
                 if response.status_code == 404:
                     self.visibility_split = True
                     self._fail(
@@ -1135,14 +1138,14 @@ class PublicDiagnostic:
                 if len(queued_ids) >= QUEUED_JOB_TARGET and not self.visibility_split:
                     with self._measure_phase("queue_transition"):
                         self._exercise_queue_transition(queued_ids)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             self._record_request_error("unexpected diagnostic error", f"{type(error).__name__}: {error}")
             self._mark_inconclusive("unexpected_error", "The diagnostic stopped after an unexpected internal error.")
         finally:
             try:
                 with self._measure_phase("cleanup"):
                     self._request_cleanup_cancellations()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 self._record_request_error("unexpected cleanup cancellation error", f"{type(error).__name__}: {error}")
                 self._mark_inconclusive(
                     "cleanup_cancellation_error",
@@ -1156,7 +1159,7 @@ class PublicDiagnostic:
                         if needs_accepted or needs_runner:
                             self._collect_job_identities(job.id)
                     self._analyze_runtime_identities()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 self._record_request_error("unexpected identity analysis error", f"{type(error).__name__}: {error}")
                 self._mark_inconclusive(
                     "identity_analysis_error",
@@ -1166,7 +1169,7 @@ class PublicDiagnostic:
                 try:
                     with self._measure_phase("cleanup"):
                         self._cleanup_jobs()
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001
                     self._record_request_error("unexpected cleanup error", f"{type(error).__name__}: {error}")
                     self._mark_inconclusive(
                         "cleanup_error",
@@ -1224,7 +1227,7 @@ class PublicDiagnostic:
 
     def build_report(self) -> dict[str, Any]:
         """Build a concise summary followed by detailed diagnostic evidence."""
-        finished_at = datetime.now(UTC)
+        finished_at = datetime.now(timezone.utc)
         counts = self._identity_counts()
         summary = {
             "outcome": self._outcome(),

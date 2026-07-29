@@ -18,7 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from uuid import UUID, uuid4
 
@@ -74,7 +74,7 @@ async def _read_input(
     else:
         assert yaml_content is not None
         content = yaml_content.encode("utf-8")
-        input_name = f"nurse-scheduling-{datetime.now().strftime('%Y%m%d%H%M%S')}.yaml"
+        input_name = f"nurse-scheduling-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.yaml"
     if len(content) > max_bytes:
         raise HTTPException(status_code=413, detail="Scheduling YAML is too large")
     return content, input_name
@@ -105,7 +105,7 @@ def _client_id(request: Request, response: Response) -> str:
 async def create_job(
     request: Request,
     response: Response,
-    file: UploadFile | None = File(None, description="YAML file with scheduling data"),
+    file: UploadFile | None = File(None, description="YAML file with scheduling data"),  # noqa: B008
     yaml_content: str | None = Form(None, description="YAML content as a string"),
     prettify: bool | None = Form(None),
     timeout: int | None = Form(None),

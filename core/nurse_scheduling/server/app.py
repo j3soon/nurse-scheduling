@@ -20,7 +20,7 @@
 import logging
 import subprocess
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -148,7 +148,7 @@ def create_app(
     instance_id = str(uuid4())
     store = store or _create_store(settings, instance_id)
     runner = runner or OptimizationRunner()
-    started_at = datetime.now(UTC)
+    started_at = datetime.now(timezone.utc)
     app_version = get_app_version()
     runtime_identity = {
         "service_name": SERVICE_NAME,
@@ -285,7 +285,7 @@ def create_app(
         """Return the first unavailable dependency reason, or `None` when ready."""
         try:
             store.check_health()
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             server_logger.warning(
                 "[server:readiness] job store unavailable backend=%s error=%s",
                 settings.job_backend,
@@ -308,7 +308,7 @@ def create_app(
             )
         try:
             activity = controller.get_activity()
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             server_logger.warning(
                 "[server:info] job activity unavailable backend=%s error=%s",
                 settings.job_backend,

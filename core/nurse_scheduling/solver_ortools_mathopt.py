@@ -30,6 +30,8 @@ from ortools.util.python import solve_interrupter
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
 from .solver_ortools_linear import ORToolsLinearSolver
 
+logger = logging.getLogger(__name__)
+
 ORTOOLS_MATHOPT_MIP_ENGINES: dict[str, mathopt.SolverType] = {
     "gscip": mathopt.SolverType.GSCIP,
     "cp-sat": mathopt.SolverType.CP_SAT,
@@ -105,7 +107,7 @@ class ORToolsMathOptSolver(ORToolsLinearSolver):
         self.variables[unique_name] = var
         return var
 
-    def add_constraint(self, constraint, name: str = None) -> None:
+    def add_constraint(self, constraint, name: str | None = None) -> None:
         """Add a linear constraint to the model."""
         if name is None:
             name = self.unique_constraint_name("constraint")
@@ -149,10 +151,10 @@ class ORToolsMathOptSolver(ORToolsLinearSolver):
 
         if timeout is not None:
             params.time_limit = timedelta(seconds=timeout)
-            logging.info("Solver time limit set to %s seconds", timeout)
+            logger.info("Solver time limit set to %s seconds", timeout)
 
         if deterministic:
-            logging.info("Configuring deterministic mode for OR-Tools MathOpt/%s", self.engine)
+            logger.info("Configuring deterministic mode for OR-Tools MathOpt/%s", self.engine)
             params.random_seed = 0
             if self.engine == "highs":
                 # The MathOpt HiGHS adapter does not support the generic threads
@@ -163,7 +165,7 @@ class ORToolsMathOptSolver(ORToolsLinearSolver):
                 params.threads = 1
 
         if solution_callback is not None:
-            logging.warning("Solution callbacks are not exposed by the OR-Tools MathOpt wrapper")
+            logger.warning("Solution callbacks are not exposed by the OR-Tools MathOpt wrapper")
 
         if should_stop is not None and self.engine not in ORTOOLS_MATHOPT_INTERRUPTIBLE_ENGINES:
             raise ValueError(f"{self.solver_selector} does not support cooperative interruption")
@@ -178,7 +180,7 @@ class ORToolsMathOptSolver(ORToolsLinearSolver):
                     try:
                         stop_requested = should_stop()
                     except Exception:
-                        logging.exception("Stop callback failed")
+                        logger.exception("Stop callback failed")
                         return
                     if stop_requested:
                         assert interrupter is not None
@@ -247,7 +249,7 @@ class ORToolsMathOptSolver(ORToolsLinearSolver):
             raise ValueError("No feasible MathOpt solution is available")
         value = self._normalize_numeric_value(self.result.objective_value())
         if not isinstance(value, int):
-            raise ValueError(f"Objective value should be an integer, but got {value}.")
+            raise ValueError(f"Objective value should be an integer, but got {value}.")  # noqa: TRY004
         return value
 
     def get_statistics(self) -> dict[str, Any]:
@@ -336,5 +338,5 @@ class ORToolsMathOptSolver(ORToolsLinearSolver):
         should_stop: Callable[[], bool] | None = None,
     ) -> Any:
         """Return None because this wrapper currently reports only the final result."""
-        logging.info("Solution callbacks are not exposed by the OR-Tools MathOpt wrapper")
+        logger.info("Solution callbacks are not exposed by the OR-Tools MathOpt wrapper")
         return None

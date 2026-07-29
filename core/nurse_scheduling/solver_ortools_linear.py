@@ -22,13 +22,15 @@ import math
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 from ortools.linear_solver import pywraplp
 from ortools.linear_solver.python import linear_solver_natural_api
 
 from .constants import Operator
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus, validate_square_constant
+
+logger = logging.getLogger(__name__)
 
 ORTOOLS_MPSOLVER_MIP_ENGINES: dict[str, str] = {
     "cbc": "CBC",
@@ -42,7 +44,7 @@ ORTOOLS_MPSOLVER_LP_ONLY_ENGINES = frozenset({"glop", "pdlp", "clp"})
 class ORToolsLinearSolver(SolverInterface):
     """OR-Tools MPSolver wrapper for integer linear solver engines."""
 
-    _STATUS_NAMES = {
+    _STATUS_NAMES: ClassVar[dict[int, str]] = {
         pywraplp.Solver.OPTIMAL: "OPTIMAL",
         pywraplp.Solver.FEASIBLE: "FEASIBLE",
         pywraplp.Solver.INFEASIBLE: "INFEASIBLE",
@@ -100,7 +102,7 @@ class ORToolsLinearSolver(SolverInterface):
         try:
             progress_callback(payload)
         except Exception:
-            logging.exception("Progress callback failed")
+            logger.exception("Progress callback failed")
 
     @staticmethod
     def _finite_int_bound(value: float, name: str) -> int:
@@ -179,7 +181,7 @@ class ORToolsLinearSolver(SolverInterface):
         self.variables[unique_name] = var
         return var
 
-    def add_constraint(self, constraint, name: str = None) -> None:
+    def add_constraint(self, constraint, name: str | None = None) -> None:
         """Add a constraint to the model."""
         if name is None:
             name = self.unique_constraint_name("constraint")
@@ -249,19 +251,19 @@ class ORToolsLinearSolver(SolverInterface):
 
         # Note: MPSolver doesn't have built-in support for deterministic solving across all engines
         if deterministic:
-            logging.info("Configuring deterministic mode for OR-Tools/%s where supported", self.engine)
+            logger.info("Configuring deterministic mode for OR-Tools/%s where supported", self.engine)
             try:
                 self.model.SetNumThreads(1)
             except Exception:
-                logging.exception("Unable to force single-threaded solving for OR-Tools/%s", self.engine)
+                logger.exception("Unable to force single-threaded solving for OR-Tools/%s", self.engine)
 
         if timeout is not None:
             self.model.SetTimeLimit(int(timeout * 1000))
-            logging.info("Solver time limit set to %s seconds", timeout)
+            logger.info("Solver time limit set to %s seconds", timeout)
 
         # Note: MPSolver doesn't support solution callbacks in the same way as CP-SAT
         if solution_callback is not None:
-            logging.warning("Solution callbacks are not supported with OR-Tools linear solvers")
+            logger.warning("Solution callbacks are not supported with OR-Tools linear solvers")
 
         stop_watcher_done = threading.Event()
         stop_watcher = None
@@ -272,12 +274,12 @@ class ORToolsLinearSolver(SolverInterface):
                     try:
                         stop_requested = should_stop()
                     except Exception:
-                        logging.exception("Stop callback failed")
+                        logger.exception("Stop callback failed")
                         return
                     if stop_requested:
                         interrupted = self.model.InterruptSolve()
                         if not interrupted:
-                            logging.warning("OR-Tools/%s did not accept solve interruption", self.engine)
+                            logger.warning("OR-Tools/%s did not accept solve interruption", self.engine)
                         return
 
             stop_watcher = threading.Thread(
@@ -307,9 +309,9 @@ class ORToolsLinearSolver(SolverInterface):
             self.solver_status = SolverStatus.MODEL_INVALID
         else:
             if self.status == pywraplp.Solver.UNBOUNDED:
-                logging.warning("Model is unbounded")
+                logger.warning("Model is unbounded")
             elif self.status == pywraplp.Solver.ABNORMAL:
-                logging.warning("Solver returned abnormal status")
+                logger.warning("Solver returned abnormal status")
             self.solver_status = SolverStatus.UNKNOWN
 
         if self.solver_status in {SolverStatus.OPTIMAL, SolverStatus.FEASIBLE}:
@@ -341,7 +343,7 @@ class ORToolsLinearSolver(SolverInterface):
             return 0
         if not isinstance(value, int):
             # This should not happen
-            raise ValueError(f"Objective value should be an integer, but got {value}.")
+            raise ValueError(f"Objective value should be an integer, but got {value}.")  # noqa: TRY004
         return value
 
     def get_statistics(self) -> dict[str, Any]:
@@ -631,5 +633,5 @@ class ORToolsLinearSolver(SolverInterface):
         Note: MPSolver does not expose solution callbacks through this wrapper.
         This method returns None.
         """
-        logging.info("Solution callbacks are not supported by OR-Tools linear solvers")
+        logger.info("Solution callbacks are not supported by OR-Tools linear solvers")
         return None

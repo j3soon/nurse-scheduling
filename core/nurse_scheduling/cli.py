@@ -181,7 +181,7 @@ def main():
     solve_started_at = time.monotonic()
     try:
         if args.progress_output:
-            progress_output_file = open(args.progress_output, "w", encoding="utf-8")
+            progress_output_file = open(args.progress_output, "w", encoding="utf-8")  # noqa: SIM115
         progress_callback = None
         if not args.show_model_build_stats or progress_output_file is not None:
             progress_callback = _create_cli_progress_callback(

@@ -30,6 +30,7 @@ DEFAULT_RETRY_MAX_DELAY_SECONDS = 0.05
 """Default maximum delay between retry attempts."""
 
 
+# Keep the Python 3.10-compatible TypeVar form.
 def retry_with_backoff(
     operation: Callable[[], RetryResult],
     *,

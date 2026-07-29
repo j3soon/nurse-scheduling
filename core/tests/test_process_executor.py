@@ -27,7 +27,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -98,7 +98,7 @@ def _job(job_id: str) -> Job:
             prettify=False,
             timeout_seconds=60,
         ),
-        created_at=datetime.now(UTC),
+        created_at=datetime.now(timezone.utc),
     )
 
 
@@ -217,7 +217,7 @@ def _guard_death_supervisor(
             hard_timeout_seconds=61,
             finish_now_enabled=False,
         )
-    except BaseException as error:
+    except BaseException as error:  # noqa: BLE001
         outcome_connection.send(
             {
                 "exception_type": type(error).__name__,

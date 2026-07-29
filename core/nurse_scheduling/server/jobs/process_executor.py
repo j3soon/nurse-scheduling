@@ -124,7 +124,7 @@ def _run_child(
                 should_stop=finish_now_event.is_set if finish_now_enabled else None,
             )
             message = ("result", result)
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001
             message = (
                 "unexpected_error",
                 type(error).__name__,

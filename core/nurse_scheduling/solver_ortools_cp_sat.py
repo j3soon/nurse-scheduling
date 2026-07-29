@@ -28,6 +28,8 @@ from ortools.sat.python import cp_model
 from .constants import Operator
 from .solver_interface import SolverInterface, SolverProgress, SolverStatus, assert_int_score
 
+logger = logging.getLogger(__name__)
+
 
 class ORToolsSolver(SolverInterface):
     """OR-Tools CP-SAT solver implementation."""
@@ -100,7 +102,7 @@ class ORToolsSolver(SolverInterface):
     ) -> SolverStatus:
         """Solve the model using OR-Tools."""
         if deterministic:
-            logging.info("Configuring deterministic solver...")
+            logger.info("Configuring deterministic solver...")
             self.solver.parameters.random_seed = 0
             self.solver.parameters.num_workers = 1
             # Potentially related parameters are:
@@ -111,9 +113,9 @@ class ORToolsSolver(SolverInterface):
         if timeout is not None:
             try:
                 self.solver.parameters.max_time_in_seconds = float(timeout)
-                logging.info(f"Solver time limit set to {timeout} seconds")
+                logger.info(f"Solver time limit set to {timeout} seconds")
             except (ValueError, TypeError, AttributeError) as exc:
-                logging.warning(
+                logger.warning(
                     "Unable to set solver timeout parameter (%s); proceeding without time limit",
                     exc,
                 )
@@ -137,7 +139,7 @@ class ORToolsSolver(SolverInterface):
                         with should_stop_lock:
                             stop_requested = should_stop()
                     except Exception:
-                        logging.exception("Stop callback failed")
+                        logger.exception("Stop callback failed")
                         return
                     if stop_requested:
                         self.solver.StopSearch()
@@ -289,9 +291,9 @@ class ORToolsSolver(SolverInterface):
                         ):
                             self.best_score = current_score
                             self.n_solutions = 1
-                        logging.info(f"# of (best) solutions found: {self.n_solutions}")
-                        logging.info(f"current score: {current_score}")
-                        logging.info(f"elapsed time: {elapsed_time:.2f}s")
+                        logger.info(f"# of (best) solutions found: {self.n_solutions}")
+                        logger.info(f"current score: {current_score}")
+                        logger.info(f"elapsed time: {elapsed_time:.2f}s")
                         try:
                             self.progress_callback(
                                 SolverProgress(
@@ -302,12 +304,12 @@ class ORToolsSolver(SolverInterface):
                                 )
                             )
                         except Exception:
-                            logging.exception("Progress callback failed")
+                            logger.exception("Progress callback failed")
                     if self.solution_callback is not None:
                         try:
                             self.solution_callback(self)
                         except Exception:
-                            logging.exception("Solution callback failed")
+                            logger.exception("Solution callback failed")
                     if self.should_stop is not None:
                         with self.should_stop_lock:
                             stop_requested = self.should_stop()
