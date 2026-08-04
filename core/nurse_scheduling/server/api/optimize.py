@@ -26,12 +26,12 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Respo
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from ... import scheduler
 from ..config import ServerSettings
 from ..jobs.controller import JobController
 from ..jobs.models import JobState
 from ..solver_capabilities import solver_supports_finish_now
-from .schemas import JobResponse
+from ..solver_options import normalize_solver_option
+from .schemas import JobResponse, OptimizationOptionsResponse
 from .sse import format_sse_event
 
 router = APIRouter()
@@ -109,16 +109,26 @@ async def create_job(
     yaml_content: str | None = Form(None, description="YAML content as a string"),
     prettify: bool | None = Form(None),
     timeout: int | None = Form(None),
-    solver: str = Form("ortools/cp-sat", description=scheduler.SOLVER_SELECTOR_HELP),
+    solver: str | None = Form(None, description="Solver value returned by GET /optimize/options"),
 ):
     """Validate an optimization request and enqueue a durable job."""
     settings = _settings(request)
     content, input_name = await _read_input(file, yaml_content, settings.max_yaml_bytes)
+    try:
+        normalized_solver = normalize_solver_option(solver if solver is not None else settings.default_solver)
+    except ValueError:
+        normalized_solver = ""
+    if normalized_solver not in settings.solver_ids:
+        choices = ", ".join(settings.solver_ids)
+        raise HTTPException(status_code=400, detail=f"Solver must be one of: {choices}")
     timeout_seconds = timeout if timeout is not None else settings.default_timeout_seconds
-    if timeout_seconds <= 0 or timeout_seconds > settings.max_timeout_seconds:
+    if timeout_seconds < settings.min_timeout_seconds or timeout_seconds > settings.max_timeout_seconds:
         raise HTTPException(
             status_code=400,
-            detail=f"Optimization timeout must be between 1 and {settings.max_timeout_seconds} seconds",
+            detail=(
+                "Optimization timeout must be between "
+                f"{settings.min_timeout_seconds} and {settings.max_timeout_seconds} seconds"
+            ),
         )
     # Unlike the synchronous endpoints below, create_job must remain async for
     # upload reading. Offload its synchronous controller/store write so it cannot
@@ -127,14 +137,20 @@ async def create_job(
         _controller(request).create_job,
         input_name=input_name,
         client_id=_client_id(request, response),
-        solver=solver,
-        prettify=prettify,
+        solver=normalized_solver,
+        prettify=prettify if prettify is not None else settings.default_prettify,
         timeout_seconds=timeout_seconds,
         input_bytes=content,
     )
     response.headers["Location"] = f"/optimize/{job.id}"
     response.headers["Retry-After"] = "1"
     return JobResponse.from_job(job)
+
+
+@router.get("/optimize/options", response_model=OptimizationOptionsResponse)
+def get_optimization_options(request: Request):
+    """Return the run options advertised and enforced by this deployment."""
+    return OptimizationOptionsResponse.from_settings(_settings(request))
 
 
 @router.get("/optimize/{job_id}", response_model=JobResponse)

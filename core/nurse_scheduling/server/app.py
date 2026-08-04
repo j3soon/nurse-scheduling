@@ -51,6 +51,7 @@ from .jobs.runner import OptimizationRunner
 from .jobs.worker import JobWorker
 from .maintenance import JobMaintenance
 from .runtime_identity import get_deployment_id
+from .solver_options import validate_solver_availability
 from .stores.memory import MemoryJobStore
 
 TITLE = "Nurse Scheduling API"
@@ -144,6 +145,7 @@ def create_app(
     Explicit dependencies support isolated tests; omitted values come from configuration.
     """
     settings = settings or ServerSettings.from_env()
+    validate_solver_availability(settings.solver_ids)
     deployment_id = get_deployment_id()
     instance_id = str(uuid4())
     store = store or _create_store(settings, instance_id)

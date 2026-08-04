@@ -38,6 +38,32 @@ export interface ServerInfoCheckResult {
   health: ServerInfoResponse;
 }
 
+export interface SolverChoice {
+  value: string;
+  label: string;
+  compute: 'cpu' | 'gpu';
+  timeout: {
+    default: number;
+    minimum: number;
+    maximum: number;
+  };
+  controls: {
+    cancel_running: boolean;
+    finish_now: boolean;
+  };
+}
+
+export interface OptimizationOptionsResponse {
+  schema_version: 'alpha';
+  solver: {
+    default: string;
+    choices: SolverChoice[];
+  };
+  prettify: {
+    default: boolean;
+  };
+}
+
 export const LOCAL_BACKEND_API_URL = 'http://localhost:8000';
 export const PRODUCTION_BACKEND_API_URL = 'https://api.nursescheduling.org';
 export const SECONDARY_BACKEND_API_URL = 'https://api-secondary.nursescheduling.org';
@@ -58,4 +84,55 @@ export function selectOfflineFallbackBackendApiUrl(candidates: string[]): string
 
 export function selectPreferredServer(results: ServerInfoCheckResult[]): ServerInfoCheckResult | undefined {
   return [...results].sort((a, b) => a.index - b.index)[0];
+}
+
+export function isOptimizationOptionsResponse(value: unknown): value is OptimizationOptionsResponse {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<OptimizationOptionsResponse>;
+  const solver = candidate.solver;
+  const prettify = candidate.prettify;
+  if (
+    candidate.schema_version !== 'alpha' ||
+    typeof solver !== 'object' || solver === null ||
+    typeof solver.default !== 'string' ||
+    !Array.isArray(solver.choices) || solver.choices.length === 0 ||
+    typeof prettify !== 'object' || prettify === null ||
+    typeof prettify.default !== 'boolean'
+  ) {
+    return false;
+  }
+
+  const choicesValid = solver.choices.every(choice => {
+    if (typeof choice !== 'object' || choice === null) {
+      return false;
+    }
+    const timeout = choice.timeout;
+    const controls = choice.controls;
+    const timeoutValid = (
+      typeof timeout === 'object' && timeout !== null &&
+      Number.isInteger(timeout.default) &&
+      Number.isInteger(timeout.minimum) &&
+      Number.isInteger(timeout.maximum) &&
+      timeout.minimum >= 1 &&
+      timeout.minimum <= timeout.default &&
+      timeout.default <= timeout.maximum
+    );
+    return (
+      typeof choice.value === 'string' && choice.value.length > 0 &&
+      typeof choice.label === 'string' && choice.label.length > 0 &&
+      (choice.compute === 'cpu' || choice.compute === 'gpu') &&
+      timeoutValid &&
+      typeof controls === 'object' && controls !== null &&
+      typeof controls.cancel_running === 'boolean' &&
+      typeof controls.finish_now === 'boolean'
+    );
+  });
+  if (!choicesValid) {
+    return false;
+  }
+  const values = solver.choices.map(choice => choice.value);
+  return new Set(values).size === values.length && values.includes(solver.default);
 }

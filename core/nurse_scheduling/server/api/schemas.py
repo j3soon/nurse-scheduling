@@ -18,11 +18,89 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
+from ..config import ServerSettings
 from ..jobs.models import Job, JobState, OptimizationOutcome
-from ..solver_capabilities import solver_supports_finish_now
+from ..solver_capabilities import get_solver_capabilities, solver_supports_finish_now
+
+
+class TimeoutOptionsResponse(BaseModel):
+    """Allowed integer range and default for an optimization timeout."""
+
+    default: int
+    minimum: int
+    maximum: int
+
+
+class SolverControlOptionsResponse(BaseModel):
+    """Running-job controls available for one solver."""
+
+    cancel_running: bool
+    finish_now: bool
+
+
+class SolverChoiceResponse(BaseModel):
+    """One solver advertised by this deployment."""
+
+    value: str
+    label: str
+    compute: Literal["cpu", "gpu"]
+    timeout: TimeoutOptionsResponse
+    controls: SolverControlOptionsResponse
+
+
+class SolverOptionsResponse(BaseModel):
+    """Allowed solver values and deployment default."""
+
+    default: str
+    choices: list[SolverChoiceResponse]
+
+
+class PrettifyOptionsResponse(BaseModel):
+    """Default for schedule prettification."""
+
+    default: bool
+
+
+class OptimizationOptionsResponse(BaseModel):
+    """Backend-defined options accepted when creating optimization jobs."""
+
+    schema_version: Literal["alpha"] = "alpha"
+    solver: SolverOptionsResponse
+    prettify: PrettifyOptionsResponse
+
+    @classmethod
+    def from_settings(cls, settings: ServerSettings) -> "OptimizationOptionsResponse":
+        """Project validated settings and canonical solver metadata."""
+        timeout = TimeoutOptionsResponse(
+            default=settings.default_timeout_seconds,
+            minimum=settings.min_timeout_seconds,
+            maximum=settings.max_timeout_seconds,
+        )
+        choices = []
+        for solver_id in settings.solver_ids:
+            capabilities = get_solver_capabilities(solver_id)
+            if capabilities is None:
+                raise ValueError(f"Missing capability metadata for configured solver: {solver_id}")
+            choices.append(
+                SolverChoiceResponse(
+                    value=capabilities.value,
+                    label=capabilities.label,
+                    compute=capabilities.compute,
+                    timeout=timeout,
+                    controls=SolverControlOptionsResponse(
+                        cancel_running=True,
+                        finish_now=capabilities.finish_now,
+                    ),
+                )
+            )
+        return cls(
+            solver=SolverOptionsResponse(default=settings.default_solver, choices=choices),
+            prettify=PrettifyOptionsResponse(default=settings.default_prettify),
+        )
 
 
 class JobRequestResponse(BaseModel):

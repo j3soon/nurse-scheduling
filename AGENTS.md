@@ -12,7 +12,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 ## Shared Workflow
 - For Linux setup, run `./scripts/setup_env.sh`.
 - Keep edits scoped to the requested module and preserve existing patterns.
-- Do not stage, unstage, or commit changes unless explicitly asked.
+- Preserve each file's staged or unstaged state. Do not stage, unstage, or
+  commit changes unless explicitly asked. When asked to stage specific changes,
+  change only those index entries.
 - Keep commits focused by module (`core`, `web-frontend`, or `docs`).
 - Avoid trailing spaces and end files with a newline.
 - Run affected tests and lint checks before finishing.

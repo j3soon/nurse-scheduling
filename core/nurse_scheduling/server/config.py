@@ -21,6 +21,9 @@ import math
 import os
 from dataclasses import dataclass
 
+from ..scheduler import ORTOOLS_CP_SAT_SOLVER
+from .solver_options import normalize_solver_option
+
 DEFAULT_MAX_RETAINED_JOBS = 128
 """Default maximum number of jobs retained across all lifecycle states."""
 DEFAULT_JOB_RETENTION_SECONDS = 24 * 60 * 60
@@ -55,6 +58,30 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
+def _boolean(name: str, default: bool) -> bool:
+    """Read a boolean environment setting."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
+def _solver_ids(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Read a comma-separated solver allowlist."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    values = tuple(value.strip() for value in raw_value.split(",") if value.strip())
+    if not values:
+        raise ValueError(f"{name} must contain at least one solver")
+    return values
+
+
 @dataclass(frozen=True)
 class ServerSettings:
     """All configuration required to construct one server process."""
@@ -83,10 +110,18 @@ class ServerSettings:
     """Maximum SSE wait before emitting a keepalive comment."""
     max_yaml_bytes: int = 2 * 1024 * 1024
     """Largest accepted YAML request body in bytes."""
+    solver_ids: tuple[str, ...] = (ORTOOLS_CP_SAT_SOLVER,)
+    """Ordered solver allowlist advertised and accepted by this deployment."""
+    default_solver: str = ORTOOLS_CP_SAT_SOLVER
+    """Solver used when an optimization request omits the solver field."""
+    min_timeout_seconds: int = 1
+    """Smallest optimization timeout accepted from a request."""
     default_timeout_seconds: int = 5 * 60
     """Optimization timeout used when the request omits one."""
     max_timeout_seconds: int = 60 * 60
     """Largest optimization timeout accepted from a request."""
+    default_prettify: bool = True
+    """Schedule-prettification setting used when a request omits one."""
     timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS
     """Time allowed for a solver to return after its requested timeout."""
 
@@ -104,6 +139,7 @@ class ServerSettings:
             "job_retention_seconds",
             "max_events_per_job",
             "max_yaml_bytes",
+            "min_timeout_seconds",
             "default_timeout_seconds",
             "max_timeout_seconds",
         ):
@@ -120,8 +156,22 @@ class ServerSettings:
                 raise ValueError(f"{name} must be positive")
         if self.max_retained_jobs < self.max_pending_jobs:
             raise ValueError("max_retained_jobs must be at least max_pending_jobs")
+        if self.min_timeout_seconds > self.default_timeout_seconds:
+            raise ValueError("min_timeout_seconds must not exceed default_timeout_seconds")
         if self.default_timeout_seconds > self.max_timeout_seconds:
             raise ValueError("default_timeout_seconds must not exceed max_timeout_seconds")
+        if isinstance(self.solver_ids, str) or not self.solver_ids:
+            raise ValueError("solver_ids must contain at least one solver")
+        normalized_solver_ids = tuple(normalize_solver_option(value) for value in self.solver_ids)
+        if len(set(normalized_solver_ids)) != len(normalized_solver_ids):
+            raise ValueError("solver_ids must not contain duplicates")
+        normalized_default_solver = normalize_solver_option(self.default_solver)
+        if normalized_default_solver not in normalized_solver_ids:
+            raise ValueError("default_solver must be included in solver_ids")
+        if not isinstance(self.default_prettify, bool):
+            raise TypeError("default_prettify must be a boolean")
+        object.__setattr__(self, "solver_ids", normalized_solver_ids)
+        object.__setattr__(self, "default_solver", normalized_default_solver)
 
     @classmethod
     def from_env(cls) -> "ServerSettings":
@@ -144,8 +194,12 @@ class ServerSettings:
             maintenance_interval_seconds=_positive_float("JOB_MAINTENANCE_INTERVAL_SECONDS", 30.0),
             sse_keepalive_seconds=_positive_float("JOB_SSE_KEEPALIVE_SECONDS", 10.0),
             max_yaml_bytes=_positive_int("OPTIMIZE_MAX_YAML_BYTES", 2 * 1024 * 1024),
+            solver_ids=_solver_ids("OPTIMIZE_SOLVERS", (ORTOOLS_CP_SAT_SOLVER,)),
+            default_solver=os.getenv("OPTIMIZE_DEFAULT_SOLVER", ORTOOLS_CP_SAT_SOLVER),
+            min_timeout_seconds=_positive_int("OPTIMIZE_MIN_TIMEOUT_SECONDS", 1),
             default_timeout_seconds=_positive_int("OPTIMIZE_DEFAULT_TIMEOUT_SECONDS", 5 * 60),
             max_timeout_seconds=_positive_int("OPTIMIZE_MAX_TIMEOUT_SECONDS", 60 * 60),
+            default_prettify=_boolean("OPTIMIZE_DEFAULT_PRETTIFY", True),
             timeout_grace_seconds=_positive_float(
                 "OPTIMIZE_TIMEOUT_GRACE_SECONDS",
                 DEFAULT_TIMEOUT_GRACE_SECONDS,

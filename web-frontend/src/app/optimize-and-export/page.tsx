@@ -35,13 +35,15 @@ import { GITHUB_PRIVACY_URL } from '@/constants/urls';
 import {
   BACKEND_API_CANDIDATES,
   EXPECTED_BACKEND_SERVICE_NAME,
+  isOptimizationOptionsResponse,
   selectPreferredServer,
   SUPPORTED_BACKEND_API_VERSION,
+  type OptimizationOptionsResponse,
   type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
 import { CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
 
-type ServerStatus = 'unchecked' | 'checking' | 'online' | 'offline';
+type ServerStatus = 'unchecked' | 'checking' | 'online' | 'offline' | 'incompatible';
 type ServerSelection = 'auto' | string;
 
 interface OptimizeJobResponse {
@@ -91,6 +93,7 @@ interface OptimizeServerEntry {
   endpoint: string;
   status: ServerStatus;
   health: ServerInfoResponse | null;
+  options: OptimizationOptionsResponse | null;
   error: string | null;
   lastCheckedAt: Date | null;
   pingMs: number | null;
@@ -125,6 +128,7 @@ function createServerEntry(
     ...server,
     status,
     health: null,
+    options: null,
     error: null,
     lastCheckedAt: null,
     pingMs: null,
@@ -277,6 +281,35 @@ async function fetchServerInfo(
   }
 }
 
+async function fetchOptimizationOptions(
+  endpoint: string,
+  timeoutMs = HEALTH_CHECK_TIMEOUT_MS,
+  signal?: AbortSignal,
+): Promise<OptimizationOptionsResponse | null> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const abortController = () => controller.abort();
+  signal?.addEventListener('abort', abortController);
+
+  try {
+    const response = await fetch(`${endpoint}/optimize/options`, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const options: unknown = await response.json();
+    return isOptimizationOptionsResponse(options) ? options : null;
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', abortController);
+  }
+}
+
 function getFilenameFromContentDisposition(contentDisposition: string | null): string {
   if (!contentDisposition) {
     return 'output.xlsx';
@@ -417,6 +450,9 @@ function getServerStatusBadgeClasses(status: ServerStatus): string {
   if (status === 'offline') {
     return 'bg-red-50 text-red-700 ring-red-200';
   }
+  if (status === 'incompatible') {
+    return 'bg-amber-50 text-amber-700 ring-amber-200';
+  }
   if (status === 'checking') {
     return 'bg-gray-50 text-gray-600 ring-gray-200';
   }
@@ -432,6 +468,9 @@ function formatServerStatus(status: ServerStatus): string {
   }
   if (status === 'offline') {
     return 'Offline';
+  }
+  if (status === 'incompatible') {
+    return 'Incompatible';
   }
   return 'Unchecked';
 }
@@ -460,6 +499,7 @@ export default function OptimizeAndExportPage() {
   const [lockedOptimizeEndpoint, setLockedOptimizeEndpoint] = useState<string | null>(null);
   const [prettifyArg, setPrettifyArg] = useState(true);
   const [anonymizeScheduleData, setAnonymizeScheduleData] = useState(true);
+  const [solverArg, setSolverArg] = useState('ortools/cp-sat');
   const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
   const [timeoutError, setTimeoutError] = useState<string | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
@@ -482,6 +522,7 @@ export default function OptimizeAndExportPage() {
   const latestHealthProbeIdRef = useRef(0);
   const serverProbeControllersRef = useRef<Map<string, AbortController>>(new Map());
   const serverEntriesRef = useRef(serverEntries);
+  const runOptionsEndpointRef = useRef<string | null>(null);
   const selectedServer = selectedServerEndpoint === 'auto'
     ? null
     : serverEntries.find(server => server.endpoint === selectedServerEndpoint) ?? null;
@@ -503,6 +544,8 @@ export default function OptimizeAndExportPage() {
     ? 'online'
     : serverEntries.some(server => server.status === 'checking')
       ? 'checking'
+      : serverEntries.some(server => server.status === 'incompatible')
+        ? 'incompatible'
       : serverEntries.some(server => server.status === 'offline')
         ? 'offline'
         : 'unchecked';
@@ -512,6 +555,11 @@ export default function OptimizeAndExportPage() {
   const activeServerHealth = selectedServerEndpoint === 'auto'
     ? resolvedServer?.health ?? serverEntries.find(server => server.status === 'checking' && server.health)?.health ?? null
     : selectedServer?.health ?? null;
+  const activeOptimizationOptionsEndpoint = resolvedServer?.endpoint ?? null;
+  const activeOptimizationOptions = resolvedServer?.options ?? null;
+  const selectedSolverChoice = activeOptimizationOptions?.solver.choices.find(
+    choice => choice.value === solverArg
+  ) ?? null;
   const hasVersionMismatch = Boolean(activeServerHealth && hasAppVersionMismatch(CURRENT_APP_VERSION, activeServerHealth.app_version));
   const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
@@ -524,11 +572,15 @@ export default function OptimizeAndExportPage() {
     !currentJob.terminal
   );
   const isCancelling = scheduleStatus === 'cancelling';
-  const isOptimizeDisabled = isOptimizing || isRequiredDataMissing || activeServerStatus !== 'online';
+  const isOptimizeDisabled = isOptimizing || isRequiredDataMissing || activeServerStatus !== 'online' || !activeOptimizationOptions;
   const optimizeDisabledReason = isRequiredDataMissing
     ? 'Complete the missing schedule configuration before optimizing.'
+    : activeServerStatus === 'incompatible'
+      ? 'Backend is too old. Select a backend that provides optimization options.'
     : activeServerStatus !== 'online'
       ? 'Backend unavailable. Check or select an online backend.'
+      : !activeOptimizationOptions
+        ? 'Backend optimization options are unavailable.'
       : null;
 
   // Create the current state object for YAML export (filtering out autogenerated items)
@@ -591,6 +643,31 @@ export default function OptimizeAndExportPage() {
     setSelectedServerEndpoint(storedServerOptions.selectedServerEndpoint);
   }, []);
 
+  useIsomorphicLayoutEffect(() => {
+    if (!activeOptimizationOptions || !activeOptimizationOptionsEndpoint) {
+      return;
+    }
+
+    const endpointChanged = runOptionsEndpointRef.current !== activeOptimizationOptionsEndpoint;
+    runOptionsEndpointRef.current = activeOptimizationOptionsEndpoint;
+    const solverValues = new Set(activeOptimizationOptions.solver.choices.map(choice => choice.value));
+    if (endpointChanged || !solverValues.has(solverArg)) {
+      const defaultSolver = activeOptimizationOptions.solver.default;
+      const defaultChoice = activeOptimizationOptions.solver.choices.find(
+        choice => choice.value === defaultSolver
+      );
+      if (!defaultChoice) {
+        return;
+      }
+      setSolverArg(defaultSolver);
+      setTimeoutArg(defaultChoice.timeout.default);
+      setTimeoutError(null);
+    }
+    if (endpointChanged) {
+      setPrettifyArg(activeOptimizationOptions.prettify.default);
+    }
+  }, [activeOptimizationOptions, activeOptimizationOptionsEndpoint, solverArg]);
+
   const saveServerOptions = useCallback((servers: OptimizeServerEntry[], nextSelectedServerEndpoint = selectedServerEndpoint) => {
     persistServerOptions(servers, nextSelectedServerEndpoint);
   }, [selectedServerEndpoint]);
@@ -626,7 +703,10 @@ export default function OptimizeAndExportPage() {
         : currentServer
     )));
 
-    void fetchServerInfo(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal).then(health => {
+    void Promise.all([
+      fetchServerInfo(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal),
+      fetchOptimizationOptions(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal),
+    ]).then(([health, options]) => {
       const pingMs = Math.round(performance.now() - startedAt);
       setServerEntries(currentServers => currentServers.map(currentServer => {
         if (
@@ -637,11 +717,21 @@ export default function OptimizeAndExportPage() {
           return currentServer;
         }
 
+        const status: ServerStatus = !health
+          ? 'offline'
+          : options
+            ? 'online'
+            : 'incompatible';
         return {
           ...currentServer,
-          status: health ? 'online' : 'offline',
+          status,
           health,
-          error: health ? null : 'Backend is not responding.',
+          options: health ? options : null,
+          error: !health
+            ? 'Backend is not responding.'
+            : options
+              ? null
+              : 'Backend is too old and does not provide optimization options.',
           lastCheckedAt: new Date(),
           pingMs,
         };
@@ -836,8 +926,30 @@ export default function OptimizeAndExportPage() {
       return;
     }
 
-    if (timeoutArg === '' || typeof timeoutArg !== 'number' || !Number.isInteger(timeoutArg) || timeoutArg < 1) {
-      setTimeoutError('Solver timeout must be a valid positive integer.');
+    if (!activeOptimizationOptions) {
+      setErrorMessage('Backend is too old and does not provide optimization options.');
+      setSuccessMessage(null);
+      return;
+    }
+
+    const solverChoice = activeOptimizationOptions.solver.choices.find(choice => choice.value === solverArg);
+    if (!solverChoice) {
+      setErrorMessage('Select a solver supported by the active backend.');
+      setSuccessMessage(null);
+      return;
+    }
+
+    const timeoutOptions = solverChoice.timeout;
+    if (
+      timeoutArg === '' ||
+      typeof timeoutArg !== 'number' ||
+      !Number.isInteger(timeoutArg) ||
+      timeoutArg < timeoutOptions.minimum ||
+      timeoutArg > timeoutOptions.maximum
+    ) {
+      setTimeoutError(
+        `Solver timeout must be an integer between ${timeoutOptions.minimum} and ${timeoutOptions.maximum} seconds.`
+      );
       setErrorMessage(null);
       return;
     }
@@ -886,6 +998,7 @@ export default function OptimizeAndExportPage() {
       }
 
       formData.append('timeout', String(timeoutArg));
+      formData.append('solver', solverArg);
 
       const createResponse = await fetch(`${normalizeEndpoint(runEndpoint)}/optimize`, {
         method: 'POST',
@@ -1026,6 +1139,7 @@ export default function OptimizeAndExportPage() {
               ...server,
               status: 'unchecked',
               health: null,
+              options: null,
               error: 'Backend URL is required.',
               lastCheckedAt: null,
               pingMs: null,
@@ -1043,6 +1157,7 @@ export default function OptimizeAndExportPage() {
               ...server,
               status: 'unchecked',
               health: null,
+              options: null,
               error: 'Backend URL already exists.',
               lastCheckedAt: null,
               pingMs: null,
@@ -1065,6 +1180,7 @@ export default function OptimizeAndExportPage() {
             endpoint: normalizedEndpoint,
             status: 'unchecked' as const,
             health: null,
+            options: null,
             error: null,
             lastCheckedAt: null,
             pingMs: null,
@@ -1283,6 +1399,8 @@ export default function OptimizeAndExportPage() {
               <FiLoader className="h-4 w-4 animate-spin" />
             ) : status === 'offline' ? (
               <FiWifiOff className="h-4 w-4" />
+            ) : status === 'incompatible' ? (
+              <FiAlertCircle className="h-4 w-4" />
             ) : status === 'online' ? (
               <FiWifi className="h-4 w-4" />
             ) : (
@@ -1361,6 +1479,8 @@ export default function OptimizeAndExportPage() {
     ? 'border-green-200 bg-green-50 text-green-700'
     : activeServerStatus === 'offline'
       ? 'border-red-200 bg-red-50 text-red-700'
+      : activeServerStatus === 'incompatible'
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
       : 'border-gray-200 bg-gray-50 text-gray-600';
   const serverStatusLabel = formatServerStatus(activeServerStatus);
 
@@ -1391,6 +1511,8 @@ export default function OptimizeAndExportPage() {
           <span className="shrink-0">
             {activeServerStatus === 'offline' ? (
               <FiWifiOff className="h-4 w-4" />
+            ) : activeServerStatus === 'incompatible' ? (
+              <FiAlertCircle className="h-4 w-4" />
             ) : activeServerStatus === 'checking' ? (
               <FiLoader className="h-4 w-4 animate-spin" />
             ) : (
@@ -1495,6 +1617,14 @@ export default function OptimizeAndExportPage() {
                   </div>
                 </div>
               )}
+              {activeServerStatus === 'incompatible' && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <div className="flex gap-2">
+                    <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>Backend is too old and does not provide optimization options.</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3 border-t border-gray-200 pt-5">
@@ -1508,6 +1638,7 @@ export default function OptimizeAndExportPage() {
                     type="checkbox"
                     checked={prettifyArg}
                     onChange={(e) => setPrettifyArg(e.target.checked)}
+                    disabled={!activeOptimizationOptions}
                     className="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
                   />
                   <span>
@@ -1530,25 +1661,71 @@ export default function OptimizeAndExportPage() {
                 </label>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="solver-select" className="block text-sm font-medium text-gray-700 mb-2">
+                    Solver
+                  </label>
+                  <select
+                    id="solver-select"
+                    value={activeOptimizationOptions ? solverArg : ''}
+                    onChange={(event) => {
+                      const nextSolver = event.target.value;
+                      const timeout = activeOptimizationOptions?.solver.choices.find(
+                        choice => choice.value === nextSolver
+                      )?.timeout;
+                      setSolverArg(nextSolver);
+                      setTimeoutError(null);
+                      if (timeout) {
+                        setTimeoutArg(current => (
+                          typeof current === 'number' &&
+                          current >= timeout.minimum &&
+                          current <= timeout.maximum
+                            ? current
+                            : timeout.default
+                        ));
+                      }
+                    }}
+                    disabled={!activeOptimizationOptions}
+                    className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:cursor-not-allowed disabled:bg-gray-100"
+                  >
+                    {!activeOptimizationOptions && <option value="">Waiting for backend options</option>}
+                    {activeOptimizationOptions?.solver.choices.map(choice => (
+                      <option key={choice.value} value={choice.value}>
+                        {choice.label} ({choice.compute.toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                  {selectedSolverChoice && (
+                    <p className="mt-2 text-xs text-gray-500">
+                      Running controls: {[
+                        selectedSolverChoice.controls.cancel_running ? 'Cancel' : null,
+                        selectedSolverChoice.controls.finish_now ? 'Finish now' : null,
+                      ].filter(Boolean).join(', ') || 'None'}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="solver-timeout" className="block text-sm font-medium text-gray-700 mb-2">
                     Solver Timeout
                   </label>
                   <div className="flex items-center gap-2">
                     <NumberInput
+                      id="solver-timeout"
                       value={timeoutArg}
                       onChange={(e) => {
                         const value = e.target.value;
                         setTimeoutError(null);
                         setTimeoutArg(value === '' ? '' : (Number.isInteger(Number(value)) ? Number(value) : value));
                       }}
-                      min="1"
-                      max="3600"
+                      min={selectedSolverChoice?.timeout.minimum}
+                      max={selectedSolverChoice?.timeout.maximum}
+                      disabled={!selectedSolverChoice}
                       className={`block w-full rounded-md border bg-white px-3 py-2 text-sm text-gray-900 shadow-sm transition-colors focus:outline-none focus:ring-2 ${
                         timeoutError
                           ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
                           : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
                       }`}
-                      placeholder="300"
+                      placeholder={selectedSolverChoice ? String(selectedSolverChoice.timeout.default) : ''}
                     />
                     <span className="text-sm text-gray-500">sec</span>
                   </div>

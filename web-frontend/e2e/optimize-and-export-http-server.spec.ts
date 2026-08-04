@@ -74,6 +74,30 @@ test('optimize and export works against a real local HTTP server instead of Play
       return;
     }
 
+    if (req.method === 'GET' && req.url === '/optimize/options') {
+      res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({
+        schema_version: 'alpha',
+        solver: {
+          default: 'ortools/cp-sat',
+          choices: [
+            {
+              value: 'ortools/cp-sat',
+              label: 'OR-Tools | CP-SAT',
+              compute: 'cpu',
+              timeout: { default: 300, minimum: 1, maximum: 3600 },
+              controls: { cancel_running: true, finish_now: true },
+            },
+          ],
+        },
+        prettify: { default: true },
+      }));
+      return;
+    }
+
     if (req.method === 'POST' && req.url === '/optimize') {
       const chunks: Buffer[] = [];
       for await (const chunk of req) {
@@ -189,6 +213,8 @@ test('optimize and export works against a real local HTTP server instead of Play
     expect(submittedBody).toContain('filename="schedule.yaml"');
     expect(submittedBody).not.toContain('name="yaml_content"');
     expect(submittedBody).toContain('2026-05-01');
+    expect(submittedBody).toContain('solver');
+    expect(submittedBody).toContain('ortools/cp-sat');
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
   }
