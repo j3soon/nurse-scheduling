@@ -25,6 +25,10 @@ Playwright.
 `test:e2e:affected` does not infer browser coverage from changed `src/` files;
 pass relevant E2E spec paths explicitly when validating frontend behavior.
 
+Keep commit bodies focused on behavior and rationale. Do not mention routine
+test additions or regression coverage unless the test strategy itself is
+material to the change.
+
 To test specific source files from the repository root, run:
 
 ```sh
