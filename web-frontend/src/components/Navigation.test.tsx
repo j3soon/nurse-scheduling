@@ -77,6 +77,7 @@ describe('Navigation', () => {
     expect(mockPrefetch).toHaveBeenCalledWith('/dates');
     expect(mockPrefetch).toHaveBeenCalledWith('/shift-types');
     expect(mockPrefetch).toHaveBeenCalledWith('/optimize-and-export');
+    expect(mockPrefetch).not.toHaveBeenCalledWith('/export-layout');
     expect(mockPrefetch).not.toHaveBeenCalledWith('/people');
   });
 
@@ -160,7 +161,7 @@ describe('Navigation', () => {
       </UnsavedEditingStateProvider>
     );
 
-    expect(screen.getByRole('button', { name: '10. Save and Load' }).className).toContain('text-blue-600');
+    expect(screen.getByRole('button', { name: '9. Save and Load' }).className).toContain('text-blue-600');
     expect(screen.getByRole('button', { name: '2. People' }).className).not.toContain('text-blue-600');
   });
 

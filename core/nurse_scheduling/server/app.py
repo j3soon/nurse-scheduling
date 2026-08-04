@@ -55,7 +55,7 @@ from .stores.memory import MemoryJobStore
 
 TITLE = "Nurse Scheduling API"
 SERVICE_NAME = "nurse-scheduling-api"
-API_VERSION = "alpha"
+API_VERSION = "0.2.0"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 APP_VERSION_FILE = REPO_ROOT / ".app-version"
 UNEXPECTED_ERROR_VERSION_ADVICE = (

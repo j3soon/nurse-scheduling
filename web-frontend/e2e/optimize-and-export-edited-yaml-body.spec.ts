@@ -28,7 +28,7 @@ test('optimize request body reflects YAML-edited state', async ({ page }) => {
    * 1. Confirm the original seeded YAML contains the old group name.
    * 2. Edit YAML through Save and Load and save a renamed group.
    * 3. Trigger optimize with a mocked backend.
-   * 4. Confirm the posted yaml_content contains the renamed group and not the old one.
+   * 4. Confirm the posted YAML contains the renamed group and not the old one.
    */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {

@@ -65,7 +65,8 @@ test('optimize and export works against a real local HTTP server instead of Play
       });
       res.end(JSON.stringify({
         status: 'ready',
-        api_version: 'alpha',
+        service_name: 'nurse-scheduling-api',
+        api_version: '0.2.0',
         app_version: 'v-test',
         jobs: { running: 1, queued: 2, cancelling: 1 },
         workers: { online: 3 },
@@ -184,7 +185,9 @@ test('optimize and export works against a real local HTTP server instead of Play
     const liveResult = page.getByRole('heading', { name: 'Live Result' }).locator('xpath=ancestor::section');
     await expect(liveResult.getByText('99', { exact: true })).toBeVisible();
     await expect(liveResult.getByText('OPTIMAL')).toBeVisible();
-    expect(submittedBody).toContain('yaml_content');
+    expect(submittedBody).toContain('name="file"');
+    expect(submittedBody).toContain('filename="schedule.yaml"');
+    expect(submittedBody).not.toContain('name="yaml_content"');
     expect(submittedBody).toContain('2026-05-01');
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));

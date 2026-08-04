@@ -320,7 +320,7 @@ def test_memory_store_rejects_empty_identity():
 def test_store_round_trips_lifecycle_input_events_and_artifact(store):
     runtime_identity = {
         "service_name": "nurse-scheduling-api",
-        "api_version": "alpha",
+        "api_version": "0.2.0",
         "app_version": "v-test",
         "deployment_id": "deployment-test",
         "instance_id": "instance-test",

@@ -22,7 +22,7 @@
 import { expect, test } from './test';
 import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, setDateRange } from './helpers';
 
-test('a repeated optimize run after upstream edits submits updated yaml_content', async ({ page }) => {
+test('a repeated optimize run after upstream edits submits updated YAML', async ({ page }) => {
   /*
    * Steps:
    * 1. Reset the schedule and run optimize once.

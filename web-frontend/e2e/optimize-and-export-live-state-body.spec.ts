@@ -28,7 +28,7 @@ test('optimize request body reflects live page edits without going through Save 
    * 1. Start from a reset schedule and confirm the original person exists.
    * 2. Rename the person directly from the People page.
    * 3. Trigger optimize with a mocked backend.
-   * 4. Confirm yaml_content contains the renamed person and not the original one.
+   * 4. Confirm the posted YAML contains the renamed person and not the original one.
    */
   await disableModalDialogs(page);
   await page.goto('/');
