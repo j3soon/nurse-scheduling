@@ -62,7 +62,12 @@ test('export formatting reorder and edit can be undone and redone independently'
   await expect(cards.nth(0)).toContainText('People: P1');
   await expect(cards.nth(1)).toContainText('Dates: 01');
 
-  await cards.nth(1).dragTo(cards.nth(0));
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  const dropClientY = await cards.nth(0).evaluate(card => card.getBoundingClientRect().top + 10);
+  await cards.nth(1).dispatchEvent('dragstart', { dataTransfer });
+  await cards.nth(0).dispatchEvent('dragover', { dataTransfer, clientY: dropClientY });
+  await cards.nth(0).dispatchEvent('drop', { dataTransfer, clientY: dropClientY });
+  await dataTransfer.dispose();
   await expect(cards.nth(0)).toContainText('Dates: 01');
   await expect(cards.nth(1)).toContainText('People: P1');
 

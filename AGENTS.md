@@ -24,6 +24,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Fix them when practical, otherwise report or document them for review.
 - Use Conventional Commits, scoped by module where applicable, for example:
   `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
+- For Codex-created commits, include a descriptive body that ends with a
+  separate `by Codex` line.
 
 ## Comment and Documentation Style
 - Keep comments and documentation minimal, concise, yet informative.
