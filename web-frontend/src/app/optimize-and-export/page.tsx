@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// The Optimize and Export page for Tab "11. Optimize and Export"
+// The Optimize and Export page.
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';

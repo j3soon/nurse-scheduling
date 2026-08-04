@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// The Save and Load page for Tab "10. Save and Load"
+// The Save and Load page.
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
