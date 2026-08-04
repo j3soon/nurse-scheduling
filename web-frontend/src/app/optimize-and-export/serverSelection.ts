@@ -19,6 +19,7 @@
 
 export interface ServerInfoResponse {
   status: string;
+  service_name: string;
   api_version: string;
   app_version: string;
   jobs?: {
@@ -40,6 +41,8 @@ export interface ServerInfoCheckResult {
 export const LOCAL_BACKEND_API_URL = 'http://localhost:8000';
 export const PRODUCTION_BACKEND_API_URL = 'https://api.nursescheduling.org';
 export const SECONDARY_BACKEND_API_URL = 'https://api-secondary.nursescheduling.org';
+export const EXPECTED_BACKEND_SERVICE_NAME = 'nurse-scheduling-api';
+export const SUPPORTED_BACKEND_API_VERSION = '0.2.0';
 export const SHOULD_DISABLE_PRODUCTION_BACKEND_API = process.env.NODE_ENV === 'test'
   || process.env.NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API === '1';
 export const BACKEND_API_CANDIDATES = SHOULD_DISABLE_PRODUCTION_BACKEND_API

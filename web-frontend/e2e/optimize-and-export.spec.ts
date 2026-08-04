@@ -64,7 +64,7 @@ test('optimize and export submits YAML to the backend and renders success metada
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
   await expect(page.getByText('output.xlsx')).toBeVisible();
-  expect(submittedBody).toContain('yaml_content');
+  expect(submittedBody).toContain('filename="schedule.yaml"');
   expect(submittedBody).toContain('2026-05-01');
   expect(submittedBody).toContain('prettify');
   expect(submittedBody).toContain('timeout');

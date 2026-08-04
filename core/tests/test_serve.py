@@ -295,7 +295,7 @@ def test_info_and_readiness_report_status_without_caching():
         assert info.json() == {
             "status": "ready",
             "service_name": "nurse-scheduling-api",
-            "api_version": "alpha",
+            "api_version": "0.2.0",
             "app_version": client.app.state.app_version,
             "deployment_id": client.app.state.deployment_id,
             "instance_id": client.app.state.instance_id,
@@ -1827,5 +1827,22 @@ def test_input_and_timeout_validation():
         oversized = client.post(
             "/optimize",
             files={"file": ("schedule.yaml", b"x" * 11, "application/x-yaml")},
+        )
+        assert oversized.status_code == 413
+
+
+def test_file_input_uses_configured_limit_above_multipart_text_default():
+    max_yaml_bytes = 1024 * 1024 + 1
+    settings = _settings(max_yaml_bytes=max_yaml_bytes)
+    with _client(start_background=False, settings=settings) as client:
+        accepted = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * max_yaml_bytes, "application/x-yaml")},
+        )
+        assert accepted.status_code == 202
+
+        oversized = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * (max_yaml_bytes + 1), "application/x-yaml")},
         )
         assert oversized.status_code == 413

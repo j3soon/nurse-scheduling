@@ -34,7 +34,9 @@ import { generateYamlFromState } from '@/utils/yamlGenerator';
 import { GITHUB_PRIVACY_URL } from '@/constants/urls';
 import {
   BACKEND_API_CANDIDATES,
+  EXPECTED_BACKEND_SERVICE_NAME,
   selectPreferredServer,
+  SUPPORTED_BACKEND_API_VERSION,
   type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
 import { CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
@@ -260,8 +262,13 @@ async function fetchServerInfo(
       return null;
     }
 
-    const info = await response.json() as ServerInfoResponse;
-    return info.status === 'ready' ? info : null;
+    const info = await response.json() as Partial<ServerInfoResponse>;
+    return info.status === 'ready'
+      && info.service_name === EXPECTED_BACKEND_SERVICE_NAME
+      && info.api_version === SUPPORTED_BACKEND_API_VERSION
+      && typeof info.app_version === 'string'
+      ? info as ServerInfoResponse
+      : null;
   } catch {
     return null;
   } finally {
@@ -730,13 +737,13 @@ export default function OptimizeAndExportPage() {
     if (typeof EventSource !== 'undefined') {
       return new Promise((resolve, reject) => {
         const eventSource = new EventSource(buildApiUrl(resolvedOptimizeEndpoint, job.links.events));
-        let finalizationStarted = false;
+        let completionStarted = false;
 
         const finalizeJob = () => {
-          if (finalizationStarted) {
+          if (completionStarted) {
             return;
           }
-          finalizationStarted = true;
+          completionStarted = true;
           eventSource.close();
           void getOptimizeJobStatus(job).then(completedJob => {
             setCurrentJob(completedJob);
@@ -790,12 +797,22 @@ export default function OptimizeAndExportPage() {
 
         eventSource.addEventListener('error', (event) => {
           if ('data' in event && typeof event.data === 'string' && event.data) {
+            if (completionStarted) {
+              return;
+            }
+            completionStarted = true;
             eventSource.close();
             const parsedData = parseSseEventData(event as MessageEvent);
             appendSseEvent('error', parsedData);
             reject(new Error('Optimization event stream failed'));
           } else {
-            appendSseEvent('error', 'Optimization event stream disconnected; waiting to reconnect');
+            if (completionStarted) {
+              return;
+            }
+            completionStarted = true;
+            eventSource.close();
+            appendSseEvent('error', 'Optimization event stream disconnected; falling back to polling');
+            void pollOptimizeJob(job).then(resolve).catch(reject);
           }
         });
       });
@@ -857,7 +874,12 @@ export default function OptimizeAndExportPage() {
 
       // Prepare form data
       const formData = new FormData();
-      formData.append('yaml_content', generateYamlFromState(anonymizationResult?.state ?? filteredState));
+      const yamlContent = generateYamlFromState(anonymizationResult?.state ?? filteredState);
+      formData.append(
+        'file',
+        new Blob([yamlContent], { type: 'application/x-yaml' }),
+        'schedule.yaml',
+      );
 
       if (prettifyArg !== null && prettifyArg !== undefined) {
         formData.append('prettify', String(prettifyArg));

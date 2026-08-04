@@ -148,7 +148,8 @@ export async function mockOptimizeAndExport(
       },
       body: JSON.stringify({
         status: 'ready',
-        api_version: 'test',
+        service_name: 'nurse-scheduling-api',
+        api_version: '0.2.0',
         app_version: 'test',
         jobs: { running: 0, queued: 0, cancelling: 0 },
         workers: { online: 1 },

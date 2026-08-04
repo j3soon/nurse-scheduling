@@ -103,7 +103,8 @@ const healthyResponse = (overrides: Partial<ServerInfoResponse> = {}) => ({
   ok: true,
   json: vi.fn().mockResolvedValue({
     status: 'ready',
-    api_version: 'alpha',
+    service_name: 'nurse-scheduling-api',
+    api_version: '0.2.0',
     app_version: 'frontend-test',
     jobs: { running: 0, queued: 0, cancelling: 0 },
     workers: { online: 1 },
@@ -180,7 +181,8 @@ describe('optimize backend server selection', () => {
         index: 1,
         health: {
           status: 'ready',
-          api_version: 'alpha',
+          service_name: 'nurse-scheduling-api',
+          api_version: '0.2.0',
           app_version: 'newer-backend',
         },
       },
@@ -189,7 +191,8 @@ describe('optimize backend server selection', () => {
         index: 0,
         health: {
           status: 'ready',
-          api_version: 'alpha',
+          service_name: 'nurse-scheduling-api',
+          api_version: '0.2.0',
           app_version: 'older-backend',
         },
       },
@@ -313,7 +316,8 @@ describe('OptimizeAndExportPage error handling', () => {
       ok: true,
       json: vi.fn().mockResolvedValue({
         status: 'ready',
-        api_version: 'alpha',
+        service_name: 'nurse-scheduling-api',
+        api_version: '0.2.0',
         app_version: 'v-test',
         jobs: { running: 2, queued: 4, cancelling: 1 },
         workers: { online: 5 },
@@ -329,7 +333,7 @@ describe('OptimizeAndExportPage error handling', () => {
       'Status',
       'Actions',
     ]);
-    expect(screen.getByText(/API version: alpha · Frontend version: frontend-test · Backend version: v-test/)).toBeInTheDocument();
+    expect(screen.getByText(/API version: 0\.2\.0 · Frontend version: frontend-test · Backend version: v-test/)).toBeInTheDocument();
     expect(screen.getByText(/Last checked: .* · \d+ ms/)).toBeInTheDocument();
     expect(screen.getAllByText('3 active · 4 queued')).toHaveLength(2);
     expect(screen.getAllByText('5 workers')).toHaveLength(2);
@@ -340,7 +344,8 @@ describe('OptimizeAndExportPage error handling', () => {
       ok: true,
       json: vi.fn().mockResolvedValue({
         status: 'ready',
-        api_version: 'alpha',
+        service_name: 'nurse-scheduling-api',
+        api_version: '0.2.0',
         app_version: 'frontend-test',
       }),
     });
@@ -423,7 +428,7 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
-    const versionDetails = /API version: alpha · Frontend version: frontend-test · Backend version: frontend-test/;
+    const versionDetails = /API version: 0\.2\.0 · Frontend version: frontend-test · Backend version: frontend-test/;
     expect(screen.getByText(versionDetails)).toBeInTheDocument();
 
     let resolveHealthCheck: (response: { ok: boolean }) => void = () => undefined;
@@ -758,7 +763,8 @@ describe('OptimizeAndExportPage error handling', () => {
       ok: true,
       json: vi.fn().mockResolvedValue({
         status: 'ready',
-        api_version: 'alpha',
+        service_name: 'nurse-scheduling-api',
+        api_version: '0.2.0',
         app_version: 'backend-test',
       }),
     });
@@ -773,7 +779,8 @@ describe('OptimizeAndExportPage error handling', () => {
       ok: true,
       json: vi.fn().mockResolvedValue({
         status: 'ready',
-        api_version: 'alpha',
+        service_name: 'nurse-scheduling-api',
+        api_version: '0.2.0',
         app_version: 'frontend-test',
       }),
     });
@@ -790,7 +797,8 @@ describe('OptimizeAndExportPage error handling', () => {
       ok: true,
       json: vi.fn().mockResolvedValue({
         status: 'ready',
-        api_version: 'alpha',
+        service_name: 'nurse-scheduling-api',
+        api_version: '0.2.0',
         app_version: 'frontend-test-dirty',
       }),
     });
@@ -809,6 +817,18 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getAllByText('Not responding')).toHaveLength(2);
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
     expect(screen.getByText(/backend unavailable/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['an unexpected service', { service_name: 'different-service' }],
+    ['an unsupported API version', { api_version: '2' }],
+  ])('rejects %s during backend discovery', async (_label, overrides) => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(healthyResponse(overrides));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
   });
 
   it('keeps a successful download when best-effort job cleanup fails', async () => {
@@ -878,6 +898,16 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('OPTIMAL')).toBeInTheDocument();
 
     expect(fetch).toHaveBeenCalledWith('http://localhost:8000/optimize', expect.objectContaining({ method: 'POST' }));
+    const optimizeRequest = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([url, init]) => url === 'http://localhost:8000/optimize' && (init as RequestInit | undefined)?.method === 'POST'
+    );
+    const optimizeBody = optimizeRequest?.[1]?.body as FormData;
+    expect(optimizeBody).toBeInstanceOf(FormData);
+    expect(optimizeBody.get('yaml_content')).toBeNull();
+    expect(optimizeBody.get('file')).toBeInstanceOf(File);
+    expect((optimizeBody.get('file') as File).name).toBe('schedule.yaml');
+    expect(optimizeBody.get('prettify')).toBe('true');
+    expect(optimizeBody.get('timeout')).toBe('300');
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/optimize/opt_test',
       expect.objectContaining({ method: 'GET' })
@@ -1133,7 +1163,7 @@ describe('OptimizeAndExportPage error handling', () => {
 
   });
 
-  it('keeps a dropped SSE stream open for automatic reconnection', async () => {
+  it('falls back to polling when the SSE stream disconnects', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
     const appendChildSpy = vi.spyOn(document.body, 'appendChild');
@@ -1171,12 +1201,8 @@ describe('OptimizeAndExportPage error handling', () => {
       });
     });
 
-    expect(screen.getByText('Optimization event stream disconnected; waiting to reconnect')).toBeInTheDocument();
-    expect(MockEventSource.instances[0].close).not.toHaveBeenCalled();
-
-    act(() => {
-      MockEventSource.instances[0].emit('job.result_available', { outcome: 'optimal', score: 77 });
-    });
+    expect(screen.getByText('Optimization event stream disconnected; falling back to polling')).toBeInTheDocument();
+    expect(MockEventSource.instances[0].close).toHaveBeenCalled();
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
     expect(screen.getByText('recovered.xlsx')).toBeInTheDocument();
