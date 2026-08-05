@@ -93,6 +93,7 @@ test('allows an explicitly selected incompatible backend with a warning', async 
   });
   await setDateRange(page);
 
+  let optimizationOptionsRequested = false;
   let optimizeRequested = false;
   await page.route('http://localhost:8000/info', async route => {
     await route.fulfill({
@@ -112,6 +113,7 @@ test('allows an explicitly selected incompatible backend with a warning', async 
     });
   });
   await page.route('http://localhost:8000/optimize/options', async route => {
+    optimizationOptionsRequested = true;
     await route.fulfill({
       status: 404,
       headers: { 'Access-Control-Allow-Origin': '*' },
@@ -135,11 +137,15 @@ test('allows an explicitly selected incompatible backend with a warning', async 
   await expect(page.getByText(/auto found no compatible backend/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
   await expect(page.getByText(/API version: alpha \(expected 0\.2\.0\)/i)).toHaveCount(0);
+  expect(optimizationOptionsRequested).toBe(true);
 
   await page.getByLabel('Select http://localhost:8000').check({ force: true });
 
   await expect(page.getByText(/API version: alpha \(expected 0\.2\.0\).*Frontend version:/i)).toBeVisible();
   await expect(page.getByText('Incompatible backend. The request may fail.')).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Solver' })).toHaveValue('ortools/cp-sat');
+  await expect(page.getByRole('spinbutton', { name: 'Solver Timeout' })).toHaveValue('300');
+  await expect(page.getByLabel('Prettify XLSX')).toBeChecked();
   const optimizeButton = page.getByRole('button', { name: 'Optimize Anyway and Download' });
   await expect(optimizeButton).toBeEnabled();
   await optimizeButton.click();
