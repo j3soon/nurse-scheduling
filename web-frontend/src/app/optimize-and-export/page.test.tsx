@@ -1086,15 +1086,51 @@ describe('OptimizeAndExportPage error handling', () => {
   });
 
   it.each([
-    ['an unexpected service', { service_name: 'different-service' }],
-    ['an unsupported API version', { api_version: '2' }],
-  ])('rejects %s during backend discovery', async (_label, overrides) => {
+    ['an unexpected service', { service_name: 'different-service' }, /service: different-service \(expected nurse-scheduling-api\)/i],
+    ['an unsupported API version', { api_version: '2' }, /API version: 2 \(expected 0\.2\.0\)/i],
+    ['a backend that is not ready', { status: 'starting' }, /status: starting \(expected ready\)/i],
+    ['missing app version metadata', { app_version: undefined }, /backend version: missing/i],
+  ])('warns about %s and allows explicit selection', async (_label, overrides, warning) => {
+    const user = userEvent.setup();
     (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(healthyResponse(overrides));
 
     render(<OptimizeAndExportPage />);
 
-    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+    await expect(screen.findByText('Server: Incompatible')).resolves.toBeInTheDocument();
+    expect(screen.queryByText('Not responding')).not.toBeInTheDocument();
+    expect(screen.getByText(/auto found no compatible backend/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
+    expect(screen.queryByText(warning)).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(`Select ${LOCAL_API_URL}`));
+
+    expect(screen.getAllByText(warning).length).toBeGreaterThan(0);
+    expect(screen.getByText('Incompatible backend. The request may fail.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Optimize Anyway and Download' })).toBeEnabled();
+  });
+
+  it('sends to an explicitly selected incompatible backend', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(healthyResponse({ api_version: 'alpha' }))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        text: vi.fn().mockResolvedValue('request rejected by old API'),
+      });
+
+    render(<OptimizeAndExportPage />);
+
+    await screen.findByText('Server: Incompatible');
+    await user.click(screen.getByLabelText(`Select ${LOCAL_API_URL}`));
+    await user.click(screen.getByRole('button', { name: 'Optimize Anyway and Download' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `${LOCAL_API_URL}/optimize`,
+      expect.objectContaining({ method: 'POST' })
+    ));
+    await expect(screen.findByText('Server error (422): request rejected by old API')).resolves.toBeInTheDocument();
   });
 
   it('keeps a successful download when best-effort job cleanup fails', async () => {

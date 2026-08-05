@@ -17,12 +17,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// The Optimize and Export page.
+// The Optimize and Export page for Tab "11. Optimize and Export"
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { FiDownload, FiAlertCircle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity, FiTrash2 } from 'react-icons/fi';
+import { FiDownload, FiAlertCircle, FiAlertTriangle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity, FiTrash2 } from 'react-icons/fi';
 import { DataTable } from '@/components/DataTable';
 import { InlineEdit } from '@/components/InlineEdit';
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
@@ -57,6 +57,12 @@ type OptimizationOptionsResult =
   | { kind: 'unsupported' }
   | { kind: 'invalid' }
   | { kind: 'unavailable' };
+
+interface ServerInfoProbeResult {
+  status: 'online' | 'incompatible' | 'offline';
+  health: ServerInfoResponse | null;
+  error: string | null;
+}
 
 interface OptimizeJobResponse {
   id: string;
@@ -261,19 +267,76 @@ async function fetchServerInfo(
   endpoint: string,
   timeoutMs = HEALTH_CHECK_TIMEOUT_MS,
   signal?: AbortSignal,
-): Promise<ServerInfoResponse | null> {
+): Promise<ServerInfoProbeResult> {
   const result = await fetchJsonWithTimeout(`${endpoint}/info`, timeoutMs, signal);
-  if (result.kind !== 'data') {
-    return null;
+  if (result.kind === 'http-error') {
+    return {
+      status: 'offline',
+      health: null,
+      error: `Backend info request failed with status ${result.status}.`,
+    };
+  }
+  if (result.kind === 'unavailable') {
+    return {
+      status: 'offline',
+      health: null,
+      error: 'Backend is not responding.',
+    };
+  }
+  if (result.kind === 'invalid-json' || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
+    return {
+      status: 'incompatible',
+      health: null,
+      error: 'Backend returned invalid server information.',
+    };
   }
 
   const info = result.data as Partial<ServerInfoResponse>;
-  return info.status === 'ready'
-    && info.service_name === EXPECTED_BACKEND_SERVICE_NAME
-    && info.api_version === SUPPORTED_BACKEND_API_VERSION
-    && typeof info.app_version === 'string'
-    ? info as ServerInfoResponse
-    : null;
+  const incompatibilities: string[] = [];
+  if (info.status !== 'ready') {
+    incompatibilities.push(
+      typeof info.status === 'string'
+        ? `Backend reports status "${info.status}". Expected "ready".`
+        : 'Backend readiness status is missing.'
+    );
+  }
+  if (info.service_name !== EXPECTED_BACKEND_SERVICE_NAME) {
+    incompatibilities.push(
+      typeof info.service_name === 'string'
+        ? `Unexpected service "${info.service_name}". Expected "${EXPECTED_BACKEND_SERVICE_NAME}".`
+        : 'Backend service name is missing.'
+    );
+  }
+  if (info.api_version !== SUPPORTED_BACKEND_API_VERSION) {
+    incompatibilities.push(
+      typeof info.api_version === 'string'
+        ? `Unsupported API version "${info.api_version}". Expected "${SUPPORTED_BACKEND_API_VERSION}".`
+        : 'Backend API version is missing.'
+    );
+  }
+  if (typeof info.app_version !== 'string') {
+    incompatibilities.push('Backend app version is missing.');
+  }
+
+  const health: ServerInfoResponse = {
+    status: typeof info.status === 'string' ? info.status : 'missing',
+    service_name: typeof info.service_name === 'string' ? info.service_name : 'missing',
+    api_version: typeof info.api_version === 'string' ? info.api_version : 'missing',
+    app_version: typeof info.app_version === 'string' ? info.app_version : 'missing',
+    jobs: info.jobs,
+    workers: info.workers,
+  };
+  return incompatibilities.length > 0
+    ? {
+        status: 'incompatible',
+        health,
+        error: incompatibilities.join(' '),
+      }
+    : {
+        status: 'online',
+        health,
+        error: null,
+      };
 }
 
 async function fetchJsonWithTimeout(
@@ -468,6 +531,9 @@ function getServerStatusBadgeClasses(status: ServerStatus): string {
   if (status === 'online') {
     return 'bg-green-50 text-green-700 ring-green-200';
   }
+  if (status === 'incompatible') {
+    return 'bg-amber-50 text-amber-700 ring-amber-200';
+  }
   if (status === 'offline') {
     return 'bg-red-50 text-red-700 ring-red-200';
   }
@@ -489,6 +555,9 @@ function formatServerStatus(status: ServerStatus): string {
   }
   if (status === 'online') {
     return 'Online';
+  }
+  if (status === 'incompatible') {
+    return 'Incompatible';
   }
   if (status === 'offline') {
     return 'Offline';
@@ -566,7 +635,7 @@ export default function OptimizeAndExportPage() {
   const resolvedServer = selectedServerEndpoint === 'auto'
     ? serverEntries.find(server => server.endpoint === autoServer?.endpoint) ?? null
     : selectedServer;
-  const resolvedOptimizeEndpoint = lockedOptimizeEndpoint ?? resolvedServer?.endpoint ?? serverEntries[0]?.endpoint ?? '';
+  const resolvedOptimizeEndpoint = lockedOptimizeEndpoint ?? resolvedServer?.endpoint ?? '';
   const autoServerStatus: ServerStatus = autoServer
     ? 'online'
     : serverEntries.some(server => server.status === 'checking')
@@ -590,6 +659,9 @@ export default function OptimizeAndExportPage() {
     choice => choice.value === solverArg
   ) ?? null;
   const hasVersionMismatch = Boolean(activeServerHealth && hasAppVersionMismatch(CURRENT_APP_VERSION, activeServerHealth.app_version));
+  const isExplicitlySelectedIncompatibleServer = selectedServerEndpoint !== 'auto'
+    && activeServerStatus === 'incompatible';
+  const canUseActiveServer = activeServerStatus === 'online' || isExplicitlySelectedIncompatibleServer;
   const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
   const isShiftTypeDataMissing = shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0;
@@ -601,15 +673,15 @@ export default function OptimizeAndExportPage() {
     !currentJob.terminal
   );
   const isCancelling = scheduleStatus === 'cancelling';
-  const isOptimizeDisabled = isOptimizing || isRequiredDataMissing || activeServerStatus !== 'online' || !activeOptimizationOptions;
+  const isOptimizeDisabled = isOptimizing || isRequiredDataMissing || !canUseActiveServer || !activeOptimizationOptions;
   const optimizeDisabledReason = isRequiredDataMissing
     ? 'Complete the missing schedule configuration before optimizing.'
-    : activeServerStatus === 'incompatible'
-      ? 'Backend is too old. Select a backend that provides optimization options.'
     : activeServerStatus === 'degraded'
       ? 'Optimization options are unavailable. Check the backend and try again.'
-    : activeServerStatus !== 'online'
-      ? 'Backend unavailable. Check or select an online backend.'
+    : !canUseActiveServer
+      ? activeServerStatus === 'incompatible'
+        ? 'Auto found no compatible backend. Explicitly select an incompatible backend to continue anyway.'
+        : 'Backend unavailable. Check or select an online backend.'
       : !activeOptimizationOptions
         ? 'Backend optimization options are unavailable.'
       : null;
@@ -737,7 +809,7 @@ export default function OptimizeAndExportPage() {
     void Promise.all([
       fetchServerInfo(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal),
       fetchOptimizationOptions(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal),
-    ]).then(([health, options]) => {
+    ]).then(([result, options]) => {
       const pingMs = Math.round(performance.now() - startedAt);
       setServerEntries(currentServers => currentServers.map(currentServer => {
         if (
@@ -750,9 +822,9 @@ export default function OptimizeAndExportPage() {
 
         const hasUsableOptions = options.kind === 'options'
           || (options.kind === 'unavailable' && currentServer.options !== null);
-        const status: ServerStatus = !health
+        const status: ServerStatus = result.status === 'offline'
           ? 'offline'
-          : options.kind === 'unsupported'
+          : result.status === 'incompatible' || options.kind === 'unsupported'
             ? 'incompatible'
             : hasUsableOptions
               ? 'online'
@@ -760,16 +832,16 @@ export default function OptimizeAndExportPage() {
         return {
           ...currentServer,
           status,
-          health,
-          options: !health
+          health: result.health,
+          options: result.status === 'offline'
             ? null
             : options.kind === 'options'
               ? options.options
               : options.kind === 'unavailable'
                 ? currentServer.options
                 : null,
-          error: !health
-            ? 'Backend is not responding.'
+          error: result.error
+            ? result.error
             : options.kind === 'options'
               ? null
               : options.kind === 'unsupported'
@@ -999,8 +1071,8 @@ export default function OptimizeAndExportPage() {
       return;
     }
 
-    if (activeServerStatus !== 'online' || !resolvedOptimizeEndpoint) {
-      setErrorMessage('Select an online backend before optimizing.');
+    if (!canUseActiveServer || !resolvedOptimizeEndpoint) {
+      setErrorMessage('Select an online backend or explicitly select an incompatible backend before optimizing.');
       setSuccessMessage(null);
       return;
     }
@@ -1382,10 +1454,10 @@ export default function OptimizeAndExportPage() {
                 className="min-w-0 truncate text-sm font-medium text-gray-900"
                 editClassName="w-full border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
               />
-              <span className="mt-1 block truncate text-xs text-gray-500">
+              <span className={`mt-1 block truncate text-xs ${server.status === 'incompatible' ? 'text-amber-700' : 'text-gray-500'}`}>
                 Last checked: {formatCheckedTime(server.lastCheckedAt)}
                 {server.pingMs !== null ? ` · ${server.pingMs} ms` : ''}
-                {server.error && server.error !== 'Backend is not responding.' ? ` · ${server.error}` : ''}
+                {server.status !== 'incompatible' && server.error && server.error !== 'Backend is not responding.' ? ` · ${server.error}` : ''}
               </span>
             </span>
           </label>
@@ -1556,10 +1628,12 @@ export default function OptimizeAndExportPage() {
           <span className="shrink-0">
             {activeServerStatus === 'offline' ? (
               <FiWifiOff className="h-4 w-4" />
-            ) : activeServerStatus === 'incompatible' || activeServerStatus === 'degraded' ? (
+            ) : activeServerStatus === 'degraded' ? (
               <FiAlertCircle className="h-4 w-4" />
             ) : activeServerStatus === 'checking' ? (
               <FiLoader className="h-4 w-4 animate-spin" />
+            ) : activeServerStatus === 'incompatible' ? (
+              <FiAlertTriangle className="h-4 w-4" />
             ) : (
               <FiWifi className="h-4 w-4" />
             )}
@@ -1648,13 +1722,40 @@ export default function OptimizeAndExportPage() {
                 <p className="text-xs text-gray-500">Checking API endpoints...</p>
               )}
 
-              {activeServerHealth && (
+              {(activeServerHealth || activeServerStatus === 'incompatible') && (
                 <div className="space-y-2">
-                  <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                    <p>
-                      API version: {activeServerHealth.api_version} · Frontend version: {CURRENT_APP_VERSION} · Backend version: {activeServerHealth.app_version}
-                    </p>
-                    {hasVersionMismatch && (
+                  <div className={`rounded-md border px-3 py-2 text-xs ${activeServerStatus === 'incompatible' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+                    {activeServerHealth && (
+                      <p>
+                        API version: {activeServerHealth.api_version}
+                        {activeServerStatus === 'incompatible' && activeServerHealth.api_version !== SUPPORTED_BACKEND_API_VERSION
+                          ? ` (expected ${SUPPORTED_BACKEND_API_VERSION})`
+                          : ''}
+                        {' · '}Frontend version: {CURRENT_APP_VERSION} · Backend version: {activeServerHealth.app_version}
+                      </p>
+                    )}
+                    {activeServerStatus === 'incompatible' ? (
+                      selectedServerEndpoint === 'auto' ? (
+                        <p className="font-medium">
+                          No compatible backend is available. Select a backend explicitly to continue anyway.
+                        </p>
+                      ) : (
+                        <>
+                          {!activeServerHealth && <p>Server information: invalid</p>}
+                          {activeServerHealth?.service_name !== EXPECTED_BACKEND_SERVICE_NAME && (
+                            <p className="mt-1">
+                              Service: {activeServerHealth?.service_name ?? 'missing'} (expected {EXPECTED_BACKEND_SERVICE_NAME})
+                            </p>
+                          )}
+                          {activeServerHealth?.status !== 'ready' && (
+                            <p className="mt-1">
+                              Status: {activeServerHealth?.status ?? 'missing'} (expected ready)
+                            </p>
+                          )}
+                          <p className="mt-1 font-medium">Incompatible backend. The request may fail.</p>
+                        </>
+                      )
+                    ) : hasVersionMismatch && (
                       <p className="mt-1 font-medium text-amber-700">
                         Frontend and backend versions do not match. If nothing breaks, you can continue.
                       </p>
@@ -1810,7 +1911,7 @@ export default function OptimizeAndExportPage() {
                 ) : (
                   <>
                     <FiDownload className="h-5 w-5" />
-                    Optimize and Download
+                    {isExplicitlySelectedIncompatibleServer ? 'Optimize Anyway and Download' : 'Optimize and Download'}
                   </>
                 )}
               </button>

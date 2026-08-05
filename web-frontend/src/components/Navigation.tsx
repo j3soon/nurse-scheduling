@@ -22,7 +22,6 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect } from 'react';
-import { IS_EXPORT_LAYOUT_ENABLED } from '@/constants/features';
 import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
 const TABS = [
@@ -35,11 +34,9 @@ const TABS = [
   { name: '6. Shift Type Successions', path: '/shift-type-successions' },
   { name: '7. Shift Counts', path: '/shift-counts' },
   { name: '8. Shift Affinities', path: '/shift-affinities' },
-  ...(IS_EXPORT_LAYOUT_ENABLED
-    ? [{ name: '9. Export Layout', path: '/export-layout' }]
-    : []),
-  { name: `${IS_EXPORT_LAYOUT_ENABLED ? 10 : 9}. Save and Load`, path: '/save-and-load' },
-  { name: `${IS_EXPORT_LAYOUT_ENABLED ? 11 : 10}. Optimize and Export`, path: '/optimize-and-export' },
+  { name: '9. Export Layout', path: '/export-layout' },
+  { name: '10. Save and Load', path: '/save-and-load' },
+  { name: '11. Optimize and Export', path: '/optimize-and-export' },
 ];
 
 export default function Navigation() {

@@ -21,7 +21,7 @@
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ExportLayoutFeaturePage } from '@/app/export-layout/page';
+import ExportLayoutPage from '@/app/export-layout/page';
 import { ExportConfig } from '@/types/scheduling';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
@@ -72,7 +72,7 @@ function renderExportLayoutPage(exportData: ExportConfig = { formatting: [], ext
 
   return render(
     <UnsavedEditingStateProvider>
-      <ExportLayoutFeaturePage />
+      <ExportLayoutPage />
     </UnsavedEditingStateProvider>
   );
 }

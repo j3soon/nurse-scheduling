@@ -17,14 +17,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Experimental export layout editor retained behind a build-time feature flag.
+// The export layout page for Tab "9. Export Layout"
 'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 import { FiAlertCircle, FiHelpCircle, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
-import { IS_EXPORT_LAYOUT_ENABLED } from '@/constants/features';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import {
   ExportExtraColumn,
@@ -170,7 +168,7 @@ const getPickerDisplay = (value: string) => {
   return { pickerValue, pickerText, pickerTextColor };
 };
 
-export function ExportLayoutFeaturePage() {
+export default function ExportFormattingPage() {
   const {
     effectiveExportData,
     updateExportFormatting,
@@ -1569,12 +1567,4 @@ export function ExportLayoutFeaturePage() {
       </div>
     </div>
   );
-}
-
-export default function ExportLayoutPage() {
-  if (!IS_EXPORT_LAYOUT_ENABLED) {
-    notFound();
-  }
-
-  return <ExportLayoutFeaturePage />;
 }
