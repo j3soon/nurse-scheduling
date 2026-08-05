@@ -665,6 +665,23 @@ def test_app_startup_fails_when_a_configured_solver_is_unavailable(monkeypatch):
         create_app(settings=_settings(), start_background=False)
 
 
+def test_app_startup_fails_when_mathopt_probe_is_not_optimal(monkeypatch):
+    from ortools.math_opt.python import mathopt
+
+    result = mathopt.SolveResult(
+        termination=mathopt.Termination(reason=mathopt.TerminationReason.INFEASIBLE),
+        solve_stats=mathopt.SolveStats(),
+    )
+    monkeypatch.setattr(mathopt, "solve", lambda _model, _solver_type: result)
+    settings = _settings(
+        solver_ids=("ortools/mathopt/highs",),
+        default_solver="ortools/mathopt/highs",
+    )
+
+    with pytest.raises(ValueError, match="Configured solver is unavailable: ortools/mathopt/highs"):
+        create_app(settings=settings, start_background=False)
+
+
 @pytest.mark.parametrize(
     "solver",
     ["ortools/cp-sat", "ortools/mpsolver/cbc", "ortools/mathopt/highs", "pulp/highs"],
@@ -716,6 +733,7 @@ def test_optimization_options_use_configured_canonical_solver_metadata(monkeypat
         response = client.get("/optimize/options")
 
     assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
     assert response.json() == {
         "schema_version": "alpha",
         "solver": {

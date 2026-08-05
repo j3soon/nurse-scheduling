@@ -43,8 +43,20 @@ import {
 } from '@/app/optimize-and-export/serverSelection';
 import { CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
 
-type ServerStatus = 'unchecked' | 'checking' | 'online' | 'offline' | 'incompatible';
+type ServerStatus = 'unchecked' | 'checking' | 'online' | 'offline' | 'incompatible' | 'degraded';
 type ServerSelection = 'auto' | string;
+
+type JsonFetchResult =
+  | { kind: 'data'; data: unknown }
+  | { kind: 'http-error'; status: number }
+  | { kind: 'invalid-json' }
+  | { kind: 'unavailable' };
+
+type OptimizationOptionsResult =
+  | { kind: 'options'; options: OptimizationOptionsResponse }
+  | { kind: 'unsupported' }
+  | { kind: 'invalid' }
+  | { kind: 'unavailable' };
 
 interface OptimizeJobResponse {
   id: string;
@@ -250,31 +262,51 @@ async function fetchServerInfo(
   timeoutMs = HEALTH_CHECK_TIMEOUT_MS,
   signal?: AbortSignal,
 ): Promise<ServerInfoResponse | null> {
+  const result = await fetchJsonWithTimeout(`${endpoint}/info`, timeoutMs, signal);
+  if (result.kind !== 'data') {
+    return null;
+  }
+
+  const info = result.data as Partial<ServerInfoResponse>;
+  return info.status === 'ready'
+    && info.service_name === EXPECTED_BACKEND_SERVICE_NAME
+    && info.api_version === SUPPORTED_BACKEND_API_VERSION
+    && typeof info.app_version === 'string'
+    ? info as ServerInfoResponse
+    : null;
+}
+
+async function fetchJsonWithTimeout(
+  url: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<JsonFetchResult> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   const abortController = () => controller.abort();
-  signal?.addEventListener('abort', abortController);
+  if (signal?.aborted) {
+    controller.abort();
+  } else {
+    signal?.addEventListener('abort', abortController);
+  }
 
   try {
-    const response = await fetch(`${endpoint}/info`, {
+    const response = await fetch(url, {
       method: 'GET',
       cache: 'no-store',
       signal: controller.signal,
     });
-
     if (!response.ok) {
-      return null;
+      return { kind: 'http-error', status: response.status };
     }
 
-    const info = await response.json() as Partial<ServerInfoResponse>;
-    return info.status === 'ready'
-      && info.service_name === EXPECTED_BACKEND_SERVICE_NAME
-      && info.api_version === SUPPORTED_BACKEND_API_VERSION
-      && typeof info.app_version === 'string'
-      ? info as ServerInfoResponse
-      : null;
+    try {
+      return { kind: 'data', data: await response.json() as unknown };
+    } catch {
+      return { kind: 'invalid-json' };
+    }
   } catch {
-    return null;
+    return { kind: 'unavailable' };
   } finally {
     window.clearTimeout(timeoutId);
     signal?.removeEventListener('abort', abortController);
@@ -285,29 +317,18 @@ async function fetchOptimizationOptions(
   endpoint: string,
   timeoutMs = HEALTH_CHECK_TIMEOUT_MS,
   signal?: AbortSignal,
-): Promise<OptimizationOptionsResponse | null> {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-  const abortController = () => controller.abort();
-  signal?.addEventListener('abort', abortController);
-
-  try {
-    const response = await fetch(`${endpoint}/optimize/options`, {
-      method: 'GET',
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const options: unknown = await response.json();
-    return isOptimizationOptionsResponse(options) ? options : null;
-  } catch {
-    return null;
-  } finally {
-    window.clearTimeout(timeoutId);
-    signal?.removeEventListener('abort', abortController);
+): Promise<OptimizationOptionsResult> {
+  const result = await fetchJsonWithTimeout(`${endpoint}/optimize/options`, timeoutMs, signal);
+  if (result.kind === 'http-error') {
+    return result.status === 404 ? { kind: 'unsupported' } : { kind: 'unavailable' };
   }
+  if (result.kind === 'unavailable') {
+    return result;
+  }
+  if (result.kind === 'invalid-json' || !isOptimizationOptionsResponse(result.data)) {
+    return { kind: 'invalid' };
+  }
+  return { kind: 'options', options: result.data };
 }
 
 function getFilenameFromContentDisposition(contentDisposition: string | null): string {
@@ -453,6 +474,9 @@ function getServerStatusBadgeClasses(status: ServerStatus): string {
   if (status === 'incompatible') {
     return 'bg-amber-50 text-amber-700 ring-amber-200';
   }
+  if (status === 'degraded') {
+    return 'bg-amber-50 text-amber-700 ring-amber-200';
+  }
   if (status === 'checking') {
     return 'bg-gray-50 text-gray-600 ring-gray-200';
   }
@@ -471,6 +495,9 @@ function formatServerStatus(status: ServerStatus): string {
   }
   if (status === 'incompatible') {
     return 'Incompatible';
+  }
+  if (status === 'degraded') {
+    return 'Options unavailable';
   }
   return 'Unchecked';
 }
@@ -544,6 +571,8 @@ export default function OptimizeAndExportPage() {
     ? 'online'
     : serverEntries.some(server => server.status === 'checking')
       ? 'checking'
+      : serverEntries.some(server => server.status === 'degraded')
+        ? 'degraded'
       : serverEntries.some(server => server.status === 'incompatible')
         ? 'incompatible'
       : serverEntries.some(server => server.status === 'offline')
@@ -577,6 +606,8 @@ export default function OptimizeAndExportPage() {
     ? 'Complete the missing schedule configuration before optimizing.'
     : activeServerStatus === 'incompatible'
       ? 'Backend is too old. Select a backend that provides optimization options.'
+    : activeServerStatus === 'degraded'
+      ? 'Optimization options are unavailable. Check the backend and try again.'
     : activeServerStatus !== 'online'
       ? 'Backend unavailable. Check or select an online backend.'
       : !activeOptimizationOptions
@@ -717,21 +748,35 @@ export default function OptimizeAndExportPage() {
           return currentServer;
         }
 
+        const hasUsableOptions = options.kind === 'options'
+          || (options.kind === 'unavailable' && currentServer.options !== null);
         const status: ServerStatus = !health
           ? 'offline'
-          : options
-            ? 'online'
-            : 'incompatible';
+          : options.kind === 'unsupported'
+            ? 'incompatible'
+            : hasUsableOptions
+              ? 'online'
+              : 'degraded';
         return {
           ...currentServer,
           status,
           health,
-          options: health ? options : null,
+          options: !health
+            ? null
+            : options.kind === 'options'
+              ? options.options
+              : options.kind === 'unavailable'
+                ? currentServer.options
+                : null,
           error: !health
             ? 'Backend is not responding.'
-            : options
+            : options.kind === 'options'
               ? null
-              : 'Backend is too old and does not provide optimization options.',
+              : options.kind === 'unsupported'
+                ? 'Backend is too old and does not provide optimization options.'
+                : options.kind === 'invalid'
+                  ? 'Backend returned invalid optimization options.'
+                  : 'Optimization options are temporarily unavailable.',
           lastCheckedAt: new Date(),
           pingMs,
         };
@@ -1399,7 +1444,7 @@ export default function OptimizeAndExportPage() {
               <FiLoader className="h-4 w-4 animate-spin" />
             ) : status === 'offline' ? (
               <FiWifiOff className="h-4 w-4" />
-            ) : status === 'incompatible' ? (
+            ) : status === 'incompatible' || status === 'degraded' ? (
               <FiAlertCircle className="h-4 w-4" />
             ) : status === 'online' ? (
               <FiWifi className="h-4 w-4" />
@@ -1479,7 +1524,7 @@ export default function OptimizeAndExportPage() {
     ? 'border-green-200 bg-green-50 text-green-700'
     : activeServerStatus === 'offline'
       ? 'border-red-200 bg-red-50 text-red-700'
-      : activeServerStatus === 'incompatible'
+      : activeServerStatus === 'incompatible' || activeServerStatus === 'degraded'
         ? 'border-amber-200 bg-amber-50 text-amber-700'
       : 'border-gray-200 bg-gray-50 text-gray-600';
   const serverStatusLabel = formatServerStatus(activeServerStatus);
@@ -1511,7 +1556,7 @@ export default function OptimizeAndExportPage() {
           <span className="shrink-0">
             {activeServerStatus === 'offline' ? (
               <FiWifiOff className="h-4 w-4" />
-            ) : activeServerStatus === 'incompatible' ? (
+            ) : activeServerStatus === 'incompatible' || activeServerStatus === 'degraded' ? (
               <FiAlertCircle className="h-4 w-4" />
             ) : activeServerStatus === 'checking' ? (
               <FiLoader className="h-4 w-4 animate-spin" />
@@ -1622,6 +1667,14 @@ export default function OptimizeAndExportPage() {
                   <div className="flex gap-2">
                     <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>Backend is too old and does not provide optimization options.</span>
+                  </div>
+                </div>
+              )}
+              {activeServerStatus === 'degraded' && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <div className="flex gap-2">
+                    <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{selectedServer?.error ?? 'Optimization options are unavailable.'}</span>
                   </div>
                 </div>
               )}

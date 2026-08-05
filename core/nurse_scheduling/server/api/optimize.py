@@ -148,8 +148,9 @@ async def create_job(
 
 
 @router.get("/optimize/options", response_model=OptimizationOptionsResponse)
-def get_optimization_options(request: Request):
+def get_optimization_options(request: Request, response: Response):
     """Return the run options advertised and enforced by this deployment."""
+    response.headers["Cache-Control"] = "no-store"
     return OptimizationOptionsResponse.from_settings(_settings(request))
 
 

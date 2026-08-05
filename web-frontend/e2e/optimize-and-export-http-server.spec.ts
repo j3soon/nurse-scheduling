@@ -213,7 +213,7 @@ test('optimize and export works against a real local HTTP server instead of Play
     expect(submittedBody).toContain('filename="schedule.yaml"');
     expect(submittedBody).not.toContain('name="yaml_content"');
     expect(submittedBody).toContain('2026-05-01');
-    expect(submittedBody).toContain('solver');
+    expect(submittedBody).toContain('name="solver"');
     expect(submittedBody).toContain('ortools/cp-sat');
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));

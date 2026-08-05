@@ -50,8 +50,8 @@ def solver_is_available(value: str) -> bool:
 
             from ..solver_ortools_mathopt import ORTOOLS_MATHOPT_MIP_ENGINES
 
-            mathopt.solve(mathopt.Model(), ORTOOLS_MATHOPT_MIP_ENGINES[selector.engine])
-            return True
+            result = mathopt.solve(mathopt.Model(), ORTOOLS_MATHOPT_MIP_ENGINES[selector.engine])
+            return result.termination.reason == mathopt.TerminationReason.OPTIMAL
 
         import pulp
 

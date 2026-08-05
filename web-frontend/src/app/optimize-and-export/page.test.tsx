@@ -421,9 +421,11 @@ describe('OptimizeAndExportPage error handling', () => {
 
   it('marks a healthy backend without optimization options as incompatible', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock
-      .mockResolvedValueOnce(healthyResponse())
-      .mockResolvedValueOnce({ ok: false, status: 404 });
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      url.endsWith('/optimize/options')
+        ? { ok: false, status: 404 }
+        : healthyResponse()
+    ));
 
     render(<OptimizeAndExportPage />);
 
@@ -432,12 +434,55 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
   });
 
+  it('preserves existing options when an options refresh temporarily fails', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    let optionsUnavailable = false;
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      url.endsWith('/optimize/options')
+        ? optionsUnavailable
+          ? { ok: false, status: 503 }
+          : optimizationOptionsResponse()
+        : healthyResponse()
+    ));
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+
+    optionsUnavailable = true;
+    await user.click(screen.getByRole('button', { name: /check backend/i }));
+
+    await expect(screen.findByText(/optimization options are temporarily unavailable/i)).resolves.toBeInTheDocument();
+    expect(screen.getByText('Server: Online')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /solver/i })).toHaveValue('ortools/cp-sat');
+    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeEnabled();
+  });
+
+  it('distinguishes invalid optimization options from an unsupported endpoint', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      url.endsWith('/optimize/options')
+        ? { ok: true, json: vi.fn().mockResolvedValue({ schema_version: 'invalid' }) }
+        : healthyResponse()
+    ));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Options unavailable')).resolves.toBeInTheDocument();
+    expect(screen.getAllByText(/backend returned invalid optimization options/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Server: Incompatible')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+  });
+
   it('uses backend-defined solver, timeout, and prettify options', async () => {
     const user = userEvent.setup();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock
-      .mockResolvedValueOnce(healthyResponse())
-      .mockResolvedValueOnce(optimizationOptionsResponse({
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/info')) {
+        return Promise.resolve(healthyResponse());
+      }
+      if (url.endsWith('/optimize/options')) {
+        return Promise.resolve(optimizationOptionsResponse({
         defaultSolver: 'pulp/cuopt',
         solverChoices: [
           {
@@ -456,12 +501,14 @@ describe('OptimizeAndExportPage error handling', () => {
           },
         ],
         prettifyDefault: false,
-      }))
-      .mockResolvedValueOnce({
+        }));
+      }
+      return Promise.resolve({
         ok: false,
         status: 503,
         text: vi.fn().mockResolvedValue('temporary failure'),
       });
+    });
 
     render(<OptimizeAndExportPage />);
     await screen.findByText('Server: Online');
@@ -528,7 +575,7 @@ describe('OptimizeAndExportPage error handling', () => {
       selectedServerEndpoint: 'auto',
     }));
     fetchMock.mockImplementation((url: string) => {
-      if (url.startsWith(primaryEndpoint)) {
+      if (url === `${primaryEndpoint}/info` || url === `${primaryEndpoint}/optimize/options`) {
         return new Promise(resolve => {
           if (url.endsWith('/optimize/options')) {
             resolvePrimaryOptions = resolve;
@@ -572,16 +619,22 @@ describe('OptimizeAndExportPage error handling', () => {
     const user = userEvent.setup();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     let resolveRefresh: (response: ReturnType<typeof healthyResponse>) => void = () => undefined;
-    fetchMock
-      .mockResolvedValueOnce(healthyResponse({
-        jobs: { running: 1, queued: 2, cancelling: 0 },
-        workers: { online: 3 },
-      }))
-      .mockResolvedValueOnce(optimizationOptionsResponse())
-      .mockImplementationOnce(() => new Promise(resolve => {
+    let healthRequestCount = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/optimize/options')) {
+        return Promise.resolve(optimizationOptionsResponse());
+      }
+      if (healthRequestCount === 0) {
+        healthRequestCount += 1;
+        return Promise.resolve(healthyResponse({
+          jobs: { running: 1, queued: 2, cancelling: 0 },
+          workers: { online: 3 },
+        }));
+      }
+      return new Promise(resolve => {
         resolveRefresh = resolve;
-      }))
-      .mockResolvedValueOnce(optimizationOptionsResponse());
+      });
+    });
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
 
     render(<OptimizeAndExportPage />);
