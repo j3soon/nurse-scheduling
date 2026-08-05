@@ -419,19 +419,44 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getAllByText('Activity unavailable')).toHaveLength(2);
   });
 
-  it('marks a healthy backend without optimization options as incompatible', async () => {
+  it('uses backward-compatible defaults when a healthy backend has no optimization options endpoint', async () => {
+    const user = userEvent.setup();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockImplementation((url: string) => Promise.resolve(
-      url.endsWith('/optimize/options')
-        ? { ok: false, status: 404 }
-        : healthyResponse()
-    ));
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/optimize/options')) {
+        return Promise.resolve({ ok: false, status: 404 });
+      }
+      if (url.endsWith('/optimize')) {
+        return Promise.resolve({
+          ok: false,
+          status: 422,
+          text: vi.fn().mockResolvedValue('legacy request reached backend'),
+        });
+      }
+      return Promise.resolve(healthyResponse());
+    });
 
     render(<OptimizeAndExportPage />);
 
-    await expect(screen.findByText('Server: Incompatible')).resolves.toBeInTheDocument();
-    expect(screen.getAllByText(/backend is too old/i).length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.queryByText(/backend is too old/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /solver/i })).toHaveValue('ortools/cp-sat');
+    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveValue(300);
+    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveAttribute('min', '1');
+    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveAttribute('max', '3600');
+    expect(screen.getByRole('checkbox', { name: /prettify xlsx/i })).toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `${LOCAL_API_URL}/optimize`,
+      expect.objectContaining({ method: 'POST' })
+    ));
+    const optimizeRequest = fetchMock.mock.calls.find(([url]) => url === `${LOCAL_API_URL}/optimize`);
+    const requestBody = optimizeRequest?.[1]?.body as FormData;
+    expect(requestBody.get('solver')).toBe('ortools/cp-sat');
+    expect(requestBody.get('timeout')).toBe('300');
+    expect(requestBody.get('prettify')).toBe('true');
   });
 
   it('preserves existing options when an options refresh temporarily fails', async () => {
@@ -458,7 +483,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeEnabled();
   });
 
-  it('distinguishes invalid optimization options from an unsupported endpoint', async () => {
+  it('keeps invalid optimization options unavailable', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementation((url: string) => Promise.resolve(
       url.endsWith('/optimize/options')
@@ -1092,7 +1117,9 @@ describe('OptimizeAndExportPage error handling', () => {
     ['missing app version metadata', { app_version: undefined }, /backend version: missing/i],
   ])('warns about %s and allows explicit selection', async (_label, overrides, warning) => {
     const user = userEvent.setup();
-    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(healthyResponse(overrides));
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation((url: string) => (
+      respondWithHealthyBackend(url, overrides)
+    ));
 
     render(<OptimizeAndExportPage />);
 
@@ -1114,6 +1141,7 @@ describe('OptimizeAndExportPage error handling', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock
       .mockResolvedValueOnce(healthyResponse({ api_version: 'alpha' }))
+      .mockResolvedValueOnce(optimizationOptionsResponse())
       .mockResolvedValueOnce({
         ok: false,
         status: 422,

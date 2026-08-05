@@ -54,7 +54,6 @@ type JsonFetchResult =
 
 type OptimizationOptionsResult =
   | { kind: 'options'; options: OptimizationOptionsResponse }
-  | { kind: 'unsupported' }
   | { kind: 'invalid' }
   | { kind: 'unavailable' };
 
@@ -137,6 +136,32 @@ const INITIAL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 const SERVER_ACTIVITY_REFRESH_MS = 15000;
 const SERVER_OPTIONS_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+// Keep the legacy /optimize request defaults and validation range for backward compatibility with backends that predate /optimize/options.
+const BACKWARD_COMPATIBLE_OPTIMIZATION_OPTIONS: OptimizationOptionsResponse = {
+  schema_version: 'alpha',
+  solver: {
+    default: 'ortools/cp-sat',
+    choices: [
+      {
+        value: 'ortools/cp-sat',
+        label: 'OR-Tools | CP-SAT',
+        compute: 'cpu',
+        timeout: {
+          default: 300,
+          minimum: 1,
+          maximum: 3600,
+        },
+        controls: {
+          cancel_running: true,
+          finish_now: true,
+        },
+      },
+    ],
+  },
+  prettify: {
+    default: true,
+  },
+};
 
 function createServerEntry(
   server: StoredOptimizeServerEntry,
@@ -383,7 +408,9 @@ async function fetchOptimizationOptions(
 ): Promise<OptimizationOptionsResult> {
   const result = await fetchJsonWithTimeout(`${endpoint}/optimize/options`, timeoutMs, signal);
   if (result.kind === 'http-error') {
-    return result.status === 404 ? { kind: 'unsupported' } : { kind: 'unavailable' };
+    return result.status === 404
+      ? { kind: 'options', options: BACKWARD_COMPATIBLE_OPTIMIZATION_OPTIONS }
+      : { kind: 'unavailable' };
   }
   if (result.kind === 'unavailable') {
     return result;
@@ -531,17 +558,11 @@ function getServerStatusBadgeClasses(status: ServerStatus): string {
   if (status === 'online') {
     return 'bg-green-50 text-green-700 ring-green-200';
   }
-  if (status === 'incompatible') {
+  if (status === 'incompatible' || status === 'degraded') {
     return 'bg-amber-50 text-amber-700 ring-amber-200';
   }
   if (status === 'offline') {
     return 'bg-red-50 text-red-700 ring-red-200';
-  }
-  if (status === 'incompatible') {
-    return 'bg-amber-50 text-amber-700 ring-amber-200';
-  }
-  if (status === 'degraded') {
-    return 'bg-amber-50 text-amber-700 ring-amber-200';
   }
   if (status === 'checking') {
     return 'bg-gray-50 text-gray-600 ring-gray-200';
@@ -561,9 +582,6 @@ function formatServerStatus(status: ServerStatus): string {
   }
   if (status === 'offline') {
     return 'Offline';
-  }
-  if (status === 'incompatible') {
-    return 'Incompatible';
   }
   if (status === 'degraded') {
     return 'Options unavailable';
@@ -824,7 +842,7 @@ export default function OptimizeAndExportPage() {
           || (options.kind === 'unavailable' && currentServer.options !== null);
         const status: ServerStatus = result.status === 'offline'
           ? 'offline'
-          : result.status === 'incompatible' || options.kind === 'unsupported'
+          : result.status === 'incompatible'
             ? 'incompatible'
             : hasUsableOptions
               ? 'online'
@@ -844,11 +862,9 @@ export default function OptimizeAndExportPage() {
             ? result.error
             : options.kind === 'options'
               ? null
-              : options.kind === 'unsupported'
-                ? 'Backend is too old and does not provide optimization options.'
-                : options.kind === 'invalid'
-                  ? 'Backend returned invalid optimization options.'
-                  : 'Optimization options are temporarily unavailable.',
+              : options.kind === 'invalid'
+                ? 'Backend returned invalid optimization options.'
+                : 'Optimization options are temporarily unavailable.',
           lastCheckedAt: new Date(),
           pingMs,
         };
@@ -1044,7 +1060,7 @@ export default function OptimizeAndExportPage() {
     }
 
     if (!activeOptimizationOptions) {
-      setErrorMessage('Backend is too old and does not provide optimization options.');
+      setErrorMessage('Backend optimization options are unavailable.');
       setSuccessMessage(null);
       return;
     }
@@ -1516,7 +1532,9 @@ export default function OptimizeAndExportPage() {
               <FiLoader className="h-4 w-4 animate-spin" />
             ) : status === 'offline' ? (
               <FiWifiOff className="h-4 w-4" />
-            ) : status === 'incompatible' || status === 'degraded' ? (
+            ) : status === 'incompatible' ? (
+              <FiAlertTriangle className="h-4 w-4" />
+            ) : status === 'degraded' ? (
               <FiAlertCircle className="h-4 w-4" />
             ) : status === 'online' ? (
               <FiWifi className="h-4 w-4" />
@@ -1760,14 +1778,6 @@ export default function OptimizeAndExportPage() {
                         Frontend and backend versions do not match. If nothing breaks, you can continue.
                       </p>
                     )}
-                  </div>
-                </div>
-              )}
-              {activeServerStatus === 'incompatible' && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  <div className="flex gap-2">
-                    <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>Backend is too old and does not provide optimization options.</span>
                   </div>
                 </div>
               )}

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState, setDateRange } from './helpers';
 
 test('optimize and export renders backend errors without a stale success state', async ({ page }) => {
   /*
@@ -49,6 +49,7 @@ test('optimize and export renders backend errors without a stale success state',
     preferences: [{ type: 'at most one shift per day' }],
     export: { formatting: [] },
   });
+  await setDateRange(page);
 
   await mockOptimizeAndExport(page, { status: 500, errorDetail: 'solver unavailable' });
 
@@ -67,8 +68,8 @@ test('allows an explicitly selected incompatible backend with a warning', async 
   /*
    * Steps:
    * 1. Seed a valid schedule and return reachable backend information for an unsupported API version.
-   * 2. Confirm Auto declines the backend while preserving its activity and compatibility details.
-   * 3. Select the backend explicitly and confirm the warning action sends the request.
+   * 2. Confirm Auto declines the backend and the missing options endpoint uses legacy defaults.
+   * 3. Select the backend explicitly, inspect its details, and confirm the warning action sends the request.
    */
   await seedSchedulingState(page, {
     apiVersion: 'test',
@@ -90,6 +91,7 @@ test('allows an explicitly selected incompatible backend with a warning', async 
     preferences: [],
     export: { formatting: [] },
   });
+  await setDateRange(page);
 
   let optimizeRequested = false;
   await page.route('http://localhost:8000/info', async route => {
@@ -107,6 +109,12 @@ test('allows an explicitly selected incompatible backend with a warning', async 
         jobs: { running: 1, queued: 3, cancelling: 1 },
         workers: { online: 2 },
       }),
+    });
+  });
+  await page.route('http://localhost:8000/optimize/options', async route => {
+    await route.fulfill({
+      status: 404,
+      headers: { 'Access-Control-Allow-Origin': '*' },
     });
   });
   await page.route('http://localhost:8000/optimize', async route => {
