@@ -66,6 +66,7 @@ from nurse_scheduling.server.jobs.runner import OptimizationRunner, RunOutput
 from nurse_scheduling.server.jobs.worker import JobWorker
 from nurse_scheduling.server.runtime_identity import get_deployment_id
 from nurse_scheduling.server.solver_capabilities import SOLVER_CAPABILITIES
+from nurse_scheduling.server.solver_options import solver_is_available
 from nurse_scheduling.server.stores.memory import MemoryJobStore
 
 PROCESS_START_TIMEOUT_SECONDS = 10
@@ -550,6 +551,22 @@ def test_job_creation_offloads_the_synchronous_store_write():
             {"default_timeout_seconds": 61, "max_timeout_seconds": 60},
             "default_timeout_seconds must not exceed max_timeout_seconds",
         ),
+        (
+            {"min_timeout_seconds": 31, "default_timeout_seconds": 30},
+            "min_timeout_seconds must not exceed default_timeout_seconds",
+        ),
+        (
+            {"solver_ids": ("ortools/cp-sat", "ortools/cp-sat")},
+            "solver_ids must not contain duplicates",
+        ),
+        (
+            {"solver_ids": ("pulp/cuopt",), "default_solver": "ortools/cp-sat"},
+            "default_solver must be included in solver_ids",
+        ),
+        (
+            {"solver_ids": ("unknown/solver",), "default_solver": "unknown/solver"},
+            "Unsupported server solver",
+        ),
     ],
 )
 def test_server_settings_reject_invalid_relationships(updates, message):
@@ -618,6 +635,160 @@ def test_server_settings_retain_up_to_128_jobs_for_24_hours_by_default():
     assert settings.job_retention_seconds == DEFAULT_JOB_RETENTION_SECONDS == 24 * 60 * 60
     assert settings.max_events_per_job == DEFAULT_MAX_EVENTS_PER_JOB == 1_000
     assert settings.timeout_grace_seconds == DEFAULT_TIMEOUT_GRACE_SECONDS == 90
+
+
+def test_server_settings_load_optimization_options_from_env(monkeypatch):
+    monkeypatch.setenv("OPTIMIZE_SOLVERS", " ORTOOLS/CP-SAT, PULP/CUOPT ")
+    monkeypatch.setenv("OPTIMIZE_DEFAULT_SOLVER", " PULP/CUOPT ")
+    monkeypatch.setenv("OPTIMIZE_MIN_TIMEOUT_SECONDS", "10")
+    monkeypatch.setenv("OPTIMIZE_DEFAULT_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("OPTIMIZE_MAX_TIMEOUT_SECONDS", "900")
+    monkeypatch.setenv("OPTIMIZE_DEFAULT_PRETTIFY", "false")
+
+    settings = ServerSettings.from_env()
+
+    assert settings.solver_ids == ("ortools/cp-sat", "pulp/cuopt")
+    assert settings.default_solver == "pulp/cuopt"
+    assert settings.min_timeout_seconds == 10
+    assert settings.default_timeout_seconds == 120
+    assert settings.max_timeout_seconds == 900
+    assert settings.default_prettify is False
+
+
+def test_app_startup_fails_when_a_configured_solver_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "nurse_scheduling.server.solver_options.solver_is_available",
+        lambda _solver_id: False,
+    )
+
+    with pytest.raises(ValueError, match="Configured solver is unavailable: ortools/cp-sat"):
+        create_app(settings=_settings(), start_background=False)
+
+
+def test_app_startup_fails_when_mathopt_probe_is_not_optimal(monkeypatch):
+    from ortools.math_opt.python import mathopt
+
+    result = mathopt.SolveResult(
+        termination=mathopt.Termination(reason=mathopt.TerminationReason.INFEASIBLE),
+        solve_stats=mathopt.SolveStats(),
+    )
+    monkeypatch.setattr(mathopt, "solve", lambda _model, _solver_type: result)
+    settings = _settings(
+        solver_ids=("ortools/mathopt/highs",),
+        default_solver="ortools/mathopt/highs",
+    )
+
+    with pytest.raises(ValueError, match="Configured solver is unavailable: ortools/mathopt/highs"):
+        create_app(settings=settings, start_background=False)
+
+
+@pytest.mark.parametrize(
+    "solver",
+    ["ortools/cp-sat", "ortools/mpsolver/cbc", "ortools/mathopt/highs", "pulp/highs"],
+)
+def test_installed_solver_runtimes_are_available(solver):
+    assert solver_is_available(solver)
+
+
+@pytest.mark.parametrize(
+    ("solve_status", "expected"),
+    [(RuntimeError("no CUDA device"), False), (-1, False), (1, True)],
+)
+def test_cuopt_availability_requires_a_successful_probe(monkeypatch, solve_status, expected):
+    import pulp
+
+    class ImportableCuOpt:
+        def __init__(self, *, msg):
+            pass
+
+        def available(self):
+            return True
+
+    def solve(_problem, _solver):
+        if isinstance(solve_status, Exception):
+            raise solve_status
+        return solve_status
+
+    monkeypatch.setattr(pulp, "CUOPT", ImportableCuOpt)
+    monkeypatch.setattr(pulp.LpProblem, "solve", solve)
+
+    assert solver_is_available("pulp/cuopt") is expected
+
+
+def test_optimization_options_use_configured_canonical_solver_metadata(monkeypatch):
+    monkeypatch.setattr(
+        "nurse_scheduling.server.app.validate_solver_availability",
+        lambda _solver_ids: None,
+    )
+    settings = _settings(
+        solver_ids=("ortools/cp-sat", "pulp/cuopt"),
+        default_solver="pulp/cuopt",
+        min_timeout_seconds=10,
+        default_timeout_seconds=120,
+        max_timeout_seconds=900,
+        default_prettify=False,
+    )
+
+    with _client(start_background=False, settings=settings) as client:
+        response = client.get("/optimize/options")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.json() == {
+        "schema_version": "alpha",
+        "solver": {
+            "default": "pulp/cuopt",
+            "choices": [
+                {
+                    "value": "ortools/cp-sat",
+                    "label": "OR-Tools | CP-SAT",
+                    "compute": "cpu",
+                    "timeout": {"default": 120, "minimum": 10, "maximum": 900},
+                    "controls": {"cancel_running": True, "finish_now": True},
+                },
+                {
+                    "value": "pulp/cuopt",
+                    "label": "PuLP | cuOpt",
+                    "compute": "gpu",
+                    "timeout": {"default": 120, "minimum": 10, "maximum": 900},
+                    "controls": {"cancel_running": True, "finish_now": False},
+                },
+            ],
+        },
+        "prettify": {"default": False},
+    }
+
+
+def test_job_creation_enforces_advertised_options():
+    settings = _settings(
+        min_timeout_seconds=10,
+        default_timeout_seconds=30,
+        max_timeout_seconds=60,
+        default_prettify=False,
+    )
+    with _client(start_background=False, settings=settings) as client:
+        defaulted = _create(client)
+        normalized = _create(client, solver=" ORTOOLS/CP-SAT ", timeout="10", prettify="true")
+        disabled_solver = _create(client, solver="pulp/cuopt")
+        unknown_solver = _create(client, solver="unknown/solver")
+        below_minimum = _create(client, timeout="9")
+        above_maximum = _create(client, timeout="61")
+        non_integer = _create(client, timeout="10.5")
+
+    assert defaulted.status_code == 202
+    assert defaulted.json()["request"]["solver"] == "ortools/cp-sat"
+    assert defaulted.json()["request"]["prettify"] is False
+    assert defaulted.json()["request"]["timeout_seconds"] == 30
+    assert normalized.status_code == 202
+    assert normalized.json()["request"]["solver"] == "ortools/cp-sat"
+    assert normalized.json()["request"]["timeout_seconds"] == 10
+    assert normalized.json()["request"]["prettify"] is True
+    assert disabled_solver.status_code == 400
+    assert disabled_solver.json()["detail"] == "Solver must be one of: ortools/cp-sat"
+    assert unknown_solver.status_code == 400
+    assert below_minimum.status_code == 400
+    assert above_maximum.status_code == 400
+    assert non_integer.status_code == 422
 
 
 def test_create_complete_download_and_delete_job():
@@ -880,7 +1051,8 @@ def test_process_timeout_allows_model_building_within_timeout_grace():
         b"apiVersion: alpha\n",
         event_callback=lambda *_args: None,
         control=lambda: None,
-        hard_timeout_seconds=2.05,
+        # Include headroom for spawn imports under coverage on macOS.
+        hard_timeout_seconds=5.05,
         finish_now_enabled=False,
     )
 
@@ -1408,7 +1580,8 @@ def test_cancel_running_job_stops_worker_and_discards_result():
 @pytest.mark.parametrize("solver", ["ortools/cp-sat", "pulp/cbc"])
 def test_cancellation_immediately_terminates_the_solver_process(solver):
     runner = IgnoringStopRunner()
-    with _client(runner) as client:
+    settings = _settings(solver_ids=(solver,), default_solver=solver)
+    with _client(runner, settings=settings) as client:
         created = _create(client, solver=solver).json()
         assert runner.started.wait(timeout=PROCESS_START_TIMEOUT_SECONDS)
         running = client.get(f"/optimize/{created['id']}").json()

@@ -162,6 +162,7 @@ checkpointing it outside the child process.
 | `GET` | `/` | Return API identity and version information. |
 | `GET` | `/info` | Check readiness and report versions, job activity, and online workers. |
 | `GET` | `/ready` | Return a minimal readiness result for routing and deployment probes. |
+| `GET` | `/optimize/options` | Return the solver choices and run-option defaults accepted by this deployment. |
 | `POST` | `/optimize` | Validate multipart input and enqueue a job. |
 | `GET` | `/optimize/{job_id}` | Return the current job representation. |
 | `GET` | `/optimize/{job_id}/events` | Replay and stream job events over SSE. |
@@ -264,15 +265,19 @@ All server settings are read once when the application is constructed.
 | `JOB_MAINTENANCE_INTERVAL_SECONDS` | `30` | Set the delay between maintenance passes. |
 | `JOB_SSE_KEEPALIVE_SECONDS` | `10` | Set the maximum SSE wait before a keepalive. |
 | `OPTIMIZE_MAX_YAML_BYTES` | `2097152` | Limit the submitted YAML size. |
+| `OPTIMIZE_SOLVERS` | `ortools/cp-sat` | Set the ordered comma-separated solver allowlist. |
+| `OPTIMIZE_DEFAULT_SOLVER` | `ortools/cp-sat` | Set the solver used when a request omits one. |
+| `OPTIMIZE_MIN_TIMEOUT_SECONDS` | `1` | Set the smallest accepted timeout. |
 | `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS` | `300` | Set the timeout used when a request omits one. |
 | `OPTIMIZE_MAX_TIMEOUT_SECONDS` | `3600` | Limit the timeout accepted from a request. |
+| `OPTIMIZE_DEFAULT_PRETTIFY` | `true` | Set prettification when a request omits it. |
 | `OPTIMIZE_TIMEOUT_GRACE_SECONDS` | `90` | Set the process grace added to the requested timeout before forced termination. |
 | `DISABLE_SENTRY` | unset | Disable backend error reporting when set to a non-empty value. |
 | `SENTRY_RELEASE` | derived from the app version | Override the release reported to Sentry. |
 
 Numeric values must be positive. `JOB_MAX_RETAINED` must be at least
-`JOB_MAX_PENDING`, and the default optimization timeout must not exceed the
-maximum timeout.
+`JOB_MAX_PENDING`. The default solver must be advertised, and the timeout
+default must remain within the configured minimum and maximum.
 
 ## Tests
 

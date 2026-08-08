@@ -81,6 +81,29 @@ as a solver capability. Yes means the trait is confirmed and enabled in the
 server registry. No means it is not confirmed and does not prove that the
 underlying solver cannot support it.
 
+### Server configuration
+
+`GET /optimize/options` publishes the solver choices and defaults accepted by
+one backend deployment. Solver labels, compute type, and finish-now support
+come from the same capability registry as the supported selectors above.
+Every advertised solver includes the deployment's integer timeout range and
+running cancellation because the server enforces both at the process level.
+
+Configure the ordered solver subset and defaults with:
+
+```sh
+OPTIMIZE_SOLVERS=ortools/cp-sat,pulp/cuopt
+OPTIMIZE_DEFAULT_SOLVER=ortools/cp-sat
+OPTIMIZE_MIN_TIMEOUT_SECONDS=1
+OPTIMIZE_DEFAULT_TIMEOUT_SECONDS=300
+OPTIMIZE_MAX_TIMEOUT_SECONDS=3600
+OPTIMIZE_DEFAULT_PRETTIFY=true
+```
+
+The default deployment advertises only `ortools/cp-sat`. Configure
+`pulp/cuopt` only where its GPU runtime is available. The server fails startup
+when an advertised solver runtime is unavailable.
+
 ### PuLP/CBC on the large scenario
 
 With the bundled CBC 2.10.3, the 87-person model has about 74,000 variables and

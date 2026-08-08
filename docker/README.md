@@ -75,6 +75,31 @@ with:
 - `JOB_WORKER_LEASE_SECONDS=90` by default
 - `JOB_MAX_EVENTS_PER_JOB=1000` by default
 
+The backend publishes its accepted run options at `GET /optimize/options`.
+The frontend uses this response for solver choices, timeout limits,
+running-job controls, and the prettify default. Configure the response with:
+
+- `OPTIMIZE_SOLVERS`, a comma-separated allowlist of selectors from the
+  [solver reference](https://nursescheduling.org/docs/solvers/)
+- `OPTIMIZE_DEFAULT_SOLVER`
+- `OPTIMIZE_MIN_TIMEOUT_SECONDS`
+- `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`
+- `OPTIMIZE_MAX_TIMEOUT_SECONDS`
+- `OPTIMIZE_DEFAULT_PRETTIFY`
+
+The safe default exposes only `ortools/cp-sat`. In an existing GPU-capable
+backend environment, copy the GPU settings template and set its tunnel token:
+
+```sh
+cp .env.gpu.example .env
+```
+
+This exposes both main solvers and selects `pulp/cuopt` by default. The template
+does not add GPU access or cuOpt to the included CPU-only Compose deployment.
+
+The API refuses to start if any configured solver is unavailable or a default
+falls outside its advertised choices or range.
+
 The API container runs multiple Uvicorn workers. Each worker claims jobs
 from Redis and runs at most one optimization job locally. Workers renew shared
 presence leases while idle and running. A job is failed and its capacity is

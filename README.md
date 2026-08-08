@@ -123,7 +123,7 @@ For Linux only: to quickly set up all local environments (`core`, `web-frontend`
 
 For Docker-based development environment:
 
-CPU solver:
+CPU image:
 
 ```sh
 # build image
@@ -150,10 +150,10 @@ docker run --rm -it --network=host \
   j3soon/nurse-scheduling:dev
 ```
 
-GPU solver:
+GPU image with cuOpt support:
 
 ```sh
-# or build image with cuOpt support
+# build image with cuOpt support
 docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 ```
 
@@ -180,21 +180,9 @@ docker run --rm -it --gpus all --network=host \
   j3soon/nurse-scheduling:dev-cuopt
 ```
 
-Inside either development container, start Redis and run the backend in Redis mode:
-
-```sh
-redis-server --daemonize yes
-redis-cli ping
-cd /app/core
-JOB_BACKEND=redis \
-JOB_REDIS_URL=redis://localhost:6379/0 \
-JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0 \
-uvicorn nurse_scheduling.serve:app --workers 3 --host 0.0.0.0 --port 8000 --no-access-log
-```
-
-Workers renew a 90-second presence lease while idle and optimizing. Set
-`JOB_WORKER_LEASE_SECONDS` to change how long the server waits before marking a
-worker offline and failing its active job.
+After entering a container, use the [Core](#core) commands to run the CLI or
+the [Web Backend](#web-backend) commands to start a server. Use the GPU image
+for `pulp/cuopt`.
 
 or with X11 forwarding for running Playwright interactive mode in the container:
 
@@ -295,25 +283,16 @@ bun run lint -- --fix
 
 ### Core
 
-We currently support thirteen solver selectors across OR-Tools and PuLP.
+The main solver paths are:
 
-> All backends other than OR-Tools/CP-SAT are experimental.
+- `ortools/cp-sat`, labeled **OR-Tools | CP-SAT**, is the recommended CPU
+  solver and the default.
+- `pulp/cuopt`, labeled **PuLP | cuOpt**, is the experimental GPU solver. It
+  requires the NVIDIA cuOpt runtime and a supported GPU.
 
-- `ortools/cp-sat` is the default solver and the most battle-tested one.
-- `ortools/mpsolver/cbc` uses CBC through the OR-Tools linear MIP API and is covered by the normal schedule regression suite.
-- `ortools/mpsolver/scip` and `ortools/mpsolver/cp-sat` use SCIP and CP-SAT through the OR-Tools linear MIP API and are covered by the normal schedule regression suite.
-- `ortools/mpsolver/bop` uses the legacy BOP engine. It has low-level and bounded schedule smoke coverage, but is not recommended for larger schedules because it can be substantially slower.
-- `ortools/mathopt/gscip`, `ortools/mathopt/cp-sat`, and `ortools/mathopt/highs` use the bundled integer-capable engines through the newer [OR-Tools MathOpt API](https://developers.google.com/optimization/math_opt) and are covered by the normal schedule regression suite.
-- `pulp/cbc` is covered by the normal schedule regression suite and opt-in real-world smoke checks.
-- `pulp/cuopt` is the GPU-accelerated solver. Its real-world smoke check is opt-in and skips when the backend is unavailable.
-- `pulp/glpk` uses the GLPK command-line solver and has low-level and bounded schedule smoke coverage. Install `glpsol` with `apt install glpk-utils`, `brew install glpk`, or `choco install glpk` before selecting it. GLPK can be substantially slower than the other supported backends on larger scheduling models.
-- `pulp/highs` uses the HiGHS Python API and is covered by the normal schedule regression suite. The `highspy` version is pinned to the HiGHS ABI bundled with OR-Tools.
-- `pulp/scip` uses the SCIP Python API and is covered by the normal schedule regression suite.
-
-Running optimization jobs can be cancelled or finished early with `ortools/cp-sat`,
-`ortools/mpsolver/scip`, `ortools/mpsolver/cp-sat`, `ortools/mpsolver/bop`, and
-`ortools/mathopt/cp-sat`. MathOpt/GSCIP, MathOpt/HiGHS, CBC, and PuLP backends do
-not support cooperative interruption in this application.
+See the [solver reference](https://nursescheduling.org/docs/solvers/) for the
+full experimental solver matrix, platform requirements, runtime capabilities,
+and test coverage.
 
 ```sh
 cd core
@@ -323,71 +302,32 @@ uv venv --python 3.12
 source .venv/bin/activate
 # install dependencies
 uv pip install -r requirements.txt
-# run CLI with default solver (ortools/cp-sat)
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path]
+# run the CPU solver, OR-Tools | CP-SAT is the default
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 # for example:
 python -m nurse_scheduling.cli tests/testcases/basics/01_1nurse_1shift_1day.yaml
+# run the GPU solver, PuLP | cuOpt
+python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cuopt
 # run CLI with prettify and verbose
 python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
 # record solver progress as JSON Lines for later plotting
 python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --verbose --prettify --timeout 180 --progress-output progress.jsonl
-# run CLI with PuLP/CBC solver (experimental)
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cbc
-# run CLI with PuLP/cuOpt solver (experimental) and GPU required
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cuopt
-# run PuLP/GLPK (experimental; requires glpsol on PATH)
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/glpk
-# run non-commercial PuLP Python-API solvers (experimental)
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/highs
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/scip
-# explicit OR-Tools/CP-SAT selector
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
-# run an OR-Tools MPSolver backend (experimental)
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/cbc
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/scip
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/cp-sat
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mpsolver/bop
-# run an OR-Tools MathOpt backend (experimental)
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mathopt/gscip
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mathopt/cp-sat
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/mathopt/highs
 ```
 
 Run tests:
 
 ```sh
 cd core
-# run low-level solver encoding tests
-pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py
-pytest --log-cli-level=INFO tests/test_solver_ortools_linear.py
-pytest --log-cli-level=INFO tests/test_solver_ortools_mathopt.py
-pytest --log-cli-level=INFO tests/test_solver_pulp_cbc.py
-pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
-pytest --log-cli-level=INFO tests/test_solver_pulp_glpk.py
-pytest --log-cli-level=INFO tests/test_solver_pulp_python.py
-# run schedule regression tests (OR-Tools / PuLP)
-pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
-pytest --log-cli-level=INFO \
-  tests/test_schedule_ortools_mpsolver_cbc.py \
-  tests/test_schedule_ortools_mpsolver_scip.py \
-  tests/test_schedule_ortools_mpsolver_cp_sat.py \
-  tests/test_schedule_ortools_mpsolver_bop.py
-pytest --log-cli-level=INFO \
-  tests/test_schedule_ortools_mathopt_gscip.py \
-  tests/test_schedule_ortools_mathopt_cp_sat.py \
-  tests/test_schedule_ortools_mathopt_highs.py
-pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
-pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
-pytest --log-cli-level=INFO tests/test_schedule_pulp_glpk.py
-pytest --log-cli-level=INFO tests/test_schedule_pulp_highs.py
-pytest --log-cli-level=INFO tests/test_schedule_pulp_scip.py
 # run the normal core test suite
 pytest --log-cli-level=INFO
-# run the slower bounded real-world scenario checks explicitly
+# run focused OR-Tools | CP-SAT tests
 pytest --log-cli-level=INFO \
-  tests/real/schedule_ortools_cp_sat.py \
-  tests/real/schedule_pulp_cbc.py \
-  tests/real/schedule_pulp_cuopt.py
+  tests/test_solver_ortools_cp_sat.py \
+  tests/test_schedule_ortools_cp_sat.py
+# run focused PuLP | cuOpt tests in the GPU environment
+pytest --log-cli-level=INFO \
+  tests/test_solver_pulp_cuopt.py \
+  tests/test_schedule_pulp_cuopt.py
 # run Python lint checks for core
 ruff check nurse_scheduling tests
 # auto-fix lint issues when possible
@@ -413,9 +353,9 @@ For more debugging output when a test fails:
 ```sh
 cd core
 pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py
-pytest --log-cli-level=INFO tests/test_solver_pulp_cbc.py
 pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
-pytest --log-cli-level=INFO tests/test_schedule_pulp_cbc.py
+pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
+pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
 ```
 
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
@@ -444,11 +384,26 @@ python tests/test_serve.py
 pytest tests/test_serve.py --log-cli-level=INFO
 ```
 
-By default, optimization job state is process-local memory:
+By default, the server exposes only **OR-Tools | CP-SAT** and keeps job state
+in process-local memory:
 
 ```sh
 cd core
-JOB_BACKEND=memory uvicorn nurse_scheduling.serve:app --no-access-log
+JOB_BACKEND=memory \
+OPTIMIZE_SOLVERS=ortools/cp-sat \
+OPTIMIZE_DEFAULT_SOLVER=ortools/cp-sat \
+uvicorn nurse_scheduling.serve:app --no-access-log
+```
+
+To expose a GPU-only **PuLP | cuOpt** server, run this command in the cuOpt
+environment or GPU development container:
+
+```sh
+cd core
+JOB_BACKEND=memory \
+OPTIMIZE_SOLVERS=pulp/cuopt \
+OPTIMIZE_DEFAULT_SOLVER=pulp/cuopt \
+uvicorn nurse_scheduling.serve:app --no-access-log
 ```
 
 For multiple Uvicorn workers or multiple backend machines, use Redis-backed job state. Redis stores job metadata,
@@ -469,6 +424,22 @@ presence lease every third of that interval, including while idle.
 
 Replayable event history is capped at 1,000 events per job. Set
 `JOB_MAX_EVENTS_PER_JOB` to choose a different positive limit.
+
+The backend is the source of truth for the optimization controls shown by the
+frontend. `GET /optimize/options` returns the allowed solvers, integer timeout
+range, running-job controls, and prettify default. Configure them with:
+
+```sh
+export OPTIMIZE_SOLVERS=ortools/cp-sat,pulp/cuopt
+export OPTIMIZE_DEFAULT_SOLVER=ortools/cp-sat
+export OPTIMIZE_MIN_TIMEOUT_SECONDS=1
+export OPTIMIZE_DEFAULT_TIMEOUT_SECONDS=300
+export OPTIMIZE_MAX_TIMEOUT_SECONDS=3600
+export OPTIMIZE_DEFAULT_PRETTIFY=true
+```
+
+Only advertise solvers available on that machine. The server validates the
+configured runtimes at startup.
 
 Without Docker, install and start Redis with your operating system package manager.
 

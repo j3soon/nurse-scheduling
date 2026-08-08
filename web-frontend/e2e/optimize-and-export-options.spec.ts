@@ -69,4 +69,6 @@ test('optimize and export sends the modified prettify and timeout options', asyn
   expect(submittedBody).toContain('false');
   expect(submittedBody).toContain('timeout');
   expect(submittedBody).toContain('45');
+  expect(submittedBody).toContain('name="solver"');
+  expect(submittedBody).toContain('ortools/cp-sat');
 });

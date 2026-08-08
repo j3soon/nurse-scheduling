@@ -49,7 +49,7 @@ const report = MCR({
     ['html'],
     ['lcovonly', { file: 'lcov.info' }],
   ],
-  entryFilter: (entry) => entry.url.startsWith('http://127.0.0.1:3000/_next/static/'),
+  entryFilter: (entry) => entry.url.startsWith('http://127.0.0.1:13000/_next/static/'),
   sourceFilter: (sourcePath) => sourcePath.includes(`${path.sep}src${path.sep}`),
 });
 

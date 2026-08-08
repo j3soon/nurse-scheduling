@@ -90,6 +90,14 @@ type MockOptimizeAndExportOptions = {
   body?: Buffer;
   disableEventSource?: boolean;
   onSubmit?: (body: string) => void;
+  defaultSolver?: string;
+  solverChoices?: Array<{
+    value: string;
+    label: string;
+    compute: 'cpu' | 'gpu';
+    timeout: { default: number; minimum: number; maximum: number };
+    controls: { cancel_running: boolean; finish_now: boolean };
+  }>;
 };
 
 export async function createMockXlsxBuffer(): Promise<Buffer> {
@@ -120,6 +128,16 @@ export async function mockOptimizeAndExport(
     body,
     disableEventSource = true,
     onSubmit,
+    defaultSolver = 'ortools/cp-sat',
+    solverChoices = [
+      {
+        value: 'ortools/cp-sat',
+        label: 'OR-Tools | CP-SAT',
+        compute: 'cpu',
+        timeout: { default: 300, minimum: 1, maximum: 3600 },
+        controls: { cancel_running: true, finish_now: true },
+      },
+    ],
   }: MockOptimizeAndExportOptions = {},
 ) {
   const jobId = 'e2e-job';
@@ -153,6 +171,29 @@ export async function mockOptimizeAndExport(
         app_version: 'test',
         jobs: { running: 0, queued: 0, cancelling: 0 },
         workers: { online: 1 },
+      }),
+    });
+  });
+
+  await page.route('http://localhost:8000/optimize/options', async route => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        schema_version: 'alpha',
+        solver: {
+          default: defaultSolver,
+          choices: solverChoices,
+        },
+        prettify: { default: true },
       }),
     });
   });

@@ -74,6 +74,30 @@ test('optimize and export works against a real local HTTP server instead of Play
       return;
     }
 
+    if (req.method === 'GET' && req.url === '/optimize/options') {
+      res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({
+        schema_version: 'alpha',
+        solver: {
+          default: 'ortools/cp-sat',
+          choices: [
+            {
+              value: 'ortools/cp-sat',
+              label: 'OR-Tools | CP-SAT',
+              compute: 'cpu',
+              timeout: { default: 300, minimum: 1, maximum: 3600 },
+              controls: { cancel_running: true, finish_now: true },
+            },
+          ],
+        },
+        prettify: { default: true },
+      }));
+      return;
+    }
+
     if (req.method === 'POST' && req.url === '/optimize') {
       const chunks: Buffer[] = [];
       for await (const chunk of req) {
@@ -171,13 +195,15 @@ test('optimize and export works against a real local HTTP server instead of Play
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
     await expect(page.getByText('Current YAML Preview')).toHaveCount(0);
 
+    const serverEndpoint = `http://127.0.0.1:${port}`;
     await page.getByText('Double-click to add URL').dblclick();
-    await page.getByPlaceholder('https://backend.example.test').fill(`http://127.0.0.1:${port}`);
+    await page.getByPlaceholder('https://backend.example.test').fill(serverEndpoint);
     await page.keyboard.press('Enter');
+    await page.getByLabel(`Select ${serverEndpoint}`).check({ force: true });
 
     await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
-    await expect(page.getByText('2 active · 2 queued')).toHaveCount(2);
-    await expect(page.getByText('3 workers')).toHaveCount(2);
+    await expect(page.getByText('2 active · 2 queued').first()).toBeVisible();
+    await expect(page.getByText('3 workers').first()).toBeVisible();
     await page.getByRole('button', { name: 'Optimize and Download' }).click();
 
     await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
@@ -189,6 +215,8 @@ test('optimize and export works against a real local HTTP server instead of Play
     expect(submittedBody).toContain('filename="schedule.yaml"');
     expect(submittedBody).not.toContain('name="yaml_content"');
     expect(submittedBody).toContain('2026-05-01');
+    expect(submittedBody).toContain('name="solver"');
+    expect(submittedBody).toContain('ortools/cp-sat');
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
   }
