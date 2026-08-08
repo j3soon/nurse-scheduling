@@ -1051,7 +1051,8 @@ def test_process_timeout_allows_model_building_within_timeout_grace():
         b"apiVersion: alpha\n",
         event_callback=lambda *_args: None,
         control=lambda: None,
-        hard_timeout_seconds=2.05,
+        # Include headroom for spawn imports under coverage on macOS.
+        hard_timeout_seconds=5.05,
         finish_now_enabled=False,
     )
 
