@@ -260,7 +260,7 @@ def create_app(
         """Capture client HTTP errors and normalize multipart size failures."""
         if request.url.path == "/optimize" and _is_form_parser_size_error(exc):
             exc = StarletteHTTPException(status_code=413, detail="Scheduling YAML is too large")
-        if 400 <= exc.status_code < 500:
+        if 400 <= exc.status_code < 500 and exc.status_code != 404:
             capture_invalid_request(request, exc.status_code, exc.detail)
         return await http_exception_handler(request, exc)
 
