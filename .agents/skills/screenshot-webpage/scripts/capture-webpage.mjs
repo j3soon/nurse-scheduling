@@ -4,8 +4,16 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, extname, resolve } from 'node:path';
 
+import {
+  chromiumHostResolverRules,
+  createNetworkPolicy,
+  isImplicitLoopbackHost,
+  normalizeAllowedHost,
+  redactUrlCredentials,
+} from './network-policy.mjs';
+
 function fail(message) {
-  console.error(`error: ${message}`);
+  console.error(`error: ${redactUrlCredentials(message)}`);
   process.exit(2);
 }
 
@@ -17,6 +25,7 @@ Options:
   --module-root PATH       Directory whose node_modules contains playwright
   --executable-path PATH   Browser executable outside Playwright's cache
   --storage-state PATH     Playwright state with cookies and local storage
+  --allow-host HOST        Repeat to authorize an exact remote hostname
   --viewport WIDTHxHEIGHT  Default: 1440x900
   --device-scale NUMBER    Default: 1
   --color-scheme light|dark
@@ -37,6 +46,7 @@ function parseArguments(argv) {
     moduleRoot: process.cwd(),
     executablePath: undefined,
     storageState: undefined,
+    allowHosts: [],
     viewport: '1440x900',
     deviceScale: 1,
     colorScheme: 'light',
@@ -71,10 +81,16 @@ function parseArguments(argv) {
       options[argument === '--force' ? 'force' : 'fullPage'] = true;
       continue;
     }
-    if (argument === '--expect-text' || argument === '--hide' || argument === '--mask') {
+    if (argument === '--expect-text' || argument === '--hide' || argument === '--mask' || argument === '--allow-host') {
       const value = argv[index + 1];
       if (value === undefined) fail(`${argument} requires a value`);
-      const key = argument === '--expect-text' ? 'expectTexts' : argument === '--hide' ? 'hideSelectors' : 'maskSelectors';
+      const key = argument === '--expect-text'
+        ? 'expectTexts'
+        : argument === '--hide'
+          ? 'hideSelectors'
+          : argument === '--mask'
+            ? 'maskSelectors'
+            : 'allowHosts';
       options[key].push(value);
       index += 1;
       continue;
@@ -106,90 +122,190 @@ function parseArguments(argv) {
   options.waitMs = Number.parseInt(String(options.waitMs), 10);
   if (!Number.isInteger(options.waitMs) || options.waitMs < 0 || options.waitMs > 30000) fail('--wait-ms must be between 0 and 30000');
   if (!['light', 'dark'].includes(String(options.colorScheme))) fail('--color-scheme must be light or dark');
+  try {
+    options.allowHosts = options.allowHosts.map(normalizeAllowedHost);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   return { url: positional[0], output: resolve(positional[1]), options };
+}
+
+function versionAtLeast(version, minimumMajor, minimumMinor) {
+  const match = /^(\d+)\.(\d+)/u.exec(String(version));
+  if (!match) return false;
+  const major = Number.parseInt(match[1], 10);
+  const minor = Number.parseInt(match[2], 10);
+  return major > minimumMajor || (major === minimumMajor && minor >= minimumMinor);
 }
 
 function loadPlaywright(moduleRoot) {
   try {
     const requireFromRoot = createRequire(resolve(moduleRoot, 'package.json'));
+    const version = requireFromRoot('playwright/package.json').version;
+    if (!versionAtLeast(version, 1, 51)) fail(`playwright 1.51 or newer is required; found ${version}`);
     return requireFromRoot(requireFromRoot.resolve('playwright'));
   } catch {
     fail(`cannot load playwright from ${moduleRoot}; choose a --module-root containing that dependency`);
   }
 }
 
-const { url, output, options } = parseArguments(process.argv.slice(2));
+const { url: rawUrl, output, options } = parseArguments(process.argv.slice(2));
 let parsedUrl;
 try {
-  parsedUrl = new URL(url);
+  parsedUrl = new URL(rawUrl);
 } catch {
-  fail(`invalid URL: ${url}`);
+  fail('invalid URL');
 }
 if (!['http:', 'https:'].includes(parsedUrl.protocol)) fail('URL must use HTTP or HTTPS');
+if (parsedUrl.username || parsedUrl.password) fail('URL credentials are not allowed');
+parsedUrl.username = '';
+parsedUrl.password = '';
+const url = parsedUrl.href;
 if (extname(output).toLowerCase() !== '.png') fail('output must use the .png extension');
 if (existsSync(output) && !options.force) fail(`output exists: ${output}; pass --force to replace it`);
 if (options.executablePath && !existsSync(resolve(options.executablePath))) fail(`browser executable does not exist: ${options.executablePath}`);
 if (options.storageState && !existsSync(resolve(options.storageState))) fail(`storage state does not exist: ${options.storageState}`);
 
+const networkPolicy = createNetworkPolicy(options.allowHosts, {
+  allowImplicitLoopback: isImplicitLoopbackHost(parsedUrl.hostname),
+});
+try {
+  await networkPolicy.assertAllowed(url);
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
+let hostResolverRules;
+try {
+  hostResolverRules = chromiumHostResolverRules(await networkPolicy.pinnedHostnames());
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
+
 const { chromium } = loadPlaywright(resolve(options.moduleRoot));
 const browser = await chromium.launch({
   headless: true,
+  ...(hostResolverRules ? { args: [`--host-resolver-rules=${hostResolverRules}`] } : {}),
   ...(options.executablePath ? { executablePath: resolve(options.executablePath) } : {}),
 });
 let finalUrl;
 let title;
 let captureError;
+let context;
 try {
-  const context = await browser.newContext({
+  context = await browser.newContext({
     viewport: options.viewport,
     deviceScaleFactor: options.deviceScale,
     colorScheme: options.colorScheme,
+    serviceWorkers: 'block',
     ...(options.storageState ? { storageState: resolve(options.storageState) } : {}),
   });
-  const page = await context.newPage();
-  const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  if (response && !response.ok()) throw new Error(`page returned HTTP ${response.status()}: ${response.url()}`);
-  if (options.ready) await page.locator(options.ready).first().waitFor({ state: 'visible', timeout: 15000 });
-  for (const text of options.expectTexts) {
-    await page.getByText(text, { exact: false }).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: 15000 });
-  }
-  if (options.waitMs) await page.waitForTimeout(options.waitMs);
-  for (const selector of options.hideSelectors) {
-    await page.locator(selector).evaluateAll(elements => {
-      for (const element of elements) element.style.setProperty('visibility', 'hidden', 'important');
-    });
-  }
-  const mask = options.maskSelectors.map(selector => page.locator(selector));
-  const screenshotOptions = {
-    path: output,
-    animations: 'disabled',
-    caret: 'hide',
-    mask,
-    scale: 'css',
-    style: '*, *::before, *::after { animation: none !important; transition: none !important; }',
+  let rejectPolicyViolation;
+  let policyViolated = false;
+  const policyViolation = new Promise((_, reject) => {
+    rejectPolicyViolation = reject;
+  });
+  const recordPolicyViolation = error => {
+    if (policyViolated) return;
+    policyViolated = true;
+    rejectPolicyViolation(error);
   };
-  mkdirSync(dirname(output), { recursive: true });
-  if (options.selector) {
-    const target = page.locator(options.selector).first();
-    await target.waitFor({ state: 'visible', timeout: 15000 });
-    await target.screenshot(screenshotOptions);
-  } else {
-    await page.screenshot({ ...screenshotOptions, fullPage: options.fullPage });
-  }
-  finalUrl = page.url();
-  title = await page.title();
-  await context.close();
+  const pagePolicies = new WeakMap();
+  const installPagePolicy = page => {
+    if (!pagePolicies.has(page)) {
+      pagePolicies.set(page, (async () => {
+        const cdp = await context.newCDPSession(page);
+        cdp.on('Fetch.requestPaused', event => {
+          void (async () => {
+            try {
+              await networkPolicy.assertAllowed(event.request.url);
+            } catch (error) {
+              recordPolicyViolation(error);
+              await cdp.send('Fetch.failRequest', {
+                requestId: event.requestId,
+                errorReason: 'BlockedByClient',
+              }).catch(() => {});
+              return;
+            }
+            await cdp.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+          })();
+        });
+        await cdp.send('Fetch.enable', { patterns: [
+          { urlPattern: 'http://*', requestStage: 'Request' },
+          { urlPattern: 'https://*', requestStage: 'Request' },
+        ] });
+      })());
+    }
+    return pagePolicies.get(page);
+  };
+  await context.route('**/*', async route => {
+    try {
+      await networkPolicy.assertAllowed(route.request().url());
+      await installPagePolicy(route.request().frame().page());
+    } catch (error) {
+      recordPolicyViolation(error);
+      await route.abort('blockedbyclient').catch(() => {});
+      return;
+    }
+    await route.continue();
+  });
+  await context.routeWebSocket(/.*/u, async webSocket => {
+    try {
+      await networkPolicy.assertAllowed(webSocket.url(), ['ws:', 'wss:']);
+    } catch (error) {
+      recordPolicyViolation(error);
+      await webSocket.close({ code: 1008, reason: 'Network target is not allowed' }).catch(() => {});
+      return;
+    }
+    webSocket.connectToServer();
+  });
+  const page = await context.newPage();
+  await installPagePolicy(page);
+
+  await Promise.race([(async () => {
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    if (response && !response.ok()) throw new Error(`page returned HTTP ${response.status()}: ${response.url()}`);
+    if (options.ready) await page.locator(options.ready).first().waitFor({ state: 'visible', timeout: 15000 });
+    for (const text of options.expectTexts) {
+      await page.getByText(text, { exact: false }).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: 15000 });
+    }
+    if (options.waitMs) await page.waitForTimeout(options.waitMs);
+    for (const selector of options.hideSelectors) {
+      await page.locator(selector).evaluateAll(elements => {
+        for (const element of elements) element.style.setProperty('visibility', 'hidden', 'important');
+      });
+    }
+    const mask = options.maskSelectors.map(selector => page.locator(selector));
+    const screenshotOptions = {
+      path: output,
+      animations: 'disabled',
+      caret: 'hide',
+      mask,
+      scale: 'css',
+      style: '*, *::before, *::after { animation: none !important; transition: none !important; }',
+    };
+    mkdirSync(dirname(output), { recursive: true });
+    if (options.selector) {
+      const target = page.locator(options.selector).first();
+      await target.waitFor({ state: 'visible', timeout: 15000 });
+      await target.screenshot(screenshotOptions);
+    } else {
+      await page.screenshot({ ...screenshotOptions, fullPage: options.fullPage });
+    }
+    finalUrl = page.url();
+    title = await page.title();
+  })(), policyViolation]);
 } catch (error) {
   captureError = error;
 } finally {
+  if (context) await context.close().catch(() => {});
   await browser.close();
 }
 if (captureError) fail(captureError instanceof Error ? captureError.message : String(captureError));
 
 console.log(JSON.stringify({
   url,
-  finalUrl,
-  title,
+  finalUrl: redactUrlCredentials(finalUrl),
+  title: redactUrlCredentials(title),
   output,
   viewport: options.viewport,
   capture: options.selector ? 'element' : options.fullPage ? 'full-page' : 'viewport',

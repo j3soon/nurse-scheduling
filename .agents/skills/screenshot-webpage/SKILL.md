@@ -15,9 +15,13 @@ command alone.
    user's running process or port without checking first.
 2. Use a stable local URL when available. Capture external or authenticated
    pages only when the user authorized access.
-3. Set up minimal test data and the exact UI state the documentation describes.
-4. Identify visible text and a ready selector that prove the intended state.
-5. Mask sensitive content with `--mask`. Never capture credentials, tokens, or
+3. Use a module root with Playwright 1.51 or newer. A loopback capture allows
+   loopback hosts by default. For a remote capture, list every host, including
+   any loopback host, with `--allow-host HOST`. Redirects, subresources, and
+   WebSockets follow the same policy. Link-local targets are always blocked.
+4. Set up minimal test data and the exact UI state the documentation describes.
+5. Identify visible text and a ready selector that prove the intended state.
+6. Mask sensitive content with `--mask`. Never capture credentials, tokens, or
    unrelated personal data.
 
 For a stateful client app, wait until imports or edits reach persistent storage
@@ -48,6 +52,17 @@ Use `bun` instead of `node` when that is the repository standard. Use
 Pass `--force` only after confirming that replacing the target image is
 intended. Use `--executable-path` when the environment provides a browser
 outside Playwright's managed browser directory.
+
+For an authorized remote page, list the page host and every required asset host
+explicitly:
+
+```bash
+node /path/to/screenshot-webpage/scripts/capture-webpage.mjs \
+  https://docs.example.com/ /path/to/docs.png \
+  --module-root /path/to/project-with-node-modules \
+  --allow-host docs.example.com \
+  --allow-host static.example.com
+```
 
 ## Validate and document
 
