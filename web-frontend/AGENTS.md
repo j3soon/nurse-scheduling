@@ -29,6 +29,9 @@ Keep commit bodies focused on behavior and rationale. Do not mention routine
 test additions or regression coverage unless the test strategy itself is
 material to the change.
 
+Page-title help icons link to the matching MkDocs page under `/docs`. Keep the
+mapping in `src/constants/urls.ts` synchronized with `../docs/mkdocs.yml`.
+
 To test specific source files from the repository root, run:
 
 ```sh

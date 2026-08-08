@@ -22,7 +22,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
+import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { Group, Item, ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
@@ -30,6 +30,8 @@ import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoef
 import { DraggableCardList } from '@/components/DraggableCardList';
 import NumberInput from '@/components/NumberInput';
 import ToggleButton from '@/components/ToggleButton';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
+import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { isValidWeightValue, isValidNumberValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
@@ -208,7 +210,6 @@ export default function ShiftTypeRequirementsPage() {
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [showInstructions, setShowInstructions] = useState(false);
   const [formData, setFormData] = useState<ShiftTypeRequirementForm>({
     description: '',
     shift_type: [],
@@ -221,17 +222,6 @@ export default function ShiftTypeRequirementsPage() {
   });
   const [errors, setErrors] = useState<ShiftTypeRequirementErrors>({});
   useTabSwitchWarning(isFormVisible);
-
-  const instructions = [
-    "Define requirements for specific shift types (e.g., \"Night shifts need 3 senior nurses\")",
-    "Select one shift type or group that this requirement applies to",
-    "Set the required number of people for each instance of the shift type",
-    "Optionally specify which people or groups are qualified for this requirement",
-    "Optionally set a preferred number of people when extra staffing is useful",
-    "Optionally specify specific dates this requirement applies to",
-    "Set weight only when the preferred number of people differs from the required number",
-    "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
-  ];
 
   const resetForm = () => {
     setFormData({
@@ -497,15 +487,10 @@ export default function ShiftTypeRequirementsPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Type Requirements</h1>
-          {instructions.length > 0 && (
-            <button
-              onClick={() => setShowInstructions(!showInstructions)}
-              className="text-gray-500 hover:text-gray-700 transition-colors"
-              title="Toggle instructions"
-            >
-              <FiHelpCircle className="h-6 w-6" />
-            </button>
-          )}
+          <PageDocumentationLink
+            href={DOCUMENTATION_URLS.shiftTypeRequirements}
+            label="Shift Type Requirements"
+          />
         </div>
         <div className="flex gap-4">
           <ToggleButton
@@ -521,17 +506,6 @@ export default function ShiftTypeRequirementsPage() {
           />
         </div>
       </div>
-
-      {showInstructions && instructions.length > 0 && (
-        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
-          <ul className="space-y-2 text-sm text-blue-700">
-            {instructions.map((instruction, index) => (
-              <li key={index}>• {instruction}</li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {(coverageWarning.undefinedShiftTypes.length > 0 || coverageWarning.duplicateCells.length > 0) && (
         <div className="mb-6 bg-amber-50 border border-amber-300 rounded-lg p-4 text-sm text-amber-900">

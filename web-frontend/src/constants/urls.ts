@@ -35,6 +35,29 @@ export const GITHUB_BRANCHES_API_URL = 'https://api.github.com/repos/j3soon/nurs
 // Website URLs
 export const WEBSITE_URL = 'https://nursescheduling.org';
 
+// Netlify publishes MkDocs at /docs. Local development serves it separately.
+const DEFAULT_DOCUMENTATION_BASE_URL = process.env.NODE_ENV === 'development'
+  ? 'http://127.0.0.1:8001/docs'
+  : '/docs';
+const DOCUMENTATION_BASE_URL = (
+  process.env.NEXT_PUBLIC_DOCS_BASE_URL || DEFAULT_DOCUMENTATION_BASE_URL
+).replace(/\/+$/, '');
+
+export const DOCUMENTATION_URLS = {
+  home: `${DOCUMENTATION_BASE_URL}/`,
+  dates: `${DOCUMENTATION_BASE_URL}/user-guide/dates/`,
+  people: `${DOCUMENTATION_BASE_URL}/user-guide/people/`,
+  shiftTypes: `${DOCUMENTATION_BASE_URL}/user-guide/shift-types/`,
+  shiftTypeRequirements: `${DOCUMENTATION_BASE_URL}/user-guide/shift-type-requirements/`,
+  shiftRequests: `${DOCUMENTATION_BASE_URL}/user-guide/shift-requests/`,
+  shiftTypeSuccessions: `${DOCUMENTATION_BASE_URL}/user-guide/shift-type-successions/`,
+  shiftCounts: `${DOCUMENTATION_BASE_URL}/user-guide/shift-counts/`,
+  shiftAffinities: `${DOCUMENTATION_BASE_URL}/user-guide/shift-affinities/`,
+  exportLayout: `${DOCUMENTATION_BASE_URL}/user-guide/export-layout/`,
+  saveAndLoad: `${DOCUMENTATION_BASE_URL}/user-guide/save-and-load/`,
+  optimizeAndExport: `${DOCUMENTATION_BASE_URL}/user-guide/optimize-and-export/`,
+} as const;
+
 // Build URLs for environment switching (static entries)
 export const STATIC_BUILD_URLS = [
   { label: 'local', url: 'http://localhost:3000' },

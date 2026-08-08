@@ -170,7 +170,7 @@ extra:
 
 extra_javascript:
   - assets/javascripts/mathjax.js
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 # Ref: https://squidfunk.github.io/mkdocs-material/setup/setting-up-the-footer/#copyright-notice
@@ -198,10 +198,27 @@ site_description: A user-friendly web app to automate the nurse scheduling task.
 
 nav:
   - Home: index.md
-  - Backend Server: backend-server.md
-  - Solvers: solvers.md
-  - Design: design.md
-  - timeline.md
+  - User Guide:
+    - Quick Start: user-guide/get-started.md
+    - App Pages:
+      - Dates: user-guide/dates.md
+      - People: user-guide/people.md
+      - Shift Types: user-guide/shift-types.md
+      - Shift Type Requirements: user-guide/shift-type-requirements.md
+      - Shift Requests: user-guide/shift-requests.md
+      - Shift Type Successions: user-guide/shift-type-successions.md
+      - Shift Counts: user-guide/shift-counts.md
+      - Shift Affinities: user-guide/shift-affinities.md
+      - Export Layout: user-guide/export-layout.md
+      - Save and Load: user-guide/save-and-load.md
+      - Optimize and Export: user-guide/optimize-and-export.md
+    - Shared Reference: user-guide/reference.md
+  - Developer Guide:
+    - Overview: developer-guide/index.md
+    - Backend Server: backend-server.md
+    - Solvers: solvers.md
+    - Design: design.md
+    - Timeline: timeline.md
     # - styling-syntaxes.md
     # - dlbook-notations.md
     # DONE (Remove sample pages):

@@ -103,7 +103,7 @@ function Harness({
     <UnsavedEditingStateProvider>
       <ItemGroupEditorPage
         title="People"
-        instructions={[]}
+        documentationHref="/docs/user-guide/people/"
         data={data}
         dataType={DataType.PEOPLE}
         mode={mode}

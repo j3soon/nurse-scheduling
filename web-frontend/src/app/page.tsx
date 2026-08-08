@@ -23,8 +23,9 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { FiChevronDown, FiCheck } from 'react-icons/fi';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
-import { STATIC_BUILD_URLS } from '@/constants/urls';
+import { DOCUMENTATION_URLS, STATIC_BUILD_URLS } from '@/constants/urls';
 import { areBuildOriginsEquivalent, fetchReleaseBranches, BuildEntry } from '@/utils/version';
 
 export default function Home() {
@@ -97,9 +98,10 @@ export default function Home() {
   return (
     <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8">
       <div className="w-full max-w-3xl text-center">
-        <h1 className="text-4xl font-bold mb-8 text-gray-800">
-          Nurse Scheduling System
-        </h1>
+        <div className="mb-8 flex items-center justify-center gap-3">
+          <h1 className="text-4xl font-bold text-gray-800">Nurse Scheduling System</h1>
+          <PageDocumentationLink href={DOCUMENTATION_URLS.home} label="Home" />
+        </div>
         <p className="text-lg text-gray-600 mb-4">
           Welcome to the Nurse Scheduling System. Use the tabs above to navigate.
         </p>
