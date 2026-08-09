@@ -1,0 +1,4 @@
+interface:
+  display_name: "Screenshot Webpage"
+  short_description: "Capture validated webpage screenshots with Playwright"
+  default_prompt: "Use $screenshot-webpage to capture a validated screenshot of this webpage."

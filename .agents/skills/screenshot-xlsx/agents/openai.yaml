@@ -1,0 +1,4 @@
+interface:
+  display_name: "Screenshot XLSX"
+  short_description: "Render verified XLSX workbooks as PNG previews"
+  default_prompt: "Use $screenshot-xlsx to render this workbook as a verified PNG preview."

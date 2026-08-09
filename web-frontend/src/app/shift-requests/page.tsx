@@ -22,8 +22,10 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiEdit2, FiAlertCircle, FiUpload, FiTrash2 } from 'react-icons/fi';
+import { FiEdit2, FiAlertCircle, FiUpload, FiTrash2 } from 'react-icons/fi';
 import UploadButton from '@/components/UploadButton';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
+import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftRequestPreference, SHIFT_REQUEST, Item } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
@@ -55,7 +57,6 @@ export default function ShiftRequestsPage() {
     options?: { replaceLatestHistoryEntry?: boolean }
   ) => updatePreferencesByType(SHIFT_REQUEST, newPrefs, options);
 
-  const [showInstructions, setShowInstructions] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
   const [addFormData, setAddFormData] = useState<{
     shiftTypes: string[];
@@ -1354,21 +1355,6 @@ export default function ShiftRequestsPage() {
     );
   };
 
-  // Instructions for the help component
-  const instructions = [
-    "This table shows shift preferences for each person on each date",
-    "History columns (H-1, H-2, etc.) show previous shift types assigned to each person",
-    "Click on any history cell to set or edit shift types for that time period",
-    "Each row represents a person, followed by their history, then date columns",
-    "Click on any cell to set shift preferences with weights for different shift types",
-    "In 'Quick Add Preference' mode, you can drag across multiple cells to quickly apply the same preference",
-    "Green cells indicate positive preferences (wants this shift type)",
-    "Red cells indicate negative preferences (wants to avoid this shift type)",
-    "Yellow cells indicate a mix of positive and negative preferences",
-    "The displayed shift type prioritizes the one with the strongest preference or avoidance",
-    "Use the navigation tabs or keyboard shortcuts to move between pages"
-  ];
-
   // Handle global keydown for Escape when add mode is active
   useEffect(() => {
     if (!isAddMode) return;
@@ -1526,15 +1512,7 @@ export default function ShiftRequestsPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Requests</h1>
-          {instructions.length > 0 && (
-            <button
-              onClick={() => setShowInstructions(!showInstructions)}
-              className="text-gray-500 hover:text-gray-700 transition-colors"
-              title="Toggle instructions"
-            >
-              <FiHelpCircle className="h-6 w-6" />
-            </button>
-          )}
+          <PageDocumentationLink href={DOCUMENTATION_URLS.shiftRequests} label="Shift Requests" />
         </div>
         <div className="flex gap-4">
           <ToggleButton
@@ -1550,17 +1528,6 @@ export default function ShiftRequestsPage() {
           />
         </div>
       </div>
-
-      {showInstructions && instructions.length > 0 && (
-        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
-          <ul className="space-y-2 text-sm text-blue-700">
-            {instructions.map((instruction, index) => (
-              <li key={index}>• {instruction}</li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {/* Show appropriate message if data is missing */}
       {!hasRequiredData && (

@@ -2,7 +2,31 @@
 
 ## Writing
 
-- Write for developers. Keep content minimal, precise, and self-contained.
+- Write pages under `user-guide/` for schedule planners. Use task-based steps,
+  plain language, and only the detail needed to complete the task.
+- Keep one user-guide page for every frontend app page. Page-title help links
+  must resolve to the matching page under the deployed `/docs` path.
+- Write developer-guide pages for contributors and operators. Keep content
+  minimal, precise, and self-contained.
+- Keep screenshots focused on a decision or result. Add concise alt text and
+  describe any warning that appears in the image.
+- Keep Quick Start on a minimal working schedule. On each app-page guide, put
+  an anonymized real-scenario example and matching screenshot after the
+  introduction.
+- Use `core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml` as the
+  canonical real-scenario example unless another committed fixture better fits
+  the page.
+- Keep Quick Start screenshots separate from app-page screenshots so a
+  deep-dive update cannot change the minimal walkthrough.
+- State whether a setting is required or optional in prose, not in a section
+  title. If the real scenario leaves a page unused, show that empty or default
+  state instead of inventing a rule.
+- Give Dates, People, and Shift Types the same required-first flow. Explain
+  that groups are optional reusable selectors that can be added when later
+  rules need them.
+- Distinguish a pre-run optimization configuration from a completed solve. Do
+  not imply that a solver ran when only backend readiness or UI state was
+  prepared for a screenshot.
 - Introduce technical concepts in this order: schema or example, description,
   then runtime or optimization behavior.
 - Define notation once and use it consistently. Distinguish sets, selected
@@ -26,6 +50,8 @@
 
 ## Validation
 
+- Do not load JavaScript from `polyfill.io`. Prefer a checked-in asset or the
+  established CDN already used by the project.
 - Restart `mkdocs serve --no-livereload` after each documentation change.
   Avoid live reload because generated social-plugin cache files can retrigger
   builds.
@@ -35,3 +61,5 @@
   figures and formulas.
 - Run `mkdocs build` and `git diff --check` before finishing.
 - Verify internal links and referenced assets resolve without 404 responses.
+- After renaming a heading, update inbound anchor links and let the MkDocs
+  build check for stale anchors.
