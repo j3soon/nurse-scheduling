@@ -233,7 +233,7 @@ def create_app(
             status_code = 409
         else:
             status_code = 500
-        if status_code < 500:
+        if 400 <= status_code < 500 and status_code != 404:
             capture_invalid_request(request, status_code, str(exc))
         else:
             server_logger.exception(
