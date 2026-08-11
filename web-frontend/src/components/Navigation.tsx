@@ -37,6 +37,7 @@ const TABS = [
   { name: '9. Export Layout', path: '/export-layout' },
   { name: '10. Save and Load', path: '/save-and-load' },
   { name: '11. Optimize and Export', path: '/optimize-and-export' },
+  { name: '12. Experimental AI', path: '/experimental-ai' },
 ];
 
 export default function Navigation() {

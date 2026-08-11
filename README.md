@@ -281,6 +281,31 @@ bun run lint -- --fix
 
 > `bun` can be replaced directly with `npm` for the basic Next.js workflow, but the documented project scripts assume Bun.
 
+### Experimental AI Chat
+
+The experimental chat answers text questions about the schedule currently open
+in the frontend. It runs as a separate backend process and sends the schedule
+to an OpenAI-compatible provider.
+
+Create a local configuration file. The real `.env.ai` file is ignored by Git:
+
+```sh
+cp .env.ai.example .env.ai
+# Review and update the values in .env.ai.
+```
+
+Start the AI backend and frontend in separate terminals:
+
+```sh
+./scripts/start_ai_backend.sh
+./scripts/start_frontend.sh --hostname 0.0.0.0
+```
+
+Open `http://localhost:3000/experimental-ai`. The local AI backend listens on
+`http://localhost:8001` by default. See the
+[AI assistant backend guide](https://nursescheduling.org/docs/ai-assistant/)
+for container commands, configuration, security notes, and focused tests.
+
 ### Core
 
 The main solver paths are:
