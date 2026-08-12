@@ -22,12 +22,14 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
+import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftTypeSuccessionsPreference, SHIFT_TYPE_SUCCESSIONS } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
+import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { RemovableTag } from '@/components/RemovableTag';
 import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
@@ -60,7 +62,6 @@ export default function ShiftTypeSuccessionsPage() {
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [showInstructions, setShowInstructions] = useState(false);
   const [formData, setFormData] = useState<ShiftTypeSuccessionForm>({
     description: '',
     person: [],
@@ -72,15 +73,6 @@ export default function ShiftTypeSuccessionsPage() {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverGap, setDragOverGap] = useState<number | null>(null);
   useTabSwitchWarning(isFormVisible);
-
-  const instructions = [
-    "Define shift type succession preferences (e.g., \"Forbid Evening -> Day succession\")",
-    "Select one or more people or groups this preference applies to",
-    "Define the pattern of shift types in succession (minimum 2 shift types required)",
-    "Specify specific dates this succession applies to",
-    "Set positive weight to encourage successions and negative weight to discourage them",
-    "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
-  ];
 
   const resetForm = () => {
     setFormData({
@@ -327,15 +319,10 @@ export default function ShiftTypeSuccessionsPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Type Successions</h1>
-          {instructions.length > 0 && (
-            <button
-              onClick={() => setShowInstructions(!showInstructions)}
-              className="text-gray-500 hover:text-gray-700 transition-colors"
-              title="Toggle instructions"
-            >
-              <FiHelpCircle className="h-6 w-6" />
-            </button>
-          )}
+          <PageDocumentationLink
+            href={DOCUMENTATION_URLS.shiftTypeSuccessions}
+            label="Shift Type Successions"
+          />
         </div>
         <div className="flex gap-4">
           <ToggleButton
@@ -351,17 +338,6 @@ export default function ShiftTypeSuccessionsPage() {
           />
         </div>
       </div>
-
-      {showInstructions && instructions.length > 0 && (
-        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
-          <ul className="space-y-2 text-sm text-blue-700">
-            {instructions.map((instruction, index) => (
-              <li key={index}>• {instruction}</li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {/* Add/Edit Form */}
       {isFormVisible && (

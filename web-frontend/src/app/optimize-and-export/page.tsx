@@ -27,11 +27,12 @@ import { DataTable } from '@/components/DataTable';
 import { InlineEdit } from '@/components/InlineEdit';
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import NumberInput from '@/components/NumberInput';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizeSchedulingStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
-import { GITHUB_PRIVACY_URL } from '@/constants/urls';
+import { DOCUMENTATION_URLS, GITHUB_PRIVACY_URL } from '@/constants/urls';
 import {
   BACKEND_API_CANDIDATES,
   EXPECTED_BACKEND_SERVICE_NAME,
@@ -1636,7 +1637,13 @@ export default function OptimizeAndExportPage() {
     <div className="container mx-auto px-4 py-6 lg:py-8">
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <h1 className="text-3xl font-bold text-gray-900">Optimize and Export</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-gray-900">Optimize and Export</h1>
+            <PageDocumentationLink
+              href={DOCUMENTATION_URLS.optimizeAndExport}
+              label="Optimize and Export"
+            />
+          </div>
           <p className="mt-1 text-sm text-gray-600">
             Send the current schedule configuration to the backend and download the generated XLSX result.
           </p>

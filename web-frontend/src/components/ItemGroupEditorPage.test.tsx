@@ -33,14 +33,14 @@ function ItemGroupEditorHarness({
   initialData,
   itemsReadOnly = false,
   groupsReadOnly = false,
-  instructions = [],
+  documentationHref = '/docs/user-guide/people/',
   extraButtons,
   children,
 }: {
   initialData?: ItemGroupEditorPageData;
   itemsReadOnly?: boolean;
   groupsReadOnly?: boolean;
-  instructions?: string[];
+  documentationHref?: string;
   extraButtons?: ReactNode;
   children?: ReactNode;
 }) {
@@ -180,7 +180,7 @@ function ItemGroupEditorHarness({
     <UnsavedEditingStateProvider>
       <ItemGroupEditorPage
         title="People"
-        instructions={instructions}
+        documentationHref={documentationHref}
         data={data}
         dataType={DataType.PEOPLE}
         mode={mode}
@@ -659,12 +659,9 @@ describe('ItemGroupEditorPage', () => {
     expect(screen.queryByDisplayValue('Generated group')).not.toBeInTheDocument();
   });
 
-  it('renders instructions, children, and extra buttons when provided', async () => {
-    const user = userEvent.setup();
-
+  it('renders documentation, children, and extra actions', () => {
     render(
       <ItemGroupEditorHarness
-        instructions={['Use stable IDs', 'Avoid duplicates']}
         extraButtons={<button type="button">Extra Action</button>}
       >
         <div>Child Content</div>
@@ -673,12 +670,10 @@ describe('ItemGroupEditorPage', () => {
 
     expect(screen.getByText('Child Content')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Extra Action' })).toBeInTheDocument();
-    expect(screen.queryByText('Instructions')).not.toBeInTheDocument();
-
-    await user.click(screen.getByTitle('Toggle instructions'));
-    expect(screen.getByText('Instructions')).toBeInTheDocument();
-    expect(screen.getByText('• Use stable IDs')).toBeInTheDocument();
-    expect(screen.getByText('• Avoid duplicates')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'People documentation' })).toHaveAttribute(
+      'href',
+      '/docs/user-guide/people/',
+    );
   });
 
   it('removes item membership from groups via removable tag action', async () => {

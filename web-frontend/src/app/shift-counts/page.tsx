@@ -22,7 +22,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
+import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import {
   ShiftCountPreference,
@@ -33,6 +33,8 @@ import { CheckboxList } from '@/components/CheckboxList';
 import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
+import { DOCUMENTATION_URLS } from '@/constants/urls';
 import NumberInput from '@/components/NumberInput';
 import { isValidWeightValue, getWeightWithPositivePrefix, isWeightNonPositive } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
@@ -85,7 +87,6 @@ export default function ShiftCountsPage() {
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [showInstructions, setShowInstructions] = useState(false);
   const [formData, setFormData] = useState<ShiftCountForm>({
     description: '',
     person: [],
@@ -99,17 +100,6 @@ export default function ShiftCountsPage() {
   const [errors, setErrors] = useState<ShiftCountErrors>({});
   useTabSwitchWarning(isFormVisible);
   const shiftTypeEntries = [...shiftTypeData.items, ...shiftTypeData.groups];
-
-  const instructions = [
-    "Set up shift count rules for people (e.g., \"Working shifts should be close to the average\")",
-    "Select one or more people that this constraint applies to",
-    "Select which dates to count shifts for",
-    "Select which shift types to count",
-    "Choose a mathematical expression to evaluate (e.g., 'x >= T' means count should be at least the target)",
-    "Set the numeric target value",
-    "Set positive weight to encourage constraint matches and negative weight to discourage them",
-    "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
-  ];
 
   const resetForm = () => {
     setFormData({
@@ -351,15 +341,7 @@ export default function ShiftCountsPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Counts</h1>
-          {instructions.length > 0 && (
-            <button
-              onClick={() => setShowInstructions(!showInstructions)}
-              className="text-gray-500 hover:text-gray-700 transition-colors"
-              title="Toggle instructions"
-            >
-              <FiHelpCircle className="h-6 w-6" />
-            </button>
-          )}
+          <PageDocumentationLink href={DOCUMENTATION_URLS.shiftCounts} label="Shift Counts" />
         </div>
         <div className="flex gap-4">
           <ToggleButton
@@ -375,17 +357,6 @@ export default function ShiftCountsPage() {
           />
         </div>
       </div>
-
-      {showInstructions && instructions.length > 0 && (
-        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
-          <ul className="space-y-2 text-sm text-blue-700">
-            {instructions.map((instruction, index) => (
-              <li key={index}>• {instruction}</li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {/* Add/Edit Form */}
       {isFormVisible && (

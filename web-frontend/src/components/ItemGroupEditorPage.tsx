@@ -21,9 +21,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FiHelpCircle } from 'react-icons/fi';
 import { DataTable } from '@/components/DataTable';
 import { AddEditItemGroupForm } from '@/components/AddEditItemGroupForm';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
 import ToggleButton from '@/components/ToggleButton';
 import { useItemTableColumns, useGroupTableColumns } from '@/components/TableColumns';
 import { isReservedKeyword } from '@/utils/keywords';
@@ -53,8 +53,8 @@ export interface ItemGroupEditorPageData {
 }
 
 interface ItemGroupEditorPageProps {
-  title: string | React.ReactNode;
-  instructions: string[];
+  title: string;
+  documentationHref: string;
   data: ItemGroupEditorPageData;
   dataType: DataType;
   mode: Mode;
@@ -85,7 +85,7 @@ interface ItemGroupEditorPageProps {
 
 export default function ItemGroupEditorPage({
   title,
-  instructions,
+  documentationHref,
   data,
   dataType,
   mode,
@@ -131,9 +131,6 @@ export default function ItemGroupEditorPage({
   const [inlineEditingId, setInlineEditingId] = useState<string>('');
   // The field being edited in inline editing mode
   const [inlineEditingField, setInlineEditingField] = useState<'id' | 'description'>('id');
-  // Help functionality from PageTitleHelp
-  const [showInstructions, setShowInstructions] = useState(false);
-
   const { items, groups } = data;
 
   const isDuplicateId = (id: string, currentId?: string) => {
@@ -562,15 +559,7 @@ export default function ItemGroupEditorPage({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">{title}</h1>
-          {instructions.length > 0 && (
-            <button
-              onClick={() => setShowInstructions(!showInstructions)}
-              className="text-gray-500 hover:text-gray-700 transition-colors"
-              title="Toggle instructions"
-            >
-              <FiHelpCircle className="h-6 w-6" />
-            </button>
-          )}
+          <PageDocumentationLink href={documentationHref} label={title} />
         </div>
         <div className="flex gap-4">
           {extraButtons}
@@ -590,17 +579,6 @@ export default function ItemGroupEditorPage({
           )}
         </div>
       </div>
-
-      {showInstructions && instructions.length > 0 && (
-        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
-          <ul className="space-y-2 text-sm text-blue-700">
-            {instructions.map((instruction, index) => (
-              <li key={index}>• {instruction}</li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {children}
 

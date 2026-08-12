@@ -22,12 +22,14 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { FiHelpCircle, FiAlertCircle } from 'react-icons/fi';
+import { FiAlertCircle } from 'react-icons/fi';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { ShiftAffinityPreference, SHIFT_AFFINITY } from '@/types/scheduling';
 import { CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
 import ToggleButton from '@/components/ToggleButton';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
+import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { isValidWeightValue, getWeightWithPositivePrefix } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
@@ -60,7 +62,6 @@ export default function ShiftAffinitiesPage() {
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [showInstructions, setShowInstructions] = useState(false);
   const [formData, setFormData] = useState<ShiftAffinityForm>({
     description: '',
     date: [],
@@ -71,16 +72,6 @@ export default function ShiftAffinitiesPage() {
   });
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   useTabSwitchWarning(isFormVisible);
-
-  const instructions = [
-    "Define shift affinity preferences to encourage or discourage people working together",
-    "Select the dates when this affinity rule applies",
-    "Select the first group of people (People 1)",
-    "Select the second group of people (People 2)",
-    "Select which shift types this affinity applies to",
-    "Set positive weight to encourage working together and negative weight to discourage it",
-    "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
-  ];
 
   const resetForm = () => {
     setFormData({
@@ -250,15 +241,7 @@ export default function ShiftAffinitiesPage() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-800">Shift Affinities</h1>
-          {instructions.length > 0 && (
-            <button
-              onClick={() => setShowInstructions(!showInstructions)}
-              className="text-gray-500 hover:text-gray-700 transition-colors"
-              title="Toggle instructions"
-            >
-              <FiHelpCircle className="h-6 w-6" />
-            </button>
-          )}
+          <PageDocumentationLink href={DOCUMENTATION_URLS.shiftAffinities} label="Shift Affinities" />
         </div>
         <div className="flex gap-4">
           <ToggleButton
@@ -274,17 +257,6 @@ export default function ShiftAffinitiesPage() {
           />
         </div>
       </div>
-
-      {showInstructions && instructions.length > 0 && (
-        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="text-lg font-medium text-blue-800 mb-3">Instructions</h3>
-          <ul className="space-y-2 text-sm text-blue-700">
-            {instructions.map((instruction, index) => (
-              <li key={index}>• {instruction}</li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {/* Add/Edit Form */}
       {isFormVisible && (

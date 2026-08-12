@@ -37,6 +37,7 @@ import {
 } from '@/utils/taiwanHolidays';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isFullCalendarMonth } from '@/utils/calendar';
+import { DOCUMENTATION_URLS } from '@/constants/urls';
 
 export default function DatePage() {
   const {
@@ -114,19 +115,6 @@ export default function DatePage() {
   const selectedDayCount = draft.startDate && draft.endDate
     ? Math.ceil((draft.endDate.getTime() - draft.startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1
     : 0;
-
-  // Instructions for the help component
-  const instructions = [
-    "Set the start and end dates for your scheduling period",
-    "The end date must be after the start date",
-    "Dates are automatically generated based on your date range",
-    "Create groups to organize dates (e.g., \"Weekdays\", \"Weekends\", \"Workdays\", \"Freedays\")",
-    "When enabled, updating the date range can create or overwrite editable Taiwan holiday date groups such as WORKDAY and FREEDAY",
-    "Click and drag through checkboxes to quickly select multiple dates when adding or editing",
-    "Drag and drop to reorder groups",
-    "Double-click to edit names or descriptions",
-    "Navigate using the tabs or keyboard shortcuts (1, 2, etc.) to continue setup"
-  ];
 
   const validateForm = () => {
     const newErrors: {[key: string]: string} = {};
@@ -415,7 +403,7 @@ export default function DatePage() {
   return (
     <ItemGroupEditorPage
       title="Date Management"
-      instructions={instructions}
+      documentationHref={DOCUMENTATION_URLS.dates}
       data={dateData}
       dataType={DataType.DATES}
       itemsReadOnly={true}
