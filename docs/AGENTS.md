@@ -11,6 +11,7 @@
   solver linearization details.
 - Keep tightly coupled schema and behavior on one page unless each topic has a
   clear independent purpose.
+- Keep `docs/PRIVACY.md` as a symlink to the canonical root `PRIVACY.md`.
 
 ## Figures
 
