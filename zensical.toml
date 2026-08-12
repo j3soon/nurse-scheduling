@@ -46,7 +46,6 @@ nav = [
 ]
 
 [project.theme]
-variant = "classic"
 custom_dir = "docs/overrides"
 favicon = "assets/images/favicon.png"
 features = [
