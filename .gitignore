@@ -138,7 +138,7 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation
+# Zensical documentation
 /site
 /docker/diagnostic-reports/
 

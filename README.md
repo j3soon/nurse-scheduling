@@ -556,22 +556,20 @@ requires a smaller data-loss window after an abrupt Redis or host failure.
 The commands below are tested on Linux only.
 
 ```sh
-cd docs
 # create virtual environment
-uv venv --python 3.12
+uv venv --python 3.12 docs/.venv
 # activate virtual environment
-source .venv/bin/activate
+source docs/.venv/bin/activate
 # install dependencies
-uv pip install -r requirements.txt
+uv pip install -r docs/requirements.txt
 # preview documentation
-mkdocs serve
+zensical serve
 ```
 
 For building static site, run:
 
 ```sh
-cd docs
-mkdocs build
+zensical build --clean --strict
 ```
 
 ## Acknowledgments

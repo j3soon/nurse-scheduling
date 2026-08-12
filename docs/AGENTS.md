@@ -27,12 +27,12 @@
 
 ## Validation
 
-- Restart `mkdocs serve --no-livereload` after each documentation change.
-  Avoid live reload because generated social-plugin cache files can retrigger
-  builds.
+- Run `zensical serve` from the repository root to preview documentation
+  changes with automatic reloads.
 - Render Mermaid and MathJax changes in both light and dark themes. Check a
   narrow viewport when formulas or wide tables are involved.
 - Use Playwright or browser developer tools to capture and inspect rendered
   figures and formulas.
-- Run `mkdocs build` and `git diff --check` before finishing.
+- Run `zensical build --clean --strict` and `git diff --check` before
+  finishing.
 - Verify internal links and referenced assets resolve without 404 responses.
