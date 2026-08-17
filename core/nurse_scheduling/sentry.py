@@ -97,6 +97,10 @@ def capture_invalid_request(request: Request, status_code: int, detail: Any) -> 
     if not _should_enable_sentry():
         return
 
+    # Ignore 404s that don't match any application route (e.g. bot vulnerability scans).
+    if status_code == 404 and request.scope.get("route") is None:
+        return
+
     import sentry_sdk
 
     route = request.scope.get("route")
