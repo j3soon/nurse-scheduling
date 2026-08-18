@@ -109,6 +109,22 @@ function columnLabel(number) {
   return label;
 }
 
+const MAX_EXCEL_COLUMN = columnNumber('XFD');
+const MAX_EXCEL_ROW = 1_048_576;
+
+function validateCoordinates(column, row, value) {
+  if (
+    !Number.isSafeInteger(column)
+    || !Number.isSafeInteger(row)
+    || column < 1
+    || column > MAX_EXCEL_COLUMN
+    || row < 1
+    || row > MAX_EXCEL_ROW
+  ) {
+    fail(`worksheet coordinate is out of bounds: ${value}`);
+  }
+}
+
 function parseRange(value) {
   const match = /^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$/.exec(value);
   if (!match) fail(`invalid range ${value}; expected A1:M16`);
@@ -118,6 +134,8 @@ function parseRange(value) {
     endColumn: columnNumber(match[3]),
     endRow: Number.parseInt(match[4], 10),
   };
+  validateCoordinates(range.startColumn, range.startRow, value);
+  validateCoordinates(range.endColumn, range.endRow, value);
   if (range.startColumn > range.endColumn || range.startRow > range.endRow) fail(`range starts after it ends: ${value}`);
   return range;
 }
@@ -191,7 +209,9 @@ for (const expectation of options.expects) {
   if (separator < 1) fail(`invalid expectation ${expectation}; expected CELL=VALUE`);
   const reference = expectation.slice(0, separator).toUpperCase();
   const expected = expectation.slice(separator + 1);
-  if (!/^[A-Z]+\d+$/.test(reference)) fail(`invalid expectation cell: ${reference}`);
+  const match = /^([A-Z]+)(\d+)$/.exec(reference);
+  if (!match) fail(`invalid expectation cell: ${reference}`);
+  validateCoordinates(columnNumber(match[1]), Number.parseInt(match[2], 10), reference);
   const actual = displayText(worksheet.getCell(reference));
   if (actual !== expected) fail(`expected ${reference}=${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
@@ -279,9 +299,17 @@ for (const row of rows) {
   for (const column of columns) {
     const cell = worksheet.getCell(row.number, column.number);
     const fill = cell.fill?.type === 'pattern' ? argbToHex(cell.fill.fgColor?.argb, '#ffffff') : '#ffffff';
+    const topBorder = cell.border?.top;
+    const leftBorder = cell.border?.left;
     const rightBorderColor = argbToHex(cell.border?.right?.color?.argb, '#d9dedb');
     const bottomBorderColor = argbToHex(cell.border?.bottom?.color?.argb, '#d9dedb');
     fragments.push(`<rect x="${x}" y="${y}" width="${column.width}" height="${row.height}" fill="${fill}"/>`);
+    if (topBorder?.style) {
+      fragments.push(`<line x1="${x}" y1="${y}" x2="${x + column.width}" y2="${y}" stroke="${argbToHex(topBorder.color?.argb, '#d9dedb')}" stroke-width="${borderWidth(topBorder.style)}"/>`);
+    }
+    if (leftBorder?.style) {
+      fragments.push(`<line x1="${x}" y1="${y}" x2="${x}" y2="${y + row.height}" stroke="${argbToHex(leftBorder.color?.argb, '#d9dedb')}" stroke-width="${borderWidth(leftBorder.style)}"/>`);
+    }
     fragments.push(`<line x1="${x + column.width}" y1="${y}" x2="${x + column.width}" y2="${y + row.height}" stroke="${rightBorderColor}" stroke-width="${borderWidth(cell.border?.right?.style)}"/>`);
     fragments.push(`<line x1="${x}" y1="${y + row.height}" x2="${x + column.width}" y2="${y + row.height}" stroke="${bottomBorderColor}" stroke-width="${borderWidth(cell.border?.bottom?.style)}"/>`);
     const text = displayText(cell);
