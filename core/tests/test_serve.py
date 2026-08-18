@@ -242,8 +242,13 @@ def _create(client: TestClient, **data):
     return client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n", **data})
 
 
-def _wait_for_terminal(client: TestClient, job_id: str) -> dict:
-    for _ in range(300):
+def _wait_for_terminal(
+    client: TestClient,
+    job_id: str,
+    timeout: float = PROCESS_START_TIMEOUT_SECONDS,
+) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         response = client.get(f"/optimize/{job_id}")
         assert response.status_code == 200
         body = response.json()
