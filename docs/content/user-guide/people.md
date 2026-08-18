@@ -39,8 +39,10 @@ Groups may overlap. The automatic `ALL` group always contains every person.
 
 ## Upload people
 
-Upload a `.txt` or `.csv` file with one exact person ID per line. Blank lines
-and lines beginning with `#` are ignored. Quoted CSV fields are not supported.
+Upload a `.txt` or `.csv` file with one person ID per line. Both extensions use
+the same newline parser. It trims each line, then ignores blank lines and lines
+whose trimmed text begins with `#`. Commas and quotation marks are literal ID
+characters. The upload does not parse CSV fields.
 
 ```text
 P1
@@ -49,8 +51,10 @@ P2
 P3
 ```
 
-The upload can list at most 1000 people. Listed IDs are added or reordered.
-Existing people omitted from the file move to the end and are not deleted.
+The upload accepts at most 1000 IDs after removing blank lines and comments,
+and rejects duplicate IDs. Listed existing IDs are reordered, while new IDs
+are added. Existing people omitted from the file are appended in their
+original order and are not deleted.
 
 Optional previous-shift history is managed on [Shift Requests](shift-requests.md).
 Continue with [Shift Types](shift-types.md).

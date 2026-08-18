@@ -1,6 +1,7 @@
 [project]
 site_name = "Nurse Scheduling"
 site_url = "https://nursescheduling.org/docs/"
+dev_addr = "127.0.0.1:8001"
 site_description = "A user-friendly web app to automate the nurse scheduling task."
 docs_dir = "docs/content"
 site_dir = "site"
