@@ -127,6 +127,7 @@ interface StoredOptimizeServerEntry {
 }
 
 interface StoredOptimizeServerOptions {
+  appVersion: string;
   servers: StoredOptimizeServerEntry[];
   selectedServerEndpoint: ServerSelection;
 }
@@ -200,6 +201,7 @@ function toStoredServerOptions(
   selectedServerEndpoint: ServerSelection,
 ): StoredOptimizeServerOptions {
   return {
+    appVersion: CURRENT_APP_VERSION,
     servers: servers.map(({ endpoint }) => ({ endpoint })),
     selectedServerEndpoint,
   };
@@ -242,6 +244,7 @@ function loadStoredServerOptions(): { servers: OptimizeServerEntry[]; selectedSe
       return { servers: createDefaultServerEntries(), selectedServerEndpoint: 'auto' };
     }
 
+    const isLegacyStore = typeof parsed.appVersion !== 'string';
     const servers = dedupeServerEntries(parsed.servers);
     const parsedSelection = typeof parsed.selectedServerEndpoint === 'string'
       ? parsed.selectedServerEndpoint
@@ -250,10 +253,14 @@ function loadStoredServerOptions(): { servers: OptimizeServerEntry[]; selectedSe
       ? parsedSelection
       : 'auto';
 
-    return {
+    const loadedOptions = {
       servers,
       selectedServerEndpoint,
     };
+    if (isLegacyStore) {
+      persistServerOptions(servers, selectedServerEndpoint);
+    }
+    return loadedOptions;
   } catch {
     return { servers: createDefaultServerEntries(), selectedServerEndpoint: 'auto' };
   }

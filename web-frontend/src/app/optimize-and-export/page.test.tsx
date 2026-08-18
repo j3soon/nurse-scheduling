@@ -820,6 +820,22 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByTitle('https://backend.example.test')).toBeInTheDocument();
   });
 
+  it('loads app-versioned backend settings without rewriting them', async () => {
+    const versionedSettings = JSON.stringify({
+      appVersion: 'newer-frontend',
+      servers: [{ endpoint: 'https://future-backend.example.test' }],
+      selectedServerEndpoint: 'https://future-backend.example.test',
+      futureField: true,
+    });
+    window.localStorage.setItem('nurse-scheduling-optimize-server-options', versionedSettings);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle('https://future-backend.example.test')).resolves.toBeInTheDocument();
+    expect(screen.queryByTitle(LOCAL_API_URL)).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('nurse-scheduling-optimize-server-options')).toBe(versionedSettings);
+  });
+
   it('hydrates stored backend options before the initial health check', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementation((url: string) => respondWithHealthyBackend(
