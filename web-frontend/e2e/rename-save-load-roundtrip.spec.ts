@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { seedSchedulingState } from './helpers';
 
 test('renamed people and groups survive a save-load roundtrip', async ({ page }) => {
   /*
@@ -28,9 +28,8 @@ test('renamed people and groups survive a save-load roundtrip', async ({ page })
    * 1. Confirm the original person and group names are visible before renaming.
    * 2. Rename both through the real People page UI.
    * 3. Capture the resulting YAML from Save and Load.
-   * 4. Upload that YAML back and confirm the renamed references persist.
+   * 4. Upload that YAML back, wait for completion, and confirm the renamed references persist.
    */
-  await disableModalDialogs(page);
   await seedSchedulingState(page, {
     apiVersion: 'test',
     description: 'rename roundtrip seed',
@@ -70,11 +69,25 @@ test('renamed people and groups survive a save-load roundtrip', async ({ page })
   await expect(page.locator('pre')).toContainText('Team Omega');
   const yamlText = await page.locator('pre').textContent();
 
+  const uploadCompleted = new Promise<void>((resolve, reject) => {
+    page.on('dialog', async dialog => {
+      try {
+        const isSuccessDialog = dialog.message().includes('YAML file loaded successfully!');
+        await dialog.accept();
+        if (isSuccessDialog) {
+          resolve();
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
   await page.locator('input[type="file"]').setInputFiles({
     name: 'rename-roundtrip.yaml',
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
+  await uploadCompleted;
 
   await page.goto('/shift-requests');
   await expect(page.getByText('Person: P1X')).toBeVisible();
