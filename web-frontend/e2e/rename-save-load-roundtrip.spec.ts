@@ -74,11 +74,16 @@ test('renamed people and groups survive a save-load roundtrip', async ({ page })
       try {
         const message = dialog.message();
         const isSuccessDialog = message.includes('YAML file loaded successfully!');
+        const isVersionWarningDialog = message.startsWith('Dirty app version detected.')
+          || message.startsWith('App version mismatch detected.')
+          || message.startsWith('The loaded file does not contain app version information.');
         await dialog.accept();
         if (isSuccessDialog) {
           resolve();
         } else if (message.startsWith('Error loading YAML file:')) {
           reject(new Error(message));
+        } else if (!isVersionWarningDialog) {
+          reject(new Error(`Unhandled dialog appeared: ${message}`));
         }
       } catch (error) {
         reject(error);
