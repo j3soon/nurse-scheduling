@@ -29,6 +29,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -246,7 +247,7 @@ def _wait_for_terminal(
     client: TestClient,
     job_id: str,
     timeout: float = PROCESS_START_TIMEOUT_SECONDS,
-) -> dict:
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         response = client.get(f"/optimize/{job_id}")

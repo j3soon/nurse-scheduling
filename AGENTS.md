@@ -29,6 +29,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
 - For Codex-created commits, include a descriptive body that ends with a
   separate `by Codex` line.
+- Build multi-paragraph commit messages with separate `git commit -m`
+  arguments. Do not embed escaped `\n` sequences because Git stores them
+  literally instead of converting them to newlines.
 
 ## Comment and Documentation Style
 - Keep comments and documentation minimal, concise, yet informative.

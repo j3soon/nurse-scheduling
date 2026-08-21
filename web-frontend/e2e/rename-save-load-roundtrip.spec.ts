@@ -72,10 +72,13 @@ test('renamed people and groups survive a save-load roundtrip', async ({ page })
   const uploadCompleted = new Promise<void>((resolve, reject) => {
     page.on('dialog', async dialog => {
       try {
-        const isSuccessDialog = dialog.message().includes('YAML file loaded successfully!');
+        const message = dialog.message();
+        const isSuccessDialog = message.includes('YAML file loaded successfully!');
         await dialog.accept();
         if (isSuccessDialog) {
           resolve();
+        } else if (message.startsWith('Error loading YAML file:')) {
+          reject(new Error(message));
         }
       } catch (error) {
         reject(error);
