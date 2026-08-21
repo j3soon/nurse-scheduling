@@ -19,6 +19,11 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: cd web-frontend && bun install
+      - name: Test bundled skill scripts
+        run: |
+          bash skills/run-ci/scripts/run-ci.test.sh
+          node --test skills/screenshot-xlsx/scripts/render-xlsx.test.mjs
+          node --test skills/screenshot-webpage/scripts/network-policy.test.mjs
       - name: Lint
         run: cd web-frontend && bun run lint
       - name: Build (For checking static build errors only)

@@ -3,13 +3,14 @@
 [![tests](https://img.shields.io/github/actions/workflow/status/j3soon/nurse-scheduling/test-core.yaml?label=tests)](https://github.com/j3soon/nurse-scheduling/actions/workflows/test-core.yaml)
 [![Netlify Status](https://api.netlify.com/api/v1/badges/8ec5c5da-89e1-41e5-87b3-133ce1007783/deploy-status)](https://nursescheduling.org/)
 [![codecov](https://codecov.io/github/j3soon/nurse-scheduling/branch/dev/graph/badge.svg)](https://codecov.io/github/j3soon/nurse-scheduling)
-[![docs](https://img.shields.io/badge/docs-pre--release-blue?logo=googledocs)](https://nursescheduling.org/docs/)
+[![docs](https://img.shields.io/badge/docs-online-blue?logo=googledocs)](https://nursescheduling.org/docs/)
 
-A flexible web application designed to streamline and automate nurse scheduling, suitable for a wide range of diverse and complex real-world requirements.
+An automated nurse schedule optimization system designed for diverse and complex real-world requirements.
 
-- Stable version (frontend-only) hosted on [Netlify](https://nursescheduling.org/).
-- Development version hosted on [Netlify](https://dev.nursescheduling.org/).
-- Documentation hosted on [Netlify](https://nursescheduling.org/docs/).
+- Stable version hosted at [nursescheduling.org](https://nursescheduling.org/).
+- Latest development features hosted at [dev.nursescheduling.org](https://dev.nursescheduling.org/).
+- Versioned releases remain available at URLs such as [release-0-2.nursescheduling.org](https://release-0-2.nursescheduling.org/).
+- Documentation hosted at [nursescheduling.org/docs](https://nursescheduling.org/docs/).
 - Source code hosted on [GitHub](https://github.com/j3soon/nurse-scheduling).
 
 ## Introduction
@@ -18,13 +19,23 @@ The nurse scheduling (or employee scheduling) problem is a well-known problem in
 
 However, constraints can differ greatly between hospitals and wards, and there is currently no unified framework for modeling these diverse requirements. Most existing literature focuses on modeling an over-simplified constraint set, which is not applicable to real-world situations. Therefore, in practice, the problem is still often solved by hand with the help of Excel, which is often extremely time-consuming. The entire process requires several hours or even more than ten hours, depending on the problem complexity (e.g., co-scheduling of multiple understaffed wards).
 
-This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) aims to develop a flexible web app to automate the nurse scheduling task, and to provide a unified framework for modeling all types of real-world scenarios without sacrificing flexibility.
+This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) provides a flexible web app and framework for automating schedule optimization across real-world scenarios. It has generated schedules used by real wards with minimal post-adjustment. We keep the main deployment stable, publish the latest features separately, retain versioned releases, and strive to preserve backward compatibility.
 
-> This project is in active development. Breaking changes may occur without notice. Please proceed with caution. Although the current version has been verified by domain experts and used successfully (with minimal post-adjustment) in several complex multi-ward scenarios involving up to ~100 nurses, it currently has a steep learning curve and lacks proper documentation.
+Development builds may introduce breaking changes. Use the stable or versioned deployments when repeatability is important.
+
+## Project Scope
+
+This project focuses on the difficult and time-consuming part of rostering: turning staffing requirements, rules, and individual preferences into a good schedule. A scheduler still needs to define the ward's concrete rules. Infeasible staffing requirements may also require the scheduler to decide what can safely be relaxed. We continue to improve the ease and flexibility of expressing these constraints. Automated re-optimization also makes changed requests less costly and allows more preferences to be considered than a manual process often can.
+
+The system complements rather than replaces a hospital's existing coordination and workforce-management processes. It intentionally does not prescribe user accounts, leave approvals, shift swaps, schedule publication, audit trails, or other self-service and governance workflows. Preferences can come from an existing hospital system, a spreadsheet, or paper and then be entered by the person preparing the schedule. In our on-site discussions, a head nurse or senior ward member typically owned this task, collecting requests was not the main bottleneck, and constructing or revising the schedule could take several hours or more than ten hours. Organizations can retain any required approvals and audit records in their existing systems.
+
+Keeping request coordination separate makes the optimizer hospital-system agnostic and easier to adopt. Hospitals that need direct integration can import data into the scheduling format and export the result to their systems. Please [open an issue](https://github.com/j3soon/nurse-scheduling/issues) to discuss additional import or export requirements.
+
+Two hosted optimization servers are provided as free, shared, best-effort services. The lower-capacity secondary server is available as a fallback. Please use them fairly and do not abuse them. You can also self-host the backend software from this repository.
 
 ## Privacy Notice
 
-This early work-in-progress project provides basic privacy protections, including anonymizing individual people IDs, removing descriptions where possible, and privacy-masking Sentry session replays. The hosted application uses analytics and error reporting, and sends scheduling data to the selected backend when you click **Optimize**. Ad blockers may block analytics and error reporting, but not optimization submissions. Do not submit sensitive information. See [Privacy and Data Handling](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for details.
+The hosted application anonymizes individual people IDs and removes descriptions by default before sending a schedule for optimization. A schedule without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](PRIVACY.md) for details.
 
 ## How to run
 
@@ -250,8 +261,6 @@ build time using the frontend's locked Playwright version. If you rebuild the
 image after Playwright version changes, `bun run test:e2e` and
 `bun run test:e2e:ui` should not require rerunning `bunx playwright install chromium`
 inside each new `docker run --rm` container.
-
-> For the interactive UI mode, you may need to run the tests multiple times to get it passed, as the test is currently somewhat flaky. This is due to the delay of page update and is planned to be fixed in the future.
 
 In GitHub Actions, frontend browser integration tests run after frontend unit/coverage tests. The workflow uploads Playwright reports as build artifacts so failed CI runs keep browser traces and reports for debugging.
 
@@ -547,22 +556,20 @@ requires a smaller data-loss window after an abrupt Redis or host failure.
 The commands below are tested on Linux only.
 
 ```sh
-cd docs
 # create virtual environment
-uv venv --python 3.12
+uv venv --python 3.12 docs/.venv
 # activate virtual environment
-source .venv/bin/activate
+source docs/.venv/bin/activate
 # install dependencies
-uv pip install -r requirements.txt
+uv pip install -r docs/requirements.txt
 # preview documentation
-mkdocs serve
+zensical serve
 ```
 
 For building static site, run:
 
 ```sh
-cd docs
-mkdocs build
+zensical build --clean --strict
 ```
 
 ## Acknowledgments

@@ -3,7 +3,7 @@
 ## Project Structure
 - `core/`: Python scheduling engine, CLI, and FastAPI backend.
 - `web-frontend/`: Next.js + TypeScript app.
-- `docs/`: MkDocs source and overrides.
+- `docs/`: Zensical content, dependencies, and template overrides.
 - `scripts/`: setup and development utilities.
 - `thirdparty/`: external calendar data and helpers.
 

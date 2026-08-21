@@ -35,7 +35,7 @@ export const GITHUB_BRANCHES_API_URL = 'https://api.github.com/repos/j3soon/nurs
 // Website URLs
 export const WEBSITE_URL = 'https://nursescheduling.org';
 
-// Netlify publishes MkDocs at /docs. Local development serves it separately.
+// Netlify publishes Zensical at /docs. Local development serves it separately.
 const DEFAULT_DOCUMENTATION_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://127.0.0.1:8001/docs'
   : '/docs';

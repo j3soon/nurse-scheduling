@@ -37,9 +37,12 @@ Anonymization applies to YAML sent to the server. Dates, groups, shifts, and
 rules may remain sensitive. The browser restores original people IDs in the
 downloaded workbook.
 
-Stay on the page until download or cancellation. Optional controls are **Get
-Results Now**, which asks the backend to finish with its best result so far,
-and **Cancel**, which stops the job without a workbook.
+Stay on the page until download or cancellation. **Get Results Now** is
+available only for a supported running solver. It asks the backend to complete
+the job with its feasible incumbent and create the workbook. If no incumbent
+is available, the job may fail with `no_solution_found`. **Cancel** is
+asynchronous for a running job. The job first becomes `cancelling`, then
+`cancelled`, without retaining a result or creating a workbook.
 
 ## Interpret the result
 

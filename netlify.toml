@@ -10,10 +10,8 @@
   bun run build
   cd ..
 
-  cd docs
-  pip install -r requirements.txt
-  python -m mkdocs build
-  cd ..
+  pip install -r docs/requirements.txt
+  python -m zensical build --clean --strict
 
   mkdir -p web-frontend/out/docs
   mv site/* web-frontend/out/docs/
