@@ -33,10 +33,4 @@ The build selector at the lower right switches between available app builds.
 See [Screen and Control Reference](user-guide/reference.md) for shared controls,
 keyboard shortcuts, weights, and automatic entries.
 
-!!! warning "Active development"
-
-    Breaking changes can occur. Back up each useful schedule as YAML and check
-    the [privacy and data-handling guidance](user-guide/save-and-load.md#download-anonymized-yaml)
-    before entering real information.
-
 Developers and operators can use the [Developer Guide](developer-guide/index.md).

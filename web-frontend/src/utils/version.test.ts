@@ -25,6 +25,7 @@ import {
   fetchLatestTag,
   fetchReleaseBranches,
   getMajorMinor,
+  isStableReleaseVersion,
   parseVersionParts,
 } from '@/utils/version';
 
@@ -49,6 +50,15 @@ describe('version utils', () => {
     expect(getMajorMinor('v1.2.3-4-gabcd')).toBe('v1.2');
     expect(getMajorMinor('2.7.0')).toBeNull();
     expect(getMajorMinor('invalid')).toBeNull();
+  });
+
+  it('recognizes only clean version tags as stable releases', () => {
+    expect(isStableReleaseVersion('v1.2.3')).toBe(true);
+    expect(isStableReleaseVersion('v1.2.3-4-gabcdef0')).toBe(false);
+    expect(isStableReleaseVersion('v1.2.3-dirty')).toBe(false);
+    expect(isStableReleaseVersion('deadbeef')).toBe(false);
+    expect(isStableReleaseVersion('dev')).toBe(false);
+    expect(isStableReleaseVersion('unknown')).toBe(false);
   });
 
   it('parses git describe version parts for display and comparison', () => {

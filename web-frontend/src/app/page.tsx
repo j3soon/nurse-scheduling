@@ -26,7 +26,13 @@ import { FiChevronDown, FiCheck } from 'react-icons/fi';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { DOCUMENTATION_URLS, STATIC_BUILD_URLS } from '@/constants/urls';
-import { areBuildOriginsEquivalent, fetchReleaseBranches, BuildEntry } from '@/utils/version';
+import {
+  areBuildOriginsEquivalent,
+  BuildEntry,
+  CURRENT_APP_VERSION,
+  fetchReleaseBranches,
+  isStableReleaseVersion,
+} from '@/utils/version';
 
 export default function Home() {
   const router = useRouter();
@@ -105,12 +111,13 @@ export default function Home() {
         <p className="text-lg text-gray-600 mb-4">
           Welcome to the Nurse Scheduling System. Use the tabs above to navigate.
         </p>
-        <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-          <p className="text-sm text-yellow-800">
-            ⚠️ This project is in active development. Breaking changes may occur without notice. Please proceed with caution.
-          </p>
-        </div>
-
+        {!isStableReleaseVersion(CURRENT_APP_VERSION) && (
+          <div className="mb-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-blue-800">
+              This is a development build. For best compatibility with saved YAML, use a versioned release.
+            </p>
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button
             onClick={handleStartNew}

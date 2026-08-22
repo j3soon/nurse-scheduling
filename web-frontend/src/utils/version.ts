@@ -55,6 +55,10 @@ const HASH_ONLY_PATTERN = /^[0-9a-fA-F]{7,}$/;
 const TAGGED_COMMIT_PATTERN = /^(v\d+\.\d+\.\d+)-(\d+)-g([0-9a-fA-F]{7,})$/;
 const TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;
 
+export function isStableReleaseVersion(version: string): boolean {
+  return TAG_PATTERN.test(version);
+}
+
 export function parseVersionParts(version: string): VersionParts {
   const isDirty = version.endsWith('-dirty');
   const cleanVersion = isDirty ? version.slice(0, -'-dirty'.length) : version;
