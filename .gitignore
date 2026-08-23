@@ -141,6 +141,7 @@ venv.bak/
 # Zensical documentation
 /site
 /docker/diagnostic-reports/
+/artifacts/
 
 # mypy
 .mypy_cache/
