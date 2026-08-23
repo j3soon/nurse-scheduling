@@ -19,6 +19,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   requiring both `core` and `web-frontend` may use one commit.
 - Avoid trailing spaces and end files with a newline.
 - Run affected tests and lint checks before finishing.
+- Store generated screenshots and other disposable review output under the
+  repository-root `artifacts/` directory. This directory is ignored by Git.
 - Derive Git versions on the host for local Docker builds. Do not copy `.git`
   into build contexts because linked worktrees store metadata elsewhere.
 - Record durable, generally applicable user guidance in the nearest relevant

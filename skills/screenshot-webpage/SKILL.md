@@ -13,15 +13,22 @@ command alone.
 
 1. Start the application with its documented local command. Do not replace the
    user's running process or port without checking first.
-2. Use a stable local URL when available. Capture external or authenticated
-   pages only when the user authorized access.
-3. Use a module root with Playwright 1.51 or newer. A loopback capture allows
-   loopback hosts by default. For a remote capture, list every host, including
-   any loopback host, with `--allow-host HOST`. Redirects, subresources, and
-   WebSockets follow the same policy. Link-local targets are always blocked.
-4. Set up minimal test data and the exact UI state the documentation describes.
-5. Identify visible text and a ready selector that prove the intended state.
-6. Mask sensitive content with `--mask`. Never capture credentials, tokens, or
+2. Immediately before each capture, verify that the exact target URL responds.
+   Repeat this preflight after restarting the application or changing its
+   version. For example, use `curl --fail --silent --show-error URL >/dev/null`.
+3. Use a stable local URL when available. Keep its hostname consistent across
+   the dev server, preflight, and capture. Do not interchange `localhost` and
+   `127.0.0.1`, because framework origin checks and application logic may treat
+   them differently. Capture external or authenticated pages only when the user
+   authorized access.
+4. Use a module root with Playwright 1.51 or newer. A loopback capture allows
+   loopback hosts by default. For any capture, list every non-loopback redirect,
+   subresource, and WebSocket host with `--allow-host HOST`. For a remote
+   capture, also list the page host and any loopback hosts. Link-local targets
+   are always blocked.
+5. Set up minimal test data and the exact UI state the documentation describes.
+6. Identify visible text and a ready selector that prove the intended state.
+7. Mask sensitive content with `--mask`. Never capture credentials, tokens, or
    unrelated personal data.
 
 For a stateful client app, wait until imports or edits reach persistent storage
@@ -52,6 +59,11 @@ Use `bun` instead of `node` when that is the repository standard. Use
 Pass `--force` only after confirming that replacing the target image is
 intended. Use `--executable-path` when the environment provides a browser
 outside Playwright's managed browser directory.
+
+When working in a repository, store final requested screenshots under its
+top-level `artifacts/` directory unless the user specifies another location.
+Keep exploratory captures there only while reviewing them, then remove those
+temporary files.
 
 For an authorized remote page, list the page host and every required asset host
 explicitly:
