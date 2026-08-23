@@ -53,4 +53,4 @@ def load_data(content: bytes) -> NurseSchedulingData:
         NurseSchedulingData: The validated scheduling data
     """
     data = _load_yaml(content)
-    return NurseSchedulingData(**data)
+    return NurseSchedulingData.model_validate(data)
