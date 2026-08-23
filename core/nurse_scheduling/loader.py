@@ -53,4 +53,8 @@ def load_data(content: bytes) -> NurseSchedulingData:
         NurseSchedulingData: The validated scheduling data
     """
     data = _load_yaml(content)
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"YAML content must be a mapping, got {type(data).__name__}"
+        )
     return NurseSchedulingData(**data)
