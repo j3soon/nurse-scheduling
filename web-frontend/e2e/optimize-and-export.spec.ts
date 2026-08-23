@@ -26,7 +26,7 @@ test('optimize and export submits YAML to the backend and renders success metada
   /*
    * Steps:
    * 1. Seed a minimal valid schedule and confirm the optimize page starts with no success message.
-   * 2. Mock the backend optimize endpoint and trigger the real optimize action.
+   * 2. Add localhost through the page and trigger the real optimize action.
    * 3. Confirm the success message, returned filename, score, and status are rendered.
    */
   await disableModalDialogs(page);
@@ -52,13 +52,20 @@ test('optimize and export submits YAML to the backend and renders success metada
   });
   await setDateRange(page);
 
-  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
+  await mockOptimizeAndExport(page, {
+    seedLocalBackend: false,
+    onSubmit: body => { submittedBody = body; },
+  });
 
   await page.goto('/optimize-and-export');
   await expect(page.getByRole('heading', { name: 'Optimize and Export', exact: true })).toBeVisible();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
   await expect(page.getByText('Current YAML Preview')).toHaveCount(0);
   await expect(page.locator('pre')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
+
+  await page.getByRole('button', { name: 'Add localhost' }).click();
+
   await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeEnabled();
 
   await page.getByRole('button', { name: 'Optimize and Download' }).click();

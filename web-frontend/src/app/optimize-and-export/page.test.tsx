@@ -24,8 +24,8 @@ import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import {
+  createBackendApiCandidates,
   isOptimizationOptionsResponse,
-  selectOfflineFallbackBackendApiUrl,
   selectPreferredServer,
   type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
@@ -59,6 +59,7 @@ vi.mock('@/utils/version', () => ({
 
 const LOCAL_API_URL = 'http://localhost:8000';
 const PRODUCTION_API_URL = 'https://api.nursescheduling.org';
+const SECONDARY_API_URL = 'https://api-secondary.nursescheduling.org';
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -212,6 +213,17 @@ async function editBackendEndpoint(user: ReturnType<typeof userEvent.setup>, fro
 }
 
 describe('optimize backend server selection', () => {
+  it('excludes localhost from the default backend candidates', () => {
+    expect(createBackendApiCandidates(false)).toEqual([
+      PRODUCTION_API_URL,
+      SECONDARY_API_URL,
+    ]);
+  });
+
+  it('does not imply localhost access when hosted backends are disabled', () => {
+    expect(createBackendApiCandidates(true)).toEqual([]);
+  });
+
   it('validates optimization option metadata', () => {
     const valid = {
       schema_version: 'alpha',
@@ -270,23 +282,6 @@ describe('optimize backend server selection', () => {
     ]);
 
     expect(selected?.endpoint).toBe(LOCAL_API_URL);
-  });
-
-  it('falls back to production when all production-enabled backend candidates are offline', () => {
-    expect(selectOfflineFallbackBackendApiUrl([LOCAL_API_URL, PRODUCTION_API_URL])).toBe(PRODUCTION_API_URL);
-  });
-
-  it('falls back to local when production is not a backend candidate', () => {
-    expect(selectOfflineFallbackBackendApiUrl([LOCAL_API_URL])).toBe(LOCAL_API_URL);
-  });
-
-  it('does not treat URLs containing the production hostname as production candidates', () => {
-    expect(selectOfflineFallbackBackendApiUrl([
-      LOCAL_API_URL,
-      'https://api.nursescheduling.org.example.test',
-      'https://example.test/https://api.nursescheduling.org',
-      'https://api.nursescheduling.org.example.test/https://api.nursescheduling.org',
-    ])).toBe(LOCAL_API_URL);
   });
 });
 
@@ -818,6 +813,61 @@ describe('OptimizeAndExportPage error handling', () => {
     await editBackendEndpoint(user, LOCAL_API_URL, 'https://backend.example.test');
 
     expect(screen.getByTitle('https://backend.example.test')).toBeInTheDocument();
+  });
+
+  it('removes the former default localhost endpoint when migrating legacy settings', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => respondWithHealthyBackend(url));
+    window.localStorage.setItem('nurse-scheduling-optimize-server-options', JSON.stringify({
+      servers: [
+        { endpoint: LOCAL_API_URL },
+        { endpoint: PRODUCTION_API_URL },
+      ],
+      selectedServerEndpoint: LOCAL_API_URL,
+    }));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle(PRODUCTION_API_URL)).resolves.toBeInTheDocument();
+    expect(screen.queryByTitle(LOCAL_API_URL)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(`${LOCAL_API_URL}/info`, expect.anything());
+    expect(JSON.parse(window.localStorage.getItem('nurse-scheduling-optimize-server-options') ?? '{}')).toEqual({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: PRODUCTION_API_URL }],
+      selectedServerEndpoint: 'auto',
+    });
+  });
+
+  it('adds localhost at the front of the backend list after an explicit click', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => respondWithHealthyBackend(url));
+    window.localStorage.setItem('nurse-scheduling-optimize-server-options', JSON.stringify({
+      appVersion: 'older-frontend',
+      servers: [{ endpoint: PRODUCTION_API_URL }],
+      selectedServerEndpoint: 'auto',
+    }));
+
+    render(<OptimizeAndExportPage />);
+
+    const addLocalhostButton = screen.getByRole('button', { name: 'Add localhost' });
+    expect(addLocalhostButton).toBeEnabled();
+    await user.click(addLocalhostButton);
+
+    await expect(screen.findByTitle(LOCAL_API_URL)).resolves.toBeInTheDocument();
+    expect(addLocalhostButton).toBeDisabled();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `${LOCAL_API_URL}/info`,
+      expect.objectContaining({ method: 'GET' })
+    ));
+    expect(JSON.parse(window.localStorage.getItem('nurse-scheduling-optimize-server-options') ?? '{}')).toEqual({
+      appVersion: 'frontend-test',
+      servers: [
+        { endpoint: LOCAL_API_URL },
+        { endpoint: PRODUCTION_API_URL },
+      ],
+      selectedServerEndpoint: 'auto',
+    });
   });
 
   it('loads app-versioned backend settings without rewriting them', async () => {

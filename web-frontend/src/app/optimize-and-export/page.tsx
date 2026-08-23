@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { FiDownload, FiAlertCircle, FiAlertTriangle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity, FiTrash2 } from 'react-icons/fi';
+import { FiDownload, FiAlertCircle, FiAlertTriangle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity, FiTrash2, FiPlus } from 'react-icons/fi';
 import { DataTable } from '@/components/DataTable';
 import { InlineEdit } from '@/components/InlineEdit';
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
@@ -37,6 +37,7 @@ import {
   BACKEND_API_CANDIDATES,
   EXPECTED_BACKEND_SERVICE_NAME,
   isOptimizationOptionsResponse,
+  LOCAL_BACKEND_API_URL,
   selectPreferredServer,
   SUPPORTED_BACKEND_API_VERSION,
   type OptimizationOptionsResponse,
@@ -245,7 +246,13 @@ function loadStoredServerOptions(): { servers: OptimizeServerEntry[]; selectedSe
     }
 
     const isLegacyStore = typeof parsed.appVersion !== 'string';
-    const servers = dedupeServerEntries(parsed.servers);
+    const storedServers = isLegacyStore
+      ? parsed.servers.filter(server => (
+          typeof server.endpoint !== 'string' ||
+          normalizeEndpoint(server.endpoint) !== LOCAL_BACKEND_API_URL
+        ))
+      : parsed.servers;
+    const servers = dedupeServerEntries(storedServers);
     const parsedSelection = typeof parsed.selectedServerEndpoint === 'string'
       ? parsed.selectedServerEndpoint
       : 'auto';
@@ -1338,7 +1345,7 @@ export default function OptimizeAndExportPage() {
     }
   };
 
-  const addServer = (endpoint: string) => {
+  const addServer = (endpoint: string, prepend = false) => {
     const normalizedEndpoint = normalizeEndpoint(endpoint);
     if (!normalizedEndpoint) {
       setAddingServer(false);
@@ -1352,7 +1359,9 @@ export default function OptimizeAndExportPage() {
     const nextServer = createServerEntry({
       endpoint: normalizedEndpoint,
     });
-    const nextServers = [...serverEntries, nextServer];
+    const nextServers = prepend
+      ? [nextServer, ...serverEntries]
+      : [...serverEntries, nextServer];
     setServerEntries(nextServers);
     saveServerOptions(nextServers);
     setAddServerError(null);
@@ -1397,6 +1406,7 @@ export default function OptimizeAndExportPage() {
     { kind: 'auto' },
     ...serverEntries.map(server => ({ kind: 'server' as const, server })),
   ];
+  const hasLocalBackend = isDuplicateServerEndpoint(LOCAL_BACKEND_API_URL);
   const hasCustomBackendSettings = hasCustomServerOptions(serverEntries, selectedServerEndpoint);
   const isEditingBackendServer = Boolean(editingServerEndpoint || addingServer);
   const finishBackendEndpointEdit = () => {
@@ -1404,6 +1414,16 @@ export default function OptimizeAndExportPage() {
   };
   const backendTableHeaderAction = (
     <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={() => addServer(LOCAL_BACKEND_API_URL, true)}
+        disabled={isOptimizing || hasLocalBackend}
+        title={hasLocalBackend ? 'Localhost is already in the backend list' : `Add ${LOCAL_BACKEND_API_URL}`}
+        className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+      >
+        <FiPlus className="h-4 w-4" />
+        Add localhost
+      </button>
       <button
         type="button"
         onClick={() => checkAllServers()}

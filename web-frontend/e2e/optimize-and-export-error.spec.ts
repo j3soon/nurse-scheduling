@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState, setDateRange } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedLocalOptimizeBackend, seedSchedulingState, setDateRange } from './helpers';
 
 test('optimize and export renders backend errors without a stale success state', async ({ page }) => {
   /*
@@ -127,6 +127,7 @@ test('allows an explicitly selected incompatible backend with a warning', async 
       body: JSON.stringify({ detail: 'old API rejected request' }),
     });
   });
+  await seedLocalOptimizeBackend(page);
 
   await page.goto('/optimize-and-export');
 
