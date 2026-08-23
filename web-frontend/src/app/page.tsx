@@ -108,7 +108,7 @@ export default function Home() {
           <h1 className="text-4xl font-bold text-gray-800">Nurse Scheduling System</h1>
           <PageDocumentationLink href={DOCUMENTATION_URLS.home} label="Home" />
         </div>
-        <p className="text-lg text-gray-600 mb-4">
+        <p className="text-lg text-gray-600 mb-8">
           Welcome to the Nurse Scheduling System. Use the tabs above to navigate.
         </p>
         {!isStableReleaseVersion(CURRENT_APP_VERSION) && (
