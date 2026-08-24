@@ -21,6 +21,16 @@ export interface StreamCallbacks {
   onDelta: (text: string) => void;
   onDone?: () => void;
 }
+
+export interface AiCapabilities {
+  image_attachments: {
+    enabled: boolean;
+    accepted_media_types: string[];
+    max_files: number;
+    max_bytes_per_file: number;
+  };
+}
+
 interface SessionResponse {
   id: string;
 }
@@ -33,12 +43,10 @@ interface SsePayload {
 export function getAiBaseUrl(): string {
   const configuredUrl = process.env.NEXT_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');
   if (configuredUrl) return configuredUrl;
-  if (typeof window === 'undefined') return '/ai';
-
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return `http://${window.location.hostname}:8001`;
+  if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:8001`;
   }
-  return `${window.location.origin}/ai`;
+  return '/ai';
 }
 
 async function responseError(response: Response): Promise<Error> {
@@ -49,6 +57,29 @@ async function responseError(response: Response): Promise<Error> {
     // Fall back to a stable error when the response is not JSON.
   }
   return new Error(`The AI backend returned HTTP ${response.status}.`);
+}
+
+export async function getCapabilities(signal?: AbortSignal): Promise<AiCapabilities> {
+  const response = await fetch(`${getAiBaseUrl()}/capabilities`, {
+    credentials: 'include',
+    signal,
+  });
+  if (!response.ok) throw await responseError(response);
+
+  const body = await response.json() as Partial<AiCapabilities>;
+  const images = body.image_attachments;
+  if (
+    typeof images?.enabled !== 'boolean'
+    || !Array.isArray(images.accepted_media_types)
+    || !images.accepted_media_types.every(mediaType => typeof mediaType === 'string')
+    || !Number.isInteger(images.max_files)
+    || images.max_files <= 0
+    || !Number.isInteger(images.max_bytes_per_file)
+    || images.max_bytes_per_file <= 0
+  ) {
+    throw new Error('The AI backend returned invalid capabilities.');
+  }
+  return body as AiCapabilities;
 }
 
 export async function createSession(scheduleYaml: string): Promise<string> {
@@ -97,12 +128,25 @@ export async function streamMessage(
   message: string,
   callbacks: StreamCallbacks,
   signal: AbortSignal,
+  images: File[] = [],
 ): Promise<void> {
+  let body: BodyInit;
+  let headers: HeadersInit | undefined;
+  if (images.length > 0) {
+    const form = new FormData();
+    form.append('message', message);
+    images.forEach(image => form.append('images', image, image.name));
+    body = form;
+  } else {
+    headers = { 'Content-Type': 'application/json' };
+    body = JSON.stringify({ message });
+  }
+
   const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    headers,
+    body,
     signal,
   });
   if (!response.ok) throw await responseError(response);

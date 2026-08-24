@@ -19,6 +19,9 @@
 
 import os
 from dataclasses import dataclass
+from typing import Literal, cast
+
+AttachmentMode = Literal["none", "images"]
 
 
 def _read_positive_int(name: str, default: int) -> int:
@@ -58,6 +61,14 @@ def _read_bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean")
 
 
+def _read_attachment_mode() -> AttachmentMode:
+    """Read the enabled attachment capability."""
+    value = os.getenv("AI_ATTACHMENT_MODE", "images").strip().lower()
+    if value not in {"none", "images"}:
+        raise ValueError("AI_ATTACHMENT_MODE must be one of: none, images")
+    return cast(AttachmentMode, value)
+
+
 @dataclass(frozen=True)
 class AiSettings:
     """Runtime settings for one isolated AI backend process."""
@@ -72,6 +83,9 @@ class AiSettings:
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
+    attachment_mode: AttachmentMode = "images"
+    max_image_files: int = 4
+    max_image_bytes: int = 5_000_000
     cookie_secure: bool = True
 
     @classmethod
@@ -99,5 +113,8 @@ class AiSettings:
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
+            attachment_mode=_read_attachment_mode(),
+            max_image_files=_read_positive_int("AI_MAX_IMAGE_FILES", 4),
+            max_image_bytes=_read_positive_int("AI_MAX_IMAGE_BYTES", 5_000_000),
             cookie_secure=_read_bool("AI_COOKIE_SECURE", True),
         )

@@ -37,6 +37,12 @@ test paths when a narrower suite is known to be sufficient.
 - A worker that cannot persist an execution outcome must relinquish its lease.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
+## Experimental AI
+- Keep optional AI features server-configured and report safe limits through
+  `/capabilities`. Treat schedules and attachments as untrusted provider input.
+- Bound and validate uploads before provider calls. Do not retain raw
+  attachments longer than their documented session behavior requires.
+
 ## Testing
 - Normal tests live under `tests/`.
 - Keep server-facing solver traits in

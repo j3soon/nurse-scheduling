@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { createSession, getAiBaseUrl, streamMessage } from './aiClient';
+import { createSession, getAiBaseUrl, getCapabilities, streamMessage } from './aiClient';
 
 function streamedResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -38,7 +38,7 @@ describe('AI client', () => {
     vi.unstubAllGlobals();
   });
 
-  it('uses the dedicated local development port', () => {
+  it('bypasses the buffering Next.js proxy during local development', () => {
     expect(getAiBaseUrl()).toBe('http://localhost:8001');
   });
 
@@ -55,6 +55,26 @@ describe('AI client', () => {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ schedule_yaml: 'description: test' }),
+    });
+  });
+
+  it('validates image attachment capabilities', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      image_attachments: {
+        enabled: true,
+        accepted_media_types: ['image/png'],
+        max_files: 2,
+        max_bytes_per_file: 5000,
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+
+    await expect(getCapabilities()).resolves.toEqual({
+      image_attachments: {
+        enabled: true,
+        accepted_media_types: ['image/png'],
+        max_files: 2,
+        max_bytes_per_file: 5000,
+      },
     });
   });
 
@@ -87,6 +107,35 @@ describe('AI client', () => {
     );
   });
 
+  it('delivers a streamed delta before the response completes', async () => {
+    const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        streamController = controller;
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    const deltas: string[] = [];
+    const onDone = vi.fn();
+
+    const streaming = streamMessage(
+      'session-id',
+      'Question',
+      { onDelta: delta => deltas.push(delta), onDone },
+      new AbortController().signal,
+    );
+    streamController?.enqueue(encoder.encode('event: delta\ndata: {"text":"First"}\n\n'));
+
+    await vi.waitFor(() => expect(deltas).toEqual(['First']));
+    expect(onDone).not.toHaveBeenCalled();
+
+    streamController?.enqueue(encoder.encode('event: done\ndata: {"message_id":"message-id"}\n\n'));
+    streamController?.close();
+    await streaming;
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+
   it('surfaces a streamed provider error', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: error\ndata: {"message":"Provider unavailable."}\n\n',
@@ -98,5 +147,28 @@ describe('AI client', () => {
       { onDelta: vi.fn() },
       new AbortController().signal,
     )).rejects.toThrow('Provider unavailable.');
+  });
+
+  it('sends images as multipart form data', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
+      'event: done\ndata: {"message_id":"message-id"}\n\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const image = new File(['image bytes'], 'ward.png', { type: 'image/png' });
+
+    await streamMessage(
+      'session-id',
+      'What is shown?',
+      { onDelta: vi.fn() },
+      new AbortController().signal,
+      [image],
+    );
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(request.headers).toBeUndefined();
+    expect(request.body).toBeInstanceOf(FormData);
+    const form = request.body as FormData;
+    expect(form.get('message')).toBe('What is shown?');
+    expect(form.getAll('images')).toEqual([image]);
   });
 });

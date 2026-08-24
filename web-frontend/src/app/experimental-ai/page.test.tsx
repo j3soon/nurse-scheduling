@@ -24,11 +24,13 @@ import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
+const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockStreamMessage = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
 
 vi.mock('./aiClient', () => ({
   createSession: mockCreateSession,
+  getCapabilities: mockGetCapabilities,
   streamMessage: mockStreamMessage,
 }));
 
@@ -52,6 +54,14 @@ vi.mock('@/hooks/useSchedulingData', () => ({
 describe('ExperimentalAiPage', () => {
   beforeEach(() => {
     mockCreateSession.mockReset().mockResolvedValue('session-id');
+    mockGetCapabilities.mockReset().mockResolvedValue({
+      image_attachments: {
+        enabled: false,
+        accepted_media_types: ['image/jpeg', 'image/png', 'image/webp'],
+        max_files: 4,
+        max_bytes_per_file: 5_000_000,
+      },
+    });
     mockStreamMessage.mockReset().mockImplementation(async (
       _sessionId: string,
       _message: string,
@@ -68,6 +78,10 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(screen.getByText('Current snapshot: 0 people, 0 dates. Captured when you send the first question.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
+      'href',
+      '/docs/user-guide/experimental-ai/',
+    );
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
@@ -78,7 +92,41 @@ describe('ExperimentalAiPage', () => {
       'Who works Monday?',
       expect.any(Object),
       expect.any(AbortSignal),
+      [],
     );
+  });
+
+  it('previews and sends images when the backend enables them', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({
+      image_attachments: {
+        enabled: true,
+        accepted_media_types: ['image/png'],
+        max_files: 2,
+        max_bytes_per_file: 1000,
+      },
+    });
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    const image = new File(['png'], 'ward.png', { type: 'image/png' });
+    render(<ExperimentalAiPage />);
+
+    const input = await screen.findByLabelText('Attach images');
+    await user.upload(input, image);
+    expect(screen.getByAltText('Preview of ward.png')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'What is shown?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(mockStreamMessage).toHaveBeenCalledWith(
+      'session-id',
+      'What is shown?',
+      expect.any(Object),
+      expect.any(AbortSignal),
+      [image],
+    );
+    expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
+    expect(createObjectUrl).toHaveBeenCalledWith(image);
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:image-preview');
   });
 
   it('shows backend failures without discarding the user question', async () => {

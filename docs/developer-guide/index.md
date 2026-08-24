@@ -11,7 +11,7 @@ Use these pages to develop, operate, or extend Nurse Scheduling.
 
 For product use, start with the [User Guide](../user-guide/get-started.md).
 
-For local page-help links, serve MkDocs at `http://127.0.0.1:8001/docs/`.
+For local page-help links, serve MkDocs at `http://127.0.0.1:8003/docs/`.
 Set `NEXT_PUBLIC_DOCS_BASE_URL` before starting the frontend when using another
 documentation address. Production builds default to the same-origin `/docs`
 path assembled by `netlify.toml`.

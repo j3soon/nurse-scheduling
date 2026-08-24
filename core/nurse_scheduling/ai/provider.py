@@ -19,18 +19,44 @@
 
 import json
 from collections.abc import AsyncIterator, Sequence
-from typing import Protocol, TypedDict
+from typing import Literal, Protocol, TypedDict
 
 import httpx
 
 from .config import AiSettings
 
 
+class TextContentPart(TypedDict):
+    """One text item in a multimodal chat message."""
+
+    type: Literal["text"]
+    text: str
+
+
+# OpenAI-compatible shape: {"type": "image_url", "image_url": {"url": "data:..."}}.
+# Separate types describe the outer content part and nested URL object precisely.
+class ImageUrl(TypedDict):
+    """OpenAI-compatible inline image URL wrapper."""
+
+    url: str
+
+
+class ImageContentPart(TypedDict):
+    """One image item in a multimodal chat message."""
+
+    type: Literal["image_url"]
+    image_url: ImageUrl
+
+
+ChatContentPart = TextContentPart | ImageContentPart
+ChatContent = str | list[ChatContentPart]
+
+
 class ChatMessage(TypedDict):
-    """One OpenAI-compatible chat message."""
+    """One text or multimodal OpenAI-compatible chat message."""
 
     role: str
-    content: str
+    content: ChatContent
 
 
 class ChatProvider(Protocol):

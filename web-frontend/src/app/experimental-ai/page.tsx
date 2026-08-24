@@ -19,16 +19,34 @@
 
 'use client';
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import Image from 'next/image';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import PageDocumentationLink from '@/components/PageDocumentationLink';
+import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
-import { createSession, streamMessage } from './aiClient';
+import { AiCapabilities, createSession, getCapabilities, streamMessage } from './aiClient';
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  attachmentNames?: string[];
 }
+
+interface SelectedImage {
+  id: string;
+  file: File;
+  previewUrl: string;
+}
+
+const DISABLED_IMAGE_CAPABILITY: AiCapabilities['image_attachments'] = {
+  enabled: false,
+  accepted_media_types: [],
+  max_files: 1,
+  max_bytes_per_file: 1,
+};
+
 function messageId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -70,23 +88,83 @@ export default function ExperimentalAiPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isClientReady, setIsClientReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imageCapability, setImageCapability] = useState(DISABLED_IMAGE_CAPABILITY);
+  const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
   const sessionIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const selectedImagesRef = useRef<SelectedImage[]>([]);
 
   useEffect(() => {
+    const capabilitiesController = new AbortController();
     setIsClientReady(true);
-    return () => abortControllerRef.current?.abort();
+    getCapabilities(capabilitiesController.signal)
+      .then(capabilities => setImageCapability(capabilities.image_attachments))
+      .catch(() => {
+        // Text chat remains available when capability discovery fails.
+      });
+    return () => {
+      capabilitiesController.abort();
+      abortControllerRef.current?.abort();
+      selectedImagesRef.current.forEach(image => URL.revokeObjectURL(image.previewUrl));
+    };
   }, []);
+
+  useEffect(() => {
+    selectedImagesRef.current = selectedImages;
+  }, [selectedImages]);
+
+  const selectImages = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (files.length === 0) return;
+    if (selectedImages.length + files.length > imageCapability.max_files) {
+      setError(`Attach at most ${imageCapability.max_files} images to one question.`);
+      return;
+    }
+    if (files.some(file => !imageCapability.accepted_media_types.includes(file.type))) {
+      setError('Attach only PNG, JPEG, or WebP images.');
+      return;
+    }
+    if (files.some(file => file.size > imageCapability.max_bytes_per_file)) {
+      const maxMegabytes = (imageCapability.max_bytes_per_file / 1_000_000).toLocaleString(undefined, {
+        maximumFractionDigits: 1,
+      });
+      setError(`Each image must be ${maxMegabytes} MB or smaller.`);
+      return;
+    }
+
+    setError(null);
+    setSelectedImages(previous => [
+      ...previous,
+      ...files.map(file => ({ id: messageId(), file, previewUrl: URL.createObjectURL(file) })),
+    ]);
+  };
+
+  const removeImage = (id: string) => {
+    setSelectedImages(previous => {
+      const removed = previous.find(image => image.id === id);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      return previous.filter(image => image.id !== id);
+    });
+  };
 
   const send = async (event: FormEvent) => {
     event.preventDefault();
     const question = draft.trim();
     if (!question || isStreaming) return;
 
-    const userMessage: ChatMessage = { id: messageId(), role: 'user', content: question };
+    const imagesForMessage = selectedImages;
+    const userMessage: ChatMessage = {
+      id: messageId(),
+      role: 'user',
+      content: question,
+      attachmentNames: imagesForMessage.map(image => image.file.name),
+    };
     const assistantId = messageId();
     setMessages(previous => [...previous, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
     setDraft('');
+    imagesForMessage.forEach(image => URL.revokeObjectURL(image.previewUrl));
+    setSelectedImages([]);
     setError(null);
     setIsStreaming(true);
     const controller = new AbortController();
@@ -104,6 +182,7 @@ export default function ExperimentalAiPage() {
           ))),
         },
         controller.signal,
+        imagesForMessage.map(image => image.file),
       );
     } catch (streamError) {
       if (!controller.signal.aborted) {
@@ -122,12 +201,13 @@ export default function ExperimentalAiPage() {
       <div className="mb-6">
         <div className="mb-2 flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
+          <PageDocumentationLink href={DOCUMENTATION_URLS.experimentalAi} label="Experimental AI" />
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
             Experimental
           </span>
         </div>
         <p className="text-sm text-gray-600">
-          Ask questions about the schedule currently open in this browser. This first version is text-only and cannot change it.
+          Ask questions about the schedule currently open in this browser. You can attach images when the backend enables them, but the assistant cannot change the schedule.
         </p>
         <p className="mt-2 text-xs font-medium text-gray-500">
           Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
@@ -159,6 +239,11 @@ export default function ExperimentalAiPage() {
             <p className="whitespace-pre-wrap break-words">
               {message.content || (isStreaming ? 'Thinking…' : '')}
             </p>
+            {message.attachmentNames && message.attachmentNames.length > 0 && (
+              <p className="mt-2 text-xs opacity-80">
+                Attached: {message.attachmentNames.join(', ')}
+              </p>
+            )}
           </article>
         ))}
       </section>
@@ -169,42 +254,86 @@ export default function ExperimentalAiPage() {
         </div>
       )}
 
-      <form onSubmit={send} className="flex items-end gap-3">
-        <label className="flex-1">
-          <span className="sr-only">Ask about the current schedule</span>
-          <textarea
-            value={draft}
-            onChange={event => setDraft(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            disabled={!isClientReady || isStreaming}
-            rows={3}
-            maxLength={8000}
-            placeholder="Ask about the current schedule…"
-            className="w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100"
-          />
-        </label>
-        {isStreaming ? (
-          <button
-            type="button"
-            onClick={stop}
-            className="rounded-xl bg-gray-800 px-5 py-3 font-medium text-white hover:bg-gray-900"
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={!isClientReady || !draft.trim()}
-            className="rounded-xl bg-blue-600 px-5 py-3 font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-          >
-            Send
-          </button>
+      <form onSubmit={send} className="space-y-3">
+        {selectedImages.length > 0 && (
+          <div aria-label="Images attached to next message" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
+            {selectedImages.map(image => (
+              <div key={image.id} className="flex max-w-52 items-center gap-2 rounded-lg bg-gray-50 p-2">
+                <Image
+                  src={image.previewUrl}
+                  alt={`Preview of ${image.file.name}`}
+                  width={48}
+                  height={48}
+                  unoptimized
+                  className="h-12 w-12 rounded-md object-cover"
+                />
+                <span className="min-w-0 flex-1 truncate text-xs text-gray-700">{image.file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removeImage(image.id)}
+                  aria-label={`Remove ${image.file.name}`}
+                  className="rounded px-1.5 py-1 text-gray-500 hover:bg-gray-200 hover:text-gray-800"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         )}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          {imageCapability.enabled && (
+            <label className={`order-2 rounded-xl border px-3 py-3 text-center text-sm font-medium sm:order-1 ${
+              isStreaming || selectedImages.length >= imageCapability.max_files
+                ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400'
+                : 'cursor-pointer border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}>
+              <input
+                type="file"
+                accept={imageCapability.accepted_media_types.join(',')}
+                multiple
+                disabled={isStreaming || selectedImages.length >= imageCapability.max_files}
+                onChange={selectImages}
+                className="sr-only"
+              />
+              Attach images
+            </label>
+          )}
+          <label className="order-1 flex-1 sm:order-2">
+            <span className="sr-only">Ask about the current schedule</span>
+            <textarea
+              value={draft}
+              onChange={event => setDraft(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              disabled={!isClientReady || isStreaming}
+              rows={3}
+              maxLength={8000}
+              placeholder="Ask about the current schedule…"
+              className="w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100"
+            />
+          </label>
+          {isStreaming ? (
+            <button
+              type="button"
+              onClick={stop}
+              className="order-3 rounded-xl bg-gray-800 px-5 py-3 font-medium text-white hover:bg-gray-900"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!isClientReady || !draft.trim()}
+              className="order-3 rounded-xl bg-blue-600 px-5 py-3 font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+            >
+              Send
+            </button>
+          )}
+        </div>
       </form>
     </main>
   );

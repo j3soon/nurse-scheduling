@@ -32,6 +32,15 @@ material to the change.
 Page-title help icons link to the matching MkDocs page under `/docs`. Keep the
 mapping in `src/constants/urls.ts` synchronized with `../docs/mkdocs.yml`.
 
+Experimental AI controls must follow backend `/capabilities` responses. The
+backend remains authoritative for feature enablement and input limits.
+Local development calls the AI backend directly because Next.js development
+rewrites buffer SSE. Production uses the same-origin `/ai` reverse-proxy route
+with response buffering disabled. When a capability-gated control is missing,
+inspect the capabilities request from the exact browser origin and validate a
+non-loopback host for container development. Loopback-only browser checks do
+not catch blocked Next.js development origins or CORS failures.
+
 To test specific source files from the repository root, run:
 
 ```sh

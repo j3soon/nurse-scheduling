@@ -1,4 +1,4 @@
-"""Tests for the text-only experimental AI service."""
+"""Tests for the experimental AI service."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import base64
 import json
 from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
@@ -29,6 +30,10 @@ from fastapi.testclient import TestClient
 from nurse_scheduling.ai.app import SERVICE_NAME, create_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError
+
+PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class FakeProvider:
@@ -105,11 +110,113 @@ def test_health_and_streamed_schedule_question() -> None:
     ]
     prompt = provider.calls[0]
     assert prompt[-1] == {"role": "user", "content": "Who works Monday?"}
-    assert "Alice" in prompt[-2]["content"]
+    assert "Alice" in prompt[0]["content"]
     assert "untrusted data" in prompt[0]["content"]
 
 
-def test_completed_turn_is_available_to_the_next_question() -> None:
+def test_capabilities_report_configured_image_limits() -> None:
+    client = TestClient(
+        create_app(
+            settings=make_settings(attachment_mode="images", max_image_files=2, max_image_bytes=1234),
+            provider=FakeProvider(),
+        )
+    )
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "image_attachments": {
+            "enabled": True,
+            "accepted_media_types": ["image/jpeg", "image/png", "image/webp"],
+            "max_files": 2,
+            "max_bytes_per_file": 1234,
+        }
+    }
+
+
+def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
+    provider = FakeProvider([["Image answer"], ["Follow-up answer"]])
+    client = TestClient(create_app(settings=make_settings(attachment_mode="images"), provider=provider))
+    session_id = create_session(client)
+
+    image_response = client.post(
+        f"/sessions/{session_id}/messages",
+        data={"message": "What is shown?"},
+        files={"images": ("ward.png", PNG_BYTES, "image/png")},
+    )
+    follow_up_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Summarize your answer."},
+    )
+
+    assert image_response.status_code == 200
+    assert follow_up_response.status_code == 200
+    image_content = provider.calls[0][-1]["content"]
+    assert image_content == [
+        {"type": "text", "text": "What is shown?"},
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{base64.b64encode(PNG_BYTES).decode('ascii')}"},
+        },
+    ]
+    follow_up_prompt = json.dumps(provider.calls[1])
+    assert "Images were attached to this message" in follow_up_prompt
+    assert "data:image/png;base64" not in follow_up_prompt
+
+
+@pytest.mark.parametrize(
+    ("settings", "files", "expected_status", "expected_detail"),
+    [
+        (
+            {"attachment_mode": "none"},
+            [("images", ("ward.png", PNG_BYTES, "image/png"))],
+            422,
+            "Image attachments are disabled.",
+        ),
+        (
+            {"attachment_mode": "images"},
+            [("images", ("ward.png", b"not an image", "image/png"))],
+            415,
+            "Image content does not match its type.",
+        ),
+        (
+            {"attachment_mode": "images", "max_image_bytes": 8},
+            [("images", ("ward.png", PNG_BYTES, "image/png"))],
+            413,
+            "Image attachment is too large.",
+        ),
+        (
+            {"attachment_mode": "images", "max_image_files": 1},
+            [
+                ("images", ("first.png", PNG_BYTES, "image/png")),
+                ("images", ("second.png", PNG_BYTES, "image/png")),
+            ],
+            413,
+            "Too many image attachments.",
+        ),
+    ],
+)
+def test_image_attachment_limits(
+    settings: dict[str, object],
+    files: list[tuple[str, tuple[str, bytes, str]]],
+    expected_status: int,
+    expected_detail: str,
+) -> None:
+    client = TestClient(create_app(settings=make_settings(**settings), provider=FakeProvider()))
+    session_id = create_session(client)
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        data={"message": "Question"},
+        files=files,
+    )
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"] == expected_detail
+
+
+def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     provider = FakeProvider([["First answer"], ["Second answer"]])
     client = TestClient(create_app(settings=make_settings(), provider=provider))
     session_id = create_session(client, "description: current")
@@ -127,7 +234,24 @@ def test_completed_turn_is_available_to_the_next_question() -> None:
     assert second.status_code == 200
     assert {"role": "user", "content": "First question"} in provider.calls[1]
     assert {"role": "assistant", "content": "First answer"} in provider.calls[1]
-    assert "description: current" in provider.calls[1][-2]["content"]
+    assert "description: current" in provider.calls[1][0]["content"]
+    assert provider.calls[1][0]["role"] == "system"
+    assert all(message["role"] != "system" for message in provider.calls[1][1:])
+
+
+def test_private_container_origin_can_call_ai_backend_directly() -> None:
+    client = TestClient(create_app(settings=make_settings(), provider=FakeProvider()))
+
+    response = client.options(
+        "/capabilities",
+        headers={
+            "Origin": "http://192.168.0.117:3005",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://192.168.0.117:3005"
 
 
 def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
@@ -186,4 +310,21 @@ def test_environment_configuration_requires_a_token(monkeypatch: pytest.MonkeyPa
     monkeypatch.delenv("AI_PROVIDER_API_KEY", raising=False)
 
     with pytest.raises(ValueError, match="AI_PROVIDER_API_KEY is required"):
+        AiSettings.from_env()
+
+
+def test_environment_configuration_enables_images_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_ATTACHMENT_MODE", raising=False)
+
+    assert AiSettings.from_env().attachment_mode == "images"
+
+
+def test_environment_configuration_rejects_unknown_attachment_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_ATTACHMENT_MODE", "documents")
+
+    with pytest.raises(ValueError, match="AI_ATTACHMENT_MODE must be one of: none, images"):
         AiSettings.from_env()

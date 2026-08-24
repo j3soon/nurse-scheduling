@@ -19,27 +19,48 @@
 
 // This test is mostly AI generated.
 
-import { expect, test } from '@playwright/test';
+import { expect, Page, test } from '@playwright/test';
 
-test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
-  let sessionBody: { schedule_yaml?: string } = {};
-  let messageBody: { message?: string } = {};
+interface CapturedRequests {
+  scheduleYaml: string;
+  messageBody: string;
+  messageContentType: string;
+}
 
-  await page.route('http://127.0.0.1:8001/**', async route => {
+async function mockAiBackend(page: Page, imageAttachments: boolean): Promise<CapturedRequests> {
+  const captured = { scheduleYaml: '', messageBody: '', messageContentType: '' };
+
+  await page.route('**/ai/**', async route => {
     const request = route.request();
     const frontendOrigin = request.headers()['origin'] ?? 'http://127.0.0.1:3000';
     const corsHeaders = {
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Origin': frontendOrigin,
     };
     if (request.method() === 'OPTIONS') {
       await route.fulfill({ status: 204, headers: corsHeaders });
       return;
     }
+    if (request.url().endsWith('/capabilities')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({
+          image_attachments: {
+            enabled: imageAttachments,
+            accepted_media_types: ['image/jpeg', 'image/png', 'image/webp'],
+            max_files: 4,
+            max_bytes_per_file: 5_000_000,
+          },
+        }),
+      });
+      return;
+    }
     if (request.url().endsWith('/sessions')) {
-      sessionBody = request.postDataJSON() as typeof sessionBody;
+      captured.scheduleYaml = (request.postDataJSON() as { schedule_yaml: string }).schedule_yaml;
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -49,24 +70,51 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
       return;
     }
 
-    messageBody = request.postDataJSON() as typeof messageBody;
+    captured.messageBody = request.postData() ?? '';
+    captured.messageContentType = request.headers()['content-type'] ?? '';
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
       headers: corsHeaders,
       body: [
-        'event: delta\ndata: {"text":"Alice works "}\n\n',
-        'event: delta\ndata: {"text":"the first date."}\n\n',
+        'event: delta\ndata: {"text":"The image and schedule "}\n\n',
+        'event: delta\ndata: {"text":"were received."}\n\n',
         'event: done\ndata: {"message_id":"answer-id"}\n\n',
       ].join(''),
     });
   });
 
+  return captured;
+}
+
+test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
+  const captured = await mockAiBackend(page, false);
+
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who works first?');
   await page.getByRole('button', { name: 'Send' }).click();
 
-  await expect(page.getByText('Alice works the first date.')).toBeVisible();
-  expect(messageBody.message).toBe('Who works first?');
-  expect(sessionBody.schedule_yaml).toContain('apiVersion:');
+  await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?' });
+  expect(captured.scheduleYaml).toContain('apiVersion:');
+});
+
+test('previews and sends an enabled image attachment', async ({ page }) => {
+  const captured = await mockAiBackend(page, true);
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+
+  await page.goto('/experimental-ai');
+  await page.getByLabel('Attach images').setInputFiles({ name: 'ward.png', mimeType: 'image/png', buffer: png });
+  await expect(page.getByAltText('Preview of ward.png')).toBeVisible();
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('What is shown?');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  await expect(page.getByText('Attached: ward.png')).toBeVisible();
+  expect(captured.messageContentType).toContain('multipart/form-data');
+  expect(captured.messageBody).toContain('What is shown?');
+  expect(captured.messageBody).toContain('ward.png');
 });

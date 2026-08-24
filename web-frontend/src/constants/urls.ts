@@ -37,7 +37,7 @@ export const WEBSITE_URL = 'https://nursescheduling.org';
 
 // Netlify publishes MkDocs at /docs. Local development serves it separately.
 const DEFAULT_DOCUMENTATION_BASE_URL = process.env.NODE_ENV === 'development'
-  ? 'http://127.0.0.1:8001/docs'
+  ? 'http://127.0.0.1:8003/docs'
   : '/docs';
 const DOCUMENTATION_BASE_URL = (
   process.env.NEXT_PUBLIC_DOCS_BASE_URL || DEFAULT_DOCUMENTATION_BASE_URL
@@ -56,6 +56,7 @@ export const DOCUMENTATION_URLS = {
   exportLayout: `${DOCUMENTATION_BASE_URL}/user-guide/export-layout/`,
   saveAndLoad: `${DOCUMENTATION_BASE_URL}/user-guide/save-and-load/`,
   optimizeAndExport: `${DOCUMENTATION_BASE_URL}/user-guide/optimize-and-export/`,
+  experimentalAi: `${DOCUMENTATION_BASE_URL}/user-guide/experimental-ai/`,
 } as const;
 
 // Build URLs for environment switching (static entries)

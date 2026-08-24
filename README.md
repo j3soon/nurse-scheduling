@@ -283,9 +283,10 @@ bun run lint -- --fix
 
 ### Experimental AI Chat
 
-The experimental chat answers text questions about the schedule currently open
-in the frontend. It runs as a separate backend process and sends the schedule
-to an OpenAI-compatible provider.
+The experimental chat answers questions about the schedule currently open in
+the frontend. Image attachments are enabled by default and can be disabled with
+`AI_ATTACHMENT_MODE=none`. It runs as a separate backend process and sends the
+schedule and enabled inputs to an OpenAI-compatible provider.
 
 Create a local configuration file. The real `.env.ai` file is ignored by Git:
 
@@ -579,8 +580,8 @@ uv venv --python 3.12
 source .venv/bin/activate
 # install dependencies
 uv pip install -r requirements.txt
-# preview documentation
-mkdocs serve
+# preview documentation on the port used by local page-help links
+mkdocs serve -a 127.0.0.1:8003
 ```
 
 For building static site, run:
