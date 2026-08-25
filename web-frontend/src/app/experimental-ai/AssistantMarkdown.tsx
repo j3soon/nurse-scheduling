@@ -65,7 +65,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
       </button>
       <pre
         ref={preRef}
-        className="max-w-full overflow-x-auto rounded-lg bg-gray-900 p-3 pt-10 text-sm text-gray-100 [&_code]:bg-transparent [&_code]:p-0"
+        className="max-w-full overflow-x-auto rounded-lg bg-gray-900 py-3 pl-3 pr-12 text-sm text-gray-100 [&_code]:bg-transparent [&_code]:p-0"
       >
         {children}
       </pre>

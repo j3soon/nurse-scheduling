@@ -136,9 +136,43 @@ test('renders assistant Markdown with safe images and copyable code', async ({ p
   expect(codeBox).not.toBeNull();
   expect(buttonBox).not.toBeNull();
   expect(buttonBox!.x).toBeGreaterThan(codeBox!.x + codeBox!.width / 2);
+  expect(await codeBlock.evaluate(element => getComputedStyle(element).paddingTop)).toBe('12px');
   await copyButton.click();
   await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('people: []');
+});
+
+test('offers a shortcut when the reader scrolls away from the latest message', async ({ page }) => {
+  const longAnswer = Array.from({ length: 80 }, (_, index) => `Coverage detail ${index + 1}`).join('\n');
+  await mockAiBackend(page, { images: false, documents: false }, [longAnswer]);
+
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Give detailed coverage.');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  const messages = page.getByRole('region', { name: 'Chat messages' });
+  const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await expect(messages.getByText('Coverage detail 80')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight)).toBe(true);
+  await expect(composer).toBeInViewport();
+  await page.mouse.move(400, 300);
+  await page.mouse.wheel(0, -800);
+
+  const scrollButton = page.getByRole('button', { name: 'Scroll to bottom' });
+  await expect(scrollButton).toBeVisible();
+  await expect(scrollButton).toHaveAttribute('title', 'Scroll to bottom');
+  await expect(scrollButton).toHaveText('');
+  await expect
+    .poll(async () => {
+      const buttonBox = await scrollButton.boundingBox();
+      return buttonBox ? buttonBox.x + buttonBox.width / 2 : null;
+    })
+    .toBe(page.viewportSize()!.width / 2);
+  await expect(composer).not.toBeInViewport();
+  expect(await messages.evaluate(element => getComputedStyle(element).overflowY)).toBe('visible');
+  await scrollButton.click();
+  await expect(scrollButton).toBeHidden();
+  await expect(composer).toBeInViewport();
 });
 
 test('previews and sends an enabled image attachment', async ({ page }) => {

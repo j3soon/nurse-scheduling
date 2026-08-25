@@ -21,6 +21,7 @@
 
 import Image from 'next/image';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FiArrowDown } from 'react-icons/fi';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
@@ -73,6 +74,23 @@ function messageId(): string {
     : `${Date.now()}-${Math.random()}`;
 }
 
+function ThinkingIndicator() {
+  return (
+    <span role="status" aria-label="Thinking" className="inline-flex items-center gap-2 text-gray-600">
+      <span>Thinking</span>
+      <span aria-hidden="true" className="inline-flex gap-1">
+        {[0, 1, 2].map(index => (
+          <span
+            key={index}
+            className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse"
+            style={{ animationDelay: `${index * 160}ms` }}
+          />
+        ))}
+      </span>
+    </span>
+  );
+}
+
 export default function ExperimentalAiPage() {
   const {
     apiVersionData,
@@ -112,9 +130,12 @@ export default function ExperimentalAiPage() {
   const [imageCapability, setImageCapability] = useState(DISABLED_IMAGE_CAPABILITY);
   const [documentCapability, setDocumentCapability] = useState(DISABLED_DOCUMENT_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
+  const isNearPageBottomRef = useRef(true);
+  const composerRef = useRef<HTMLFormElement | null>(null);
 
   useEffect(() => {
     const capabilitiesController = new AbortController();
@@ -143,6 +164,29 @@ export default function ExperimentalAiPage() {
   useEffect(() => {
     selectedAttachmentsRef.current = selectedAttachments;
   }, [selectedAttachments]);
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => {
+      isNearPageBottomRef.current = entry.isIntersecting;
+      setShowScrollToBottom(messages.length > 0 && !entry.isIntersecting);
+    });
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (isNearPageBottomRef.current && typeof composerRef.current?.scrollIntoView === 'function') {
+      composerRef.current.scrollIntoView({ block: 'end', behavior: 'instant' });
+    }
+  }, [messages]);
+
+  const scrollToPageBottom = () => {
+    isNearPageBottomRef.current = true;
+    setShowScrollToBottom(false);
+    composerRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  };
 
   const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -229,6 +273,8 @@ export default function ExperimentalAiPage() {
       attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
     const assistantId = messageId();
+    isNearPageBottomRef.current = true;
+    setShowScrollToBottom(false);
     setMessages(previous => [...previous, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
     setDraft('');
     attachmentsForMessage.forEach(attachment => {
@@ -300,7 +346,7 @@ export default function ExperimentalAiPage() {
       <section
         aria-label="Chat messages"
         aria-live="polite"
-        className="mb-4 min-h-80 flex-1 space-y-4 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-4"
+        className="mb-4 min-h-80 space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-4"
       >
         {messages.length === 0 && (
           <div className="flex min-h-72 items-center justify-center text-center text-gray-500">
@@ -321,10 +367,10 @@ export default function ExperimentalAiPage() {
             </p>
             {message.role === 'assistant' && message.content ? (
               <AssistantMarkdown content={message.content} />
+            ) : message.role === 'assistant' && isStreaming ? (
+              <ThinkingIndicator />
             ) : (
-              <p className="whitespace-pre-wrap break-words">
-                {message.content || (isStreaming ? 'Thinking…' : '')}
-              </p>
+              <p className="whitespace-pre-wrap break-words">{message.content}</p>
             )}
             {message.attachmentNames && message.attachmentNames.length > 0 && (
               <p className="mt-2 text-xs opacity-80">
@@ -334,6 +380,18 @@ export default function ExperimentalAiPage() {
           </article>
         ))}
       </section>
+
+      {showScrollToBottom && (
+        <button
+          type="button"
+          onClick={scrollToPageBottom}
+          aria-label="Scroll to bottom"
+          title="Scroll to bottom"
+          className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+        >
+          <FiArrowDown aria-hidden="true" className="h-4 w-4" />
+        </button>
+      )}
 
       {error && (
         <div role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -347,7 +405,7 @@ export default function ExperimentalAiPage() {
         </div>
       )}
 
-      <form onSubmit={send} className="space-y-3">
+      <form ref={composerRef} onSubmit={send} className="space-y-3">
         {selectedAttachments.length > 0 && (
           <div aria-label="Files attached to next message" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
             {selectedAttachments.map(attachment => (

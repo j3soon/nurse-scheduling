@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 
@@ -189,6 +189,24 @@ describe('ExperimentalAiPage', () => {
     );
     expect(screen.queryByLabelText('Attach files')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  });
+
+  it('animates the thinking indicator while awaiting the first response token', async () => {
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(() => new Promise<void>(resolve => {
+      finishStream = resolve;
+    }));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Think about this.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const thinking = await screen.findByRole('status', { name: 'Thinking' });
+    expect(thinking.querySelectorAll('[style*="animation-delay"]')).toHaveLength(3);
+
+    finishStream?.();
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Thinking' })).not.toBeInTheDocument());
   });
 
   it('shows backend failures without discarding the user question', async () => {
