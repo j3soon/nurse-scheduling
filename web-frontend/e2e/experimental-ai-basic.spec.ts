@@ -30,6 +30,7 @@ interface CapturedRequests {
 async function mockAiBackend(
   page: Page,
   attachments: { images: boolean; documents: boolean },
+  answerDeltas = ['The image and schedule ', 'were received.'],
 ): Promise<CapturedRequests> {
   const captured = { scheduleYaml: '', messageBody: '', messageContentType: '' };
 
@@ -86,8 +87,7 @@ async function mockAiBackend(
       contentType: 'text/event-stream',
       headers: corsHeaders,
       body: [
-        'event: delta\ndata: {"text":"The image and schedule "}\n\n',
-        'event: delta\ndata: {"text":"were received."}\n\n',
+        ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
         'event: done\ndata: {"message_id":"answer-id"}\n\n',
       ].join(''),
     });
@@ -106,6 +106,39 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?' });
   expect(captured.scheduleYaml).toContain('apiVersion:');
+});
+
+test('renders assistant Markdown with safe images and copyable code', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await mockAiBackend(
+    page,
+    { images: false, documents: false },
+    [
+      '## Coverage\n\n**Alice** works Monday.\n\n',
+      '| Person | Shift |\n| --- | --- |\n| Alice | D |\n\n```yaml\npeople: []\n```\n\n![tracker](https://tracker.example/pixel.png)',
+    ],
+  );
+
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Summarize coverage.');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByRole('heading', { level: 2, name: 'Coverage' })).toBeVisible();
+  await expect(page.getByRole('table')).toContainText('Alice');
+  await expect(page.getByText('[Remote image omitted: tracker]')).toBeVisible();
+  await expect(page.locator('article img')).toHaveCount(0);
+
+  const codeBlock = page.locator('article pre');
+  const copyButton = page.getByRole('button', { name: 'Copy code' });
+  await expect(codeBlock).toContainText('people: []');
+  await expect(copyButton).toBeVisible();
+  const [codeBox, buttonBox] = await Promise.all([codeBlock.boundingBox(), copyButton.boundingBox()]);
+  expect(codeBox).not.toBeNull();
+  expect(buttonBox).not.toBeNull();
+  expect(buttonBox!.x).toBeGreaterThan(codeBox!.x + codeBox!.width / 2);
+  await copyButton.click();
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('people: []');
 });
 
 test('previews and sends an enabled image attachment', async ({ page }) => {

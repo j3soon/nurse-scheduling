@@ -155,6 +155,8 @@ backend instance until shared AI storage is added.
   provider. Configure a matching request-body limit at the public reverse proxy.
 - Accepted documents are bounded and checked for a matching supported filename
   extension, declared MIME type, and strict UTF-8 text content.
+- Assistant answers use a safe Markdown renderer. Raw HTML is disabled and
+  remote Markdown images are omitted to prevent third-party requests.
 - A failed or cancelled answer is not added to conversation history.
 
 ## Troubleshoot local development
@@ -196,6 +198,7 @@ pytest -q tests/test_ai_basic.py
 
 cd /app/web-frontend
 bun run test -- \
+  src/app/experimental-ai/AssistantMarkdown.test.tsx \
   src/app/experimental-ai/aiClient.test.ts \
   src/app/experimental-ai/page.test.tsx \
   src/components/Navigation.test.tsx

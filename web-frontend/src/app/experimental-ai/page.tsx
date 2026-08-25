@@ -25,6 +25,7 @@ import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
+import AssistantMarkdown from './AssistantMarkdown';
 import { AiCapabilities, createSession, getCapabilities, streamMessage } from './aiClient';
 
 interface ChatMessage {
@@ -318,9 +319,13 @@ export default function ExperimentalAiPage() {
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
               {message.role === 'user' ? 'You' : 'Assistant'}
             </p>
-            <p className="whitespace-pre-wrap break-words">
-              {message.content || (isStreaming ? 'Thinking…' : '')}
-            </p>
+            {message.role === 'assistant' && message.content ? (
+              <AssistantMarkdown content={message.content} />
+            ) : (
+              <p className="whitespace-pre-wrap break-words">
+                {message.content || (isStreaming ? 'Thinking…' : '')}
+              </p>
+            )}
             {message.attachmentNames && message.attachmentNames.length > 0 && (
               <p className="mt-2 text-xs opacity-80">
                 Attached: {message.attachmentNames.join(', ')}

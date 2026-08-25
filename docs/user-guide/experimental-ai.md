@@ -32,6 +32,10 @@ The blue development-version banner appears only in non-release builds.
    <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line.
 6. Select **Stop** to cancel a response in progress.
 
+Assistant answers render Markdown, including headings, lists, links, code, and
+tables. Use the copy icon at the top-right of a code block to copy its contents.
+Raw HTML is ignored. Remote images written in an answer are not loaded.
+
 The browser uploads one YAML snapshot when it creates the chat session. Later
 questions in that session use the same backend-owned snapshot. Reload the page
 to begin a new chat from the latest schedule.
