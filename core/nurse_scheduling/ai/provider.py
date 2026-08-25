@@ -18,12 +18,22 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import json
+import logging
+import re
 from collections.abc import AsyncIterator, Sequence
 from typing import Literal, Protocol, TypedDict
+from uuid import uuid4
 
 import httpx
 
 from .config import AiSettings
+
+logger = logging.getLogger("nurse_scheduling.ai.provider")
+BEARER_TOKEN_PATTERN = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
+SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)(\b(?:api[_-]?key|access[_-]?token|authorization|secret)\b\s*[\"']?\s*[:=]\s*[\"']?)"
+    r"([^\"'\s,;<}]+)"
+)
 
 
 class TextContentPart(TypedDict):
@@ -68,7 +78,14 @@ class ChatProvider(Protocol):
 
 
 class ProviderError(RuntimeError):
-    """A sanitized provider or protocol failure."""
+    """A provider or protocol failure forwarded to the chat client."""
+
+
+def _redact_provider_error(response_body: str, provider_api_key: str) -> str:
+    """Redact known credential forms before writing an upstream error to logs."""
+    redacted = response_body.replace(provider_api_key, "[REDACTED]") if provider_api_key else response_body
+    redacted = BEARER_TOKEN_PATTERN.sub(r"\1[REDACTED]", redacted)
+    return SECRET_ASSIGNMENT_PATTERN.sub(r"\1[REDACTED]", redacted)
 
 
 class OpenAiCompatibleProvider:
@@ -99,7 +116,22 @@ class OpenAiCompatibleProvider:
             ):
                 if response.status_code != 200:
                     await response.aread()
-                    raise ProviderError(f"The AI provider returned HTTP {response.status_code}.")
+                    error_id = str(uuid4())
+                    response_body = response.text.strip()
+                    if response_body:
+                        logger.error(
+                            "AI provider HTTP error error_id=%s status=%s response_body=%s",
+                            error_id,
+                            response.status_code,
+                            _redact_provider_error(response_body, self._settings.provider_api_key),
+                        )
+                    else:
+                        logger.error(
+                            "AI provider HTTP error error_id=%s status=%s empty_response_body=true",
+                            error_id,
+                            response.status_code,
+                        )
+                    raise ProviderError(f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.")
 
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):

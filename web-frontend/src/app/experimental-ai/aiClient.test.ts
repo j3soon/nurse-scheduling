@@ -148,9 +148,10 @@ describe('AI client', () => {
     expect(onDone).toHaveBeenCalledOnce();
   });
 
-  it('surfaces a streamed provider error', async () => {
+  it('surfaces a provider status with its backend error ID', async () => {
+    const providerError = 'The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f.';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'event: error\ndata: {"message":"Provider unavailable."}\n\n',
+      `event: error\ndata: ${JSON.stringify({ message: providerError })}\n\n`,
     ])));
 
     await expect(streamMessage(
@@ -158,7 +159,7 @@ describe('AI client', () => {
       'Question',
       { onDelta: vi.fn() },
       new AbortController().signal,
-    )).rejects.toThrow('Provider unavailable.');
+    )).rejects.toThrow(providerError);
   });
 
   it('sends images as multipart form data', async () => {

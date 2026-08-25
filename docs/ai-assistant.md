@@ -157,6 +157,9 @@ backend instance until shared AI storage is added.
   extension, declared MIME type, and strict UTF-8 text content.
 - Assistant answers use a safe Markdown renderer. Raw HTML is disabled and
   remote Markdown images are omitted to prevent third-party requests.
+- Provider HTTP errors return a searchable error ID to the browser. The backend
+  logs the upstream response body under that ID after redacting common
+  credential forms.
 - A failed or cancelled answer is not added to conversation history.
 
 ## Troubleshoot local development
@@ -167,6 +170,15 @@ backend instance until shared AI storage is added.
 | Provider unavailable | Check `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and provider availability. |
 | An attachment is rejected | Check its supported type and the configured size and count limits. Text documents must use UTF-8. |
 | An answer stops early | Retry it. Cancelled and failed answers are not added to backend history. |
+
+For a provider HTTP failure, search the AI backend log using the error ID shown
+in the browser. If the logged response is a Cloudflare `520`, inspect the
+provider origin for an empty, malformed, or abruptly closed response. A `525`
+means Cloudflare could not complete TLS with the provider origin. Correlate the
+logged timestamp and Cloudflare Ray ID with the provider proxy, tunnel, and
+origin logs. See Cloudflare's [520](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-520/)
+and [525](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-525/)
+guidance.
 
 ### Capability-gated controls
 
@@ -193,8 +205,9 @@ Run the focused checks inside the development container:
 
 ```sh
 cd /app/core
-ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py tests/test_ai_basic.py
-pytest -q tests/test_ai_basic.py
+ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
+  tests/test_ai_basic.py tests/test_ai_provider.py
+pytest -q tests/test_ai_basic.py tests/test_ai_provider.py
 
 cd /app/web-frontend
 bun run test -- \

@@ -210,14 +210,16 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('shows backend failures without discarding the user question', async () => {
-    mockStreamMessage.mockRejectedValueOnce(new Error('Provider unavailable.'));
+    const providerError = 'The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f.';
+    mockStreamMessage.mockRejectedValueOnce(new Error(providerError));
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Can you help?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Provider unavailable.');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(providerError);
     expect(screen.getByText('Can you help?')).toBeInTheDocument();
   });
 });

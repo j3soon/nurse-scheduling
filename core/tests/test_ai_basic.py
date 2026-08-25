@@ -401,7 +401,8 @@ def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
 
 
 def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
-    provider = FakeProvider([ProviderError("Provider unavailable."), ["Recovered"]])
+    provider_error = "The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f."
+    provider = FakeProvider([ProviderError(provider_error), ["Recovered"]])
     client = TestClient(create_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
@@ -414,7 +415,7 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
         json={"message": "Retry"},
     )
 
-    assert parse_sse(failed.text) == [("error", {"message": "Provider unavailable."})]
+    assert parse_sse(failed.text) == [("error", {"message": provider_error})]
     assert recovered.status_code == 200
     assert all(message["content"] != "Failed question" for message in provider.calls[1])
 
