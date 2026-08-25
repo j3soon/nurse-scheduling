@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 AttachmentMode = Literal["none", "images"]
+DocumentAttachmentMode = Literal["none", "text"]
 
 
 def _read_positive_int(name: str, default: int) -> int:
@@ -69,6 +70,14 @@ def _read_attachment_mode() -> AttachmentMode:
     return cast(AttachmentMode, value)
 
 
+def _read_document_attachment_mode() -> DocumentAttachmentMode:
+    """Read the enabled document attachment capability."""
+    value = os.getenv("AI_DOCUMENT_ATTACHMENT_MODE", "text").strip().lower()
+    if value not in {"none", "text"}:
+        raise ValueError("AI_DOCUMENT_ATTACHMENT_MODE must be one of: none, text")
+    return cast(DocumentAttachmentMode, value)
+
+
 @dataclass(frozen=True)
 class AiSettings:
     """Runtime settings for one isolated AI backend process."""
@@ -86,6 +95,9 @@ class AiSettings:
     attachment_mode: AttachmentMode = "images"
     max_image_files: int = 4
     max_image_bytes: int = 5_000_000
+    document_attachment_mode: DocumentAttachmentMode = "text"
+    max_document_files: int = 4
+    max_document_bytes: int = 50_000
     cookie_secure: bool = True
 
     @classmethod
@@ -116,5 +128,8 @@ class AiSettings:
             attachment_mode=_read_attachment_mode(),
             max_image_files=_read_positive_int("AI_MAX_IMAGE_FILES", 4),
             max_image_bytes=_read_positive_int("AI_MAX_IMAGE_BYTES", 5_000_000),
+            document_attachment_mode=_read_document_attachment_mode(),
+            max_document_files=_read_positive_int("AI_MAX_DOCUMENT_FILES", 4),
+            max_document_bytes=_read_positive_int("AI_MAX_DOCUMENT_BYTES", 50_000),
             cookie_secure=_read_bool("AI_COOKIE_SECURE", True),
         )

@@ -284,9 +284,11 @@ bun run lint -- --fix
 ### Experimental AI Chat
 
 The experimental chat answers questions about the schedule currently open in
-the frontend. Image attachments are enabled by default and can be disabled with
-`AI_ATTACHMENT_MODE=none`. It runs as a separate backend process and sends the
-schedule and enabled inputs to an OpenAI-compatible provider.
+the frontend. Image and UTF-8 TXT, Markdown, and CSV attachments are enabled by
+default. Disable them independently with `AI_ATTACHMENT_MODE=none` and
+`AI_DOCUMENT_ATTACHMENT_MODE=none`. The chat runs as a separate backend
+process and sends the schedule and enabled inputs to an OpenAI-compatible
+provider.
 
 Create a local configuration file. The real `.env.ai` file is ignored by Git:
 

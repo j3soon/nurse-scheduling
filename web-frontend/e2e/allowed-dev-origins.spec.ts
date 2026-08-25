@@ -86,13 +86,19 @@ test('hydrates through a non-loopback development origin', async ({ page }) => {
           max_files: 1,
           max_bytes_per_file: 1000,
         },
+        document_attachments: {
+          enabled: true,
+          accepted_extensions: ['.txt', '.md', '.csv'],
+          max_files: 1,
+          max_bytes_per_file: 50000,
+        },
       }),
     }));
 
     await page.goto(`http://${host}:${DEV_PORT}/experimental-ai`);
 
     await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
-    await expect(page.getByLabel('Attach images')).toBeAttached();
+    await expect(page.getByLabel('Attach files')).toBeAttached();
   } finally {
     server.kill('SIGTERM');
     await Promise.race([

@@ -61,6 +61,12 @@ describe('ExperimentalAiPage', () => {
         max_files: 4,
         max_bytes_per_file: 5_000_000,
       },
+      document_attachments: {
+        enabled: false,
+        accepted_extensions: ['.txt', '.md', '.csv'],
+        max_files: 4,
+        max_bytes_per_file: 50_000,
+      },
     });
     mockStreamMessage.mockReset().mockImplementation(async (
       _sessionId: string,
@@ -92,7 +98,7 @@ describe('ExperimentalAiPage', () => {
       'Who works Monday?',
       expect.any(Object),
       expect.any(AbortSignal),
-      [],
+      { images: [], documents: [] },
     );
   });
 
@@ -104,6 +110,12 @@ describe('ExperimentalAiPage', () => {
         max_files: 2,
         max_bytes_per_file: 1000,
       },
+      document_attachments: {
+        enabled: false,
+        accepted_extensions: ['.txt', '.md', '.csv'],
+        max_files: 4,
+        max_bytes_per_file: 50_000,
+      },
     });
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
@@ -111,7 +123,7 @@ describe('ExperimentalAiPage', () => {
     const image = new File(['png'], 'ward.png', { type: 'image/png' });
     render(<ExperimentalAiPage />);
 
-    const input = await screen.findByLabelText('Attach images');
+    const input = await screen.findByLabelText('Attach files');
     await user.upload(input, image);
     expect(screen.getByAltText('Preview of ward.png')).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'What is shown?');
@@ -122,11 +134,61 @@ describe('ExperimentalAiPage', () => {
       'What is shown?',
       expect.any(Object),
       expect.any(AbortSignal),
-      [image],
+      { images: [image], documents: [] },
     );
     expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
     expect(createObjectUrl).toHaveBeenCalledWith(image);
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:image-preview');
+  });
+
+  it('previews and sends text documents when the backend enables them', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({
+      image_attachments: {
+        enabled: false,
+        accepted_media_types: ['image/png'],
+        max_files: 2,
+        max_bytes_per_file: 1000,
+      },
+      document_attachments: {
+        enabled: true,
+        accepted_extensions: ['.txt', '.md', '.csv'],
+        max_files: 2,
+        max_bytes_per_file: 50_000,
+      },
+    });
+    const user = userEvent.setup();
+    const document = new File(['name,shift\nAlice,day\n'], 'staff.csv', { type: '' });
+    render(<ExperimentalAiPage />);
+
+    const input = await screen.findByLabelText('Attach files');
+    await user.upload(input, document);
+    expect(screen.getByText('csv')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the CSV.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(mockStreamMessage).toHaveBeenCalledWith(
+      'session-id',
+      'Check the CSV.',
+      expect.any(Object),
+      expect.any(AbortSignal),
+      {
+        images: [],
+        documents: [expect.objectContaining({ name: 'staff.csv', type: 'text/csv' })],
+      },
+    );
+    expect(screen.getByText('Attached: staff.csv')).toBeInTheDocument();
+  });
+
+  it('shows an error when capability discovery fails', async () => {
+    mockGetCapabilities.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not load AI capabilities. Check that the AI backend is reachable from this browser, then reload the page.',
+    );
+    expect(screen.queryByLabelText('Attach files')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
   });
 
   it('shows backend failures without discarding the user question', async () => {

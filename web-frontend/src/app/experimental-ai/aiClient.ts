@@ -29,6 +29,17 @@ export interface AiCapabilities {
     max_files: number;
     max_bytes_per_file: number;
   };
+  document_attachments: {
+    enabled: boolean;
+    accepted_extensions: string[];
+    max_files: number;
+    max_bytes_per_file: number;
+  };
+}
+
+export interface MessageAttachments {
+  images?: File[];
+  documents?: File[];
 }
 
 interface SessionResponse {
@@ -68,6 +79,7 @@ export async function getCapabilities(signal?: AbortSignal): Promise<AiCapabilit
 
   const body = await response.json() as Partial<AiCapabilities>;
   const images = body.image_attachments;
+  const documents = body.document_attachments;
   if (
     typeof images?.enabled !== 'boolean'
     || !Array.isArray(images.accepted_media_types)
@@ -76,6 +88,13 @@ export async function getCapabilities(signal?: AbortSignal): Promise<AiCapabilit
     || images.max_files <= 0
     || !Number.isInteger(images.max_bytes_per_file)
     || images.max_bytes_per_file <= 0
+    || typeof documents?.enabled !== 'boolean'
+    || !Array.isArray(documents.accepted_extensions)
+    || !documents.accepted_extensions.every(extension => typeof extension === 'string')
+    || !Number.isInteger(documents.max_files)
+    || documents.max_files <= 0
+    || !Number.isInteger(documents.max_bytes_per_file)
+    || documents.max_bytes_per_file <= 0
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
@@ -128,14 +147,17 @@ export async function streamMessage(
   message: string,
   callbacks: StreamCallbacks,
   signal: AbortSignal,
-  images: File[] = [],
+  attachments: MessageAttachments = {},
 ): Promise<void> {
+  const images = attachments.images ?? [];
+  const documents = attachments.documents ?? [];
   let body: BodyInit;
   let headers: HeadersInit | undefined;
-  if (images.length > 0) {
+  if (images.length > 0 || documents.length > 0) {
     const form = new FormData();
     form.append('message', message);
     images.forEach(image => form.append('images', image, image.name));
+    documents.forEach(document => form.append('documents', document, document.name));
     body = form;
   } else {
     headers = { 'Content-Type': 'application/json' };

@@ -27,7 +27,10 @@ interface CapturedRequests {
   messageContentType: string;
 }
 
-async function mockAiBackend(page: Page, imageAttachments: boolean): Promise<CapturedRequests> {
+async function mockAiBackend(
+  page: Page,
+  attachments: { images: boolean; documents: boolean },
+): Promise<CapturedRequests> {
   const captured = { scheduleYaml: '', messageBody: '', messageContentType: '' };
 
   await page.route('**/ai/**', async route => {
@@ -50,10 +53,16 @@ async function mockAiBackend(page: Page, imageAttachments: boolean): Promise<Cap
         headers: corsHeaders,
         body: JSON.stringify({
           image_attachments: {
-            enabled: imageAttachments,
+            enabled: attachments.images,
             accepted_media_types: ['image/jpeg', 'image/png', 'image/webp'],
             max_files: 4,
             max_bytes_per_file: 5_000_000,
+          },
+          document_attachments: {
+            enabled: attachments.documents,
+            accepted_extensions: ['.txt', '.md', '.csv'],
+            max_files: 4,
+            max_bytes_per_file: 50_000,
           },
         }),
       });
@@ -88,7 +97,7 @@ async function mockAiBackend(page: Page, imageAttachments: boolean): Promise<Cap
 }
 
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
-  const captured = await mockAiBackend(page, false);
+  const captured = await mockAiBackend(page, { images: false, documents: false });
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who works first?');
@@ -100,14 +109,14 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
 });
 
 test('previews and sends an enabled image attachment', async ({ page }) => {
-  const captured = await mockAiBackend(page, true);
+  const captured = await mockAiBackend(page, { images: true, documents: false });
   const png = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64',
   );
 
   await page.goto('/experimental-ai');
-  await page.getByLabel('Attach images').setInputFiles({ name: 'ward.png', mimeType: 'image/png', buffer: png });
+  await page.getByLabel('Attach files').setInputFiles({ name: 'ward.png', mimeType: 'image/png', buffer: png });
   await expect(page.getByAltText('Preview of ward.png')).toBeVisible();
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('What is shown?');
   await page.getByRole('button', { name: 'Send' }).click();
@@ -117,4 +126,25 @@ test('previews and sends an enabled image attachment', async ({ page }) => {
   expect(captured.messageContentType).toContain('multipart/form-data');
   expect(captured.messageBody).toContain('What is shown?');
   expect(captured.messageBody).toContain('ward.png');
+});
+
+test('previews and sends an enabled CSV attachment', async ({ page }) => {
+  const captured = await mockAiBackend(page, { images: false, documents: true });
+
+  await page.goto('/experimental-ai');
+  await page.getByLabel('Attach files').setInputFiles({
+    name: 'staff.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('name,shift\nAlice,day\n'),
+  });
+  await expect(page.getByText('csv', { exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Check the CSV.');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  await expect(page.getByText('Attached: staff.csv')).toBeVisible();
+  expect(captured.messageContentType).toContain('multipart/form-data');
+  expect(captured.messageBody).toContain('name="documents"');
+  expect(captured.messageBody).toContain('staff.csv');
+  expect(captured.messageBody).toContain('Alice,day');
 });

@@ -58,13 +58,19 @@ describe('AI client', () => {
     });
   });
 
-  it('validates image attachment capabilities', async () => {
+  it('validates attachment capabilities', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       image_attachments: {
         enabled: true,
         accepted_media_types: ['image/png'],
         max_files: 2,
         max_bytes_per_file: 5000,
+      },
+      document_attachments: {
+        enabled: true,
+        accepted_extensions: ['.txt', '.md', '.csv'],
+        max_files: 3,
+        max_bytes_per_file: 50000,
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
 
@@ -74,6 +80,12 @@ describe('AI client', () => {
         accepted_media_types: ['image/png'],
         max_files: 2,
         max_bytes_per_file: 5000,
+      },
+      document_attachments: {
+        enabled: true,
+        accepted_extensions: ['.txt', '.md', '.csv'],
+        max_files: 3,
+        max_bytes_per_file: 50000,
       },
     });
   });
@@ -161,7 +173,7 @@ describe('AI client', () => {
       'What is shown?',
       { onDelta: vi.fn() },
       new AbortController().signal,
-      [image],
+      { images: [image] },
     );
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
@@ -170,5 +182,28 @@ describe('AI client', () => {
     const form = request.body as FormData;
     expect(form.get('message')).toBe('What is shown?');
     expect(form.getAll('images')).toEqual([image]);
+  });
+
+  it('sends text documents as multipart form data', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
+      'event: done\ndata: {"message_id":"message-id"}\n\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const document = new File(['name,shift\nAlice,day\n'], 'staff.csv', { type: 'text/csv' });
+
+    await streamMessage(
+      'session-id',
+      'Check the file.',
+      { onDelta: vi.fn() },
+      new AbortController().signal,
+      { documents: [document] },
+    );
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(request.headers).toBeUndefined();
+    expect(request.body).toBeInstanceOf(FormData);
+    const form = request.body as FormData;
+    expect(form.get('message')).toBe('Check the file.');
+    expect(form.getAll('documents')).toEqual([document]);
   });
 });

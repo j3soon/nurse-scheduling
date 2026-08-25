@@ -34,10 +34,11 @@ interface ChatMessage {
   attachmentNames?: string[];
 }
 
-interface SelectedImage {
+interface SelectedAttachment {
   id: string;
   file: File;
-  previewUrl: string;
+  kind: 'image' | 'document';
+  previewUrl?: string;
 }
 
 const DISABLED_IMAGE_CAPABILITY: AiCapabilities['image_attachments'] = {
@@ -46,6 +47,24 @@ const DISABLED_IMAGE_CAPABILITY: AiCapabilities['image_attachments'] = {
   max_files: 1,
   max_bytes_per_file: 1,
 };
+
+const DISABLED_DOCUMENT_CAPABILITY: AiCapabilities['document_attachments'] = {
+  enabled: false,
+  accepted_extensions: [],
+  max_files: 1,
+  max_bytes_per_file: 1,
+};
+
+const DOCUMENT_MEDIA_TYPES: Record<string, string> = {
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.csv': 'text/csv',
+};
+
+function fileExtension(filename: string): string {
+  const lastDot = filename.lastIndexOf('.');
+  return lastDot < 0 ? '' : filename.slice(lastDot).toLowerCase();
+}
 
 function messageId(): string {
   return typeof crypto.randomUUID === 'function'
@@ -88,63 +107,111 @@ export default function ExperimentalAiPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isClientReady, setIsClientReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
   const [imageCapability, setImageCapability] = useState(DISABLED_IMAGE_CAPABILITY);
-  const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
+  const [documentCapability, setDocumentCapability] = useState(DISABLED_DOCUMENT_CAPABILITY);
+  const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const sessionIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const selectedImagesRef = useRef<SelectedImage[]>([]);
+  const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
 
   useEffect(() => {
     const capabilitiesController = new AbortController();
     setIsClientReady(true);
     getCapabilities(capabilitiesController.signal)
-      .then(capabilities => setImageCapability(capabilities.image_attachments))
+      .then(capabilities => {
+        setImageCapability(capabilities.image_attachments);
+        setDocumentCapability(capabilities.document_attachments);
+      })
       .catch(() => {
-        // Text chat remains available when capability discovery fails.
+        if (!capabilitiesController.signal.aborted) {
+          setCapabilitiesError(
+            'Could not load AI capabilities. Check that the AI backend is reachable from this browser, then reload the page.',
+          );
+        }
       });
     return () => {
       capabilitiesController.abort();
       abortControllerRef.current?.abort();
-      selectedImagesRef.current.forEach(image => URL.revokeObjectURL(image.previewUrl));
+      selectedAttachmentsRef.current.forEach(attachment => {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      });
     };
   }, []);
 
   useEffect(() => {
-    selectedImagesRef.current = selectedImages;
-  }, [selectedImages]);
+    selectedAttachmentsRef.current = selectedAttachments;
+  }, [selectedAttachments]);
 
-  const selectImages = (event: ChangeEvent<HTMLInputElement>) => {
+  const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     if (files.length === 0) return;
-    if (selectedImages.length + files.length > imageCapability.max_files) {
+
+    const candidates = files.map(file => {
+      if (imageCapability.enabled && imageCapability.accepted_media_types.includes(file.type)) {
+        return { file, kind: 'image' as const };
+      }
+      const extension = fileExtension(file.name);
+      if (documentCapability.enabled && documentCapability.accepted_extensions.includes(extension)) {
+        const normalizedFile = new File([file], file.name, {
+          type: DOCUMENT_MEDIA_TYPES[extension] ?? 'text/plain',
+          lastModified: file.lastModified,
+        });
+        return { file: normalizedFile, kind: 'document' as const };
+      }
+      return null;
+    });
+    if (candidates.some(candidate => candidate === null)) {
+      setError('Attach only a supported image, TXT, Markdown, or CSV file.');
+      return;
+    }
+    const attachments = candidates.filter(candidate => candidate !== null);
+    const selectedImageCount = selectedAttachments.filter(attachment => attachment.kind === 'image').length;
+    const selectedDocumentCount = selectedAttachments.length - selectedImageCount;
+    const imageCount = attachments.filter(attachment => attachment.kind === 'image').length;
+    const documentCount = attachments.length - imageCount;
+    if (selectedImageCount + imageCount > imageCapability.max_files) {
       setError(`Attach at most ${imageCapability.max_files} images to one question.`);
       return;
     }
-    if (files.some(file => !imageCapability.accepted_media_types.includes(file.type))) {
-      setError('Attach only PNG, JPEG, or WebP images.');
+    if (selectedDocumentCount + documentCount > documentCapability.max_files) {
+      setError(`Attach at most ${documentCapability.max_files} documents to one question.`);
       return;
     }
-    if (files.some(file => file.size > imageCapability.max_bytes_per_file)) {
+    if (attachments.some(attachment => (
+      attachment.kind === 'image' && attachment.file.size > imageCapability.max_bytes_per_file
+    ))) {
       const maxMegabytes = (imageCapability.max_bytes_per_file / 1_000_000).toLocaleString(undefined, {
         maximumFractionDigits: 1,
       });
       setError(`Each image must be ${maxMegabytes} MB or smaller.`);
       return;
     }
+    if (attachments.some(attachment => (
+      attachment.kind === 'document' && attachment.file.size > documentCapability.max_bytes_per_file
+    ))) {
+      const maxKilobytes = Math.floor(documentCapability.max_bytes_per_file / 1000).toLocaleString();
+      setError(`Each document must be ${maxKilobytes} KB or smaller.`);
+      return;
+    }
 
     setError(null);
-    setSelectedImages(previous => [
+    setSelectedAttachments(previous => [
       ...previous,
-      ...files.map(file => ({ id: messageId(), file, previewUrl: URL.createObjectURL(file) })),
+      ...attachments.map(attachment => ({
+        ...attachment,
+        id: messageId(),
+        ...(attachment.kind === 'image' ? { previewUrl: URL.createObjectURL(attachment.file) } : {}),
+      })),
     ]);
   };
 
-  const removeImage = (id: string) => {
-    setSelectedImages(previous => {
-      const removed = previous.find(image => image.id === id);
-      if (removed) URL.revokeObjectURL(removed.previewUrl);
-      return previous.filter(image => image.id !== id);
+  const removeAttachment = (id: string) => {
+    setSelectedAttachments(previous => {
+      const removed = previous.find(attachment => attachment.id === id);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return previous.filter(attachment => attachment.id !== id);
     });
   };
 
@@ -153,18 +220,20 @@ export default function ExperimentalAiPage() {
     const question = draft.trim();
     if (!question || isStreaming) return;
 
-    const imagesForMessage = selectedImages;
+    const attachmentsForMessage = selectedAttachments;
     const userMessage: ChatMessage = {
       id: messageId(),
       role: 'user',
       content: question,
-      attachmentNames: imagesForMessage.map(image => image.file.name),
+      attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
     const assistantId = messageId();
     setMessages(previous => [...previous, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
     setDraft('');
-    imagesForMessage.forEach(image => URL.revokeObjectURL(image.previewUrl));
-    setSelectedImages([]);
+    attachmentsForMessage.forEach(attachment => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+    setSelectedAttachments([]);
     setError(null);
     setIsStreaming(true);
     const controller = new AbortController();
@@ -182,7 +251,14 @@ export default function ExperimentalAiPage() {
           ))),
         },
         controller.signal,
-        imagesForMessage.map(image => image.file),
+        {
+          images: attachmentsForMessage
+            .filter(attachment => attachment.kind === 'image')
+            .map(attachment => attachment.file),
+          documents: attachmentsForMessage
+            .filter(attachment => attachment.kind === 'document')
+            .map(attachment => attachment.file),
+        },
       );
     } catch (streamError) {
       if (!controller.signal.aborted) {
@@ -195,6 +271,12 @@ export default function ExperimentalAiPage() {
   };
 
   const stop = () => abortControllerRef.current?.abort();
+  const selectedImageCount = selectedAttachments.filter(attachment => attachment.kind === 'image').length;
+  const selectedDocumentCount = selectedAttachments.length - selectedImageCount;
+  const attachmentPickerDisabled = isStreaming || (
+    (!imageCapability.enabled || selectedImageCount >= imageCapability.max_files)
+    && (!documentCapability.enabled || selectedDocumentCount >= documentCapability.max_files)
+  );
 
   return (
     <main className="mx-auto flex min-h-[calc(100vh-8rem)] max-w-5xl flex-col px-4 py-8 sm:px-6">
@@ -207,7 +289,7 @@ export default function ExperimentalAiPage() {
           </span>
         </div>
         <p className="text-sm text-gray-600">
-          Ask questions about the schedule currently open in this browser. You can attach images when the backend enables them, but the assistant cannot change the schedule.
+          Ask questions about the schedule currently open in this browser. You can attach supported images and text documents when the backend enables them, but the assistant cannot change the schedule.
         </p>
         <p className="mt-2 text-xs font-medium text-gray-500">
           Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
@@ -254,24 +336,36 @@ export default function ExperimentalAiPage() {
         </div>
       )}
 
+      {capabilitiesError && (
+        <div role="alert" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {capabilitiesError}
+        </div>
+      )}
+
       <form onSubmit={send} className="space-y-3">
-        {selectedImages.length > 0 && (
-          <div aria-label="Images attached to next message" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
-            {selectedImages.map(image => (
-              <div key={image.id} className="flex max-w-52 items-center gap-2 rounded-lg bg-gray-50 p-2">
-                <Image
-                  src={image.previewUrl}
-                  alt={`Preview of ${image.file.name}`}
-                  width={48}
-                  height={48}
-                  unoptimized
-                  className="h-12 w-12 rounded-md object-cover"
-                />
-                <span className="min-w-0 flex-1 truncate text-xs text-gray-700">{image.file.name}</span>
+        {selectedAttachments.length > 0 && (
+          <div aria-label="Files attached to next message" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
+            {selectedAttachments.map(attachment => (
+              <div key={attachment.id} className="flex max-w-52 items-center gap-2 rounded-lg bg-gray-50 p-2">
+                {attachment.previewUrl ? (
+                  <Image
+                    src={attachment.previewUrl}
+                    alt={`Preview of ${attachment.file.name}`}
+                    width={48}
+                    height={48}
+                    unoptimized
+                    className="h-12 w-12 rounded-md object-cover"
+                  />
+                ) : (
+                  <span className="flex h-12 w-12 items-center justify-center rounded-md bg-blue-50 text-xs font-semibold uppercase text-blue-700">
+                    {fileExtension(attachment.file.name).slice(1)}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate text-xs text-gray-700">{attachment.file.name}</span>
                 <button
                   type="button"
-                  onClick={() => removeImage(image.id)}
-                  aria-label={`Remove ${image.file.name}`}
+                  onClick={() => removeAttachment(attachment.id)}
+                  aria-label={`Remove ${attachment.file.name}`}
                   className="rounded px-1.5 py-1 text-gray-500 hover:bg-gray-200 hover:text-gray-800"
                 >
                   ×
@@ -281,21 +375,24 @@ export default function ExperimentalAiPage() {
           </div>
         )}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          {imageCapability.enabled && (
+          {(imageCapability.enabled || documentCapability.enabled) && (
             <label className={`order-2 rounded-xl border px-3 py-3 text-center text-sm font-medium sm:order-1 ${
-              isStreaming || selectedImages.length >= imageCapability.max_files
+              attachmentPickerDisabled
                 ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400'
                 : 'cursor-pointer border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
             }`}>
               <input
                 type="file"
-                accept={imageCapability.accepted_media_types.join(',')}
+                accept={[
+                  ...(imageCapability.enabled ? imageCapability.accepted_media_types : []),
+                  ...(documentCapability.enabled ? documentCapability.accepted_extensions : []),
+                ].join(',')}
                 multiple
-                disabled={isStreaming || selectedImages.length >= imageCapability.max_files}
-                onChange={selectImages}
+                disabled={attachmentPickerDisabled}
+                onChange={selectAttachments}
                 className="sr-only"
               />
-              Attach images
+              Attach files
             </label>
           )}
           <label className="order-1 flex-1 sm:order-2">
