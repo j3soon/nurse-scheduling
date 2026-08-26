@@ -34,6 +34,8 @@ from nurse_scheduling.ai.provider import ChatMessage, ProviderError
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
+WEBP_BYTES = b"RIFF\x04\x00\x00\x00WEBP"
 
 
 class FakeProvider:
@@ -178,6 +180,30 @@ def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
     assert "data:image/png;base64" not in follow_up_prompt
 
 
+@pytest.mark.parametrize(
+    ("filename", "media_type", "data"),
+    [
+        ("ward.jpg", "image/jpeg", JPEG_BYTES),
+        ("ward.webp", "image/webp", WEBP_BYTES),
+    ],
+)
+def test_supported_image_signatures_are_sent_to_provider(filename: str, media_type: str, data: bytes) -> None:
+    provider = FakeProvider()
+    client = TestClient(create_app(settings=make_settings(attachment_mode="images"), provider=provider))
+    session_id = create_session(client)
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        data={"message": "What is shown?"},
+        files={"images": (filename, data, media_type)},
+    )
+
+    assert response.status_code == 200
+    content = provider.calls[0][-1]["content"]
+    assert isinstance(content, list)
+    assert content[1]["image_url"]["url"].startswith(f"data:{media_type};base64,")
+
+
 def test_documents_are_sent_to_provider_but_contents_are_not_retained() -> None:
     provider = FakeProvider([["Document answer"], ["Follow-up answer"]])
     client = TestClient(create_app(settings=make_settings(), provider=provider))
@@ -209,6 +235,28 @@ def test_documents_are_sent_to_provider_but_contents_are_not_retained() -> None:
     assert "notes.md" in follow_up_prompt
     assert "Private marker 8462" not in follow_up_prompt
     assert "Alice,day" not in follow_up_prompt
+
+
+@pytest.mark.parametrize(
+    ("filename", "media_type"),
+    [
+        ("notes.md", "text/plain"),
+        ("staff.csv", "application/csv"),
+        ("staff.csv", "application/vnd.ms-excel"),
+        ("staff.csv", "text/plain"),
+    ],
+)
+def test_text_documents_accept_each_advertised_media_type(filename: str, media_type: str) -> None:
+    client = TestClient(create_app(settings=make_settings(), provider=FakeProvider()))
+    session_id = create_session(client)
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        data={"message": "Read the file."},
+        files={"documents": (filename, b"Alice works Monday.", media_type)},
+    )
+
+    assert response.status_code == 200
 
 
 def test_images_and_documents_share_one_provider_user_message() -> None:
@@ -315,6 +363,24 @@ def test_image_attachment_limits(
             [("documents", ("notes.txt", b"\xff", "text/plain"))],
             415,
             "Text document attachment must be UTF-8.",
+        ),
+        (
+            {},
+            [("documents", ("notes.txt", b"hello\x00hidden", "text/plain"))],
+            415,
+            "Text document attachment must be UTF-8.",
+        ),
+        (
+            {},
+            [("documents", ("notes.pdf", b"%PDF-1.4", "text/plain"))],
+            415,
+            "Document type does not match its filename.",
+        ),
+        (
+            {},
+            [("documents", ("notes.xlsx", b"PK\x03\x04", "application/zip"))],
+            415,
+            "Document type does not match its filename.",
         ),
         (
             {"max_document_bytes": 4},

@@ -173,11 +173,13 @@ def _extract_xlsx_text(data: bytes, limits: DocumentExtractionLimits) -> str:
                             continue
                         populated_cells += 1
                         if formula_cell.data_type == "f":
+                            # openpyxl wraps array formulas in an object whose text holds the formula.
+                            formula_value = getattr(value, "text", value)
                             cached_text = (
                                 _format_cell_value(cached_value) if cached_value is not None else "unavailable"
                             )
                             output.append(
-                                f"{formula_cell.coordinate}: formula {_format_cell_value(value)}, "
+                                f"{formula_cell.coordinate}: formula {_format_cell_value(formula_value)}, "
                                 f"cached value {cached_text}"
                             )
                         else:
