@@ -7,8 +7,8 @@
 
 This page answers questions about the schedule currently open in the browser.
 When enabled by the AI backend, a question can include PNG, JPEG, and WebP
-images or UTF-8 TXT, Markdown, and CSV documents. The assistant cannot change
-the schedule or run optimization.
+images or TXT, Markdown, CSV, PDF, and XLSX documents. The assistant cannot
+change the schedule or run optimization.
 
 ## Real scenario example
 
@@ -25,7 +25,7 @@ The blue development-version banner appears only in non-release builds.
 1. Finish editing or load the intended schedule.
 2. Open **Experimental AI**.
 3. Confirm the displayed people and date counts.
-4. If **Attach files** is available, optionally select supported images or text
+4. If **Attach files** is available, optionally select supported images or
    documents and confirm the displayed files. Remove an incorrect file with
    its **×** button.
 5. Enter a question and select **Send**. Press <kbd>Enter</kbd> to send or
@@ -49,11 +49,13 @@ to begin a new chat from the latest schedule.
 
 The complete schedule YAML is sent to the configured AI backend and model
 provider. Attached images are also sent to that provider for the current
-question, as are the contents and filenames of attached text documents.
-Attachment contents are not retained in backend chat history. Document
-filenames remain as history markers. People IDs, descriptions, rules, dates,
-images, and documents may be sensitive. Use only an approved provider and
-anonymize sensitive data first when required.
+question, as are the extracted contents and filenames of attached documents.
+PDF extraction reads embedded text and does not perform OCR. XLSX extraction
+includes cell values, formula text, and cached formula results when available.
+It does not recalculate formulas. Attachment contents are not retained in
+backend chat history. Document filenames remain as history markers. People
+IDs, descriptions, rules, dates, images, and documents may be sensitive. Use
+only an approved provider and anonymize sensitive data first when required.
 
 Chat sessions use unguessable identifiers but do not have account
 authentication yet. Sessions are stored in AI-backend memory and disappear

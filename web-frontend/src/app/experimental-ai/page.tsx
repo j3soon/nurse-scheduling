@@ -61,6 +61,8 @@ const DOCUMENT_MEDIA_TYPES: Record<string, string> = {
   '.txt': 'text/plain',
   '.md': 'text/markdown',
   '.csv': 'text/csv',
+  '.pdf': 'application/pdf',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 };
 
 function fileExtension(filename: string): string {
@@ -208,7 +210,7 @@ export default function ExperimentalAiPage() {
       return null;
     });
     if (candidates.some(candidate => candidate === null)) {
-      setError('Attach only a supported image, TXT, Markdown, or CSV file.');
+      setError('Attach only a file type enabled by the AI backend.');
       return;
     }
     const attachments = candidates.filter(candidate => candidate !== null);
@@ -336,7 +338,7 @@ export default function ExperimentalAiPage() {
           </span>
         </div>
         <p className="text-sm text-gray-600">
-          Ask questions about the schedule currently open in this browser. You can attach supported images and text documents when the backend enables them, but the assistant cannot change the schedule.
+          Ask questions about the schedule currently open in this browser. You can attach supported images and documents when the backend enables them, but the assistant cannot change the schedule.
         </p>
         <p className="mt-2 text-xs font-medium text-gray-500">
           Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.

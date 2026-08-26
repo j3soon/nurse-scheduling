@@ -141,7 +141,7 @@ def test_capabilities_report_configured_attachment_limits() -> None:
         },
         "document_attachments": {
             "enabled": True,
-            "accepted_extensions": [".txt", ".md", ".csv"],
+            "accepted_extensions": [".txt", ".md", ".csv", ".pdf", ".xlsx"],
             "max_files": 3,
             "max_bytes_per_file": 4321,
         },
@@ -205,7 +205,7 @@ def test_documents_are_sent_to_provider_but_contents_are_not_retained() -> None:
     assert "Private marker 8462" in document_content
     assert "Alice,day" in document_content
     follow_up_prompt = json.dumps(provider.calls[1])
-    assert "Text documents were attached" in follow_up_prompt
+    assert "Documents were attached" in follow_up_prompt
     assert "notes.md" in follow_up_prompt
     assert "Private marker 8462" not in follow_up_prompt
     assert "Alice,day" not in follow_up_prompt
@@ -296,6 +296,12 @@ def test_image_attachment_limits(
             {},
             [("documents", ("notes.pdf", b"hello", "application/pdf"))],
             415,
+            "PDF content does not match its filename.",
+        ),
+        (
+            {},
+            [("documents", ("notes.docx", b"hello", "application/octet-stream"))],
+            415,
             "Unsupported document type.",
         ),
         (
@@ -308,7 +314,7 @@ def test_image_attachment_limits(
             {},
             [("documents", ("notes.txt", b"\xff", "text/plain"))],
             415,
-            "Document attachment must be UTF-8 text.",
+            "Text document attachment must be UTF-8.",
         ),
         (
             {"max_document_bytes": 4},
@@ -472,3 +478,23 @@ def test_environment_configuration_rejects_unknown_document_attachment_mode(
 
     with pytest.raises(ValueError, match="AI_DOCUMENT_ATTACHMENT_MODE must be one of: none, text"):
         AiSettings.from_env()
+
+
+def test_environment_configuration_reads_document_extraction_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_MAX_DOCUMENT_BYTES", "6000000")
+    monkeypatch.setenv("AI_MAX_DOCUMENT_TEXT_CHARS", "60000")
+    monkeypatch.setenv("AI_MAX_PDF_PAGES", "60")
+    monkeypatch.setenv("AI_MAX_XLSX_SHEETS", "6")
+    monkeypatch.setenv("AI_MAX_XLSX_CELLS", "6000")
+    monkeypatch.setenv("AI_MAX_XLSX_UNCOMPRESSED_BYTES", "60000000")
+
+    settings = AiSettings.from_env()
+
+    assert settings.max_document_bytes == 6_000_000
+    assert settings.max_document_text_chars == 60_000
+    assert settings.max_pdf_pages == 60
+    assert settings.max_xlsx_sheets == 6
+    assert settings.max_xlsx_cells == 6_000
+    assert settings.max_xlsx_uncompressed_bytes == 60_000_000

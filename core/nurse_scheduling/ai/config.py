@@ -97,7 +97,12 @@ class AiSettings:
     max_image_bytes: int = 5_000_000
     document_attachment_mode: DocumentAttachmentMode = "text"
     max_document_files: int = 4
-    max_document_bytes: int = 50_000
+    max_document_bytes: int = 5_000_000
+    max_document_text_chars: int = 50_000
+    max_pdf_pages: int = 100
+    max_xlsx_sheets: int = 20
+    max_xlsx_cells: int = 100_000
+    max_xlsx_uncompressed_bytes: int = 50_000_000
     cookie_secure: bool = True
 
     @classmethod
@@ -130,6 +135,11 @@ class AiSettings:
             max_image_bytes=_read_positive_int("AI_MAX_IMAGE_BYTES", 5_000_000),
             document_attachment_mode=_read_document_attachment_mode(),
             max_document_files=_read_positive_int("AI_MAX_DOCUMENT_FILES", 4),
-            max_document_bytes=_read_positive_int("AI_MAX_DOCUMENT_BYTES", 50_000),
+            max_document_bytes=_read_positive_int("AI_MAX_DOCUMENT_BYTES", 5_000_000),
+            max_document_text_chars=_read_positive_int("AI_MAX_DOCUMENT_TEXT_CHARS", 50_000),
+            max_pdf_pages=_read_positive_int("AI_MAX_PDF_PAGES", 100),
+            max_xlsx_sheets=_read_positive_int("AI_MAX_XLSX_SHEETS", 20),
+            max_xlsx_cells=_read_positive_int("AI_MAX_XLSX_CELLS", 100_000),
+            max_xlsx_uncompressed_bytes=_read_positive_int("AI_MAX_XLSX_UNCOMPRESSED_BYTES", 50_000_000),
             cookie_secure=_read_bool("AI_COOKIE_SECURE", True),
         )

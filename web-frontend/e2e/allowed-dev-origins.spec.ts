@@ -88,9 +88,9 @@ test('hydrates through a non-loopback development origin', async ({ page }) => {
         },
         document_attachments: {
           enabled: true,
-          accepted_extensions: ['.txt', '.md', '.csv'],
+          accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
           max_files: 1,
-          max_bytes_per_file: 50000,
+          max_bytes_per_file: 5000000,
         },
       }),
     }));

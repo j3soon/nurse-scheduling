@@ -63,9 +63,9 @@ describe('ExperimentalAiPage', () => {
       },
       document_attachments: {
         enabled: false,
-        accepted_extensions: ['.txt', '.md', '.csv'],
+        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
         max_files: 4,
-        max_bytes_per_file: 50_000,
+        max_bytes_per_file: 5_000_000,
       },
     });
     mockStreamMessage.mockReset().mockImplementation(async (
@@ -112,9 +112,9 @@ describe('ExperimentalAiPage', () => {
       },
       document_attachments: {
         enabled: false,
-        accepted_extensions: ['.txt', '.md', '.csv'],
+        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
         max_files: 4,
-        max_bytes_per_file: 50_000,
+        max_bytes_per_file: 5_000_000,
       },
     });
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
@@ -151,9 +151,9 @@ describe('ExperimentalAiPage', () => {
       },
       document_attachments: {
         enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv'],
+        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
         max_files: 2,
-        max_bytes_per_file: 50_000,
+        max_bytes_per_file: 5_000_000,
       },
     });
     const user = userEvent.setup();
@@ -177,6 +177,49 @@ describe('ExperimentalAiPage', () => {
       },
     );
     expect(screen.getByText('Attached: staff.csv')).toBeInTheDocument();
+  });
+
+  it('normalizes PDF and XLSX media types before upload', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({
+      image_attachments: {
+        enabled: false,
+        accepted_media_types: [],
+        max_files: 2,
+        max_bytes_per_file: 1000,
+      },
+      document_attachments: {
+        enabled: true,
+        accepted_extensions: ['.pdf', '.xlsx'],
+        max_files: 2,
+        max_bytes_per_file: 5_000_000,
+      },
+    });
+    const user = userEvent.setup();
+    const pdf = new File(['pdf'], 'notes.pdf', { type: '' });
+    const workbook = new File(['xlsx'], 'coverage.xlsx', { type: '' });
+    render(<ExperimentalAiPage />);
+
+    const input = await screen.findByLabelText('Attach files');
+    await user.upload(input, [pdf, workbook]);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read both files.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(mockStreamMessage).toHaveBeenCalledWith(
+      'session-id',
+      'Read both files.',
+      expect.any(Object),
+      expect.any(AbortSignal),
+      {
+        images: [],
+        documents: [
+          expect.objectContaining({ name: 'notes.pdf', type: 'application/pdf' }),
+          expect.objectContaining({
+            name: 'coverage.xlsx',
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          }),
+        ],
+      },
+    );
   });
 
   it('shows an error when capability discovery fails', async () => {

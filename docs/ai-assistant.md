@@ -5,10 +5,9 @@ about one schedule snapshot. Its ASGI entry point is
 `nurse_scheduling.ai_serve:app`. It does not import the optimization server or
 use its Redis data.
 
-Image and UTF-8 text document attachments are enabled by default and can be
-disabled independently. Supported documents are TXT, Markdown, and CSV. This
-version excludes PDF, XLSX, retrieval, tools, YAML proposals, and schedule
-mutation.
+Image and document attachments are enabled by default and can be disabled
+independently. Supported documents are TXT, Markdown, CSV, PDF, and XLSX. This
+version excludes retrieval, tools, YAML proposals, and schedule mutation.
 
 ## Run locally
 
@@ -80,9 +79,14 @@ shows one compatible deployment pattern.
 | `AI_ATTACHMENT_MODE` | `images` | Use `none` to disable image attachments. |
 | `AI_MAX_IMAGE_FILES` | `4` | Maximum images attached to one question. |
 | `AI_MAX_IMAGE_BYTES` | `5000000` | Maximum bytes per image. |
-| `AI_DOCUMENT_ATTACHMENT_MODE` | `text` | Use `none` to disable TXT, Markdown, and CSV attachments. |
-| `AI_MAX_DOCUMENT_FILES` | `4` | Maximum text documents attached to one question. |
-| `AI_MAX_DOCUMENT_BYTES` | `50000` | Maximum UTF-8 bytes per text document. |
+| `AI_DOCUMENT_ATTACHMENT_MODE` | `text` | Use `none` to disable document-to-text ingestion. |
+| `AI_MAX_DOCUMENT_FILES` | `4` | Maximum documents attached to one question. |
+| `AI_MAX_DOCUMENT_BYTES` | `5000000` | Maximum upload bytes per document. |
+| `AI_MAX_DOCUMENT_TEXT_CHARS` | `50000` | Maximum extracted prompt characters per document. |
+| `AI_MAX_PDF_PAGES` | `100` | Maximum pages per PDF. |
+| `AI_MAX_XLSX_SHEETS` | `20` | Maximum worksheets per XLSX workbook. |
+| `AI_MAX_XLSX_CELLS` | `100000` | Maximum rectangular cell span across an XLSX workbook. |
+| `AI_MAX_XLSX_UNCOMPRESSED_BYTES` | `50000000` | Maximum total expanded XLSX archive bytes. |
 
 ## Run in the development container
 
@@ -154,7 +158,13 @@ backend instance until shared AI storage is added.
 - Accepted images are signature-checked and bounded before they are sent to the
   provider. Configure a matching request-body limit at the public reverse proxy.
 - Accepted documents are bounded and checked for a matching supported filename
-  extension, declared MIME type, and strict UTF-8 text content.
+  extension, declared MIME type, and file signature where applicable. Text
+  files require UTF-8. PDF extraction reads embedded text without OCR and
+  rejects encrypted files. XLSX extraction disables external links, rejects
+  encrypted or oversized archives, and uses hardened XML parsing.
+- XLSX formulas are never evaluated. Extraction includes the formula text and
+  the cached result last saved by a spreadsheet application. A missing cached
+  result is marked as unavailable.
 - Assistant answers use a safe Markdown renderer. Raw HTML is disabled and
   remote Markdown images are omitted to prevent third-party requests.
 - Provider HTTP errors return a searchable error ID to the browser. The backend
@@ -168,7 +178,7 @@ backend instance until shared AI storage is added.
 | --- | --- |
 | Send fails immediately | Start the AI backend and request `http://localhost:8001/health`. |
 | Provider unavailable | Check `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and provider availability. |
-| An attachment is rejected | Check its supported type and the configured size and count limits. Text documents must use UTF-8. |
+| An attachment is rejected | Check its supported type and configured byte, text, page, sheet, and cell limits. Text documents must use UTF-8. Encrypted PDF and XLSX files are unsupported. |
 | An answer stops early | Retry it. Cancelled and failed answers are not added to backend history. |
 
 For a provider HTTP failure, search the AI backend log using the error ID shown
@@ -206,8 +216,8 @@ Run the focused checks inside the development container:
 ```sh
 cd /app/core
 ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
-  tests/test_ai_basic.py tests/test_ai_provider.py
-pytest -q tests/test_ai_basic.py tests/test_ai_provider.py
+  tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py
+pytest -q tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py
 
 cd /app/web-frontend
 bun run test -- \

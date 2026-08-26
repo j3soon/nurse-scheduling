@@ -68,9 +68,9 @@ describe('AI client', () => {
       },
       document_attachments: {
         enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv'],
+        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
         max_files: 3,
-        max_bytes_per_file: 50000,
+        max_bytes_per_file: 5000000,
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
 
@@ -83,9 +83,9 @@ describe('AI client', () => {
       },
       document_attachments: {
         enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv'],
+        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
         max_files: 3,
-        max_bytes_per_file: 50000,
+        max_bytes_per_file: 5000000,
       },
     });
   });

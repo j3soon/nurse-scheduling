@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 
 from .config import AiSettings
+from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .provider import ChatContent, ChatMessage, ChatProvider, OpenAiCompatibleProvider, ProviderError
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
@@ -50,6 +51,8 @@ SUPPORTED_DOCUMENT_MEDIA_TYPES = {
     ".txt": ("text/plain",),
     ".md": ("text/markdown", "text/plain"),
     ".csv": ("text/csv", "application/csv", "application/vnd.ms-excel", "text/plain"),
+    ".pdf": ("application/pdf",),
+    ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",),
 }
 SYSTEM_PROMPT = """You are the experimental Nurse Scheduling assistant.
 Answer questions using the current schedule supplied with each user message.
@@ -96,7 +99,7 @@ class ImageAttachmentCapability(BaseModel):
 
 
 class DocumentAttachmentCapability(BaseModel):
-    """Public limits for UTF-8 text document input."""
+    """Public limits for documents converted to text by the backend."""
 
     enabled: bool
     accepted_extensions: tuple[str, ...]
@@ -121,7 +124,7 @@ class ImageAttachment:
 
 @dataclass(frozen=True)
 class DocumentAttachment:
-    """One validated text document kept only for the active provider request."""
+    """One validated document kept only for the active provider request."""
 
     filename: str
     media_type: str
@@ -255,8 +258,12 @@ async def _read_images(uploads: list[UploadFile], settings: AiSettings) -> list[
     return images
 
 
-async def _read_documents(uploads: list[UploadFile], settings: AiSettings) -> list[DocumentAttachment]:
-    """Read bounded UTF-8 documents and verify extension and declared type."""
+async def _read_documents(
+    uploads: list[UploadFile],
+    settings: AiSettings,
+    concurrency_limit: asyncio.Semaphore,
+) -> list[DocumentAttachment]:
+    """Read bounded documents, verify their types, and extract prompt text."""
     if not uploads:
         return []
     if settings.document_attachment_mode != "text":
@@ -264,6 +271,13 @@ async def _read_documents(uploads: list[UploadFile], settings: AiSettings) -> li
     if len(uploads) > settings.max_document_files:
         raise HTTPException(status_code=413, detail="Too many document attachments.")
 
+    limits = DocumentExtractionLimits(
+        max_text_chars=settings.max_document_text_chars,
+        max_pdf_pages=settings.max_pdf_pages,
+        max_xlsx_sheets=settings.max_xlsx_sheets,
+        max_xlsx_cells=settings.max_xlsx_cells,
+        max_xlsx_uncompressed_bytes=settings.max_xlsx_uncompressed_bytes,
+    )
     documents: list[DocumentAttachment] = []
     for upload in uploads:
         filename = upload.filename or ""
@@ -278,11 +292,12 @@ async def _read_documents(uploads: list[UploadFile], settings: AiSettings) -> li
         if len(data) > settings.max_document_bytes:
             raise HTTPException(status_code=413, detail="Document attachment is too large.")
         try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(status_code=415, detail="Document attachment must be UTF-8 text.") from exc
-        if "\x00" in text:
-            raise HTTPException(status_code=415, detail="Document attachment must be UTF-8 text.")
+            async with concurrency_limit:
+                text = await asyncio.to_thread(extract_document_text, filename, data, limits)
+        except DocumentLimitError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except InvalidDocumentError as exc:
+            raise HTTPException(status_code=415, detail=str(exc)) from exc
         documents.append(DocumentAttachment(filename=filename, media_type=declared_type, text=text))
     return documents
 
@@ -306,6 +321,7 @@ def _validate_question(raw_message: object, settings: AiSettings) -> str:
 async def _parse_message_request(
     request: Request,
     settings: AiSettings,
+    concurrency_limit: asyncio.Semaphore,
 ) -> tuple[str, list[ImageAttachment], list[DocumentAttachment]]:
     """Accept the original JSON request or multipart input with attachments."""
     content_type = request.headers.get("content-type", "").lower()
@@ -353,7 +369,7 @@ async def _parse_message_request(
             raise HTTPException(status_code=422, detail="Documents must be uploaded as files.")
         question = _validate_question(message_values[0], settings)
         images = await _read_images(image_values, settings)
-        documents = await _read_documents(document_values, settings)
+        documents = await _read_documents(document_values, settings, concurrency_limit)
     return question, images, documents
 
 
@@ -473,7 +489,7 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
-        question, images, documents = await _parse_message_request(request, settings)
+        question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
         history, schedule_yaml = store.begin(session_id, owner)
         messages = _provider_messages(history, schedule_yaml, question, images, documents)
         history_question = question
@@ -481,7 +497,7 @@ def create_app(
             history_question = f"{question}\n[Images were attached to this message.]"
         if documents:
             filenames = json.dumps([document.filename for document in documents], ensure_ascii=False)
-            history_question = f"{history_question}\n[Text documents were attached: {filenames}.]"
+            history_question = f"{history_question}\n[Documents were attached: {filenames}.]"
 
         async def generate_events():
             assistant_parts: list[str] = []

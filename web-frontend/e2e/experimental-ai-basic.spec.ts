@@ -61,9 +61,9 @@ async function mockAiBackend(
           },
           document_attachments: {
             enabled: attachments.documents,
-            accepted_extensions: ['.txt', '.md', '.csv'],
+            accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
             max_files: 4,
-            max_bytes_per_file: 50_000,
+            max_bytes_per_file: 5_000_000,
           },
         }),
       });
@@ -195,23 +195,39 @@ test('previews and sends an enabled image attachment', async ({ page }) => {
   expect(captured.messageBody).toContain('ward.png');
 });
 
-test('previews and sends an enabled CSV attachment', async ({ page }) => {
+test('previews and sends enabled document attachments', async ({ page }) => {
   const captured = await mockAiBackend(page, { images: false, documents: true });
 
   await page.goto('/experimental-ai');
-  await page.getByLabel('Attach files').setInputFiles({
-    name: 'staff.csv',
-    mimeType: 'text/csv',
-    buffer: Buffer.from('name,shift\nAlice,day\n'),
-  });
+  await page.getByLabel('Attach files').setInputFiles([
+    {
+      name: 'staff.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('name,shift\nAlice,day\n'),
+    },
+    {
+      name: 'notes.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 test'),
+    },
+    {
+      name: 'coverage.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: Buffer.from('xlsx test'),
+    },
+  ]);
   await expect(page.getByText('csv', { exact: true })).toBeVisible();
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Check the CSV.');
+  await expect(page.getByText('pdf', { exact: true })).toBeVisible();
+  await expect(page.getByText('xlsx', { exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Check the documents.');
   await page.getByRole('button', { name: 'Send' }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
-  await expect(page.getByText('Attached: staff.csv')).toBeVisible();
+  await expect(page.getByText('Attached: staff.csv, notes.pdf, coverage.xlsx')).toBeVisible();
   expect(captured.messageContentType).toContain('multipart/form-data');
   expect(captured.messageBody).toContain('name="documents"');
   expect(captured.messageBody).toContain('staff.csv');
+  expect(captured.messageBody).toContain('notes.pdf');
+  expect(captured.messageBody).toContain('coverage.xlsx');
   expect(captured.messageBody).toContain('Alice,day');
 });
