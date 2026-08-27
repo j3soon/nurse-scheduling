@@ -112,6 +112,17 @@ class BaseExportFormattingRule(BaseModel):
     rightBorderColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     fontColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def validate_cell_only_fields(cls, data):
+        """Keep cell-only field errors actionable before extra-field rejection."""
+        if isinstance(data, dict) and data.get("type") != "cell":
+            if data.get("when") is not None:
+                raise ValueError("export formatting 'when' is only supported for rules with type 'cell'")
+            if data.get("appendText") is not None or data.get("note") is not None:
+                raise ValueError("export formatting annotations are only supported for rules with type 'cell'")
+        return data
+
 
 class ExportPersonFormattingRule(BaseExportFormattingRule):
     type: Literal["row", "people header", "history"]
@@ -521,7 +532,11 @@ def _validate_schedule_semantics(data: NurseSchedulingData) -> None:
             if not shift_groups or any(not group for group in shift_groups):
                 raise ValueError(f"Non-empty shift types are required, but got {preference.shiftType}")
             if any(OFF in group for group in shift_groups):
-                raise ValueError("'OFF' is not allowed in shift type requirement preferences.")
+                raise ValueError(
+                    "'OFF' is not allowed in shift type requirement preferences. "
+                    "To specify a zero-shift day, define an ALL shift type for that date "
+                    "with requiredNumPeople set to 0."
+                )
             if preference.shiftTypeCoefficients and len(shift_groups) != 1:
                 raise ValueError(
                     "Shift type requirement coefficients are only supported when shiftType normalizes to one "
@@ -534,6 +549,11 @@ def _validate_schedule_semantics(data: NurseSchedulingData) -> None:
                 "Shift type requirement coefficient",
                 "shiftType",
             )
+            if preference.preferredNumPeople is not None and preference.weight in {math.inf, -math.inf}:
+                raise ValueError(
+                    f"Infinity weights are not allowed for {SHIFT_TYPE_REQUIREMENT} with 'preferredNumPeople'. "
+                    "Use 'requiredNumPeople' instead to enforce hard constraints."
+                )
             if preference.qualifiedPeople is not None:
                 utils.parse_pids(preference.qualifiedPeople, people_map)
             if preference.date is not None:

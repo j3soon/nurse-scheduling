@@ -24,6 +24,7 @@ import os
 import sys
 
 import pytest
+from pydantic import ValidationError
 
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -62,6 +63,14 @@ def test_model_accepts_nested_shift_type_requirement_groups():
 
     assert data.preferences[1].shiftType == [["D", "E"]]
     assert data.preferences[1].shiftTypeCoefficients == [("D", 2)]
+
+
+def test_model_rejects_off_requirement_with_zero_shift_guidance():
+    payload = _base_payload()
+    payload["preferences"][1]["shiftType"] = "OFF"
+
+    with pytest.raises(ValueError, match="To specify a zero-shift day, define an ALL shift type"):
+        NurseSchedulingData.model_validate(payload)
 
 
 def test_model_accepts_zero_float_weight():
@@ -139,6 +148,61 @@ def test_model_rejects_invalid_dates_items_and_group_ids():
     payload["dates"]["groups"] = [{"id": "2025-01-01", "members": ["2025-01-01"]}]
     with pytest.raises(ValueError, match="Date group ID '2025-01-01' must not be in the format"):
         NurseSchedulingData.model_validate(payload)
+
+
+@pytest.mark.parametrize("field_name", ["people1", "people2", "shiftTypes"])
+def test_model_rejects_scalar_shift_affinity_selections(field_name):
+    payload = _base_payload()
+    affinity = {
+        "type": "shift affinity",
+        "date": "ALL",
+        "people1": ["n1"],
+        "people2": ["n1"],
+        "shiftTypes": ["D"],
+    }
+    affinity[field_name] = affinity[field_name][0]
+    payload["preferences"].append(affinity)
+
+    with pytest.raises(ValidationError) as exc_info:
+        NurseSchedulingData.model_validate(payload)
+
+    assert any(
+        error["loc"][-2:] == ("ShiftAffinityPreference", field_name) and error["msg"] == "Input should be a valid list"
+        for error in exc_info.value.errors(include_url=False)
+    )
+
+
+def test_model_rejects_nested_history_with_field_path():
+    payload = _base_payload()
+    payload["people"]["items"][0]["history"] = [["D"]]
+
+    with pytest.raises(ValidationError) as exc_info:
+        NurseSchedulingData.model_validate(payload)
+
+    assert any(
+        error["loc"] == ("people", "items", 0, "history", 0) and error["msg"] == "Input should be a valid string"
+        for error in exc_info.value.errors(include_url=False)
+    )
+
+
+def test_model_rejects_scalar_succession_pattern_with_field_path():
+    payload = _base_payload()
+    payload["preferences"].append(
+        {
+            "type": "shift type successions",
+            "person": "n1",
+            "pattern": "D",
+        }
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        NurseSchedulingData.model_validate(payload)
+
+    assert any(
+        error["loc"][-2:] == ("ShiftTypeSuccessionsPreference", "pattern")
+        and error["msg"] == "Input should be a valid list"
+        for error in exc_info.value.errors(include_url=False)
+    )
 
 
 @pytest.mark.parametrize(

@@ -63,29 +63,9 @@ def _parse_shift_type_requirement_coefficients(
     shift_type_groups: list[list[int]],
 ) -> dict[int, int]:
     coefficients = {s: 1 for s in set(itertools.chain.from_iterable(shift_type_groups))}
-    coefficient_entries = preference.shiftTypeCoefficients or []
-    if coefficient_entries and len(shift_type_groups) != 1:
-        raise ValueError(
-            "Shift type requirement coefficients are only supported when shiftType normalizes to one requirement group."
-        )
-    selected_sids = set(coefficients)
-    coefficient_sids = set()
-
-    for shift_type_id, coefficient in coefficient_entries:
-        if coefficient < 1:
-            raise ValueError(f"Shift type requirement coefficient for '{shift_type_id}' must be at least 1.")
-
-        expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
-        if not set(expanded_sids).issubset(selected_sids):
-            raise ValueError(f"Shift type requirement coefficient for '{shift_type_id}' must be covered by shiftType.")
-        duplicate_sids = coefficient_sids.intersection(expanded_sids)
-        if duplicate_sids:
-            raise ValueError(f"Duplicate shift type requirement coefficient for '{shift_type_id}'.")
-        coefficient_sids.update(expanded_sids)
-
-        for s in expanded_sids:
-            if s in coefficients:
-                coefficients[s] = coefficient
+    for shift_type_id, coefficient in preference.shiftTypeCoefficients or []:
+        for s in utils.parse_sids(shift_type_id, ctx.map_sid_s):
+            coefficients[s] = coefficient
 
     return coefficients
 
@@ -119,14 +99,6 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
     if preference.date is not None:
         ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
     shift_type_groups = _parse_shift_type_requirement_groups(preference.shiftType, ctx.map_sid_s)
-    if len(shift_type_groups) == 0 or any(len(ss) == 0 for ss in shift_type_groups):
-        raise ValueError(f"Non-empty shift types are required, but got {preference.shiftType}")
-    if any(constants.OFF_sid in ss for ss in shift_type_groups):
-        raise ValueError(
-            "'OFF' is not allowed in shift type requirement preferences. "
-            "To specify a zero-shift day, define an ALL shift type for that date "
-            "with requiredNumPeople set to 0."
-        )
     coefficients = _parse_shift_type_requirement_coefficients(ctx, preference, shift_type_groups)
     for d in ds:
         for group_idx, ss in enumerate(shift_type_groups):
@@ -185,10 +157,6 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
 
                 # Add the objective
                 weight = preference.weight
-                if weight in [math.inf, -math.inf]:
-                    raise ValueError(
-                        f"Infinity weights are not allowed for {models.SHIFT_TYPE_REQUIREMENT} with 'preferredNumPeople'. Use 'requiredNumPeople' instead to enforce hard constraints."
-                    )
                 utils.add_objective(ctx, weight, diff)
                 ctx.reports.append(Report(f"shift_type_requirements_{diff_var_name}", diff, lambda x: x == 0))
 
@@ -252,8 +220,6 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
     # where actual_n_matched = sum_{(d, s)}(shifts[(d, s, p)]), for all satisfying (d, s)
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    if not isinstance(preference.pattern, list):
-        raise ValueError(f"Pattern must be a list, but got {type(preference.pattern)}")  # noqa: TRY004
     # Convert each pattern element to a list and parse shift IDs
     flattened_pattern = [
         sorted(
@@ -297,16 +263,7 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
             # Consider history data to check for patterns that start at day 0
             # We only need to check day 0 since any pattern that matches history must include it
             if d_begin == 0 and ctx.people.items[p].history is not None:
-                history = [utils.parse_sids(sid, ctx.map_sid_s) for sid in ctx.people.items[p].history]
-                for i in range(len(history)):
-                    if len(history[i]) != 1 and ctx.people.items[p].history[i] != constants.OFF:
-                        raise ValueError(
-                            f"History must not include nested ID, but got {ctx.people.items[p].history[i]}"
-                        )
-                    if ctx.people.items[p].history[i] == constants.ALL:
-                        raise ValueError(f"History must not include 'ALL', but got {ctx.people.items[p].history[i]}")
-                    else:
-                        history[i] = history[i][0]
+                history = [utils.parse_sids(sid, ctx.map_sid_s)[0] for sid in ctx.people.items[p].history]
                 # For each pattern, check if its prefix matches the end of shift history
                 # If so, add the remaining suffix as a new pattern to check
                 for history_suffix_len in range(1, min(len(flattened_pattern), len(history)) + 1):
@@ -379,23 +336,8 @@ def _parse_shift_count_coefficients(
     ctx: Context, preference: models.ShiftCountPreference, c_ss: list[int]
 ) -> dict[int, int]:
     coefficients = dict.fromkeys(c_ss, 1)
-    coefficient_entries = preference.countShiftTypeCoefficients or []
-    selected_sids = set(c_ss)
-    coefficient_sids = set()
-
-    for shift_type_id, coefficient in coefficient_entries:
-        if coefficient < 1:
-            raise ValueError(f"Shift count coefficient for '{shift_type_id}' must be at least 1.")
-
-        expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
-        if not set(expanded_sids).issubset(selected_sids):
-            raise ValueError(f"Shift count coefficient for '{shift_type_id}' must be covered by countShiftTypes.")
-        duplicate_sids = coefficient_sids.intersection(expanded_sids)
-        if duplicate_sids:
-            raise ValueError(f"Duplicate shift count coefficient for '{shift_type_id}'.")
-        coefficient_sids.update(expanded_sids)
-
-        for s in expanded_sids:
+    for shift_type_id, coefficient in preference.countShiftTypeCoefficients or []:
+        for s in utils.parse_sids(shift_type_id, ctx.map_sid_s):
             coefficients[s] = coefficient
 
     return coefficients
@@ -409,21 +351,13 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
     ps = utils.parse_pids(preference.person, ctx.map_pid_p)
     c_ds = utils.parse_dates(preference.countDates, ctx.map_did_d, ctx.dates.range)
     c_ss = utils.parse_sids(preference.countShiftTypes, ctx.map_sid_s)
-    if len(c_ss) == 0:
-        raise ValueError(f"Non-empty count shift types are required, but got {preference.countShiftTypes}")
     coefficients = _parse_shift_count_coefficients(ctx, preference, c_ss)
 
     expressions = utils.ensure_list(preference.expression)
     targets = utils.ensure_list(preference.target)
-    if len(expressions) != len(targets):
-        raise ValueError(f"Number of expressions ({len(expressions)}) must match number of targets ({len(targets)})")
-    if len(expressions) == 0:
-        raise ValueError("Expression must not be empty")
     weight = preference.weight
     for i in range(len(expressions)):
         expression, T = expressions[i], targets[i]
-        if T < 0:
-            raise ValueError(f"Target must be non-negative, but got {T}")
 
         for p in ps:
             unique_var_prefix = f"pref_{preference_idx}_p_{p}"
@@ -439,7 +373,6 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
             # Each person can work at most one selected shift per day.
             max_x = len(c_ds) * max(coefficients.values())
 
-            SUPPORTED_EXPRESSIONS = ["|x - T|^2", "x >= T", "x <= T", "x > T", "x < T", "x = T"]
             # Evaluate the expression
             if expression == "|x - T|^2":
                 # Note that a shift is represented as (d, s)
@@ -466,14 +399,9 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 # Use abstracted squared equality method
                 ctx.solver.add_squared_equality(squared, abs_diff, (0, max_abs_diff))
                 # Add the objective
-                if weight == math.inf:
-                    raise ValueError(f"'.inf' weights are not allowed for shift count with '{expression}'.")
-                elif weight != -math.inf and weight > 0:
-                    # -inf means x == T, which is okay
-                    raise ValueError(f"Weight must be non-positive for shift count with '{expression}'.")
                 utils.add_objective(ctx, weight, squared)
                 ctx.reports.append(Report(f"shift_count_{squared_var_name}", squared, lambda x: x == 0))
-            elif expression in SUPPORTED_EXPRESSIONS:
+            else:
                 expr_var_name = f"{unique_var_prefix}_expr"
                 operators = {
                     "x >= T": constants.Operator.GE,
@@ -493,10 +421,6 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 utils.add_objective(ctx, weight, expr)
                 # TODO: Be aware of signs of `weight`?
                 ctx.reports.append(Report(f"shift_count_{unique_var_prefix}_expr", expr, lambda x: x))
-            else:
-                raise ValueError(
-                    f"Unsupported expression: {expression}. Supported expressions are: {SUPPORTED_EXPRESSIONS}"
-                )
 
 
 def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, preference_idx):
@@ -530,10 +454,6 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
     # Therefore, the current formulation is the most flexible one, albeit a bit confusing on first sight.
 
     ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
-    if not isinstance(preference.people1, list):
-        raise ValueError(f"People1 must be a list, but got {type(preference.people1)}")  # noqa: TRY004
-    if not isinstance(preference.people2, list):
-        raise ValueError(f"People2 must be a list, but got {type(preference.people2)}")  # noqa: TRY004
     # Convert each people1 element to a list and parse person IDs
     flattened_people1 = [
         sorted(
@@ -558,8 +478,6 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
         )
         for element in preference.people2
     ]
-    if not isinstance(preference.shiftTypes, list):
-        raise ValueError(f"Shift types must be a list, but got {type(preference.shiftTypes)}")  # noqa: TRY004
     # Convert each shift type element to a list and parse shift type IDs
     flattened_shift_types = [
         sorted(

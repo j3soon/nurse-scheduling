@@ -76,18 +76,12 @@ def _build_custom_export_style_info(
             style_map[key]["fontColor"] = font_color
 
     for rule in ctx.export.formatting:
-        _validate_export_formatting_rule_usage(rule)
-
         target_people = set()
         target_dates = set()
         target_shift_types = set()
 
         if rule.type in ("row", "people header", "history", "cell"):
             for target in rule.people:
-                if target not in ctx.map_pid_p:
-                    raise ValueError(
-                        f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
-                    )
                 target_people.update(ctx.map_pid_p[target])
 
         if rule.type in ("column", "date header", "cell"):
@@ -96,10 +90,6 @@ def _build_custom_export_style_info(
 
         if rule.type == "cell":
             for target in rule.shiftTypes:
-                if target not in ctx.map_sid_s:
-                    raise ValueError(
-                        f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
-                    )
                 target_shift_types.update(ctx.map_sid_s[target])
 
         if rule.type == "row":
@@ -231,25 +221,8 @@ def _build_custom_export_style_info(
 
 def _parse_extra_column_coefficients(ctx: Context, rule, count_shift_types: list[int]) -> dict[int, int]:
     coefficients = dict.fromkeys(count_shift_types, 1)
-    coefficient_entries = rule.countShiftTypeCoefficients or []
-    selected_sids = set(count_shift_types)
-    coefficient_sids = set()
-
-    for shift_type_id, coefficient in coefficient_entries:
-        if coefficient < 1:
-            raise ValueError(f"Export extra column coefficient for '{shift_type_id}' must be at least 1.")
-
-        expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
-        if not set(expanded_sids).issubset(selected_sids):
-            raise ValueError(
-                f"Export extra column coefficient for '{shift_type_id}' must be covered by countShiftTypes."
-            )
-        duplicate_sids = coefficient_sids.intersection(expanded_sids)
-        if duplicate_sids:
-            raise ValueError(f"Duplicate export extra column coefficient for '{shift_type_id}'.")
-        coefficient_sids.update(expanded_sids)
-
-        for s in expanded_sids:
+    for shift_type_id, coefficient in rule.countShiftTypeCoefficients or []:
+        for s in utils.parse_sids(shift_type_id, ctx.map_sid_s):
             coefficients[s] = coefficient
 
     return coefficients
@@ -280,13 +253,6 @@ def _count_extra_row_for_date(ctx: Context, d: int, count_people, count_shift_ty
         ):
             count += 1
     return count
-
-
-def _validate_export_formatting_rule_usage(rule):
-    if rule.type != "cell" and getattr(rule, "when", None):
-        raise ValueError("export formatting 'when' is only supported for rules with type 'cell'")
-    if rule.type != "cell" and (getattr(rule, "appendText", None) or getattr(rule, "note", None)):
-        raise ValueError("export formatting annotations are only supported for rules with type 'cell'")
 
 
 def _get_shift_request_shape(ctx: Context, person_target, date_target) -> str:
@@ -338,8 +304,6 @@ def _build_cell_annotation_rules(ctx: Context):
 
     annotation_rules = []
     for rule in ctx.export.formatting:
-        _validate_export_formatting_rule_usage(rule)
-
         if rule.type != "cell" or not rule.when or (not rule.appendText and not rule.note):
             continue
 
@@ -347,16 +311,10 @@ def _build_cell_annotation_rules(ctx: Context):
         target_dates = set()
         target_shift_types = set()
         for target in rule.people:
-            if target not in ctx.map_pid_p:
-                raise ValueError(
-                    f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
-                )
             target_people.update(ctx.map_pid_p[target])
         for target in rule.dates:
             target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
         for target in rule.shiftTypes:
-            if target not in ctx.map_sid_s:
-                raise ValueError(f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'")
             target_shift_types.update(ctx.map_sid_s[target])
         annotation_rules.append(
             {
@@ -372,19 +330,12 @@ def _build_cell_annotation_rules(ctx: Context):
 
 def _export_preference_condition_matches(ctx: Context, condition, pref, *, request_shape: str, satisfied: bool):
     pref_condition = condition.preference
-    unsupported_types = set(pref_condition.types) - {models.SHIFT_REQUEST}
-    if unsupported_types:
-        raise ValueError(f"Unsupported export formatting preference condition type(s): {sorted(unsupported_types)}")
     if pref.type not in pref_condition.types:
         return False
     if pref_condition.satisfied is not None and pref_condition.satisfied != satisfied:
         return False
     if pref_condition.weightRange is not None:
-        if len(pref_condition.weightRange) != 2:
-            raise ValueError("export formatting preference weightRange must contain exactly two values")
         min_weight, max_weight = pref_condition.weightRange
-        if min_weight > max_weight:
-            raise ValueError("export formatting preference weightRange minimum must be less than or equal to maximum")
         if pref.weight < min_weight or pref.weight > max_weight:
             return False
     return (
