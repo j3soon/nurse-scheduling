@@ -17,7 +17,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import itertools
 import logging
 import math
 
@@ -27,50 +26,16 @@ from .report import Report
 
 logger = logging.getLogger(__name__)
 
-# Leave most parsing to the caller, keep the function here simple.
+# Input parsing and selector expansion belong to the Pydantic compiler. Keep
+# runtime preference handlers focused on solver construction.
 
 
-def _parse_shift_type_requirement_groups(shift_type, map_sid_s):
-    # Normalize shiftType to a list of requirement groups. Each inner list is
-    # one staffing equation. This follows shift affinity's top-level list
-    # behavior: each top-level selector becomes one equation, and a group
-    # selector expands inside that equation.
-    #   D -> [[D]]
-    #   ALL -> [[D, E, N]]
-    #   Group(D, E) -> [[D, E]]
-    #   [D, E] -> [[D], [E]]
-    #   [ALL] -> [[D, E, N]]
-    #   [Group(D, E)] -> [[D, E]]
-    #   [[D, E]] -> [[D, E]]
-    #   [[ALL]] -> [[D, E, N]]
-    if not isinstance(shift_type, list):
-        return [utils.parse_sids(shift_type, map_sid_s)]
-
-    groups = []
-    for element in shift_type:
-        if isinstance(element, list):
-            groups.append(
-                sorted(set(itertools.chain.from_iterable(utils.parse_sids(sid, map_sid_s) for sid in element)))
-            )
-        else:
-            groups.append(utils.parse_sids(element, map_sid_s))
-    return groups
-
-
-def _parse_shift_type_requirement_coefficients(
+def shift_type_requirements(
     ctx: Context,
     preference: models.ShiftTypeRequirementsPreference,
-    shift_type_groups: list[list[int]],
-) -> dict[int, int]:
-    coefficients = {s: 1 for s in set(itertools.chain.from_iterable(shift_type_groups))}
-    for shift_type_id, coefficient in preference.shiftTypeCoefficients or []:
-        for s in utils.parse_sids(shift_type_id, ctx.map_sid_s):
-            coefficients[s] = coefficient
-
-    return coefficients
-
-
-def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequirementsPreference, preference_idx):
+    compiled_preference: models.CompiledShiftTypeRequirements,
+    preference_idx,
+):
     # Hard constraint
     # For all requirement groups, the required number of people must be
     # fulfilled. Note that a concrete shift is represented as (d, s).
@@ -95,13 +60,9 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
     # Also note that this requirement is used in other preference types,
     # so this could not be implemented as a special case of shift_count.
 
-    ds = range(ctx.n_days)
-    if preference.date is not None:
-        ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
-    shift_type_groups = _parse_shift_type_requirement_groups(preference.shiftType, ctx.map_sid_s)
-    coefficients = _parse_shift_type_requirement_coefficients(ctx, preference, shift_type_groups)
-    for d in ds:
-        for group_idx, ss in enumerate(shift_type_groups):
+    coefficients = dict(compiled_preference.coefficients)
+    for d in compiled_preference.dates:
+        for group_idx, ss in enumerate(compiled_preference.shift_type_groups):
             for s in ss:
                 # A requirement expands through date and shift type groups into
                 # concrete (date, shift type) pairs. Duplicates are allowed
@@ -124,10 +85,10 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
             # requirement group. Without explicit qualifiedPeople, eligibility
             # can differ by concrete shift type.
             qualified_ps_by_s = {s: ctx.map_ds_p[(d, s)] for s in ss}
-            if preference.qualifiedPeople is not None:
+            if compiled_preference.qualified_people is not None:
                 # If qualifiedPeople is specified, only allow those people to
                 # work any shift type in the group.
-                qualified_ps = utils.parse_pids(preference.qualifiedPeople, ctx.map_pid_p)
+                qualified_ps = compiled_preference.qualified_people
                 qualified_ps_by_s = {s: qualified_ps for s in ss}
                 for s in ss:
                     unqualified_n_people = sum(
@@ -161,7 +122,7 @@ def shift_type_requirements(ctx: Context, preference: models.ShiftTypeRequiremen
                 ctx.reports.append(Report(f"shift_type_requirements_{diff_var_name}", diff, lambda x: x == 0))
 
 
-def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preference_idx):
+def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, compiled_preference, preference_idx):
     # Hard constraint
     # For all people, for all days, only work at most one shift.
     # Note that a shift in day `d` can be represented as `s` instead of (d, s).
@@ -172,26 +133,28 @@ def all_people_work_at_most_one_shift_per_day(ctx: Context, preference, preferen
     pass
 
 
-def shift_request(ctx: Context, preference: models.ShiftRequestPreference, preference_idx):
+def shift_request(
+    ctx: Context,
+    preference: models.ShiftRequestPreference,
+    compiled_preference: models.CompiledShiftRequest,
+    preference_idx,
+):
     # Soft constraint
     # For all people, try to fulfill the shift requests.
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * shifts[(d, s, p)]), for all satisfying (d, s)
-    ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
-    ss = utils.parse_sids(preference.shiftType, ctx.map_sid_s)
-    ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    for d in ds:
+    for d in compiled_preference.dates:
         # Note that the order of p and s is inverted deliberately
-        for p in ps:
+        for p in compiled_preference.people:
             weight = preference.weight
-            if utils.is_ss_equivalent_to_all(ss, ctx.n_shift_types):
+            if utils.is_ss_equivalent_to_all(compiled_preference.shift_types, ctx.n_shift_types):
                 # Add the objective
                 utils.add_objective(ctx, weight, ctx.solver.negate(ctx.offs[(d, p)]))
                 ctx.reports.append(
                     Report(f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs", ctx.offs[(d, p)], lambda x: x == 0)
                 )
             else:
-                for s in ss:
+                for s in compiled_preference.shift_types:
                     # Add the objective
                     if s == constants.OFF_sid:
                         utils.add_objective(ctx, weight, ctx.offs[(d, p)])
@@ -213,66 +176,52 @@ def shift_request(ctx: Context, preference: models.ShiftRequestPreference, prefe
                         )
 
 
-def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessionsPreference, preference_idx):
+def shift_type_successions(
+    ctx: Context,
+    preference: models.ShiftTypeSuccessionsPreference,
+    compiled_preference: models.CompiledShiftTypeSuccessions,
+    preference_idx,
+):
     # Soft constraint
     # For all people, for all start date, try to match the shift type successions.
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
     # where actual_n_matched = sum_{(d, s)}(shifts[(d, s, p)]), for all satisfying (d, s)
-    ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    # Convert each pattern element to a list and parse shift IDs
-    flattened_pattern = [
-        sorted(
-            set(
-                itertools.chain.from_iterable(
-                    utils.parse_sids(sid, ctx.map_sid_s)
-                    for sid in (element if isinstance(element, list) else [element])
-                )
-            )
-        )
-        for element in preference.pattern
-    ]
-    parsed_pattern = []
-    for i in range(len(flattened_pattern)):
-        if utils.is_ss_equivalent_to_all(flattened_pattern[i], ctx.n_shift_types):
-            parsed_pattern.append(constants.ALL)
-        else:
-            parsed_pattern.append(flattened_pattern[i])
-    assert len(parsed_pattern) == len(flattened_pattern)
-
-    ds = range(ctx.n_days)
-    # Parse date range if specified
-    if preference.date is not None:
-        ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
-
     def _pattern_element_match_expr(d, p, pattern_element):
-        if pattern_element == constants.ALL:
+        if pattern_element.matches_all_working_shifts:
             return ctx.solver.negate(ctx.offs[(d, p)]), True
-        matches = [ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for s in pattern_element]
+        matches = [
+            ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for s in pattern_element.shift_types
+        ]
         if len(matches) == 1:
             return matches[0], True
         return sum(matches), False
 
-    for p in ps:
-        for d_begin in range(ctx.n_days - len(flattened_pattern) + 1):
+    # Resolve the Pydantic private attribute once because this hot loop runs
+    # for every selected person and pattern start date.
+    histories = ctx.compiled_schedule.histories
+    for p in compiled_preference.people:
+        history = histories[p]
+        for d_begin in range(ctx.n_days - len(compiled_preference.pattern) + 1):
             # Check if all dates in the pattern range are valid
-            if not all(d in ds for d in range(d_begin, d_begin + len(flattened_pattern))):
+            if not all(
+                d in compiled_preference.date_set for d in range(d_begin, d_begin + len(compiled_preference.pattern))
+            ):
                 continue
             # Match all patterns that start at day d_begin
-            patterns = [parsed_pattern]
+            patterns = [compiled_preference.pattern]
             # Consider history data to check for patterns that start at day 0
             # We only need to check day 0 since any pattern that matches history must include it
-            if d_begin == 0 and ctx.people.items[p].history is not None:
-                history = [utils.parse_sids(sid, ctx.map_sid_s)[0] for sid in ctx.people.items[p].history]
+            if d_begin == 0 and history is not None:
                 # For each pattern, check if its prefix matches the end of shift history
                 # If so, add the remaining suffix as a new pattern to check
-                for history_suffix_len in range(1, min(len(flattened_pattern), len(history)) + 1):
+                for history_suffix_len in range(1, min(len(compiled_preference.pattern), len(history)) + 1):
                     history_suffix = history[-history_suffix_len:]
-                    pattern_prefix = flattened_pattern[:history_suffix_len]
-                    if all(history_suffix[i] in pattern_prefix[i] for i in range(history_suffix_len)):
+                    pattern_prefix = compiled_preference.pattern[:history_suffix_len]
+                    if all(history_suffix[i] in pattern_prefix[i].shift_types for i in range(history_suffix_len)):
                         # If history suffix matches pattern prefix, add remaining pattern suffix as new pattern
                         # This is equivalent to checking patterns that span across history and future days
-                        patterns.append(parsed_pattern[history_suffix_len:])
+                        patterns.append(compiled_preference.pattern[history_suffix_len:])
             for pattern_idx, pattern in enumerate(patterns):
                 target_n_matched = len(pattern)
                 unique_var_prefix = (
@@ -332,46 +281,32 @@ def shift_type_successions(ctx: Context, preference: models.ShiftTypeSuccessions
                 ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 1))
 
 
-def _parse_shift_count_coefficients(
-    ctx: Context, preference: models.ShiftCountPreference, c_ss: list[int]
-) -> dict[int, int]:
-    coefficients = dict.fromkeys(c_ss, 1)
-    for shift_type_id, coefficient in preference.countShiftTypeCoefficients or []:
-        for s in utils.parse_sids(shift_type_id, ctx.map_sid_s):
-            coefficients[s] = coefficient
-
-    return coefficients
-
-
-def shift_count(ctx: Context, preference: models.ShiftCountPreference, preference_idx):
+def shift_count(
+    ctx: Context,
+    preference: models.ShiftCountPreference,
+    compiled_preference: models.CompiledShiftCount,
+    preference_idx,
+):
     # Soft constraint
     # For specified people, dates, and shift types, penalize violations of the expression
     # The expression is evaluated as a mathematical formula where x is the actual evaluated value
     # and T is the target value
-    ps = utils.parse_pids(preference.person, ctx.map_pid_p)
-    c_ds = utils.parse_dates(preference.countDates, ctx.map_did_d, ctx.dates.range)
-    c_ss = utils.parse_sids(preference.countShiftTypes, ctx.map_sid_s)
-    coefficients = _parse_shift_count_coefficients(ctx, preference, c_ss)
-
-    expressions = utils.ensure_list(preference.expression)
-    targets = utils.ensure_list(preference.target)
+    coefficients = dict(compiled_preference.coefficients)
     weight = preference.weight
-    for i in range(len(expressions)):
-        expression, T = expressions[i], targets[i]
-
-        for p in ps:
+    for expression, T in zip(compiled_preference.expressions, compiled_preference.targets, strict=True):
+        for p in compiled_preference.people:
             unique_var_prefix = f"pref_{preference_idx}_p_{p}"
             # Calculate actual number of shifts for this person
             x = sum(
                 coefficients[s] * (ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)])
-                for d in c_ds
-                for s in c_ss
+                for d in compiled_preference.dates
+                for s in compiled_preference.shift_types
             )
 
             # TODO: Also Report value of `x`
 
             # Each person can work at most one selected shift per day.
-            max_x = len(c_ds) * max(coefficients.values())
+            max_x = len(compiled_preference.dates) * max(coefficients.values())
 
             # Evaluate the expression
             if expression == "|x - T|^2":
@@ -423,7 +358,12 @@ def shift_count(ctx: Context, preference: models.ShiftCountPreference, preferenc
                 ctx.reports.append(Report(f"shift_count_{unique_var_prefix}_expr", expr, lambda x: x))
 
 
-def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, preference_idx):
+def shift_affinity(
+    ctx: Context,
+    preference: models.ShiftAffinityPreference,
+    compiled_preference: models.CompiledShiftAffinity,
+    preference_idx,
+):
     # Soft constraint
     # For specified date, people1, people2, and shift types, encourage or discourage working together.
     # Positive weight encourages affinity (working together), negative weight encourages repulsion (working apart)
@@ -453,48 +393,10 @@ def shift_affinity(ctx: Context, preference: models.ShiftAffinityPreference, pre
     # we will lose the ability to handle the example scenarios above.
     # Therefore, the current formulation is the most flexible one, albeit a bit confusing on first sight.
 
-    ds = utils.parse_dates(preference.date, ctx.map_did_d, ctx.dates.range)
-    # Convert each people1 element to a list and parse person IDs
-    flattened_people1 = [
-        sorted(
-            set(
-                itertools.chain.from_iterable(
-                    utils.parse_pids(pid, ctx.map_pid_p)
-                    for pid in (element if isinstance(element, list) else [element])
-                )
-            )
-        )
-        for element in preference.people1
-    ]
-    # Convert each people2 element to a list and parse person IDs
-    flattened_people2 = [
-        sorted(
-            set(
-                itertools.chain.from_iterable(
-                    utils.parse_pids(pid, ctx.map_pid_p)
-                    for pid in (element if isinstance(element, list) else [element])
-                )
-            )
-        )
-        for element in preference.people2
-    ]
-    # Convert each shift type element to a list and parse shift type IDs
-    flattened_shift_types = [
-        sorted(
-            set(
-                itertools.chain.from_iterable(
-                    utils.parse_sids(sid, ctx.map_sid_s)
-                    for sid in (element if isinstance(element, list) else [element])
-                )
-            )
-        )
-        for element in preference.shiftTypes
-    ]
-
-    for d in ds:
-        for i, p1s in enumerate(flattened_people1):
-            for j, p2s in enumerate(flattened_people2):
-                for k, ss in enumerate(flattened_shift_types):
+    for d in compiled_preference.dates:
+        for i, p1s in enumerate(compiled_preference.people1_groups):
+            for j, p2s in enumerate(compiled_preference.people2_groups):
+                for k, ss in enumerate(compiled_preference.shift_type_groups):
                     unique_var_prefix = f"pref_{preference_idx}_d_{d}_i_{i}_j_{j}_k_{k}"
                     some_p1_matched_var_name = f"{unique_var_prefix}_some_p1_matched"
                     some_p2_matched_var_name = f"{unique_var_prefix}_some_p2_matched"

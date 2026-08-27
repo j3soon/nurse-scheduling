@@ -940,6 +940,11 @@ def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
         map_pid_p={"n1": [0]},
         map_did_d={},
         map_sid_s={},
+        compiled_schedule=SimpleNamespace(
+            export=SimpleNamespace(
+                formatting=[SimpleNamespace(people=(0,), dates=(), shift_types=())],
+            )
+        ),
     )
 
     # n_rows=0 forces set_style to hit out-of-bounds guard and skip writes.

@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import ConfigDict, Field
@@ -37,13 +38,13 @@ class Context(NurseSchedulingData):
     n_people: int = None
 
     # Mapping fields
-    map_sid_s: dict[str | int, list[int]] = Field(
+    map_sid_s: Mapping[str | int, tuple[int, ...]] = Field(
         default_factory=dict
-    )  # Maps shift type ID to list of shift type indices
-    map_pid_p: dict[str | int, list[int]] = Field(
+    )  # Maps shift type ID to shift type indices
+    map_pid_p: Mapping[str | int, tuple[int, ...]] = Field(
         default_factory=dict
-    )  # Maps person/group ID to list of person indices
-    map_did_d: dict[str, list[int]] = Field(default_factory=dict)  # Maps date/group ID to list of date indices
+    )  # Maps person/group ID to person indices
+    map_did_d: Mapping[str, tuple[int, ...]] = Field(default_factory=dict)  # Maps date/group ID to date indices
 
     # Fields used by the solver (abstracted)
     solver: SolverInterface | None = None
@@ -77,3 +78,30 @@ class Context(NurseSchedulingData):
 
     # Optimization objective (expression type varies by solver)
     objective: Any = 0
+
+    @classmethod
+    def from_validated(cls, data: NurseSchedulingData) -> "Context":
+        """Create runtime state without validating or resolving the input twice."""
+        compiled = data.compiled_schedule
+        # The source model and compiled snapshot were produced by the same
+        # validation pass, so model_construct can safely skip a second pass.
+        # Copy only the date container to expose generated items without
+        # mutating the validated input model.
+        ctx = cls.model_construct(
+            appVersion=data.appVersion,
+            apiVersion=data.apiVersion,
+            description=data.description,
+            dates=data.dates.model_copy(update={"items": list(compiled.dates)}),
+            people=data.people,
+            shiftTypes=data.shiftTypes,
+            preferences=data.preferences,
+            export=data.export,
+            n_days=len(compiled.dates),
+            n_shift_types=len(data.shiftTypes.items),
+            n_people=len(data.people.items),
+            map_sid_s=compiled.map_sid_s,
+            map_pid_p=compiled.map_pid_p,
+            map_did_d=compiled.map_did_d,
+        )
+        ctx._compiled_schedule = compiled
+        return ctx

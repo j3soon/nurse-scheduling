@@ -48,6 +48,12 @@ test paths when a narrower suite is known to be sufficient.
 
 ## Testing
 - Normal tests live under `tests/`.
+- Resolve input selectors and input-derived invariants in
+  `NurseSchedulingData.compiled_schedule`. Scheduler, preference, and export
+  phases should consume that representation instead of reparsing YAML fields.
+- Treat a validated schedule and its compiled representation as one snapshot.
+  Revalidate changed input instead of mutating a validated model and reusing
+  stale compiled data.
 - Keep server-facing solver traits in
   `nurse_scheduling/server/solver_capabilities.py`. Runtime control checks and
   `/optimize/options` must use that registry rather than duplicate selector
@@ -78,6 +84,10 @@ test paths when a narrower suite is known to be sufficient.
 ## Python Style
 - Use 4-space indentation, `snake_case` functions/modules, and `PascalCase`
   classes. Keep type names explicit.
+- Treat existing comments and docstrings as durable project knowledge. When
+  moving or replacing code, preserve their information near the replacement.
+  Do not silently delete them unless the documented behavior is obsolete, and
+  explain that decision during review.
 - Core linting and formatting use Ruff.
 - Every Python file must use the repository module-docstring and AGPL header
   convention documented in `../docs/agent-license-headers.md`.

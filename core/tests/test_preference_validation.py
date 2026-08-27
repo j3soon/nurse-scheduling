@@ -28,7 +28,7 @@ import pytest
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nurse_scheduling import preference_types, scheduler
+from nurse_scheduling import models, scheduler
 
 
 @pytest.mark.parametrize("weight", [".inf", "-.inf"])
@@ -551,16 +551,9 @@ preferences:
 
 
 def test_shift_type_requirements_parse_all_scalar_and_list_forms():
-    map_sid_s = {
-        "D": [0],
-        "E": [1],
-        "N": [2],
-        "ALL": [0, 1, 2],
-    }
-
-    assert preference_types._parse_shift_type_requirement_groups("ALL", map_sid_s) == [[0, 1, 2]]
-    assert preference_types._parse_shift_type_requirement_groups(["ALL"], map_sid_s) == [[0, 1, 2]]
-    assert preference_types._parse_shift_type_requirement_groups([["ALL"]], map_sid_s) == [[0, 1, 2]]
+    assert _compiled_requirement_groups("ALL") == ((0, 1, 2),)
+    assert _compiled_requirement_groups(["ALL"]) == ((0, 1, 2),)
+    assert _compiled_requirement_groups([["ALL"]]) == ((0, 1, 2),)
 
 
 @pytest.mark.parametrize(
@@ -576,14 +569,32 @@ def test_shift_type_requirements_parse_all_scalar_and_list_forms():
     ],
 )
 def test_shift_type_requirements_parse_grouped_and_top_level_shift_types(shift_type, expected):
-    map_sid_s = {
-        "D": [0],
-        "E": [1],
-        "N": [2],
-        "Weekend": [0, 2],
-    }
+    assert _compiled_requirement_groups(shift_type) == tuple(tuple(group) for group in expected)
 
-    assert preference_types._parse_shift_type_requirement_groups(shift_type, map_sid_s) == expected
+
+def _compiled_requirement_groups(shift_type):
+    data = models.NurseSchedulingData.model_validate(
+        {
+            "apiVersion": "alpha",
+            "dates": {"range": {"startDate": "2025-01-01", "endDate": "2025-01-01"}},
+            "people": {"items": [{"id": "n1"}]},
+            "shiftTypes": {
+                "items": [{"id": "D"}, {"id": "E"}, {"id": "N"}],
+                "groups": [{"id": "Weekend", "members": ["D", "N"]}],
+            },
+            "preferences": [
+                {"type": "at most one shift per day"},
+                {
+                    "type": "shift type requirement",
+                    "shiftType": shift_type,
+                    "requiredNumPeople": 0,
+                },
+            ],
+        }
+    )
+    compiled = data.compiled_schedule.preferences[1]
+    assert isinstance(compiled, models.CompiledShiftTypeRequirements)
+    return compiled.shift_type_groups
 
 
 def test_shift_type_requirements_allows_duplicate_expanded_coverage(caplog):

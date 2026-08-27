@@ -19,8 +19,10 @@
 
 # This test is mostly AI generated.
 
+import copy
 import datetime
 import os
+import pickle
 import sys
 
 import pytest
@@ -29,7 +31,8 @@ from pydantic import ValidationError
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nurse_scheduling.models import NurseSchedulingData
+from nurse_scheduling.context import Context
+from nurse_scheduling.models import CompiledShiftTypeRequirements, NurseSchedulingData
 
 
 def _base_payload() -> dict:
@@ -43,6 +46,92 @@ def _base_payload() -> dict:
             {"type": "shift type requirement", "shiftType": "D", "requiredNumPeople": 1},
         ],
     }
+
+
+def test_model_compiles_reusable_schedule_indices_for_runtime_phases():
+    payload = _base_payload()
+    payload["dates"] = {
+        "range": {"startDate": "2025-01-01", "endDate": "2025-01-03"},
+        "groups": [
+            {"id": "firstTwo", "members": ["2025-01-01", "2025-01-02"]},
+            {"id": "allThree", "members": ["firstTwo", "2025-01-03"]},
+        ],
+    }
+    payload["people"] = {
+        "items": [{"id": "n1", "history": ["OFF", "E"]}, {"id": "n2"}],
+        "groups": [
+            {"id": "team", "members": ["n1"]},
+            {"id": "allPeople", "members": ["team", "n2"]},
+        ],
+    }
+    payload["shiftTypes"] = {
+        "items": [{"id": "D"}, {"id": "E"}],
+        "groups": [
+            {"id": "day", "members": ["D"]},
+            {"id": "work", "members": ["day", "E"]},
+        ],
+    }
+    payload["preferences"][1].update(
+        shiftType="work",
+        date="allThree",
+        qualifiedPeople="allPeople",
+    )
+    payload["export"] = {
+        "formatting": [{"type": "row", "people": ["allPeople"], "backgroundColor": "#ffffff"}],
+        "extraColumns": [
+            {
+                "type": "count",
+                "header": "Work",
+                "countShiftTypes": ["work"],
+                "countDates": ["firstTwo"],
+            }
+        ],
+    }
+
+    data = NurseSchedulingData.model_validate(payload)
+    compiled = data.compiled_schedule
+    requirement = compiled.preferences[1]
+
+    assert compiled.map_sid_s["work"] == (0, 1)
+    assert compiled.map_pid_p["allPeople"] == (0, 1)
+    assert compiled.map_did_d["allThree"] == (0, 1, 2)
+    assert compiled.histories == ((-1, 1), None)
+    assert isinstance(requirement, CompiledShiftTypeRequirements)
+    assert requirement.shift_type_groups == ((0, 1),)
+    assert requirement.dates == (0, 1, 2)
+    assert requirement.qualified_people == (0, 1)
+    assert compiled.export.formatting[0].people == (0, 1)
+    assert compiled.export.extra_columns[0].dates == (0, 1)
+
+    ctx = Context.from_validated(data)
+
+    assert ctx.compiled_schedule is compiled
+    assert ctx.map_sid_s is compiled.map_sid_s
+    assert tuple(ctx.dates.items) == compiled.dates
+    assert "compiled_schedule" not in data.model_dump()
+    copied = data.model_copy(deep=True)
+    assert copied.compiled_schedule is compiled
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        compiled.map_sid_s["work"] = (0,)
+
+
+def test_compiled_schedule_supports_pickle_and_context_deepcopy():
+    data = NurseSchedulingData.model_validate(_base_payload())
+    compiled = data.compiled_schedule
+
+    restored = pickle.loads(pickle.dumps(data))
+    assert restored.model_dump() == data.model_dump()
+    assert restored.compiled_schedule == compiled
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        restored.compiled_schedule.map_sid_s["D"] = (1,)
+
+    ctx = Context.from_validated(data)
+    copied_ctx = ctx.model_copy(deep=True)
+    deepcopied_ctx = copy.deepcopy(ctx)
+    assert copied_ctx.compiled_schedule is compiled
+    assert copied_ctx.map_sid_s is compiled.map_sid_s
+    assert deepcopied_ctx.compiled_schedule is compiled
+    assert deepcopied_ctx.map_sid_s is compiled.map_sid_s
 
 
 def test_model_requires_at_most_one_shift_preference():
