@@ -80,6 +80,10 @@ test paths when a narrower suite is known to be sufficient.
 - Use `--show-model-build-stats` when checking or benchmarking model-building
   optimizations against real testcases. It emits a compact aggregated summary
   and suppresses the full schedule output.
+- Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
+  binary or text payload. Pytest derives the node ID from the parameter value
+  and exports it through `PYTEST_CURRENT_TEST`, which fails on Windows once the
+  ID exceeds the 32767-character environment variable limit.
 
 ## Python Style
 - Use 4-space indentation, `snake_case` functions/modules, and `PascalCase`

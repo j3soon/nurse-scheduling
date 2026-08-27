@@ -277,6 +277,7 @@ def test_pdf_extraction_preserves_page_order_and_non_ascii_text() -> None:
         (b"not pdf", _limits(), "PDF content does not match its filename."),
         (b"%PDF-1.7\nbroken", _limits(), "PDF attachment is invalid or unsupported."),
     ],
+    ids=["too-many-pages", "encrypted", "not-a-pdf", "malformed"],
 )
 def test_pdf_rejects_unsupported_or_bounded_content(
     data: bytes,
@@ -352,6 +353,7 @@ def test_xlsx_rejects_content_that_is_not_an_ooxml_workbook() -> None:
             "XLSX attachment is invalid or unsupported.",
         ),
     ],
+    ids=["too-many-entries", "encrypted-entry", "malformed-sheet"],
 )
 def test_xlsx_rejects_unsafe_or_malformed_archives(data: bytes, expected_error: str) -> None:
     with pytest.raises((DocumentLimitError, InvalidDocumentError), match=expected_error):
@@ -364,6 +366,7 @@ def test_xlsx_rejects_unsafe_or_malformed_archives(data: bytes, expected_error: 
         ("notes.pdf", _pdf_with_text("Text beyond the extraction limit")),
         ("coverage.xlsx", _xlsx_with_formula()),
     ],
+    ids=["pdf", "xlsx"],
 )
 def test_binary_document_extraction_enforces_prompt_size_limit(filename: str, data: bytes) -> None:
     with pytest.raises(DocumentLimitError, match="Document extracted text is too large"):
