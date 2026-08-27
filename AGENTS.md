@@ -27,6 +27,15 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   `AGENTS.md`. Omit task-specific or temporary details.
 - Note potentially wasteful token use and uninformative tests, scripts, or runs.
   Fix them when practical, otherwise report or document them for review.
+- Inspect the repository with narrow queries. Filter to the paths, revisions, or
+  lines in question instead of listing every branch, printing whole files, or
+  dumping full status output.
+- Compare versions of a file by searching each revision for the differing value
+  instead of printing every version in full.
+- Prefer the compact or affected test and lint commands documented for each
+  module. Read the summary lines of a run before requesting more output.
+- Check a suspected missing dependency or tool directly before rerunning a full
+  suite to diagnose its failure.
 - Use Conventional Commits, scoped by module where applicable, for example:
   `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
 - For agent-created commits, include a descriptive body that ends with a
