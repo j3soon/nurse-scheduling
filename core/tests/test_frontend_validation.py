@@ -76,7 +76,6 @@ def test_frontend_model_accepts_frontend_generated_shape():
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
-        (lambda payload: payload.update(country="TW"), "country is not preserved"),
         (
             lambda payload: payload["preferences"].append(
                 {

@@ -145,7 +145,7 @@ def test_model_rejects_invalid_dates_items_and_group_ids():
     ("mutate", "message"),
     [
         (lambda payload: payload.update(apiVersion="future"), "Unsupported API version"),
-        (lambda payload: payload.update(country="US"), "Country US is not supported"),
+        (lambda payload: payload.update(country="US"), "country"),
         (
             lambda payload: payload["people"].update(groups=[{"id": "g", "members": ["missing"]}]),
             "Unknown person ID: missing",

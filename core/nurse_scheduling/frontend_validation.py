@@ -55,9 +55,6 @@ class _FrontendNurseSchedulingData(NurseSchedulingData):
 
     @model_validator(mode="after")
     def validate_frontend_subset(self) -> Self:
-        if self.country is not None:
-            raise ValueError("country is not preserved by the web frontend")
-
         for container_name, container in (("people", self.people), ("shiftTypes", self.shiftTypes)):
             for item_index, item in enumerate(container.items):
                 path = f"{container_name}.items[{item_index}]"

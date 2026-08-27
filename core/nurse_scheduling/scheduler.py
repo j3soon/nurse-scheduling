@@ -190,8 +190,6 @@ def schedule(
         ctx.map_pid_p[group.id] = sorted(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
 
     # Map date string (YYYY-MM-DD) to date index
-    if ctx.country is not None and ctx.country != "TW":
-        raise ValueError(f"Country {ctx.country} is not supported yet")
     for d in range(ctx.n_days):
         date_obj = ctx.dates.items[d]
         ctx.map_did_d[str(date_obj)] = [d]

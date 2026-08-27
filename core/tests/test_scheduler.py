@@ -47,13 +47,6 @@ def test_scheduler_rejects_unsupported_api_version():
         scheduler.schedule(content)
 
 
-def test_scheduler_rejects_unsupported_country():
-    content = _load_valid_yaml_bytes() + b"\ncountry: US\n"
-
-    with pytest.raises(ValueError, match="Country US is not supported yet"):
-        scheduler.schedule(content)
-
-
 def test_scheduler_rejects_unsupported_solver_selector():
     content = _load_valid_yaml_bytes()
 

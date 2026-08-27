@@ -308,7 +308,6 @@ class NurseSchedulingData(BaseModel):
     apiVersion: str
     description: str | None = None
     dates: DateContainer
-    country: str | None = None
     people: PeopleContainer
     shiftTypes: ShiftTypesContainer
     preferences: list[
@@ -487,8 +486,6 @@ def _validate_schedule_semantics(data: NurseSchedulingData) -> None:
     """Validate canonical scheduling semantics after Pydantic field parsing."""
     if data.apiVersion != "alpha":
         raise ValueError(f"Unsupported API version: {data.apiVersion}")
-    if data.country not in {None, "TW"}:
-        raise ValueError(f"Country {data.country} is not supported yet")
 
     shift_ids = [item.id for item in data.shiftTypes.items]
     shift_map = _build_reference_map(
