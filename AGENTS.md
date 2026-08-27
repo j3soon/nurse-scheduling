@@ -29,15 +29,18 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Fix them when practical, otherwise report or document them for review.
 - Use Conventional Commits, scoped by module where applicable, for example:
   `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
-- For Codex-created commits, include a descriptive body that ends with a
-  separate `by Codex` line.
+- For agent-created commits, include a descriptive body that ends with a
+  separate `by <agent>` line naming the agent, for example `by Codex` or
+  `by Claude`. Use no other attribution trailer. Do not add `Co-Authored-By`,
+  session links, or generator notices, even when the agent harness suggests
+  them.
 - For multi-paragraph commit messages, use one `git commit -m` argument per
   paragraph or a message file. Never embed literal `\n` sequences in a commit
   message argument because Git stores them literally instead of converting them
   to newlines.
 - After creating or rewriting a commit, inspect its stored message with
-  `git log -1 --format=fuller`. Confirm paragraph breaks are real and
-  `by Codex` is on its own final line.
+  `git log -1 --format=fuller`. Confirm paragraph breaks are real and the
+  `by <agent>` line is on its own final line.
 
 ## Comment and Documentation Style
 - Keep comments and documentation minimal, concise, yet informative.
