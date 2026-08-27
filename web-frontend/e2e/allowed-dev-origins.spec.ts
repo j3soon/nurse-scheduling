@@ -19,11 +19,18 @@
 
 // This test is mostly AI generated.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
-import { expect, test } from '@playwright/test';
+import { expect, test as base } from '@playwright/test';
 
-const DEV_PORT = 13005;
+// The development server compiles on demand and competes with the other
+// workers, so allow far more than the Playwright default. Keep the test budget
+// strictly larger than the readiness budget so a slow start reports the
+// captured server logs instead of a bare test timeout.
+const TEST_TIMEOUT_MS = 180_000;
+const SERVER_READY_TIMEOUT_MS = 90_000;
+const SERVER_STOP_TIMEOUT_MS = 5_000;
 
 function nonLoopbackIpv4(): string | undefined {
   return Object.values(networkInterfaces())
@@ -32,14 +39,35 @@ function nonLoopbackIpv4(): string | undefined {
     ?.address;
 }
 
+// Use an ephemeral port so a leftover server can never fail a later retry.
+function reservePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '0.0.0.0', () => {
+      const address = probe.address();
+      if (address === null || typeof address === 'string') {
+        probe.close(() => reject(new Error('Failed to reserve a development server port.')));
+        return;
+      }
+      const { port } = address;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
 async function waitForServer(url: string, processExited: Promise<number | null>, logs: () => string): Promise<void> {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
+  const exited = processExited.then(code => {
+    throw new Error(`Next.js development server exited with ${code}.\n${logs()}`);
+  });
+  // Nothing observes this once the server is ready, so keep the eventual
+  // rejection from surfacing as an unhandled rejection during teardown.
+  exited.catch(() => {});
   while (Date.now() < deadline) {
     const result = await Promise.race([
-      fetch(url).then(response => response.ok).catch(() => false),
-      processExited.then(code => {
-        throw new Error(`Next.js development server exited with ${code}.\n${logs()}`);
-      }),
+      fetch(url, { signal: AbortSignal.timeout(1_000) }).then(response => response.ok).catch(() => false),
+      exited,
     ]);
     if (result) return;
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -47,63 +75,115 @@ async function waitForServer(url: string, processExited: Promise<number | null>,
   throw new Error(`Next.js development server did not become ready.\n${logs()}`);
 }
 
-test('hydrates through a non-loopback development origin', async ({ page }) => {
-  const host = nonLoopbackIpv4();
-  test.skip(!host, 'A non-loopback IPv4 address is required.');
+// Kill `next dev` as well as the `bun` wrapper that spawned it.
+function killServerTree(server: ChildProcess, signal: NodeJS.Signals): void {
+  if (!server.pid) return;
 
-  const output: string[] = [];
-  const server = spawn(
-    'bun',
-    ['run', 'dev', '--hostname', '0.0.0.0', '--port', String(DEV_PORT)],
-    {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        DISABLE_SENTRY: '1',
-        NEXT_PUBLIC_DISABLE_SENTRY: '1',
-        NEXT_TELEMETRY_DISABLED: '1',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  );
-  server.stdout.on('data', chunk => output.push(String(chunk)));
-  server.stderr.on('data', chunk => output.push(String(chunk)));
-  const processExited = new Promise<number | null>(resolve => server.once('exit', resolve));
+  if (process.platform === 'win32') {
+    // Windows has no process groups, so walk the tree explicitly.
+    spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f']);
+    return;
+  }
 
   try {
-    await waitForServer(`http://127.0.0.1:${DEV_PORT}/experimental-ai`, processExited, () => output.join(''));
-    await page.route(`http://${host}:8001/capabilities`, route => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      headers: {
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Allow-Origin': `http://${host}:${DEV_PORT}`,
-      },
-      body: JSON.stringify({
-        image_attachments: {
-          enabled: true,
-          accepted_media_types: ['image/png'],
-          max_files: 1,
-          max_bytes_per_file: 1000,
-        },
-        document_attachments: {
-          enabled: true,
-          accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-          max_files: 1,
-          max_bytes_per_file: 5000000,
-        },
-      }),
-    }));
-
-    await page.goto(`http://${host}:${DEV_PORT}/experimental-ai`);
-
-    await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
-    await expect(page.getByLabel('Attach files')).toBeAttached();
-  } finally {
-    server.kill('SIGTERM');
-    await Promise.race([
-      processExited,
-      new Promise(resolve => setTimeout(resolve, 5_000)),
-    ]);
+    // `detached` makes the child a group leader, so this reaches `next dev` too.
+    process.kill(-server.pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
   }
+}
+
+function exitedWithin(processExited: Promise<number | null>, timeoutMs: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    processExited.then(() => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+async function stopServer(server: ChildProcess, processExited: Promise<number | null>): Promise<void> {
+  if (server.exitCode !== null || server.signalCode !== null) return;
+  killServerTree(server, 'SIGTERM');
+  if (await exitedWithin(processExited, SERVER_STOP_TIMEOUT_MS)) return;
+  killServerTree(server, 'SIGKILL');
+  await exitedWithin(processExited, SERVER_STOP_TIMEOUT_MS);
+}
+
+type DevServerFixtures = {
+  devServer: { host: string; port: number };
+};
+
+// Own the server from a fixture because Playwright still runs fixture teardown
+// after a test times out. A `try`/`finally` in the test body does not run, which
+// orphans the server and makes every retry fail to bind.
+const test = base.extend<DevServerFixtures>({
+  // `use` is renamed because the React hooks lint rule misreads that name.
+  devServer: async ({}, runTest, testInfo) => {
+    testInfo.setTimeout(TEST_TIMEOUT_MS);
+    const host = nonLoopbackIpv4();
+    testInfo.skip(!host, 'A non-loopback IPv4 address is required.');
+    if (host === undefined) return;
+
+    const port = await reservePort();
+    const output: string[] = [];
+    const server = spawn(
+      'bun',
+      ['run', 'dev', '--hostname', '0.0.0.0', '--port', String(port)],
+      {
+        cwd: process.cwd(),
+        detached: process.platform !== 'win32',
+        env: {
+          ...process.env,
+          DISABLE_SENTRY: '1',
+          NEXT_PUBLIC_DISABLE_SENTRY: '1',
+          NEXT_TELEMETRY_DISABLED: '1',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    server.stdout.on('data', chunk => output.push(String(chunk)));
+    server.stderr.on('data', chunk => output.push(String(chunk)));
+    const processExited = new Promise<number | null>(resolve => server.once('exit', resolve));
+
+    try {
+      await waitForServer(`http://127.0.0.1:${port}/experimental-ai`, processExited, () => output.join(''));
+      await runTest({ host, port });
+    } finally {
+      await stopServer(server, processExited);
+    }
+  },
+});
+
+test('hydrates through a non-loopback development origin', async ({ page, devServer }) => {
+  const { host, port } = devServer;
+
+  await page.route(`http://${host}:8001/capabilities`, route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    headers: {
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Origin': `http://${host}:${port}`,
+    },
+    body: JSON.stringify({
+      image_attachments: {
+        enabled: true,
+        accepted_media_types: ['image/png'],
+        max_files: 1,
+        max_bytes_per_file: 1000,
+      },
+      document_attachments: {
+        enabled: true,
+        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
+        max_files: 1,
+        max_bytes_per_file: 5000000,
+      },
+    }),
+  }));
+
+  await page.goto(`http://${host}:${port}/experimental-ai`);
+
+  await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  await expect(page.getByLabel('Attach files')).toBeAttached();
 });
