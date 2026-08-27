@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="${1:-$PWD}"
-repo_root="$(cd "$repo_root" && pwd)"
+requested_root="${1:-$PWD}"
+if ! repo_root="$(cd -- "$requested_root" 2>/dev/null && pwd)"; then
+  printf 'error: %s is not the repository root\n' "$requested_root" >&2
+  exit 2
+fi
 
 if [[ ! -d "$repo_root/core" || ! -d "$repo_root/web-frontend" ]]; then
   printf 'error: %s is not the repository root\n' "$repo_root" >&2

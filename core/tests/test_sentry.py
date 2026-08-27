@@ -23,6 +23,8 @@ import sys
 import types
 from datetime import datetime, timezone
 
+import pytest
+
 from nurse_scheduling.loader import _load_yaml
 from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, init_sentry
 from nurse_scheduling.server.jobs.models import Job, JobRequest, JobState
@@ -266,3 +268,19 @@ def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypat
         )
     ]
     assert scope.fingerprint == ["invalid-request", "422", "/optimize/{job_id}"]
+
+
+@pytest.mark.parametrize("route", [None, types.SimpleNamespace(path="/optimize/{job_id}")])
+def test_capture_invalid_request_ignores_not_found(monkeypatch, route):
+    request = types.SimpleNamespace(
+        scope={"route": route},
+        url=types.SimpleNamespace(path="/optimize/missing"),
+        method="GET",
+    )
+    fake_sentry_sdk = types.SimpleNamespace(
+        new_scope=lambda: pytest.fail("404 response reached Sentry"),
+    )
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+    capture_invalid_request(request, 404, "Not Found")

@@ -1,0 +1,140 @@
+[project]
+site_name = "Nurse Scheduling"
+site_url = "https://nursescheduling.org/docs/"
+dev_addr = "127.0.0.1:8003"
+site_description = "A user-friendly web app to automate the nurse scheduling task."
+docs_dir = "docs/content"
+site_dir = "site"
+copyright = "Copyright &copy; 2023-2026 <a href=\"https://github.com/j3soon/nurse-scheduling\">Nurse Scheduling Contributors</a>"
+repo_url = "https://github.com/j3soon/nurse-scheduling"
+repo_name = "j3soon/nurse-scheduling"
+extra_javascript = [
+  "assets/javascripts/mathjax.js",
+  "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
+]
+nav = [
+  { "Home" = "index.md" },
+  {
+    "User Guide" = [
+      { "Quick Start" = "user-guide/get-started.md" },
+      {
+        "App Pages" = [
+          { "Dates" = "user-guide/dates.md" },
+          { "People" = "user-guide/people.md" },
+          { "Shift Types" = "user-guide/shift-types.md" },
+          { "Shift Type Requirements" = "user-guide/shift-type-requirements.md" },
+          { "Shift Requests" = "user-guide/shift-requests.md" },
+          { "Shift Type Successions" = "user-guide/shift-type-successions.md" },
+          { "Shift Counts" = "user-guide/shift-counts.md" },
+          { "Shift Affinities" = "user-guide/shift-affinities.md" },
+          { "Export Layout" = "user-guide/export-layout.md" },
+          { "Save and Load" = "user-guide/save-and-load.md" },
+          { "Optimize and Export" = "user-guide/optimize-and-export.md" },
+          { "Experimental AI" = "user-guide/experimental-ai.md" },
+        ]
+      },
+      { "Shared Reference" = "user-guide/reference.md" },
+    ]
+  },
+  {
+    "Developer Guide" = [
+      { "Overview" = "developer-guide/index.md" },
+      { "Backend Server" = "backend-server.md" },
+      { "AI Assistant Backend" = "ai-assistant.md" },
+      { "Solvers" = "solvers.md" },
+      { "Design" = "design.md" },
+      { "Timeline" = "timeline.md" },
+    ]
+  },
+]
+
+[project.theme]
+custom_dir = "docs/overrides"
+favicon = "assets/images/favicon.png"
+features = [
+  "content.code.copy",
+  "navigation.expand",
+  "navigation.indexes",
+  "toc.follow",
+  "navigation.top",
+  "search.suggest",
+  "search.share",
+  "header.autohide",
+  "announce.dismiss",
+]
+
+[project.theme.icon]
+logo = "material/file-document-outline"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "material/brightness-auto"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "material/brightness-7"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "material/brightness-4"
+toggle.name = "Switch to light mode"
+
+[project.extra.analytics]
+provider = "google"
+property = "G-XGDWE4SWF7"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/j3soon/nurse-scheduling"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc = { permalink = true }
+pymdownx.arithmatex = { generic = true }
+pymdownx.betterem = {}
+pymdownx.caret = {}
+pymdownx.critic = {}
+pymdownx.details = {}
+pymdownx.emoji = {
+  emoji_generator = "zensical.extensions.emoji.to_svg",
+  emoji_index = "zensical.extensions.emoji.twemoji",
+}
+pymdownx.highlight = {
+  anchor_linenums = true,
+  line_spans = "__span",
+  pygments_lang_class = true,
+}
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.mark = {}
+pymdownx.smartsymbols = {}
+pymdownx.snippets = {}
+pymdownx.superfences = {
+  custom_fences = [
+    {
+      name = "mermaid",
+      class = "mermaid",
+      format = "pymdownx.superfences.fence_code_format",
+    },
+  ],
+}
+pymdownx.tabbed = { alternate_style = true }
+pymdownx.tasklist = { custom_checkbox = true }
+pymdownx.tilde = {}
+mdx_truly_sane_lists = {}

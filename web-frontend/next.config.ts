@@ -27,7 +27,7 @@ function getGitVersion(cwd: string = REPO_ROOT): string {
   }
 }
 
-const appVersion = getGitVersion();
+const appVersion = process.env.APP_VERSION_OVERRIDE?.trim() || getGitVersion();
 const sentryRelease = process.env.SENTRY_RELEASE || `nurse-scheduling@${appVersion}`;
 
 function getAllowedDevOrigins(): string[] {

@@ -3,7 +3,7 @@
 ## Project Structure
 - `core/`: Python scheduling engine, CLI, and FastAPI backend.
 - `web-frontend/`: Next.js + TypeScript app.
-- `docs/`: MkDocs source and overrides.
+- `docs/`: Zensical content, dependencies, and template overrides.
 - `scripts/`: setup and development utilities.
 - `thirdparty/`: external calendar data and helpers.
 
@@ -19,6 +19,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   requiring both `core` and `web-frontend` may use one commit.
 - Avoid trailing spaces and end files with a newline.
 - Run affected tests and lint checks before finishing.
+- Store generated screenshots and other disposable review output under the
+  repository-root `artifacts/` directory. This directory is ignored by Git.
 - Derive Git versions on the host for local Docker builds. Do not copy `.git`
   into build contexts because linked worktrees store metadata elsewhere.
 - Record durable, generally applicable user guidance in the nearest relevant
@@ -31,7 +33,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   separate `by Codex` line.
 - For multi-paragraph commit messages, use one `git commit -m` argument per
   paragraph or a message file. Never embed literal `\n` sequences in a commit
-  message argument.
+  message argument because Git stores them literally instead of converting them
+  to newlines.
 - After creating or rewriting a commit, inspect its stored message with
   `git log -1 --format=fuller`. Confirm paragraph breaks are real and
   `by Codex` is on its own final line.

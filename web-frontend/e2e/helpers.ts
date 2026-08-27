@@ -23,6 +23,7 @@ import { expect, Page } from '@playwright/test';
 import ExcelJS from 'exceljs';
 
 const STORAGE_KEY = 'nurse-scheduling-data';
+const OPTIMIZE_SERVER_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
 const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
 
 type StoredState = {
@@ -80,6 +81,23 @@ export async function disableModalDialogs(page: Page) {
   });
 }
 
+export async function seedLocalOptimizeBackend(page: Page) {
+  const storedOptions = JSON.stringify({
+    appVersion: 'e2e',
+    servers: [{ endpoint: 'http://localhost:8000' }],
+    selectedServerEndpoint: 'auto',
+  });
+
+  await page.addInitScript(
+    ({ key, value }) => {
+      if (window.localStorage.getItem(key) === null) {
+        window.localStorage.setItem(key, value);
+      }
+    },
+    { key: OPTIMIZE_SERVER_STORAGE_KEY, value: storedOptions }
+  );
+}
+
 type MockOptimizeAndExportOptions = {
   status?: number;
   errorDetail?: string;
@@ -89,6 +107,7 @@ type MockOptimizeAndExportOptions = {
   xlsxReady?: boolean;
   body?: Buffer;
   disableEventSource?: boolean;
+  seedLocalBackend?: boolean;
   onSubmit?: (body: string) => void;
   defaultSolver?: string;
   solverChoices?: Array<{
@@ -127,6 +146,7 @@ export async function mockOptimizeAndExport(
     xlsxReady = true,
     body,
     disableEventSource = true,
+    seedLocalBackend = true,
     onSubmit,
     defaultSolver = 'ortools/cp-sat',
     solverChoices = [
@@ -142,6 +162,10 @@ export async function mockOptimizeAndExport(
 ) {
   const jobId = 'e2e-job';
   const xlsxBody = body ?? (await createMockXlsxBuffer());
+
+  if (seedLocalBackend) {
+    await seedLocalOptimizeBackend(page);
+  }
 
   if (disableEventSource) {
     await page.addInitScript(() => {

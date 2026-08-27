@@ -35,6 +35,7 @@
   solver linearization details.
 - Keep tightly coupled schema and behavior on one page unless each topic has a
   clear independent purpose.
+- Keep `docs/PRIVACY.md` as a symlink to the canonical root `PRIVACY.md`.
 
 ## Figures
 
@@ -52,14 +53,14 @@
 
 - Do not load JavaScript from `polyfill.io`. Prefer a checked-in asset or the
   established CDN already used by the project.
-- Restart `mkdocs serve --no-livereload` after each documentation change.
-  Avoid live reload because generated social-plugin cache files can retrigger
-  builds.
+- Run `zensical serve` from the repository root to preview documentation
+  changes with automatic reloads.
 - Render Mermaid and MathJax changes in both light and dark themes. Check a
   narrow viewport when formulas or wide tables are involved.
 - Use Playwright or browser developer tools to capture and inspect rendered
   figures and formulas.
-- Run `mkdocs build` and `git diff --check` before finishing.
+- Run `zensical build --clean --strict` and `git diff --check` before
+  finishing.
 - Verify internal links and referenced assets resolve without 404 responses.
-- After renaming a heading, update inbound anchor links and let the MkDocs
+- After renaming a heading, update inbound anchor links and let the Zensical
   build check for stale anchors.

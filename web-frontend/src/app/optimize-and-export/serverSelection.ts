@@ -71,16 +71,16 @@ export const EXPECTED_BACKEND_SERVICE_NAME = 'nurse-scheduling-api';
 export const SUPPORTED_BACKEND_API_VERSION = '0.2.0';
 export const SHOULD_DISABLE_PRODUCTION_BACKEND_API = process.env.NODE_ENV === 'test'
   || process.env.NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API === '1';
-export const BACKEND_API_CANDIDATES = SHOULD_DISABLE_PRODUCTION_BACKEND_API
-  ? [LOCAL_BACKEND_API_URL]
-  : [LOCAL_BACKEND_API_URL, PRODUCTION_BACKEND_API_URL, SECONDARY_BACKEND_API_URL];
-export const INITIAL_BACKEND_API_URL = BACKEND_API_CANDIDATES[0];
 
-export function selectOfflineFallbackBackendApiUrl(candidates: string[]): string {
-  return candidates.includes(PRODUCTION_BACKEND_API_URL)
-    ? PRODUCTION_BACKEND_API_URL
-    : candidates[0];
+export function createBackendApiCandidates(disableHostedBackends: boolean): string[] {
+  return disableHostedBackends
+    ? []
+    : [PRODUCTION_BACKEND_API_URL, SECONDARY_BACKEND_API_URL];
 }
+
+export const BACKEND_API_CANDIDATES = process.env.NODE_ENV === 'test'
+  ? [LOCAL_BACKEND_API_URL]
+  : createBackendApiCandidates(SHOULD_DISABLE_PRODUCTION_BACKEND_API);
 
 export function selectPreferredServer(results: ServerInfoCheckResult[]): ServerInfoCheckResult | undefined {
   return [...results].sort((a, b) => a.index - b.index)[0];

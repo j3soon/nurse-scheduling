@@ -1,10 +1,10 @@
 # Privacy and Data Handling
 
-This document describes the Nurse Scheduling System's current data-handling behavior. Do not enter confidential, regulated, or personally identifiable information unless you understand and accept how it may be processed.
+This document describes the Nurse Scheduling System's data-handling behavior. Use nicknames or other non-identifying people IDs if a schedule may be sensitive. Self-host when your organization requires full control over processing, logging, and retention.
 
-## Project Status and Privacy Limitations
+## Anonymization and Its Limits
 
-This project is in early development. Its basic privacy protections primarily anonymize individual people IDs and remove descriptions where possible. Other information, including people-group IDs, dates, shift types, histories, preferences, and export configuration, may remain identifiable or sensitive. Anonymization may fail for malformed or unsupported data. We plan to improve these protections as the project matures.
+The hosted optimization workflow anonymizes individual people IDs and removes descriptions by default. This means names used as people IDs are normally replaced before the schedule reaches the optimization server. A schedule without direct identifiers may not identify anyone by itself, but people-group IDs, dates, shift types, histories, preferences, and export configuration can still reveal information in context. Anonymization is not a guarantee, especially for malformed or unsupported data.
 
 ## Browser Storage
 
@@ -35,7 +35,7 @@ Ad blockers and privacy-focused browser extensions may block Google Analytics an
 
 ## Self-Hosting
 
-For stronger control, run the frontend and backend locally or on infrastructure you control:
+The project is open source so organizations can inspect its data handling and run the frontend and backend locally or on infrastructure they control:
 
 - Disable frontend Sentry with `NEXT_PUBLIC_DISABLE_SENTRY=1`.
 - Disable frontend server-side and backend Sentry with `DISABLE_SENTRY=1`.

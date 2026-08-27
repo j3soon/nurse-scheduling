@@ -28,7 +28,7 @@ curl http://localhost:8001/health
 The launcher reads `.env.ai` automatically. Set `AI_ENV_FILE` to load another
 path. Port `8001` avoids the normal backend on `8000`. Use another port for a
 local documentation server when both services run at the same time. The
-documented local MkDocs port is `8003`.
+documented local Zensical port is `8003`.
 
 During local development, the frontend calls port `8001` on the browser's
 current hostname. This avoids buffering SSE through a Next.js development
