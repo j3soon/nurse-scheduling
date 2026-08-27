@@ -25,6 +25,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   into build contexts because linked worktrees store metadata elsewhere.
 - Record durable, generally applicable user guidance in the nearest relevant
   `AGENTS.md`. Omit task-specific or temporary details.
+- After finishing a task, suggest improvements to `AGENTS.md`, skills, scripts,
+  or other agent-facing configuration when the task exposed one. Propose only
+  guidance that generalizes to recurring work. Keep session-specific findings in
+  the commit message instead.
 - Note potentially wasteful token use and uninformative tests, scripts, or runs.
   Fix them when practical, otherwise report or document them for review.
 - Inspect the repository with narrow queries. Filter to the paths, revisions, or

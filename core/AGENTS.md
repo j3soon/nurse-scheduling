@@ -80,6 +80,8 @@ test paths when a narrower suite is known to be sufficient.
 - Use `--show-model-build-stats` when checking or benchmarking model-building
   optimizations against real testcases. It emits a compact aggregated summary
   and suppresses the full schedule output.
+- Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
+  neutral, including paths, line endings, and environment limits.
 - Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
   binary or text payload. Pytest derives the node ID from the parameter value
   and exports it through `PYTEST_CURRENT_TEST`, which fails on Windows once the
