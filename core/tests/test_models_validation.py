@@ -105,9 +105,12 @@ def test_model_compiles_reusable_schedule_indices_for_runtime_phases():
 
     ctx = Context.from_validated(data)
 
+    assert ctx.scenario is data
     assert ctx.compiled_schedule is compiled
-    assert ctx.map_sid_s is compiled.map_sid_s
-    assert tuple(ctx.dates.items) == compiled.dates
+    assert ctx.n_days == len(compiled.dates)
+    assert ctx.n_shift_types == len(data.shiftTypes.items)
+    assert ctx.n_people == len(data.people.items)
+    assert data.dates.items == []
     assert "compiled_schedule" not in data.model_dump()
     copied = data.model_copy(deep=True)
     assert copied.compiled_schedule is compiled
@@ -126,12 +129,11 @@ def test_compiled_schedule_supports_pickle_and_context_deepcopy():
         restored.compiled_schedule.map_sid_s["D"] = (1,)
 
     ctx = Context.from_validated(data)
-    copied_ctx = ctx.model_copy(deep=True)
     deepcopied_ctx = copy.deepcopy(ctx)
-    assert copied_ctx.compiled_schedule is compiled
-    assert copied_ctx.map_sid_s is compiled.map_sid_s
     assert deepcopied_ctx.compiled_schedule is compiled
-    assert deepcopied_ctx.map_sid_s is compiled.map_sid_s
+    assert deepcopied_ctx.scenario is not data
+    assert deepcopied_ctx.scenario.model_dump() == data.model_dump()
+    assert deepcopied_ctx.scenario.compiled_schedule is compiled
 
 
 def test_model_requires_at_most_one_shift_preference():

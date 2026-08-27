@@ -70,8 +70,8 @@ def shift_type_requirements(
                 coverage_key = (d, s)
                 if coverage_key in ctx.shift_type_requirement_coverage:
                     previous_preference_idx = ctx.shift_type_requirement_coverage[coverage_key]
-                    date_id = str(ctx.dates.items[d])
-                    shift_type_id = ctx.shiftTypes.items[s].id
+                    date_id = str(ctx.compiled_schedule.dates[d])
+                    shift_type_id = ctx.scenario.shiftTypes.items[s].id
                     logger.info(
                         "Duplicate shift type requirement coverage for "
                         f"date '{date_id}' and shift type '{shift_type_id}' "
@@ -81,10 +81,9 @@ def shift_type_requirements(
                 else:
                     ctx.shift_type_requirement_coverage[coverage_key] = preference_idx
 
-            # Get the set of people who can work each shift type in this
-            # requirement group. Without explicit qualifiedPeople, eligibility
-            # can differ by concrete shift type.
-            qualified_ps_by_s = {s: ctx.map_ds_p[(d, s)] for s in ss}
+            # Every person has a variable for each shift type, so default
+            # eligibility includes all people for every concrete shift.
+            qualified_ps_by_s = {s: range(ctx.n_people) for s in ss}
             if compiled_preference.qualified_people is not None:
                 # If qualifiedPeople is specified, only allow those people to
                 # work any shift type in the group.
