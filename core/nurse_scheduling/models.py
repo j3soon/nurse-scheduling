@@ -25,6 +25,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import Self
 
+from . import utils
 from .constants import ALL, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR, OFF
 
 AT_MOST_ONE_SHIFT_PER_DAY = "at most one shift per day"
@@ -33,6 +34,7 @@ SHIFT_REQUEST = "shift request"
 SHIFT_TYPE_SUCCESSIONS = "shift type successions"
 SHIFT_COUNT = "shift count"
 SHIFT_AFFINITY = "shift affinity"
+SUPPORTED_SHIFT_COUNT_EXPRESSIONS = frozenset({"|x - T|^2", "x >= T", "x <= T", "x > T", "x < T", "x = T"})
 
 
 def validate_weight(weight: float) -> int | float:
@@ -398,4 +400,231 @@ class NurseSchedulingData(BaseModel):
                 raise ValueError(f"Date group ID {group.id!r} must not be in the format of YYYY-MM-DD, MM-DD, or D")
             date_group_ids.add(group.id)
 
+        _validate_schedule_semantics(self)
         return self
+
+
+def _build_reference_map(item_ids, groups, reserved, reference_name):
+    """Expand ordered item and group IDs into concrete reference sets."""
+    reference_map = {item_id: {item_id} for item_id in item_ids}
+    reference_map.update(reserved)
+    for group in groups:
+        expanded = set()
+        for member in group.members:
+            if member not in reference_map:
+                raise ValueError(f"Unknown {reference_name} ID: {member}")
+            expanded.update(reference_map[member])
+        reference_map[group.id] = expanded
+    return reference_map
+
+
+def _build_date_map(data: NurseSchedulingData):
+    """Build the date selector map used by canonical reference validation."""
+    date_range = data.dates.range
+    n_days = (date_range.endDate - date_range.startDate).days + 1
+    date_map = {str(date_range.startDate + datetime.timedelta(days=index)): [index] for index in range(n_days)}
+    for keyword, predicate in MAP_DATE_KEYWORD_TO_FILTER.items():
+        date_map[keyword] = [
+            index for index in range(n_days) if predicate(date_range.startDate + datetime.timedelta(days=index))
+        ]
+    for weekday_index, keyword in enumerate(MAP_WEEKDAY_TO_STR):
+        date_map[keyword] = [
+            index
+            for index in range(n_days)
+            if (date_range.startDate + datetime.timedelta(days=index)).weekday() == weekday_index
+        ]
+    for group in data.dates.groups:
+        expanded = set()
+        for member in group.members:
+            expanded.update(utils.parse_dates(member, date_map, date_range))
+        date_map[group.id] = sorted(expanded)
+    return date_map
+
+
+def _iter_leaf_references(value):
+    """Yield scalar IDs from flat or nested reference lists."""
+    if isinstance(value, list):
+        for item in value:
+            yield from _iter_leaf_references(item)
+        return
+    yield value
+
+
+def _validate_nested_references(value, reference_map, reference_name):
+    """Reject unknown IDs while preserving supported nested reference shapes."""
+    for item in _iter_leaf_references(value):
+        if item not in reference_map:
+            raise ValueError(f"Unknown {reference_name} ID: {item}")
+
+
+def _expanded_shift_groups(value, shift_map):
+    """Normalize shift requirement selectors into concrete shift sets."""
+    selectors = value if isinstance(value, list) else [value]
+    groups = []
+    for selector in selectors:
+        members = selector if isinstance(selector, list) else [selector]
+        groups.append(set().union(*(shift_map[member] for member in members)))
+    return groups
+
+
+def _validate_coefficients(entries, selected, shift_map, label, selection_name):
+    """Validate coefficient references, coverage, values, and overlap."""
+    covered = set()
+    for shift_type_id, coefficient in entries or []:
+        if coefficient < 1:
+            raise ValueError(f"{label} for '{shift_type_id}' must be at least 1.")
+        if shift_type_id not in shift_map:
+            raise ValueError(f"Unknown shift type ID: {shift_type_id}")
+        expanded = shift_map[shift_type_id]
+        if not expanded.issubset(selected):
+            raise ValueError(f"{label} for '{shift_type_id}' must be covered by {selection_name}.")
+        if covered.intersection(expanded):
+            raise ValueError(f"Duplicate {label.lower()} for '{shift_type_id}'.")
+        covered.update(expanded)
+
+
+def _validate_schedule_semantics(data: NurseSchedulingData) -> None:
+    """Validate canonical scheduling semantics after Pydantic field parsing."""
+    if data.apiVersion != "alpha":
+        raise ValueError(f"Unsupported API version: {data.apiVersion}")
+    if data.country not in {None, "TW"}:
+        raise ValueError(f"Country {data.country} is not supported yet")
+
+    shift_ids = [item.id for item in data.shiftTypes.items]
+    shift_map = _build_reference_map(
+        shift_ids,
+        data.shiftTypes.groups,
+        {ALL: set(shift_ids), OFF: {OFF}},
+        "shift type",
+    )
+    people_ids = [item.id for item in data.people.items]
+    people_map = _build_reference_map(
+        people_ids,
+        data.people.groups,
+        {ALL: set(people_ids)},
+        "person",
+    )
+    date_map = _build_date_map(data)
+
+    for preference in data.preferences:
+        if isinstance(preference, ShiftRequestPreference):
+            utils.parse_pids(preference.person, people_map)
+            utils.parse_dates(preference.date, date_map, data.dates.range)
+            utils.parse_sids(preference.shiftType, shift_map)
+        elif isinstance(preference, ShiftTypeSuccessionsPreference):
+            utils.parse_pids(preference.person, people_map)
+            if not preference.pattern:
+                raise ValueError("Pattern must not be empty")
+            _validate_nested_references(preference.pattern, shift_map, "shift type")
+            if preference.date is not None:
+                utils.parse_dates(preference.date, date_map, data.dates.range)
+        elif isinstance(preference, ShiftTypeRequirementsPreference):
+            _validate_nested_references(preference.shiftType, shift_map, "shift type")
+            shift_groups = _expanded_shift_groups(preference.shiftType, shift_map)
+            if not shift_groups or any(not group for group in shift_groups):
+                raise ValueError(f"Non-empty shift types are required, but got {preference.shiftType}")
+            if any(OFF in group for group in shift_groups):
+                raise ValueError("'OFF' is not allowed in shift type requirement preferences.")
+            if preference.shiftTypeCoefficients and len(shift_groups) != 1:
+                raise ValueError(
+                    "Shift type requirement coefficients are only supported when shiftType normalizes to one "
+                    "requirement group."
+                )
+            _validate_coefficients(
+                preference.shiftTypeCoefficients,
+                set().union(*shift_groups),
+                shift_map,
+                "Shift type requirement coefficient",
+                "shiftType",
+            )
+            if preference.qualifiedPeople is not None:
+                utils.parse_pids(preference.qualifiedPeople, people_map)
+            if preference.date is not None:
+                utils.parse_dates(preference.date, date_map, data.dates.range)
+        elif isinstance(preference, ShiftCountPreference):
+            utils.parse_pids(preference.person, people_map)
+            utils.parse_dates(preference.countDates, date_map, data.dates.range)
+            selected_shift_types = set(utils.parse_sids(preference.countShiftTypes, shift_map))
+            if not selected_shift_types:
+                raise ValueError(f"Non-empty count shift types are required, but got {preference.countShiftTypes}")
+            _validate_coefficients(
+                preference.countShiftTypeCoefficients,
+                selected_shift_types,
+                shift_map,
+                "Shift count coefficient",
+                "countShiftTypes",
+            )
+            expressions = utils.ensure_list(preference.expression)
+            targets = utils.ensure_list(preference.target)
+            if len(expressions) != len(targets):
+                raise ValueError(
+                    f"Number of expressions ({len(expressions)}) must match number of targets ({len(targets)})"
+                )
+            if not expressions:
+                raise ValueError("Expression must not be empty")
+            for expression in expressions:
+                if expression not in SUPPORTED_SHIFT_COUNT_EXPRESSIONS:
+                    raise ValueError(
+                        f"Unsupported expression: {expression}. "
+                        f"Supported expressions are: {sorted(SUPPORTED_SHIFT_COUNT_EXPRESSIONS)}"
+                    )
+                if expression == "|x - T|^2":
+                    if preference.weight == math.inf:
+                        raise ValueError(f"'.inf' weights are not allowed for shift count with '{expression}'.")
+                    if preference.weight != -math.inf and preference.weight > 0:
+                        raise ValueError(f"Weight must be non-positive for shift count with '{expression}'.")
+            for target in targets:
+                if target < 0:
+                    raise ValueError(f"Target must be non-negative, but got {target}")
+        elif isinstance(preference, ShiftAffinityPreference):
+            utils.parse_dates(preference.date, date_map, data.dates.range)
+            if not preference.people1 or not preference.people2:
+                raise ValueError("Shift affinity people selections must not be empty")
+            if not preference.shiftTypes:
+                raise ValueError("Shift affinity shift types must not be empty")
+            _validate_nested_references(preference.people1, people_map, "person")
+            _validate_nested_references(preference.people2, people_map, "person")
+            _validate_nested_references(preference.shiftTypes, shift_map, "shift type")
+
+    _validate_export_semantics(data, people_map, shift_map, date_map)
+
+
+def _validate_export_semantics(data, people_map, shift_map, date_map):
+    """Validate export references and options against the canonical schedule."""
+    for rule in data.export.formatting:
+        if hasattr(rule, "people"):
+            for target in rule.people:
+                if target not in people_map:
+                    raise ValueError(
+                        f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
+                    )
+        if hasattr(rule, "dates"):
+            utils.parse_dates(rule.dates, date_map, data.dates.range)
+        if hasattr(rule, "shiftTypes"):
+            for target in rule.shiftTypes:
+                if target not in shift_map:
+                    raise ValueError(
+                        f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
+                    )
+        if isinstance(rule, ExportCellFormattingRule) and rule.when:
+            weight_range = rule.when.preference.weightRange
+            if weight_range is not None and len(weight_range) != 2:
+                raise ValueError("export formatting preference weightRange must contain exactly two values")
+            if weight_range is not None and weight_range[0] > weight_range[1]:
+                raise ValueError(
+                    "export formatting preference weightRange minimum must be less than or equal to maximum"
+                )
+
+    for rule in data.export.extraColumns:
+        selected = set(utils.parse_sids(rule.countShiftTypes, shift_map))
+        utils.parse_dates(rule.countDates, date_map, data.dates.range)
+        _validate_coefficients(
+            rule.countShiftTypeCoefficients,
+            selected,
+            shift_map,
+            "Export extra column coefficient",
+            "countShiftTypes",
+        )
+    for rule in data.export.extraRows:
+        utils.parse_sids(rule.countShiftTypes, shift_map)
+        utils.parse_pids(rule.countPeople, people_map)

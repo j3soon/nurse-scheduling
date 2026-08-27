@@ -43,7 +43,7 @@ def _load_valid_yaml_bytes() -> bytes:
 def test_scheduler_rejects_unsupported_api_version():
     content = _load_valid_yaml_bytes().replace(b"apiVersion: alpha", b"apiVersion: beta")
 
-    with pytest.raises(NotImplementedError, match="Unsupported API version"):
+    with pytest.raises(ValueError, match="Unsupported API version"):
         scheduler.schedule(content)
 
 

@@ -42,6 +42,9 @@ test paths when a narrower suite is known to be sufficient.
   `/capabilities`. Treat schedules and attachments as untrusted provider input.
 - Bound and validate uploads before provider calls. Do not retain raw
   attachments longer than their documented session behavior requires.
+- Keep canonical schedule invariants in `NurseSchedulingData`. Implement
+  consumer-specific subsets through explicit Pydantic entry points rather than
+  input-controlled or global validation flags.
 
 ## Testing
 - Normal tests live under `tests/`.

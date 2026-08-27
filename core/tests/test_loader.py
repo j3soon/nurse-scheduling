@@ -28,6 +28,7 @@ from pydantic import ValidationError
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from nurse_scheduling import loader
 from nurse_scheduling.loader import _load_yaml, load_data
 
 SENTRY_MOJIBAKE_YAML = """\
@@ -120,3 +121,30 @@ def test_load_yaml_preserves_bom_corrupted_api_version_keys(api_version_key):
 
     assert data[api_version_key] == "alpha"
     assert "apiVersion" not in data
+
+
+def test_load_yaml_rejects_aliases_before_expansion():
+    content = b"shared: &shared [one, two]\ncopy: *shared\n"
+
+    with pytest.raises(ValueError, match="aliases are not allowed"):
+        _load_yaml(content)
+
+
+@pytest.mark.parametrize("content", [b"null\n", b"- one\n- two\n"])
+def test_load_yaml_requires_top_level_mapping(content):
+    with pytest.raises(TypeError, match="top-level mapping"):
+        _load_yaml(content)
+
+
+def test_load_yaml_rejects_excessive_nesting(monkeypatch):
+    monkeypatch.setattr(loader, "MAX_YAML_DEPTH", 1)
+
+    with pytest.raises(ValueError, match="nesting exceeds"):
+        _load_yaml(b"outer:\n  inner: value\n")
+
+
+def test_load_yaml_rejects_excessive_node_count(monkeypatch):
+    monkeypatch.setattr(loader, "MAX_YAML_NODES", 2)
+
+    with pytest.raises(ValueError, match="node count exceeds"):
+        _load_yaml(b"values: [one, two]\n")

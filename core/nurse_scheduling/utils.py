@@ -20,8 +20,10 @@
 import datetime
 import math
 import re
+from typing import TYPE_CHECKING
 
-from .models import DateRange
+if TYPE_CHECKING:
+    from .models import DateRange
 
 
 def ensure_list(val):
@@ -47,7 +49,7 @@ def add_objective(ctx, weight, expression):
         ctx.objective += weight * expression
 
 
-def _parse_single_date(date: str, date_range: DateRange) -> datetime.date:
+def _parse_single_date(date: str, date_range: "DateRange") -> datetime.date:
     startdate, enddate = date_range.startDate, date_range.endDate
     error_details = f"- Start date: {startdate}\n- End date: {enddate}\n"
     if match := re.match(r"^\d{1,2}$", date):

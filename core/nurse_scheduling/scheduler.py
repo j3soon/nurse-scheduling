@@ -160,8 +160,6 @@ def schedule(
 
     _emit_phase_progress(progress_callback, "parsing_data", "Parsing schedule data", progress_started_at)
     logger.info("Extracting scenario data...")
-    if scenario.apiVersion != "alpha":
-        raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
     ctx = Context(**dict(scenario))
     del scenario
     ctx.n_days = (ctx.dates.range.endDate - ctx.dates.range.startDate).days + 1

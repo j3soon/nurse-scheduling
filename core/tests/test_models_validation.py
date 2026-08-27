@@ -139,3 +139,35 @@ def test_model_rejects_invalid_dates_items_and_group_ids():
     payload["dates"]["groups"] = [{"id": "2025-01-01", "members": ["2025-01-01"]}]
     with pytest.raises(ValueError, match="Date group ID '2025-01-01' must not be in the format"):
         NurseSchedulingData.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda payload: payload.update(apiVersion="future"), "Unsupported API version"),
+        (lambda payload: payload.update(country="US"), "Country US is not supported"),
+        (
+            lambda payload: payload["people"].update(groups=[{"id": "g", "members": ["missing"]}]),
+            "Unknown person ID: missing",
+        ),
+        (
+            lambda payload: payload["preferences"].append(
+                {
+                    "type": "shift count",
+                    "person": "n1",
+                    "countDates": "ALL",
+                    "countShiftTypes": "D",
+                    "expression": "arbitrary",
+                    "target": 1,
+                }
+            ),
+            "Unsupported expression",
+        ),
+    ],
+)
+def test_model_rejects_unsupported_backend_semantics(mutate, message):
+    payload = _base_payload()
+    mutate(payload)
+
+    with pytest.raises(ValueError, match=message):
+        NurseSchedulingData.model_validate(payload)
