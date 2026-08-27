@@ -27,10 +27,10 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Test real-world scenario until OR-Tools clears critical violations
         working-directory: core
-        run: pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py
+        run: pytest tests/real/schedule_ortools_cp_sat.py
       - name: Test bounded real-world scenario with CBC
         working-directory: core
-        run: pytest --log-cli-level=INFO tests/real/schedule_pulp_cbc.py
+        run: pytest tests/real/schedule_pulp_cbc.py
       - name: Test bounded real-world scenario with cuOpt
         working-directory: core
-        run: pytest --log-cli-level=INFO tests/real/schedule_pulp_cuopt.py
+        run: pytest tests/real/schedule_pulp_cuopt.py

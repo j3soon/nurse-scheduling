@@ -293,7 +293,7 @@ def test_should_use_bool_and_var_only_for_compact_literal_counts():
 
 def test_infer_expr_bounds_rejects_unbounded_variable():
     solver = PuLPSolver()
-    unbounded = pulp.LpVariable("x_unbounded", lowBound=0, cat=pulp.LpInteger)
+    unbounded = solver.model.add_variable("x_unbounded", lowBound=0, cat=pulp.LpInteger)
 
     with pytest.raises(ValueError, match="unbounded variable"):
         solver._infer_expr_bounds(unbounded)
@@ -451,7 +451,7 @@ def test_add_squared_equality_validation_errors():
     solver = PuLPSolver()
     t = solver.new_int_var(0, 100, "t")
     bounded = solver.new_int_var(0, 5, "x")
-    unbounded = pulp.LpVariable("x_unbounded_sq", lowBound=0, cat=pulp.LpInteger)
+    unbounded = solver.model.add_variable("x_unbounded_sq", lowBound=0, cat=pulp.LpInteger)
     large = solver.new_int_var(0, 200, "x_large")
 
     with pytest.raises(NotImplementedError, match="expects a bounded variable or constant"):
@@ -485,7 +485,7 @@ def test_add_squared_equality_constant_source_branch():
 
 def test_infer_expr_bounds_rejects_unbounded_variable_inside_affine():
     solver = PuLPSolver()
-    x = pulp.LpVariable("x_affine_unbounded", lowBound=0, cat=pulp.LpInteger)
+    x = solver.model.add_variable("x_affine_unbounded", lowBound=0, cat=pulp.LpInteger)
     expr = x + 1
 
     with pytest.raises(ValueError, match="unbounded variable in expression"):

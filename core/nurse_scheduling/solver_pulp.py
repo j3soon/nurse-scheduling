@@ -128,17 +128,17 @@ class BasePuLPSolver(SolverInterface):
 
     def _unique_name(self, base: str) -> str:
         """Return a model-unique name for variables/constraints."""
-        if base not in self.variables and base not in self.model.constraints:
+        if base not in self.variables and self.model.get_constraint_by_name(base) is None:
             return base
         while True:
             self._name_counter += 1
             candidate = f"{base}__{self._name_counter}"
-            if candidate not in self.variables and candidate not in self.model.constraints:
+            if candidate not in self.variables and self.model.get_constraint_by_name(candidate) is None:
                 return candidate
 
     def unique_constraint_name(self, base: str) -> str:
         """Return a generated constraint name using the current number of model constraints."""
-        return f"{base}_{len(self.model.constraints)}"
+        return f"{base}_{self.model.numConstraints()}"
 
     def _infer_expr_bounds(self, expr: Any) -> tuple[int, int]:
         """Infer integer lower/upper bounds for a linear expression."""
@@ -174,14 +174,14 @@ class BasePuLPSolver(SolverInterface):
     def new_bool_var(self, name: str) -> pulp.LpVariable:
         """Create a new boolean variable."""
         unique_name = self._unique_name(name)
-        var = pulp.LpVariable(unique_name, cat=pulp.LpBinary)
+        var = self.model.add_variable(unique_name, cat=pulp.LpBinary)
         self.variables[unique_name] = var
         return var
 
     def new_int_var(self, lb: int, ub: int, name: str) -> pulp.LpVariable:
         """Create a new integer variable."""
         unique_name = self._unique_name(name)
-        var = pulp.LpVariable(unique_name, lowBound=lb, upBound=ub, cat=pulp.LpInteger)
+        var = self.model.add_variable(unique_name, lowBound=lb, upBound=ub, cat=pulp.LpInteger)
         self.variables[unique_name] = var
         return var
 
@@ -447,7 +447,7 @@ class BasePuLPSolver(SolverInterface):
         issues = []
         if self.model.objective is None:
             issues.append("No objective function set")
-        if len(self.model.constraints) == 0:
+        if self.model.numConstraints() == 0:
             issues.append("No constraints defined")
 
         if issues:

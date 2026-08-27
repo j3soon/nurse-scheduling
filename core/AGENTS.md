@@ -8,15 +8,15 @@ Run commands from `core/`:
 - `uv venv --python 3.12 && source .venv/bin/activate`
 - `uv pip install -r requirements.txt`
 - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `../README.md`.
-- `pytest --log-cli-level=INFO`: run the normal core test suite.
-- `pytest --log-cli-level=INFO <affected_test_paths>`
+- `pytest`: run the normal core test suite with logs captured unless a test fails.
+- `pytest <affected_test_paths>`
 - `../scripts/test_core_affected.sh`: run changed test files with compact
   output, or the compact normal suite when core source/helper files change.
-- `pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
+- `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.
 - `python tests/real/solver_capabilities.py --solver ortools/cp-sat`: probe
   timeout, cancel, and finish-now behavior on the large real scenario.
-- `pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run the primary solver/schedule suites.
+- `pytest tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run the primary solver/schedule suites.
 - `ruff check nurse_scheduling tests`
 - `ruff format nurse_scheduling tests`
 
