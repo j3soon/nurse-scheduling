@@ -45,6 +45,10 @@ test paths when a narrower suite is known to be sufficient.
 - Keep canonical schedule invariants in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
+- The assistant is reachable only from the web frontend, so its schedule tools
+  target the frontend subset alone. Validate through
+  `ai/validation.py`, and do not expose the canonical backend flavor, which
+  accepts shapes the editor cannot represent.
 
 ## Testing
 - Normal tests live under `tests/`.
