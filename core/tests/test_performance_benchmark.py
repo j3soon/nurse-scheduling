@@ -149,14 +149,61 @@ def test_compute_child_calculates_attainment_score(tmp_path, monkeypatch):
     result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
     assert result["completedCriterion"] is True
     assert result["stopReason"] == "top_threshold"
+    assert result["topThresholdReached"] is True
+    assert result["timeToTopThresholdSeconds"] == 6.0
+    assert result["timeToTopThresholdCensored"] is False
     assert result["attainmentScore"] == 60.0
     assert result["thresholdReachSeconds"] == {"10": 2.0, "20": 6.0}
     assert result["solverSeconds"] == 6.0
 
 
-def test_compute_markdown_reports_final_machine_score():
+def test_summarize_compute_runs_scores_median_target_time():
+    runs = [
+        {
+            "completedCriterion": True,
+            "topThresholdReached": True,
+            "timeToTopThresholdSeconds": 50.0,
+            "attainmentScore": 90.0,
+            "score": 120,
+            "solverSeconds": 48.0,
+            "endToEndSeconds": 52.0,
+        },
+        {
+            "completedCriterion": True,
+            "topThresholdReached": True,
+            "timeToTopThresholdSeconds": 80.0,
+            "attainmentScore": 80.0,
+            "score": 110,
+            "solverSeconds": 98.0,
+            "endToEndSeconds": 102.0,
+        },
+        {
+            "completedCriterion": True,
+            "topThresholdReached": False,
+            "timeToTopThresholdSeconds": 900,
+            "attainmentScore": 20.0,
+            "score": 100,
+            "solverSeconds": 900.0,
+            "endToEndSeconds": 902.0,
+        },
+    ]
+
+    summary = performance_benchmark._summarize_compute_runs(runs)
+
+    assert summary["topThresholdReachedRuns"] == 2
+    assert summary["performanceScore"] == 125.0
+    assert summary["timeToTopThresholdSeconds"]["median"] == 80.0
+    assert summary["timeToTopThresholdSeconds"]["mean"] == 343.333333
+
+
+def test_compute_markdown_reports_final_score_and_average_time():
     report = {
-        "config": {"warmupRuns": 1, "runs": 2, "timeoutSeconds": 300},
+        "config": {
+            "warmupRuns": 1,
+            "runs": 2,
+            "timeoutSeconds": 300,
+            "performanceReferenceTimeSeconds": 100,
+        },
         "environment": {
             "appVersion": "test",
             "ortoolsVersion": "test",
@@ -166,19 +213,30 @@ def test_compute_markdown_reports_final_machine_score():
         },
         "runs": [],
         "summary": {
+            "completedRuns": 2,
+            "topThresholdReachedRuns": 2,
+            "performanceScore": 125.0,
+            "timeToTopThresholdSeconds": {
+                "mean": 80.0,
+                "median": 80.0,
+                "min": 70.0,
+                "max": 90.0,
+                "sampleStandardDeviation": 14.142136,
+            },
             "attainmentScore": {
                 "mean": 86.798927,
                 "median": 87.0,
                 "min": 83.0,
                 "max": 89.0,
                 "sampleStandardDeviation": 2.0,
-            }
+            },
         },
     }
 
     markdown = performance_benchmark._markdown_compute_report(report)
 
-    assert "- Final machine score: **86.798927**" in markdown
+    assert "- Final score: **125.0**" in markdown
+    assert "- Average time to top threshold: **80.0 seconds**" in markdown
 
 
 def test_parse_args_uses_documented_defaults():

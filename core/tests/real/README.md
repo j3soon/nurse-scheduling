@@ -105,8 +105,8 @@ python tests/real/run_schedule.py \
 ## Performance benchmark
 
 Run the real 87-person scenario in isolated OR-Tools CP-SAT processes with the
-Docker workflow. The default normalized compute benchmark performs one
-unmeasured warm-up followed by five measured bounded runs:
+Docker workflow. The default compute benchmark performs one unmeasured warm-up
+followed by five measured bounded runs:
 
 ```sh
 ./scripts/run_performance_benchmark.sh
@@ -127,17 +127,21 @@ development Dockerfile:
 docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
 ```
 
-The primary score rewards reaching a fixed ladder of real-case objective
-thresholds early. For each threshold, a run earns `100 × (1 - first reach time
-÷ wall-time budget)` points, with zero for an unreached threshold. The run score
-is the mean across thresholds and the machine score is the mean across measured
-runs. It is bounded from 0 to 100, with higher values indicating better
-real-case solver performance. Each run stops after reaching the top
-`4,470,000,000,000` threshold or a 900-second hard wall-time limit. The score
-still uses 900 seconds as its denominator after an early success. The benchmark
-uses normal nondeterministic parallel CP-SAT and all CPUs visible to Docker. It
-does not enable deterministic solver or interleaved-search mode, and it leaves
-all solver settings at their defaults except for the wall-time limit.
+The primary score uses elapsed time to the fixed top objective threshold of
+`4,470,000,000,000`. It is `100 × 100 seconds ÷ median time to the top
+threshold`, so a score of 100 represents a 100-second median and score ratios
+represent inverse median-time ratios. Higher is faster. The report also shows
+the arithmetic mean time to the top threshold. Each run stops after reaching
+the threshold or a 900-second hard wall-time limit. An unreached threshold uses
+the limit as a censored time, and the report shows how many runs reached it.
+
+The previous threshold-ladder attainment score remains as a secondary progress
+metric. For each threshold, a run earns `100 × (1 - first reach time ÷
+wall-time budget)` points, with zero for an unreached threshold. The run score
+is the mean across thresholds. The benchmark uses normal nondeterministic
+parallel CP-SAT and all CPUs visible to Docker. It does not enable deterministic
+solver or interleaved-search mode, and it leaves all solver settings at their
+defaults except for the wall-time limit.
 
 Customize the measured and warm-up counts or wall-time budget:
 
@@ -160,25 +164,25 @@ applied by the wrapper. Compare machines only when their scenario hash, core
 source hash, OR-Tools version, wall-time budget, and Docker CPU
 visibility policy match. The benchmark harness hash must also match. The report
 includes sample variance, standard deviation, and coefficient of variation.
-Compare the mean primary score because it averages independent bounded runs.
-A high coefficient of variation still indicates that more runs are needed.
+Compare the final score and median top-threshold time. A high coefficient of
+variation still indicates that more runs are needed.
 
 Reports are written under the repository-root
 `artifacts/performance-benchmarks/` directory. Each report records the scenario
 and core source hashes, application and OR-Tools versions, CPU visibility,
 initial load average, per-run logs, threshold reach times, normalized attainment
-scores, final objectives, solver time, and end-to-end time. Both modes record
-raw progress JSONL.
+scores, the primary performance score, final objectives, solver time, and
+end-to-end time. Both modes record raw progress JSONL.
 `summary.md` is the human-readable result and `report.json` is the stable
 machine-readable record. Solver time excludes parsing, model construction, and
 export. End-to-end time includes those phases but excludes Docker image build,
 container startup, and Python process startup. The per-run `processSeconds`
 field includes Python startup for diagnostic context.
 
-For matching compute reports, use the mean attainment score as the normalized
-machine score. This score ranks performance on the real solver workload. It is
-not a linear claim that one computer has a specific multiple of another's raw
-CPU throughput.
+For matching compute reports, compare final performance scores directly. A
+machine with twice the score reached the top threshold in half the median time.
+Also compare the average time and reached-run count because timeouts are
+censored at the configured wall-time limit.
 
 The benchmark currently fixes the solver to `ortools/cp-sat`. Both modes record
 score events, but neither persists intermediate schedule contents. That belongs

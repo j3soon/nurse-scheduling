@@ -62,6 +62,7 @@ ATTAINMENT_THRESHOLDS = (
     4_450_000_000_000,
     4_470_000_000_000,
 )
+PERFORMANCE_REFERENCE_TIME_SECONDS = 100
 SOLVER = "ortools/cp-sat"
 REPOSITORY_ROOT = Path(__file__).parents[3]
 
@@ -198,6 +199,7 @@ def _run_compute_child(args: argparse.Namespace) -> int:
     if solving_started_seconds is not None and exporting_started_seconds is not None:
         solver_seconds = round(exporting_started_seconds - solving_started_seconds, 3)
     reached_top_threshold = ATTAINMENT_THRESHOLDS[-1] in threshold_reach_seconds
+    time_to_top_threshold_seconds = threshold_reach_seconds.get(ATTAINMENT_THRESHOLDS[-1], args.timeout)
     completed_criterion = reached_top_threshold or (
         solver_seconds is not None and solver_seconds >= args.timeout * 0.95
     )
@@ -211,6 +213,9 @@ def _run_compute_child(args: argparse.Namespace) -> int:
         "timeoutSeconds": args.timeout,
         "completedCriterion": completed_criterion,
         "stopReason": "top_threshold" if reached_top_threshold else "wall_time",
+        "topThresholdReached": reached_top_threshold,
+        "timeToTopThresholdSeconds": time_to_top_threshold_seconds,
+        "timeToTopThresholdCensored": not reached_top_threshold,
         "attainmentScore": _attainment_score(threshold_reach_seconds, args.timeout),
         "thresholdReachSeconds": {
             str(threshold): threshold_reach_seconds.get(threshold) for threshold in ATTAINMENT_THRESHOLDS
@@ -346,9 +351,18 @@ def _summarize_runs(runs: list[dict[str, Any]], target_score: int | None) -> dic
 
 def _summarize_compute_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
     completed = [run for run in runs if run.get("completedCriterion") and run.get("error") is None]
+    time_to_top_threshold = _numeric_summary([run["timeToTopThresholdSeconds"] for run in completed])
+    median_time = time_to_top_threshold["median"] if time_to_top_threshold is not None else None
     return {
         "requestedRuns": len(runs),
         "completedRuns": len(completed),
+        "topThresholdReachedRuns": sum(run["topThresholdReached"] for run in completed),
+        "performanceScore": (
+            round(100 * PERFORMANCE_REFERENCE_TIME_SECONDS / median_time, 6)
+            if median_time is not None and median_time > 0
+            else None
+        ),
+        "timeToTopThresholdSeconds": time_to_top_threshold,
         "attainmentScore": _numeric_summary([run["attainmentScore"] for run in completed]),
         "finalScore": _numeric_summary([run["score"] for run in completed]),
         "solverSeconds": _numeric_summary([run["solverSeconds"] for run in completed]),
@@ -359,12 +373,17 @@ def _summarize_compute_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 def _markdown_compute_report(report: dict[str, Any]) -> str:
     config = report["config"]
     summary = report["summary"]
-    attainment_summary = summary.get("attainmentScore")
-    final_machine_score = attainment_summary["mean"] if attainment_summary is not None else "unavailable"
+    performance_score = summary.get("performanceScore")
+    final_score = performance_score if performance_score is not None else "unavailable"
+    time_to_top_threshold = summary.get("timeToTopThresholdSeconds")
+    average_time = time_to_top_threshold["mean"] if time_to_top_threshold is not None else "unavailable"
     lines = [
         "# OR-Tools Real-Case Performance Benchmark",
         "",
-        f"- Final machine score: **{final_machine_score}**",
+        f"- Final score: **{final_score}**",
+        f"- Average time to top threshold: **{average_time} seconds**",
+        f"- Top threshold reached: {summary['topThresholdReachedRuns']} of {summary['completedRuns']} measured runs",
+        f"- Performance reference time: {config['performanceReferenceTimeSeconds']} seconds",
         f"- App version: `{report['environment']['appVersion']}`",
         f"- OR-Tools version: `{report['environment']['ortoolsVersion']}`",
         f"- CPU: {report['environment']['cpuModel'] or 'unknown'}",
@@ -374,16 +393,18 @@ def _markdown_compute_report(report: dict[str, Any]) -> str:
             f"{config['timeoutSeconds']}-second hard limit or top-threshold attainment"
         ),
         "",
-        "| Run | Status | Attainment score | Final objective | Solver seconds | End-to-end seconds |",
-        "| ---: | --- | ---: | ---: | ---: | ---: |",
+        "| Run | Status | Time to top threshold | Reached | Attainment score | Final objective | Solver seconds | End-to-end seconds |",
+        "| ---: | --- | ---: | :---: | ---: | ---: | ---: | ---: |",
     ]
     for run in report["runs"]:
         lines.append(
-            f"| {run['run']} | {run.get('status', 'ERROR')} | {run.get('attainmentScore', '')} | "
+            f"| {run['run']} | {run.get('status', 'ERROR')} | {run.get('timeToTopThresholdSeconds', '')} | "
+            f"{'yes' if run.get('topThresholdReached') else 'no'} | {run.get('attainmentScore', '')} | "
             f"{run.get('score', '')} | {run.get('solverSeconds', '')} | {run.get('endToEndSeconds', '')} |"
         )
     lines.extend(["", "## Aggregate", ""])
     for label, key in (
+        ("Time to top threshold", "timeToTopThresholdSeconds"),
         ("Attainment score", "attainmentScore"),
         ("Final objective", "finalScore"),
         ("Solver seconds", "solverSeconds"),
@@ -400,9 +421,11 @@ def _markdown_compute_report(report: dict[str, Any]) -> str:
         [
             "",
             (
-                "The primary machine score is the mean attainment score across measured runs. "
-                "Each run earns equal credit for reaching each fixed objective threshold early. "
-                "The result is bounded from 0 to 100, and higher is better."
+                "The final score is 100 times the reference time divided by the median time to "
+                "the top threshold. Higher is faster, and score ratios represent inverse "
+                "median-time ratios. A run that does not reach the threshold uses the hard "
+                "timeout as a censored time. The attainment score remains a secondary measure "
+                "of progress across the objective threshold ladder."
             ),
             "",
         ]
@@ -542,6 +565,11 @@ def _run_parent(args: argparse.Namespace) -> int:
             "parallelism": "solver default using CPUs available to the container",
             "attainmentThresholds": list(ATTAINMENT_THRESHOLDS),
             "attainmentFormula": "100 * mean(max(0, 1 - first_reach_seconds / timeout))",
+            "performanceReferenceTimeSeconds": PERFORMANCE_REFERENCE_TIME_SECONDS,
+            "performanceScoreFormula": ("100 * reference_time_seconds / median(time_to_top_threshold_seconds)"),
+            "timeToTopThresholdTimeoutHandling": (
+                "unreached thresholds use timeoutSeconds and are reported as censored"
+            ),
         },
         "environment": environment,
         "warmups": warmups,
