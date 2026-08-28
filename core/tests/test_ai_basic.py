@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import base64
+import hashlib
 import json
 from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
@@ -29,7 +30,10 @@ from fastapi.testclient import TestClient
 
 from nurse_scheduling.ai.app import SERVICE_NAME, create_app
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.provider import ChatMessage, ProviderError
+from nurse_scheduling.ai.editor import EDIT_TOOL
+from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
+
+from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -44,14 +48,16 @@ class FakeProvider:
     def __init__(self, responses: list[list[str] | Exception] | None = None) -> None:
         self.responses = responses or [["Hello", " from AI"]]
         self.calls: list[list[ChatMessage]] = []
+        self.offered_tools: object = None
 
-    async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
+    async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator[TextDelta]:
         self.calls.append(list(messages))
+        self.offered_tools = tools
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
         for delta in response:
-            yield delta
+            yield TextDelta(delta)
 
 
 def make_settings(**overrides: object) -> AiSettings:
@@ -564,3 +570,101 @@ def test_environment_configuration_reads_document_extraction_limits(monkeypatch:
     assert settings.max_xlsx_sheets == 6
     assert settings.max_xlsx_cells == 6_000
     assert settings.max_xlsx_uncompressed_bytes == 60_000_000
+
+
+class ScriptedToolProvider:
+    """Return a scripted tool call, then a text answer."""
+
+    def __init__(self, *turns) -> None:
+        self._turns = list(turns)
+        self.calls: list[list[ChatMessage]] = []
+
+    async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator[object]:
+        self.calls.append(list(messages))
+        for event in self._turns[min(len(self.calls) - 1, len(self._turns) - 1)]:
+            yield event
+
+
+def rename_call() -> list[object]:
+    """Ask the editor to give the first person a description."""
+    arguments = json.dumps(
+        {"old_str": "  - id: P1\n    description: ''", "new_str": "  - id: P1\n    description: Head"}
+    )
+    return [ToolCallRequest((ToolCall("call_0", EDIT_TOOL, arguments),))]
+
+
+def proposing_client() -> tuple[TestClient, str, str]:
+    """Run one proposing turn and return the client, session, and base revision."""
+    provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
+    client = TestClient(create_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    schedule = schedule_yaml()
+    session_id = create_session(client, schedule)
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+    assert response.status_code == 200
+    return client, session_id, hashlib.sha256(schedule.encode("utf-8")).hexdigest()
+
+
+def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
+    provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
+    client = TestClient(create_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    session_id = create_session(client, schedule_yaml())
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+
+    events = parse_sse(response.text)
+    assert ("tool", {"name": EDIT_TOOL}) in events
+    proposal = next(data for name, data in events if name == "proposal")
+    assert "people.items[0].description" in proposal["diff"]
+    assert not any(name == "proposal" and "schedule" in data for name, data in events)
+
+
+def test_approval_returns_the_proposed_schedule_once() -> None:
+    client, session_id, revision = proposing_client()
+
+    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+    repeated = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+
+    assert approved.status_code == 200
+    assert "description: Head" in approved.json()["schedule_yaml"]
+    assert repeated.status_code == 404
+
+
+def test_approval_is_refused_when_the_browser_holds_another_revision() -> None:
+    client, session_id, _ = proposing_client()
+
+    stale = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": "0" * 64})
+    retried = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": "0" * 64})
+
+    assert stale.status_code == 409
+    assert "changed after this proposal" in stale.json()["detail"]
+    assert retried.status_code == 404
+
+
+def test_rejection_drops_the_proposal() -> None:
+    client, session_id, revision = proposing_client()
+
+    rejected = client.post(f"/sessions/{session_id}/proposal/reject")
+    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+
+    assert rejected.status_code == 204
+    assert approved.status_code == 404
+
+
+def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
+    client, session_id, revision = proposing_client()
+    payload = base_schedule_payload()
+    payload["description"] = "Ward A"
+
+    updated = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": schedule_yaml(payload)})
+    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+
+    assert updated.status_code == 204
+    assert approved.status_code == 404
+
+
+def test_sessions_are_private_to_their_browser() -> None:
+    _, session_id, revision = proposing_client()
+    other = TestClient(create_app(settings=make_settings(), provider=FakeProvider()))
+
+    assert other.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision}).status_code == 404
+    assert other.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "a: 1"}).status_code == 404

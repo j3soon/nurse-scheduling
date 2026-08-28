@@ -39,7 +39,7 @@ from nurse_scheduling.ai.documents import (
     InvalidDocumentError,
     extract_document_text,
 )
-from nurse_scheduling.ai.provider import ChatMessage
+from nurse_scheduling.ai.provider import ChatMessage, TextDelta
 
 
 class FakeProvider:
@@ -48,9 +48,9 @@ class FakeProvider:
     def __init__(self) -> None:
         self.calls: list[list[ChatMessage]] = []
 
-    async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
+    async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator[TextDelta]:
         self.calls.append(list(messages))
-        yield "Document answer"
+        yield TextDelta("Document answer")
 
 
 def _limits(**overrides: int) -> DocumentExtractionLimits:
