@@ -93,6 +93,20 @@ def _issue_from_error(entry: dict) -> ScheduleIssue:
     return ScheduleIssue(format_schedule_location(entry.get("loc", ())), str(entry.get("msg", "Invalid value.")))
 
 
+def new_schedule_issues(
+    before: ScheduleValidationResult,
+    after: ScheduleValidationResult,
+) -> tuple[ScheduleIssue, ...]:
+    """Report the problems an edit introduced, ignoring those already present.
+
+    Both results are bounded, so a schedule with more problems than the reported
+    limit can hide one. That is acceptable, because the user still reviews the
+    diff before anything is applied.
+    """
+    existing = {(issue.location, issue.message) for issue in before.issues}
+    return tuple(issue for issue in after.issues if (issue.location, issue.message) not in existing)
+
+
 def format_schedule_location(location: Sequence[object]) -> str:
     """Render a schedule path such as `people.items[0].id` from its parts."""
     parts: list[str] = []

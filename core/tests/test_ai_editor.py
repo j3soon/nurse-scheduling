@@ -132,7 +132,8 @@ def test_edit_that_breaks_the_schedule_is_not_applied():
 
     result = _edit(editor, "  - id: P1\n", "  - id: []\n")
 
-    assert result.startswith("schedule.yaml was not changed, because the result is invalid.")
+    assert result.startswith("schedule.yaml was not changed, because the edit introduces problems.")
+    assert "people.items[0].id" in result
     assert editor.current_text == editor.base_text
     assert editor.proposal is None
 
@@ -208,3 +209,29 @@ def test_unknown_tools_and_unusable_arguments_are_reported_as_text():
     assert execute_tool(editor, EDIT_TOOL, "{}") == "`old_str` and `new_str` are required and must be strings."
     assert execute_tool(editor, WRITE_TOOL, "{}") == "`text` is required and must be a string."
     assert "must not be empty" in _edit(editor, "", "x")
+
+
+def test_an_edit_is_judged_by_the_problems_it_introduces():
+    payload = base_schedule_payload()
+    # A user part way through building a schedule has not added this preference yet.
+    payload["preferences"] = []
+    editor = _editor(payload)
+
+    result = _edit(editor, "  - id: P1\n    description: ''", "  - id: P1\n    description: Head")
+
+    assert result.startswith("schedule.yaml still has problems that were already there")
+    assert "at most one shift per day" in result
+    assert editor.proposal is not None
+    assert parse_schedule(editor.current_text)["people"]["items"][0]["description"] == "Head"
+
+
+def test_an_edit_that_adds_a_problem_is_still_refused_on_an_invalid_schedule():
+    payload = base_schedule_payload()
+    payload["preferences"] = []
+    editor = _editor(payload)
+
+    result = _edit(editor, "  - id: P1\n", "  - id: []\n")
+
+    assert result.startswith("schedule.yaml was not changed, because the edit introduces problems.")
+    assert "at most one shift per day" not in result
+    assert editor.proposal is None

@@ -27,7 +27,7 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .diff import ScheduleDiff, diff_schedules
-from .validation import validate_frontend_schedule_yaml
+from .validation import ScheduleValidationResult, new_schedule_issues, validate_frontend_schedule_yaml
 
 # The assistant edits one document, so the tools carry no path. Anything the
 # model needs to know about the schedule it reads out of this file.
@@ -72,6 +72,18 @@ class ScheduleEditor:
         self.edit_budget = edit_budget
         self.failed_edits = 0
         self.proposal: ScheduleProposal | None = None
+        self._base_validation: ScheduleValidationResult | None = None
+
+    @property
+    def base_validation(self) -> ScheduleValidationResult:
+        """Validate the schedule the browser sent, once, for comparison.
+
+        A user can be part way through building a schedule, so an edit is judged
+        by the problems it introduces rather than by the ones it inherits.
+        """
+        if self._base_validation is None:
+            self._base_validation = validate_frontend_schedule_yaml(self.base_text, self.max_bytes)
+        return self._base_validation
 
     @property
     def edits_left(self) -> int:
@@ -207,11 +219,13 @@ def _commit(editor: ScheduleEditor, candidate: str) -> str:
         editor.failed_edits += 1
         return f"The edit leaves {SCHEDULE_FILENAME} unchanged. {_budget_note(editor)}"
     validation = validate_frontend_schedule_yaml(candidate, editor.max_bytes)
-    if not validation.valid:
+    introduced = () if validation.valid else new_schedule_issues(editor.base_validation, validation)
+    if introduced:
         editor.failed_edits += 1
+        problems = "\n".join(f"- {issue.location}: {issue.message}" for issue in introduced)
         return (
-            f"{SCHEDULE_FILENAME} was not changed, because the result is invalid.\n"
-            f"{validation.render()}\n{_budget_note(editor)}"
+            f"{SCHEDULE_FILENAME} was not changed, because the edit introduces problems.\n"
+            f"{problems}\n{_budget_note(editor)}"
         )
 
     diff = _diff_against_base(editor, candidate)
@@ -220,7 +234,12 @@ def _commit(editor: ScheduleEditor, candidate: str) -> str:
         return diff
     editor.current_text = candidate
     editor.proposal = ScheduleProposal(text=candidate, diff=diff)
-    return f"{SCHEDULE_FILENAME} is valid. Changes so far:\n{diff.render()}"
+    if validation.valid:
+        return f"{SCHEDULE_FILENAME} is valid. Changes so far:\n{diff.render()}"
+    return (
+        f"{SCHEDULE_FILENAME} still has problems that were already there, and this edit added none.\n"
+        f"{validation.render()}\nChanges so far:\n{diff.render()}"
+    )
 
 
 def _diff_against_base(editor: ScheduleEditor, candidate: str) -> ScheduleDiff | str:

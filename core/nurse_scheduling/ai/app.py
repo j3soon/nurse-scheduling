@@ -40,7 +40,7 @@ from .config import AiSettings
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .editor import EDIT_TOOL, SCHEDULE_FILENAME, VIEW_TOOL, WRITE_TOOL, ScheduleEditor
 from .provider import ChatContent, ChatMessage, ChatProvider, OpenAiCompatibleProvider, ProviderError
-from .validation import validate_frontend_schedule_yaml
+from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
 API_VERSION = "0.2.0"
@@ -244,8 +244,8 @@ class SessionStore:
                 session.proposal_yaml = schedule_yaml
                 session.proposal_diff = diff
 
-    def take_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> str:
-        """Approve the pending proposal and adopt it as the session schedule."""
+    def take_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
+        """Approve the pending proposal and adopt it, returning it with the schedule it replaced."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
             if not session.proposal_yaml:
@@ -258,11 +258,12 @@ class SessionStore:
                     detail="The schedule changed after this proposal was created, so it was discarded.",
                 )
             approved = session.proposal_yaml
+            replaced = session.schedule_yaml
             session.proposal_yaml = ""
             session.proposal_diff = ""
             session.schedule_yaml = approved
             session.revision = schedule_revision(approved)
-            return approved
+            return approved, replaced
 
     def discard_proposal(self, session_id: str, owner_token: str | None) -> None:
         """Drop the pending proposal without changing the schedule."""
@@ -638,11 +639,15 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
-        approved = store.take_proposal(session_id, owner, request.base_sha256)
+        approved, replaced = store.take_proposal(session_id, owner, request.base_sha256)
         validation = validate_frontend_schedule_yaml(approved, settings.max_schedule_bytes)
         if not validation.valid:
-            logger.error("Approved proposal failed revalidation session_id=%s", session_id)
-            raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
+            # A user can approve while their schedule is still incomplete, so only
+            # a problem this proposal introduces blocks it.
+            replaced_validation = validate_frontend_schedule_yaml(replaced, settings.max_schedule_bytes)
+            if new_schedule_issues(replaced_validation, validation):
+                logger.error("Approved proposal failed revalidation session_id=%s", session_id)
+                raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
         return ProposalResponse(schedule_yaml=approved)
 
     @app.post("/sessions/{session_id}/proposal/reject", status_code=status.HTTP_204_NO_CONTENT)

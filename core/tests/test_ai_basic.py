@@ -668,3 +668,21 @@ def test_sessions_are_private_to_their_browser() -> None:
 
     assert other.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision}).status_code == 404
     assert other.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "a: 1"}).status_code == 404
+
+
+def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
+    payload = base_schedule_payload()
+    payload["preferences"] = []
+    provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
+    client = TestClient(create_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    schedule = schedule_yaml(payload)
+    session_id = create_session(client, schedule)
+    client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+
+    approved = client.post(
+        f"/sessions/{session_id}/proposal/approve",
+        json={"base_sha256": hashlib.sha256(schedule.encode("utf-8")).hexdigest()},
+    )
+
+    assert approved.status_code == 200
+    assert "description: Head" in approved.json()["schedule_yaml"]
