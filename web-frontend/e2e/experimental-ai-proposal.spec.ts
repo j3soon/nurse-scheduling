@@ -41,8 +41,8 @@ shiftTypes:
 preferences: []
 `;
 
-async function mockProposingBackend(page: Page): Promise<{ approvals: number }> {
-  const state = { approvals: 0 };
+async function mockProposingBackend(page: Page): Promise<{ approvals: number; refreshed: string[] }> {
+  const state = { approvals: 0, refreshed: [] as string[] };
 
   await page.route('**/ai/**', async route => {
     const request = route.request();
@@ -75,6 +75,11 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number }> 
         headers: corsHeaders,
         body: JSON.stringify({ id: 'browser-session' }),
       });
+      return;
+    }
+    if (request.url().endsWith('/schedule')) {
+      state.refreshed.push((request.postDataJSON() as { schedule_yaml: string }).schedule_yaml);
+      await route.fulfill({ status: 204, headers: corsHeaders });
       return;
     }
     if (request.url().endsWith('/proposal/approve')) {
@@ -140,4 +145,21 @@ test('keeps the schedule when a proposal is rejected', async ({ page }) => {
 
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeHidden();
+});
+
+test('sends the applied schedule to the session before the next question', async ({ page }) => {
+  const state = await mockProposingBackend(page);
+
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Approve' }).click();
+  await expect(page.getByText('The proposed schedule was applied.')).toBeVisible();
+
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who is on shift?');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  // The approved schedule replaced the one the session was created with.
+  await expect.poll(() => state.refreshed.length).toBe(1);
+  expect(state.refreshed[0]).toContain('Proposed Nurse');
 });

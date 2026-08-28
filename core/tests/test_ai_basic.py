@@ -118,7 +118,9 @@ def test_health_and_streamed_schedule_question() -> None:
     ]
     prompt = provider.calls[0]
     assert prompt[-1] == {"role": "user", "content": "Who works Monday?"}
-    assert "Alice" in prompt[0]["content"]
+    # The schedule itself is read with the view tool, so only its shape is sent.
+    assert "Alice" not in prompt[0]["content"]
+    assert "schedule.yaml is 2 lines" in prompt[0]["content"]
     assert "untrusted data" in prompt[0]["content"]
 
 
@@ -442,7 +444,7 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     assert second.status_code == 200
     assert {"role": "user", "content": "First question"} in provider.calls[1]
     assert {"role": "assistant", "content": "First answer"} in provider.calls[1]
-    assert "description: current" in provider.calls[1][0]["content"]
+    assert "Current schedule summary:" in provider.calls[1][0]["content"]
     assert provider.calls[1][0]["role"] == "system"
     assert all(message["role"] != "system" for message in provider.calls[1][1:])
 
@@ -686,3 +688,35 @@ def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
 
     assert approved.status_code == 200
     assert "description: Head" in approved.json()["schedule_yaml"]
+
+
+def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
+    provider = FakeProvider()
+    client = TestClient(create_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    schedule = schedule_yaml()
+    session_id = create_session(client, schedule)
+
+    client.post(f"/sessions/{session_id}/messages", json={"message": "How many people?"})
+
+    system_prompt = provider.calls[0][0]["content"]
+    assert "2 people, 2 shift types, 2 preferences" in system_prompt
+    assert "Group ids: people PEOPLE" in system_prompt
+    assert "Dates run from 2026-01-01 to 2026-01-02" in system_prompt
+    summary = system_prompt.split("Current schedule summary:\n")[1]
+    assert len(summary) < len(schedule) / 2
+
+
+def test_a_browser_may_send_the_newer_schedule_across_origins() -> None:
+    client = TestClient(create_app(settings=make_settings(), provider=FakeProvider()))
+
+    preflight = client.options(
+        "/sessions/any/schedule",
+        headers={
+            "Origin": "http://localhost:3005",
+            "Access-Control-Request-Method": "PUT",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert preflight.status_code == 200
+    assert "PUT" in preflight.headers["access-control-allow-methods"]

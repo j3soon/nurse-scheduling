@@ -26,6 +26,7 @@ from nurse_scheduling.ai.editor import (
     VIEW_TOOL,
     WRITE_TOOL,
     ScheduleEditor,
+    describe_schedule,
     execute_tool,
     tool_definitions,
 )
@@ -235,3 +236,19 @@ def test_an_edit_that_adds_a_problem_is_still_refused_on_an_invalid_schedule():
     assert result.startswith("schedule.yaml was not changed, because the edit introduces problems.")
     assert "at most one shift per day" not in result
     assert editor.proposal is None
+
+
+def test_describe_schedule_reports_shape_without_contents():
+    payload = base_schedule_payload()
+    payload["people"]["groups"] = [{"id": f"G{index}", "description": "", "members": []} for index in range(25)]
+
+    summary = describe_schedule(schedule_yaml(payload))
+
+    assert "2 people, 2 shift types, 2 preferences" in summary
+    assert "Dates run from 2026-01-01 to 2026-01-02" in summary
+    assert "and 5 more" in summary
+    assert "P1" not in summary
+
+
+def test_describe_schedule_reports_a_file_that_does_not_parse():
+    assert describe_schedule("people: [unclosed\n") == "schedule.yaml is 1 lines and does not currently parse."

@@ -33,6 +33,7 @@ from .validation import ScheduleValidationResult, new_schedule_issues, validate_
 # model needs to know about the schedule it reads out of this file.
 SCHEDULE_FILENAME = "schedule.yaml"
 MAX_VIEW_CHARS = 12_000
+MAX_SUMMARY_IDS = 20
 DEFAULT_EDIT_BUDGET = 5
 
 VIEW_TOOL = "view_schedule"
@@ -295,3 +296,66 @@ _HANDLERS: dict[str, Callable[[ScheduleEditor, dict[str, Any]], str]] = {
     EDIT_TOOL: _edit,
     WRITE_TOOL: _write,
 }
+
+
+def describe_schedule(schedule_text: str) -> str:
+    """Summarize the shape of the schedule for a prompt, without its contents.
+
+    Sending the whole document with every question costs about ten thousand
+    tokens on a large ward and repeats what `view_schedule` already returns, so
+    the prompt carries counts and group ids and the assistant reads the rest.
+    """
+    line_count = len(schedule_text.splitlines())
+    try:
+        schedule = _load_yaml(schedule_text.encode("utf-8"))
+    except (YAMLError, TypeError, ValueError):
+        return f"{SCHEDULE_FILENAME} is {line_count} lines and does not currently parse."
+
+    counts = [
+        f"{_count(schedule, 'people')} people",
+        f"{_count(schedule, 'shiftTypes')} shift types",
+        f"{len(_as_list(schedule.get('preferences')))} preferences",
+    ]
+    summary = f"{SCHEDULE_FILENAME} is {line_count} lines: {', '.join(counts)}."
+
+    # Dates usually come from the range rather than named items, so report both.
+    date_range = _section(schedule, "dates").get("range")
+    if isinstance(date_range, dict) and date_range.get("startDate") and date_range.get("endDate"):
+        summary += f" Dates run from {date_range['startDate']} to {date_range['endDate']}."
+    date_items = _count(schedule, "dates")
+    if date_items:
+        summary += f" {date_items} dates are listed individually."
+
+    groups = [f"{name} {_group_ids(schedule, name)}" for name in _GROUPED_SECTIONS if _group_ids(schedule, name)]
+    if groups:
+        summary += f"\nGroup ids: {'; '.join(groups)}."
+    return summary
+
+
+def _count(schedule: Any, name: str) -> int:
+    """Count the items of one named section."""
+    return len(_as_list(_section(schedule, name).get("items")))
+
+
+def _group_ids(schedule: Any, name: str) -> str:
+    """List the group ids of one named section, which selectors refer to."""
+    ids = [
+        str(group["id"])
+        for group in _as_list(_section(schedule, name).get("groups"))
+        if isinstance(group, dict) and "id" in group
+    ]
+    if len(ids) > MAX_SUMMARY_IDS:
+        return f"{', '.join(ids[:MAX_SUMMARY_IDS])} and {len(ids) - MAX_SUMMARY_IDS} more"
+    return ", ".join(ids)
+
+
+def _section(schedule: Any, name: str) -> dict[str, Any]:
+    section = schedule.get(name) if isinstance(schedule, dict) else None
+    return section if isinstance(section, dict) else {}
+
+
+def _as_list(node: Any) -> list[Any]:
+    return node if isinstance(node, list) else []
+
+
+_GROUPED_SECTIONS = ("people", "dates", "shiftTypes")
