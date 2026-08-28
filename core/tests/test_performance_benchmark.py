@@ -25,6 +25,31 @@ from types import SimpleNamespace
 
 from nurse_scheduling.solver_interface import SchedulePhaseProgress, SolverProgress
 from tests.real import performance_benchmark
+from tests.real.assignment_fixture import deserialize_assignment_fixture
+
+VALID_SCENARIO = b"""\
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2026-01-01
+    endDate: 2026-01-02
+people:
+  items:
+    - id: nurse
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+"""
+
+
+class _FakeDataFrame:
+    def to_csv(self, path, *, index, header, lineterminator):
+        assert index is False
+        assert header is False
+        assert lineterminator == "\n"
+        path.write_text("schedule\n", encoding="utf-8")
 
 
 def test_summarize_runs_reports_score_time_and_target_distributions():
@@ -88,6 +113,7 @@ def test_child_records_progress_and_stops_at_target(tmp_path, monkeypatch):
 
     monkeypatch.setattr(performance_benchmark.nurse_scheduling, "schedule", fake_schedule)
     monkeypatch.setattr(performance_benchmark, "REAL_TESTCASE", scenario_path)
+    monkeypatch.setattr(performance_benchmark, "_write_schedule_artifacts", lambda *_args: {})
     args = Namespace(
         mode=performance_benchmark.SEARCH_MODE,
         run_dir=run_dir,
@@ -135,6 +161,7 @@ def test_compute_child_calculates_attainment_score(tmp_path, monkeypatch):
 
     monkeypatch.setattr(performance_benchmark.nurse_scheduling, "schedule", fake_schedule)
     monkeypatch.setattr(performance_benchmark, "REAL_TESTCASE", scenario_path)
+    monkeypatch.setattr(performance_benchmark, "_write_schedule_artifacts", lambda *_args: {})
     args = Namespace(
         mode=performance_benchmark.COMPUTE_MODE,
         run_dir=run_dir,
@@ -155,6 +182,33 @@ def test_compute_child_calculates_attainment_score(tmp_path, monkeypatch):
     assert result["attainmentScore"] == 60.0
     assert result["thresholdReachSeconds"] == {"10": 2.0, "20": 6.0}
     assert result["solverSeconds"] == 6.0
+
+
+def test_write_schedule_artifacts_keeps_replayable_assignment(tmp_path):
+    solution = {(0, 0, 0): 1, (1, 0, 0): 0}
+    result = SimpleNamespace(
+        dataframe=_FakeDataFrame(),
+        solution=solution,
+        score=123,
+    )
+
+    artifact_fields = performance_benchmark._write_schedule_artifacts(
+        tmp_path,
+        VALID_SCENARIO,
+        result,
+    )
+
+    assert artifact_fields == {
+        "scheduleArtifact": "schedule.csv",
+        "assignmentArtifact": "assignment.json",
+    }
+    assert (tmp_path / "schedule.csv").read_text(encoding="utf-8") == "schedule\n"
+    fixture = json.loads((tmp_path / "assignment.json").read_text(encoding="utf-8"))
+    assert fixture["capturedScore"] == 123
+    assert "expectedScore" not in fixture
+    replay_solution, expected_score = deserialize_assignment_fixture(VALID_SCENARIO, fixture)
+    assert replay_solution == solution
+    assert expected_score == 123
 
 
 def test_summarize_compute_runs_scores_median_target_time():

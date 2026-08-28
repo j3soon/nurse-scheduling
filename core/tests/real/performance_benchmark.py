@@ -41,6 +41,7 @@ from nurse_scheduling.solver_interface import (
     serialize_solver_progress,
 )
 
+from .assignment_fixture import serialize_assignment_fixture
 from .schedule_real_helper import REAL_TESTCASE
 
 COMPUTE_MODE = "compute"
@@ -154,6 +155,27 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _write_schedule_artifacts(run_dir: Path, file_content: bytes, result: Any) -> dict[str, str]:
+    if result.dataframe is None or result.solution is None or result.score is None:
+        return {}
+    schedule_filename = "schedule.csv"
+    assignment_filename = "assignment.json"
+    result.dataframe.to_csv(
+        run_dir / schedule_filename,
+        index=False,
+        header=False,
+        lineterminator="\n",
+    )
+    _write_json(
+        run_dir / assignment_filename,
+        serialize_assignment_fixture(file_content, result.solution, result.score),
+    )
+    return {
+        "scheduleArtifact": schedule_filename,
+        "assignmentArtifact": assignment_filename,
+    }
+
+
 def _attainment_score(threshold_reach_seconds: dict[int, float], timeout: int) -> float:
     rewards = [
         max(0.0, 1 - threshold_reach_seconds.get(threshold, timeout) / timeout) for threshold in ATTAINMENT_THRESHOLDS
@@ -167,6 +189,7 @@ def _run_compute_child(args: argparse.Namespace) -> int:
     exporting_started_seconds = None
     workload_started_at = time.monotonic()
     progress_path = args.run_dir / "progress.jsonl"
+    file_content = REAL_TESTCASE.read_bytes()
 
     with progress_path.open("w", encoding="utf-8") as progress_file:
 
@@ -186,7 +209,7 @@ def _run_compute_child(args: argparse.Namespace) -> int:
             progress_file.write(json.dumps(serialized, sort_keys=True) + "\n")
 
         result = nurse_scheduling.schedule(
-            REAL_TESTCASE.read_bytes(),
+            file_content,
             prettify=False,
             solver=SOLVER,
             timeout=args.timeout,
@@ -225,6 +248,7 @@ def _run_compute_child(args: argparse.Namespace) -> int:
         "solverSeconds": solver_seconds,
         "endToEndSeconds": workload_seconds,
     }
+    run_result.update(_write_schedule_artifacts(args.run_dir, file_content, result))
     _write_json(args.run_dir / "result.json", run_result)
     return 0 if completed_criterion and result.score is not None else 1
 
@@ -293,6 +317,7 @@ def _run_search_child(args: argparse.Namespace) -> int:
         "solverSeconds": solver_seconds,
         "endToEndSeconds": workload_seconds,
     }
+    run_result.update(_write_schedule_artifacts(args.run_dir, file_content, result))
     _write_json(args.run_dir / "result.json", run_result)
     return 0 if result.score is not None else 1
 
