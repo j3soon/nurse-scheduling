@@ -6,8 +6,10 @@ about one schedule snapshot. Its ASGI entry point is
 use its Redis data.
 
 Image and document attachments are enabled by default and can be disabled
-independently. Supported documents are TXT, Markdown, CSV, PDF, and XLSX. This
-version excludes retrieval, tools, YAML proposals, and schedule mutation.
+independently. Supported documents are TXT, Markdown, CSV, PDF, and XLSX. The
+assistant reads and edits the schedule through tools and can propose a new
+schedule, which the browser applies only after the user approves it. This
+version excludes retrieval and repository access.
 
 ## Run locally
 
@@ -43,8 +45,10 @@ flowchart LR
     Browser[Frontend<br/>current schedule] -->|POST schedule once| Session[AI backend<br/>in-memory session]
     Browser -->|POST question<br/>and optional attachments| Session
     Session -->|OpenAI-compatible chat request| Provider[Model provider]
-    Provider -->|streamed deltas| Session
-    Session -->|SSE text events| Browser
+    Provider -->|streamed deltas and tool calls| Session
+    Session -->|read and edit schedule.yaml| Editor[Schedule editor<br/>validated draft]
+    Session -->|SSE text, tool, and proposal events| Browser
+    Browser -->|approve with base revision| Session
 ```
 
 The browser receives an HTTP-only owner cookie and an unguessable session UUID.
@@ -55,6 +59,27 @@ request. **Images and document contents are not included in subsequent chat
 history.** This is intentional to avoid repeatedly consuming provider context
 tokens. History retains only attachment markers and document filenames.
 Schedules and attachments are labeled as untrusted data in the system prompt.
+
+## Proposal lifecycle
+
+The assistant edits one virtual file, `schedule.yaml`, through three tools:
+`view_schedule`, `edit_schedule`, and `write_schedule`. Every change is
+validated against the schedule shapes the web frontend can edit, and the working
+draft advances only when the result is valid. A failed edit spends one of
+`AI_MAX_SCHEDULE_EDITS` attempts.
+
+A finished run that changed the schedule leaves one pending proposal. The
+browser receives its structural diff, never its YAML. `POST
+/sessions/{id}/proposal/approve` requires the SHA-256 of the schedule the
+browser holds, so a proposal built on an older schedule is discarded instead of
+applied. The approved schedule is revalidated before it is returned, becomes the
+session schedule, and the browser applies it through the normal YAML import path
+as one undo step. `POST /sessions/{id}/proposal/reject` drops it, and `PUT
+/sessions/{id}/schedule` replaces the snapshot when the schedule changed
+elsewhere in the app, which also drops any pending proposal.
+
+A run that fails, is cancelled, or is abandoned leaves no proposal. A run that
+only answers a question never creates one.
 
 The provider boundary uses OpenAI-compatible chat completions. The
 [Cloudflare Tunnel example](https://github.com/j3soon/local-llm-notes/tree/main/examples/basic-secure-api/cloudflare)

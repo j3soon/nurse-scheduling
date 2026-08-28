@@ -19,7 +19,16 @@
 
 // This test is mostly AI generated.
 
-import { createSession, getAiBaseUrl, getCapabilities, streamMessage } from './aiClient';
+import {
+  approveProposal,
+  createSession,
+  getAiBaseUrl,
+  getCapabilities,
+  rejectProposal,
+  scheduleRevision,
+  streamMessage,
+  updateSessionSchedule,
+} from './aiClient';
 
 function streamedResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -206,5 +215,74 @@ describe('AI client', () => {
     const form = request.body as FormData;
     expect(form.get('message')).toBe('Check the file.');
     expect(form.getAll('documents')).toEqual([document]);
+  });
+
+  it('forwards tool use and a proposal to the caller', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: tool\ndata: {"name":"edit_schedule"}\n\n',
+      'event: delta\ndata: {"text":"Renamed P1."}\n\n',
+      'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
+      'event: done\ndata: {"message_id":"1"}\n\n',
+    ])));
+    const tools: string[] = [];
+    const diffs: string[] = [];
+    const texts: string[] = [];
+
+    await streamMessage(
+      'session-id',
+      'Rename P1.',
+      {
+        onDelta: text => texts.push(text),
+        onTool: name => tools.push(name),
+        onProposal: diff => diffs.push(diff),
+      },
+      new AbortController().signal,
+    );
+
+    expect(tools).toEqual(['edit_schedule']);
+    expect(texts).toEqual(['Renamed P1.']);
+    expect(diffs).toEqual(['- people.items[0].id']);
+  });
+
+  it('approves a proposal with the revision the browser holds', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ schedule_yaml: 'description: approved\n' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(approveProposal('session-id', 'description: test')).resolves.toBe('description: approved\n');
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8001/sessions/session-id/proposal/approve', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_sha256: await scheduleRevision('description: test') }),
+    });
+  });
+
+  it('reports the backend reason when a proposal cannot be approved', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'The schedule changed after this proposal was created, so it was discarded.' }),
+      { status: 409, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    await expect(approveProposal('session-id', 'description: test')).rejects.toThrow(
+      'The schedule changed after this proposal was created, so it was discarded.',
+    );
+  });
+
+  it('rejects a proposal and refreshes a session schedule', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await rejectProposal('session-id');
+    await updateSessionSchedule('session-id', 'description: newer');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8001/sessions/session-id/proposal/reject');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:8001/sessions/session-id/schedule');
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      method: 'PUT',
+      body: JSON.stringify({ schedule_yaml: 'description: newer' }),
+    });
   });
 });

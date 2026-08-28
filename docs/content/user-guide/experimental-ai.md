@@ -7,8 +7,27 @@
 
 This page answers questions about the schedule currently open in the browser.
 When enabled by the AI backend, a question can include PNG, JPEG, and WebP
-images or TXT, Markdown, CSV, PDF, and XLSX documents. The assistant cannot
-change the schedule or run optimization.
+images or TXT, Markdown, CSV, PDF, and XLSX documents. The assistant can propose
+changes to the schedule, which apply only after you approve them. It cannot run
+optimization.
+
+## Review a proposed change
+
+Ask for a change, such as renaming a person or adding a shift request, and the
+assistant proposes one instead of changing the schedule itself.
+
+1. Ask for the change in the usual way.
+2. Read **Proposed schedule change**, which lists every difference between your
+   current schedule and the proposal.
+3. Select **Approve** to apply it, or **Reject** to discard it.
+4. An approved proposal replaces the schedule in one step, so
+   <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change.
+
+A line such as `Used schedule.yaml: edit_schedule` under an answer shows that
+the assistant read or edited the schedule while preparing it.
+
+Approval is refused when the schedule changed after the proposal was made. Ask
+again so the assistant works from what you now have.
 
 ## Real scenario example
 

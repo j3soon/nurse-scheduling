@@ -19,6 +19,8 @@
 
 export interface StreamCallbacks {
   onDelta: (text: string) => void;
+  onTool?: (name: string) => void;
+  onProposal?: (diff: string) => void;
   onDone?: () => void;
 }
 
@@ -49,6 +51,8 @@ interface SessionResponse {
 interface SsePayload {
   text?: unknown;
   message?: unknown;
+  name?: unknown;
+  diff?: unknown;
 }
 
 export function getAiBaseUrl(): string {
@@ -135,6 +139,10 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
 
   if (eventType === 'delta' && typeof payload.text === 'string') {
     callbacks.onDelta(payload.text);
+  } else if (eventType === 'tool' && typeof payload.name === 'string') {
+    callbacks.onTool?.(payload.name);
+  } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
+    callbacks.onProposal?.(payload.diff);
   } else if (eventType === 'done') {
     callbacks.onDone?.();
   } else if (eventType === 'error') {
@@ -193,4 +201,45 @@ export async function streamMessage(
   }
 
   if (buffer.trim()) consumeEvent(buffer, callbacks);
+}
+
+export async function scheduleRevision(scheduleYaml: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(scheduleYaml));
+  return Array.from(new Uint8Array(digest))
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export async function updateSessionSchedule(sessionId: string, scheduleYaml: string): Promise<void> {
+  const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/schedule`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ schedule_yaml: scheduleYaml }),
+  });
+  if (!response.ok) throw await responseError(response);
+}
+
+export async function approveProposal(sessionId: string, scheduleYaml: string): Promise<string> {
+  const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/proposal/approve`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ base_sha256: await scheduleRevision(scheduleYaml) }),
+  });
+  if (!response.ok) throw await responseError(response);
+
+  const body = await response.json() as { schedule_yaml?: unknown };
+  if (typeof body.schedule_yaml !== 'string' || !body.schedule_yaml) {
+    throw new Error('The AI backend returned an invalid proposal.');
+  }
+  return body.schedule_yaml;
+}
+
+export async function rejectProposal(sessionId: string): Promise<void> {
+  const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/proposal/reject`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!response.ok) throw await responseError(response);
 }
