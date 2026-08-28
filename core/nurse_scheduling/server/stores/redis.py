@@ -181,11 +181,9 @@ class RedisJobStore:
                     job_key = self._job_key(job.id)
                     transaction.watch(self._jobs_key, self._pending_key, self._queue_key, job_key)
                     if transaction.exists(job_key):
-                        transaction.unwatch()
                         raise StoreWriteConflictError(f"Job already exists: {job.id}")
                     pending_count = transaction.scard(self._pending_key)
                     if pending_count >= limits.max_pending:
-                        transaction.unwatch()
                         raise JobCapacityError("Too many jobs are queued or running")
 
                     prune_ids: list[str] = []
@@ -197,7 +195,6 @@ class RedisJobStore:
                         )
                         prune_count = retained_count - limits.max_retained + 1
                         if len(terminal) < prune_count:
-                            transaction.unwatch()
                             raise JobCapacityError("Too many jobs are retained")
                         prune_ids = [candidate.id for candidate in terminal[:prune_count]]
 
@@ -319,11 +316,9 @@ class RedisJobStore:
                         not self._lease_is_live(lease, started_at, worker_expiry, worker_token)
                         or active_job_id is not None
                     ):
-                        transaction.unwatch()
                         return None
                     queued = transaction.zrange(self._queue_key, 0, 0)
                     if not queued:
-                        transaction.unwatch()
                         return None
                     job_id = _decode(queued[0])
                     job_key = self._job_key(job_id)
@@ -390,7 +385,6 @@ class RedisJobStore:
                     if (
                         current_expiry is not None and current_expiry > registered_at.timestamp()
                     ) or active_job_id is not None:
-                        transaction.unwatch()
                         return False
                     transaction.multi()
                     transaction.zadd(self._workers_key, {lease.worker_id: lease.expires_at.timestamp()})
@@ -410,7 +404,6 @@ class RedisJobStore:
                     current_expiry = transaction.zscore(self._workers_key, lease.worker_id)
                     current_token = _decode(transaction.hget(self._worker_tokens_key, lease.worker_id))
                     if not self._lease_is_live(lease, renewed_at, current_expiry, current_token):
-                        transaction.unwatch()
                         return False
                     transaction.multi()
                     transaction.zadd(self._workers_key, {lease.worker_id: lease_expires_at.timestamp()})
@@ -427,7 +420,6 @@ class RedisJobStore:
                     transaction.watch(self._worker_tokens_key)
                     current_token = _decode(transaction.hget(self._worker_tokens_key, lease.worker_id))
                     if current_token != lease.token:
-                        transaction.unwatch()
                         return
                     transaction.multi()
                     transaction.zrem(self._workers_key, lease.worker_id)
@@ -504,15 +496,12 @@ class RedisJobStore:
                     transaction.watch(*watched_keys)
                     raw = transaction.get(job_key)
                     if raw is None:
-                        transaction.unwatch()
                         raise JobNotFoundError("Job was not found")
                     current = self._deserialize_job(raw)
                     if current.revision != expected_revision:
-                        transaction.unwatch()
                         raise StoreWriteConflictError(f"Job revision changed: {job.id}")
                     if worker_lease is not None:
                         if worker_lease_observed_at is None:
-                            transaction.unwatch()
                             raise ValueError("worker_lease_observed_at is required with a worker lease")
                         worker_expiry = transaction.zscore(self._workers_key, worker_lease.worker_id)
                         worker_token = _decode(transaction.hget(self._worker_tokens_key, worker_lease.worker_id))
@@ -527,7 +516,6 @@ class RedisJobStore:
                             )
                             or active_job_id != job.id
                         ):
-                            transaction.unwatch()
                             return self.get(job.id)
                     updated_job = replace(job, revision=expected_revision + 1, queue_position=None)
                     remaining_queue_ids: list[str] = []
@@ -649,7 +637,6 @@ class RedisJobStore:
                     )
                     worker_ids = [_decode(raw_id) for raw_id in raw_ids]
                     if not worker_ids:
-                        transaction.unwatch()
                         return []
                     transaction.multi()
                     transaction.zrem(self._workers_key, *worker_ids)
@@ -687,11 +674,9 @@ class RedisJobStore:
                     transaction.watch(job_key)
                     raw = transaction.get(job_key)
                     if raw is None:
-                        transaction.unwatch()
                         raise JobNotFoundError("Job was not found")
                     current = self._deserialize_job(raw)
                     if current.revision != expected_revision:
-                        transaction.unwatch()
                         raise StoreWriteConflictError(f"Job revision changed: {job_id}")
                     transaction.multi()
                     self._stage_job_deletion(transaction, job_id)
