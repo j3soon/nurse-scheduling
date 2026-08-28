@@ -49,6 +49,12 @@ test paths when a narrower suite is known to be sufficient.
   target the frontend subset alone. Validate through
   `ai/validation.py`, and do not expose the canonical backend flavor, which
   accepts shapes the editor cannot represent.
+- Let the assistant edit the schedule as text through `ai/editor.py`, which
+  exposes view, edit, and write over one virtual file. Structured patch
+  operations were tried and removed, because current models edit text well and
+  the operation machinery cost more than it prevented. Keep validation on every
+  change and the structural diff at review, since those catch a dropped entry
+  that still parses.
 
 ## Testing
 - Normal tests live under `tests/`.

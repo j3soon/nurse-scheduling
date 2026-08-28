@@ -19,59 +19,17 @@
 
 # This test is mostly AI generated.
 
-import json
-
 from nurse_scheduling.ai.validation import (
     MAX_ISSUE_MESSAGE_CHARS,
     MAX_VALIDATION_ISSUES,
     validate_frontend_schedule_yaml,
 )
 
-LARGE_LIMIT = 1_000_000
-
-
-def _base_payload() -> dict:
-    return {
-        "appVersion": "v0.0.0-test",
-        "apiVersion": "alpha",
-        "description": "",
-        "dates": {
-            "range": {"startDate": "2026-01-01", "endDate": "2026-01-02"},
-            "items": [],
-            "groups": [{"id": "FIRST", "description": "", "members": ["2026-01-01"]}],
-        },
-        "people": {
-            "items": [
-                {"id": "P1", "description": "", "history": []},
-                {"id": "P2", "description": "", "history": []},
-            ],
-            "groups": [{"id": "PEOPLE", "description": "", "members": ["P1", "P2"]}],
-        },
-        "shiftTypes": {
-            "items": [{"id": "D", "description": ""}, {"id": "N", "description": ""}],
-            "groups": [{"id": "WORK", "description": "", "members": ["D", "N"]}],
-        },
-        "preferences": [
-            {"type": "at most one shift per day"},
-            {
-                "type": "shift request",
-                "person": ["P1"],
-                "date": ["FIRST"],
-                "shiftType": ["D"],
-                "weight": 1,
-            },
-        ],
-        "export": {"formatting": [], "extraColumns": [], "extraRows": []},
-    }
-
-
-def _yaml(payload: dict) -> str:
-    # JSON is valid YAML 1.2, so tests mutate a payload and serialize it directly.
-    return json.dumps(payload)
+from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
 
 def test_accepts_frontend_generated_schedule():
-    result = validate_frontend_schedule_yaml(_yaml(_base_payload()), LARGE_LIMIT)
+    result = validate_frontend_schedule_yaml(schedule_yaml(base_schedule_payload()), SCHEDULE_BYTE_LIMIT)
 
     assert result.valid
     assert result.issues == ()
@@ -79,7 +37,7 @@ def test_accepts_frontend_generated_schedule():
 
 
 def test_rejects_backend_only_shape_the_editor_cannot_represent():
-    payload = _base_payload()
+    payload = base_schedule_payload()
     payload["preferences"].append(
         {
             "type": "shift type requirement",
@@ -90,27 +48,27 @@ def test_rejects_backend_only_shape_the_editor_cannot_represent():
         }
     )
 
-    result = validate_frontend_schedule_yaml(_yaml(payload), LARGE_LIMIT)
+    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert any("must not contain nested references" in issue.message for issue in result.issues)
 
 
 def test_rejects_optional_canonical_field_required_by_the_editor():
-    payload = _base_payload()
+    payload = base_schedule_payload()
     del payload["people"]["items"][1]["description"]
 
-    result = validate_frontend_schedule_yaml(_yaml(payload), LARGE_LIMIT)
+    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert any("people.items[1].description is required" in issue.message for issue in result.issues)
 
 
 def test_reports_field_errors_with_schedule_paths():
-    payload = _base_payload()
+    payload = base_schedule_payload()
     payload["people"]["items"][0]["history"] = "not-a-list"
 
-    result = validate_frontend_schedule_yaml(_yaml(payload), LARGE_LIMIT)
+    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert any(issue.location.startswith("people.items[0].history") for issue in result.issues)
@@ -119,7 +77,7 @@ def test_reports_field_errors_with_schedule_paths():
 def test_rejects_yaml_aliases():
     schedule = "anchor: &shared {}\napiVersion: alpha\ncopy: *shared\n"
 
-    result = validate_frontend_schedule_yaml(schedule, LARGE_LIMIT)
+    result = validate_frontend_schedule_yaml(schedule, SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert result.issues[0].location == "(document)"
@@ -127,7 +85,7 @@ def test_rejects_yaml_aliases():
 
 
 def test_rejects_unreadable_yaml():
-    result = validate_frontend_schedule_yaml("people: [unclosed\n", LARGE_LIMIT)
+    result = validate_frontend_schedule_yaml("people: [unclosed\n", SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert result.issues[0].location == "(document)"
@@ -135,14 +93,14 @@ def test_rejects_unreadable_yaml():
 
 
 def test_rejects_non_mapping_document():
-    result = validate_frontend_schedule_yaml("- just-a-list\n", LARGE_LIMIT)
+    result = validate_frontend_schedule_yaml("- just-a-list\n", SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert "top-level mapping" in result.issues[0].message
 
 
 def test_rejects_schedule_over_the_byte_limit():
-    schedule = _yaml(_base_payload())
+    schedule = schedule_yaml(base_schedule_payload())
 
     result = validate_frontend_schedule_yaml(schedule, len(schedule.encode("utf-8")) - 1)
 
@@ -151,10 +109,10 @@ def test_rejects_schedule_over_the_byte_limit():
 
 
 def test_bounds_the_reported_issue_count():
-    payload = _base_payload()
+    payload = base_schedule_payload()
     payload["people"]["items"] = [{"id": [], "description": ""} for _ in range(MAX_VALIDATION_ISSUES)]
 
-    result = validate_frontend_schedule_yaml(_yaml(payload), LARGE_LIMIT)
+    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert len(result.issues) == MAX_VALIDATION_ISSUES
