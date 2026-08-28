@@ -121,11 +121,11 @@ class ToolCapableChatProvider(ChatProvider, Protocol):
         ...
 
 
-def assistant_tool_call_message(calls: Sequence[ToolCall]) -> ChatMessage:
+def assistant_tool_call_message(calls: Sequence[ToolCall], content: str | None = None) -> ChatMessage:
     """Record the assistant turn that requested tools, as the protocol requires."""
     return ChatMessage(
         role="assistant",
-        content=None,
+        content=content or None,
         tool_calls=[
             {"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}}
             for call in calls

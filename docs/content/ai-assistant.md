@@ -76,6 +76,8 @@ shows one compatible deployment pattern.
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
+| `AI_MAX_AGENT_TURNS` | `6` | Maximum provider turns for one answer. The last turn offers no tools. |
+| `AI_MAX_SCHEDULE_EDITS` | `5` | Failed schedule edits allowed before the assistant must stop. |
 | `AI_ATTACHMENT_MODE` | `images` | Use `none` to disable image attachments. |
 | `AI_MAX_IMAGE_FILES` | `4` | Maximum images attached to one question. |
 | `AI_MAX_IMAGE_BYTES` | `5000000` | Maximum bytes per image. |

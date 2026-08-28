@@ -92,6 +92,8 @@ class AiSettings:
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
+    max_agent_turns: int = 6
+    max_schedule_edits: int = 5
     attachment_mode: AttachmentMode = "images"
     max_image_files: int = 4
     max_image_bytes: int = 5_000_000
@@ -130,6 +132,8 @@ class AiSettings:
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
+            max_agent_turns=_read_positive_int("AI_MAX_AGENT_TURNS", 6),
+            max_schedule_edits=_read_positive_int("AI_MAX_SCHEDULE_EDITS", 5),
             attachment_mode=_read_attachment_mode(),
             max_image_files=_read_positive_int("AI_MAX_IMAGE_FILES", 4),
             max_image_bytes=_read_positive_int("AI_MAX_IMAGE_BYTES", 5_000_000),
