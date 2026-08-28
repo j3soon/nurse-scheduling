@@ -25,9 +25,16 @@ from collections.abc import AsyncIterator, Sequence
 
 import pytest
 
-from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolUse, run_agent
+from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse, run_agent
 from nurse_scheduling.ai.editor import EDIT_TOOL, VIEW_TOOL, ScheduleEditor
-from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.provider import (
+    ChatMessage,
+    ProviderError,
+    ReasoningDelta,
+    TextDelta,
+    ToolCall,
+    ToolCallRequest,
+)
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, schedule_yaml
 
@@ -89,6 +96,8 @@ def test_a_tool_call_is_executed_and_returned_to_the_provider():
 
     assert isinstance(events[0], AgentToolUse)
     assert events[0].name == VIEW_TOOL
+    assert events[0].ok
+    assert events[0].arguments == "{}"
     assert events[0].result.startswith("schedule.yaml lines 1 to ")
     second_request = provider.requests[1][0]
     assert second_request[-2]["tool_calls"][0]["function"]["name"] == VIEW_TOOL
@@ -171,3 +180,23 @@ def test_a_read_only_run_is_offered_the_view_tool_alone():
 
     offered = [tool["function"]["name"] for tool in provider.requests[0][1]]
     assert offered == [VIEW_TOOL]
+
+
+def test_reasoning_is_reported_without_entering_the_answer():
+    provider = FakeProvider([ReasoningDelta("Counting people. "), TextDelta("Two people.")])
+    editor = _editor()
+
+    events = _run(provider, editor)
+
+    assert events == [AgentReasoning("Counting people. "), AgentText("Two people.")]
+
+
+def test_a_failed_tool_call_is_reported_as_such():
+    provider = FakeProvider(_calls((EDIT_TOOL, json.dumps({"old_str": "missing", "new_str": "x"}))), _text("Sorry."))
+    editor = _editor()
+
+    events = _run(provider, editor)
+
+    assert isinstance(events[0], AgentToolUse)
+    assert not events[0].ok
+    assert "was not found" in events[0].result

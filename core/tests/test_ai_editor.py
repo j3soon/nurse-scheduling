@@ -26,6 +26,7 @@ from nurse_scheduling.ai.editor import (
     VIEW_TOOL,
     WRITE_TOOL,
     ScheduleEditor,
+    ToolOutcome,
     describe_schedule,
     execute_tool,
     tool_definitions,
@@ -39,15 +40,19 @@ def _editor(payload: dict | None = None, **kwargs) -> ScheduleEditor:
 
 
 def _view(editor: ScheduleEditor, **arguments) -> str:
-    return execute_tool(editor, VIEW_TOOL, json.dumps(arguments))
+    return execute_tool(editor, VIEW_TOOL, json.dumps(arguments)).text
 
 
 def _edit(editor: ScheduleEditor, old_str: str, new_str: str) -> str:
+    return _edit_outcome(editor, old_str, new_str).text
+
+
+def _edit_outcome(editor: ScheduleEditor, old_str: str, new_str: str) -> ToolOutcome:
     return execute_tool(editor, EDIT_TOOL, json.dumps({"old_str": old_str, "new_str": new_str}))
 
 
 def _write(editor: ScheduleEditor, text: str) -> str:
-    return execute_tool(editor, WRITE_TOOL, json.dumps({"text": text}))
+    return execute_tool(editor, WRITE_TOOL, json.dumps({"text": text})).text
 
 
 def test_view_returns_the_whole_file_with_line_numbers():
@@ -204,11 +209,12 @@ def test_editing_runs_receive_three_tools():
 def test_unknown_tools_and_unusable_arguments_are_reported_as_text():
     editor = _editor()
 
-    assert execute_tool(editor, "bash", "{}").startswith("Unknown tool `bash`.")
-    assert execute_tool(editor, VIEW_TOOL, "not json").startswith(f"The arguments for `{VIEW_TOOL}` were not")
-    assert execute_tool(editor, VIEW_TOOL, "[]") == f"The arguments for `{VIEW_TOOL}` must be a JSON object."
-    assert execute_tool(editor, EDIT_TOOL, "{}") == "`old_str` and `new_str` are required and must be strings."
-    assert execute_tool(editor, WRITE_TOOL, "{}") == "`text` is required and must be a string."
+    assert execute_tool(editor, "bash", "{}").text.startswith("Unknown tool `bash`.")
+    assert execute_tool(editor, VIEW_TOOL, "not json").text.startswith(f"The arguments for `{VIEW_TOOL}` were not")
+    assert execute_tool(editor, VIEW_TOOL, "[]").text == f"The arguments for `{VIEW_TOOL}` must be a JSON object."
+    assert execute_tool(editor, EDIT_TOOL, "{}").text == "`old_str` and `new_str` are required and must be strings."
+    assert execute_tool(editor, WRITE_TOOL, "{}").text == "`text` is required and must be a string."
+    assert not execute_tool(editor, "bash", "{}").ok
     assert "must not be empty" in _edit(editor, "", "x")
 
 
@@ -252,3 +258,15 @@ def test_describe_schedule_reports_shape_without_contents():
 
 def test_describe_schedule_reports_a_file_that_does_not_parse():
     assert describe_schedule("people: [unclosed\n") == "schedule.yaml is 1 lines and does not currently parse."
+
+
+def test_a_tool_call_reports_whether_it_did_what_it_was_asked():
+    editor = _editor()
+
+    applied = _edit_outcome(editor, "  - id: P1\n    description: ''", "  - id: P1\n    description: Head")
+    missing = _edit_outcome(editor, "id: P9", "id: P10")
+
+    assert applied.ok
+    assert not missing.ok
+    assert execute_tool(editor, VIEW_TOOL, "{}").ok
+    assert not execute_tool(editor, VIEW_TOOL, json.dumps({"start_line": 9999})).ok

@@ -35,7 +35,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 
-from .agent import AgentProposal, AgentText, AgentToolUse, run_agent
+from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse, run_agent
 from .config import AiSettings
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .editor import EDIT_TOOL, SCHEDULE_FILENAME, VIEW_TOOL, WRITE_TOOL, ScheduleEditor, describe_schedule
@@ -293,7 +293,7 @@ class SessionStore:
             del self._sessions[session_id]
 
 
-def _sse_event(event_type: str, data: dict[str, str]) -> str:
+def _sse_event(event_type: str, data: dict[str, object]) -> str:
     """Serialize one server-sent event."""
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
@@ -594,8 +594,18 @@ def create_app(
                         if isinstance(event, AgentText):
                             assistant_parts.append(event.text)
                             yield _sse_event("delta", {"text": event.text})
+                        elif isinstance(event, AgentReasoning):
+                            yield _sse_event("reasoning", {"text": event.text})
                         elif isinstance(event, AgentToolUse):
-                            yield _sse_event("tool", {"name": event.name})
+                            yield _sse_event(
+                                "tool",
+                                {
+                                    "name": event.name,
+                                    "arguments": event.arguments,
+                                    "result": event.result,
+                                    "ok": event.ok,
+                                },
+                            )
                         elif isinstance(event, AgentProposal):
                             store.store_proposal(session_id, event.text, event.diff)
                             yield _sse_event("proposal", {"diff": event.diff})

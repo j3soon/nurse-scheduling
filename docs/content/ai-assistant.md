@@ -47,7 +47,7 @@ flowchart LR
     Session -->|OpenAI-compatible chat request| Provider[Model provider]
     Provider -->|streamed deltas and tool calls| Session
     Session -->|read and edit schedule.yaml| Editor[Schedule editor<br/>validated draft]
-    Session -->|SSE text, tool, and proposal events| Browser
+    Session -->|SSE text, reasoning, tool, and proposal events| Browser
     Browser -->|approve with base revision| Session
 ```
 
@@ -59,6 +59,18 @@ request. **Images and document contents are not included in subsequent chat
 history.** This is intentional to avoid repeatedly consuming provider context
 tokens. History retains only attachment markers and document filenames.
 Schedules and attachments are labeled as untrusted data in the system prompt.
+
+## Reasoning and tool activity
+
+Providers stream reasoning in a field of its own, either `reasoning_content` or
+`reasoning`, and the adapter forwards it as a separate event. It is never joined
+to the answer text, never stored in conversation history, and never sent back to
+the provider, so it cannot leak into an assistant message and costs nothing on
+later turns.
+
+The `tool` event carries the tool name, the arguments the model sent, the result
+it received, and whether the call did what it was asked. Nothing is truncated on
+the server. The browser reveals long output in portions instead.
 
 ## Proposal lifecycle
 

@@ -38,6 +38,8 @@ SECRET_ASSIGNMENT_PATTERN = re.compile(
 )
 MAX_TOOL_CALLS_PER_RESPONSE = 8
 MAX_TOOL_ARGUMENT_CHARS = 20_000
+MAX_RESPONSE_TEXT_CHARS = 200_000
+MAX_RESPONSE_REASONING_CHARS = 400_000
 
 
 class TextContentPart(TypedDict):
@@ -92,13 +94,25 @@ class TextDelta:
 
 
 @dataclass(frozen=True)
+class ReasoningDelta:
+    """One streamed fragment of the model's reasoning.
+
+    Reasoning arrives in its own field, so it is never mixed into the answer and
+    cannot leak into the assistant message. It is shown to the user on request
+    and is never sent back to the provider.
+    """
+
+    text: str
+
+
+@dataclass(frozen=True)
 class ToolCallRequest:
     """The tool calls an assistant turn ended with."""
 
     calls: tuple[ToolCall, ...]
 
 
-ChatStreamEvent = TextDelta | ToolCallRequest
+ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest
 
 
 class ChatProvider(Protocol):
@@ -208,6 +222,8 @@ class OpenAiCompatibleProvider:
                     raise ProviderError(f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.")
 
                 partial_calls: dict[int, _PartialToolCall] = {}
+                text_chars = 0
+                reasoning_chars = 0
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -223,7 +239,17 @@ class OpenAiCompatibleProvider:
                     except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
                         raise ProviderError("The AI provider returned an invalid stream.") from exc
                     if isinstance(content, str) and content:
+                        text_chars += len(content)
+                        if text_chars > MAX_RESPONSE_TEXT_CHARS:
+                            raise ProviderError("The AI provider returned more text than one answer may contain.")
                         yield TextDelta(content)
+                    # Providers name this field either way, and llama.cpp uses the first.
+                    reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                    if isinstance(reasoning, str) and reasoning:
+                        reasoning_chars += len(reasoning)
+                        if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
+                            raise ProviderError("The AI provider returned more reasoning than one answer may contain.")
+                        yield ReasoningDelta(reasoning)
                     _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
                 if partial_calls:
                     yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))

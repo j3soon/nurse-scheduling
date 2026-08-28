@@ -219,12 +219,14 @@ describe('AI client', () => {
 
   it('forwards tool use and a proposal to the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'event: tool\ndata: {"name":"edit_schedule"}\n\n',
+      'event: reasoning\ndata: {"text":"Checking people."}\n\n',
+      'event: tool\ndata: {"name":"edit_schedule","arguments":"{\\"old_str\\":\\"a\\"}","result":"applied","ok":true}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
       'event: done\ndata: {"message_id":"1"}\n\n',
     ])));
     const tools: string[] = [];
+    const reasoning: string[] = [];
     const diffs: string[] = [];
     const texts: string[] = [];
 
@@ -233,13 +235,15 @@ describe('AI client', () => {
       'Rename P1.',
       {
         onDelta: text => texts.push(text),
-        onTool: name => tools.push(name),
+        onReasoning: text => reasoning.push(text),
+        onTool: activity => tools.push(`${activity.name}:${activity.ok}:${activity.result}`),
         onProposal: diff => diffs.push(diff),
       },
       new AbortController().signal,
     );
 
-    expect(tools).toEqual(['edit_schedule']);
+    expect(tools).toEqual(['edit_schedule:true:applied']);
+    expect(reasoning).toEqual(['Checking people.']);
     expect(texts).toEqual(['Renamed P1.']);
     expect(diffs).toEqual(['- people.items[0].id']);
   });
@@ -284,5 +288,18 @@ describe('AI client', () => {
       method: 'PUT',
       body: JSON.stringify({ schedule_yaml: 'description: newer' }),
     });
+  });
+
+  it('treats a tool event without detail as a successful call', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: tool\ndata: {"name":"view_schedule"}\n\n',
+      'event: done\ndata: {"message_id":"1"}\n\n',
+    ])));
+    const tools: { name: string; ok: boolean; result: string }[] = [];
+
+    await streamMessage('session-id', 'Look.', { onDelta: () => {}, onTool: activity => tools.push(activity) },
+      new AbortController().signal);
+
+    expect(tools).toEqual([{ name: 'view_schedule', arguments: '', result: '', ok: true }]);
   });
 });

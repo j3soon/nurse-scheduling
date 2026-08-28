@@ -288,7 +288,13 @@ describe('ExperimentalAiPage', () => {
         onProposal?: (diff: string) => void;
       },
     ) => {
-      callbacks.onTool?.('edit_schedule');
+      callbacks.onReasoning?.('Looking at P1. ');
+      callbacks.onTool?.({
+        name: 'edit_schedule',
+        arguments: JSON.stringify({ old_str: "description: ''", new_str: 'description: Head' }),
+        result: 'schedule.yaml is valid.',
+        ok: true,
+      });
       callbacks.onDelta('I propose renaming P1.');
       callbacks.onProposal?.('- people.items[0].description: "" -> "Head"');
     };
@@ -310,7 +316,8 @@ describe('ExperimentalAiPage', () => {
 
       expect(await screen.findByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
       expect(screen.getByText('- people.items[0].description: "" -> "Head"')).toBeInTheDocument();
-      expect(screen.getByText('Used schedule.yaml: edit_schedule')).toBeInTheDocument();
+      expect(screen.getByText('edit_schedule')).toBeInTheDocument();
+      expect(screen.getByText(/^Reasoning ·/)).toBeInTheDocument();
     });
 
     it('applies an approved proposal as one history entry', async () => {

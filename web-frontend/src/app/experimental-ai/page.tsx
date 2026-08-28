@@ -28,6 +28,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import AssistantMarkdown from './AssistantMarkdown';
+import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import {
   AiCapabilities,
   approveProposal,
@@ -43,7 +44,14 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   attachmentNames?: string[];
-  tools?: string[];
+  activity?: ActivityEntry[];
+}
+
+const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
+
+interface AiPreferences {
+  showReasoning: boolean;
+  showTools: boolean;
 }
 
 interface SelectedAttachment {
@@ -144,6 +152,8 @@ export default function ExperimentalAiPage() {
   const [documentCapability, setDocumentCapability] = useState(DISABLED_DOCUMENT_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(true);
+  const [showTools, setShowTools] = useState(true);
   const [proposalDiff, setProposalDiff] = useState<string | null>(null);
   const [proposalNotice, setProposalNotice] = useState<string | null>(null);
   const [isApplyingProposal, setIsApplyingProposal] = useState(false);
@@ -153,6 +163,29 @@ export default function ExperimentalAiPage() {
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
   const isNearPageBottomRef = useRef(true);
   const composerRef = useRef<HTMLFormElement | null>(null);
+
+  useEffect(() => {
+    // Reading the stored preferences here keeps the server-rendered markup stable.
+    try {
+      const stored = window.localStorage.getItem(AI_STORAGE_KEY);
+      if (stored === null) return;
+      const preferences = JSON.parse(stored) as Partial<AiPreferences>;
+      if (typeof preferences.showReasoning === 'boolean') setShowReasoning(preferences.showReasoning);
+      if (typeof preferences.showTools === 'boolean') setShowTools(preferences.showTools);
+    } catch {
+      // Unreadable storage keeps the defaults rather than blocking the page.
+    }
+  }, []);
+
+  const rememberPreferences = (preferences: AiPreferences) => {
+    setShowReasoning(preferences.showReasoning);
+    setShowTools(preferences.showTools);
+    try {
+      window.localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(preferences));
+    } catch {
+      // A browser that refuses storage still applies the choice for this visit.
+    }
+  };
 
   useEffect(() => {
     const capabilitiesController = new AbortController();
@@ -322,8 +355,20 @@ export default function ExperimentalAiPage() {
           onDelta: text => setMessages(previous => previous.map(message => (
             message.id === assistantId ? { ...message, content: message.content + text } : message
           ))),
-          onTool: name => setMessages(previous => previous.map(message => (
-            message.id === assistantId ? { ...message, tools: [...(message.tools ?? []), name] } : message
+          onReasoning: text => setMessages(previous => previous.map(message => {
+            if (message.id !== assistantId) return message;
+            const activity = message.activity ?? [];
+            const last = activity[activity.length - 1];
+            // Consecutive reasoning belongs to one entry, so the order of work stays readable.
+            if (last?.kind === 'reasoning') {
+              return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
+            }
+            return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
+          })),
+          onTool: activity => setMessages(previous => previous.map(message => (
+            message.id === assistantId
+              ? { ...message, activity: [...(message.activity ?? []), { kind: 'tool' as const, ...activity }] }
+              : message
           ))),
           onProposal: diff => setProposalDiff(diff),
         },
@@ -402,6 +447,26 @@ export default function ExperimentalAiPage() {
         <p className="mt-2 text-xs font-medium text-gray-500">
           Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
         </p>
+        <div className="mt-2 flex flex-wrap gap-4 text-xs text-gray-500">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={showReasoning}
+              onChange={event => rememberPreferences({ showReasoning: event.target.checked, showTools })}
+              className="h-3 w-3 accent-gray-400"
+            />
+            Show reasoning
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={showTools}
+              onChange={event => rememberPreferences({ showReasoning, showTools: event.target.checked })}
+              className="h-3 w-3 accent-gray-400"
+            />
+            Show tool activity
+          </label>
+        </div>
       </div>
 
       <section
@@ -438,10 +503,12 @@ export default function ExperimentalAiPage() {
                 Attached: {message.attachmentNames.join(', ')}
               </p>
             )}
-            {message.tools && message.tools.length > 0 && (
-              <p className="mt-2 text-xs text-gray-500">
-                Used schedule.yaml: {message.tools.join(', ')}
-              </p>
+            {message.activity && (
+              <AssistantActivity
+                entries={message.activity.filter(entry => (
+                  entry.kind === 'reasoning' ? showReasoning : showTools
+                ))}
+              />
             )}
           </article>
         ))}

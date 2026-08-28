@@ -34,6 +34,7 @@ from nurse_scheduling.ai.provider import (
     ChatMessage,
     OpenAiCompatibleProvider,
     ProviderError,
+    ReasoningDelta,
     TextDelta,
     ToolCall,
     ToolCallRequest,
@@ -252,3 +253,30 @@ def test_rejects_a_tool_call_without_a_name(monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(ProviderError, match="without a name"):
         _events(_streaming_provider(monkeypatch, body), TOOLS)
+
+
+@pytest.mark.parametrize("field", ["reasoning_content", "reasoning"])
+def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.MonkeyPatch, field: str) -> None:
+    body = _sse_body(
+        _delta_chunk({field: "The ward "}),
+        _delta_chunk({field: "has 3 nurses."}),
+        _delta_chunk({"content": "Yes."}),
+    )
+
+    events = _events(_streaming_provider(monkeypatch, body))
+
+    assert events == [ReasoningDelta("The ward "), ReasoningDelta("has 3 nurses."), TextDelta("Yes.")]
+
+
+def test_rejects_an_answer_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(_delta_chunk({"content": "x" * (provider_module.MAX_RESPONSE_TEXT_CHARS + 1)}))
+
+    with pytest.raises(ProviderError, match="more text than"):
+        _events(_streaming_provider(monkeypatch, body))
+
+
+def test_rejects_reasoning_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(_delta_chunk({"reasoning_content": "x" * (provider_module.MAX_RESPONSE_REASONING_CHARS + 1)}))
+
+    with pytest.raises(ProviderError, match="more reasoning than"):
+        _events(_streaming_provider(monkeypatch, body))

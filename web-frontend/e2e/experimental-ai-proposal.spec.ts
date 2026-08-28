@@ -97,7 +97,8 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       contentType: 'text/event-stream',
       headers: corsHeaders,
       body: [
-        'event: tool\ndata: {"name":"edit_schedule"}\n\n',
+        'event: reasoning\ndata: {"text":"The ward has one nurse, so I will add another."}\n\n',
+        'event: tool\ndata: {"name":"edit_schedule","arguments":"{\\"old_str\\":\\"  groups: []\\",\\"new_str\\":\\"  groups: []\\"}","result":"schedule.yaml is valid.","ok":true}\n\n',
         'event: delta\ndata: {"text":"I propose adding one nurse."}\n\n',
         'event: proposal\ndata: {"diff":"- people.items[0]: added {\\"id\\": \\"Proposed Nurse\\"}"}\n\n',
         'event: done\ndata: {"message_id":"answer-id"}\n\n',
@@ -118,7 +119,7 @@ test('approves a proposed schedule and applies it as one undoable step', async (
   const proposal = page.getByRole('region', { name: 'Proposed schedule change' });
   await expect(proposal).toBeVisible();
   await expect(proposal).toContainText('added');
-  await expect(page.getByText('Used schedule.yaml: edit_schedule')).toBeVisible();
+  await expect(page.getByText('edit_schedule')).toBeVisible();
 
   await page.getByRole('button', { name: 'Approve' }).click();
 
@@ -162,4 +163,29 @@ test('sends the applied schedule to the session before the next question', async
   // The approved schedule replaced the one the session was created with.
   await expect.poll(() => state.refreshed.length).toBe(1);
   expect(state.refreshed[0]).toContain('Proposed Nurse');
+});
+
+test('keeps reasoning and tool detail out of the way until asked for', async ({ page }) => {
+  await mockProposingBackend(page);
+
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  const reasoning = page.getByText('The ward has one nurse, so I will add another.');
+  await expect(page.getByText(/^Reasoning ·/)).toBeVisible();
+  await expect(reasoning).toBeHidden();
+
+  await page.getByText(/^Reasoning ·/).click();
+  await expect(reasoning).toBeVisible();
+
+  await page.getByText('edit_schedule', { exact: true }).click();
+  await expect(page.getByText('schedule.yaml is valid.')).toBeVisible();
+
+  // Turning the categories off hides them for good, across reloads.
+  await page.getByRole('checkbox', { name: 'Show reasoning' }).uncheck();
+  await page.getByRole('checkbox', { name: 'Show tool activity' }).uncheck();
+  await expect(page.getByText(/^Reasoning ·/)).toBeHidden();
+  await page.reload();
+  await expect(page.getByRole('checkbox', { name: 'Show reasoning' })).not.toBeChecked();
 });

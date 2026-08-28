@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from .editor import ScheduleEditor, execute_tool, tool_definitions
 from .provider import (
     ChatMessage,
+    ReasoningDelta,
     TextDelta,
     ToolCallRequest,
     ToolCapableChatProvider,
@@ -42,11 +43,20 @@ class AgentText:
 
 
 @dataclass(frozen=True)
+class AgentReasoning:
+    """One streamed fragment of the model's reasoning, for the reader only."""
+
+    text: str
+
+
+@dataclass(frozen=True)
 class AgentToolUse:
-    """One tool call the assistant made, with the result it received."""
+    """One tool call the assistant made, with what it sent and received."""
 
     name: str
+    arguments: str
     result: str
+    ok: bool
 
 
 @dataclass(frozen=True)
@@ -57,7 +67,7 @@ class AgentProposal:
     diff: str
 
 
-AgentEvent = AgentText | AgentToolUse | AgentProposal
+AgentEvent = AgentText | AgentReasoning | AgentToolUse | AgentProposal
 
 
 async def run_agent(
@@ -84,6 +94,8 @@ async def run_agent(
                 if isinstance(event, TextDelta):
                     answer.append(event.text)
                     yield AgentText(event.text)
+                elif isinstance(event, ReasoningDelta):
+                    yield AgentReasoning(event.text)
                 elif isinstance(event, ToolCallRequest):
                     calls = event.calls
             if not calls or not offer_tools:
@@ -91,10 +103,10 @@ async def run_agent(
 
             conversation.append(assistant_tool_call_message(calls, "".join(answer)))
             for call in calls:
-                result = execute_tool(editor, call.name, call.arguments)
-                logger.info("agent tool call name=%s result_chars=%s", call.name, len(result))
-                yield AgentToolUse(call.name, result)
-                conversation.append(tool_result_message(call.id, result))
+                outcome = execute_tool(editor, call.name, call.arguments)
+                logger.info("agent tool call name=%s ok=%s result_chars=%s", call.name, outcome.ok, len(outcome.text))
+                yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                conversation.append(tool_result_message(call.id, outcome.text))
         completed = True
     finally:
         if not completed:

@@ -44,6 +44,14 @@ _WHITESPACE = re.compile(r"\s+")
 
 
 @dataclass(frozen=True)
+class ToolOutcome:
+    """What one tool call produced, and whether it did what it was asked."""
+
+    text: str
+    ok: bool
+
+
+@dataclass(frozen=True)
 class ScheduleProposal:
     """A validated schedule the user can approve, with what it changes."""
 
@@ -139,7 +147,7 @@ def tool_definitions(editor: ScheduleEditor) -> list[dict[str, Any]]:
     ]
 
 
-def execute_tool(editor: ScheduleEditor, name: str, arguments: str) -> str:
+def execute_tool(editor: ScheduleEditor, name: str, arguments: str) -> ToolOutcome:
     """Run one editor tool call and return bounded text for the model.
 
     Every failure is reported as text rather than raised, because the model has
@@ -148,83 +156,93 @@ def execute_tool(editor: ScheduleEditor, name: str, arguments: str) -> str:
     handler = _HANDLERS.get(name)
     if handler is None or (name != VIEW_TOOL and not editor.allow_edit):
         available = ", ".join(definition["function"]["name"] for definition in tool_definitions(editor))
-        return f"Unknown tool `{name}`. Available tools: {available}."
+        return _failed(f"Unknown tool `{name}`. Available tools: {available}.")
     try:
         parsed = json.loads(arguments) if arguments.strip() else {}
     except json.JSONDecodeError as error:
-        return f"The arguments for `{name}` were not valid JSON. {error}"
+        return _failed(f"The arguments for `{name}` were not valid JSON. {error}")
     if not isinstance(parsed, dict):
-        return f"The arguments for `{name}` must be a JSON object."
+        return _failed(f"The arguments for `{name}` must be a JSON object.")
     return handler(editor, parsed)
 
 
-def _view(editor: ScheduleEditor, arguments: dict[str, Any]) -> str:
+def _ok(text: str) -> ToolOutcome:
+    """Report a tool call that did what it was asked."""
+    return ToolOutcome(text=text, ok=True)
+
+
+def _failed(text: str) -> ToolOutcome:
+    """Report a tool call that changed nothing, so the model can correct it."""
+    return ToolOutcome(text=text, ok=False)
+
+
+def _view(editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
     """Return the working schedule, or one line range of it, with line numbers."""
     lines = editor.current_text.splitlines()
     start = _read_line(arguments, "start_line", 1)
     if isinstance(start, str):
-        return start
+        return _failed(start)
     end = _read_line(arguments, "end_line", len(lines))
     if isinstance(end, str):
-        return end
+        return _failed(end)
     if start > len(lines):
-        return f"{SCHEDULE_FILENAME} has {len(lines)} lines, so line {start} is past the end."
+        return _failed(f"{SCHEDULE_FILENAME} has {len(lines)} lines, so line {start} is past the end.")
     if end < start:
-        return "`end_line` must not be before `start_line`."
+        return _failed("`end_line` must not be before `start_line`.")
 
     numbered = "\n".join(f"{number}\t{lines[number - 1]}" for number in range(start, min(end, len(lines)) + 1))
     header = f"{SCHEDULE_FILENAME} lines {start} to {min(end, len(lines))} of {len(lines)}:"
     if len(numbered) > MAX_VIEW_CHARS:
         numbered = numbered[:MAX_VIEW_CHARS] + "\n... truncated, request a smaller line range."
-    return f"{header}\n{numbered}"
+    return _ok(f"{header}\n{numbered}")
 
 
-def _edit(editor: ScheduleEditor, arguments: dict[str, Any]) -> str:
+def _edit(editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
     """Replace one unique block of text and validate the result."""
     old_str = arguments.get("old_str")
     new_str = arguments.get("new_str")
     if not isinstance(old_str, str) or not isinstance(new_str, str):
-        return "`old_str` and `new_str` are required and must be strings."
+        return _failed("`old_str` and `new_str` are required and must be strings.")
     if not old_str:
-        return f"`old_str` must not be empty. Use {WRITE_TOOL} to replace the whole file."
+        return _failed(f"`old_str` must not be empty. Use {WRITE_TOOL} to replace the whole file.")
     if editor.edits_left == 0:
-        return _exhausted(editor)
+        return _failed(_exhausted(editor))
 
     occurrences = editor.current_text.count(old_str)
     if occurrences == 0:
         editor.failed_edits += 1
         hint = _near_match_hint(editor.current_text, old_str)
-        return f"`old_str` was not found in {SCHEDULE_FILENAME}.{hint} {_budget_note(editor)}"
+        return _failed(f"`old_str` was not found in {SCHEDULE_FILENAME}.{hint} {_budget_note(editor)}")
     if occurrences > 1:
         editor.failed_edits += 1
-        return (
+        return _failed(
             f"`old_str` appears {occurrences} times in {SCHEDULE_FILENAME}. "
             f"Include surrounding lines so it matches once. {_budget_note(editor)}"
         )
     return _commit(editor, editor.current_text.replace(old_str, new_str, 1))
 
 
-def _write(editor: ScheduleEditor, arguments: dict[str, Any]) -> str:
+def _write(editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
     """Replace the whole working schedule and validate the result."""
     text = arguments.get("text")
     if not isinstance(text, str):
-        return "`text` is required and must be a string."
+        return _failed("`text` is required and must be a string.")
     if editor.edits_left == 0:
-        return _exhausted(editor)
+        return _failed(_exhausted(editor))
     return _commit(editor, text)
 
 
-def _commit(editor: ScheduleEditor, candidate: str) -> str:
+def _commit(editor: ScheduleEditor, candidate: str) -> ToolOutcome:
     """Validate one candidate schedule and keep it only when it is usable."""
     if candidate == editor.current_text:
         editor.failed_edits += 1
-        return f"The edit leaves {SCHEDULE_FILENAME} unchanged. {_budget_note(editor)}"
+        return _failed(f"The edit leaves {SCHEDULE_FILENAME} unchanged. {_budget_note(editor)}")
     validation = validate_frontend_schedule_yaml(candidate, editor.max_bytes)
     introduced = () if validation.valid else new_schedule_issues(editor.base_validation, validation)
     if introduced:
         editor.failed_edits += 1
         problems = "\n".join(f"- {issue.location}: {issue.message}" for issue in introduced)
-        return (
+        return _failed(
             f"{SCHEDULE_FILENAME} was not changed, because the edit introduces problems.\n"
             f"{problems}\n{_budget_note(editor)}"
         )
@@ -232,12 +250,12 @@ def _commit(editor: ScheduleEditor, candidate: str) -> str:
     diff = _diff_against_base(editor, candidate)
     if isinstance(diff, str):
         editor.failed_edits += 1
-        return diff
+        return _failed(diff)
     editor.current_text = candidate
     editor.proposal = ScheduleProposal(text=candidate, diff=diff)
     if validation.valid:
-        return f"{SCHEDULE_FILENAME} is valid. Changes so far:\n{diff.render()}"
-    return (
+        return _ok(f"{SCHEDULE_FILENAME} is valid. Changes so far:\n{diff.render()}")
+    return _ok(
         f"{SCHEDULE_FILENAME} still has problems that were already there, and this edit added none.\n"
         f"{validation.render()}\nChanges so far:\n{diff.render()}"
     )
@@ -291,7 +309,7 @@ def _function(name: str, description: str, parameters: dict[str, Any]) -> dict[s
     return {"type": "function", "function": {"name": name, "description": description, "parameters": parameters}}
 
 
-_HANDLERS: dict[str, Callable[[ScheduleEditor, dict[str, Any]], str]] = {
+_HANDLERS: dict[str, Callable[[ScheduleEditor, dict[str, Any]], ToolOutcome]] = {
     VIEW_TOOL: _view,
     EDIT_TOOL: _edit,
     WRITE_TOOL: _write,

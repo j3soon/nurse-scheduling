@@ -23,8 +23,20 @@ assistant proposes one instead of changing the schedule itself.
 4. An approved proposal replaces the schedule in one step, so
    <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change.
 
-A line such as `Used schedule.yaml: edit_schedule` under an answer shows that
-the assistant read or edited the schedule while preparing it.
+## See what the assistant did
+
+Small grey rows under an answer record how it was produced. They stay collapsed
+until you select one.
+
+- **Reasoning** shows the model's own thinking for that step.
+- A tool name such as `view_schedule` or `edit_schedule` shows what the
+  assistant read or changed. An edit opens as a before and after comparison.
+- A row marked `failed` means that step changed nothing. This is the usual
+  reason an answer arrives without a proposal.
+
+Long output is revealed a portion at a time with **Show more**. Clear
+**Show reasoning** or **Show tool activity** near the top of the page to hide
+either kind. The choice is remembered on this browser.
 
 Approval is refused when the schedule changed after the proposal was made. Ask
 again so the assistant works from what you now have.

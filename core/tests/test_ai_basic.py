@@ -614,7 +614,11 @@ def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
 
     events = parse_sse(response.text)
-    assert ("tool", {"name": EDIT_TOOL}) in events
+    tool = next(data for name, data in events if name == "tool")
+    assert tool["name"] == EDIT_TOOL
+    assert tool["ok"] is True
+    assert "Head" in tool["arguments"]
+    assert "schedule.yaml is valid" in tool["result"]
     proposal = next(data for name, data in events if name == "proposal")
     assert "people.items[0].description" in proposal["diff"]
     assert not any(name == "proposal" and "schedule" in data for name, data in events)

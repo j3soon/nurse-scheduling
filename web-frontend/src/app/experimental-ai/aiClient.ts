@@ -17,9 +17,17 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+export interface ToolActivity {
+  name: string;
+  arguments: string;
+  result: string;
+  ok: boolean;
+}
+
 export interface StreamCallbacks {
   onDelta: (text: string) => void;
-  onTool?: (name: string) => void;
+  onReasoning?: (text: string) => void;
+  onTool?: (activity: ToolActivity) => void;
   onProposal?: (diff: string) => void;
   onDone?: () => void;
 }
@@ -53,6 +61,9 @@ interface SsePayload {
   message?: unknown;
   name?: unknown;
   diff?: unknown;
+  arguments?: unknown;
+  result?: unknown;
+  ok?: unknown;
 }
 
 export function getAiBaseUrl(): string {
@@ -139,8 +150,15 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
 
   if (eventType === 'delta' && typeof payload.text === 'string') {
     callbacks.onDelta(payload.text);
+  } else if (eventType === 'reasoning' && typeof payload.text === 'string') {
+    callbacks.onReasoning?.(payload.text);
   } else if (eventType === 'tool' && typeof payload.name === 'string') {
-    callbacks.onTool?.(payload.name);
+    callbacks.onTool?.({
+      name: payload.name,
+      arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
+      result: typeof payload.result === 'string' ? payload.result : '',
+      ok: payload.ok !== false,
+    });
   } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
     callbacks.onProposal?.(payload.diff);
   } else if (eventType === 'done') {
