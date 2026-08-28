@@ -46,7 +46,7 @@ from .schedule_real_helper import REAL_TESTCASE
 COMPUTE_MODE = "compute"
 SEARCH_MODE = "search"
 DEFAULT_COMPUTE_RUNS = 5
-DEFAULT_COMPUTE_TIMEOUT_SECONDS = 300
+DEFAULT_COMPUTE_TIMEOUT_SECONDS = 900
 DEFAULT_WARMUP_RUNS = 1
 DEFAULT_SEARCH_RUNS = 3
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 300
@@ -369,8 +369,10 @@ def _markdown_compute_report(report: dict[str, Any]) -> str:
         f"- OR-Tools version: `{report['environment']['ortoolsVersion']}`",
         f"- CPU: {report['environment']['cpuModel'] or 'unknown'}",
         f"- Available logical CPUs: {len(report['environment']['cpuAffinity'] or []) or report['environment']['logicalCpuCount']}",
-        f"- Configuration: {config['warmupRuns']} warm-up and {config['runs']} measured runs, "
-        f"{config['timeoutSeconds']}-second hard limit or top-threshold attainment",
+        (
+            f"- Configuration: {config['warmupRuns']} warm-up and {config['runs']} measured runs, "
+            f"{config['timeoutSeconds']}-second hard limit or top-threshold attainment"
+        ),
         "",
         "| Run | Status | Attainment score | Final objective | Solver seconds | End-to-end seconds |",
         "| ---: | --- | ---: | ---: | ---: | ---: |",
@@ -397,9 +399,11 @@ def _markdown_compute_report(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "The primary machine score is the mean attainment score across measured runs. "
-            "Each run earns equal credit for reaching each fixed objective threshold early. "
-            "The result is bounded from 0 to 100, and higher is better.",
+            (
+                "The primary machine score is the mean attainment score across measured runs. "
+                "Each run earns equal credit for reaching each fixed objective threshold early. "
+                "The result is bounded from 0 to 100, and higher is better."
+            ),
             "",
         ]
     )

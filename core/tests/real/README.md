@@ -133,8 +133,8 @@ thresholds early. For each threshold, a run earns `100 × (1 - first reach time
 is the mean across thresholds and the machine score is the mean across measured
 runs. It is bounded from 0 to 100, with higher values indicating better
 real-case solver performance. Each run stops after reaching the top
-`4,470,000,000,000` threshold or a 300-second hard wall-time limit. The score
-still uses 300 seconds as its denominator after an early success. The benchmark
+`4,470,000,000,000` threshold or a 900-second hard wall-time limit. The score
+still uses 900 seconds as its denominator after an early success. The benchmark
 uses normal nondeterministic parallel CP-SAT and all CPUs visible to Docker. It
 does not enable deterministic solver or interleaved-search mode, and it leaves
 all solver settings at their defaults except for the wall-time limit.

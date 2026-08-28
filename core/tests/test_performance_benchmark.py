@@ -187,6 +187,6 @@ def test_parse_args_uses_documented_defaults():
     assert args.mode == "compute"
     assert args.runs == 5
     assert args.warmup_runs == 1
-    assert args.timeout == 300
+    assert args.timeout == 900
     assert args.target_score is None
     assert "performance-benchmarks" in args.output_dir.parts
