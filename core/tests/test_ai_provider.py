@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -29,12 +30,19 @@ import pytest
 
 from nurse_scheduling.ai import provider as provider_module
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.provider import ChatMessage, OpenAiCompatibleProvider, ProviderError
+from nurse_scheduling.ai.provider import (
+    ChatMessage,
+    OpenAiCompatibleProvider,
+    ProviderError,
+    TextDelta,
+    ToolCall,
+    ToolCallRequest,
+)
 
 
-async def _collect(stream: AsyncIterator[str]) -> list[str]:
+async def _collect(stream: AsyncIterator) -> list:
     """Consume a provider stream so request errors are raised."""
-    return [delta async for delta in stream]
+    return [item async for item in stream]
 
 
 @pytest.mark.parametrize(
@@ -89,3 +97,158 @@ def test_provider_http_error_logs_redacted_body_and_returns_error_id(
     assert f"error_id={error_match.group(1)} status=525" in caplog.text
     assert expected_logged_body in caplog.text
     assert "test-token" not in caplog.text
+
+
+def _sse_body(*chunks: dict) -> str:
+    """Render provider chunks as one server-sent event stream."""
+    events = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+    return events + "data: [DONE]\n\n"
+
+
+def _delta_chunk(delta: dict) -> dict:
+    return {"choices": [{"delta": delta}]}
+
+
+def _streaming_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    body: str,
+    requests: list[httpx.Request] | None = None,
+) -> OpenAiCompatibleProvider:
+    """Build a provider whose endpoint replies with one prepared stream."""
+    real_async_client = httpx.AsyncClient
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if requests is not None:
+            requests.append(request)
+        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, text=body)
+
+    monkeypatch.setattr(
+        provider_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_async_client(transport=httpx.MockTransport(handle), **kwargs),
+    )
+    return OpenAiCompatibleProvider(
+        AiSettings(
+            provider_base_url="https://provider.example/v1",
+            provider_api_key="test-token",
+            provider_model="test-model",
+        )
+    )
+
+
+def _events(provider: OpenAiCompatibleProvider, tools: list[dict] | None = None) -> list:
+    messages: list[ChatMessage] = [{"role": "user", "content": "Question"}]
+    return asyncio.run(_collect(provider.stream_events(messages, tools)))
+
+
+TOOLS = [{"type": "function", "function": {"name": "schedule_patch", "parameters": {"type": "object"}}}]
+
+
+def test_reconstructs_one_tool_call_from_streamed_fragments(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(
+        _delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "schedule_patch"}}]}),
+        _delta_chunk({"tool_calls": [{"index": 0, "function": {"arguments": '{"operations":'}}]}),
+        _delta_chunk({"tool_calls": [{"index": 0, "function": {"arguments": "[]}"}}]}),
+    )
+
+    events = _events(_streaming_provider(monkeypatch, body), TOOLS)
+
+    assert events == [ToolCallRequest((ToolCall(id="call_1", name="schedule_patch", arguments='{"operations":[]}'),))]
+
+
+def test_reconstructs_parallel_tool_calls_in_index_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(
+        _delta_chunk({"tool_calls": [{"index": 1, "id": "call_2", "function": {"name": "b", "arguments": "{}"}}]}),
+        _delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "a", "arguments": "{}"}}]}),
+    )
+
+    events = _events(_streaming_provider(monkeypatch, body), TOOLS)
+
+    assert [call.name for call in events[0].calls] == ["a", "b"]
+
+
+def test_separates_tool_calls_when_the_provider_omits_the_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(
+        _delta_chunk({"tool_calls": [{"id": "call_1", "function": {"name": "a", "arguments": '{"x":'}}]}),
+        _delta_chunk({"tool_calls": [{"function": {"arguments": "1}"}}]}),
+        _delta_chunk({"tool_calls": [{"id": "call_2", "function": {"name": "b", "arguments": "{}"}}]}),
+    )
+
+    events = _events(_streaming_provider(monkeypatch, body), TOOLS)
+
+    assert [(call.id, call.name, call.arguments) for call in events[0].calls] == [
+        ("call_1", "a", '{"x":1}'),
+        ("call_2", "b", "{}"),
+    ]
+
+
+def test_streams_text_before_the_tool_call_it_ends_with(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(
+        _delta_chunk({"content": "Checking. "}),
+        _delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "a", "arguments": "{}"}}]}),
+    )
+    provider = _streaming_provider(monkeypatch, body)
+
+    events = _events(provider, TOOLS)
+
+    assert events[0] == TextDelta("Checking. ")
+    assert isinstance(events[1], ToolCallRequest)
+
+
+def test_stream_chat_yields_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(
+        _delta_chunk({"content": "Answer"}),
+        _delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "a", "arguments": "{}"}}]}),
+    )
+    provider = _streaming_provider(monkeypatch, body)
+    messages: list[ChatMessage] = [{"role": "user", "content": "Question"}]
+
+    assert asyncio.run(_collect(provider.stream_chat(messages))) == ["Answer"]
+
+
+def test_sends_tools_only_when_they_are_offered(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[httpx.Request] = []
+    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"content": "Answer"})), requests)
+
+    _events(provider, TOOLS)
+    _events(provider)
+
+    with_tools = json.loads(requests[0].content)
+    without_tools = json.loads(requests[1].content)
+    assert with_tools["tools"] == TOOLS
+    assert with_tools["tool_choice"] == "auto"
+    assert "tools" not in without_tools
+    assert "tool_choice" not in without_tools
+
+
+def test_rejects_more_tool_calls_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(
+        _delta_chunk(
+            {
+                "tool_calls": [
+                    {"index": index, "id": f"call_{index}", "function": {"name": "a", "arguments": "{}"}}
+                    for index in range(provider_module.MAX_TOOL_CALLS_PER_RESPONSE + 1)
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(ProviderError, match="more than"):
+        _events(_streaming_provider(monkeypatch, body), TOOLS)
+
+
+def test_rejects_oversized_tool_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
+    oversized = "x" * (provider_module.MAX_TOOL_ARGUMENT_CHARS + 1)
+    body = _sse_body(
+        _delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "a", "arguments": oversized}}]})
+    )
+
+    with pytest.raises(ProviderError, match="too large"):
+        _events(_streaming_provider(monkeypatch, body), TOOLS)
+
+
+def test_rejects_a_tool_call_without_a_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(_delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"arguments": "{}"}}]}))
+
+    with pytest.raises(ProviderError, match="without a name"):
+        _events(_streaming_provider(monkeypatch, body), TOOLS)
