@@ -155,6 +155,23 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _claimed_performance_env(report: dict[str, Any]) -> str | None:
+    """Build deployable environment settings from a complete compute benchmark."""
+    config = report["config"]
+    summary = report["summary"]
+    score = summary.get("performanceScore")
+    if config["mode"] != COMPUTE_MODE or score is None or summary["completedRuns"] != summary["requestedRuns"]:
+        return None
+    return "\n".join(
+        (
+            f"CLAIMED_PERFORMANCE_SCORE={score}",
+            f"CLAIMED_PERFORMANCE_APP_VERSION={report['environment']['appVersion']}",
+            f"CLAIMED_PERFORMANCE_MEASURED_AT={report['createdAt']}",
+            "",
+        )
+    )
+
+
 def _write_schedule_artifacts(run_dir: Path, file_content: bytes, result: Any) -> dict[str, str]:
     if result.dataframe is None or result.solution is None or result.score is None:
         return {}
@@ -605,6 +622,11 @@ def _run_parent(args: argparse.Namespace) -> int:
     }
     _write_json(output_dir / "report.json", report)
     (output_dir / "summary.md").write_text(_markdown_report(report), encoding="utf-8")
+    claimed_performance_env = _claimed_performance_env(report)
+    if claimed_performance_env is not None:
+        claimed_performance_path = output_dir / "claimed-performance.env"
+        claimed_performance_path.write_text(claimed_performance_env, encoding="utf-8")
+        print(f"Server claimed-performance settings: {claimed_performance_path}")
     print(f"Benchmark report: {output_dir / 'summary.md'}")
     return 0 if report["summary"]["completedRuns"] == args.runs else 1
 

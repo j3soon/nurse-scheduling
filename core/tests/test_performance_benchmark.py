@@ -293,6 +293,40 @@ def test_compute_markdown_reports_final_score_and_average_time():
     assert "- Average time to top threshold: **80.0 seconds**" in markdown
 
 
+def test_complete_compute_report_produces_claimed_performance_environment():
+    report = {
+        "createdAt": "2026-08-28T19:12:54.974377+00:00",
+        "config": {"mode": performance_benchmark.COMPUTE_MODE},
+        "environment": {"appVersion": "v0.2.0-66-g959adc4"},
+        "summary": {
+            "requestedRuns": 5,
+            "completedRuns": 5,
+            "performanceScore": 41.524445,
+        },
+    }
+
+    assert performance_benchmark._claimed_performance_env(report) == (
+        "CLAIMED_PERFORMANCE_SCORE=41.524445\n"
+        "CLAIMED_PERFORMANCE_APP_VERSION=v0.2.0-66-g959adc4\n"
+        "CLAIMED_PERFORMANCE_MEASURED_AT=2026-08-28T19:12:54.974377+00:00\n"
+    )
+
+
+def test_incomplete_compute_report_does_not_produce_claimed_performance_environment():
+    report = {
+        "createdAt": "2026-08-28T19:12:54.974377+00:00",
+        "config": {"mode": performance_benchmark.COMPUTE_MODE},
+        "environment": {"appVersion": "v0.2.0-66-g959adc4"},
+        "summary": {
+            "requestedRuns": 5,
+            "completedRuns": 4,
+            "performanceScore": 41.524445,
+        },
+    }
+
+    assert performance_benchmark._claimed_performance_env(report) is None
+
+
 def test_parse_args_uses_documented_defaults():
     args = performance_benchmark._parse_args([])
 

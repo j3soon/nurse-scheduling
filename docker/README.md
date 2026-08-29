@@ -100,6 +100,12 @@ does not add GPU access or cuOpt to the included CPU-only Compose deployment.
 The API refuses to start if any configured solver is unavailable or a default
 falls outside its advertised choices or range.
 
+A complete compute benchmark creates `claimed-performance.env`. Merge its
+three `CLAIMED_PERFORMANCE_*` values into the deployment environment to publish
+the self-claimed score and provenance at `GET /info`. All three values must be
+set together. The frontend displays the claimed score when the backend is
+selected.
+
 The API container runs multiple Uvicorn workers. Each worker claims jobs
 from Redis and runs at most one optimization job locally. Workers renew shared
 presence leases while idle and running. A job is failed and its capacity is

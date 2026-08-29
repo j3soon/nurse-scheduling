@@ -42,6 +42,7 @@ from nurse_scheduling.server.config import (
     DEFAULT_MAX_EVENTS_PER_JOB,
     DEFAULT_MAX_RETAINED_JOBS,
     DEFAULT_TIMEOUT_GRACE_SECONDS,
+    ClaimedPerformance,
     ServerSettings,
 )
 from nurse_scheduling.server.jobs.controller import JobController
@@ -309,6 +310,7 @@ def test_info_and_readiness_report_status_without_caching():
             "started_at": client.app.state.started_at.isoformat(),
             "job_backend": "memory",
             "job_store_id": client.app.state.job_store.store_id,
+            "claimed_performance": None,
             "jobs": {"running": 0, "queued": 0, "cancelling": 0},
             "workers": {"online": 0},
         }
@@ -336,6 +338,23 @@ def test_info_reports_shared_job_and_worker_activity():
         client.post(f"/optimize/{first['id']}/cancel")
         client.post(f"/optimize/{second['id']}/cancel")
         controller.complete_cancellation(first["id"], lease)
+
+
+def test_info_reports_self_claimed_performance_with_provenance():
+    claimed_performance = ClaimedPerformance(
+        score=41.524445,
+        app_version="v0.2.0-66-g959adc4",
+        measured_at=datetime(2026, 8, 28, 19, 12, 54, tzinfo=timezone.utc),
+    )
+
+    with _client(start_background=False, settings=_settings(claimed_performance=claimed_performance)) as client:
+        info = client.get("/info")
+
+        assert info.json()["claimed_performance"] == {
+            "score": 41.524445,
+            "app_version": "v0.2.0-66-g959adc4",
+            "measured_at": "2026-08-28T19:12:54+00:00",
+        }
 
 
 def test_info_reports_cancelling_jobs_separately():
@@ -659,6 +678,36 @@ def test_server_settings_load_optimization_options_from_env(monkeypatch):
     assert settings.default_timeout_seconds == 120
     assert settings.max_timeout_seconds == 900
     assert settings.default_prettify is False
+
+
+def test_server_settings_load_claimed_performance_from_env(monkeypatch):
+    monkeypatch.setenv("CLAIMED_PERFORMANCE_SCORE", "41.524445")
+    monkeypatch.setenv("CLAIMED_PERFORMANCE_APP_VERSION", "v0.2.0-66-g959adc4")
+    monkeypatch.setenv("CLAIMED_PERFORMANCE_MEASURED_AT", "2026-08-28T19:12:54.974377+00:00")
+
+    claimed_performance = ServerSettings.from_env().claimed_performance
+
+    assert claimed_performance == ClaimedPerformance(
+        score=41.524445,
+        app_version="v0.2.0-66-g959adc4",
+        measured_at=datetime(2026, 8, 28, 19, 12, 54, 974377, tzinfo=timezone.utc),
+    )
+
+
+def test_server_settings_require_complete_claimed_performance(monkeypatch):
+    monkeypatch.setenv("CLAIMED_PERFORMANCE_SCORE", "41.524445")
+
+    with pytest.raises(ValueError, match="must be set together"):
+        ServerSettings.from_env()
+
+
+def test_server_settings_require_timezone_in_claimed_performance_time(monkeypatch):
+    monkeypatch.setenv("CLAIMED_PERFORMANCE_SCORE", "41.524445")
+    monkeypatch.setenv("CLAIMED_PERFORMANCE_APP_VERSION", "v0.2.0-66-g959adc4")
+    monkeypatch.setenv("CLAIMED_PERFORMANCE_MEASURED_AT", "2026-08-28T19:12:54")
+
+    with pytest.raises(ValueError, match="must include a timezone"):
+        ServerSettings.from_env()
 
 
 def test_app_startup_fails_when_a_configured_solver_is_unavailable(monkeypatch):

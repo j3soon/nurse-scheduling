@@ -179,6 +179,11 @@ export. End-to-end time includes those phases but excludes Docker image build,
 container startup, and Python process startup. The per-run `processSeconds`
 field includes Python startup for diagnostic context.
 
+A complete compute benchmark also writes `claimed-performance.env` with the
+normalized score, benchmarked app version, and report time. Set all three
+values on a backend to publish the score through `GET /info`. The frontend
+displays it as `Claimed performance` when that backend is selected.
+
 For matching compute reports, compare final performance scores directly. A
 machine with twice the score reached the top threshold in half the median time.
 Also compare the average time and reached-run count because timeouts are
