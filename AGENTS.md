@@ -29,6 +29,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Fix them when practical, otherwise report or document them for review.
 - Use Conventional Commits, scoped by module where applicable, for example:
   `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
+- Never use a coding agent identity as the Git author, committer, or co-author.
+  Use the repository's configured human identity. If none is available, ask the
+  user instead of inventing one.
 - For Codex-created commits, include a descriptive body that ends with a
   separate `by Codex` line.
 - Build multi-paragraph commit messages with separate `git commit -m`

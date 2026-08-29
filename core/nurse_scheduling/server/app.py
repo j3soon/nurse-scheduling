@@ -152,6 +152,15 @@ def create_app(
     runner = runner or OptimizationRunner()
     started_at = datetime.now(timezone.utc)
     app_version = get_app_version()
+    claimed_performance = (
+        {
+            "score": settings.claimed_performance.score,
+            "app_version": settings.claimed_performance.app_version,
+            "measured_at": settings.claimed_performance.measured_at.isoformat(),
+        }
+        if settings.claimed_performance is not None
+        else None
+    )
     runtime_identity = {
         "service_name": SERVICE_NAME,
         "api_version": API_VERSION,
@@ -281,7 +290,11 @@ def create_app(
 
     def info_payload(status: str):
         """Build public service identity and job-store metadata."""
-        return {"status": status, **runtime_identity}
+        return {
+            "status": status,
+            **runtime_identity,
+            "claimed_performance": claimed_performance,
+        }
 
     def check_readiness() -> str | None:
         """Return the first unavailable dependency reason, or `None` when ready."""

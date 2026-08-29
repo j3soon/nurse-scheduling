@@ -127,6 +127,31 @@ def test_scheduler_rejects_invalid_avoid_solution_value():
         scheduler.schedule(content, avoid_solution=avoid_solution)
 
 
+def test_scheduler_forces_complete_solution():
+    content = _load_valid_yaml_bytes()
+
+    result = scheduler.schedule(content, forced_solution={(0, 0, 0): 1})
+
+    assert result.solution == {(0, 0, 0): 1}
+    assert result.score == 0
+    assert result.solver_status == "OPTIMAL"
+
+
+@pytest.mark.parametrize(
+    ("forced_solution", "expected_message"),
+    [
+        ({}, "1 missing and 0 unexpected"),
+        ({(0, 0, 0): 1, (1, 0, 0): 0}, "0 missing and 1 unexpected"),
+        ({(0, 0, 0): 2}, "Invalid forced solution value: 2"),
+    ],
+)
+def test_scheduler_rejects_invalid_forced_solution(forced_solution, expected_message):
+    content = _load_valid_yaml_bytes()
+
+    with pytest.raises(ValueError, match=expected_message):
+        scheduler.schedule(content, forced_solution=forced_solution)
+
+
 @pytest.mark.parametrize(
     ("stale_reference_yaml", "expected_message"),
     [

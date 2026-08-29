@@ -272,12 +272,21 @@ All server settings are read once when the application is constructed.
 | `OPTIMIZE_MAX_TIMEOUT_SECONDS` | `3600` | Limit the timeout accepted from a request. |
 | `OPTIMIZE_DEFAULT_PRETTIFY` | `true` | Set prettification when a request omits it. |
 | `OPTIMIZE_TIMEOUT_GRACE_SECONDS` | `90` | Set the process grace added to the requested timeout before forced termination. |
+| `CLAIMED_PERFORMANCE_SCORE` | unset | Publish the server's self-claimed normalized performance score. |
+| `CLAIMED_PERFORMANCE_APP_VERSION` | unset | Record the app version used by the claimed-performance benchmark. |
+| `CLAIMED_PERFORMANCE_MEASURED_AT` | unset | Record the benchmark report time as an ISO 8601 date and time with a timezone. |
 | `DISABLE_SENTRY` | unset | Disable backend error reporting when set to a non-empty value. |
 | `SENTRY_RELEASE` | derived from the app version | Override the release reported to Sentry. |
 
 Numeric values must be positive. `JOB_MAX_RETAINED` must be at least
 `JOB_MAX_PENDING`. The default solver must be advertised, and the timeout
 default must remain within the configured minimum and maximum.
+
+The three `CLAIMED_PERFORMANCE_*` values are optional, but they must be set
+together. A complete compute benchmark writes them to
+`claimed-performance.env` beside its report. The API publishes the result at
+`GET /info` as `claimed_performance`. The frontend displays it as
+`Claimed performance` when that backend is selected.
 
 ## Tests
 
