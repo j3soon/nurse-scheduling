@@ -3,7 +3,7 @@ set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 image_name="${BENCHMARK_IMAGE:-j3soon/nurse-scheduling:dev}"
-app_version="$(git -C "$repository_root" describe --tags --always --dirty)"
+app_version="$(git -C "$repository_root" describe --tags --always --dirty 2>/dev/null || echo "v0.0.0-unknown")"
 
 mkdir -p "$repository_root/artifacts"
 

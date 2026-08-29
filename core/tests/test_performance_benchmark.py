@@ -92,6 +92,15 @@ def test_summarize_runs_reports_score_time_and_target_distributions():
     assert summary["targetEndToEndSeconds"]["median"] == 4.5
 
 
+def test_summarize_runs_preserves_zero_solver_seconds():
+    runs = [{"score": 100, "solverSeconds": 0.0, "endToEndSeconds": 0.1}]
+
+    summary = performance_benchmark._summarize_runs(runs, target_score=None)
+
+    assert summary["solverSeconds"]["count"] == 1
+    assert summary["solverSeconds"]["min"] == 0.0
+
+
 def test_child_records_progress_and_stops_at_target(tmp_path, monkeypatch):
     run_dir = tmp_path / "run-001"
     run_dir.mkdir()

@@ -375,7 +375,9 @@ def _summarize_runs(runs: list[dict[str, Any]], target_score: int | None) -> dic
         "requestedRuns": len(runs),
         "completedRuns": len(completed),
         "score": _numeric_summary([run["score"] for run in completed]),
-        "solverSeconds": _numeric_summary([run["solverSeconds"] for run in completed if run["solverSeconds"]]),
+        "solverSeconds": _numeric_summary(
+            [run["solverSeconds"] for run in completed if run["solverSeconds"] is not None]
+        ),
         "endToEndSeconds": _numeric_summary([run["endToEndSeconds"] for run in completed]),
     }
     if target_score is not None:
