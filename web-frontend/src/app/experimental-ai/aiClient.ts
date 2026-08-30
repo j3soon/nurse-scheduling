@@ -17,6 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+// This code is mostly AI generated.
+
 export interface ToolActivity {
   name: string;
   arguments: string;

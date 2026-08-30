@@ -17,6 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+// This code is mostly AI generated.
+
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';

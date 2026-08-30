@@ -17,6 +17,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# This code is mostly AI generated.
+
 import os
 from dataclasses import dataclass
 from typing import Literal, cast
