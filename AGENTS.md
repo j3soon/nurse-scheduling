@@ -60,6 +60,11 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - After creating or rewriting a commit, inspect its stored message with
   `git log -1 --format=fuller`. Confirm paragraph breaks are real and the
   `by <agent>` line is on its own final line.
+- Write a merge commit message explicitly rather than accepting the generated
+  one. `git commit --no-edit` keeps the `# Conflicts:` block as body text and
+  leaves the message without a description or the `by <agent>` line. Say what
+  the merge takes and why each conflict was resolved the way it was, since that
+  reasoning cannot be recovered from the diff.
 
 ## Comment and Documentation Style
 - Keep comments and documentation minimal, concise, yet informative.
