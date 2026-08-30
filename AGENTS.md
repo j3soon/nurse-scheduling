@@ -38,6 +38,13 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   instead of printing every version in full.
 - Prefer the compact or affected test and lint commands documented for each
   module. Read the summary lines of a run before requesting more output.
+- Treat full local CI and a full AI evaluation as long-running checks. When the
+  agent runtime supports yielded background execution with a completion
+  notification, let that background worker own the process wait, preserve the
+  exit code and compact output, and notify the active agent once when the check
+  finishes. Continue the same task from that notification instead of polling
+  from model turns. Keep affected checks and selected evaluation cases in the
+  foreground.
 - Check a suspected missing dependency or tool directly before rerunning a full
   suite to diagnose its failure.
 - Use Conventional Commits, scoped by module where applicable, for example:
