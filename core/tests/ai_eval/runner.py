@@ -72,6 +72,7 @@ class CaseRun:
     trajectory: dict[str, Any] = field(default_factory=dict)
     token_usage: TokenUsage | None = None
     token_usage_turns: int = 0
+    rejected_tools: list[str] = field(default_factory=list)
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
@@ -82,6 +83,7 @@ class CaseRun:
             "seconds": round(self.seconds, 1),
             "turns": self.turns,
             "tools": self.tools,
+            "rejected_tools": self.rejected_tools,
             "failures": self.failures,
             "proposed": self.proposed,
             "reasoning_chars": self.reasoning_chars,
@@ -133,11 +135,12 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
 
     answer: list[str] = []
     tools: list[str] = []
+    rejected_tools: list[str] = []
     events: list[dict[str, Any]] = []
     reasoning = 0
     started = time.monotonic()
     try:
-        async for event in run_agent(counting, editor, messages, settings.max_agent_turns):
+        async for event in run_agent(counting, editor, messages, settings.max_tool_calls):
             if isinstance(event, AgentText):
                 answer.append(event.text)
                 _record_text(events, "text", event.text)
@@ -145,12 +148,16 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
                 reasoning += len(event.text)
                 _record_text(events, "reasoning", event.text)
             elif isinstance(event, AgentToolUse):
-                tools.append(event.name if event.ok else f"{event.name}(failed)")
+                if event.executed:
+                    tools.append(event.name if event.ok else f"{event.name}(failed)")
+                else:
+                    rejected_tools.append(event.name)
                 events.append(
                     {
                         "kind": "tool",
                         "name": event.name,
                         "ok": event.ok,
+                        "executed": event.executed,
                         "arguments": event.arguments,
                         "result": event.result,
                     }
@@ -173,6 +180,7 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
             _trajectory(case, messages, events, None),
             token_usage=counting.token_usage,
             token_usage_turns=counting.token_usage_turns,
+            rejected_tools=rejected_tools,
         )
 
     elapsed = time.monotonic() - started
@@ -194,6 +202,7 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
         trajectory=_trajectory(case, messages, events, editor.proposal, result),
         token_usage=counting.token_usage,
         token_usage_turns=counting.token_usage_turns,
+        rejected_tools=rejected_tools,
     )
 
 

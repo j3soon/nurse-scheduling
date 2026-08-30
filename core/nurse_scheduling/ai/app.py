@@ -592,7 +592,7 @@ def create_app(
             completed = False
             try:
                 async with concurrency_limit:
-                    async for event in run_agent(provider, editor, messages, settings.max_agent_turns):
+                    async for event in run_agent(provider, editor, messages, settings.max_tool_calls):
                         if isinstance(event, AgentText):
                             assistant_parts.append(event.text)
                             yield _sse_event("delta", {"text": event.text})

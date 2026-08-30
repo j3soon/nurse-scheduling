@@ -48,7 +48,7 @@ def settings() -> AiSettings:
         provider_base_url="https://provider.example/v1",
         provider_api_key="test-token",
         provider_model="test-model",
-        max_agent_turns=4,
+        max_tool_calls=3,
     )
 
 
@@ -144,6 +144,21 @@ def test_a_failed_tool_call_is_recorded_as_such():
     assert not run.passed
     assert run.tools == ["edit_schedule(failed)"]
     assert not run.proposed
+
+
+def test_a_budget_rejection_is_separate_from_executed_tools():
+    provider = ScriptedProvider(
+        *[[ToolCallRequest((ToolCall(f"call_{index}", "view_schedule", "{}"),))] for index in range(4)],
+        [TextDelta("I need more input.")],
+    )
+
+    run = _run("ask-people-count", provider)
+
+    assert run.tools == ["view_schedule"] * 3
+    assert run.rejected_tools == ["view_schedule"]
+    assert run.turns == 5
+    tool_events = [event for event in run.trajectory["events"] if event["kind"] == "tool"]
+    assert [event["executed"] for event in tool_events] == [True, True, True, False]
 
 
 def test_a_provider_failure_is_reported_rather_than_raised():
@@ -258,6 +273,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "seconds",
         "turns",
         "tools",
+        "rejected_tools",
         "failures",
         "proposed",
         "reasoning_chars",

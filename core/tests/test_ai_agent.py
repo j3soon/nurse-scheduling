@@ -70,9 +70,9 @@ def _editor(**kwargs) -> ScheduleEditor:
     return ScheduleEditor(schedule_yaml(), SCHEDULE_BYTE_LIMIT, **kwargs)
 
 
-def _run(provider: FakeProvider, editor: ScheduleEditor, max_turns: int = 4) -> list:
+def _run(provider: FakeProvider, editor: ScheduleEditor, max_tool_calls: int = 4) -> list:
     async def collect() -> list:
-        return [event async for event in run_agent(provider, editor, QUESTION, max_turns)]
+        return [event async for event in run_agent(provider, editor, QUESTION, max_tool_calls)]
 
     return asyncio.run(collect())
 
@@ -136,14 +136,81 @@ def test_parallel_tool_calls_each_receive_a_result():
     assert [message["tool_call_id"] for message in results] == ["call_0", "call_1"]
 
 
-def test_the_last_turn_offers_no_tools_so_the_answer_must_be_text():
-    provider = FakeProvider(_calls((VIEW_TOOL, "{}")))
+def test_an_excess_tool_call_gets_an_error_before_tool_free_finalization():
+    provider = FakeProvider(_calls((VIEW_TOOL, "{}")), _calls((VIEW_TOOL, "{}")), _text("I need more input."))
     editor = _editor()
 
-    _run(provider, editor, max_turns=3)
+    events = _run(provider, editor, max_tool_calls=1)
 
     assert len(provider.requests) == 3
     assert [tools is None for _, tools in provider.requests] == [False, False, True]
+    tool_events = [event for event in events if isinstance(event, AgentToolUse)]
+    assert tool_events[0].ok
+    assert not tool_events[1].ok
+    assert tool_events[0].executed
+    assert not tool_events[1].executed
+    assert "1 of 1 calls have already been executed" in tool_events[1].result
+    assert provider.requests[2][0][-1] == {
+        "role": "tool",
+        "tool_call_id": "call_0",
+        "content": tool_events[1].result,
+    }
+    assert events[-1] == AgentText("I need more input.")
+
+
+def test_parallel_calls_past_the_budget_are_rejected_without_execution():
+    provider = FakeProvider(
+        _calls((VIEW_TOOL, "{}"), (VIEW_TOOL, '{"start_line": 1, "end_line": 1}')),
+        _text("Done."),
+    )
+    editor = _editor()
+
+    events = _run(provider, editor, max_tool_calls=1)
+
+    tool_events = [event for event in events if isinstance(event, AgentToolUse)]
+    assert [event.ok for event in tool_events] == [True, False]
+    assert [event.executed for event in tool_events] == [True, False]
+    assert tool_events[0].result.startswith("schedule.yaml lines 1 to ")
+    assert "This call was not executed" in tool_events[1].result
+    assert [tools is None for _, tools in provider.requests] == [False, True]
+
+
+def test_raw_tool_markup_in_budget_finalization_is_not_shown():
+    provider = FakeProvider(
+        _calls((VIEW_TOOL, "{}")),
+        _text("I still need the schedule.\n\n<tool_call>view_schedule</tool_call>"),
+    )
+    editor = _editor()
+
+    events = _run(provider, editor, max_tool_calls=0)
+
+    answer = "".join(event.text for event in events if isinstance(event, AgentText))
+    assert "<tool_call>" not in answer
+    assert answer.startswith("I still need the schedule.")
+    assert "within the available tool-call budget" in answer
+
+
+def test_a_tool_call_during_budget_finalization_stops_without_another_turn():
+    provider = FakeProvider(_calls((VIEW_TOOL, "{}")), _calls((VIEW_TOOL, "{}")))
+
+    events = _run(provider, _editor(), max_tool_calls=0)
+
+    answer = "".join(event.text for event in events if isinstance(event, AgentText))
+    assert len(provider.requests) == 2
+    assert [tools is None for _, tools in provider.requests] == [False, True]
+    assert answer == (
+        "I could not complete this request within the available tool-call budget. "
+        "Please ask me to continue or narrow the request."
+    )
+
+
+def test_a_negative_tool_budget_is_rejected():
+    provider = FakeProvider(_text("Unused."))
+
+    with pytest.raises(ValueError, match="max_tool_calls must be non-negative"):
+        _run(provider, _editor(), max_tool_calls=-1)
+
+    assert provider.requests == []
 
 
 def test_a_failed_run_leaves_no_proposal():

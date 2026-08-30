@@ -91,7 +91,7 @@ The runner needs the same provider settings the service uses:
 | `AI_PROVIDER_BASE_URL` | Yes | OpenAI-compatible endpoint. |
 | `AI_PROVIDER_API_KEY` | Yes | Provider bearer token. |
 | `AI_PROVIDER_MODEL` | No | Defaults to `local-model`. |
-| `AI_MAX_AGENT_TURNS` | No | Provider turns allowed for one case. |
+| `AI_MAX_TOOL_CALLS` | No | Tool calls allowed for one case. |
 | `AI_MAX_SCHEDULE_EDITS` | No | Failed edits allowed for one case. |
 | `AI_EVAL_ARTIFACT_ROOT` | No | Report root, `artifacts` by default. |
 
@@ -163,7 +163,7 @@ shows one compatible deployment pattern.
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
-| `AI_MAX_AGENT_TURNS` | `6` | Maximum provider turns for one answer. The last turn offers no tools. |
+| `AI_MAX_TOOL_CALLS` | `5` | Maximum executed tool calls for one answer. Excess calls receive an error before one tool-free final response. |
 | `AI_MAX_SCHEDULE_EDITS` | `5` | Failed schedule edits allowed before the assistant must stop. |
 | `AI_ATTACHMENT_MODE` | `images` | Use `none` to disable image attachments. |
 | `AI_MAX_IMAGE_FILES` | `4` | Maximum images attached to one question. |
@@ -176,6 +176,10 @@ shows one compatible deployment pattern.
 | `AI_MAX_XLSX_SHEETS` | `20` | Maximum worksheets per XLSX workbook. |
 | `AI_MAX_XLSX_CELLS` | `100000` | Maximum rectangular cell span across an XLSX workbook. |
 | `AI_MAX_XLSX_UNCOMPRESSED_BYTES` | `50000000` | Maximum total expanded XLSX archive bytes. |
+
+`AI_MAX_AGENT_TURNS` remains accepted for compatibility when
+`AI_MAX_TOOL_CALLS` is unset. The service subtracts one reserved final turn
+from the former value to derive the tool-call limit.
 
 ## Run in the development container
 

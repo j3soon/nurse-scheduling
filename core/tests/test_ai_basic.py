@@ -534,6 +534,33 @@ def test_environment_configuration_enables_images_by_default(monkeypatch: pytest
     assert AiSettings.from_env().document_attachment_mode == "text"
 
 
+def test_environment_configuration_reads_tool_call_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_MAX_TOOL_CALLS", "7")
+    monkeypatch.setenv("AI_MAX_AGENT_TURNS", "20")
+
+    assert AiSettings.from_env().max_tool_calls == 7
+
+
+def test_environment_configuration_translates_legacy_agent_turn_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_MAX_TOOL_CALLS", raising=False)
+    monkeypatch.setenv("AI_MAX_AGENT_TURNS", "6")
+
+    assert AiSettings.from_env().max_tool_calls == 5
+
+
+def test_environment_configuration_rejects_negative_tool_call_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_MAX_TOOL_CALLS", "-1")
+
+    with pytest.raises(ValueError, match="AI_MAX_TOOL_CALLS must be non-negative"):
+        AiSettings.from_env()
+
+
 def test_environment_configuration_rejects_unknown_attachment_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
