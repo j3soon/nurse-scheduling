@@ -20,9 +20,11 @@
 # This test is mostly AI generated.
 
 import json
+from pathlib import Path
 
 from nurse_scheduling.ai.editor import (
     EDIT_TOOL,
+    FIND_TOOL,
     VIEW_TOOL,
     WRITE_TOOL,
     ScheduleEditor,
@@ -34,6 +36,8 @@ from nurse_scheduling.ai.editor import (
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, parse_schedule, schedule_yaml
 
+LARGE_WARD = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
+
 
 def _editor(payload: dict | None = None, **kwargs) -> ScheduleEditor:
     return ScheduleEditor(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT, **kwargs)
@@ -41,6 +45,10 @@ def _editor(payload: dict | None = None, **kwargs) -> ScheduleEditor:
 
 def _view(editor: ScheduleEditor, **arguments) -> str:
     return execute_tool(editor, VIEW_TOOL, json.dumps(arguments)).text
+
+
+def _find(editor: ScheduleEditor, query: object, **arguments) -> ToolOutcome:
+    return execute_tool(editor, FIND_TOOL, json.dumps({"query": query, **arguments}))
 
 
 def _edit(editor: ScheduleEditor, old_str: str, new_str: str) -> str:
@@ -78,6 +86,62 @@ def test_view_reports_a_range_past_the_end():
 
     assert "is past the end." in _view(editor, start_line=9_999)
     assert _view(editor, start_line=5, end_line=2) == "`end_line` must not be before `start_line`."
+
+
+def test_find_reports_total_and_numbered_matching_lines():
+    editor = ScheduleEditor("Alpha\nno match\nalpha\nALPHA", SCHEDULE_BYTE_LIMIT)
+
+    result = _find(editor, "alpha")
+
+    assert result.ok
+    assert result.text.startswith('schedule.yaml has 3 lines matching "alpha" (case-insensitive):')
+    assert "1\tAlpha" in result.text
+    assert "3\talpha" in result.text
+    assert "4\tALPHA" in result.text
+
+
+def test_find_can_match_case_sensitively_and_report_no_matches():
+    editor = ScheduleEditor("Alpha\nalpha", SCHEDULE_BYTE_LIMIT)
+
+    sensitive = _find(editor, "Alpha", case_sensitive=True)
+    missing = _find(editor, "missing")
+
+    assert "has 1 line matching" in sensitive.text
+    assert "1\tAlpha" in sensitive.text
+    assert "2\talpha" not in sensitive.text
+    assert missing.ok
+    assert missing.text == 'No lines in schedule.yaml match "missing" (case-insensitive).'
+
+
+def test_find_reports_all_matches_but_returns_only_the_first_twenty():
+    editor = ScheduleEditor("\n".join(f"match {index}" for index in range(25)), SCHEDULE_BYTE_LIMIT)
+
+    result = _find(editor, "match")
+
+    assert "has 25 lines matching" in result.text
+    assert "20\tmatch 19" in result.text
+    assert "21\tmatch 20" not in result.text
+    assert "Showing the first 20 of 25 matching lines." in result.text
+
+
+def test_find_counts_shift_requests_in_the_large_ward_without_paging():
+    schedule = LARGE_WARD.read_text(encoding="utf-8")
+    editor = ScheduleEditor(schedule, len(schedule.encode("utf-8")))
+
+    result = _find(editor, "type: shift request")
+
+    assert result.ok
+    assert 'schedule.yaml has 155 lines matching "type: shift request"' in result.text
+    assert "Showing the first 20 of 155 matching lines." in result.text
+
+
+def test_find_rejects_unusable_arguments():
+    editor = _editor()
+
+    assert _find(editor, None).text == "`query` is required and must be a string."
+    assert _find(editor, "  ").text == "`query` must contain non-whitespace text."
+    assert "must not exceed 200 characters" in _find(editor, "x" * 201).text
+    assert _find(editor, "P1", case_sensitive="yes").text == "`case_sensitive` must be a boolean."
 
 
 def test_edit_applies_a_unique_replacement_and_records_the_proposal():
@@ -189,21 +253,22 @@ def test_the_edit_budget_stops_further_edits():
     assert editor.proposal is None
 
 
-def test_read_only_runs_only_receive_the_view_tool():
+def test_read_only_runs_receive_both_read_tools():
     editor = _editor(allow_edit=False)
 
     names = [definition["function"]["name"] for definition in tool_definitions(editor)]
 
-    assert names == [VIEW_TOOL]
+    assert names == [VIEW_TOOL, FIND_TOOL]
     assert _edit(editor, "apiVersion: alpha", "apiVersion: beta").startswith(f"Unknown tool `{EDIT_TOOL}`.")
     assert _write(editor, "x").startswith(f"Unknown tool `{WRITE_TOOL}`.")
     assert _view(editor).startswith("schedule.yaml lines 1 to ")
+    assert _find(editor, "P1").ok
 
 
-def test_editing_runs_receive_three_tools():
+def test_editing_runs_receive_four_tools():
     names = [definition["function"]["name"] for definition in tool_definitions(_editor())]
 
-    assert names == [VIEW_TOOL, EDIT_TOOL, WRITE_TOOL]
+    assert names == [VIEW_TOOL, FIND_TOOL, EDIT_TOOL, WRITE_TOOL]
 
 
 def test_unknown_tools_and_unusable_arguments_are_reported_as_text():

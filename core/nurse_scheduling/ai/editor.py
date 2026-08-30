@@ -35,10 +35,14 @@ from .validation import ScheduleValidationResult, new_schedule_issues, validate_
 # model needs to know about the schedule it reads out of this file.
 SCHEDULE_FILENAME = "schedule.yaml"
 MAX_VIEW_CHARS = 12_000
+MAX_FIND_QUERY_CHARS = 200
+MAX_FIND_MATCHES = 20
+MAX_FIND_CHARS = 6_000
 MAX_SUMMARY_IDS = 20
 DEFAULT_EDIT_BUDGET = 5
 
 VIEW_TOOL = "view_schedule"
+FIND_TOOL = "find_in_schedule"
 EDIT_TOOL = "edit_schedule"
 WRITE_TOOL = "write_schedule"
 
@@ -117,7 +121,26 @@ def tool_definitions(editor: ScheduleEditor) -> list[dict[str, Any]]:
                 },
                 "additionalProperties": False,
             },
-        )
+        ),
+        _function(
+            FIND_TOOL,
+            f"Find literal text in {SCHEDULE_FILENAME}. Returns the total number of matching lines and up to "
+            f"{MAX_FIND_MATCHES} numbered matches. Use this before {VIEW_TOOL} to locate sections, ids, and repeated "
+            "item types in a large schedule.",
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_FIND_QUERY_CHARS,
+                    },
+                    "case_sensitive": {"type": "boolean", "default": False},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        ),
     ]
     if not editor.allow_edit:
         return definitions
@@ -156,7 +179,7 @@ def execute_tool(editor: ScheduleEditor, name: str, arguments: str) -> ToolOutco
     to read the problem and try again.
     """
     handler = _HANDLERS.get(name)
-    if handler is None or (name != VIEW_TOOL and not editor.allow_edit):
+    if handler is None or (name not in {VIEW_TOOL, FIND_TOOL} and not editor.allow_edit):
         available = ", ".join(definition["function"]["name"] for definition in tool_definitions(editor))
         return _failed(f"Unknown tool `{name}`. Available tools: {available}.")
     try:
@@ -197,6 +220,45 @@ def _view(editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
     if len(numbered) > MAX_VIEW_CHARS:
         numbered = numbered[:MAX_VIEW_CHARS] + "\n... truncated, request a smaller line range."
     return _ok(f"{header}\n{numbered}")
+
+
+def _find(editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
+    """Return bounded numbered lines containing one literal query."""
+    query = arguments.get("query")
+    case_sensitive = arguments.get("case_sensitive", False)
+    if not isinstance(query, str):
+        return _failed("`query` is required and must be a string.")
+    if not query.strip():
+        return _failed("`query` must contain non-whitespace text.")
+    if len(query) > MAX_FIND_QUERY_CHARS:
+        return _failed(f"`query` must not exceed {MAX_FIND_QUERY_CHARS} characters.")
+    if not isinstance(case_sensitive, bool):
+        return _failed("`case_sensitive` must be a boolean.")
+
+    needle = query if case_sensitive else query.casefold()
+    matches = [
+        (number, line)
+        for number, line in enumerate(editor.current_text.splitlines(), start=1)
+        if needle in (line if case_sensitive else line.casefold())
+    ]
+    rendered_query = json.dumps(query, ensure_ascii=False)
+    sensitivity = "case-sensitive" if case_sensitive else "case-insensitive"
+    if not matches:
+        return _ok(f"No lines in {SCHEDULE_FILENAME} match {rendered_query} ({sensitivity}).")
+
+    shown = matches[:MAX_FIND_MATCHES]
+    numbered = "\n".join(f"{number}\t{line}" for number, line in shown)
+    truncated_by_chars = len(numbered) > MAX_FIND_CHARS
+    if truncated_by_chars:
+        numbered = numbered[:MAX_FIND_CHARS] + "\n... output truncated by character limit."
+    line_word = "line" if len(matches) == 1 else "lines"
+    header = f"{SCHEDULE_FILENAME} has {len(matches)} {line_word} matching {rendered_query} ({sensitivity}):"
+    suffix = ""
+    if len(matches) > len(shown):
+        suffix = f"\nShowing the first {len(shown)} of {len(matches)} matching lines."
+    elif truncated_by_chars:
+        suffix = "\nRequest a more specific query to see complete matching lines."
+    return _ok(f"{header}\n{numbered}{suffix}")
 
 
 def _edit(editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
@@ -313,6 +375,7 @@ def _function(name: str, description: str, parameters: dict[str, Any]) -> dict[s
 
 _HANDLERS: dict[str, Callable[[ScheduleEditor, dict[str, Any]], ToolOutcome]] = {
     VIEW_TOOL: _view,
+    FIND_TOOL: _find,
     EDIT_TOOL: _edit,
     WRITE_TOOL: _write,
 }

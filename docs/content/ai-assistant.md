@@ -124,8 +124,9 @@ choose the directory, which must not already exist, or set
 
 ## Proposal lifecycle
 
-The assistant edits one virtual file, `schedule.yaml`, through three tools:
-`view_schedule`, `edit_schedule`, and `write_schedule`. Every change is
+The assistant works with one virtual file, `schedule.yaml`, through four tools:
+`find_in_schedule`, `view_schedule`, `edit_schedule`, and `write_schedule`.
+Search returns a total matching-line count and up to 20 numbered matches. Every change is
 validated against the schedule shapes the web frontend can edit, and the working
 draft advances only when the result is valid. A failed edit spends one of
 `AI_MAX_SCHEDULE_EDITS` attempts.

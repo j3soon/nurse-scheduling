@@ -26,7 +26,7 @@ from collections.abc import AsyncIterator, Sequence
 import pytest
 
 from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse, run_agent
-from nurse_scheduling.ai.editor import EDIT_TOOL, VIEW_TOOL, ScheduleEditor
+from nurse_scheduling.ai.editor import EDIT_TOOL, FIND_TOOL, VIEW_TOOL, ScheduleEditor
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderError,
@@ -239,14 +239,14 @@ def test_an_abandoned_run_leaves_no_proposal():
     assert editor.proposal is None
 
 
-def test_a_read_only_run_is_offered_the_view_tool_alone():
+def test_a_read_only_run_is_offered_both_read_tools():
     provider = FakeProvider(_text("Two people."))
     editor = _editor(allow_edit=False)
 
     _run(provider, editor)
 
     offered = [tool["function"]["name"] for tool in provider.requests[0][1]]
-    assert offered == [VIEW_TOOL]
+    assert offered == [VIEW_TOOL, FIND_TOOL]
 
 
 def test_reasoning_is_reported_without_entering_the_answer():
