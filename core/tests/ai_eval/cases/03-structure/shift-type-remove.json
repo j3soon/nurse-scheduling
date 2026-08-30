@@ -1,0 +1,52 @@
+{
+  "id": "shift-type-remove",
+  "fixture": "new-schedule",
+  "question": "We do not use the A- shift type. Remove it, including from any group.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "shiftTypes.items[?id=A-]",
+      "absent": true
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "added": []
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "removed": [
+        "A-"
+      ]
+    },
+    {
+      "path": "shiftTypes.groups[?id=Administrative].members",
+      "added": []
+    },
+    {
+      "path": "shiftTypes.groups[?id=Administrative].members",
+      "removed": [
+        "A-"
+      ]
+    },
+    {
+      "path": "shiftTypes.groups[].id",
+      "added": []
+    },
+    {
+      "path": "shiftTypes.groups[].id",
+      "removed": []
+    },
+    {
+      "path": "shiftTypes.groups[?members=A-]",
+      "absent": true
+    },
+    {
+      "path": "people.items[?history=A-]",
+      "absent": true
+    }
+  ],
+  "changes": [
+    "shiftTypes.items",
+    "shiftTypes.groups"
+  ]
+}

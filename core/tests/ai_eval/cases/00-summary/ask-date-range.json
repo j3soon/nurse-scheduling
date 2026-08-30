@@ -1,0 +1,24 @@
+{
+  "id": "ask-date-range",
+  "fixture": "ward87",
+  "question": "What period does this roster cover?",
+  "expect_proposal": false,
+  "answer_contains": [
+    [
+      "{start_date}",
+      "1 November",
+      "November 1",
+      "Nov 1"
+    ],
+    [
+      "{end_date}",
+      "30 November",
+      "November 30",
+      "Nov 30"
+    ],
+    [
+      "{year}"
+    ]
+  ],
+  "note": "The year is required on its own, so a reply naming only the days and month does not pass."
+}

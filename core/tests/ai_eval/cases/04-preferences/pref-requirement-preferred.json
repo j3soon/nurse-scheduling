@@ -1,0 +1,31 @@
+{
+  "id": "pref-requirement-preferred",
+  "fixture": "new-schedule",
+  "question": "The E shift needs at least 1 person but we would prefer 3, and this preference is worth -5.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift type requirement][?shiftType=E].requiredNumPeople",
+      "equals": 1
+    },
+    {
+      "path": "preferences[?type=shift type requirement][?shiftType=E].preferredNumPeople",
+      "equals": 3
+    },
+    {
+      "path": "preferences[?type=shift type requirement][?shiftType=E].weight",
+      "equals": -5
+    },
+    {
+      "path": "preferences[?type=shift type requirement][?shiftType=E].shiftType",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "delta": 1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

@@ -456,7 +456,7 @@ async def _parse_message_request(
     return question, images, documents
 
 
-def _provider_messages(
+def build_provider_messages(
     history: list[ChatMessage],
     schedule_yaml: str,
     question: str,
@@ -573,7 +573,7 @@ def create_app(
         """Stream one answer and retain only text after successful completion."""
         question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
         history, schedule_yaml = store.begin(session_id, owner)
-        messages = _provider_messages(history, schedule_yaml, question, images, documents)
+        messages = build_provider_messages(history, schedule_yaml, question, images, documents)
         history_question = question
         if images:
             history_question = f"{question}\n[Images were attached to this message.]"

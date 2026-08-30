@@ -72,6 +72,56 @@ The `tool` event carries the tool name, the arguments the model sent, the result
 it received, and whether the call did what it was asked. Nothing is truncated on
 the server. The browser reveals long output in portions instead.
 
+## Evaluation
+
+The assistant is evaluated against fixed cases with verifiable criteria. This is
+evaluation, and is separate from the solver performance benchmark described in
+the backend server guide.
+
+`core/tests/ai_eval/cases/` holds the cases grouped by category, from questions
+answerable from the prompt summary through schedule edits to requests that must
+be refused. Each case states criteria over the schedule a run produces, so
+grading does not depend on how the assistant reached it. Every run contacts the
+configured provider, so this is a manual tool rather than part of CI.
+
+The runner needs the same provider settings the service uses:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `AI_PROVIDER_BASE_URL` | Yes | OpenAI-compatible endpoint. |
+| `AI_PROVIDER_API_KEY` | Yes | Provider bearer token. |
+| `AI_PROVIDER_MODEL` | No | Defaults to `local-model`. |
+| `AI_MAX_AGENT_TURNS` | No | Provider turns allowed for one case. |
+| `AI_MAX_SCHEDULE_EDITS` | No | Failed edits allowed for one case. |
+| `AI_EVAL_ARTIFACT_ROOT` | No | Report root, `artifacts` by default. |
+
+The launcher reads them from `.env.ai`, so the shortest form is:
+
+```sh
+./scripts/run_ai_eval.sh
+./scripts/run_ai_eval.sh --category 01-reading
+```
+
+To run it without the launcher, load the settings first:
+
+```sh
+set -a && . ./.env.ai && set +a
+cd core && python -m tests.ai_eval.runner --category 01-reading
+```
+
+Select cases with `--case` and `--category`, both repeatable.
+
+Every run writes a report to its own directory under
+`artifacts/ai-evals/<timestamp>/`, alongside the performance benchmark reports,
+and prints the path when it finishes. `summary.md` holds the pass count, median
+seconds, provider turns, and tool calls per category, `results.jsonl` holds one
+line per case, and `cases/<id>.json` holds the whole run for one case: the
+prompt it was given, its reasoning, every tool call with its arguments and
+result, the answer, the proposed schedule, and each criterion with its
+outcome. Pass `--output-dir` to
+choose the directory, which must not already exist, or set
+`AI_EVAL_ARTIFACT_ROOT` to move the root.
+
 ## Proposal lifecycle
 
 The assistant edits one virtual file, `schedule.yaml`, through three tools:

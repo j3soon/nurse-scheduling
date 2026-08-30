@@ -1,0 +1,31 @@
+{
+  "id": "export-extra-row",
+  "fixture": "new-schedule",
+  "question": "Add an export row headed 'Day cover' counting how many people work D on each date.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "export.extraRows[?header=Day cover].countShiftTypes",
+      "equals": [
+        "D"
+      ]
+    },
+    {
+      "path": "export.extraRows[?header=Day cover].countPeople",
+      "equals": [
+        "ALL"
+      ]
+    },
+    {
+      "path": "export.extraRows[?header=Day cover].type",
+      "equals": "count"
+    },
+    {
+      "path": "export.extraRows",
+      "count": 1
+    }
+  ],
+  "changes": [
+    "export"
+  ]
+}

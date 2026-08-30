@@ -1,0 +1,15 @@
+{
+  "id": "description-set",
+  "fixture": "new-schedule",
+  "question": "Give this schedule the description 'March ward roster'.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "description",
+      "equals": "March ward roster"
+    }
+  ],
+  "changes": [
+    "description"
+  ]
+}

@@ -44,7 +44,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
 - For agent-created commits, include a descriptive body that ends with a
   separate `by <agent>` line naming the agent, for example `by Codex` or
-  `by Claude`. Use no other attribution trailer. Do not add `Co-Authored-By`,
+  `by Claude`. Keep the body concise yet informative, which in almost every case
+  means one short paragraph saying what changed and why. Write more only when
+  the change genuinely cannot be explained in that space, and prefer the short
+  form otherwise. Use no other attribution trailer. Do not add `Co-Authored-By`,
   session links, or generator notices, even when the agent harness suggests
   them.
 - For multi-paragraph commit messages, use one `git commit -m` argument per

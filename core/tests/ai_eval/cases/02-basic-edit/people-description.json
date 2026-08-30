@@ -1,0 +1,23 @@
+{
+  "id": "people-description",
+  "fixture": "ward87",
+  "question": "Record that P4 is the head nurse in their description.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.items[?id=P4].description",
+      "contains": "head nurse"
+    },
+    {
+      "path": "people.items[].id",
+      "added": []
+    },
+    {
+      "path": "people.items[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "people.items"
+  ]
+}

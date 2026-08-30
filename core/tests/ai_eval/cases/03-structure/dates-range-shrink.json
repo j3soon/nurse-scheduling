@@ -1,0 +1,66 @@
+{
+  "id": "dates-range-shrink",
+  "fixture": "ward87",
+  "question": "The last two days were cancelled. Shorten the roster so it ends on the 28th.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "dates.range.endDate",
+      "equals": "2025-11-28"
+    },
+    {
+      "path": "dates.range.startDate",
+      "equals": "2025-11-01"
+    },
+    {
+      "path": "dates.groups[?id=FREEDAY].members",
+      "removed": [
+        "29",
+        "30"
+      ]
+    },
+    {
+      "path": "dates.groups[?id=Freeday shift right].members",
+      "removed": [
+        "30"
+      ]
+    },
+    {
+      "path": "dates.groups[?id=After 4].members",
+      "removed": [
+        "29",
+        "30"
+      ]
+    },
+    {
+      "path": "dates.groups[].id",
+      "removed": []
+    },
+    {
+      "path": "preferences[?date=29]",
+      "absent": true
+    },
+    {
+      "path": "preferences[?date=30]",
+      "absent": true
+    },
+    {
+      "path": "preferences[?type=at most one shift per day]",
+      "count": 1
+    },
+    {
+      "path": "dates.groups[?members=29]",
+      "absent": true
+    },
+    {
+      "path": "dates.groups[?members=30]",
+      "absent": true
+    }
+  ],
+  "changes": [
+    "dates.range",
+    "dates.groups",
+    "preferences"
+  ],
+  "note": "Shortening the range orphans the 29th and 30th, which three date groups and 16 preferences still name. One preference covers only those two days. Extending the range instead was tried and removed as a case: crossing a month boundary switches every date id from DD to MM-DD, so the correct answer would rewrite every date reference in the file."
+}

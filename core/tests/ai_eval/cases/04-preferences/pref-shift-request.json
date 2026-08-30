@@ -1,0 +1,35 @@
+{
+  "id": "pref-shift-request",
+  "fixture": "ward87",
+  "question": "P60 wants to work the N shift on the 7th.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift request][?person=P60][?shiftType=N][?date=07]",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift request]",
+      "count": 156
+    },
+    {
+      "path": "preferences[?type=shift request][?person=P60][?shiftType=N][?date=07].person",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift request][?person=P60][?shiftType=N][?date=07].shiftType",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift request][?person=P60][?shiftType=N][?date=07].date",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "delta": 1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

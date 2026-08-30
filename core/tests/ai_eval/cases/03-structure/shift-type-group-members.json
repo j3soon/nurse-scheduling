@@ -1,0 +1,33 @@
+{
+  "id": "shift-type-group-members",
+  "fixture": "new-schedule",
+  "question": "Add the A shift type to the Day group as well.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "contains": "A"
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "added": [
+        "A"
+      ]
+    },
+    {
+      "path": "shiftTypes.groups[?id=Day].members",
+      "removed": []
+    },
+    {
+      "path": "shiftTypes.groups[].id",
+      "added": []
+    },
+    {
+      "path": "shiftTypes.groups[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "shiftTypes.groups"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "id": "people-group-members",
+  "fixture": "ward87",
+  "question": "Add P50 to the 'Night People' group.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.groups[?id=Night People].members",
+      "contains": "P50"
+    },
+    {
+      "path": "people.groups[?id=Night People].members",
+      "added": [
+        "P50"
+      ]
+    },
+    {
+      "path": "people.groups[?id=Night People].members",
+      "removed": []
+    },
+    {
+      "path": "people.groups[].id",
+      "added": []
+    },
+    {
+      "path": "people.groups[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "people.groups"
+  ]
+}

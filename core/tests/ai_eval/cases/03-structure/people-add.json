@@ -1,0 +1,30 @@
+{
+  "id": "people-add",
+  "fixture": "new-schedule",
+  "question": "Add two nurses called Alice and Bob.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.items[?id=Alice]",
+      "count": 1
+    },
+    {
+      "path": "people.items[?id=Bob]",
+      "count": 1
+    },
+    {
+      "path": "people.items[].id",
+      "added": [
+        "Alice",
+        "Bob"
+      ]
+    },
+    {
+      "path": "people.items[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "people.items"
+  ]
+}

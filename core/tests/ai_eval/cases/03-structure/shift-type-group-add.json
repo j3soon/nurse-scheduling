@@ -1,0 +1,33 @@
+{
+  "id": "shift-type-group-add",
+  "fixture": "new-schedule",
+  "question": "Create a shift type group 'Long shifts' containing N and N+.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "shiftTypes.groups[?id=Long shifts].members",
+      "contains": "N"
+    },
+    {
+      "path": "shiftTypes.groups[?id=Long shifts].members",
+      "contains": "N+"
+    },
+    {
+      "path": "shiftTypes.groups[?id=Long shifts].members",
+      "count": 2
+    },
+    {
+      "path": "shiftTypes.groups[].id",
+      "added": [
+        "Long shifts"
+      ]
+    },
+    {
+      "path": "shiftTypes.groups[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "shiftTypes.groups"
+  ]
+}

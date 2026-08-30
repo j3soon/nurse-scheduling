@@ -1,0 +1,14 @@
+{
+  "id": "ask-group-size",
+  "fixture": "ward87",
+  "question": "How many people are in the Night People group?",
+  "expect_proposal": false,
+  "answer_contains": [
+    [
+      "27",
+      "twenty-seven",
+      "twenty seven"
+    ]
+  ],
+  "note": "Group membership is not in the prompt summary, unlike the total number of people."
+}

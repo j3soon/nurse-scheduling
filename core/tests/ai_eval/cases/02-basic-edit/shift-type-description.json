@@ -1,0 +1,23 @@
+{
+  "id": "shift-type-description",
+  "fixture": "new-schedule",
+  "question": "Change the description of shift type A to 'Administrative duty'.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "shiftTypes.items[?id=A].description",
+      "equals": "Administrative duty"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "added": []
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "shiftTypes.items"
+  ]
+}

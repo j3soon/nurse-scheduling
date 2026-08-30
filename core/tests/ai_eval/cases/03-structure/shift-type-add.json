@@ -1,0 +1,25 @@
+{
+  "id": "shift-type-add",
+  "fixture": "new-schedule",
+  "question": "Add a shift type with id 'T' described as 'Training'.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "shiftTypes.items[?id=T].description",
+      "equals": "Training"
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "added": [
+        "T"
+      ]
+    },
+    {
+      "path": "shiftTypes.items[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "shiftTypes.items"
+  ]
+}
