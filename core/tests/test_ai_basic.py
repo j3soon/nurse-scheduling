@@ -734,6 +734,9 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "Group ids: people PEOPLE" in system_prompt
     assert "Dates run from 2026-01-01 to 2026-01-02" in system_prompt
     assert "find_in_schedule" in system_prompt
+    assert "get_schedule_schema" in system_prompt
+    assert "validated examples are authoritative" in system_prompt
+    assert "reserve a call for edit_schedule or write_schedule" in system_prompt
     summary = system_prompt.split("Current schedule summary:\n")[1]
     assert len(summary) < len(schedule) / 2
 

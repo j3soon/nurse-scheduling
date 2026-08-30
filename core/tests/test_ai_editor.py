@@ -25,6 +25,7 @@ from pathlib import Path
 from nurse_scheduling.ai.editor import (
     EDIT_TOOL,
     FIND_TOOL,
+    SCHEMA_TOOL,
     VIEW_TOOL,
     WRITE_TOOL,
     ScheduleEditor,
@@ -33,6 +34,7 @@ from nurse_scheduling.ai.editor import (
     execute_tool,
     tool_definitions,
 )
+from nurse_scheduling.ai.schema import SCHEMA_PATHS
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, parse_schedule, schedule_yaml
 
@@ -49,6 +51,10 @@ def _view(editor: ScheduleEditor, **arguments) -> str:
 
 def _find(editor: ScheduleEditor, query: object, **arguments) -> ToolOutcome:
     return execute_tool(editor, FIND_TOOL, json.dumps({"query": query, **arguments}))
+
+
+def _schema(editor: ScheduleEditor, **arguments) -> ToolOutcome:
+    return execute_tool(editor, SCHEMA_TOOL, json.dumps(arguments))
 
 
 def _edit(editor: ScheduleEditor, old_str: str, new_str: str) -> str:
@@ -142,6 +148,43 @@ def test_find_rejects_unusable_arguments():
     assert _find(editor, "  ").text == "`query` must contain non-whitespace text."
     assert "must not exceed 200 characters" in _find(editor, "x" * 201).text
     assert _find(editor, "P1", case_sensitive="yes").text == "`case_sensitive` must be a boolean."
+
+
+def test_schema_tool_returns_an_index_or_one_focused_topic():
+    editor = _editor()
+
+    index = _schema(editor)
+    topic = _schema(editor, path="dates.range")
+
+    assert index.ok
+    assert "Required top-level fields" in index.text
+    assert "preferences.shift request" in index.text
+    assert topic.ok
+    assert topic.text.startswith("Path: dates.range")
+    assert "startDate" in topic.text
+    assert "Minimal frontend-compatible YAML" in topic.text
+
+
+def test_schema_tool_rejects_unknown_or_unusable_paths_with_guidance():
+    editor = _editor()
+
+    wrong_type = _schema(editor, path=3)
+    unknown = _schema(editor, path="preference.shift requests")
+
+    assert wrong_type.text == "`path` must be a string when provided."
+    assert not unknown.ok
+    assert "Closest paths: preferences.shift request" in unknown.text
+    assert "Omit `path`" in unknown.text
+
+
+def test_schema_tool_definition_advertises_every_optional_path():
+    definition = next(
+        definition for definition in tool_definitions(_editor()) if definition["function"]["name"] == SCHEMA_TOOL
+    )
+    parameters = definition["function"]["parameters"]
+
+    assert parameters["properties"]["path"]["enum"] == list(SCHEMA_PATHS)
+    assert "required" not in parameters
 
 
 def test_edit_applies_a_unique_replacement_and_records_the_proposal():
@@ -253,22 +296,23 @@ def test_the_edit_budget_stops_further_edits():
     assert editor.proposal is None
 
 
-def test_read_only_runs_receive_both_read_tools():
+def test_read_only_runs_receive_all_read_tools():
     editor = _editor(allow_edit=False)
 
     names = [definition["function"]["name"] for definition in tool_definitions(editor)]
 
-    assert names == [VIEW_TOOL, FIND_TOOL]
+    assert names == [VIEW_TOOL, FIND_TOOL, SCHEMA_TOOL]
     assert _edit(editor, "apiVersion: alpha", "apiVersion: beta").startswith(f"Unknown tool `{EDIT_TOOL}`.")
     assert _write(editor, "x").startswith(f"Unknown tool `{WRITE_TOOL}`.")
     assert _view(editor).startswith("schedule.yaml lines 1 to ")
     assert _find(editor, "P1").ok
+    assert _schema(editor, path="people.items").ok
 
 
-def test_editing_runs_receive_four_tools():
+def test_editing_runs_receive_five_tools():
     names = [definition["function"]["name"] for definition in tool_definitions(_editor())]
 
-    assert names == [VIEW_TOOL, FIND_TOOL, EDIT_TOOL, WRITE_TOOL]
+    assert names == [VIEW_TOOL, FIND_TOOL, SCHEMA_TOOL, EDIT_TOOL, WRITE_TOOL]
 
 
 def test_unknown_tools_and_unusable_arguments_are_reported_as_text():

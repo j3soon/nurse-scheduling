@@ -29,6 +29,7 @@ from ruamel.yaml.error import YAMLError
 
 from ..loader import _load_yaml
 from .diff import ScheduleDiff, diff_schedules
+from .schema import SCHEMA_PATHS, closest_schema_paths, render_schedule_schema
 from .validation import ScheduleValidationResult, new_schedule_issues, validate_frontend_schedule_yaml
 
 # The assistant edits one document, so the tools carry no path. Anything the
@@ -43,6 +44,7 @@ DEFAULT_EDIT_BUDGET = 5
 
 VIEW_TOOL = "view_schedule"
 FIND_TOOL = "find_in_schedule"
+SCHEMA_TOOL = "get_schedule_schema"
 EDIT_TOOL = "edit_schedule"
 WRITE_TOOL = "write_schedule"
 
@@ -141,6 +143,16 @@ def tool_definitions(editor: ScheduleEditor) -> list[dict[str, Any]]:
                 "additionalProperties": False,
             },
         ),
+        _function(
+            SCHEMA_TOOL,
+            "Describe one part of the frontend-editable schedule YAML. Omit `path` for a root overview and "
+            "path index. Use this instead of guessing field names or probing the schema through failed edits.",
+            {
+                "type": "object",
+                "properties": {"path": {"type": "string", "enum": list(SCHEMA_PATHS)}},
+                "additionalProperties": False,
+            },
+        ),
     ]
     if not editor.allow_edit:
         return definitions
@@ -179,7 +191,7 @@ def execute_tool(editor: ScheduleEditor, name: str, arguments: str) -> ToolOutco
     to read the problem and try again.
     """
     handler = _HANDLERS.get(name)
-    if handler is None or (name not in {VIEW_TOOL, FIND_TOOL} and not editor.allow_edit):
+    if handler is None or (name not in {VIEW_TOOL, FIND_TOOL, SCHEMA_TOOL} and not editor.allow_edit):
         available = ", ".join(definition["function"]["name"] for definition in tool_definitions(editor))
         return _failed(f"Unknown tool `{name}`. Available tools: {available}.")
     try:
@@ -259,6 +271,20 @@ def _find(editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
     elif truncated_by_chars:
         suffix = "\nRequest a more specific query to see complete matching lines."
     return _ok(f"{header}\n{numbered}{suffix}")
+
+
+def _schema(_editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
+    """Return bounded schema guidance for one known path."""
+    path = arguments.get("path")
+    if path is not None and not isinstance(path, str):
+        return _failed("`path` must be a string when provided.")
+    rendered = render_schedule_schema(path)
+    if rendered is not None:
+        return _ok(rendered)
+
+    close = closest_schema_paths(path)
+    hint = f" Closest paths: {', '.join(close)}." if close else ""
+    return _failed(f"Unknown schema path `{path}`.{hint} Omit `path` to list every available path.")
 
 
 def _edit(editor: ScheduleEditor, arguments: dict[str, Any]) -> ToolOutcome:
@@ -376,6 +402,7 @@ def _function(name: str, description: str, parameters: dict[str, Any]) -> dict[s
 _HANDLERS: dict[str, Callable[[ScheduleEditor, dict[str, Any]], ToolOutcome]] = {
     VIEW_TOOL: _view,
     FIND_TOOL: _find,
+    SCHEMA_TOOL: _schema,
     EDIT_TOOL: _edit,
     WRITE_TOOL: _write,
 }

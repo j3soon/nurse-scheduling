@@ -132,7 +132,13 @@ async def run_agent(
                     len(outcome.text),
                 )
                 yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
-                conversation.append(tool_result_message(call.id, outcome.text))
+                guided_result = _tool_result_with_budget_guidance(
+                    outcome.text,
+                    tool_calls_used,
+                    max_tool_calls,
+                    editor.proposal is not None,
+                )
+                conversation.append(tool_result_message(call.id, guided_result))
 
             if rejected_call:
                 async for event in _finalize_after_tool_budget(provider, conversation):
@@ -154,6 +160,25 @@ def _tool_budget_error(used: int, limit: int) -> str:
         "This call was not executed. Do not call another tool. Answer the user using the information already "
         "collected, or explain what remains unresolved."
     )
+
+
+def _tool_result_with_budget_guidance(result: str, used: int, limit: int, proposal_exists: bool) -> str:
+    """Expose the remaining execution budget to improve tool planning."""
+    remaining = max(0, limit - used)
+    if proposal_exists:
+        guidance = "A validated schedule proposal exists. Answer the user now unless it needs correction."
+    elif remaining == 0:
+        guidance = "No tool calls remain. Answer using the information already collected."
+    elif remaining == 1:
+        guidance = (
+            "One tool call remains. If the user requested a schedule change, use edit_schedule or write_schedule now."
+        )
+    else:
+        guidance = (
+            f"{remaining} tool calls remain. If the user requested a schedule change, reserve one for "
+            "edit_schedule or write_schedule."
+        )
+    return f"{result}\n\nTool budget: {guidance}"
 
 
 async def _finalize_after_tool_budget(

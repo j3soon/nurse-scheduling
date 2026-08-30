@@ -26,7 +26,7 @@ from collections.abc import AsyncIterator, Sequence
 import pytest
 
 from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse, run_agent
-from nurse_scheduling.ai.editor import EDIT_TOOL, FIND_TOOL, VIEW_TOOL, ScheduleEditor
+from nurse_scheduling.ai.editor import EDIT_TOOL, FIND_TOOL, SCHEMA_TOOL, VIEW_TOOL, ScheduleEditor
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderError,
@@ -101,7 +101,20 @@ def test_a_tool_call_is_executed_and_returned_to_the_provider():
     assert events[0].result.startswith("schedule.yaml lines 1 to ")
     second_request = provider.requests[1][0]
     assert second_request[-2]["tool_calls"][0]["function"]["name"] == VIEW_TOOL
-    assert second_request[-1] == {"role": "tool", "tool_call_id": "call_0", "content": events[0].result}
+    assert second_request[-1]["role"] == "tool"
+    assert second_request[-1]["tool_call_id"] == "call_0"
+    assert second_request[-1]["content"].startswith(events[0].result)
+    assert "3 tool calls remain" in second_request[-1]["content"]
+
+
+def test_the_last_tool_call_is_reserved_for_a_requested_edit():
+    provider = FakeProvider(_calls((VIEW_TOOL, "{}")), _text("Done."))
+
+    _run(provider, _editor(), max_tool_calls=2)
+
+    tool_result = provider.requests[1][0][-1]["content"]
+    assert "One tool call remains" in tool_result
+    assert "use edit_schedule or write_schedule now" in tool_result
 
 
 def test_an_edit_run_ends_with_a_proposal():
@@ -239,14 +252,14 @@ def test_an_abandoned_run_leaves_no_proposal():
     assert editor.proposal is None
 
 
-def test_a_read_only_run_is_offered_both_read_tools():
+def test_a_read_only_run_is_offered_all_read_tools():
     provider = FakeProvider(_text("Two people."))
     editor = _editor(allow_edit=False)
 
     _run(provider, editor)
 
     offered = [tool["function"]["name"] for tool in provider.requests[0][1]]
-    assert offered == [VIEW_TOOL, FIND_TOOL]
+    assert offered == [VIEW_TOOL, FIND_TOOL, SCHEMA_TOOL]
 
 
 def test_reasoning_is_reported_without_entering_the_answer():

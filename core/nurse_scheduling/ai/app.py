@@ -40,7 +40,16 @@ from starlette.datastructures import UploadFile
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse, run_agent
 from .config import AiSettings
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
-from .editor import EDIT_TOOL, FIND_TOOL, SCHEDULE_FILENAME, VIEW_TOOL, WRITE_TOOL, ScheduleEditor, describe_schedule
+from .editor import (
+    EDIT_TOOL,
+    FIND_TOOL,
+    SCHEDULE_FILENAME,
+    SCHEMA_TOOL,
+    VIEW_TOOL,
+    WRITE_TOOL,
+    ScheduleEditor,
+    describe_schedule,
+)
 from .provider import ChatContent, ChatMessage, ChatProvider, OpenAiCompatibleProvider, ProviderError
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 
@@ -64,6 +73,10 @@ SYSTEM_PROMPT = f"""You are the experimental Nurse Scheduling assistant.
 The user is editing one schedule, which you can read and change as the file {SCHEDULE_FILENAME}.
 Only a summary of the schedule is given below, so use {VIEW_TOOL} to read the file itself
 before answering about its contents or editing it. Use {FIND_TOOL} first to locate text in a large schedule.
+When the YAML shape or supported fields are uncertain, use {SCHEMA_TOOL} instead of guessing through edits.
+Its validated examples are authoritative, so do not search the schedule for another example of that shape.
+Tool calls are limited. For a requested change, reserve a call for {EDIT_TOOL} or {WRITE_TOOL} and stop
+researching once you know the schema, references, and an edit anchor.
 Use {EDIT_TOOL} for a small change and {WRITE_TOOL} only to restructure it.
 Every change is validated, and a valid change becomes a proposal the user must approve, so never claim
 that you have changed the user's schedule. Say what you propose and let them decide.
