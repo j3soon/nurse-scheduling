@@ -34,7 +34,13 @@ from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, 
 from nurse_scheduling.ai.app import build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.editor import ScheduleEditor
-from nurse_scheduling.ai.provider import ChatMessage, ChatStreamEvent, OpenAiCompatibleProvider, ProviderError
+from nurse_scheduling.ai.provider import (
+    ChatMessage,
+    ChatStreamEvent,
+    OpenAiCompatibleProvider,
+    ProviderError,
+    TokenUsage,
+)
 from nurse_scheduling.loader import _load_yaml
 
 from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases
@@ -64,6 +70,8 @@ class CaseRun:
     reasoning_chars: int = 0
     error: str = ""
     trajectory: dict[str, Any] = field(default_factory=dict)
+    token_usage: TokenUsage | None = None
+    token_usage_turns: int = 0
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
@@ -79,6 +87,7 @@ class CaseRun:
             "reasoning_chars": self.reasoning_chars,
             "answer": self.answer,
             "error": self.error,
+            "token_usage": _token_usage_record(self.token_usage, self.token_usage_turns, self.turns),
         }
 
     def as_trajectory(self) -> dict[str, Any]:
@@ -92,6 +101,8 @@ class _CountingProvider:
     def __init__(self, provider: Any) -> None:
         self._provider = provider
         self.turns = 0
+        self.token_usage: TokenUsage | None = None
+        self.token_usage_turns = 0
 
     async def stream_events(
         self,
@@ -100,6 +111,10 @@ class _CountingProvider:
     ) -> AsyncIterator[ChatStreamEvent]:
         self.turns += 1
         async for event in self._provider.stream_events(messages, tools):
+            if isinstance(event, TokenUsage):
+                self.token_usage = event if self.token_usage is None else self.token_usage + event
+                self.token_usage_turns += 1
+                continue
             yield event
 
 
@@ -156,6 +171,8 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
             reasoning,
             str(error),
             _trajectory(case, messages, events, None),
+            token_usage=counting.token_usage,
+            token_usage_turns=counting.token_usage_turns,
         )
 
     elapsed = time.monotonic() - started
@@ -175,6 +192,8 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
         proposed=proposed is not None,
         reasoning_chars=reasoning,
         trajectory=_trajectory(case, messages, events, editor.proposal, result),
+        token_usage=counting.token_usage,
+        token_usage_turns=counting.token_usage_turns,
     )
 
 
@@ -212,6 +231,20 @@ def _trajectory(
 def _describe(failure: Any) -> str:
     """Render one failed check for the report."""
     return f"{failure.description}: {failure.detail}" if failure.detail else failure.description
+
+
+def _token_usage_record(usage: TokenUsage | None, reported_turns: int, turns: int) -> dict[str, Any]:
+    """Render exact provider usage, or make its absence explicit."""
+    return {
+        "available": usage is not None,
+        "complete": turns > 0 and reported_turns == turns,
+        "reported_turns": reported_turns,
+        "prompt_tokens": usage.prompt_tokens if usage else None,
+        "cached_prompt_tokens": usage.cached_prompt_tokens if usage else None,
+        "completion_tokens": usage.completion_tokens if usage else None,
+        "reasoning_tokens": usage.reasoning_tokens if usage else None,
+        "total_tokens": usage.total_tokens if usage else None,
+    }
 
 
 def summarize(runs: Sequence[CaseRun]) -> str:
@@ -324,7 +357,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     cases = select(load_cases(arguments.cases_dir), arguments.case, arguments.category)
     settings = AiSettings.from_env()
     started = time.monotonic()
-    runs = asyncio.run(run_all(cases, settings, OpenAiCompatibleProvider(settings), arguments.jobs))
+    runs = asyncio.run(run_all(cases, settings, OpenAiCompatibleProvider(settings, include_usage=True), arguments.jobs))
     wall_seconds = time.monotonic() - started
 
     summary = write_report(

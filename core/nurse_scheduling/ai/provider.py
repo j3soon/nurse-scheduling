@@ -114,7 +114,28 @@ class ToolCallRequest:
     calls: tuple[ToolCall, ...]
 
 
-ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest
+@dataclass(frozen=True)
+class TokenUsage:
+    """Provider-reported token usage for one streamed completion."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cached_prompt_tokens: int = 0
+    reasoning_tokens: int = 0
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        """Add usage from consecutive provider turns."""
+        return TokenUsage(
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+            cached_prompt_tokens=self.cached_prompt_tokens + other.cached_prompt_tokens,
+            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
+        )
+
+
+ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest | TokenUsage
 
 
 class ChatProvider(Protocol):
@@ -168,8 +189,9 @@ def _redact_provider_error(response_body: str, provider_api_key: str) -> str:
 class OpenAiCompatibleProvider:
     """Stream chat completions from an OpenAI-compatible HTTP endpoint."""
 
-    def __init__(self, settings: AiSettings) -> None:
+    def __init__(self, settings: AiSettings, *, include_usage: bool = False) -> None:
         self._settings = settings
+        self._include_usage = include_usage
 
     async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
         """Translate provider SSE chunks into plain text deltas."""
@@ -190,6 +212,8 @@ class OpenAiCompatibleProvider:
             "messages": list(messages),
             "stream": True,
         }
+        if self._include_usage:
+            payload["stream_options"] = {"include_usage": True}
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
@@ -236,7 +260,15 @@ class OpenAiCompatibleProvider:
                         continue
                     try:
                         event = json.loads(raw_data)
-                        delta = event["choices"][0]["delta"]
+                        choices = event["choices"]
+                        if not isinstance(choices, list):
+                            raise TypeError
+                        usage = event.get("usage")
+                        if usage is not None:
+                            yield _parse_token_usage(usage)
+                        if not choices and usage is not None:
+                            continue
+                        delta = choices[0]["delta"]
                         content = delta.get("content")
                     except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
                         raise ProviderError("The AI provider returned an invalid stream.") from exc
@@ -261,6 +293,31 @@ class OpenAiCompatibleProvider:
             raise ProviderError("The AI provider timed out.") from exc
         except httpx.HTTPError as exc:
             raise ProviderError("The AI provider is unavailable.") from exc
+
+
+def _parse_token_usage(raw_usage: object) -> TokenUsage:
+    """Parse the standard Chat Completions usage object from its final chunk."""
+    if not isinstance(raw_usage, dict):
+        raise ProviderError("The AI provider returned invalid token usage.")
+    prompt_details = raw_usage.get("prompt_tokens_details") or {}
+    completion_details = raw_usage.get("completion_tokens_details") or {}
+    if not isinstance(prompt_details, dict) or not isinstance(completion_details, dict):
+        raise ProviderError("The AI provider returned invalid token usage.")
+    return TokenUsage(
+        prompt_tokens=_usage_integer(raw_usage, "prompt_tokens"),
+        completion_tokens=_usage_integer(raw_usage, "completion_tokens"),
+        total_tokens=_usage_integer(raw_usage, "total_tokens"),
+        cached_prompt_tokens=_usage_integer(prompt_details, "cached_tokens", default=0),
+        reasoning_tokens=_usage_integer(completion_details, "reasoning_tokens", default=0),
+    )
+
+
+def _usage_integer(values: dict[str, Any], key: str, *, default: int | None = None) -> int:
+    """Read one non-negative integer from a provider usage object."""
+    value = values.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ProviderError("The AI provider returned invalid token usage.")
+    return value
 
 
 @dataclass

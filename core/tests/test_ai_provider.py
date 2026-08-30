@@ -36,6 +36,7 @@ from nurse_scheduling.ai.provider import (
     ProviderError,
     ReasoningDelta,
     TextDelta,
+    TokenUsage,
     ToolCall,
     ToolCallRequest,
 )
@@ -114,6 +115,8 @@ def _streaming_provider(
     monkeypatch: pytest.MonkeyPatch,
     body: str,
     requests: list[httpx.Request] | None = None,
+    *,
+    include_usage: bool = False,
 ) -> OpenAiCompatibleProvider:
     """Build a provider whose endpoint replies with one prepared stream."""
     real_async_client = httpx.AsyncClient
@@ -133,7 +136,8 @@ def _streaming_provider(
             provider_base_url="https://provider.example/v1",
             provider_api_key="test-token",
             provider_model="test-model",
-        )
+        ),
+        include_usage=include_usage,
     )
 
 
@@ -220,6 +224,31 @@ def test_sends_tools_only_when_they_are_offered(monkeypatch: pytest.MonkeyPatch)
     assert with_tools["tool_choice"] == "auto"
     assert "tools" not in without_tools
     assert "tool_choice" not in without_tools
+
+
+def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[httpx.Request] = []
+    usage = {
+        "prompt_tokens": 120,
+        "completion_tokens": 30,
+        "total_tokens": 150,
+        "prompt_tokens_details": {"cached_tokens": 80},
+        "completion_tokens_details": {"reasoning_tokens": 12},
+    }
+    body = _sse_body(_delta_chunk({"content": "Answer"}), {"choices": [], "usage": usage})
+
+    events = _events(_streaming_provider(monkeypatch, body, requests, include_usage=True))
+
+    assert json.loads(requests[0].content)["stream_options"] == {"include_usage": True}
+    assert events == [TextDelta("Answer"), TokenUsage(120, 30, 150, 80, 12)]
+
+
+def test_does_not_request_token_usage_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[httpx.Request] = []
+
+    _events(_streaming_provider(monkeypatch, _sse_body(_delta_chunk({"content": "Answer"})), requests))
+
+    assert "stream_options" not in json.loads(requests[0].content)
 
 
 def test_rejects_more_tool_calls_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:

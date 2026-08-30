@@ -32,6 +32,7 @@ from nurse_scheduling.ai.provider import (
     ProviderError,
     ReasoningDelta,
     TextDelta,
+    TokenUsage,
     ToolCall,
     ToolCallRequest,
 )
@@ -163,6 +164,44 @@ def test_reasoning_length_is_measured_without_entering_the_answer():
     assert "Counting" not in run.answer
 
 
+def test_token_usage_is_aggregated_across_provider_turns():
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest((ToolCall("call_0", "view_schedule", "{}"),)),
+            TokenUsage(100, 20, 120, cached_prompt_tokens=40, reasoning_tokens=5),
+        ],
+        [TextDelta("There are 87 people."), TokenUsage(150, 10, 160, cached_prompt_tokens=90)],
+    )
+
+    run = _run("ask-people-count", provider)
+
+    assert run.as_record()["token_usage"] == {
+        "available": True,
+        "complete": True,
+        "reported_turns": 2,
+        "prompt_tokens": 250,
+        "cached_prompt_tokens": 130,
+        "completion_tokens": 30,
+        "reasoning_tokens": 5,
+        "total_tokens": 280,
+    }
+
+
+def test_missing_provider_usage_is_recorded_explicitly():
+    run = _run("ask-people-count", ScriptedProvider([TextDelta("There are 87 people.")]))
+
+    assert run.as_record()["token_usage"] == {
+        "available": False,
+        "complete": False,
+        "reported_turns": 0,
+        "prompt_tokens": None,
+        "cached_prompt_tokens": None,
+        "completion_tokens": None,
+        "reasoning_tokens": None,
+        "total_tokens": None,
+    }
+
+
 def test_cases_are_selected_by_id_and_by_category():
     cases = load_cases(CASES)
 
@@ -224,6 +263,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "reasoning_chars",
         "answer",
         "error",
+        "token_usage",
     }
     assert json.loads(json.dumps(record))["case_id"] == "ask-people-count"
 
@@ -249,6 +289,7 @@ def test_a_report_holds_the_summary_and_one_line_for_each_case(tmp_path: Path):
     assert "00-summary         1/1" in summary.read_text(encoding="utf-8")
     lines = (tmp_path / "run" / "results.jsonl").read_text(encoding="utf-8").splitlines()
     assert [json.loads(line)["case_id"] for line in lines] == ["a", "b"]
+    assert json.loads(lines[0])["token_usage"]["total_tokens"] is None
 
 
 def test_a_report_records_case_concurrency_and_wall_time(tmp_path: Path):
