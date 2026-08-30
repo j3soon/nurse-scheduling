@@ -19,7 +19,7 @@
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, NamedTuple
 
@@ -143,6 +143,7 @@ def schedule(
     progress_callback: Callable[[ScheduleProgress], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     model_build_stats_callback: Callable[[ModelBuildStats], None] | None = None,
+    forced_solution: Mapping[tuple[int, int, int], int] | None = None,
 ) -> ScheduleResult:
     progress_started_at = time.monotonic()
     _emit_phase_progress(
@@ -245,6 +246,31 @@ def schedule(
         step_started_at,
         start_counts,
     )
+
+    if forced_solution is not None:
+        step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)
+        expected_keys = set(ctx.shifts)
+        provided_keys = set(forced_solution)
+        missing_keys = expected_keys - provided_keys
+        unexpected_keys = provided_keys - expected_keys
+        if missing_keys or unexpected_keys:
+            raise ValueError(
+                "Forced solution keys must exactly match the schedule shift variables: "
+                f"{len(missing_keys)} missing and {len(unexpected_keys)} unexpected."
+            )
+        logger.info("Forcing solution...")
+        for key, shift_var in ctx.shifts.items():
+            value = forced_solution[key]
+            if value not in (0, 1):
+                raise ValueError(f"Invalid forced solution value: {value}")
+            ctx.solver.add_constraint(shift_var == value)
+        emit_model_build_stats(
+            model_build_stats_callback,
+            ctx,
+            "force_solution",
+            step_started_at,
+            start_counts,
+        )
 
     if avoid_solution is not None:
         step_started_at, start_counts = start_model_build_step(model_build_stats_callback, ctx)

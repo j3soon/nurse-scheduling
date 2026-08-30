@@ -1,0 +1,347 @@
+"""Tests for the opt-in real-case performance benchmark harness."""
+
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+#
+# Copyright (C) 2023-2026 Johnson Sun
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# This test is mostly AI generated.
+
+import json
+from argparse import Namespace
+from types import SimpleNamespace
+
+from nurse_scheduling.solver_interface import SchedulePhaseProgress, SolverProgress
+from tests.real import performance_benchmark
+from tests.real.assignment_fixture import deserialize_assignment_fixture
+
+VALID_SCENARIO = b"""\
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2026-01-01
+    endDate: 2026-01-02
+people:
+  items:
+    - id: nurse
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+"""
+
+
+class _FakeDataFrame:
+    def to_csv(self, path, *, index, header, lineterminator):
+        assert index is False
+        assert header is False
+        assert lineterminator == "\n"
+        path.write_text("schedule\n", encoding="utf-8")
+
+
+def test_summarize_runs_reports_score_time_and_target_distributions():
+    runs = [
+        {
+            "score": 100,
+            "solverSeconds": 5.0,
+            "endToEndSeconds": 6.0,
+            "targetReached": True,
+            "targetSolverSeconds": 4.0,
+            "targetEndToEndSeconds": 5.0,
+        },
+        {
+            "score": 120,
+            "solverSeconds": 5.2,
+            "endToEndSeconds": 6.4,
+            "targetReached": True,
+            "targetSolverSeconds": 3.0,
+            "targetEndToEndSeconds": 4.0,
+        },
+        {"score": None, "error": "failed"},
+    ]
+
+    summary = performance_benchmark._summarize_runs(runs, target_score=90)
+
+    assert summary["requestedRuns"] == 3
+    assert summary["completedRuns"] == 2
+    assert summary["score"] == {
+        "count": 2,
+        "min": 100,
+        "median": 110.0,
+        "mean": 110.0,
+        "max": 120,
+        "sampleVariance": 200,
+        "sampleStandardDeviation": 14.142136,
+        "coefficientOfVariationPercent": 12.856487,
+    }
+    assert summary["targetReachedRuns"] == 2
+    assert summary["targetSolverSeconds"]["median"] == 3.5
+    assert summary["targetEndToEndSeconds"]["median"] == 4.5
+
+
+def test_summarize_runs_preserves_zero_solver_seconds():
+    runs = [{"score": 100, "solverSeconds": 0.0, "endToEndSeconds": 0.1}]
+
+    summary = performance_benchmark._summarize_runs(runs, target_score=None)
+
+    assert summary["solverSeconds"]["count"] == 1
+    assert summary["solverSeconds"]["min"] == 0.0
+
+
+def test_child_records_progress_and_stops_at_target(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run-001"
+    run_dir.mkdir()
+    scenario_path = tmp_path / "scenario.yaml"
+    scenario_path.write_bytes(b"scenario")
+    should_stop_seen = False
+
+    def fake_schedule(file_content, prettify, solver, timeout, progress_callback, should_stop):
+        nonlocal should_stop_seen
+        assert file_content
+        assert prettify is False
+        assert solver == "ortools/cp-sat"
+        assert timeout == 10
+        progress_callback(SchedulePhaseProgress("scheduler", "solving", "Solving", 1.0))
+        progress_callback(SolverProgress("ortools/cp-sat:solution-callback", 123, 2.5, solutionIndex=1))
+        should_stop_seen = should_stop()
+        progress_callback(SchedulePhaseProgress("scheduler", "exporting", "Exporting", 3.6))
+        return SimpleNamespace(score=123, solver_status="FEASIBLE")
+
+    monkeypatch.setattr(performance_benchmark.nurse_scheduling, "schedule", fake_schedule)
+    monkeypatch.setattr(performance_benchmark, "REAL_TESTCASE", scenario_path)
+    monkeypatch.setattr(performance_benchmark, "_write_schedule_artifacts", lambda *_args: {})
+    args = Namespace(
+        mode=performance_benchmark.SEARCH_MODE,
+        run_dir=run_dir,
+        run_number=1,
+        warmup=False,
+        started_at="2026-08-28T00:00:00+00:00",
+        timeout=10,
+        target_score=120,
+    )
+
+    assert performance_benchmark._run_child(args) == 0
+    assert should_stop_seen is True
+    result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["targetReached"] is True
+    assert result["targetSolverSeconds"] == 2.5
+    assert result["score"] == 123
+    assert result["solverSeconds"] == 2.6
+    progress = [json.loads(line) for line in (run_dir / "progress.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [event["source"] for event in progress] == [
+        "scheduler",
+        "ortools/cp-sat:solution-callback",
+        "scheduler",
+    ]
+
+
+def test_compute_child_calculates_attainment_score(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run-001"
+    run_dir.mkdir()
+    scenario_path = tmp_path / "scenario.yaml"
+    scenario_path.write_bytes(b"scenario")
+    monkeypatch.setattr(performance_benchmark, "ATTAINMENT_THRESHOLDS", (10, 20))
+
+    def fake_schedule(file_content, prettify, solver, timeout, progress_callback, should_stop):
+        assert file_content
+        assert prettify is False
+        assert solver == "ortools/cp-sat"
+        assert timeout == 10
+        progress_callback(SchedulePhaseProgress("scheduler", "solving", "Solving", 1.0))
+        progress_callback(SolverProgress("ortools/cp-sat:solution-callback", 15, 2.0, solutionIndex=1))
+        assert should_stop() is False
+        progress_callback(SolverProgress("ortools/cp-sat:solution-callback", 25, 6.0, solutionIndex=2))
+        assert should_stop() is True
+        progress_callback(SchedulePhaseProgress("scheduler", "exporting", "Exporting", 7.0))
+        return SimpleNamespace(score=25, solver_status="FEASIBLE")
+
+    monkeypatch.setattr(performance_benchmark.nurse_scheduling, "schedule", fake_schedule)
+    monkeypatch.setattr(performance_benchmark, "REAL_TESTCASE", scenario_path)
+    monkeypatch.setattr(performance_benchmark, "_write_schedule_artifacts", lambda *_args: {})
+    args = Namespace(
+        mode=performance_benchmark.COMPUTE_MODE,
+        run_dir=run_dir,
+        run_number=1,
+        warmup=False,
+        started_at="2026-08-28T00:00:00+00:00",
+        timeout=10,
+        target_score=None,
+    )
+
+    assert performance_benchmark._run_child(args) == 0
+    result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["completedCriterion"] is True
+    assert result["stopReason"] == "top_threshold"
+    assert result["topThresholdReached"] is True
+    assert result["timeToTopThresholdSeconds"] == 6.0
+    assert result["timeToTopThresholdCensored"] is False
+    assert result["attainmentScore"] == 60.0
+    assert result["thresholdReachSeconds"] == {"10": 2.0, "20": 6.0}
+    assert result["solverSeconds"] == 6.0
+
+
+def test_write_schedule_artifacts_keeps_replayable_assignment(tmp_path):
+    solution = {(0, 0, 0): 1, (1, 0, 0): 0}
+    result = SimpleNamespace(
+        dataframe=_FakeDataFrame(),
+        solution=solution,
+        score=123,
+    )
+
+    artifact_fields = performance_benchmark._write_schedule_artifacts(
+        tmp_path,
+        VALID_SCENARIO,
+        result,
+    )
+
+    assert artifact_fields == {
+        "scheduleArtifact": "schedule.csv",
+        "assignmentArtifact": "assignment.json",
+    }
+    assert (tmp_path / "schedule.csv").read_text(encoding="utf-8") == "schedule\n"
+    fixture = json.loads((tmp_path / "assignment.json").read_text(encoding="utf-8"))
+    assert fixture["capturedScore"] == 123
+    assert "expectedScore" not in fixture
+    replay_solution, expected_score = deserialize_assignment_fixture(VALID_SCENARIO, fixture)
+    assert replay_solution == solution
+    assert expected_score == 123
+
+
+def test_summarize_compute_runs_scores_median_target_time():
+    runs = [
+        {
+            "completedCriterion": True,
+            "topThresholdReached": True,
+            "timeToTopThresholdSeconds": 50.0,
+            "attainmentScore": 90.0,
+            "score": 120,
+            "solverSeconds": 48.0,
+            "endToEndSeconds": 52.0,
+        },
+        {
+            "completedCriterion": True,
+            "topThresholdReached": True,
+            "timeToTopThresholdSeconds": 80.0,
+            "attainmentScore": 80.0,
+            "score": 110,
+            "solverSeconds": 98.0,
+            "endToEndSeconds": 102.0,
+        },
+        {
+            "completedCriterion": True,
+            "topThresholdReached": False,
+            "timeToTopThresholdSeconds": 900,
+            "attainmentScore": 20.0,
+            "score": 100,
+            "solverSeconds": 900.0,
+            "endToEndSeconds": 902.0,
+        },
+    ]
+
+    summary = performance_benchmark._summarize_compute_runs(runs)
+
+    assert summary["topThresholdReachedRuns"] == 2
+    assert summary["performanceScore"] == 125.0
+    assert summary["timeToTopThresholdSeconds"]["median"] == 80.0
+    assert summary["timeToTopThresholdSeconds"]["mean"] == 343.333333
+
+
+def test_compute_markdown_reports_final_score_and_average_time():
+    report = {
+        "config": {
+            "warmupRuns": 1,
+            "runs": 2,
+            "timeoutSeconds": 300,
+            "performanceReferenceTimeSeconds": 100,
+        },
+        "environment": {
+            "appVersion": "test",
+            "ortoolsVersion": "test",
+            "cpuModel": "test CPU",
+            "cpuAffinity": [0, 1],
+            "logicalCpuCount": 2,
+        },
+        "runs": [],
+        "summary": {
+            "completedRuns": 2,
+            "topThresholdReachedRuns": 2,
+            "performanceScore": 125.0,
+            "timeToTopThresholdSeconds": {
+                "mean": 80.0,
+                "median": 80.0,
+                "min": 70.0,
+                "max": 90.0,
+                "sampleStandardDeviation": 14.142136,
+            },
+            "attainmentScore": {
+                "mean": 86.798927,
+                "median": 87.0,
+                "min": 83.0,
+                "max": 89.0,
+                "sampleStandardDeviation": 2.0,
+            },
+        },
+    }
+
+    markdown = performance_benchmark._markdown_compute_report(report)
+
+    assert "- Final score: **125.0**" in markdown
+    assert "- Average time to top threshold: **80.0 seconds**" in markdown
+
+
+def test_complete_compute_report_produces_claimed_performance_environment():
+    report = {
+        "createdAt": "2026-08-28T19:12:54.974377+00:00",
+        "config": {"mode": performance_benchmark.COMPUTE_MODE},
+        "environment": {"appVersion": "v0.2.0-66-g959adc4"},
+        "summary": {
+            "requestedRuns": 5,
+            "completedRuns": 5,
+            "performanceScore": 41.524445,
+        },
+    }
+
+    assert performance_benchmark._claimed_performance_env(report) == (
+        "CLAIMED_PERFORMANCE_SCORE=41.524445\n"
+        "CLAIMED_PERFORMANCE_APP_VERSION=v0.2.0-66-g959adc4\n"
+        "CLAIMED_PERFORMANCE_MEASURED_AT=2026-08-28T19:12:54.974377+00:00\n"
+    )
+
+
+def test_incomplete_compute_report_does_not_produce_claimed_performance_environment():
+    report = {
+        "createdAt": "2026-08-28T19:12:54.974377+00:00",
+        "config": {"mode": performance_benchmark.COMPUTE_MODE},
+        "environment": {"appVersion": "v0.2.0-66-g959adc4"},
+        "summary": {
+            "requestedRuns": 5,
+            "completedRuns": 4,
+            "performanceScore": 41.524445,
+        },
+    }
+
+    assert performance_benchmark._claimed_performance_env(report) is None
+
+
+def test_parse_args_uses_documented_defaults():
+    args = performance_benchmark._parse_args([])
+
+    assert args.mode == "compute"
+    assert args.runs == 5
+    assert args.warmup_runs == 1
+    assert args.timeout == 900
+    assert args.target_score is None
+    assert "performance-benchmarks" in args.output_dir.parts

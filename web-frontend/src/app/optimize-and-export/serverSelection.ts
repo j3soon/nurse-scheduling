@@ -17,11 +17,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+export interface ClaimedPerformance {
+  score: number;
+  app_version: string;
+  measured_at: string;
+}
+
 export interface ServerInfoResponse {
   status: string;
   service_name: string;
   api_version: string;
   app_version: string;
+  claimed_performance?: ClaimedPerformance | null;
   jobs?: {
     running: number;
     queued: number;

@@ -1154,6 +1154,22 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.queryByText(/frontend and backend versions do not match/i)).not.toBeInTheDocument();
   });
 
+  it('shows a selected backend claimed performance score', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation((url: string) => (
+      respondWithHealthyBackend(url, {
+        claimed_performance: {
+          score: 41.524445,
+          app_version: 'frontend-test',
+          measured_at: '2026-08-28T19:12:54.974377+00:00',
+        },
+      })
+    ));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Claimed performance: 41.52')).resolves.toBeInTheDocument();
+  });
+
   it('warns when frontend and backend versions match but are dirty', async () => {
     mockCurrentAppVersion.value = 'frontend-test-dirty';
     (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation((url: string) => (

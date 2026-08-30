@@ -13,6 +13,7 @@ Run commands from `core/`:
 - `../scripts/test_core_affected.sh`: run changed test files with compact
   output, or the compact normal suite when core source/helper files change.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
+- `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.
 - `python tests/real/solver_capabilities.py --solver ortools/cp-sat`: probe
   timeout, cancel, and finish-now behavior on the large real scenario.

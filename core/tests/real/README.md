@@ -101,3 +101,94 @@ python tests/real/run_schedule.py \
   --timeout 180 \
   --progress-output progress.jsonl
 ```
+
+## Performance benchmark
+
+Run the real 87-person scenario in isolated OR-Tools CP-SAT processes with the
+Docker workflow. The default compute benchmark performs one unmeasured warm-up
+followed by five measured bounded runs:
+
+```sh
+./scripts/run_performance_benchmark.sh
+```
+
+The wrapper reuses the existing `j3soon/nurse-scheduling:dev` development image
+and bind-mounts the current repository read-only. Select another compatible
+local image when needed:
+
+```sh
+BENCHMARK_IMAGE=custom-benchmark:tag ./scripts/run_performance_benchmark.sh
+```
+
+If the default image does not exist, build it with the repository's existing
+development Dockerfile:
+
+```sh
+docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
+```
+
+The primary score uses elapsed time to the fixed top objective threshold of
+`4,470,000,000,000`. It is `100 × 100 seconds ÷ median time to the top
+threshold`, so a score of 100 represents a 100-second median and score ratios
+represent inverse median-time ratios. Higher is faster. The report also shows
+the arithmetic mean time to the top threshold. Each run stops after reaching
+the threshold or a 900-second hard wall-time limit. An unreached threshold uses
+the limit as a censored time, and the report shows how many runs reached it.
+
+The previous threshold-ladder attainment score remains as a secondary progress
+metric. For each threshold, a run earns `100 × (1 - first reach time ÷
+wall-time budget)` points, with zero for an unreached threshold. The run score
+is the mean across thresholds. The benchmark uses normal nondeterministic
+parallel CP-SAT and all CPUs visible to Docker. It does not enable deterministic
+solver or interleaved-search mode, and it leaves all solver settings at their
+defaults except for the wall-time limit.
+
+Customize the measured and warm-up counts or wall-time budget:
+
+```sh
+./scripts/run_performance_benchmark.sh \
+  --runs 7 --warmup-runs 1 --timeout 300
+```
+
+The older solution-quality experiments remain available explicitly. These are
+useful for solver behavior but are not normalized computer-power metrics:
+
+```sh
+./scripts/run_performance_benchmark.sh --mode search --runs 3 --timeout 300
+./scripts/run_performance_benchmark.sh \
+  --mode search --runs 5 --timeout 300 --target-score SCORE
+```
+
+Run benchmarks only while the host is otherwise idle. No CPU or memory limit is
+applied by the wrapper. Compare machines only when their scenario hash, core
+source hash, OR-Tools version, wall-time budget, and Docker CPU
+visibility policy match. The benchmark harness hash must also match. The report
+includes sample variance, standard deviation, and coefficient of variation.
+Compare the final score and median top-threshold time. A high coefficient of
+variation still indicates that more runs are needed.
+
+Reports are written under the repository-root
+`artifacts/performance-benchmarks/` directory. Each report records the scenario
+and core source hashes, application and OR-Tools versions, CPU visibility,
+initial load average, per-run logs, threshold reach times, normalized attainment
+scores, the primary performance score, final objectives, solver time, and
+end-to-end time. Both modes record raw progress JSONL.
+`summary.md` is the human-readable result and `report.json` is the stable
+machine-readable record. Solver time excludes parsing, model construction, and
+export. End-to-end time includes those phases but excludes Docker image build,
+container startup, and Python process startup. The per-run `processSeconds`
+field includes Python startup for diagnostic context.
+
+A complete compute benchmark also writes `claimed-performance.env` with the
+normalized score, benchmarked app version, and report time. Set all three
+values on a backend to publish the score through `GET /info`. The frontend
+displays it as `Claimed performance` when that backend is selected.
+
+For matching compute reports, compare final performance scores directly. A
+machine with twice the score reached the top threshold in half the median time.
+Also compare the average time and reached-run count because timeouts are
+censored at the configured wall-time limit.
+
+The benchmark currently fixes the solver to `ortools/cp-sat`. Both modes record
+score events, but neither persists intermediate schedule contents. That belongs
+to the separate intermediate-solution corpus workflow.

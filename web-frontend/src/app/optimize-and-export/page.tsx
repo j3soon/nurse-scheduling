@@ -292,6 +292,25 @@ function hasAppVersionMismatch(frontendVersion: string, backendVersion: string):
   return frontendVersion !== backendVersion || isDirtyAppVersion(frontendVersion) || isDirtyAppVersion(backendVersion);
 }
 
+function parseClaimedPerformance(value: unknown): ServerInfoResponse['claimed_performance'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.score !== 'number' || !Number.isFinite(candidate.score) || candidate.score <= 0 ||
+    typeof candidate.app_version !== 'string' || candidate.app_version.length === 0 ||
+    typeof candidate.measured_at !== 'string' || !Number.isFinite(Date.parse(candidate.measured_at))
+  ) {
+    return null;
+  }
+  return {
+    score: candidate.score,
+    app_version: candidate.app_version,
+    measured_at: candidate.measured_at,
+  };
+}
+
 function normalizeEndpoint(endpoint: string): string {
   return endpoint.trim().replace(/\/+$/, '');
 }
@@ -363,6 +382,7 @@ async function fetchServerInfo(
     service_name: typeof info.service_name === 'string' ? info.service_name : 'missing',
     api_version: typeof info.api_version === 'string' ? info.api_version : 'missing',
     app_version: typeof info.app_version === 'string' ? info.app_version : 'missing',
+    claimed_performance: parseClaimedPerformance(info.claimed_performance),
     jobs: info.jobs,
     workers: info.workers,
   };
@@ -692,6 +712,7 @@ export default function OptimizeAndExportPage() {
     choice => choice.value === solverArg
   ) ?? null;
   const hasVersionMismatch = Boolean(activeServerHealth && hasAppVersionMismatch(CURRENT_APP_VERSION, activeServerHealth.app_version));
+  const activeClaimedPerformance = activeServerHealth?.claimed_performance ?? null;
   const isExplicitlySelectedIncompatibleServer = selectedServerEndpoint !== 'auto'
     && activeServerStatus === 'incompatible';
   const canUseActiveServer = activeServerStatus === 'online' || isExplicitlySelectedIncompatibleServer;
@@ -1784,6 +1805,11 @@ export default function OptimizeAndExportPage() {
                           ? ` (expected ${SUPPORTED_BACKEND_API_VERSION})`
                           : ''}
                         {' · '}Frontend version: {CURRENT_APP_VERSION} · Backend version: {activeServerHealth.app_version}
+                      </p>
+                    )}
+                    {activeClaimedPerformance && (
+                      <p className="mt-1">
+                        Claimed performance: {formatScore(activeClaimedPerformance.score)}
                       </p>
                     )}
                     {activeServerStatus === 'incompatible' ? (

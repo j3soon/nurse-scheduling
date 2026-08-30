@@ -20,6 +20,7 @@
 import math
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from ..scheduler import ORTOOLS_CP_SAT_SOLVER
 from .solver_options import normalize_solver_option
@@ -32,6 +33,12 @@ DEFAULT_MAX_EVENTS_PER_JOB = 1_000
 """Default maximum number of replayable events retained for one job."""
 DEFAULT_TIMEOUT_GRACE_SECONDS = 90.0
 """Default grace period before forcibly terminating a timed-out solver."""
+CLAIMED_PERFORMANCE_ENV_NAMES = (
+    "CLAIMED_PERFORMANCE_SCORE",
+    "CLAIMED_PERFORMANCE_APP_VERSION",
+    "CLAIMED_PERFORMANCE_MEASURED_AT",
+)
+"""Environment settings that form one atomic self-claimed benchmark result."""
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -83,6 +90,58 @@ def _solver_ids(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
+class ClaimedPerformance:
+    """Self-reported normalized benchmark score for one server."""
+
+    score: float
+    """Normalized benchmark score where 100 is the reference performance."""
+    app_version: str
+    """Application version benchmarked to produce the score."""
+    measured_at: datetime
+    """Timezone-aware time when the benchmark report was created."""
+
+    def __post_init__(self) -> None:
+        """Validate and normalize directly constructed benchmark metadata."""
+        if not math.isfinite(self.score) or self.score <= 0:
+            raise ValueError("claimed performance score must be positive")
+        app_version = self.app_version.strip()
+        if not app_version:
+            raise ValueError("claimed performance app version must not be empty")
+        if self.measured_at.tzinfo is None or self.measured_at.utcoffset() is None:
+            raise ValueError("claimed performance measured time must include a timezone")
+        object.__setattr__(self, "app_version", app_version)
+        object.__setattr__(self, "measured_at", self.measured_at.astimezone(timezone.utc))
+
+
+def _claimed_performance() -> ClaimedPerformance | None:
+    """Read an optional complete claimed-performance result from the environment."""
+    values = {name: (os.getenv(name) or "").strip() for name in CLAIMED_PERFORMANCE_ENV_NAMES}
+    configured_names = {name for name, value in values.items() if value}
+    if not configured_names:
+        return None
+    if len(configured_names) != len(CLAIMED_PERFORMANCE_ENV_NAMES):
+        raise ValueError(f"{', '.join(CLAIMED_PERFORMANCE_ENV_NAMES)} must be set together")
+    try:
+        score = float(values["CLAIMED_PERFORMANCE_SCORE"])
+    except ValueError as error:
+        raise ValueError("CLAIMED_PERFORMANCE_SCORE must be a positive number") from error
+    if not math.isfinite(score) or score <= 0:
+        raise ValueError("CLAIMED_PERFORMANCE_SCORE must be a positive number")
+    try:
+        measured_at = datetime.fromisoformat(values["CLAIMED_PERFORMANCE_MEASURED_AT"])
+    except ValueError as error:
+        raise ValueError("CLAIMED_PERFORMANCE_MEASURED_AT must be an ISO 8601 date and time") from error
+    try:
+        return ClaimedPerformance(
+            score=score,
+            app_version=values["CLAIMED_PERFORMANCE_APP_VERSION"],
+            measured_at=measured_at,
+        )
+    except ValueError as error:
+        raise ValueError(f"Invalid claimed performance configuration: {error}") from error
+
+
+@dataclass(frozen=True)
 class ServerSettings:
     """All configuration required to construct one server process."""
 
@@ -124,6 +183,8 @@ class ServerSettings:
     """Schedule-prettification setting used when a request omits one."""
     timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS
     """Time allowed for a solver to return after its requested timeout."""
+    claimed_performance: ClaimedPerformance | None = None
+    """Optional self-reported benchmark score and its provenance."""
 
     def __post_init__(self) -> None:
         """Validate cross-field and direct-construction constraints.
@@ -204,4 +265,5 @@ class ServerSettings:
                 "OPTIMIZE_TIMEOUT_GRACE_SECONDS",
                 DEFAULT_TIMEOUT_GRACE_SECONDS,
             ),
+            claimed_performance=_claimed_performance(),
         )
