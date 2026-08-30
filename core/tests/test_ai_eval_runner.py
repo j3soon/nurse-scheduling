@@ -37,7 +37,7 @@ from nurse_scheduling.ai.provider import (
 )
 
 from .ai_eval.grading import load_cases
-from .ai_eval.runner import CASES, CaseRun, default_output_dir, run_case, select, summarize, write_report
+from .ai_eval.runner import CASES, CaseRun, default_output_dir, run_all, run_case, select, summarize, write_report
 
 CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
 
@@ -63,6 +63,23 @@ class ScriptedProvider:
             raise turn
         for event in turn:
             yield event
+
+
+class ConcurrentProvider:
+    """Return one answer while measuring simultaneous provider streams."""
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+
+    async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator:
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await asyncio.sleep(0.01)
+            yield TextDelta("Done.")
+        finally:
+            self.active -= 1
 
 
 def _run(case_id: str, provider: ScriptedProvider) -> CaseRun:
@@ -159,6 +176,22 @@ def test_an_unknown_case_id_stops_the_run():
         select(load_cases(CASES), ["no-such-case"], [])
 
 
+@pytest.mark.parametrize(("jobs", "expected_max_active"), [(1, 1), (2, 2)])
+def test_run_all_bounds_parallelism_and_preserves_case_order(jobs: int, expected_max_active: int):
+    cases = load_cases(CASES)[:3]
+    provider = ConcurrentProvider()
+
+    runs = asyncio.run(run_all(cases, settings(), provider, jobs))
+
+    assert provider.max_active == expected_max_active
+    assert [run.case_id for run in runs] == [case.id for case in cases]
+
+
+def test_run_all_rejects_non_positive_jobs():
+    with pytest.raises(ValueError, match="jobs must be positive"):
+        asyncio.run(run_all([], settings(), ScriptedProvider(), 0))
+
+
 def test_the_summary_reports_each_category_and_every_failure():
     runs = [
         CaseRun("a", "00-summary", True, 2.0, 1, []),
@@ -216,6 +249,19 @@ def test_a_report_holds_the_summary_and_one_line_for_each_case(tmp_path: Path):
     assert "00-summary         1/1" in summary.read_text(encoding="utf-8")
     lines = (tmp_path / "run" / "results.jsonl").read_text(encoding="utf-8").splitlines()
     assert [json.loads(line)["case_id"] for line in lines] == ["a", "b"]
+
+
+def test_a_report_records_case_concurrency_and_wall_time(tmp_path: Path):
+    summary = write_report(
+        [CaseRun("a", "00-summary", True, 2.0, 1, [])],
+        tmp_path / "run",
+        jobs=4,
+        wall_seconds=1.25,
+    )
+
+    text = summary.read_text(encoding="utf-8")
+    assert "Case concurrency: 4" in text
+    assert "Wall time: 1.2 seconds" in text
 
 
 def test_a_report_never_overwrites_an_earlier_one(tmp_path: Path):

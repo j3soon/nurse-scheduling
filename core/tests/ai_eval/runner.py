@@ -244,7 +244,9 @@ def default_output_dir() -> Path:
     return artifact_root / "ai-evals" / timestamp
 
 
-def write_report(runs: Sequence[CaseRun], output_dir: Path) -> Path:
+def write_report(
+    runs: Sequence[CaseRun], output_dir: Path, *, jobs: int = 1, wall_seconds: float | None = None
+) -> Path:
     """Write one run's results and summary, and report where the summary landed."""
     output_dir.mkdir(parents=True, exist_ok=False)
     (output_dir / "results.jsonl").write_text(
@@ -258,7 +260,10 @@ def write_report(runs: Sequence[CaseRun], output_dir: Path) -> Path:
             json.dumps(run.as_trajectory(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
     summary = output_dir / "summary.md"
-    summary.write_text(f"# AI evaluation\n\n```\n{summarize(runs)}\n```\n", encoding="utf-8")
+    timing = f"\nWall time: {wall_seconds:.1f} seconds\n" if wall_seconds is not None else ""
+    summary.write_text(
+        f"# AI evaluation\n\nCase concurrency: {jobs}{timing}\n```\n{summarize(runs)}\n```\n", encoding="utf-8"
+    )
     return summary
 
 
@@ -283,15 +288,25 @@ def select(cases: Sequence[EvalCase], ids: Sequence[str], categories: Sequence[s
     return chosen
 
 
-async def run_all(cases: Sequence[EvalCase], settings: AiSettings, provider: Any) -> list[CaseRun]:
-    """Run every selected case in order, reporting progress as it goes."""
-    runs: list[CaseRun] = []
-    for index, case in enumerate(cases, start=1):
-        run = await run_case(provider, settings, case)
-        runs.append(run)
+async def run_all(cases: Sequence[EvalCase], settings: AiSettings, provider: Any, jobs: int = 1) -> list[CaseRun]:
+    """Run selected cases with bounded parallelism and preserve dataset order."""
+    if jobs <= 0:
+        raise ValueError("jobs must be positive")
+
+    concurrency_limit = asyncio.Semaphore(jobs)
+    completed = 0
+
+    async def run_bounded(index: int, case: EvalCase) -> tuple[int, CaseRun]:
+        nonlocal completed
+        async with concurrency_limit:
+            run = await run_case(provider, settings, case)
+        completed += 1
         mark = "pass" if run.passed else "FAIL"
-        print(f"[{index}/{len(cases)}] {mark} {run.case_id} {run.seconds:.0f}s", flush=True)
-    return runs
+        print(f"[{completed}/{len(cases)}] {mark} {run.case_id} {run.seconds:.0f}s", flush=True)
+        return index, run
+
+    indexed_runs = await asyncio.gather(*(run_bounded(index, case) for index, case in enumerate(cases)))
+    return [run for _, run in sorted(indexed_runs)]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -301,15 +316,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--category", action="append", default=[], help="run one category directory, repeatable")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
     parser.add_argument("--output-dir", type=Path, default=None, help="new directory for the report")
+    parser.add_argument("--jobs", type=int, default=1, help="number of cases to run concurrently (default: 1)")
     arguments = parser.parse_args(argv)
+    if arguments.jobs <= 0:
+        parser.error("--jobs must be positive")
 
     cases = select(load_cases(arguments.cases_dir), arguments.case, arguments.category)
     settings = AiSettings.from_env()
-    runs = asyncio.run(run_all(cases, settings, OpenAiCompatibleProvider(settings)))
+    started = time.monotonic()
+    runs = asyncio.run(run_all(cases, settings, OpenAiCompatibleProvider(settings), arguments.jobs))
+    wall_seconds = time.monotonic() - started
 
-    summary = write_report(runs, (arguments.output_dir or default_output_dir()).resolve())
+    summary = write_report(
+        runs,
+        (arguments.output_dir or default_output_dir()).resolve(),
+        jobs=arguments.jobs,
+        wall_seconds=wall_seconds,
+    )
     print()
     print(summarize(runs))
+    print(f"Wall time: {wall_seconds:.1f} seconds with {arguments.jobs} case job(s)")
     print()
     print(f"Evaluation report: {summary}")
     return 0 if all(run.passed for run in runs) else 1
