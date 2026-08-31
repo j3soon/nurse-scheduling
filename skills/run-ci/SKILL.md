@@ -25,10 +25,11 @@ The script intentionally:
   suite with coverage.
 - Uses compact test output flags to keep CI output small. pytest uses the
   flags from `scripts/test_core_affected.sh`
-  (`-q --tb=short --disable-warnings --maxfail=1`), and Playwright and Vitest
-  coverage use `--reporter=dot --quiet --max-failures=1` and
-  `text-summary` reporting, matching `scripts/test_frontend_e2e_affected.sh`
-  and the compact affected scripts. Run focused tests with
+  (`-q --tb=short --disable-warnings --maxfail=1`). Playwright coverage uses
+  `--reporter=dot --quiet --max-failures=1`, matching
+  `scripts/test_frontend_e2e_affected.sh`. Vitest coverage uses
+  `text-summary` reporting instead of the per-file text table. Run focused
+  tests with
   `--log-cli-level=INFO` when solver or job logs are needed.
 - Runs frontend lint, build, unit coverage, E2E coverage, and the E2E coverage
   report. Coverage commands execute the tests, so do not run duplicate
