@@ -111,7 +111,14 @@ def kill_process_tree(process: multiprocessing.Process) -> None:
     # EPERM when a process group contains only an unreaped zombie leader.
     process.join(timeout=0)
     if process.pid is not None:
-        _kill_process_tree_by_pid(process.pid)
+        try:
+            _kill_process_tree_by_pid(process.pid)
+        except PermissionError:
+            # Pipe EOF can arrive just before Darwin makes an abruptly exiting
+            # child reapable. Wait for that transition, then retry the group so
+            # any still-running solver descendants are also terminated.
+            process.join(timeout=1)
+            _kill_process_tree_by_pid(process.pid)
     if process.is_alive():
         process.kill()
     process.join(timeout=1)

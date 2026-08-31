@@ -425,7 +425,7 @@ def _run_process_cleanup_probe(name: str) -> dict:
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
-def test_cleanup_reaps_exited_child_before_signaling_process_group(monkeypatch):
+def test_cleanup_retries_group_signal_after_child_becomes_reapable(monkeypatch):
     calls = []
 
     class ExitedProcess:
@@ -434,7 +434,8 @@ def test_cleanup_reaps_exited_child_before_signaling_process_group(monkeypatch):
 
         def join(self, timeout):
             calls.append(("join", timeout))
-            self.reaped = True
+            if timeout:
+                self.reaped = True
 
         def is_alive(self):
             return False
@@ -445,9 +446,9 @@ def test_cleanup_reaps_exited_child_before_signaling_process_group(monkeypatch):
     process = ExitedProcess()
 
     def kill_process_group(process_id):
+        calls.append(("kill_process_group", process_id))
         if not process.reaped:
             raise PermissionError("Darwin rejects signaling a zombie-only group")
-        calls.append(("kill_process_group", process_id))
 
     monkeypatch.setattr(process_tree, "_kill_process_tree_by_pid", kill_process_group)
 
@@ -455,6 +456,8 @@ def test_cleanup_reaps_exited_child_before_signaling_process_group(monkeypatch):
 
     assert calls == [
         ("join", 0),
+        ("kill_process_group", 123),
+        ("join", 1),
         ("kill_process_group", 123),
         ("join", 1),
     ]
