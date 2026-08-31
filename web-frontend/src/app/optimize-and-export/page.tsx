@@ -40,6 +40,7 @@ import {
   EXPECTED_BACKEND_SERVICE_NAME,
   isOptimizationOptionsResponse,
   LOCAL_BACKEND_API_URL,
+  normalizeEndpoint,
   parseAuthRequirement,
   selectPreferredServer,
   SUPPORTED_BACKEND_API_VERSION,
@@ -328,10 +329,6 @@ function parseClaimedPerformance(value: unknown): ServerInfoResponse['claimed_pe
     app_version: candidate.app_version,
     measured_at: candidate.measured_at,
   };
-}
-
-function normalizeEndpoint(endpoint: string): string {
-  return endpoint.trim().replace(/\/+$/, '');
 }
 
 function buildApiUrl(endpoint: string, path: string): string {

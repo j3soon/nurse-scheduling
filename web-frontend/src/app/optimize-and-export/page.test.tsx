@@ -27,6 +27,7 @@ import {
   buildAuthHeaders,
   createBackendApiCandidates,
   isOptimizationOptionsResponse,
+  normalizeEndpoint,
   parseAuthRequirement,
   selectPreferredServer,
   type ServerInfoResponse,
@@ -238,6 +239,43 @@ describe('backend authentication discovery', () => {
   it('sends an Authorization header only when a token is set', () => {
     expect(buildAuthHeaders('secret')).toEqual({ Authorization: 'Bearer secret' });
     expect(buildAuthHeaders(null)).toEqual({});
+  });
+});
+
+describe('backend endpoint normalization', () => {
+  it.each([
+    ['api.nursescheduling.org', 'https://api.nursescheduling.org'],
+    ['api.nursescheduling.org/', 'https://api.nursescheduling.org'],
+    ['api.nursescheduling.org///', 'https://api.nursescheduling.org'],
+    ['  api.nursescheduling.org  ', 'https://api.nursescheduling.org'],
+    ['//api.nursescheduling.org', 'https://api.nursescheduling.org'],
+    ['backend.example.test:8443', 'https://backend.example.test:8443'],
+  ])('defaults a bare host to https: %s', (input, expected) => {
+    expect(normalizeEndpoint(input)).toBe(expected);
+  });
+
+  it.each([
+    ['localhost:8000', 'http://localhost:8000'],
+    ['localhost', 'http://localhost'],
+    ['127.0.0.1:8000', 'http://127.0.0.1:8000'],
+    ['LOCALHOST:8000', 'http://LOCALHOST:8000'],
+  ])('defaults a loopback host to http: %s', (input, expected) => {
+    expect(normalizeEndpoint(input)).toBe(expected);
+  });
+
+  it.each([
+    ['http://localhost:8000', 'http://localhost:8000'],
+    ['https://api.nursescheduling.org', 'https://api.nursescheduling.org'],
+    ['http://api.nursescheduling.org', 'http://api.nursescheduling.org'],
+    ['HTTPS://api.nursescheduling.org', 'HTTPS://api.nursescheduling.org'],
+    ['https://api.nursescheduling.org/', 'https://api.nursescheduling.org'],
+  ])('keeps an explicit scheme as typed: %s', (input, expected) => {
+    expect(normalizeEndpoint(input)).toBe(expected);
+  });
+
+  it('leaves an empty value empty', () => {
+    expect(normalizeEndpoint('')).toBe('');
+    expect(normalizeEndpoint('   ')).toBe('');
   });
 });
 
@@ -1034,6 +1072,26 @@ describe('OptimizeAndExportPage error handling', () => {
 
     expect(screen.getByText('Double-click to add URL')).toBeInTheDocument();
     expect(screen.queryByText('Backend URL is required.')).not.toBeInTheDocument();
+  });
+
+  it('probes an https URL when only a domain name is entered', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    queueInitialLocalSelection(fetchMock);
+    fetchMock.mockImplementation((url: string) => respondWithHealthyBackend(String(url)));
+
+    render(<OptimizeAndExportPage />);
+    await editBackendEndpoint(user, LOCAL_API_URL, 'api.nursescheduling.org');
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/info',
+      expect.objectContaining({ method: 'GET' })
+    ));
+    // The corrected URL is what gets stored and shown, not the bare host that was typed.
+    await expect(screen.findByTitle('https://api.nursescheduling.org')).resolves.toBeInTheDocument();
+    expect(
+      JSON.parse(window.localStorage.getItem('nurse-scheduling-optimize-server-options') ?? '{}').servers
+    ).toEqual([{ endpoint: 'https://api.nursescheduling.org' }]);
   });
 
   it('checks a user-entered endpoint and marks it offline after the health timeout', async () => {

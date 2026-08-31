@@ -164,6 +164,35 @@ test('optimize and export distinguishes a rejected token from a missing one', as
   );
 });
 
+test('optimize and export completes a bare domain into an https backend URL', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Open the page with the mocked local backend.
+   * 2. Add a backend by typing only a domain name into the real inline editor.
+   * 3. Confirm the stored and displayed URL gained an https scheme.
+   */
+  await disableModalDialogs(page);
+  await seedMinimalSchedule(page);
+  await mockOptimizeAndExport(page);
+
+  await page.goto('/optimize-and-export');
+  await expect(page.getByText('Server: Online')).toBeVisible();
+
+  await page.getByText('Double-click to add URL').dblclick();
+  await page.getByPlaceholder('https://backend.example.test').fill('api.nursescheduling.org');
+  await page.keyboard.press('Enter');
+
+  await expect(page.getByTitle('https://api.nursescheduling.org')).toBeVisible();
+  const storedServers = await page.evaluate(
+    (key) => JSON.parse(window.localStorage.getItem(key) ?? '{}').servers,
+    STORAGE_KEY
+  );
+  expect(storedServers).toEqual([
+    { endpoint: BACKEND_URL },
+    { endpoint: 'https://api.nursescheduling.org' },
+  ]);
+});
+
 test('optimize and export keeps a one-time token out of browser storage', async ({ page }) => {
   /*
    * Steps:

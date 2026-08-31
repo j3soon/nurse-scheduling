@@ -112,6 +112,37 @@ export function parseAuthRequirement(value: unknown): AuthRequirement | null {
   };
 }
 
+const ENDPOINT_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+
+function isLoopbackAuthority(authority: string): boolean {
+  return authority === 'localhost'
+    || authority.startsWith('localhost:')
+    || authority === '127.0.0.1'
+    || authority.startsWith('127.0.0.1:')
+    || authority.startsWith('[::1]');
+}
+
+function defaultEndpointScheme(endpoint: string): string {
+  // A loopback backend is served over plain HTTP, so defaulting it to HTTPS would recreate
+  // the very confusion this defaulting exists to prevent.
+  const authority = endpoint.replace(/^\/+/, '').split('/')[0].toLowerCase();
+  return isLoopbackAuthority(authority) ? 'http:' : 'https:';
+}
+
+export function normalizeEndpoint(endpoint: string): string {
+  const trimmed = endpoint.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  // Entering a bare host is a common mistake and the request would never reach a backend,
+  // so a scheme is filled in. Anything that already declares one is left as typed.
+  const withScheme = ENDPOINT_SCHEME_PATTERN.test(trimmed)
+    ? trimmed
+    : `${defaultEndpointScheme(trimmed)}//${trimmed.replace(/^\/+/, '')}`;
+  return withScheme.replace(/\/+$/, '');
+}
+
 export function buildAuthHeaders(token: string | null): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
