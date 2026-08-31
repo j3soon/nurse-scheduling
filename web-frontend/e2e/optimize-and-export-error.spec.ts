@@ -134,7 +134,11 @@ test('allows an explicitly selected incompatible backend with a warning', async 
   await expect(page.getByText('Server: Incompatible')).toBeVisible();
   await expect(page.getByText('2 active · 3 queued')).toBeVisible();
   await expect(page.getByText('2 workers')).toBeVisible();
-  await expect(page.getByLabel('http://localhost:8000 status: Incompatible')).toHaveAttribute('title', 'Incompatible');
+  // The reason is reachable from the Status icon rather than printed into the server cell.
+  await expect(page.getByLabel('http://localhost:8000 status: Incompatible')).toHaveAttribute(
+    'title',
+    'Incompatible. Unsupported API version "alpha". Expected "0.2.0".'
+  );
   await expect(page.getByText(/auto found no compatible backend/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
   await expect(page.getByText(/API version: alpha \(expected 0\.2\.0\)/i)).toHaveCount(0);

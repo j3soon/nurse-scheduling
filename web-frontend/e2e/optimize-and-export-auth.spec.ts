@@ -147,7 +147,7 @@ test('optimize and export distinguishes a rejected token from a missing one', as
   const status = page.getByLabel(`${BACKEND_URL} status: Credentials rejected`);
   await expect(status).toHaveAttribute(
     'title',
-    'Backend rejected this token. Select Change to enter the current one.'
+    'Credentials rejected. Select Change to enter the current token.'
   );
   // The description line stays short so the trailing columns keep their place.
   await expect(page.getByText(/Last checked:.*rejected/i)).toHaveCount(0);
@@ -160,7 +160,7 @@ test('optimize and export distinguishes a rejected token from a missing one', as
   await page.getByRole('button', { name: `Forget token for ${BACKEND_URL}` }).click();
   await expect(page.getByLabel(`${BACKEND_URL} status: Credentials required`)).toHaveAttribute(
     'title',
-    'This backend requires a token. Select Enter token to continue.'
+    'Credentials required. Select Enter token to continue.'
   );
 });
 

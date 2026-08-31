@@ -658,9 +658,19 @@ function formatCredentialStatus(rejected: boolean): string {
 }
 
 function describeCredentialStatus(rejected: boolean): string {
-  return rejected
-    ? 'Backend rejected this token. Select Change to enter the current one.'
-    : 'This backend requires a token. Select Enter token to continue.';
+  return rejected ? 'Select Change to enter the current token.' : 'Select Enter token to continue.';
+}
+
+// Every status detail belongs in the Status icon's hover text. Putting it in the server
+// cell instead lengthens that cell, which widens the table and hides the trailing columns.
+function describeServerStatus(status: ServerStatus, server: OptimizeServerEntry | null): string {
+  const statusText = status === 'unauthorized'
+    ? formatCredentialStatus(isCredentialRejection(server))
+    : formatServerStatus(status);
+  const detail = status === 'unauthorized'
+    ? describeCredentialStatus(isCredentialRejection(server))
+    : server?.error ?? null;
+  return detail ? `${statusText}. ${detail}` : statusText;
 }
 
 function formatServerStatus(status: ServerStatus): string {
@@ -1634,14 +1644,14 @@ export default function OptimizeAndExportPage() {
                 editClassName="w-full border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
               />
               {/*
-                * Do not add text to this line without being asked. Every addition lengthens it,
-                * which widens this cell, makes the table scroll horizontally, and pushes the
-                * Status and Actions columns out of view.
+                * Do not add text to this line without being asked, and never put a status or
+                * error message here. Every addition lengthens the line, which widens this cell,
+                * makes the table scroll horizontally, and pushes the Status and Actions columns
+                * out of view. Status detail belongs in the Status icon's hover text.
                 */}
-              <span className={`mt-1 block truncate text-xs ${server.status === 'incompatible' ? 'text-amber-700' : 'text-gray-500'}`}>
+              <span className="mt-1 block truncate text-xs text-gray-500">
                 Last checked: {formatCheckedTime(server.lastCheckedAt)}
                 {server.pingMs !== null ? ` · ${server.pingMs} ms` : ''}
-                {server.status !== 'incompatible' && server.error && server.error !== 'Backend is not responding.' ? ` · ${server.error}` : ''}
               </span>
             </span>
           </label>
@@ -1715,9 +1725,7 @@ export default function OptimizeAndExportPage() {
         const statusText = status === 'unauthorized'
           ? formatCredentialStatus(rejected)
           : formatServerStatus(status);
-        const hoverText = status === 'unauthorized'
-          ? describeCredentialStatus(rejected)
-          : formatServerStatus(status);
+        const hoverText = describeServerStatus(status, server);
         const label = row.kind === 'auto'
           ? `Auto status: ${statusText}`
           : `${row.server.endpoint} status: ${statusText}`;

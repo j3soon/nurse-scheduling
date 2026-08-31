@@ -539,7 +539,11 @@ describe('OptimizeAndExportPage error handling', () => {
     optionsUnavailable = true;
     await user.click(screen.getByRole('button', { name: /check backend/i }));
 
-    await expect(screen.findByText(/optimization options are temporarily unavailable/i)).resolves.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText(`${LOCAL_API_URL} status: Online`)).toHaveAttribute(
+      'title',
+      'Online. Optimization options are temporarily unavailable.'
+    ));
+    expect(screen.queryByText(/optimization options are temporarily unavailable/i)).not.toBeInTheDocument();
     expect(screen.getByText('Server: Online')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: /solver/i })).toHaveValue('ortools/cp-sat');
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeEnabled();
@@ -556,7 +560,11 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByText('Server: Options unavailable')).resolves.toBeInTheDocument();
-    expect(screen.getAllByText(/backend returned invalid optimization options/i).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Options unavailable`)).toHaveAttribute(
+      'title',
+      'Options unavailable. Backend returned invalid optimization options.'
+    );
+    expect(screen.queryByText(/backend returned invalid optimization options/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Server: Incompatible')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
   });
@@ -1268,6 +1276,52 @@ describe('OptimizeAndExportPage error handling', () => {
     await expect(screen.findByText(/frontend and backend versions do not match/i)).resolves.toBeInTheDocument();
   });
 
+  it('reports a failed info probe through the Status icon only', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(() => Promise.resolve({ ok: false, status: 503 }));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Offline`)).toHaveAttribute(
+      'title',
+      'Offline. Backend info request failed with status 503.'
+    );
+    expect(screen.queryByText(/backend info request failed/i)).not.toBeInTheDocument();
+  });
+
+  it('reports an unreachable backend through the Status icon only', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(() => Promise.reject(new Error('connection refused')));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Offline`)).toHaveAttribute(
+      'title',
+      'Offline. Backend is not responding.'
+    );
+    expect(screen.queryByText(/is not responding/i)).not.toBeInTheDocument();
+  });
+
+  it('reports an incompatible backend through the Status icon only', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/optimize/options')
+        ? optimizationOptionsResponse()
+        : healthyResponse({ api_version: '0.1.0' })
+    ));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Incompatible')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Incompatible`)).toHaveAttribute(
+      'title',
+      'Incompatible. Unsupported API version "0.1.0". Expected "0.2.0".'
+    );
+    expect(screen.queryByText(/unsupported api version/i)).not.toBeInTheDocument();
+  });
+
   it('shows a backend check failure message', async () => {
     (fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network failed'));
 
@@ -1947,7 +2001,7 @@ describe('OptimizeAndExportPage backend authentication', () => {
     expect(screen.queryByText(/Last checked:.*credential/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText(`${LOCAL_API_URL} status: Credentials required`)).toHaveAttribute(
       'title',
-      'This backend requires a token. Select Enter token to continue.'
+      'Credentials required. Select Enter token to continue.'
     );
     expect(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
@@ -2021,7 +2075,7 @@ describe('OptimizeAndExportPage backend authentication', () => {
     // A rejected token is distinguished only by the Status icon and its hover text.
     expect(screen.getByLabelText(`${LOCAL_API_URL} status: Credentials rejected`)).toHaveAttribute(
       'title',
-      'Backend rejected this token. Select Change to enter the current one.'
+      'Credentials rejected. Select Change to enter the current token.'
     );
     expect(screen.queryByText(/Last checked:.*rejected/i)).not.toBeInTheDocument();
 
