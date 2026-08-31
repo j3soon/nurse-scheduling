@@ -142,13 +142,14 @@ docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
 ```
 
 ```sh
-# persist Codex/Claude Code/OpenCode auth/config across containers
+# persist Codex/Claude Code/OpenCode/Pi auth/config across containers
 mkdir -p ~/docker/.codex
 mkdir -p ~/docker/.claude
 touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/Claude Code/OpenCode config
+mkdir -p ~/docker/pi/agent
+# mount project files and Codex/Claude Code/OpenCode/Pi config
 docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
@@ -156,6 +157,7 @@ docker run --rm -it --network=host \
   -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v ~/docker/pi/agent:/root/.pi/agent \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev
@@ -172,13 +174,14 @@ The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
 wheel. Use another environment for the `pulp/highs` solver.
 
 ```sh
-# persist Codex/Claude Code/OpenCode auth/config across containers
+# persist Codex/Claude Code/OpenCode/Pi auth/config across containers
 mkdir -p ~/docker/.codex
 mkdir -p ~/docker/.claude
 touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/Claude Code/OpenCode config
+mkdir -p ~/docker/pi/agent
+# mount project files and Codex/Claude Code/OpenCode/Pi config
 docker run --rm -it --gpus all --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
@@ -186,6 +189,7 @@ docker run --rm -it --gpus all --network=host \
   -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v ~/docker/pi/agent:/root/.pi/agent \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev-cuopt
@@ -204,7 +208,8 @@ mkdir -p ~/docker/.claude
 touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/Claude Code/OpenCode config, and forward X11 display
+mkdir -p ~/docker/pi/agent
+# mount project files and Codex/Claude Code/OpenCode/Pi config, and forward X11 display
 docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
@@ -212,6 +217,7 @@ docker run --rm -it --network=host \
   -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v ~/docker/pi/agent:/root/.pi/agent \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   -e DISPLAY=$DISPLAY \

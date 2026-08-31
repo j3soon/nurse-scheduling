@@ -79,6 +79,17 @@ RUN opencode_version="$(opencode --version)" \
     && test -n "$opencode_version" \
     && echo "Installed OpenCode CLI: $opencode_version"
 
+# Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/pi/Dockerfile
+# Install Pi Coding Agent
+# This remote metadata changes when the npm latest tag advances, which
+# invalidates the install layer during normal Docker builds.
+ADD https://registry.npmjs.org/@earendil-works%2Fpi-coding-agent/latest /tmp/pi-coding-agent-latest.json
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+RUN pi_version="$(pi --version)" \
+    && test -n "$pi_version" \
+    && echo "Installed Pi Coding Agent: $pi_version"
+RUN mkdir -p /root/.pi/agent
+
 WORKDIR /app
 
 ENTRYPOINT ["/bin/bash"]

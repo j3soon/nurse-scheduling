@@ -32,8 +32,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Never use a coding agent identity as the Git author, committer, or co-author.
   Use the repository's configured human identity. If none is available, ask the
   user instead of inventing one.
-- For Codex-created commits, include a descriptive body that ends with a
-  separate `by Codex` line.
+- For commits created by a coding agent, include a descriptive body that
+  ends with a separate `by <Harness> (<Model>)` line, using the actual
+  harness and model names. For example, `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
 - Build multi-paragraph commit messages with separate `git commit -m`
   arguments. Do not embed escaped `\n` sequences because Git stores them
   literally instead of converting them to newlines.
