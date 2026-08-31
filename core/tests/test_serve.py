@@ -21,6 +21,7 @@
 
 import asyncio
 import json
+import logging
 import multiprocessing
 import os
 import subprocess
@@ -37,6 +38,7 @@ from fastapi.testclient import TestClient
 
 from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
+from nurse_scheduling.server.auth import create_stream_token, extract_bearer_token, verify_stream_token
 from nurse_scheduling.server.config import (
     DEFAULT_JOB_RETENTION_SECONDS,
     DEFAULT_MAX_EVENTS_PER_JOB,
@@ -240,8 +242,12 @@ def _client(runner=None, *, start_background=True, settings=None) -> TestClient:
     return TestClient(app)
 
 
-def _create(client: TestClient, **data):
-    return client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n", **data})
+def _create(client: TestClient, headers=None, **data):
+    return client.post(
+        "/optimize",
+        data={"yaml_content": "apiVersion: alpha\n", **data},
+        headers=headers,
+    )
 
 
 def _wait_for_terminal(
@@ -310,6 +316,7 @@ def test_info_and_readiness_report_status_without_caching():
             "started_at": client.app.state.started_at.isoformat(),
             "job_backend": "memory",
             "job_store_id": client.app.state.job_store.store_id,
+            "auth": {"required": False, "scheme": "bearer"},
             "claimed_performance": None,
             "jobs": {"running": 0, "queued": 0, "cancelling": 0},
             "workers": {"online": 0},
@@ -2074,3 +2081,307 @@ def test_file_input_uses_configured_limit_above_multipart_text_default():
             files={"file": ("schedule.yaml", b"x" * (max_yaml_bytes + 1), "application/x-yaml")},
         )
         assert oversized.status_code == 413
+
+
+AUTH_TOKEN = "integration-shared-token"
+
+
+def _auth_header(token: str = AUTH_TOKEN) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_discovery_routes_stay_public_when_authentication_is_enabled():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        info = client.get("/info")
+
+        assert info.status_code == 200
+        assert info.json()["auth"] == {"required": True, "scheme": "bearer"}
+        assert client.get("/ready").status_code == 200
+
+
+def test_protected_routes_reject_requests_without_the_shared_token():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        for response in (
+            client.get("/"),
+            client.get("/optimize/options"),
+            _create(client),
+            client.get("/optimize/any"),
+            client.get("/optimize/any/events"),
+            client.get("/optimize/any/xlsx"),
+            client.post("/optimize/any/cancel"),
+            client.post("/optimize/any/finish-now"),
+            client.delete("/optimize/any"),
+        ):
+            assert response.status_code == 401
+            assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Authorization": f"Bearer {AUTH_TOKEN}-wrong"},
+        {"Authorization": AUTH_TOKEN},
+        {"Authorization": f"Basic {AUTH_TOKEN}"},
+        {"Authorization": "Bearer "},
+    ],
+)
+def test_protected_routes_reject_malformed_or_incorrect_credentials(headers):
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        assert client.get("/optimize/options", headers=headers).status_code == 401
+
+
+def test_protected_routes_accept_the_configured_shared_token():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        assert client.get("/", headers=_auth_header()).status_code == 200
+        assert client.get("/optimize/options", headers=_auth_header()).status_code == 200
+        # The scheme is matched case-insensitively, as required by RFC 9110.
+        assert client.get("/optimize/options", headers={"Authorization": f"bearer {AUTH_TOKEN}"}).status_code == 200
+
+        created = client.post(
+            "/optimize",
+            data={"yaml_content": "apiVersion: alpha\n"},
+            headers=_auth_header(),
+        )
+        assert created.status_code == 202
+        job_id = created.json()["id"]
+        assert client.get(f"/optimize/{job_id}", headers=_auth_header()).status_code == 200
+
+
+MISSING_JOB_ID = "job_does_not_exist"
+
+
+def _stream_status(client: TestClient, job_id: str, query: str = "", **kwargs) -> int:
+    """Return the status of an event-stream request without consuming the stream.
+
+    An unknown job is rejected with 404 only after credentials are accepted, so the status
+    distinguishes an authorization failure from a missing job without opening a stream.
+    """
+    return client.get(f"/optimize/{job_id}/events{query}", **kwargs).status_code
+
+
+def test_event_stream_links_carry_a_scoped_token_when_authentication_is_enabled():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        job = _create(client, headers=_auth_header()).json()
+        events_path, separator, query = job["links"]["events"].partition("?")
+
+        assert events_path == f"/optimize/{job['id']}/events"
+        assert separator == "?"
+        assert query.startswith("token=")
+
+
+def test_event_stream_links_stay_plain_without_authentication():
+    with _client(start_background=False) as client:
+        job = _create(client).json()
+
+        assert job["links"]["events"] == f"/optimize/{job['id']}/events"
+
+
+def test_event_stream_accepts_either_the_shared_token_or_a_stream_token():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        stream_token = create_stream_token(AUTH_TOKEN, MISSING_JOB_ID, ttl_seconds=60)
+
+        assert _stream_status(client, MISSING_JOB_ID, f"?token={stream_token}") == 404
+        assert _stream_status(client, MISSING_JOB_ID, headers=_auth_header()) == 404
+
+
+def test_event_stream_rejects_missing_or_unusable_stream_tokens():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        other_job_token = create_stream_token(AUTH_TOKEN, "job_for_someone_else", ttl_seconds=60)
+
+        assert _stream_status(client, MISSING_JOB_ID) == 401
+        assert _stream_status(client, MISSING_JOB_ID, f"?token={other_job_token}") == 401
+        assert _stream_status(client, MISSING_JOB_ID, "?token=9999999999.deadbeef") == 401
+        assert _stream_status(client, MISSING_JOB_ID, "?token=nonsense") == 401
+        assert _stream_status(client, MISSING_JOB_ID, "?token=not-a-number.deadbeef") == 401
+        assert _stream_status(client, MISSING_JOB_ID, "?token=") == 401
+
+
+def test_stream_tokens_do_not_authorize_other_routes():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        stream_token = create_stream_token(AUTH_TOKEN, MISSING_JOB_ID, ttl_seconds=60)
+
+        assert client.get(f"/optimize/options?token={stream_token}").status_code == 401
+
+
+def test_stream_token_lifetime_covers_the_longest_allowed_run():
+    """A stream must stay authorized for a full optimization plus its termination grace."""
+    settings = _settings(max_timeout_seconds=120, default_timeout_seconds=60, timeout_grace_seconds=5.5)
+
+    assert settings.stream_token_ttl_seconds == 120 + 6 + 10
+
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        job = _create(client, headers=_auth_header()).json()
+        expiry = int(job["links"]["events"].split("token=")[1].split(".")[0])
+        expected_ttl = client.app.state.settings.stream_token_ttl_seconds
+        issued_ttl = expiry - int(datetime.now(timezone.utc).timestamp())
+
+        assert expected_ttl - 5 <= issued_ttl <= expected_ttl
+
+
+def test_stream_tokens_are_scoped_signed_and_expiring():
+    issued_at = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    token = create_stream_token(AUTH_TOKEN, "job_1", now=issued_at, ttl_seconds=60)
+
+    assert verify_stream_token(AUTH_TOKEN, "job_1", token, now=issued_at)
+    assert verify_stream_token(AUTH_TOKEN, "job_1", token, now=issued_at + timedelta(seconds=60))
+    assert not verify_stream_token(AUTH_TOKEN, "job_1", token, now=issued_at + timedelta(seconds=61))
+    assert not verify_stream_token(AUTH_TOKEN, "job_2", token, now=issued_at)
+    assert not verify_stream_token("a-different-shared-token", "job_1", token, now=issued_at)
+    assert not verify_stream_token(AUTH_TOKEN, "job_1", None, now=issued_at)
+
+
+def test_rejected_requests_explain_the_failure_without_leaking_the_token():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        missing = client.get("/optimize/options")
+        invalid = client.get("/optimize/options", headers={"Authorization": "Bearer nope"})
+
+        assert missing.json() == {"detail": "Backend credentials are required."}
+        assert invalid.json() == {"detail": "Backend credentials are invalid."}
+        assert AUTH_TOKEN not in missing.text
+        assert AUTH_TOKEN not in invalid.text
+
+
+def test_browser_preflight_allows_the_authorization_header():
+    """Browsers send the token only if the preflight advertises the header as allowed."""
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        response = client.options(
+            "/optimize/options",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+
+        assert response.status_code == 200
+        allowed = response.headers["access-control-allow-headers"].lower()
+        assert "authorization" in allowed or allowed == "*"
+        assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+@pytest.mark.parametrize(
+    "header_value,expected",
+    [
+        (None, None),
+        ("", None),
+        ("Bearer", None),
+        ("Bearer ", None),
+        ("Bearer    ", None),
+        ("Basic abc", None),
+        ("abc", None),
+        (f"Bearer {AUTH_TOKEN}", AUTH_TOKEN),
+        (f"bearer {AUTH_TOKEN}", AUTH_TOKEN),
+        (f"BEARER {AUTH_TOKEN}", AUTH_TOKEN),
+        (f"Bearer   {AUTH_TOKEN}  ", AUTH_TOKEN),
+    ],
+)
+def test_bearer_header_parsing_covers_malformed_values(header_value, expected):
+    assert extract_bearer_token(header_value) == expected
+
+
+@pytest.mark.parametrize(
+    "raw_value,expected",
+    [("true", True), ("1", True), ("yes", True), ("on", True), ("false", False), ("0", False), ("off", False)],
+)
+def test_required_authentication_accepts_boolean_spellings(monkeypatch, raw_value, expected):
+    monkeypatch.setenv("API_AUTH_REQUIRED", raw_value)
+    monkeypatch.setenv("API_AUTH_TOKEN", AUTH_TOKEN)
+
+    assert ServerSettings.from_env().auth_required is expected
+
+
+def test_required_authentication_rejects_a_non_boolean_value(monkeypatch):
+    monkeypatch.setenv("API_AUTH_REQUIRED", "maybe")
+    monkeypatch.setenv("API_AUTH_TOKEN", AUTH_TOKEN)
+
+    with pytest.raises(ValueError, match="API_AUTH_REQUIRED must be a boolean"):
+        ServerSettings.from_env()
+
+
+@pytest.mark.parametrize("token", ["shared-token-with-emoji-\U0001f510", "shared-token-with-accents-é"])
+def test_non_ascii_shared_tokens_are_rejected_at_startup(token):
+    """An HTTP header cannot carry these, so the server must not start and reject everyone."""
+    with pytest.raises(ValueError, match="API_AUTH_TOKEN must contain only ASCII characters"):
+        _settings(auth_token=token)
+
+
+def test_routes_stay_open_when_no_shared_token_is_configured():
+    with _client(start_background=False) as client:
+        assert client.get("/").status_code == 200
+        assert client.get("/optimize/options").status_code == 200
+        assert client.get("/info").json()["auth"] == {"required": False, "scheme": "bearer"}
+
+
+@pytest.mark.parametrize(
+    "configured,expected",
+    [
+        (None, None),
+        ("", None),
+        ("   ", None),
+        (f"  {AUTH_TOKEN}  ", AUTH_TOKEN),
+    ],
+)
+def test_blank_shared_tokens_disable_authentication(configured, expected):
+    assert _settings(auth_token=configured).auth_token == expected
+
+
+def test_short_shared_tokens_are_accepted_with_a_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="nurse_scheduling.server.auth"):
+        assert _settings(auth_token="sk-123").auth_token == "sk-123"
+
+    assert "shorter than 16 characters" in caplog.text
+
+
+def test_server_settings_load_the_shared_token_from_env(monkeypatch):
+    monkeypatch.setenv("API_AUTH_TOKEN", AUTH_TOKEN)
+    assert ServerSettings.from_env().auth_token == AUTH_TOKEN
+
+    monkeypatch.delenv("API_AUTH_TOKEN")
+    assert ServerSettings.from_env().auth_token is None
+
+
+def test_authentication_stays_off_by_default_for_local_runs(monkeypatch):
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("API_AUTH_REQUIRED", raising=False)
+    settings = ServerSettings.from_env()
+
+    assert settings.auth_required is False
+    assert settings.auth_token is None
+
+
+def test_enabled_authentication_requires_a_token(monkeypatch):
+    monkeypatch.setenv("API_AUTH_REQUIRED", "true")
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty"):
+        ServerSettings.from_env()
+
+    monkeypatch.setenv("API_AUTH_TOKEN", "   ")
+    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty"):
+        ServerSettings.from_env()
+
+
+def test_enabled_authentication_accepts_a_configured_token(monkeypatch):
+    monkeypatch.setenv("API_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("API_AUTH_TOKEN", AUTH_TOKEN)
+    settings = ServerSettings.from_env()
+
+    assert settings.auth_required is True
+    assert settings.auth_token == AUTH_TOKEN
+
+
+def test_authentication_can_be_turned_off_deliberately(monkeypatch):
+    monkeypatch.setenv("API_AUTH_REQUIRED", "false")
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    settings = ServerSettings.from_env()
+
+    assert settings.auth_required is False
+    assert settings.auth_token is None
+    with _client(start_background=False, settings=_settings(auth_required=False)) as client:
+        assert client.get("/optimize/options").status_code == 200
+
+
+def test_a_token_alone_still_enables_authentication():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        assert client.get("/optimize/options").status_code == 401
+        assert client.get("/optimize/options", headers=_auth_header()).status_code == 200

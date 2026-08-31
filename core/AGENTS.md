@@ -38,6 +38,21 @@ test paths when a narrower suite is known to be sufficient.
 - A worker that cannot persist an execution outcome must relinquish its lease.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
+## Server Authentication
+- `API_AUTH_TOKEN` is optional. Unset means the deployment serves without
+  authentication, which keeps local runs and older clients working.
+- `API_AUTH_REQUIRED` makes a token mandatory and is set in the deployment images,
+  so a published backend fails to start rather than serving openly by accident.
+  Leave it unset outside those images.
+- `/optimize/{job_id}/events` accepts a signed, job-scoped, expiring URL token as
+  well as the bearer header, because `EventSource` cannot set headers. Mint it
+  into `links.events`; never put `API_AUTH_TOKEN` itself in a URL. Its lifetime
+  comes from `ServerSettings.stream_token_ttl_seconds`, which tracks the longest
+  run the deployment allows.
+- Keep `/info` and `/ready` public. Clients discover the requirement from
+  `/info`, and deployment probes must not need credentials. Gate every other
+  route with the shared-token dependency.
+
 ## Testing
 - Normal tests live under `tests/`.
 - Keep server-facing solver traits in

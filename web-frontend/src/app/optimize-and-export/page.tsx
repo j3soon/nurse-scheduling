@@ -22,11 +22,12 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { FiDownload, FiAlertCircle, FiAlertTriangle, FiCheckCircle, FiLoader, FiRefreshCw, FiWifi, FiWifiOff, FiActivity, FiTrash2, FiPlus } from 'react-icons/fi';
+import { FiDownload, FiAlertCircle, FiAlertTriangle, FiCheckCircle, FiLoader, FiLock, FiRefreshCw, FiShieldOff, FiWifi, FiWifiOff, FiActivity, FiTrash2, FiPlus } from 'react-icons/fi';
 import { DataTable } from '@/components/DataTable';
 import { InlineEdit } from '@/components/InlineEdit';
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import NumberInput from '@/components/NumberInput';
+import BackendTokenField from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizeSchedulingStateWithMapping } from '@/utils/anonymizeSchedulingState';
@@ -35,9 +36,11 @@ import { generateYamlFromState } from '@/utils/yamlGenerator';
 import { DOCUMENTATION_URLS, GITHUB_PRIVACY_URL } from '@/constants/urls';
 import {
   BACKEND_API_CANDIDATES,
+  buildAuthHeaders,
   EXPECTED_BACKEND_SERVICE_NAME,
   isOptimizationOptionsResponse,
   LOCAL_BACKEND_API_URL,
+  parseAuthRequirement,
   selectPreferredServer,
   SUPPORTED_BACKEND_API_VERSION,
   type OptimizationOptionsResponse,
@@ -45,7 +48,7 @@ import {
 } from '@/app/optimize-and-export/serverSelection';
 import { CURRENT_APP_VERSION, parseVersionParts } from '@/utils/version';
 
-type ServerStatus = 'unchecked' | 'checking' | 'online' | 'offline' | 'incompatible' | 'degraded';
+type ServerStatus = 'unchecked' | 'checking' | 'online' | 'offline' | 'incompatible' | 'degraded' | 'unauthorized';
 type ServerSelection = 'auto' | string;
 
 type JsonFetchResult =
@@ -57,11 +60,14 @@ type JsonFetchResult =
 type OptimizationOptionsResult =
   | { kind: 'options'; options: OptimizationOptionsResponse }
   | { kind: 'invalid' }
+  | { kind: 'unauthorized' }
   | { kind: 'unavailable' };
 
 interface ServerInfoProbeResult {
   status: 'online' | 'incompatible' | 'offline';
   health: ServerInfoResponse | null;
+  // Missing on backends that predate optional authentication, which are always open.
+  authRequired: boolean;
   error: string | null;
 }
 
@@ -110,6 +116,10 @@ interface OptimizePhaseEvent {
 
 interface OptimizeServerEntry {
   endpoint: string;
+  // `token` is the credential used for this backend, kept out of storage unless remembered.
+  token: string | null;
+  rememberToken: boolean;
+  authRequired: boolean;
   status: ServerStatus;
   health: ServerInfoResponse | null;
   options: OptimizationOptionsResponse | null;
@@ -125,6 +135,7 @@ type BackendTableRow =
 
 interface StoredOptimizeServerEntry {
   endpoint: string;
+  token?: string;
 }
 
 interface StoredOptimizeServerOptions {
@@ -170,8 +181,12 @@ function createServerEntry(
   server: StoredOptimizeServerEntry,
   status: ServerStatus = 'unchecked',
 ): OptimizeServerEntry {
+  const storedToken = typeof server.token === 'string' ? server.token.trim() : '';
   return {
-    ...server,
+    endpoint: server.endpoint,
+    token: storedToken || null,
+    rememberToken: storedToken.length > 0,
+    authRequired: false,
     status,
     health: null,
     options: null,
@@ -194,6 +209,7 @@ function hasCustomServerOptions(
 ): boolean {
   return selectedServerEndpoint !== 'auto'
     || servers.length !== BACKEND_API_CANDIDATES.length
+    || servers.some(server => server.token !== null)
     || servers.some((server, index) => normalizeEndpoint(server.endpoint) !== BACKEND_API_CANDIDATES[index]);
 }
 
@@ -203,7 +219,9 @@ function toStoredServerOptions(
 ): StoredOptimizeServerOptions {
   return {
     appVersion: CURRENT_APP_VERSION,
-    servers: servers.map(({ endpoint }) => ({ endpoint })),
+    servers: servers.map(({ endpoint, token, rememberToken }) => (
+      rememberToken && token ? { endpoint, token } : { endpoint }
+    )),
     selectedServerEndpoint,
   };
 }
@@ -224,6 +242,7 @@ function dedupeServerEntries(servers: StoredOptimizeServerEntry[]): OptimizeServ
     seenEndpoints.add(endpoint);
     entries.push(createServerEntry({
       endpoint,
+      token: typeof server.token === 'string' ? server.token : undefined,
     }));
     return entries;
   }, []);
@@ -332,6 +351,7 @@ async function fetchServerInfo(
     return {
       status: 'offline',
       health: null,
+      authRequired: false,
       error: `Backend info request failed with status ${result.status}.`,
     };
   }
@@ -339,6 +359,7 @@ async function fetchServerInfo(
     return {
       status: 'offline',
       health: null,
+      authRequired: false,
       error: 'Backend is not responding.',
     };
   }
@@ -346,6 +367,7 @@ async function fetchServerInfo(
     return {
       status: 'incompatible',
       health: null,
+      authRequired: false,
       error: 'Backend returned invalid server information.',
     };
   }
@@ -377,24 +399,29 @@ async function fetchServerInfo(
     incompatibilities.push('Backend app version is missing.');
   }
 
+  const auth = parseAuthRequirement(info.auth);
   const health: ServerInfoResponse = {
     status: typeof info.status === 'string' ? info.status : 'missing',
     service_name: typeof info.service_name === 'string' ? info.service_name : 'missing',
     api_version: typeof info.api_version === 'string' ? info.api_version : 'missing',
     app_version: typeof info.app_version === 'string' ? info.app_version : 'missing',
+    auth,
     claimed_performance: parseClaimedPerformance(info.claimed_performance),
     jobs: info.jobs,
     workers: info.workers,
   };
+  const authRequired = auth?.required ?? false;
   return incompatibilities.length > 0
     ? {
         status: 'incompatible',
         health,
+        authRequired,
         error: incompatibilities.join(' '),
       }
     : {
         status: 'online',
         health,
+        authRequired,
         error: null,
       };
 }
@@ -403,6 +430,7 @@ async function fetchJsonWithTimeout(
   url: string,
   timeoutMs: number,
   signal?: AbortSignal,
+  headers?: Record<string, string>,
 ): Promise<JsonFetchResult> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -417,6 +445,7 @@ async function fetchJsonWithTimeout(
     const response = await fetch(url, {
       method: 'GET',
       cache: 'no-store',
+      headers,
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -438,11 +467,20 @@ async function fetchJsonWithTimeout(
 
 async function fetchOptimizationOptions(
   endpoint: string,
+  token: string | null,
   timeoutMs = HEALTH_CHECK_TIMEOUT_MS,
   signal?: AbortSignal,
 ): Promise<OptimizationOptionsResult> {
-  const result = await fetchJsonWithTimeout(`${endpoint}/optimize/options`, timeoutMs, signal);
+  const result = await fetchJsonWithTimeout(
+    `${endpoint}/optimize/options`,
+    timeoutMs,
+    signal,
+    buildAuthHeaders(token),
+  );
   if (result.kind === 'http-error') {
+    if (result.status === 401) {
+      return { kind: 'unauthorized' };
+    }
     return result.status === 404
       ? { kind: 'options', options: BACKWARD_COMPATIBLE_OPTIMIZATION_OPTIONS }
       : { kind: 'unavailable' };
@@ -491,6 +529,15 @@ async function getErrorDetail(response: Response): Promise<string> {
     return errorText;
   }
   return errorText;
+}
+
+const CREDENTIALS_REJECTED_MESSAGE = 'Backend credentials are missing or invalid. Enter the backend token and try again.';
+
+async function getServerErrorMessage(response: Response): Promise<string> {
+  if (response.status === 401) {
+    return CREDENTIALS_REJECTED_MESSAGE;
+  }
+  return `Server error (${response.status}): ${await getErrorDetail(response)}`;
 }
 
 function formatCheckedTime(date: Date | null): string {
@@ -593,7 +640,7 @@ function getServerStatusBadgeClasses(status: ServerStatus): string {
   if (status === 'online') {
     return 'bg-green-50 text-green-700 ring-green-200';
   }
-  if (status === 'incompatible' || status === 'degraded') {
+  if (status === 'incompatible' || status === 'degraded' || status === 'unauthorized') {
     return 'bg-amber-50 text-amber-700 ring-amber-200';
   }
   if (status === 'offline') {
@@ -603,6 +650,20 @@ function getServerStatusBadgeClasses(status: ServerStatus): string {
     return 'bg-gray-50 text-gray-600 ring-gray-200';
   }
   return 'bg-gray-100 text-gray-600 ring-gray-200';
+}
+
+function isCredentialRejection(server: OptimizeServerEntry | null): boolean {
+  return server?.status === 'unauthorized' && server.token !== null;
+}
+
+function formatCredentialStatus(rejected: boolean): string {
+  return rejected ? 'Credentials rejected' : 'Credentials required';
+}
+
+function describeCredentialStatus(rejected: boolean): string {
+  return rejected
+    ? 'Backend rejected this token. Select Change to enter the current one.'
+    : 'This backend requires a token. Select Enter token to continue.';
 }
 
 function formatServerStatus(status: ServerStatus): string {
@@ -620,6 +681,9 @@ function formatServerStatus(status: ServerStatus): string {
   }
   if (status === 'degraded') {
     return 'Options unavailable';
+  }
+  if (status === 'unauthorized') {
+    return 'Credentials required';
   }
   return 'Unchecked';
 }
@@ -643,6 +707,7 @@ export default function OptimizeAndExportPage() {
   const [serverEntries, setServerEntries] = useState<OptimizeServerEntry[]>(initialServerOptions.current.servers);
   const [selectedServerEndpoint, setSelectedServerEndpoint] = useState<ServerSelection>(initialServerOptions.current.selectedServerEndpoint);
   const [editingServerEndpoint, setEditingServerEndpoint] = useState<string | null>(null);
+  const [editingTokenEndpoint, setEditingTokenEndpoint] = useState<string | null>(null);
   const [addingServer, setAddingServer] = useState(false);
   const [addServerError, setAddServerError] = useState<string | null>(null);
   const [lockedOptimizeEndpoint, setLockedOptimizeEndpoint] = useState<string | null>(null);
@@ -695,6 +760,8 @@ export default function OptimizeAndExportPage() {
       ? 'checking'
       : serverEntries.some(server => server.status === 'degraded')
         ? 'degraded'
+      : serverEntries.some(server => server.status === 'unauthorized')
+        ? 'unauthorized'
       : serverEntries.some(server => server.status === 'incompatible')
         ? 'incompatible'
       : serverEntries.some(server => server.status === 'offline')
@@ -730,6 +797,8 @@ export default function OptimizeAndExportPage() {
   const isOptimizeDisabled = isOptimizing || isRequiredDataMissing || !canUseActiveServer || !activeOptimizationOptions;
   const optimizeDisabledReason = isRequiredDataMissing
     ? 'Complete the missing schedule configuration before optimizing.'
+    : activeServerStatus === 'unauthorized'
+      ? 'This backend requires credentials. Enter its token to continue.'
     : activeServerStatus === 'degraded'
       ? 'Optimization options are unavailable. Check the backend and try again.'
     : !canUseActiveServer
@@ -862,7 +931,7 @@ export default function OptimizeAndExportPage() {
 
     void Promise.all([
       fetchServerInfo(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal),
-      fetchOptimizationOptions(endpoint, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal),
+      fetchOptimizationOptions(endpoint, server.token, INITIAL_HEALTH_CHECK_TIMEOUT_MS, controller.signal),
     ]).then(([result, options]) => {
       const pingMs = Math.round(performance.now() - startedAt);
       setServerEntries(currentServers => currentServers.map(currentServer => {
@@ -880,12 +949,18 @@ export default function OptimizeAndExportPage() {
           ? 'offline'
           : result.status === 'incompatible'
             ? 'incompatible'
-            : hasUsableOptions
-              ? 'online'
-              : 'degraded';
+            : options.kind === 'unauthorized'
+              ? 'unauthorized'
+              : hasUsableOptions
+                ? 'online'
+                : 'degraded';
+
         return {
           ...currentServer,
           status,
+          // A rejected token still means the backend requires one, even if `/info` predates
+          // the descriptor.
+          authRequired: result.authRequired || options.kind === 'unauthorized',
           health: result.health,
           options: result.status === 'offline'
             ? null
@@ -898,9 +973,12 @@ export default function OptimizeAndExportPage() {
             ? result.error
             : options.kind === 'options'
               ? null
-              : options.kind === 'invalid'
-                ? 'Backend returned invalid optimization options.'
-                : 'Optimization options are temporarily unavailable.',
+              : options.kind === 'unauthorized'
+                // Credential problems are shown by the Status icon, not by this line.
+                ? null
+                : options.kind === 'invalid'
+                  ? 'Backend returned invalid optimization options.'
+                  : 'Optimization options are temporarily unavailable.',
           lastCheckedAt: new Date(),
           pingMs,
         };
@@ -952,18 +1030,35 @@ export default function OptimizeAndExportPage() {
     };
   }, [startServerCheck]);
 
+  const getServerToken = useCallback((endpoint: string): string | null => {
+    const normalizedEndpoint = normalizeEndpoint(endpoint);
+    return serverEntriesRef.current.find(
+      server => normalizeEndpoint(server.endpoint) === normalizedEndpoint
+    )?.token ?? null;
+  }, []);
+
+  const authorizedFetch = useCallback((endpoint: string, path: string, init: RequestInit = {}): Promise<Response> => {
+    return fetch(buildApiUrl(endpoint, path), {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...buildAuthHeaders(getServerToken(endpoint)),
+      },
+    });
+  }, [getServerToken]);
+
   const getOptimizeJobStatus = useCallback(async (job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
-    const response = await fetch(buildApiUrl(resolvedOptimizeEndpoint, job.links.self), {
+    const response = await authorizedFetch(resolvedOptimizeEndpoint, job.links.self, {
       method: 'GET',
       cache: 'no-store',
     });
 
     if (!response.ok) {
-      throw new Error(`Server error (${response.status}): ${await getErrorDetail(response)}`);
+      throw new Error(await getServerErrorMessage(response));
     }
 
     return await response.json() as OptimizeJobResponse;
-  }, [resolvedOptimizeEndpoint]);
+  }, [authorizedFetch, resolvedOptimizeEndpoint]);
 
   const pollOptimizeJob = useCallback((job: OptimizeJobResponse): Promise<OptimizeJobResponse> => {
     return new Promise((resolve, reject) => {
@@ -1169,13 +1264,13 @@ export default function OptimizeAndExportPage() {
       formData.append('timeout', String(timeoutArg));
       formData.append('solver', solverArg);
 
-      const createResponse = await fetch(`${normalizeEndpoint(runEndpoint)}/optimize`, {
+      const createResponse = await authorizedFetch(runEndpoint, '/optimize', {
         method: 'POST',
         body: formData,
       });
 
       if (!createResponse.ok) {
-        throw new Error(`Server error (${createResponse.status}): ${await getErrorDetail(createResponse)}`);
+        throw new Error(await getServerErrorMessage(createResponse));
       }
 
       const createdJob = await createResponse.json() as OptimizeJobResponse;
@@ -1201,12 +1296,12 @@ export default function OptimizeAndExportPage() {
         throw new Error(`No downloadable schedule is available. Job outcome: ${completedJob.result?.outcome ?? completedJob.state}`);
       }
 
-      const xlsxResponse = await fetch(buildApiUrl(runEndpoint, completedJob.links.schedule), {
+      const xlsxResponse = await authorizedFetch(runEndpoint, completedJob.links.schedule, {
         method: 'GET',
       });
 
       if (!xlsxResponse.ok) {
-        throw new Error(`Server error (${xlsxResponse.status}): ${await getErrorDetail(xlsxResponse)}`);
+        throw new Error(await getServerErrorMessage(xlsxResponse));
       }
 
       // Get the blob data (XLSX file)
@@ -1225,7 +1320,7 @@ export default function OptimizeAndExportPage() {
       setSavedDownload({ url, filename });
       downloadFileFromUrl(url, filename);
 
-      void fetch(buildApiUrl(runEndpoint, completedJob.links.self), {
+      void authorizedFetch(runEndpoint, completedJob.links.self, {
         method: 'DELETE',
       }).catch(() => undefined);
 
@@ -1252,12 +1347,12 @@ export default function OptimizeAndExportPage() {
       const actionPath = action === 'cancel'
         ? currentJob?.links.cancellation ?? `/optimize/${currentJobId}/cancel`
         : currentJob?.links.early_completion ?? `/optimize/${currentJobId}/finish-now`;
-      const response = await fetch(buildApiUrl(resolvedOptimizeEndpoint, actionPath), {
+      const response = await authorizedFetch(resolvedOptimizeEndpoint, actionPath, {
         method: 'POST',
       });
 
       if (!response.ok) {
-        throw new Error(`Server error (${response.status}): ${await getErrorDetail(response)}`);
+        throw new Error(await getServerErrorMessage(response));
       }
 
       const updatedJob = await response.json() as OptimizeJobResponse;
@@ -1282,6 +1377,21 @@ export default function OptimizeAndExportPage() {
   const selectServer = (serverEndpoint: ServerSelection) => {
     setSelectedServerEndpoint(serverEndpoint);
     saveServerOptions(serverEntries, serverEndpoint);
+  };
+
+  const applyServerToken = (serverEndpoint: string, token: string | null, rememberToken: boolean) => {
+    const nextServers = serverEntries.map(server => (
+      server.endpoint === serverEndpoint
+        ? { ...server, token, rememberToken, status: 'unchecked' as const, error: null }
+        : server
+    ));
+    setServerEntries(nextServers);
+    saveServerOptions(nextServers);
+    setEditingTokenEndpoint(null);
+    const changedServer = nextServers.find(server => server.endpoint === serverEndpoint);
+    if (changedServer) {
+      startServerCheck(changedServer);
+    }
   };
 
   const isDuplicateServerEndpoint = (endpoint: string, currentEndpoint?: string) => {
@@ -1347,6 +1457,10 @@ export default function OptimizeAndExportPage() {
         ? {
             ...server,
             endpoint: normalizedEndpoint,
+            // A retyped URL can point at a different host, so the token is not carried over.
+            token: null,
+            rememberToken: false,
+            authRequired: false,
             status: 'unchecked' as const,
             health: null,
             options: null,
@@ -1416,6 +1530,7 @@ export default function OptimizeAndExportPage() {
     setServerEntries(nextServers);
     setSelectedServerEndpoint('auto');
     setEditingServerEndpoint(null);
+    setEditingTokenEndpoint(null);
     setAddingServer(false);
     setAddServerError(null);
     nextServers.forEach(server => {
@@ -1429,7 +1544,7 @@ export default function OptimizeAndExportPage() {
   ];
   const hasLocalBackend = isDuplicateServerEndpoint(LOCAL_BACKEND_API_URL);
   const hasCustomBackendSettings = hasCustomServerOptions(serverEntries, selectedServerEndpoint);
-  const isEditingBackendServer = Boolean(editingServerEndpoint || addingServer);
+  const isEditingBackendServer = Boolean(editingServerEndpoint || addingServer || editingTokenEndpoint);
   const finishBackendEndpointEdit = () => {
     setEditingServerEndpoint(null);
   };
@@ -1496,7 +1611,9 @@ export default function OptimizeAndExportPage() {
         }
 
         const { server } = row;
+        const showCredentials = server.authRequired || server.token !== null;
         return (
+          <div className="min-w-0 overflow-hidden">
           <label className="flex min-w-0 cursor-pointer items-start">
             <input
               type="radio"
@@ -1519,6 +1636,11 @@ export default function OptimizeAndExportPage() {
                 className="min-w-0 truncate text-sm font-medium text-gray-900"
                 editClassName="w-full border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
               />
+              {/*
+                * Do not add text to this line without being asked. Every addition lengthens it,
+                * which widens this cell, makes the table scroll horizontally, and pushes the
+                * Status and Actions columns out of view.
+                */}
               <span className={`mt-1 block truncate text-xs ${server.status === 'incompatible' ? 'text-amber-700' : 'text-gray-500'}`}>
                 Last checked: {formatCheckedTime(server.lastCheckedAt)}
                 {server.pingMs !== null ? ` · ${server.pingMs} ms` : ''}
@@ -1526,11 +1648,32 @@ export default function OptimizeAndExportPage() {
               </span>
             </span>
           </label>
+          {showCredentials && (
+            <div
+              className="pl-3"
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
+              <BackendTokenField
+                endpoint={server.endpoint}
+                token={server.token}
+                rememberToken={server.rememberToken}
+                isEditing={editingTokenEndpoint === server.endpoint}
+                disabled={isOptimizing}
+                onEdit={() => setEditingTokenEndpoint(server.endpoint)}
+                onCancel={() => setEditingTokenEndpoint(null)}
+                onSave={(token, rememberToken) => applyServerToken(server.endpoint, token, rememberToken)}
+                onClear={() => applyServerToken(server.endpoint, null, false)}
+              />
+            </div>
+          )}
+          </div>
         );
       },
     },
     {
       header: 'Activity',
+      width: 150,
       accessor: (row: BackendTableRow) => {
         const server = row.kind === 'auto' ? resolvedServer : row.server;
         const status = row.kind === 'auto' ? autoServerStatus : row.server.status;
@@ -1567,20 +1710,35 @@ export default function OptimizeAndExportPage() {
       align: 'center' as const,
       width: 80,
       accessor: (row: BackendTableRow) => {
+        const server = row.kind === 'auto' ? resolvedServer : row.server;
         const status = row.kind === 'auto' ? autoServerStatus : row.server.status;
+        // A rejected token and a missing one differ only here, so the icon and its hover
+        // text carry the distinction instead of lengthening the server description line.
+        const rejected = status === 'unauthorized' && isCredentialRejection(server);
+        const statusText = status === 'unauthorized'
+          ? formatCredentialStatus(rejected)
+          : formatServerStatus(status);
+        const hoverText = status === 'unauthorized'
+          ? describeCredentialStatus(rejected)
+          : formatServerStatus(status);
         const label = row.kind === 'auto'
-          ? `Auto status: ${formatServerStatus(status)}`
-          : `${row.server.endpoint} status: ${formatServerStatus(status)}`;
+          ? `Auto status: ${statusText}`
+          : `${row.server.endpoint} status: ${statusText}`;
+        const badgeClasses = rejected
+          ? 'bg-red-50 text-red-700 ring-red-200'
+          : getServerStatusBadgeClasses(status);
         return (
           <span
             aria-label={label}
-            title={formatServerStatus(status)}
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-md ring-1 ${getServerStatusBadgeClasses(status)}`}
+            title={hoverText}
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-md ring-1 ${badgeClasses}`}
           >
             {status === 'checking' ? (
               <FiLoader className="h-4 w-4 animate-spin" />
             ) : status === 'offline' ? (
               <FiWifiOff className="h-4 w-4" />
+            ) : status === 'unauthorized' ? (
+              rejected ? <FiShieldOff className="h-4 w-4" /> : <FiLock className="h-4 w-4" />
             ) : status === 'incompatible' ? (
               <FiAlertTriangle className="h-4 w-4" />
             ) : status === 'degraded' ? (
@@ -1663,7 +1821,7 @@ export default function OptimizeAndExportPage() {
     ? 'border-green-200 bg-green-50 text-green-700'
     : activeServerStatus === 'offline'
       ? 'border-red-200 bg-red-50 text-red-700'
-      : activeServerStatus === 'incompatible' || activeServerStatus === 'degraded'
+      : activeServerStatus === 'incompatible' || activeServerStatus === 'degraded' || activeServerStatus === 'unauthorized'
         ? 'border-amber-200 bg-amber-50 text-amber-700'
       : 'border-gray-200 bg-gray-50 text-gray-600';
   const serverStatusLabel = formatServerStatus(activeServerStatus);
@@ -1701,6 +1859,8 @@ export default function OptimizeAndExportPage() {
           <span className="shrink-0">
             {activeServerStatus === 'offline' ? (
               <FiWifiOff className="h-4 w-4" />
+            ) : activeServerStatus === 'unauthorized' ? (
+              <FiLock className="h-4 w-4" />
             ) : activeServerStatus === 'degraded' ? (
               <FiAlertCircle className="h-4 w-4" />
             ) : activeServerStatus === 'checking' ? (
@@ -1764,6 +1924,7 @@ export default function OptimizeAndExportPage() {
             <div className="space-y-3">
               <DataTable
                 title="Backend"
+                fixedLayout
                 columns={backendTableColumns}
                 data={backendRows}
                 onReorder={isOptimizing || isEditingBackendServer ? undefined : reorderBackendRows}

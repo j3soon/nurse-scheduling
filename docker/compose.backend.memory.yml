@@ -19,6 +19,10 @@ services:
       OPTIMIZE_DEFAULT_TIMEOUT_SECONDS: "${OPTIMIZE_DEFAULT_TIMEOUT_SECONDS:-300}"
       OPTIMIZE_MAX_TIMEOUT_SECONDS: "${OPTIMIZE_MAX_TIMEOUT_SECONDS:-3600}"
       OPTIMIZE_DEFAULT_PRETTIFY: "${OPTIMIZE_DEFAULT_PRETTIFY:-true}"
+      # The production image enables authentication, so this deployment refuses to start
+      # without a token. Serving it open needs a deliberate API_AUTH_REQUIRED=false.
+      API_AUTH_REQUIRED: "${API_AUTH_REQUIRED:-true}"
+      API_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
       CLAIMED_PERFORMANCE_SCORE: "${CLAIMED_PERFORMANCE_SCORE:-}"
       CLAIMED_PERFORMANCE_APP_VERSION: "${CLAIMED_PERFORMANCE_APP_VERSION:-}"
       CLAIMED_PERFORMANCE_MEASURED_AT: "${CLAIMED_PERFORMANCE_MEASURED_AT:-}"
@@ -60,6 +64,7 @@ services:
       DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS: ${DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS:-600}
       DIAGNOSTIC_JOB_TIMEOUT_SECONDS: ${DIAGNOSTIC_JOB_TIMEOUT_SECONDS:-3600}
       DIAGNOSTIC_REPORT_DIR: /reports
+      DIAGNOSTIC_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
     command: ["python", "-m", "nurse_scheduling.server.diagnostic"]
     volumes:
       - diagnostic-reports:/reports

@@ -20,6 +20,11 @@ ARG APP_VERSION
 RUN : "${APP_VERSION:?Set APP_VERSION from git describe before building}" \
     && printf '%s\n' "$APP_VERSION" > /app/nurse-scheduling/.app-version
 
+# Images built for deployment authenticate by default, so a container that is given no
+# API_AUTH_TOKEN refuses to start instead of serving openly. Running the server outside
+# these images leaves the setting unset, which keeps development unauthenticated.
+ENV API_AUTH_REQUIRED=true
+
 EXPOSE 8000
 
 CMD ["uvicorn", "nurse_scheduling.serve:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]

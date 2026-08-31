@@ -23,6 +23,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..scheduler import ORTOOLS_CP_SAT_SOLVER
+from .auth import (
+    AUTH_REQUIRED_ENV_NAME,
+    AUTH_TOKEN_ENV_NAME,
+    STREAM_TOKEN_GRACE_SECONDS,
+    normalize_auth_token,
+)
 from .solver_options import normalize_solver_option
 
 DEFAULT_MAX_RETAINED_JOBS = 128
@@ -185,6 +191,10 @@ class ServerSettings:
     """Time allowed for a solver to return after its requested timeout."""
     claimed_performance: ClaimedPerformance | None = None
     """Optional self-reported benchmark score and its provenance."""
+    auth_token: str | None = None
+    """Shared token required by protected routes, `None` to serve without authentication."""
+    auth_required: bool = False
+    """Whether this deployment must authenticate, which makes a missing token a startup failure."""
 
     def __post_init__(self) -> None:
         """Validate cross-field and direct-construction constraints.
@@ -233,6 +243,21 @@ class ServerSettings:
             raise TypeError("default_prettify must be a boolean")
         object.__setattr__(self, "solver_ids", normalized_solver_ids)
         object.__setattr__(self, "default_solver", normalized_default_solver)
+        object.__setattr__(self, "auth_token", normalize_auth_token(self.auth_token))
+        # Images built for deployment set this, so an unauthenticated public server stays a
+        # deliberate choice rather than the result of a forgotten token.
+        if self.auth_required and self.auth_token is None:
+            raise ValueError(f"{AUTH_REQUIRED_ENV_NAME} is set, so {AUTH_TOKEN_ENV_NAME} must not be empty")
+
+    @property
+    def stream_token_ttl_seconds(self) -> int:
+        """Lifetime of an event-stream token.
+
+        A stream stays open for at most one full optimization plus the grace period before a
+        timed-out solver is terminated, so the token outlives every legitimate stream while
+        still expiring soon after the longest run this deployment allows.
+        """
+        return self.max_timeout_seconds + math.ceil(self.timeout_grace_seconds) + STREAM_TOKEN_GRACE_SECONDS
 
     @classmethod
     def from_env(cls) -> "ServerSettings":
@@ -266,4 +291,6 @@ class ServerSettings:
                 DEFAULT_TIMEOUT_GRACE_SECONDS,
             ),
             claimed_performance=_claimed_performance(),
+            auth_token=os.getenv(AUTH_TOKEN_ENV_NAME),
+            auth_required=_boolean(AUTH_REQUIRED_ENV_NAME, False),
         )

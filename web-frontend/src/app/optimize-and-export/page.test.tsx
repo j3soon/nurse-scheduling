@@ -24,8 +24,10 @@ import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import {
+  buildAuthHeaders,
   createBackendApiCandidates,
   isOptimizationOptionsResponse,
+  parseAuthRequirement,
   selectPreferredServer,
   type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
@@ -211,6 +213,33 @@ async function editBackendEndpoint(user: ReturnType<typeof userEvent.setup>, fro
   await user.type(endpointInput, to);
   await user.tab();
 }
+
+describe('backend authentication discovery', () => {
+  it('treats a backend without an auth descriptor as open', () => {
+    expect(parseAuthRequirement(undefined)).toBeNull();
+    expect(parseAuthRequirement(null)).toBeNull();
+    expect(parseAuthRequirement('bearer')).toBeNull();
+    expect(parseAuthRequirement([])).toBeNull();
+    expect(parseAuthRequirement({ scheme: 'bearer' })).toBeNull();
+  });
+
+  it('reads the advertised requirement and scheme', () => {
+    expect(parseAuthRequirement({ required: true, scheme: 'Bearer' })).toEqual({
+      required: true,
+      scheme: 'bearer',
+    });
+    expect(parseAuthRequirement({ required: false, scheme: 'bearer' })).toEqual({
+      required: false,
+      scheme: 'bearer',
+    });
+    expect(parseAuthRequirement({ required: true })).toEqual({ required: true, scheme: 'bearer' });
+  });
+
+  it('sends an Authorization header only when a token is set', () => {
+    expect(buildAuthHeaders('secret')).toEqual({ Authorization: 'Bearer secret' });
+    expect(buildAuthHeaders(null)).toEqual({});
+  });
+});
 
 describe('optimize backend server selection', () => {
   it('excludes localhost from the default backend candidates', () => {
@@ -1784,5 +1813,242 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(optimizeButton);
 
     expect(fetch).not.toHaveBeenCalledWith('http://localhost:8000/optimize', expect.anything());
+  });
+});
+
+describe('OptimizeAndExportPage backend authentication', () => {
+  const AUTH_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
+  const BACKEND_TOKEN = 'shared-backend-token';
+  const protectedInfoResponse = () => healthyResponse({ auth: { required: true, scheme: 'bearer' } });
+  const unauthorizedResponse = () => ({
+    ok: false,
+    status: 401,
+    text: vi.fn().mockResolvedValue(JSON.stringify({ detail: 'Backend credentials are required.' })),
+  });
+
+  const readStoredServers = () => JSON.parse(
+    window.localStorage.getItem(AUTH_STORAGE_KEY) ?? '{"servers":[]}'
+  ).servers as Array<{ endpoint: string; token?: string }>;
+
+  const respondByUrl = (fetchMock: ReturnType<typeof vi.fn>) => {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/info')) {
+        return Promise.resolve(protectedInfoResponse());
+      }
+      if (requestUrl.endsWith('/optimize/options')) {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        return Promise.resolve(
+          headers.Authorization === `Bearer ${BACKEND_TOKEN}`
+            ? optimizationOptionsResponse()
+            : unauthorizedResponse()
+        );
+      }
+      return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+    });
+    return fetchMock;
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    MockEventSource.instances = [];
+    mockGenerateYamlFromState.mockReturnValue('apiVersion: alpha\ndescription: baseline\n');
+    mockRestorePeopleIdsInXlsx.mockClear();
+    mockRestorePeopleIdsInXlsx.mockImplementation(async blob => blob);
+    mockUseSchedulingData.mockReturnValue(createSchedulingData());
+    mockCurrentAppVersion.value = 'frontend-test';
+    vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('EventSource', undefined);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  });
+
+  it('keeps working unchanged against backends that do not advertise authentication', async () => {
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /enter token for/i })).not.toBeInTheDocument();
+    const optionsCall = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([url]) => String(url).endsWith('/optimize/options')
+    );
+    expect(optionsCall).toBeDefined();
+    expect((optionsCall?.[1] as RequestInit | undefined)?.headers ?? {}).not.toHaveProperty('Authorization');
+  });
+
+  it('reports that credentials are required and prompts for a token', async () => {
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Credentials required')).resolves.toBeInTheDocument();
+    // The token row and the Status icon carry this state, so the description line stays short.
+    expect(screen.getByText('Token required')).toBeInTheDocument();
+    expect(screen.queryByText(/Last checked:.*credential/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Credentials required`)).toHaveAttribute(
+      'title',
+      'This backend requires a token. Select Enter token to continue.'
+    );
+    expect(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+  });
+
+  it('authorizes the backend with an entered token and remembers it when asked', async () => {
+    const user = userEvent.setup();
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Credentials required');
+
+    await user.click(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` }));
+    await user.type(screen.getByLabelText(`Token for ${LOCAL_API_URL}`), BACKEND_TOKEN);
+    await user.click(screen.getByRole('checkbox', { name: /remember on this device/i }));
+    await user.click(screen.getByRole('button', { name: `Save token for ${LOCAL_API_URL}` }));
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.getByText('Token saved on this device')).toBeInTheDocument();
+    expect(readStoredServers()).toEqual([{ endpoint: LOCAL_API_URL, token: BACKEND_TOKEN }]);
+  });
+
+  it('uses a token for the session only when it is not remembered', async () => {
+    const user = userEvent.setup();
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Credentials required');
+
+    await user.click(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` }));
+    await user.type(screen.getByLabelText(`Token for ${LOCAL_API_URL}`), BACKEND_TOKEN);
+    await user.click(screen.getByRole('button', { name: `Save token for ${LOCAL_API_URL}` }));
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.getByText('Token set for this session')).toBeInTheDocument();
+    expect(readStoredServers()).toEqual([{ endpoint: LOCAL_API_URL }]);
+  });
+
+  it('sends a remembered token with optimization requests', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: LOCAL_API_URL, token: BACKEND_TOKEN }],
+      selectedServerEndpoint: 'auto',
+    }));
+    const fetchMock = respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/optimize'))).toBe(true));
+    const createCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/optimize'));
+    expect((createCall?.[1] as RequestInit).headers).toMatchObject({
+      Authorization: `Bearer ${BACKEND_TOKEN}`,
+    });
+  });
+
+  it('reports a rejected token and forgets it on request', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: LOCAL_API_URL, token: 'stale-token' }],
+      selectedServerEndpoint: 'auto',
+    }));
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Credentials required')).resolves.toBeInTheDocument();
+    // A rejected token is distinguished only by the Status icon and its hover text.
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Credentials rejected`)).toHaveAttribute(
+      'title',
+      'Backend rejected this token. Select Change to enter the current one.'
+    );
+    expect(screen.queryByText(/Last checked:.*rejected/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: `Forget token for ${LOCAL_API_URL}` }));
+
+    await waitFor(() => expect(readStoredServers()).toEqual([{ endpoint: LOCAL_API_URL }]));
+    expect(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` })).toBeInTheDocument();
+  });
+
+  it('surfaces a credentials failure that happens during a run', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: LOCAL_API_URL, token: BACKEND_TOKEN }],
+      selectedServerEndpoint: 'auto',
+    }));
+    // The token is rotated on the backend after the page has already gone online, so
+    // discovery keeps succeeding while the run itself is refused.
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/info')) {
+        return Promise.resolve(protectedInfoResponse());
+      }
+      if (requestUrl.endsWith('/optimize/options')) {
+        return Promise.resolve(optimizationOptionsResponse());
+      }
+      return Promise.resolve(unauthorizedResponse());
+    });
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+
+    await expect(
+      screen.findByText('Backend credentials are missing or invalid. Enter the backend token and try again.')
+    ).resolves.toBeInTheDocument();
+  });
+
+  it('keeps each backend token scoped to its own endpoint', async () => {
+    const SECOND_API_URL = 'http://localhost:8100';
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [
+        { endpoint: LOCAL_API_URL, token: BACKEND_TOKEN },
+        { endpoint: SECOND_API_URL, token: 'second-backend-token' },
+      ],
+      selectedServerEndpoint: 'auto',
+    }));
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    respondByUrl(fetchMock);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+
+    await waitFor(() => {
+      const optionsCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/optimize/options'));
+      expect(optionsCalls.length).toBeGreaterThanOrEqual(2);
+    });
+    const tokenFor = (endpoint: string) => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url) === `${endpoint}/optimize/options`);
+      return ((call?.[1] as RequestInit | undefined)?.headers as Record<string, string> | undefined)?.Authorization;
+    };
+
+    expect(tokenFor(LOCAL_API_URL)).toBe(`Bearer ${BACKEND_TOKEN}`);
+    expect(tokenFor(SECOND_API_URL)).toBe('Bearer second-backend-token');
+  });
+
+  it('drops a stored token when the backend URL is retyped', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: LOCAL_API_URL, token: BACKEND_TOKEN }],
+      selectedServerEndpoint: 'auto',
+    }));
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+
+    await user.dblClick(screen.getByTitle(LOCAL_API_URL));
+    const endpointInput = screen.getByDisplayValue(LOCAL_API_URL);
+    await user.clear(endpointInput);
+    await user.type(endpointInput, 'http://localhost:9000{Enter}');
+
+    await waitFor(() => expect(readStoredServers()).toEqual([{ endpoint: 'http://localhost:9000' }]));
   });
 });

@@ -23,11 +23,17 @@ export interface ClaimedPerformance {
   measured_at: string;
 }
 
+export interface AuthRequirement {
+  required: boolean;
+  scheme: string;
+}
+
 export interface ServerInfoResponse {
   status: string;
   service_name: string;
   api_version: string;
   app_version: string;
+  auth?: AuthRequirement | null;
   claimed_performance?: ClaimedPerformance | null;
   jobs?: {
     running: number;
@@ -75,6 +81,7 @@ export const LOCAL_BACKEND_API_URL = 'http://localhost:8000';
 export const PRODUCTION_BACKEND_API_URL = 'https://api.nursescheduling.org';
 export const SECONDARY_BACKEND_API_URL = 'https://api-secondary.nursescheduling.org';
 export const EXPECTED_BACKEND_SERVICE_NAME = 'nurse-scheduling-api';
+export const SUPPORTED_AUTH_SCHEME = 'bearer';
 export const SUPPORTED_BACKEND_API_VERSION = '0.2.0';
 export const SHOULD_DISABLE_PRODUCTION_BACKEND_API = process.env.NODE_ENV === 'test'
   || process.env.NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API === '1';
@@ -88,6 +95,26 @@ export function createBackendApiCandidates(disableHostedBackends: boolean): stri
 export const BACKEND_API_CANDIDATES = process.env.NODE_ENV === 'test'
   ? [LOCAL_BACKEND_API_URL]
   : createBackendApiCandidates(SHOULD_DISABLE_PRODUCTION_BACKEND_API);
+
+// Backends that predate optional authentication omit the field entirely, which keeps
+// this frontend compatible with them by treating a missing descriptor as an open server.
+export function parseAuthRequirement(value: unknown): AuthRequirement | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const candidate = value as Partial<AuthRequirement>;
+  if (typeof candidate.required !== 'boolean') {
+    return null;
+  }
+  return {
+    required: candidate.required,
+    scheme: typeof candidate.scheme === 'string' ? candidate.scheme.toLowerCase() : SUPPORTED_AUTH_SCHEME,
+  };
+}
+
+export function buildAuthHeaders(token: string | null): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export function selectPreferredServer(results: ServerInfoCheckResult[]): ServerInfoCheckResult | undefined {
   return [...results].sort((a, b) => a.index - b.index)[0];
