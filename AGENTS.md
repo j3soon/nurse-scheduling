@@ -9,44 +9,30 @@
 
 Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
-## Shared Workflow
-- For Linux setup, run `./scripts/setup_env.sh`.
-- Keep edits scoped to the requested module and preserve existing patterns.
-- Preserve each file's staged or unstaged state. Do not stage, unstage, or
-  commit changes unless explicitly asked. When asked to stage specific changes,
-  change only those index entries.
-- Keep commits focused by module (`core`, `web-frontend`, or `docs`). Changes
-  requiring both `core` and `web-frontend` may use one commit.
-- Avoid trailing spaces and end files with a newline.
+## Workflow
+- Linux setup: run `./scripts/setup_env.sh`.
+- Keep edits scoped to the requested module. Preserve existing patterns.
 - Run affected tests and lint checks before finishing.
-- Store generated screenshots and other disposable review output under the
-  repository-root `artifacts/` directory. This directory is ignored by Git.
-- Derive Git versions on the host for local Docker builds. Do not copy `.git`
-  into build contexts because linked worktrees store metadata elsewhere.
-- Record durable, generally applicable user guidance in the nearest relevant
-  `AGENTS.md`. Omit task-specific or temporary details.
-- Note potentially wasteful token use and uninformative tests, scripts, or runs.
-  Fix them when practical, otherwise report or document them for review.
-- Use Conventional Commits, scoped by module where applicable, for example:
-  `feat(core/serve): ...`, `fix(web-frontend): ...`, or `docs: ...`.
-- Never use a coding agent identity as the Git author, committer, or co-author.
-  Use the repository's configured human identity. If none is available, ask the
-  user instead of inventing one.
-- For commits created by a coding agent, include a descriptive body that
-  ends with a separate `by <Harness> (<Model>)` line, using the actual
-  harness and model names. For example, `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
-- Build multi-paragraph commit messages with separate `git commit -m`
-  arguments. Do not embed escaped `\n` sequences because Git stores them
-  literally instead of converting them to newlines.
+- Avoid trailing spaces. End files with a newline.
+- Store screenshots and other disposable review output in the Git-ignored repository-root `artifacts/`.
+- Derive Git versions on the host for local Docker builds. Never copy `.git` into build contexts (linked worktrees store metadata elsewhere).
+- Note wasteful token use and uninformative tests, scripts, or runs. Fix when practical, otherwise report or document.
+- Record durable, general user guidance in the nearest relevant `AGENTS.md`. Omit task-specific or temporary details.
 
-## Comment and Documentation Style
-- Keep comments and documentation minimal, concise, yet informative.
+## Git
+- Preserve each file's staged or unstaged state. Never stage, unstage, or commit unless explicitly asked. Stage only the requested index entries.
+- Keep commits focused by module (`core`, `web-frontend`, or `docs`). A `core` + `web-frontend` change may share one commit.
+- Use Conventional Commits, module-scoped where applicable, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `docs: ...`.
+- Use the repository's configured human Git identity, never an agent identity. If none is configured, ask the user.
+- Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
+- Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
+
+## Style
+- Keep comments and docs minimal, concise, yet informative.
 - Do not use em-dash or semicolon to connect sentences.
 
 ## Cross-Module Requirements
-- When renaming or deleting frontend people, dates, or shift types, sync all
-  references, including preferences and export layout entries.
+- When renaming or deleting frontend people, dates, or shift types, sync all references, including preferences and export layout entries.
 
 ## Pull Requests
-Include scope and rationale, linked issues when applicable, test/lint evidence,
-and screenshots for frontend UI changes.
+- Include scope and rationale, linked issues when applicable, test/lint evidence, and screenshots for frontend UI changes.
