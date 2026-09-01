@@ -17,8 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// This test is mostly AI generated.
-
 import { expect, test } from './test';
 import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
 

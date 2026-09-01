@@ -17,8 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// This test is mostly AI generated.
-
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import BackendTokenField from '@/components/BackendTokenField';
@@ -75,10 +73,15 @@ describe('BackendTokenField', () => {
     expect(screen.getByRole('button', { name: `Save token for ${ENDPOINT}` })).toBeDisabled();
   });
 
-  it('starts blank when no token is set', () => {
-    renderField({ isEditing: true });
+  it('does not save a blank token', async () => {
+    const user = userEvent.setup();
+    const { props } = renderField({ isEditing: true });
 
-    expect(screen.getByLabelText(`Token for ${ENDPOINT}`)).toHaveValue('');
+    const input = screen.getByLabelText(`Token for ${ENDPOINT}`);
+    expect(input).toHaveValue('');
+
+    await user.type(input, '{Enter}');
+    expect(props.onSave).not.toHaveBeenCalled();
   });
 
   it('saves a trimmed token with the chosen remember setting', async () => {

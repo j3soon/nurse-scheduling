@@ -225,7 +225,15 @@ def create_app(
                 maintenance.stop()
                 worker.stop()
 
-    app = FastAPI(title=TITLE, version=API_VERSION, lifespan=lifespan)
+    generated_docs_are_public = settings.auth_token is None
+    app = FastAPI(
+        title=TITLE,
+        version=API_VERSION,
+        lifespan=lifespan,
+        openapi_url="/openapi.json" if generated_docs_are_public else None,
+        docs_url="/docs" if generated_docs_are_public else None,
+        redoc_url="/redoc" if generated_docs_are_public else None,
+    )
     app.state.settings = settings
     app.state.job_store = store
     app.state.job_controller = controller

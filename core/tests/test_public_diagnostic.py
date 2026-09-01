@@ -1093,6 +1093,15 @@ def test_diagnostic_sends_the_configured_shared_token(tmp_path):
     assert seen_headers == ["Bearer diagnostic-shared-token"]
 
 
+def test_diagnostic_rejects_a_shared_token_for_an_http_target(tmp_path):
+    with pytest.raises(ValueError, match="DIAGNOSTIC_AUTH_TOKEN requires DIAGNOSTIC_TARGET_URL to use HTTPS"):
+        _diagnostic(
+            tmp_path,
+            target_url="http://backend.example.test",
+            auth_token="diagnostic-shared-token",
+        )
+
+
 def test_diagnostic_omits_the_header_without_a_shared_token(tmp_path):
     seen_headers: list[str | None] = []
 
@@ -1115,6 +1124,7 @@ def test_diagnostic_normalizes_the_configured_shared_token(tmp_path, configured,
 
 
 def test_diagnostic_reads_the_shared_token_from_env(monkeypatch):
+    monkeypatch.delenv("DIAGNOSTIC_AUTH_TOKEN", raising=False)
     monkeypatch.setenv("API_AUTH_TOKEN", "from-api-env")
     assert DiagnosticConfig.from_env().auth_token == "from-api-env"
 

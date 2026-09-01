@@ -2308,8 +2308,18 @@ def test_non_ascii_shared_tokens_are_rejected_at_startup(token):
 def test_routes_stay_open_when_no_shared_token_is_configured():
     with _client(start_background=False) as client:
         assert client.get("/").status_code == 200
+        assert client.get("/openapi.json").status_code == 200
+        assert client.get("/docs").status_code == 200
+        assert client.get("/redoc").status_code == 200
         assert client.get("/optimize/options").status_code == 200
         assert client.get("/info").json()["auth"] == {"required": False, "scheme": "bearer"}
+
+
+def test_generated_docs_are_disabled_when_authentication_is_enabled():
+    with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
+        for path in ("/openapi.json", "/docs", "/redoc"):
+            assert client.get(path).status_code == 404
+            assert client.get(path, headers=_auth_header()).status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -2358,6 +2368,14 @@ def test_enabled_authentication_requires_a_token(monkeypatch):
 
     monkeypatch.setenv("API_AUTH_TOKEN", "   ")
     with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty"):
+        ServerSettings.from_env()
+
+
+def test_enabled_authentication_rejects_a_short_token(monkeypatch):
+    monkeypatch.setenv("API_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("API_AUTH_TOKEN", "x")
+
+    with pytest.raises(ValueError, match="API_AUTH_TOKEN must be at least 16 characters"):
         ServerSettings.from_env()
 
 

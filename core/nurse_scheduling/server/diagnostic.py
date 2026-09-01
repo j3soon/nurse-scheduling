@@ -173,6 +173,8 @@ class DiagnosticConfig:
                 raise ValueError(f"{name} must be positive")
         object.__setattr__(self, "target_url", target)
         auth_token = (self.auth_token or "").strip()
+        if auth_token and parsed.scheme != "https":
+            raise ValueError("DIAGNOSTIC_AUTH_TOKEN requires DIAGNOSTIC_TARGET_URL to use HTTPS")
         object.__setattr__(self, "auth_token", auth_token or None)
 
     @classmethod

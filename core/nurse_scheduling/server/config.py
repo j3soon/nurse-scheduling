@@ -26,6 +26,7 @@ from ..scheduler import ORTOOLS_CP_SAT_SOLVER
 from .auth import (
     AUTH_REQUIRED_ENV_NAME,
     AUTH_TOKEN_ENV_NAME,
+    RECOMMENDED_AUTH_TOKEN_LENGTH,
     STREAM_TOKEN_GRACE_SECONDS,
     normalize_auth_token,
 )
@@ -243,11 +244,20 @@ class ServerSettings:
             raise TypeError("default_prettify must be a boolean")
         object.__setattr__(self, "solver_ids", normalized_solver_ids)
         object.__setattr__(self, "default_solver", normalized_default_solver)
-        object.__setattr__(self, "auth_token", normalize_auth_token(self.auth_token))
+        object.__setattr__(
+            self,
+            "auth_token",
+            normalize_auth_token(self.auth_token, warn_on_short=not self.auth_required),
+        )
         # Images built for deployment set this, so an unauthenticated public server stays a
         # deliberate choice rather than the result of a forgotten token.
         if self.auth_required and self.auth_token is None:
             raise ValueError(f"{AUTH_REQUIRED_ENV_NAME} is set, so {AUTH_TOKEN_ENV_NAME} must not be empty")
+        if self.auth_required and len(self.auth_token) < RECOMMENDED_AUTH_TOKEN_LENGTH:
+            raise ValueError(
+                f"{AUTH_REQUIRED_ENV_NAME} is set, so {AUTH_TOKEN_ENV_NAME} must be at least "
+                f"{RECOMMENDED_AUTH_TOKEN_LENGTH} characters"
+            )
 
     @property
     def stream_token_ttl_seconds(self) -> int:

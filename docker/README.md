@@ -24,7 +24,7 @@ Compose deployments are internet-facing, so they authenticate by default.
 `Dockerfile.api` and `Dockerfile.api.staging` set `API_AUTH_REQUIRED=true` in the
 image, which makes an empty `API_AUTH_TOKEN` a startup failure:
 
-```
+```text
 API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty
 ```
 
@@ -41,9 +41,9 @@ baked into the image.
 Running the server outside these images leaves `API_AUTH_REQUIRED` unset, so
 local development stays unauthenticated with no extra configuration.
 
-Use at least 16 characters. A shorter token still starts the server but logs a
-warning, which keeps short keys usable for local testing only. Requests present
-the token as a bearer credential:
+Use at least 16 characters. A deployment image rejects a shorter token. Servers
+run outside those images still accept one with a warning, which keeps short keys
+usable for local testing only. Requests present the token as a bearer credential:
 
 ```sh
 curl -H "Authorization: Bearer ${API_AUTH_TOKEN}" https://api.nursescheduling.org/optimize/options

@@ -224,6 +224,7 @@ Submit either a YAML file or a YAML string, but not both:
 
 ```sh
 curl -i \
+  -H "Authorization: Bearer $API_AUTH_TOKEN" \
   -F file=@core/tests/testcases/basics/01_1nurse_1shift_1day.yaml \
   -F timeout=60 \
   "$API_URL/optimize"
@@ -235,12 +236,15 @@ result:
 
 ```sh
 export JOB_ID="<job_id>"
+export EVENTS_URL="/optimize/<job_id>/events?token=<stream_token>"
 
-curl -N "$API_URL/optimize/$JOB_ID/events"
-curl -OJ "$API_URL/optimize/$JOB_ID/xlsx"
+curl -N "$API_URL$EVENTS_URL"
+curl -OJ -H "Authorization: Bearer $API_AUTH_TOKEN" \
+  "$API_URL/optimize/$JOB_ID/xlsx"
 
 # Delete retained data after the job reaches a terminal state.
-curl -i -X DELETE "$API_URL/optimize/$JOB_ID"
+curl -i -X DELETE -H "Authorization: Bearer $API_AUTH_TOKEN" \
+  "$API_URL/optimize/$JOB_ID"
 ```
 
 The server persists and replays `job.state_changed`, `job.phase_changed`,
@@ -333,8 +337,8 @@ default must remain within the configured minimum and maximum.
 
 `API_AUTH_TOKEN` is optional and unset by default, so a locally run server
 needs no credentials. Setting it turns on authentication for that deployment.
-Use at least 16 characters. A shorter token starts the server but logs a
-warning, so keep short keys to local testing.
+Use at least 16 characters. Deployment images reject a shorter token. Servers
+run outside those images accept one with a warning for local testing.
 
 The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployment that
 publishes the backend refuses to start without a token. Serving one without
