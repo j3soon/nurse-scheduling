@@ -29,8 +29,8 @@ Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.
 
 - **Reasoning** shows the model's own thinking for that step.
-- A tool name such as `view_schedule` or `edit_schedule` shows what the
-  assistant read or changed. An edit opens as a before and after comparison.
+- The `bash` tool shows the command the assistant ran and its bounded output.
+  The assistant may invoke the `nsctl` schema helper from Bash.
 - A row marked `failed` means that step changed nothing. This is the usual
   reason an answer arrives without a proposal.
 

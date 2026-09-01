@@ -7,9 +7,10 @@ use its Redis data.
 
 Image and document attachments are enabled by default and can be disabled
 independently. Supported documents are TXT, Markdown, CSV, PDF, and XLSX. The
-assistant reads and edits the schedule through tools and can propose a new
-schedule, which the browser applies only after the user approves it. This
-version excludes retrieval and repository access.
+assistant reads and edits the schedule in a disposable sandbox and can propose a new
+schedule, which the browser applies only after the user approves it.
+Each user message gets one temporary shell backed by E2B Cloud. This version
+excludes retrieval and repository access.
 
 ## Run locally
 
@@ -46,7 +47,8 @@ flowchart LR
     Browser -->|POST question<br/>and optional attachments| Session
     Session -->|OpenAI-compatible chat request| Provider[Model provider]
     Provider -->|streamed deltas and tool calls| Session
-    Session -->|read and edit schedule.yaml| Editor[Schedule editor<br/>validated draft]
+    Session -->|one fresh turn| Sandbox[E2B Cloud sandbox<br/>shell working copy]
+    Sandbox -->|candidate schedule| Validation[Trusted server validation<br/>and structural diff]
     Session -->|SSE text, reasoning, tool, and proposal events| Browser
     Browser -->|approve with base revision| Session
 ```
@@ -60,6 +62,13 @@ history.** This is intentional to avoid repeatedly consuming provider context
 tokens. History retains only attachment markers and document filenames.
 Schedules and attachments are labeled as untrusted data in the system prompt.
 
+Sandbox and conversation state are separate. The backend copies the current
+schedule to `/workspace/schedule.yaml` and searchable schema documentation to
+`/reference`, runs every command for that user message in the same sandbox,
+reads the candidate, and destroys the sandbox. A later message always starts a
+new sandbox. Only conversation history, the canonical schedule revision, and a
+pending validated proposal remain in application state.
+
 ## Reasoning and tool activity
 
 Providers stream reasoning in a field of its own, either `reasoning_content` or
@@ -69,8 +78,10 @@ the provider, so it cannot leak into an assistant message and costs nothing on
 later turns.
 
 The `tool` event carries the tool name, the arguments the model sent, the result
-it received, and whether the call did what it was asked. Nothing is truncated on
-the server. The browser reveals long output in portions instead.
+it received, and whether the call did what it was asked. Sandbox backends return
+raw command output to the AI layer. The AI `bash` tool then bounds stdout,
+stderr, and combined output before sending it to the model or browser. This
+policy stays outside the provider-neutral sandbox interface.
 
 ## Evaluation
 
@@ -91,8 +102,10 @@ The runner needs the same provider settings the service uses:
 | `AI_PROVIDER_BASE_URL` | Yes | OpenAI-compatible endpoint. |
 | `AI_PROVIDER_API_KEY` | Yes | Provider bearer token. |
 | `AI_PROVIDER_MODEL` | No | Defaults to `local-model`. |
+| `AI_SANDBOX_BACKEND` | Yes | Use `e2b`. |
+| `E2B_API_KEY` | Yes | E2B Cloud credential used by the trusted application. |
+| `E2B_TEMPLATE` | No | Defaults to `nurse-scheduling-ai-sandbox`. |
 | `AI_MAX_TOOL_CALLS` | No | Tool calls allowed for one case. |
-| `AI_MAX_SCHEDULE_EDITS` | No | Failed edits allowed for one case. |
 | `AI_EVAL_ARTIFACT_ROOT` | No | Report root, `artifacts` by default. |
 
 The launcher reads them from `.env.ai`, so the shortest form is:
@@ -109,29 +122,66 @@ set -a && . ./.env.ai && set +a
 cd core && python -m tests.ai_eval.runner --category 01-reading
 ```
 
-Select cases with `--case` and `--category`, both repeatable.
+Select cases with `--case` and `--category`, both repeatable. The runner creates
+and destroys one E2B sandbox per case, so start with selected cases before
+running the complete evaluation.
 
 Every run writes a report to its own directory under
 `artifacts/ai-evals/<timestamp>/`, alongside the performance benchmark reports,
 and prints the path when it finishes. `summary.md` holds the pass count, median
-seconds, provider turns, and tool calls per category, `results.jsonl` holds one
-line per case, and `cases/<id>.json` holds the whole run for one case: the
-prompt it was given, its reasoning, every tool call with its arguments and
-result, the answer, the proposed schedule, and each criterion with its
-outcome. Pass `--output-dir` to
+seconds, LLM inference time, and the aggregate sandbox timing per category. It
+also includes per-case tables for every sandbox timing and suspension metric.
+`results.jsonl` holds one line per case, and
+`cases/<id>.json` holds the whole run for one case: the prompt it was given,
+its reasoning, every tool call with its arguments and result, the answer, the
+proposed schedule, timing breakdown, and each criterion with its outcome. Pass `--output-dir` to
 choose the directory, which must not already exist, or set
 `AI_EVAL_ARTIFACT_ROOT` to move the root.
 
-## Proposal lifecycle
+Timing fields use wall-clock seconds. `end_to_end_seconds` covers the agent run.
+`llm_inference_seconds` sums only time awaiting provider stream events.
+`llm_turn_seconds` records that wait separately for each provider request.
+`sandbox.lifetime_seconds` covers the complete create-to-destroy lifecycle. Its
+mutually exclusive components are provisioning, execution, pause transition,
+warm waiting, suspended, resume wait, and teardown. Their sum equals the
+sandbox lifetime. Resume wait is the blocking interval after work needs the
+sandbox but before E2B has made it usable, and `max_resume_wait_seconds` exposes
+the worst individual resume. The `sandbox.suspension` object reports pause and
+resume counts. LLM inference can overlap warm waiting, pause transition, and
+suspended time by design.
 
-The assistant works with one virtual file, `schedule.yaml`, through five tools:
-`find_in_schedule`, `view_schedule`, `get_schedule_schema`, `edit_schedule`,
-and `write_schedule`. Search returns a total matching-line count and up to 20
-numbered matches. Schema lookup returns bounded frontend-compatible field rules
-and validated YAML examples. Every change is
-validated against the schedule shapes the web frontend can edit, and the working
-draft advances only when the result is valid. A failed edit spends one of
-`AI_MAX_SCHEDULE_EDITS` attempts.
+After each sandbox operation, the E2B backend schedules an explicit warm-memory
+pause. Immediate follow-up activity cancels a pause that has not started, so
+hydration and other consecutive operations stay together. Otherwise the pause
+transition can overlap model inference, and E2B auto-resumes the same sandbox
+when the next operation arrives. The memory snapshot is retained because five
+fresh disk-only resume trials took 5.95 to 12.62 seconds, with an 8.01-second
+median. Commands, file operations, pause/resume transitions, and close share
+one serialized lifecycle lock.
+
+The E2B creation timeout is not the hard deadline. E2B 2.46.0 testing showed
+that an `on_timeout=kill` deadline did not kill a manually paused sandbox. The
+application-level maximum agent-turn deadline and explicit kill in `finally`
+are therefore the authoritative hard deadline. A separate live check confirms
+that after this explicit kill, E2B rejects resume with `SandboxNotFoundException`.
+
+## Agent capabilities
+
+The model receives exactly one tool, `bash(command)`. It can use preinstalled
+Bash, Python with `ruamel.yaml`, ripgrep, sed, grep, and diff against
+`/workspace/schedule.yaml`. `nsctl` is a normal command available through Bash,
+not another model tool. Its read-only `schema`, `schema list`, `schema search`,
+and `schema show` commands expose the frontend schedule guidance copied to
+`/reference` for that turn.
+
+This follows the minimalism philosophy of the [Pi coding agent](https://pi.dev/):
+prefer one general shell capability and discoverable CLI documentation over a
+growing set of model-specific tools. Nurse Scheduling retains stricter service
+boundaries than a local coding agent. The workspace is disposable, commands
+are bounded, secrets and canonical storage stay outside it, and a trusted
+application validates every detected change and the final candidate.
+
+## Proposal lifecycle
 
 A finished run that changed the schedule leaves one pending proposal. The
 browser receives its structural diff, never its YAML. `POST
@@ -146,6 +196,12 @@ elsewhere in the app, which also drops any pending proposal.
 A run that fails, is cancelled, or is abandoned leaves no proposal. A run that
 only answers a question never creates one.
 
+After a Bash command changes the candidate, the trusted application returns an
+intermediate validation result so the model can repair it. The backend reads
+the final file as untrusted input and applies authoritative validation and a
+structural diff. Validation inside the sandbox is feedback only. It is never
+the acceptance boundary.
+
 The provider boundary uses OpenAI-compatible chat completions. The
 [Cloudflare Tunnel example](https://github.com/j3soon/local-llm-notes/tree/main/examples/basic-secure-api/cloudflare)
 shows one compatible deployment pattern.
@@ -158,6 +214,16 @@ shows one compatible deployment pattern.
 | `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `120` | Provider request timeout. |
+| `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
+| `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
+| `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
+| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `10` | Default deadline for one shell command. |
+| `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `300` | Deadline for the complete sandbox-backed user message. |
+| `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
+| `AI_BASH_TOOL_MAX_COMMAND_CHARS` | `4000` | Maximum model-issued shell command length. |
+| `AI_BASH_TOOL_MAX_STDOUT_CHARS` | `12000` | Stdout retained by the AI shell interface. |
+| `AI_BASH_TOOL_MAX_STDERR_CHARS` | `4000` | Stderr retained by the AI shell interface. |
+| `AI_BASH_TOOL_MAX_OUTPUT_CHARS` | `16000` | Combined stdout and stderr retained by the AI shell interface. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. |
 | `AI_SESSION_TTL_SECONDS` | `3600` | Idle session lifetime. |
@@ -166,8 +232,7 @@ shows one compatible deployment pattern.
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
-| `AI_MAX_TOOL_CALLS` | `5` | Maximum executed tool calls for one answer. Excess calls receive an error before one tool-free final response. |
-| `AI_MAX_SCHEDULE_EDITS` | `5` | Failed schedule edits allowed before the assistant must stop. |
+| `AI_MAX_TOOL_CALLS` | `5` | Maximum executed tool calls for one answer. The sandbox example uses `8`. Excess calls receive an error before one tool-free final response. |
 | `AI_ATTACHMENT_MODE` | `images` | Use `none` to disable image attachments. |
 | `AI_MAX_IMAGE_FILES` | `4` | Maximum images attached to one question. |
 | `AI_MAX_IMAGE_BYTES` | `5000000` | Maximum bytes per image. |
@@ -245,6 +310,15 @@ backend instance until shared AI storage is added.
 
 - Keep `.env.ai` private. Git ignores it, while `.env.ai.example` contains only
   placeholders.
+- E2B Cloud is currently the only sandbox backend. The agent depends on the
+  project `SandboxBackend` contract so a future self-hosted E2B or remote gVisor
+  backend does not require changing model logic.
+- The trusted application creates E2B sandboxes with outbound Internet access
+  disabled. It does not pass the E2B key, model provider key, database
+  credentials, host paths, or canonical storage into the sandbox.
+- Treat shell commands and every sandbox file as untrusted. A sandbox can only
+  return a candidate schedule. Trusted validation, proposal storage, revision
+  checks, user approval, and canonical updates remain outside it.
 - Use `AI_COOKIE_SECURE=0` only for local HTTP. Set it to `1` when the public
   browser route uses HTTPS, even if NGINX uses internal HTTP to the container.
 - The owner cookie contains an opaque UUID, not the provider key. It is not a
@@ -312,8 +386,12 @@ Run the focused checks inside the development container:
 ```sh
 cd /app/core
 ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
-  tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py
-pytest -q tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py
+  tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
+  tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
+  tests/test_ai_sandbox_agent.py tests/test_ai_bash_tool.py tests/test_ai_nsctl.py
+pytest -q tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
+  tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
+  tests/test_ai_sandbox_agent.py tests/test_ai_bash_tool.py tests/test_ai_nsctl.py
 
 cd /app/web-frontend
 bun run test -- \

@@ -50,12 +50,20 @@ test paths when a narrower suite is known to be sufficient.
   target the frontend subset alone. Validate through
   `ai/validation.py`, and do not expose the canonical backend flavor, which
   accepts shapes the editor cannot represent.
-- Let the assistant edit the schedule as text through `ai/editor.py`, which
-  exposes view, edit, and write over one virtual file. Structured patch
-  operations were tried and removed, because current models edit text well and
-  the operation machinery cost more than it prevented. Keep validation on every
-  change and the structural diff at review, since those catch a dropped entry
-  that still parses.
+- Keep schedule facts out of the prompt summary in `describe_schedule` and put
+  them in a tool result instead. The evaluation asserts that a reading case
+  cannot be answered from the summary alone, so listing item IDs or line numbers
+  there turns a reading case into a copying case. See
+  `test_reading_questions_cannot_be_answered_from_the_prompt_summary`.
+- Decide what to fix next by tallying failed tool calls across a whole
+  evaluation run, not from one trajectory. A repeated recoverable failure costs
+  more than the case that exposed it, and a bounded tool should clamp an
+  over-large request rather than refuse it.
+- Expose only the `bash` model tool over the disposable sandbox. Put
+  deterministic domain guidance behind the searchable `nsctl` CLI instead of
+  adding model-specific tools. Keep trusted validation after every detected
+  schedule change and the structural diff at review, since those catch a
+  dropped entry that still parses.
 
 ## Testing
 - Normal tests live under `tests/`.
