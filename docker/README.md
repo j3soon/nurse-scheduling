@@ -41,9 +41,9 @@ baked into the image.
 Running the server outside these images leaves `API_AUTH_REQUIRED` unset, so
 local development stays unauthenticated with no extra configuration.
 
-Use at least 16 characters. A deployment image rejects a shorter token. Servers
-run outside those images still accept one with a warning, which keeps short keys
-usable for local testing only. Requests present the token as a bearer credential:
+Use at least 16 characters. When `API_AUTH_REQUIRED=true`, the backend rejects a
+shorter token. When it is `false`, a shorter token is accepted with a warning for
+local testing. Requests present the token as a bearer credential:
 
 ```sh
 curl -H "Authorization: Bearer ${API_AUTH_TOKEN}" https://api.nursescheduling.org/optimize/options
@@ -52,11 +52,14 @@ curl -H "Authorization: Bearer ${API_AUTH_TOKEN}" https://api.nursescheduling.or
 `GET /info` and `GET /ready` stay public so clients and deployment probes can
 discover the deployment without credentials. `/info` reports
 `"auth": {"required": true, "scheme": "bearer"}`, which the frontend uses to
-prompt for a token before calling a protected route. Every other route,
-including `/` and all of `/optimize`, answers `401` with a
+prompt for a token before calling a protected route. Every other application
+route, including `/` and all of `/optimize`, answers `401` with a
 `WWW-Authenticate: Bearer` header when the token is missing or wrong. Tokens
 are compared in constant time, and `401` responses are not reported to Sentry
 because unauthenticated probes of a public URL are expected.
+
+When authentication is configured, the generated `/openapi.json`, `/docs`, and
+`/redoc` routes are disabled and return `404`.
 
 Running the backend outside Compose leaves `API_AUTH_TOKEN` unset, so local
 development stays unauthenticated and needs no frontend changes.

@@ -173,10 +173,10 @@ checkpointing it outside the child process.
 
 ### Authentication
 
-A deployment that sets `API_AUTH_TOKEN` requires a bearer token on every route
-except `/info` and `/ready`. Those two stay public so clients and deployment
-probes can discover the server without credentials. `/info` reports the
-requirement:
+A deployment that sets `API_AUTH_TOKEN` requires a bearer token on every
+application route except `/info` and `/ready`. Those two stay public so clients
+and deployment probes can discover the server without credentials. `/info`
+reports the requirement:
 
 ```json
 { "auth": { "required": true, "scheme": "bearer" } }
@@ -210,6 +210,9 @@ A missing or incorrect token returns `401` with a `WWW-Authenticate: Bearer`
 header. Tokens are compared in constant time. The token is shared by every
 client of the deployment, so rotate it by changing `API_AUTH_TOKEN` and
 restarting the server.
+
+When authentication is configured, the generated `/openapi.json`, `/docs`, and
+`/redoc` routes are disabled and return `404`.
 
 `API_AUTH_REQUIRED` makes authentication mandatory rather than optional. The
 images built for deployment set it, so a container started without
@@ -326,7 +329,7 @@ All server settings are read once when the application is constructed.
 | `CLAIMED_PERFORMANCE_SCORE` | unset | Publish the server's self-claimed normalized performance score. |
 | `CLAIMED_PERFORMANCE_APP_VERSION` | unset | Record the app version used by the claimed-performance benchmark. |
 | `CLAIMED_PERFORMANCE_MEASURED_AT` | unset | Record the benchmark report time as an ISO 8601 date and time with a timezone. |
-| `API_AUTH_TOKEN` | unset | Require this shared bearer token on every route except `/info` and `/ready`. |
+| `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
 | `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty `API_AUTH_TOKEN` a startup failure. Set in the deployment images. |
 | `DISABLE_SENTRY` | unset | Disable backend error reporting when set to a non-empty value. |
 | `SENTRY_RELEASE` | derived from the app version | Override the release reported to Sentry. |
@@ -337,8 +340,9 @@ default must remain within the configured minimum and maximum.
 
 `API_AUTH_TOKEN` is optional and unset by default, so a locally run server
 needs no credentials. Setting it turns on authentication for that deployment.
-Use at least 16 characters. Deployment images reject a shorter token. Servers
-run outside those images accept one with a warning for local testing.
+Use at least 16 characters. When `API_AUTH_REQUIRED=true`, the backend rejects a
+shorter token. When it is `false`, a shorter token is accepted with a warning for
+local testing.
 
 The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployment that
 publishes the backend refuses to start without a token. Serving one without
