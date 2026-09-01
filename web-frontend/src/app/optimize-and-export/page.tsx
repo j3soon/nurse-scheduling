@@ -276,8 +276,12 @@ function loadStoredServerOptions(): { servers: OptimizeServerEntry[]; selectedSe
     const parsedSelection = typeof parsed.selectedServerEndpoint === 'string'
       ? parsed.selectedServerEndpoint
       : 'auto';
-    const selectedServerEndpoint = parsedSelection === 'auto' || servers.some(server => server.endpoint === parsedSelection)
-      ? parsedSelection
+    const normalizedSelection = parsedSelection === 'auto'
+      ? 'auto'
+      : normalizeEndpoint(parsedSelection);
+    const selectedServerEndpoint = normalizedSelection === 'auto'
+      || servers.some(server => server.endpoint === normalizedSelection)
+      ? normalizedSelection
       : 'auto';
 
     const loadedOptions = {

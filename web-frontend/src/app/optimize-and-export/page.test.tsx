@@ -948,8 +948,8 @@ describe('OptimizeAndExportPage error handling', () => {
   it('loads app-versioned backend settings without rewriting them', async () => {
     const versionedSettings = JSON.stringify({
       appVersion: 'newer-frontend',
-      servers: [{ endpoint: 'https://future-backend.example.test' }],
-      selectedServerEndpoint: 'https://future-backend.example.test',
+      servers: [{ endpoint: 'future-backend.example.test' }],
+      selectedServerEndpoint: 'future-backend.example.test',
       futureField: true,
     });
     window.localStorage.setItem('nurse-scheduling-optimize-server-options', versionedSettings);
@@ -957,6 +957,7 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByTitle('https://future-backend.example.test')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText('Select https://future-backend.example.test')).toBeChecked();
     expect(screen.queryByTitle(LOCAL_API_URL)).not.toBeInTheDocument();
     expect(window.localStorage.getItem('nurse-scheduling-optimize-server-options')).toBe(versionedSettings);
   });
