@@ -21,5 +21,6 @@ fastapi[standard]
 httpx
 python-multipart
 redis
+e2b==2.46.0 # For isolated AI sandbox execution and template builds
 # For error tracking
 sentry-sdk

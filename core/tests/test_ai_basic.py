@@ -601,6 +601,36 @@ def test_environment_configuration_reads_document_extraction_limits(monkeypatch:
     assert settings.max_xlsx_uncompressed_bytes == 60_000_000
 
 
+def test_environment_configuration_requires_e2b_key_when_selected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
+    monkeypatch.delenv("E2B_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="E2B_API_KEY is required"):
+        AiSettings.from_env()
+
+
+def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
+    monkeypatch.setenv("E2B_API_KEY", "e2b-key")
+    monkeypatch.setenv("E2B_TEMPLATE", "test-template")
+    monkeypatch.setenv("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", "4.5")
+    monkeypatch.setenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", "6")
+
+    settings = AiSettings.from_env()
+
+    assert settings.sandbox_backend == "e2b"
+    assert settings.e2b_api_key == "e2b-key"
+    assert settings.e2b_template == "test-template"
+    assert settings.sandbox_command_timeout_seconds == 4.5
+    assert settings.sandbox_turn_timeout_seconds == 90
+    assert settings.sandbox_cleanup_timeout_seconds == 6
+
+
 class ScriptedToolProvider:
     """Return a scripted tool call, then a text answer."""
 

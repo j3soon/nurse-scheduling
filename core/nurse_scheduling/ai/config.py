@@ -25,6 +25,7 @@ from typing import Literal, cast
 
 AttachmentMode = Literal["none", "images"]
 DocumentAttachmentMode = Literal["none", "text"]
+SandboxBackendName = Literal["none", "e2b"]
 
 
 def _read_positive_int(name: str, default: int) -> int:
@@ -101,6 +102,14 @@ def _read_document_attachment_mode() -> DocumentAttachmentMode:
     return cast(DocumentAttachmentMode, value)
 
 
+def _read_sandbox_backend() -> SandboxBackendName:
+    """Read the optional disposable sandbox provider."""
+    value = os.getenv("AI_SANDBOX_BACKEND", "none").strip().lower()
+    if value not in {"none", "e2b"}:
+        raise ValueError("AI_SANDBOX_BACKEND must be one of: none, e2b")
+    return cast(SandboxBackendName, value)
+
+
 @dataclass(frozen=True)
 class AiSettings:
     """Runtime settings for one isolated AI backend process."""
@@ -128,6 +137,12 @@ class AiSettings:
     max_xlsx_sheets: int = 20
     max_xlsx_cells: int = 100_000
     max_xlsx_uncompressed_bytes: int = 50_000_000
+    sandbox_backend: SandboxBackendName = "none"
+    e2b_api_key: str = ""
+    e2b_template: str = "nurse-scheduling-ai-sandbox"
+    sandbox_command_timeout_seconds: float = 10.0
+    sandbox_turn_timeout_seconds: float = 120.0
+    sandbox_cleanup_timeout_seconds: float = 10.0
     cookie_secure: bool = True
 
     @classmethod
@@ -143,6 +158,14 @@ class AiSettings:
             raise ValueError("AI_PROVIDER_BASE_URL is required")
         if not provider_model:
             raise ValueError("AI_PROVIDER_MODEL must not be empty")
+
+        sandbox_backend = _read_sandbox_backend()
+        e2b_api_key = os.getenv("E2B_API_KEY", "").strip()
+        e2b_template = os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox").strip()
+        if sandbox_backend == "e2b" and not e2b_api_key:
+            raise ValueError("E2B_API_KEY is required when AI_SANDBOX_BACKEND=e2b")
+        if sandbox_backend == "e2b" and not e2b_template:
+            raise ValueError("E2B_TEMPLATE is required when AI_SANDBOX_BACKEND=e2b")
 
         return cls(
             provider_base_url=provider_base_url,
@@ -168,5 +191,11 @@ class AiSettings:
             max_xlsx_sheets=_read_positive_int("AI_MAX_XLSX_SHEETS", 20),
             max_xlsx_cells=_read_positive_int("AI_MAX_XLSX_CELLS", 100_000),
             max_xlsx_uncompressed_bytes=_read_positive_int("AI_MAX_XLSX_UNCOMPRESSED_BYTES", 50_000_000),
+            sandbox_backend=sandbox_backend,
+            e2b_api_key=e2b_api_key,
+            e2b_template=e2b_template,
+            sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 10.0),
+            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 120.0),
+            sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
             cookie_secure=_read_bool("AI_COOKIE_SECURE", True),
         )
