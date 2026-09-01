@@ -19,10 +19,13 @@
 
 # This code is mostly AI generated.
 
+import asyncio
 import logging
 import math
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from enum import Enum
 from typing import Any
 
 from e2b import AsyncSandbox
@@ -30,13 +33,24 @@ from e2b.exceptions import SandboxNotFoundException, TimeoutException
 from e2b.sandbox.commands.command_handle import CommandExitException
 
 from ..config import AiSettings
-from .base import CommandResult, SandboxError
+from .base import CommandResult, SandboxError, SandboxLifecycleMetrics
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox.e2b")
 E2B_USER = "user"
 E2B_WORKSPACE = "/workspace"
 COMMAND_TIMEOUT_EXIT_CODE = 124
 CreateSandbox = Callable[..., Awaitable[Any]]
+
+
+class E2BSandboxState(str, Enum):
+    """Serialized application view of one E2B sandbox lifecycle."""
+
+    RUNNING = "running"
+    PAUSING = "pausing"
+    PAUSED = "paused"
+    RESUMING = "resuming"
+    CLOSING = "closing"
+    CLOSED = "closed"
 
 
 class E2BSandboxFactory:
@@ -77,18 +91,31 @@ class E2BSandboxFactory:
 
     async def create(self) -> "E2BSandboxBackend":
         started = time.monotonic()
-        try:
-            sandbox = await self._create_sandbox(
+        creation = asyncio.create_task(
+            self._create_sandbox(
                 template=self._template,
                 timeout=math.ceil(self._turn_timeout_seconds),
                 secure=True,
                 allow_internet_access=False,
-                lifecycle={"on_timeout": "kill", "auto_resume": False},
+                lifecycle={
+                    # Retain memory because filesystem-only snapshots cold-boot on resume.
+                    "on_timeout": {"action": "pause", "keep_memory": True},
+                    "auto_resume": True,
+                },
                 api_key=self._api_key,
             )
+        )
+        try:
+            sandbox = await asyncio.shield(creation)
+        except asyncio.CancelledError:
+            await self._destroy_after_cancelled_creation(creation)
+            raise
         except Exception as exc:
             raise SandboxError("E2B could not create a sandbox.") from exc
-        backend = E2BSandboxBackend(sandbox, command_timeout_seconds=self._command_timeout_seconds)
+        backend = E2BSandboxBackend(
+            sandbox,
+            command_timeout_seconds=self._command_timeout_seconds,
+        )
         logger.info(
             "sandbox created sandbox_id=%s provider=e2b latency_seconds=%.3f",
             backend.sandbox_id,
@@ -96,115 +123,302 @@ class E2BSandboxFactory:
         )
         return backend
 
+    async def _destroy_after_cancelled_creation(self, creation: asyncio.Task[Any]) -> None:
+        """Finish an in-flight create request so its sandbox can be killed."""
+        try:
+            sandbox = await asyncio.shield(creation)
+        except BaseException:
+            logger.exception("cancelled sandbox creation did not return a sandbox")
+            return
+        try:
+            await asyncio.shield(sandbox.kill())
+        except BaseException:
+            logger.exception(
+                "sandbox cleanup failed after creation cancellation sandbox_id=%s",
+                sandbox.sandbox_id,
+            )
+        else:
+            logger.info(
+                "sandbox destroyed after creation cancellation sandbox_id=%s provider=e2b",
+                sandbox.sandbox_id,
+            )
+
 
 class E2BSandboxBackend:
     """Expose raw E2B file, command, and lifecycle operations."""
 
-    def __init__(self, sandbox: Any, *, command_timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        sandbox: Any,
+        *,
+        command_timeout_seconds: float,
+    ) -> None:
+        if command_timeout_seconds <= 0:
+            raise ValueError("command_timeout_seconds must be positive")
         self._sandbox = sandbox
         self._command_timeout_seconds = command_timeout_seconds
-        self._closed = False
+        self._state = E2BSandboxState.RUNNING
+        self._close_started = False
+        self._lifecycle_lock = asyncio.Lock()
+        self._pause_task: asyncio.Task[None] | None = None
+        self._paused_at: float | None = None
         self._commands = 0
         self._created_at = time.monotonic()
+        self._execution_seconds = 0.0
+        self._pause_count = 0
+        self._pause_transition_seconds = 0.0
+        self._resume_count = 0
+        self._resume_wait_seconds = 0.0
+        self._max_resume_wait_seconds = 0.0
+        self._suspended_seconds = 0.0
+        self._teardown_seconds = 0.0
 
     @property
     def sandbox_id(self) -> str:
         return str(self._sandbox.sandbox_id)
 
+    @property
+    def lifecycle_state(self) -> E2BSandboxState:
+        """Expose the current transition state for telemetry and tests."""
+        return self._state
+
+    @property
+    def lifecycle_metrics(self) -> SandboxLifecycleMetrics:
+        """Snapshot provider lifecycle costs without expanding SandboxBackend."""
+        suspended_seconds = self._suspended_seconds
+        if self._paused_at is not None:
+            suspended_seconds += time.monotonic() - self._paused_at
+        return SandboxLifecycleMetrics(
+            execution_seconds=self._execution_seconds,
+            pause_count=self._pause_count,
+            pause_transition_seconds=self._pause_transition_seconds,
+            resume_count=self._resume_count,
+            resume_wait_seconds=self._resume_wait_seconds,
+            max_resume_wait_seconds=self._max_resume_wait_seconds,
+            suspended_seconds=suspended_seconds,
+            teardown_seconds=self._teardown_seconds,
+        )
+
     async def write_file(self, path: str, content: str | bytes) -> None:
-        self._ensure_open()
-        try:
-            await self._sandbox.files.write(path, content, user=E2B_USER)
-        except Exception as exc:
-            raise SandboxError(f"E2B could not write sandbox file: {path}") from exc
+        async with self._active_operation():
+            started = time.monotonic()
+            try:
+                await self._sandbox.files.write(path, content, user=E2B_USER)
+            except Exception as exc:
+                raise SandboxError(f"E2B could not write sandbox file: {path}") from exc
+            finally:
+                self._execution_seconds += time.monotonic() - started
 
     async def read_file(self, path: str) -> bytes:
-        self._ensure_open()
-        try:
-            content = await self._sandbox.files.read(path, format="bytes", user=E2B_USER)
-        except Exception as exc:
-            raise SandboxError(f"E2B could not read sandbox file: {path}") from exc
+        async with self._active_operation():
+            started = time.monotonic()
+            try:
+                content = await self._sandbox.files.read(path, format="bytes", user=E2B_USER)
+            except Exception as exc:
+                raise SandboxError(f"E2B could not read sandbox file: {path}") from exc
+            finally:
+                self._execution_seconds += time.monotonic() - started
         return bytes(content)
 
     async def run(self, command: str, *, timeout_seconds: float | None = None) -> CommandResult:
-        self._ensure_open()
         timeout = timeout_seconds if timeout_seconds is not None else self._command_timeout_seconds
         if timeout <= 0:
             raise ValueError("timeout_seconds must be positive")
 
-        self._commands += 1
-        started = time.monotonic()
-        try:
-            result = await self._sandbox.commands.run(
-                command,
-                user=E2B_USER,
-                cwd=E2B_WORKSPACE,
-                timeout=timeout,
-            )
-        except CommandExitException as exc:
-            result = exc
-        except TimeoutException:
-            destroyed = await self._close_after_timeout()
+        async with self._active_operation():
+            self._commands += 1
+            started = time.monotonic()
+            try:
+                result = await self._sandbox.commands.run(
+                    command,
+                    user=E2B_USER,
+                    cwd=E2B_WORKSPACE,
+                    timeout=timeout,
+                )
+            except CommandExitException as exc:
+                result = exc
+            except TimeoutException:
+                duration = time.monotonic() - started
+                self._execution_seconds += duration
+                destroyed = await self._destroy_locked()
+                logger.warning(
+                    "sandbox command timed out sandbox_id=%s command_number=%s duration_seconds=%.3f",
+                    self.sandbox_id,
+                    self._commands,
+                    duration,
+                )
+                cleanup = "The sandbox was destroyed." if destroyed else "Sandbox cleanup will be retried."
+                return CommandResult(
+                    "",
+                    f"Command timed out after {timeout:g} seconds. {cleanup}",
+                    COMMAND_TIMEOUT_EXIT_CODE,
+                    duration_seconds=duration,
+                    timed_out=True,
+                )
+            except Exception as exc:
+                self._execution_seconds += time.monotonic() - started
+                raise SandboxError("E2B could not run the sandbox command.") from exc
+
             duration = time.monotonic() - started
-            logger.warning(
-                "sandbox command timed out sandbox_id=%s command_number=%s duration_seconds=%.3f",
+            self._execution_seconds += duration
+            logger.info(
+                "sandbox command finished sandbox_id=%s command_number=%s exit_code=%s duration_seconds=%.3f",
                 self.sandbox_id,
                 self._commands,
+                result.exit_code,
                 duration,
             )
-            cleanup = "The sandbox was destroyed." if destroyed else "Sandbox cleanup will be retried."
             return CommandResult(
-                "",
-                f"Command timed out after {timeout:g} seconds. {cleanup}",
-                COMMAND_TIMEOUT_EXIT_CODE,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                exit_code=result.exit_code,
                 duration_seconds=duration,
-                timed_out=True,
             )
-        except Exception as exc:
-            raise SandboxError("E2B could not run the sandbox command.") from exc
-
-        duration = time.monotonic() - started
-        logger.info(
-            "sandbox command finished sandbox_id=%s command_number=%s exit_code=%s duration_seconds=%.3f",
-            self.sandbox_id,
-            self._commands,
-            result.exit_code,
-            duration,
-        )
-        return CommandResult(
-            stdout=result.stdout,
-            stderr=result.stderr,
-            exit_code=result.exit_code,
-            duration_seconds=duration,
-        )
 
     async def close(self) -> None:
-        if self._closed:
+        if self._state is E2BSandboxState.CLOSED:
             return
+        self._close_started = True
+        self._cancel_pending_pause()
+        async with self._lifecycle_lock:
+            if self._state is E2BSandboxState.CLOSED:
+                return
+            if not await self._destroy_locked():
+                raise SandboxError(f"E2B could not destroy sandbox {self.sandbox_id}.")
+
+    @asynccontextmanager
+    async def _active_operation(self) -> AsyncIterator[None]:
+        """Serialize one operation with pause, resume, and close transitions."""
+        async with self._lifecycle_lock:
+            self._cancel_pending_pause_locked()
+            self._ensure_open()
+            await self._resume_locked()
+            try:
+                yield
+            finally:
+                if self._state not in {E2BSandboxState.CLOSING, E2BSandboxState.CLOSED}:
+                    self._schedule_pause_locked()
+
+    def _schedule_pause_locked(self) -> None:
+        if self._close_started or self._state is not E2BSandboxState.RUNNING:
+            return
+        self._cancel_pending_pause_locked()
+        self._pause_task = asyncio.create_task(self._pause_when_idle())
+
+    async def _pause_when_idle(self) -> None:
+        """Explicitly warm-pause unless another operation arrives first."""
+        current_task = asyncio.current_task()
+        try:
+            async with self._lifecycle_lock:
+                if (
+                    self._close_started
+                    or self._state is not E2BSandboxState.RUNNING
+                    or self._pause_task is not current_task
+                ):
+                    return
+                self._state = E2BSandboxState.PAUSING
+                started = time.monotonic()
+                try:
+                    await self._sandbox.pause(keep_memory=True)
+                except asyncio.CancelledError:
+                    self._state = E2BSandboxState.RUNNING
+                    raise
+                except Exception:
+                    self._state = E2BSandboxState.RUNNING
+                    logger.exception("sandbox pause failed sandbox_id=%s", self.sandbox_id)
+                    return
+                now = time.monotonic()
+                latency = now - started
+                self._pause_count += 1
+                self._pause_transition_seconds += latency
+                self._paused_at = now
+                self._state = E2BSandboxState.PAUSED
+                logger.info(
+                    "sandbox paused sandbox_id=%s pause_count=%s pause_transition_seconds=%.3f",
+                    self.sandbox_id,
+                    self._pause_count,
+                    latency,
+                )
+        finally:
+            if self._pause_task is current_task:
+                self._pause_task = None
+
+    async def _resume_locked(self) -> None:
+        if self._state is not E2BSandboxState.PAUSED:
+            return
+        self._state = E2BSandboxState.RESUMING
+        started = time.monotonic()
+        try:
+            # This filesystem request exercises E2B auto-resume without an explicit connect call.
+            await self._sandbox.files.exists(E2B_WORKSPACE, user=E2B_USER)
+        except Exception as exc:
+            self._state = E2BSandboxState.PAUSED
+            raise SandboxError(f"E2B could not resume sandbox {self.sandbox_id}.") from exc
+
+        now = time.monotonic()
+        latency = now - started
+        self._resume_count += 1
+        self._resume_wait_seconds += latency
+        self._max_resume_wait_seconds = max(self._max_resume_wait_seconds, latency)
+        if self._paused_at is not None:
+            self._suspended_seconds += started - self._paused_at
+            self._paused_at = None
+        self._state = E2BSandboxState.RUNNING
+        logger.info(
+            "sandbox resumed sandbox_id=%s resume_count=%s resume_wait_seconds=%.3f suspended_seconds=%.3f",
+            self.sandbox_id,
+            self._resume_count,
+            latency,
+            self._suspended_seconds,
+        )
+
+    async def _destroy_locked(self) -> bool:
+        self._close_started = True
+        self._cancel_pending_pause_locked()
+        previous_state = self._state
+        self._state = E2BSandboxState.CLOSING
         started = time.monotonic()
         try:
             await self._sandbox.kill()
         except SandboxNotFoundException:
             pass
-        except Exception as exc:
-            raise SandboxError(f"E2B could not destroy sandbox {self.sandbox_id}.") from exc
-        self._closed = True
+        except Exception:
+            self._state = previous_state
+            logger.exception("sandbox cleanup failed sandbox_id=%s", self.sandbox_id)
+            return False
+
+        now = time.monotonic()
+        teardown_seconds = now - started
+        self._teardown_seconds += teardown_seconds
+        if self._paused_at is not None:
+            self._suspended_seconds += started - self._paused_at
+            self._paused_at = None
+        self._state = E2BSandboxState.CLOSED
         logger.info(
-            "sandbox destroyed sandbox_id=%s provider=e2b commands=%s cleanup_seconds=%.3f lifetime_seconds=%.3f",
+            "sandbox destroyed sandbox_id=%s provider=e2b commands=%s pause_count=%s "
+            "pause_transition_seconds=%.3f resume_wait_seconds=%.3f suspended_seconds=%.3f "
+            "teardown_seconds=%.3f lifetime_seconds=%.3f",
             self.sandbox_id,
             self._commands,
-            time.monotonic() - started,
-            time.monotonic() - self._created_at,
+            self._pause_count,
+            self._pause_transition_seconds,
+            self._resume_wait_seconds,
+            self._suspended_seconds,
+            teardown_seconds,
+            now - self._created_at,
         )
-
-    async def _close_after_timeout(self) -> bool:
-        try:
-            await self.close()
-        except SandboxError:
-            logger.exception("Timed-out E2B sandbox cleanup failed sandbox_id=%s", self.sandbox_id)
-            return False
         return True
 
+    def _cancel_pending_pause(self) -> None:
+        if self._state is E2BSandboxState.RUNNING:
+            self._cancel_pending_pause_locked()
+
+    def _cancel_pending_pause_locked(self) -> None:
+        task = self._pause_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+        self._pause_task = None
+
     def _ensure_open(self) -> None:
-        if self._closed:
+        if self._close_started or self._state in {E2BSandboxState.CLOSING, E2BSandboxState.CLOSED}:
             raise SandboxError(f"E2B sandbox {self.sandbox_id} is closed")

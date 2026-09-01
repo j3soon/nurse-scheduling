@@ -49,6 +49,20 @@ class CommandResult:
     timed_out: bool = False
 
 
+@dataclass(frozen=True)
+class SandboxLifecycleMetrics:
+    """Optional provider lifecycle telemetry outside the minimal backend API."""
+
+    execution_seconds: float = 0.0
+    pause_count: int = 0
+    pause_transition_seconds: float = 0.0
+    resume_count: int = 0
+    resume_wait_seconds: float = 0.0
+    max_resume_wait_seconds: float = 0.0
+    suspended_seconds: float = 0.0
+    teardown_seconds: float = 0.0
+
+
 class SandboxBackend(Protocol):
     """One disposable sandbox that survives for one complete agent turn."""
 
