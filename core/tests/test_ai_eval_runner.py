@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from nurse_scheduling.ai.bash_tool import BASH_TOOL
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import (
     ChatMessage,
@@ -36,6 +37,9 @@ from nurse_scheduling.ai.provider import (
     ToolCall,
     ToolCallRequest,
 )
+from nurse_scheduling.ai.sandbox import CommandResult
+from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
+from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnMetrics
 
 from .ai_eval.grading import load_cases
 from .ai_eval.runner import CASES, CaseRun, default_output_dir, run_all, run_case, select, summarize, write_report
@@ -43,13 +47,15 @@ from .ai_eval.runner import CASES, CaseRun, default_output_dir, run_all, run_cas
 CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
 
 
-def settings() -> AiSettings:
-    return AiSettings(
-        provider_base_url="https://provider.example/v1",
-        provider_api_key="test-token",
-        provider_model="test-model",
-        max_tool_calls=3,
-    )
+def settings(**overrides: object) -> AiSettings:
+    values = {
+        "provider_base_url": "https://provider.example/v1",
+        "provider_api_key": "test-token",
+        "provider_model": "test-model",
+        "max_tool_calls": 3,
+    }
+    values.update(overrides)
+    return AiSettings(**values)
 
 
 class ScriptedProvider:
@@ -83,8 +89,28 @@ class ConcurrentProvider:
             self.active -= 1
 
 
-def _run(case_id: str, provider: ScriptedProvider) -> CaseRun:
-    return asyncio.run(run_case(provider, settings(), CASE_BY_ID[case_id]))
+def _factory(command_handler=None) -> FakeSandboxFactory:
+    if command_handler is None:
+        command_handler = lambda *_: CommandResult("ok\n", "", 0)
+    return FakeSandboxFactory(
+        lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=command_handler),
+    )
+
+
+def _description_factory() -> FakeSandboxFactory:
+    def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        current = backend.files[WORKSPACE_SCHEDULE].decode()
+        backend.files[WORKSPACE_SCHEDULE] = current.replace(
+            "apiVersion: alpha\ndescription: ''",
+            "apiVersion: alpha\ndescription: March ward roster",
+        ).encode()
+        return CommandResult("updated\n", "", 0)
+
+    return _factory(edit)
+
+
+def _run(case_id: str, provider: ScriptedProvider, factory: FakeSandboxFactory | None = None) -> CaseRun:
+    return asyncio.run(run_case(provider, settings(), CASE_BY_ID[case_id], factory or _factory()))
 
 
 def test_a_correct_answer_passes_and_records_its_cost():
@@ -96,6 +122,13 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.tools == []
     assert not run.proposed
     assert run.seconds >= 0
+
+
+def test_provider_wait_time_is_recorded_per_inference_turn():
+    run = asyncio.run(run_case(ConcurrentProvider(), settings(), CASE_BY_ID["ask-people-count"], _factory()))
+
+    assert run.llm_inference_seconds >= 0.005
+    assert run.llm_turn_seconds == pytest.approx([run.llm_inference_seconds])
 
 
 def test_an_answer_in_words_is_accepted():
@@ -112,50 +145,90 @@ def test_a_wrong_answer_fails_with_the_reason():
 
 
 def test_an_edit_case_records_the_tools_and_the_proposal():
-    # The anchor includes the line above, because every person also has a description.
-    edit = json.dumps(
-        {
-            "old_str": "apiVersion: alpha\ndescription: ''",
-            "new_str": "apiVersion: alpha\ndescription: March ward roster",
-        }
-    )
     provider = ScriptedProvider(
-        [ToolCallRequest((ToolCall("call_0", "edit_schedule", edit),))],
+        [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"edit description"}'),))],
         [TextDelta("I propose the new description.")],
     )
 
-    run = _run("description-set", provider)
+    run = _run("description-set", provider, _description_factory())
 
     assert run.passed
-    assert run.tools == ["edit_schedule"]
+    assert run.tools == [BASH_TOOL]
     assert run.proposed
     assert run.turns == 2
 
 
-def test_a_failed_tool_call_is_recorded_as_such():
-    edit = json.dumps({"old_str": "nothing matches this", "new_str": "x"})
+def test_eval_uses_the_sandbox_runner_and_closes_its_backend():
+    factory = _description_factory()
     provider = ScriptedProvider(
-        [ToolCallRequest((ToolCall("call_0", "edit_schedule", edit),))],
-        [TextDelta("I could not find that text.")],
+        [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"edit"}'),))],
+        [TextDelta("I propose the new description.")],
     )
 
-    run = _run("description-set", provider)
+    run = asyncio.run(
+        run_case(
+            provider,
+            settings(),
+            CASE_BY_ID["description-set"],
+            factory,
+        )
+    )
+
+    assert run.passed
+    assert run.tools == [BASH_TOOL]
+    assert run.proposed
+    assert factory.created[0].closed
+    assert "`/workspace/schedule.yaml`" in run.trajectory["prompt"][0]["content"]
+    timing = run.as_record()["timing"]
+    assert timing["end_to_end_seconds"] >= timing["llm_inference_seconds"]
+    assert len(timing["llm_turn_seconds"]) == run.turns
+    assert sum(timing["llm_turn_seconds"]) == pytest.approx(timing["llm_inference_seconds"], abs=0.002)
+    assert timing["sandbox"]["available"] is True
+    sandbox = timing["sandbox"]
+    assert sandbox["lifetime_seconds"] == pytest.approx(
+        sandbox["provisioning_seconds"]
+        + sandbox["execution_seconds"]
+        + sandbox["pause_transition_seconds"]
+        + sandbox["warm_waiting_seconds"]
+        + sandbox["suspended_seconds"]
+        + sandbox["resume_wait_seconds"]
+        + sandbox["teardown_seconds"],
+        abs=0.005,
+    )
+    assert timing["end_to_end_seconds"] >= sandbox["lifetime_seconds"]
+    assert timing["sandbox"]["suspension"] == {
+        "pause_count": 0,
+        "resume_count": 0,
+    }
+
+
+def test_a_failed_tool_call_is_recorded_as_such():
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"false"}'),))],
+        [TextDelta("I could not find that text.")],
+    )
+    factory = _factory(lambda *_: CommandResult("", "not found", 1))
+
+    run = _run("description-set", provider, factory)
 
     assert not run.passed
-    assert run.tools == ["edit_schedule(failed)"]
+    assert run.tools == [f"{BASH_TOOL}(failed)"]
     assert not run.proposed
 
 
 def test_a_budget_rejection_is_separate_from_executed_tools():
     provider = ScriptedProvider(
-        *[[ToolCallRequest((ToolCall(f"call_{index}", "view_schedule", "{}"),))] for index in range(4)],
+        *[
+            [ToolCallRequest((ToolCall(f"call_{index}", BASH_TOOL, '{"command":"true"}'),))]
+            for index in range(4)
+        ],
         [TextDelta("I need more input.")],
     )
 
     run = _run("ask-people-count", provider)
 
-    assert run.tools == ["view_schedule"] * 3
-    assert run.rejected_tools == ["view_schedule"]
+    assert run.tools == [BASH_TOOL] * 3
+    assert run.rejected_tools == [BASH_TOOL]
     assert run.turns == 5
     tool_events = [event for event in run.trajectory["events"] if event["kind"] == "tool"]
     assert [event["executed"] for event in tool_events] == [True, True, True, False]
@@ -182,7 +255,7 @@ def test_reasoning_length_is_measured_without_entering_the_answer():
 def test_token_usage_is_aggregated_across_provider_turns():
     provider = ScriptedProvider(
         [
-            ToolCallRequest((ToolCall("call_0", "view_schedule", "{}"),)),
+            ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"rg people"}'),)),
             TokenUsage(100, 20, 120, cached_prompt_tokens=40, reasoning_tokens=5),
         ],
         [TextDelta("There are 87 people."), TokenUsage(150, 10, 160, cached_prompt_tokens=90)],
@@ -235,7 +308,7 @@ def test_run_all_bounds_parallelism_and_preserves_case_order(jobs: int, expected
     cases = load_cases(CASES)[:3]
     provider = ConcurrentProvider()
 
-    runs = asyncio.run(run_all(cases, settings(), provider, jobs))
+    runs = asyncio.run(run_all(cases, settings(), provider, jobs, _factory()))
 
     assert provider.max_active == expected_max_active
     assert [run.case_id for run in runs] == [case.id for case in cases]
@@ -243,13 +316,13 @@ def test_run_all_bounds_parallelism_and_preserves_case_order(jobs: int, expected
 
 def test_run_all_rejects_non_positive_jobs():
     with pytest.raises(ValueError, match="jobs must be positive"):
-        asyncio.run(run_all([], settings(), ScriptedProvider(), 0))
+        asyncio.run(run_all([], settings(), ScriptedProvider(), 0, _factory()))
 
 
 def test_the_summary_reports_each_category_and_every_failure():
     runs = [
         CaseRun("a", "00-summary", True, 2.0, 1, []),
-        CaseRun("b", "01-reading", False, 7.0, 2, ["view_schedule"], ["answer mentions '27': not mentioned"]),
+        CaseRun("b", "01-reading", False, 7.0, 2, [BASH_TOOL], ["answer mentions '27': not mentioned"]),
     ]
 
     report = summarize(runs)
@@ -271,6 +344,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "category",
         "passed",
         "seconds",
+        "timing",
         "turns",
         "tools",
         "rejected_tools",
@@ -281,6 +355,11 @@ def test_the_report_records_enough_to_explain_a_run():
         "error",
         "token_usage",
     }
+    assert record["timing"]["end_to_end_seconds"] == pytest.approx(run.seconds, abs=0.001)
+    assert record["timing"]["llm_inference_seconds"] == pytest.approx(run.llm_inference_seconds, abs=0.001)
+    assert record["timing"]["llm_turn_seconds"] == pytest.approx(run.llm_turn_seconds, abs=0.001)
+    assert record["timing"]["sandbox"]["available"] is True
+    assert record["timing"]["sandbox"]["lifetime_seconds"] >= 0
     assert json.loads(json.dumps(record))["case_id"] == "ask-people-count"
 
 
@@ -296,7 +375,7 @@ def test_each_run_reports_into_its_own_timestamped_directory(monkeypatch: pytest
 def test_a_report_holds_the_summary_and_one_line_for_each_case(tmp_path: Path):
     runs = [
         CaseRun("a", "00-summary", True, 2.0, 1, []),
-        CaseRun("b", "01-reading", False, 7.0, 2, ["view_schedule"], ["answer mentions '27': not mentioned"]),
+        CaseRun("b", "01-reading", False, 7.0, 2, [BASH_TOOL], ["answer mentions '27': not mentioned"]),
     ]
 
     summary = write_report(runs, tmp_path / "run")
@@ -321,6 +400,31 @@ def test_a_report_records_case_concurrency_and_wall_time(tmp_path: Path):
     assert "Wall time: 1.2 seconds" in text
 
 
+def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
+    metrics = SandboxTurnMetrics(
+        provisioning_seconds=0.4,
+        execution_seconds=1.0,
+        pause_transition_seconds=0.3,
+        warm_waiting_seconds=3.0,
+        suspended_seconds=5.0,
+        resume_wait_seconds=0.1,
+        max_resume_wait_seconds=0.06,
+        teardown_seconds=0.2,
+        lifetime_seconds=10.0,
+        pause_count=2,
+        resume_count=2,
+    )
+    summary = write_report(
+        [CaseRun("a", "00-summary", True, 10.0, 1, [], sandbox_metrics=metrics)],
+        tmp_path / "run",
+    )
+
+    text = summary.read_text(encoding="utf-8")
+    assert "mutually exclusive lifetime components" in text
+    assert "| a | 10.000 | 0.400 | 1.000 | 0.300 | 3.000 | 5.000 | 0.100 | 0.200 |" in text
+    assert "| a | 2 | 2 | 0.100 | 0.060 |" in text
+
+
 def test_a_report_never_overwrites_an_earlier_one(tmp_path: Path):
     write_report([CaseRun("a", "00-summary", True, 2.0, 1, [])], tmp_path / "run")
 
@@ -329,21 +433,16 @@ def test_a_report_never_overwrites_an_earlier_one(tmp_path: Path):
 
 
 def test_a_run_records_everything_it_did():
-    edit = json.dumps(
-        {
-            "old_str": "apiVersion: alpha\ndescription: ''",
-            "new_str": "apiVersion: alpha\ndescription: March ward roster",
-        }
-    )
+    edit = '{"command":"edit description"}'
     provider = ScriptedProvider(
         [
             ReasoningDelta("Looking for the description. "),
-            ToolCallRequest((ToolCall("call_0", "edit_schedule", edit),)),
+            ToolCallRequest((ToolCall("call_0", BASH_TOOL, edit),)),
         ],
         [TextDelta("I propose the new description.")],
     )
 
-    trajectory = _run("description-set", provider).as_trajectory()
+    trajectory = _run("description-set", provider, _description_factory()).as_trajectory()
 
     assert trajectory["question"].startswith("Give this schedule the description")
     assert trajectory["prompt"][0]["role"] == "system"
@@ -352,9 +451,7 @@ def test_a_run_records_everything_it_did():
     tool_event = trajectory["events"][1]
     assert tool_event["arguments"] == edit
     assert tool_event["ok"]
-    # The new-schedule fixture has no date range yet, so the edit is accepted for
-    # adding no new problem rather than for leaving the file valid.
-    assert "Changes so far" in tool_event["result"]
+    assert "passed trusted server-side validation" in tool_event["result"]
     assert "March ward roster" in trajectory["proposal"]["schedule_yaml"]
     assert all(check["passed"] for check in trajectory["checks"])
 

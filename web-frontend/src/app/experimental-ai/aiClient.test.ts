@@ -220,7 +220,7 @@ describe('AI client', () => {
   it('forwards tool use and a proposal to the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
-      'event: tool\ndata: {"name":"edit_schedule","arguments":"{\\"old_str\\":\\"a\\"}","result":"applied","ok":true}\n\n',
+      'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
       'event: done\ndata: {"message_id":"1"}\n\n',
@@ -242,7 +242,7 @@ describe('AI client', () => {
       new AbortController().signal,
     );
 
-    expect(tools).toEqual(['edit_schedule:true:applied']);
+    expect(tools).toEqual(['bash:true:exit_code: 0']);
     expect(reasoning).toEqual(['Checking people.']);
     expect(texts).toEqual(['Renamed P1.']);
     expect(diffs).toEqual(['- people.items[0].id']);
@@ -292,7 +292,7 @@ describe('AI client', () => {
 
   it('treats a tool event without detail as a successful call', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'event: tool\ndata: {"name":"view_schedule"}\n\n',
+      'event: tool\ndata: {"name":"bash"}\n\n',
       'event: done\ndata: {"message_id":"1"}\n\n',
     ])));
     const tools: { name: string; ok: boolean; result: string }[] = [];
@@ -300,6 +300,6 @@ describe('AI client', () => {
     await streamMessage('session-id', 'Look.', { onDelta: () => {}, onTool: activity => tools.push(activity) },
       new AbortController().signal);
 
-    expect(tools).toEqual([{ name: 'view_schedule', arguments: '', result: '', ok: true }]);
+    expect(tools).toEqual([{ name: 'bash', arguments: '', result: '', ok: true }]);
   });
 });

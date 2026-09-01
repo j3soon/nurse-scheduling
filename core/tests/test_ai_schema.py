@@ -43,6 +43,50 @@ def test_schema_paths_are_unique_and_every_result_is_bounded():
     assert all(len(result) <= MAX_SCHEMA_RESULT_CHARS for result in results if result is not None)
 
 
+def test_schema_separates_the_two_counting_preferences():
+    """Staffing per shift and shifts per person read alike until the schema says otherwise."""
+    index = render_schedule_schema("preferences")
+    requirement = render_schedule_schema("preferences.shift type requirement")
+    count = render_schedule_schema("preferences.shift count")
+
+    assert index is not None
+    assert "counts how many people a shift type needs on a date" in index
+    assert "counts how many shifts one person works across dates" in index
+    assert requirement is not None
+    assert "number of people a shift type needs on a date" in requirement
+    assert "Do not express this as a `shift count` preference" in requirement
+    assert "Add `preferredNumPeople` with a finite `weight`" in requirement
+    assert count is not None
+    assert "not the people needed on a shift" in count
+    assert "use `shift type requirement` instead" in count
+
+
+def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
+    root = render_schedule_schema()
+    shift_count = render_schedule_schema("preferences.shift count")
+
+    assert root is not None
+    assert "Keep reserved selectors such as `ALL` literal" in root
+    assert "shift type `D` is not group `Day`" in root
+    assert "Quote a YAML string containing `: `" in root
+    assert shift_count is not None
+    assert "[[D, 1], [N, 2]]" in shift_count
+    assert "not a mapping or a list of strings" in shift_count
+    successions = render_schedule_schema("preferences.shift type successions")
+    extra_rows = render_schedule_schema("export.extraRows")
+    assert successions is not None
+    assert "E followed by D is [E, D], not [Evening, Day]" in successions
+    assert extra_rows is not None
+    assert "Use ALL to count every person" in extra_rows
+    assert "countPeople: [ALL]" in extra_rows
+    date_range = render_schedule_schema("dates.range")
+    people_items = render_schedule_schema("people.items")
+    assert date_range is not None
+    assert "same coordinated file edit" in date_range
+    assert people_items is not None
+    assert "every group membership" in people_items
+
+
 @pytest.mark.parametrize("path", EXAMPLE_PATHS, ids=EXAMPLE_PATHS)
 def test_every_returned_yaml_example_is_frontend_compatible(path: str):
     topic = SCHEMA_TOPICS[path]

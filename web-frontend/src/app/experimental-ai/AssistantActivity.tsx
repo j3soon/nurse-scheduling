@@ -67,38 +67,10 @@ function ChunkedText({ text, label }: { text: string; label: string }) {
   );
 }
 
-function EditPreview({ entry }: { entry: ToolEntry }) {
-  let removed = '';
-  let added = '';
-  try {
-    const parsed = JSON.parse(entry.arguments) as { old_str?: unknown; new_str?: unknown };
-    removed = typeof parsed.old_str === 'string' ? parsed.old_str : '';
-    added = typeof parsed.new_str === 'string' ? parsed.new_str : '';
-  } catch {
-    // Fall back to the raw arguments when the model sent something unparsable.
-  }
-  if (!removed && !added) return <ChunkedText text={entry.arguments} label="arguments" />;
-
-  return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-      {removed.split('\n').map((line, index) => (
-        <span key={`removed-${index}`} className="block text-red-700">- {line}</span>
-      ))}
-      {added.split('\n').map((line, index) => (
-        <span key={`added-${index}`} className="block text-green-700">+ {line}</span>
-      ))}
-    </pre>
-  );
-}
-
 function ToolBody({ entry }: { entry: ToolEntry }) {
   return (
     <div className="space-y-2">
-      {entry.name === 'edit_schedule' ? (
-        <EditPreview entry={entry} />
-      ) : (
-        entry.arguments && entry.arguments !== '{}' && <ChunkedText text={entry.arguments} label="arguments" />
-      )}
+      {entry.arguments && entry.arguments !== '{}' && <ChunkedText text={entry.arguments} label="arguments" />}
       {entry.result && <ChunkedText text={entry.result} label="output" />}
     </div>
   );

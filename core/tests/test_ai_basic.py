@@ -28,10 +28,14 @@ from unittest.mock import ANY
 import pytest
 from fastapi.testclient import TestClient
 
-from nurse_scheduling.ai.app import SERVICE_NAME, create_app
+from nurse_scheduling.ai.app import SERVICE_NAME
+from nurse_scheduling.ai.app import create_app as create_ai_app
+from nurse_scheduling.ai.bash_tool import BASH_TOOL
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.editor import EDIT_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.sandbox import CommandResult
+from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
+from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
@@ -40,6 +44,13 @@ PNG_BYTES = base64.b64decode(
 )
 JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
 WEBP_BYTES = b"RIFF\x04\x00\x00\x00WEBP"
+
+
+@pytest.fixture(autouse=True)
+def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give positive environment parsing tests the required sandbox settings."""
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
+    monkeypatch.setenv("E2B_API_KEY", "test-e2b-key")
 
 
 class FakeProvider:
@@ -77,6 +88,15 @@ def make_settings(**overrides: object) -> AiSettings:
     return AiSettings(**values)
 
 
+def create_test_app(*, settings: AiSettings, provider, sandbox_factory=None):
+    """Create the app with a fake disposable sandbox unless a test supplies one."""
+    return create_ai_app(
+        settings=settings,
+        provider=provider,
+        sandbox_factory=sandbox_factory or FakeSandboxFactory(),
+    )
+
+
 def create_session(client: TestClient, schedule_yaml: str = "description: test") -> str:
     """Create a session and return its public UUID."""
     response = client.post("/sessions", json={"schedule_yaml": schedule_yaml})
@@ -97,7 +117,7 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
 
 def test_health_and_streamed_schedule_question() -> None:
     provider = FakeProvider()
-    client = TestClient(create_app(settings=make_settings(), provider=provider))
+    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
 
     health = client.get("/health")
     assert health.status_code == 200
@@ -126,7 +146,7 @@ def test_health_and_streamed_schedule_question() -> None:
 
 def test_capabilities_report_configured_attachment_limits() -> None:
     client = TestClient(
-        create_app(
+        create_test_app(
             settings=make_settings(
                 attachment_mode="images",
                 max_image_files=2,
@@ -160,7 +180,7 @@ def test_capabilities_report_configured_attachment_limits() -> None:
 
 def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
     provider = FakeProvider([["Image answer"], ["Follow-up answer"]])
-    client = TestClient(create_app(settings=make_settings(attachment_mode="images"), provider=provider))
+    client = TestClient(create_test_app(settings=make_settings(attachment_mode="images"), provider=provider))
     session_id = create_session(client)
 
     image_response = client.post(
@@ -197,7 +217,7 @@ def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
 )
 def test_supported_image_signatures_are_sent_to_provider(filename: str, media_type: str, data: bytes) -> None:
     provider = FakeProvider()
-    client = TestClient(create_app(settings=make_settings(attachment_mode="images"), provider=provider))
+    client = TestClient(create_test_app(settings=make_settings(attachment_mode="images"), provider=provider))
     session_id = create_session(client)
 
     response = client.post(
@@ -214,7 +234,7 @@ def test_supported_image_signatures_are_sent_to_provider(filename: str, media_ty
 
 def test_documents_are_sent_to_provider_but_contents_are_not_retained() -> None:
     provider = FakeProvider([["Document answer"], ["Follow-up answer"]])
-    client = TestClient(create_app(settings=make_settings(), provider=provider))
+    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
     document_response = client.post(
@@ -255,7 +275,7 @@ def test_documents_are_sent_to_provider_but_contents_are_not_retained() -> None:
     ],
 )
 def test_text_documents_accept_each_advertised_media_type(filename: str, media_type: str) -> None:
-    client = TestClient(create_app(settings=make_settings(), provider=FakeProvider()))
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
 
     response = client.post(
@@ -269,7 +289,7 @@ def test_text_documents_accept_each_advertised_media_type(filename: str, media_t
 
 def test_images_and_documents_share_one_provider_user_message() -> None:
     provider = FakeProvider()
-    client = TestClient(create_app(settings=make_settings(), provider=provider))
+    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
     response = client.post(
@@ -326,7 +346,7 @@ def test_image_attachment_limits(
     expected_status: int,
     expected_detail: str,
 ) -> None:
-    client = TestClient(create_app(settings=make_settings(**settings), provider=FakeProvider()))
+    client = TestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
     session_id = create_session(client)
 
     response = client.post(
@@ -413,7 +433,7 @@ def test_document_attachment_limits(
     expected_status: int,
     expected_detail: str,
 ) -> None:
-    client = TestClient(create_app(settings=make_settings(**settings), provider=FakeProvider()))
+    client = TestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
     session_id = create_session(client)
 
     response = client.post(
@@ -428,7 +448,7 @@ def test_document_attachment_limits(
 
 def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     provider = FakeProvider([["First answer"], ["Second answer"]])
-    client = TestClient(create_app(settings=make_settings(), provider=provider))
+    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client, "description: current")
 
     first = client.post(
@@ -450,7 +470,7 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
 
 
 def test_private_container_origin_can_call_ai_backend_directly() -> None:
-    client = TestClient(create_app(settings=make_settings(), provider=FakeProvider()))
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     response = client.options(
         "/capabilities",
@@ -465,7 +485,7 @@ def test_private_container_origin_can_call_ai_backend_directly() -> None:
 
 
 def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
-    app = create_app(settings=make_settings(), provider=FakeProvider())
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
     owner_client = TestClient(app)
     other_client = TestClient(app)
     session_id = create_session(owner_client)
@@ -483,7 +503,7 @@ def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
 def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     provider_error = "The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f."
     provider = FakeProvider([ProviderError(provider_error), ["Recovered"]])
-    client = TestClient(create_app(settings=make_settings(), provider=provider))
+    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
     failed = client.post(
@@ -502,7 +522,7 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
 
 def test_request_limits_are_enforced() -> None:
     client = TestClient(
-        create_app(
+        create_test_app(
             settings=make_settings(max_message_chars=5, max_schedule_bytes=5),
             provider=FakeProvider(),
         )
@@ -620,6 +640,10 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     monkeypatch.setenv("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", "90")
     monkeypatch.setenv("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", "6")
+    monkeypatch.setenv("AI_BASH_TOOL_MAX_COMMAND_CHARS", "3000")
+    monkeypatch.setenv("AI_BASH_TOOL_MAX_STDOUT_CHARS", "9000")
+    monkeypatch.setenv("AI_BASH_TOOL_MAX_STDERR_CHARS", "3000")
+    monkeypatch.setenv("AI_BASH_TOOL_MAX_OUTPUT_CHARS", "12000")
 
     settings = AiSettings.from_env()
 
@@ -629,6 +653,19 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     assert settings.sandbox_command_timeout_seconds == 4.5
     assert settings.sandbox_turn_timeout_seconds == 90
     assert settings.sandbox_cleanup_timeout_seconds == 6
+    assert settings.bash_tool_max_command_chars == 3000
+    assert settings.bash_tool_max_stdout_chars == 9000
+    assert settings.bash_tool_max_stderr_chars == 3000
+    assert settings.bash_tool_max_output_chars == 12000
+
+
+def test_environment_configuration_requires_a_sandbox_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "none")
+
+    with pytest.raises(ValueError, match="AI_SANDBOX_BACKEND must be configured"):
+        AiSettings.from_env()
 
 
 class ScriptedToolProvider:
@@ -645,17 +682,36 @@ class ScriptedToolProvider:
 
 
 def rename_call() -> list[object]:
-    """Ask the editor to give the first person a description."""
-    arguments = json.dumps(
-        {"old_str": "  - id: P1\n    description: ''", "new_str": "  - id: P1\n    description: Head"}
-    )
-    return [ToolCallRequest((ToolCall("call_0", EDIT_TOOL, arguments),))]
+    """Ask Bash to give the first person a description."""
+    arguments = json.dumps({"command": "python3 -c 'set P1 description to Head'"})
+    return [ToolCallRequest((ToolCall("call_0", BASH_TOOL, arguments),))]
+
+
+def rename_factory() -> FakeSandboxFactory:
+    """Return a fake sandbox that applies the scripted description change."""
+
+    def rename(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        current = backend.files[WORKSPACE_SCHEDULE].decode()
+        backend.files[WORKSPACE_SCHEDULE] = current.replace(
+            "  - id: P1\n    description: ''",
+            "  - id: P1\n    description: Head",
+            1,
+        ).encode()
+        return CommandResult("updated\n", "", 0)
+
+    return FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=rename))
 
 
 def proposing_client() -> tuple[TestClient, str, str]:
     """Run one proposing turn and return the client, session, and base revision."""
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
-    client = TestClient(create_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            provider=provider,
+            sandbox_factory=rename_factory(),
+        )
+    )
     schedule = schedule_yaml()
     session_id = create_session(client, schedule)
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
@@ -665,20 +721,69 @@ def proposing_client() -> tuple[TestClient, str, str]:
 
 def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
-    client = TestClient(create_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            provider=provider,
+            sandbox_factory=rename_factory(),
+        )
+    )
     session_id = create_session(client, schedule_yaml())
 
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
 
     events = parse_sse(response.text)
     tool = next(data for name, data in events if name == "tool")
-    assert tool["name"] == EDIT_TOOL
+    assert tool["name"] == BASH_TOOL
     assert tool["ok"] is True
     assert "Head" in tool["arguments"]
-    assert "schedule.yaml is valid" in tool["result"]
+    assert "passed trusted server-side validation" in tool["result"]
     proposal = next(data for name, data in events if name == "proposal")
     assert "people.items[0].description" in proposal["diff"]
     assert not any(name == "proposal" and "schedule" in data for name, data in events)
+
+
+def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> None:
+    command = json.dumps(
+        {
+            "command": (
+                "python3 - <<'PY'\n"
+                "from pathlib import Path\n"
+                "path = Path('/workspace/schedule.yaml')\n"
+                "text = path.read_text()\n"
+                'path.write_text(text.replace("description: \'\'", "description: Head", 1))\n'
+                "PY"
+            )
+        }
+    )
+    provider = ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("call_0", BASH_TOOL, command),))],
+        [TextDelta("I propose the description.")],
+    )
+
+    def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        current = backend.files[WORKSPACE_SCHEDULE].decode()
+        backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Head", 1).encode()
+        return CommandResult("updated\n", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=edit))
+    settings = make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, bash_tool_max_command_chars=1000)
+    client = TestClient(create_test_app(settings=settings, provider=provider, sandbox_factory=factory))
+    schedule = schedule_yaml()
+    session_id = create_session(client, schedule)
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Set the description."})
+
+    events = parse_sse(response.text)
+    assert next(data for name, data in events if name == "tool")["name"] == BASH_TOOL
+    assert next(data for name, data in events if name == "proposal")["diff"] == '- description: "" -> "Head"'
+    assert factory.created[0].closed
+    assert "`/workspace/schedule.yaml`" in provider.calls[0][0]["content"]
+    assert "E2B" not in provider.calls[0][0]["content"]
+    revision = hashlib.sha256(schedule.encode()).hexdigest()
+    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+    assert approved.status_code == 200
+    assert "description: Head" in approved.json()["schedule_yaml"]
 
 
 def test_approval_returns_the_proposed_schedule_once() -> None:
@@ -727,7 +832,7 @@ def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
 
 def test_sessions_are_private_to_their_browser() -> None:
     _, session_id, revision = proposing_client()
-    other = TestClient(create_app(settings=make_settings(), provider=FakeProvider()))
+    other = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     assert other.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision}).status_code == 404
     assert other.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "a: 1"}).status_code == 404
@@ -737,7 +842,13 @@ def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
     payload = base_schedule_payload()
     payload["preferences"] = []
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
-    client = TestClient(create_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            provider=provider,
+            sandbox_factory=rename_factory(),
+        )
+    )
     schedule = schedule_yaml(payload)
     session_id = create_session(client, schedule)
     client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
@@ -753,7 +864,7 @@ def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
 
 def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     provider = FakeProvider()
-    client = TestClient(create_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    client = TestClient(create_test_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
     schedule = schedule_yaml()
     session_id = create_session(client, schedule)
 
@@ -763,16 +874,20 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "2 people, 2 shift types, 2 preferences" in system_prompt
     assert "Group ids: people PEOPLE" in system_prompt
     assert "Dates run from 2026-01-01 to 2026-01-02" in system_prompt
-    assert "find_in_schedule" in system_prompt
-    assert "get_schedule_schema" in system_prompt
-    assert "validated examples are authoritative" in system_prompt
-    assert "reserve a call for edit_schedule or write_schedule" in system_prompt
+    assert "Your only tool is `bash`" in system_prompt
+    assert "`nsctl schema`" in system_prompt
+    assert "`nsctl schema show PATH`" in system_prompt
+    assert "Preserve existing fields" in system_prompt
+    assert "and exact selectors" in system_prompt
+    assert "Combine a small edit with its checks" in system_prompt
+    assert "trusted validation status" in system_prompt
+    assert "explicit user approval" in system_prompt
     summary = system_prompt.split("Current schedule summary:\n")[1]
     assert len(summary) < len(schedule) / 2
 
 
 def test_a_browser_may_send_the_newer_schedule_across_origins() -> None:
-    client = TestClient(create_app(settings=make_settings(), provider=FakeProvider()))
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     preflight = client.options(
         "/sessions/any/schedule",

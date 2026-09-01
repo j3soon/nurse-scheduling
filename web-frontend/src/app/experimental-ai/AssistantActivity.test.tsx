@@ -23,11 +23,11 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 
-const editEntry: ActivityEntry = {
+const bashEntry: ActivityEntry = {
   kind: 'tool',
-  name: 'edit_schedule',
-  arguments: JSON.stringify({ old_str: "description: ''", new_str: 'description: Head nurse' }),
-  result: 'schedule.yaml is valid.',
+  name: 'bash',
+  arguments: JSON.stringify({ command: "sed -i 's/old/new/' schedule.yaml" }),
+  result: 'exit_code: 0',
   ok: true,
 };
 
@@ -55,29 +55,28 @@ describe('AssistantActivity', () => {
   });
 
   it('marks a failed tool call without opening it', () => {
-    render(<AssistantActivity entries={[{ ...editEntry, ok: false, result: '`old_str` was not found.' }]} />);
+    render(<AssistantActivity entries={[{ ...bashEntry, ok: false, result: 'exit_code: 1' }]} />);
 
-    expect(screen.getByText('edit_schedule · failed')).toBeInTheDocument();
-    expect(screen.getByText('`old_str` was not found.')).not.toBeVisible();
+    expect(screen.getByText('bash · failed')).toBeInTheDocument();
+    expect(screen.getByText('exit_code: 1')).not.toBeVisible();
   });
 
-  it('shows an edit as a before and after diff', async () => {
+  it('shows Bash arguments and output', async () => {
     const user = userEvent.setup();
-    render(<AssistantActivity entries={[editEntry]} />);
+    render(<AssistantActivity entries={[bashEntry]} />);
 
-    await user.click(screen.getByText('edit_schedule'));
+    await user.click(screen.getByText('bash'));
 
-    expect(screen.getByText("- description: ''")).toBeVisible();
-    expect(screen.getByText('+ description: Head nurse')).toBeVisible();
-    expect(screen.getByText('schedule.yaml is valid.')).toBeVisible();
+    expect(screen.getByText(/sed -i/)).toBeVisible();
+    expect(screen.getByText('exit_code: 0')).toBeVisible();
   });
 
   it('reveals long output one chunk at a time', async () => {
     const user = userEvent.setup();
     const longResult = 'x'.repeat(2500);
-    render(<AssistantActivity entries={[{ kind: 'tool', name: 'view_schedule', arguments: '{}', result: longResult, ok: true }]} />);
+    render(<AssistantActivity entries={[{ kind: 'tool', name: 'bash', arguments: '{}', result: longResult, ok: true }]} />);
 
-    await user.click(screen.getByText('view_schedule'));
+    await user.click(screen.getByText('bash'));
 
     const more = screen.getByRole('button', { name: 'Show more output (500 characters left)' });
     await user.click(more);
@@ -89,13 +88,13 @@ describe('AssistantActivity', () => {
       <AssistantActivity
         entries={[
           { kind: 'reasoning', text: 'First thought.' },
-          { kind: 'tool', name: 'view_schedule', arguments: '{}', result: 'lines', ok: true },
+          { kind: 'tool', name: 'bash', arguments: '{}', result: 'lines', ok: true },
           { kind: 'reasoning', text: 'Second thought.' },
         ]}
       />,
     );
 
-    const summaries = screen.getAllByText(/Reasoning ·|view_schedule/).map(element => element.textContent);
-    expect(summaries).toEqual(['Reasoning · 14 characters', 'view_schedule', 'Reasoning · 15 characters']);
+    const summaries = screen.getAllByText(/Reasoning ·|bash/).map(element => element.textContent);
+    expect(summaries).toEqual(['Reasoning · 14 characters', 'bash', 'Reasoning · 15 characters']);
   });
 });

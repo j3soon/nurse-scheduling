@@ -30,16 +30,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse, run_agent
+from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse
 from nurse_scheduling.ai.app import build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.editor import ScheduleEditor
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ChatStreamEvent,
     OpenAiCompatibleProvider,
     ProviderError,
     TokenUsage,
+)
+from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory
+from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
+from nurse_scheduling.ai.sandbox_agent import (
+    SANDBOX_SYSTEM_PROMPT,
+    SandboxAgentLimits,
+    SandboxTurnMetrics,
+    run_sandbox_agent,
 )
 from nurse_scheduling.loader import _load_yaml
 
@@ -73,6 +80,9 @@ class CaseRun:
     token_usage: TokenUsage | None = None
     token_usage_turns: int = 0
     rejected_tools: list[str] = field(default_factory=list)
+    llm_inference_seconds: float = 0.0
+    llm_turn_seconds: list[float] = field(default_factory=list)
+    sandbox_metrics: SandboxTurnMetrics | None = None
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
@@ -81,6 +91,12 @@ class CaseRun:
             "category": self.category,
             "passed": self.passed,
             "seconds": round(self.seconds, 1),
+            "timing": _timing_record(
+                self.seconds,
+                self.llm_inference_seconds,
+                self.llm_turn_seconds,
+                self.sandbox_metrics,
+            ),
             "turns": self.turns,
             "tools": self.tools,
             "rejected_tools": self.rejected_tools,
@@ -105,6 +121,8 @@ class _CountingProvider:
         self.turns = 0
         self.token_usage: TokenUsage | None = None
         self.token_usage_turns = 0
+        self.inference_seconds = 0.0
+        self.inference_turn_seconds: list[float] = []
 
     async def stream_events(
         self,
@@ -112,12 +130,29 @@ class _CountingProvider:
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> AsyncIterator[ChatStreamEvent]:
         self.turns += 1
-        async for event in self._provider.stream_events(messages, tools):
-            if isinstance(event, TokenUsage):
-                self.token_usage = event if self.token_usage is None else self.token_usage + event
-                self.token_usage_turns += 1
-                continue
-            yield event
+        stream = self._provider.stream_events(messages, tools).__aiter__()
+        turn_seconds = 0.0
+        try:
+            while True:
+                started = time.monotonic()
+                try:
+                    event = await anext(stream)
+                except StopAsyncIteration:
+                    break
+                finally:
+                    elapsed = time.monotonic() - started
+                    self.inference_seconds += elapsed
+                    turn_seconds += elapsed
+                if isinstance(event, TokenUsage):
+                    self.token_usage = event if self.token_usage is None else self.token_usage + event
+                    self.token_usage_turns += 1
+                    continue
+                yield event
+        finally:
+            self.inference_turn_seconds.append(turn_seconds)
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                await close()
 
 
 def fixture_text(fixture: str) -> str:
@@ -126,21 +161,37 @@ def fixture_text(fixture: str) -> str:
     return (path / WARD_FILE if path.is_dir() else path).read_text(encoding="utf-8")
 
 
-async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseRun:
+async def run_case(
+    provider: Any,
+    settings: AiSettings,
+    case: EvalCase,
+    sandbox_factory: SandboxFactory | None = None,
+) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
-    editor = ScheduleEditor(text, settings.max_schedule_bytes, edit_budget=settings.max_schedule_edits)
-    messages = build_provider_messages([], text, case.question, [], [])
+    messages = build_provider_messages([], text, case.question, [], [], system_prompt=SANDBOX_SYSTEM_PROMPT)
     counting = _CountingProvider(provider)
 
     answer: list[str] = []
     tools: list[str] = []
     rejected_tools: list[str] = []
     events: list[dict[str, Any]] = []
+    proposal_event: AgentProposal | None = None
+    sandbox_metrics = SandboxTurnMetrics()
     reasoning = 0
     started = time.monotonic()
     try:
-        async for event in run_agent(counting, editor, messages, settings.max_tool_calls):
+        if sandbox_factory is None:
+            raise ValueError("sandbox_factory is required for AI evaluation")
+        agent_events = run_sandbox_agent(
+            counting,
+            sandbox_factory,
+            text,
+            messages,
+            SandboxAgentLimits.from_settings(settings),
+            sandbox_metrics,
+        )
+        async for event in agent_events:
             if isinstance(event, AgentText):
                 answer.append(event.text)
                 _record_text(events, "text", event.text)
@@ -163,8 +214,10 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
                     }
                 )
             elif isinstance(event, AgentProposal):
+                proposal_event = event
                 events.append({"kind": "proposal", "diff": event.diff})
-    except ProviderError as error:
+    except (ProviderError, SandboxError) as error:
+        failure = "the provider failed" if isinstance(error, ProviderError) else "the sandbox failed"
         return CaseRun(
             case.id,
             case.category,
@@ -172,7 +225,7 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
             time.monotonic() - started,
             counting.turns,
             tools,
-            ["the provider failed"],
+            [failure],
             "".join(answer),
             False,
             reasoning,
@@ -181,11 +234,14 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
             token_usage=counting.token_usage,
             token_usage_turns=counting.token_usage_turns,
             rejected_tools=rejected_tools,
+            llm_inference_seconds=counting.inference_seconds,
+            llm_turn_seconds=counting.inference_turn_seconds,
+            sandbox_metrics=sandbox_metrics,
         )
 
     elapsed = time.monotonic() - started
     initial = _load_yaml(text.encode("utf-8"))
-    proposed = _load_yaml(editor.proposal.text.encode("utf-8")) if editor.proposal else None
+    proposed = _load_yaml(proposal_event.text.encode("utf-8")) if proposal_event else None
     outcome = RunOutcome(answer="".join(answer), proposed=proposed, initial=initial)
     result = grade(case, outcome, computed_values(initial))
     return CaseRun(
@@ -199,10 +255,13 @@ async def run_case(provider: Any, settings: AiSettings, case: EvalCase) -> CaseR
         answer=outcome.answer,
         proposed=proposed is not None,
         reasoning_chars=reasoning,
-        trajectory=_trajectory(case, messages, events, editor.proposal, result),
+        trajectory=_trajectory(case, messages, events, proposal_event, result),
         token_usage=counting.token_usage,
         token_usage_turns=counting.token_usage_turns,
         rejected_tools=rejected_tools,
+        llm_inference_seconds=counting.inference_seconds,
+        llm_turn_seconds=counting.inference_turn_seconds,
+        sandbox_metrics=sandbox_metrics,
     )
 
 
@@ -233,7 +292,12 @@ def _trajectory(
             {"description": check.description, "passed": check.passed, "detail": check.detail}
             for check in (result.checks if result else ())
         ],
-        "proposal": {"schedule_yaml": proposal.text, "diff": proposal.diff.render()} if proposal else None,
+        "proposal": {
+            "schedule_yaml": proposal.text,
+            "diff": proposal.diff if isinstance(proposal.diff, str) else proposal.diff.render(),
+        }
+        if proposal
+        else None,
     }
 
 
@@ -256,26 +320,122 @@ def _token_usage_record(usage: TokenUsage | None, reported_turns: int, turns: in
     }
 
 
+def _timing_record(
+    end_to_end_seconds: float,
+    llm_inference_seconds: float,
+    llm_turn_seconds: Sequence[float],
+    sandbox: SandboxTurnMetrics | None,
+) -> dict[str, Any]:
+    """Separate overlapping provider and provisioned-sandbox wall times."""
+    return {
+        "end_to_end_seconds": round(end_to_end_seconds, 3),
+        "llm_inference_seconds": round(llm_inference_seconds, 3),
+        "llm_turn_seconds": [round(seconds, 3) for seconds in llm_turn_seconds],
+        "sandbox": {
+            "available": sandbox is not None,
+            "lifetime_seconds": round(sandbox.lifetime_seconds, 3) if sandbox else None,
+            "provisioning_seconds": round(sandbox.provisioning_seconds, 3) if sandbox else None,
+            "execution_seconds": round(sandbox.execution_seconds, 3) if sandbox else None,
+            "pause_transition_seconds": round(sandbox.pause_transition_seconds, 3) if sandbox else None,
+            "warm_waiting_seconds": round(sandbox.warm_waiting_seconds, 3) if sandbox else None,
+            "suspended_seconds": round(sandbox.suspended_seconds, 3) if sandbox else None,
+            "resume_wait_seconds": round(sandbox.resume_wait_seconds, 3) if sandbox else None,
+            "max_resume_wait_seconds": round(sandbox.max_resume_wait_seconds, 3) if sandbox else None,
+            "teardown_seconds": round(sandbox.teardown_seconds, 3) if sandbox else None,
+            "suspension": {
+                "pause_count": sandbox.pause_count if sandbox else None,
+                "resume_count": sandbox.resume_count if sandbox else None,
+            },
+        },
+    }
+
+
 def summarize(runs: Sequence[CaseRun]) -> str:
     """Report the pass rate and cost of a run, by category and overall."""
     if not runs:
         return "No cases ran."
-    lines = [f"{'category':<16}{'pass':>8}{'median s':>10}{'turns':>8}{'tools':>8}"]
+    lines = [
+        (
+            f"{'category':<16}{'pass':>8}{'e2e s':>9}{'LLM s':>9}{'lifetime s':>11}"
+            f"{'execute s':>10}{'warm wait':>10}{'suspend s':>10}{'resume s':>10}"
+            f"{'pauses':>8}{'turns':>8}{'tools':>8}"
+        )
+    ]
     for category in sorted({run.category for run in runs}):
         group = [run for run in runs if run.category == category]
         lines.append(
             f"{category:<16}{sum(run.passed for run in group):>4}/{len(group):<3}"
-            f"{_median([run.seconds for run in group]):>10.1f}"
+            f"{_median([run.seconds for run in group]):>9.1f}"
+            f"{_median([run.llm_inference_seconds for run in group]):>9.1f}"
+            f"{_median([run.sandbox_metrics.lifetime_seconds for run in group if run.sandbox_metrics]):>11.1f}"
+            f"{_median([run.sandbox_metrics.execution_seconds for run in group if run.sandbox_metrics]):>10.1f}"
+            f"{_median([run.sandbox_metrics.warm_waiting_seconds for run in group if run.sandbox_metrics]):>10.1f}"
+            f"{_median([run.sandbox_metrics.suspended_seconds for run in group if run.sandbox_metrics]):>10.1f}"
+            f"{_median([run.sandbox_metrics.resume_wait_seconds for run in group if run.sandbox_metrics]):>10.1f}"
+            f"{_median([float(run.sandbox_metrics.pause_count) for run in group if run.sandbox_metrics]):>8.1f}"
             f"{_median([float(run.turns) for run in group]):>8.1f}"
             f"{_median([float(len(run.tools)) for run in group]):>8.1f}"
         )
     total = sum(run.passed for run in runs)
-    lines.append(f"{'total':<16}{total:>4}/{len(runs):<3}{sum(run.seconds for run in runs):>10.0f} seconds")
+    sandbox_runs = [run.sandbox_metrics for run in runs if run.sandbox_metrics is not None]
+    lines.append(
+        f"{'total':<16}{total:>4}/{len(runs):<3}"
+        f"{sum(run.seconds for run in runs):>9.1f}"
+        f"{sum(run.llm_inference_seconds for run in runs):>9.1f}"
+        f"{sum(metrics.lifetime_seconds for metrics in sandbox_runs):>11.1f}"
+        f"{sum(metrics.execution_seconds for metrics in sandbox_runs):>10.1f}"
+        f"{sum(metrics.warm_waiting_seconds for metrics in sandbox_runs):>10.1f}"
+        f"{sum(metrics.suspended_seconds for metrics in sandbox_runs):>10.1f}"
+        f"{sum(metrics.resume_wait_seconds for metrics in sandbox_runs):>10.1f}"
+        f"{sum(metrics.pause_count for metrics in sandbox_runs):>8}"
+        f"{sum(run.turns for run in runs):>8}"
+        f"{sum(len(run.tools) for run in runs):>8}"
+    )
+    lines.append("Category timing rows are medians. The total row contains sums.")
     failed = [run for run in runs if not run.passed]
     if failed:
         lines.append("")
         lines.append("failures:")
         lines.extend(f"  {run.case_id}: {'; '.join(run.failures) or run.error}" for run in failed)
+    return "\n".join(lines)
+
+
+def sandbox_metrics_markdown(runs: Sequence[CaseRun]) -> str:
+    """Render every sandbox timing field for each case in the Markdown report."""
+    sandbox_runs = [(run, run.sandbox_metrics) for run in runs if run.sandbox_metrics is not None]
+    if not sandbox_runs:
+        return "## Sandbox metrics\n\nNo sandbox metrics were available for this run."
+
+    lines = [
+        "## Sandbox timing by case",
+        "",
+        "Durations are seconds. All columns after lifetime are mutually exclusive lifetime components.",
+        "",
+        "| Case | Lifetime | Provision | Execute | Pause transition | Warm wait | Suspended | Resume wait | Teardown |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for run, metrics in sandbox_runs:
+        lines.append(
+            f"| {run.case_id} | {metrics.lifetime_seconds:.3f} | {metrics.provisioning_seconds:.3f} "
+            f"| {metrics.execution_seconds:.3f} | {metrics.pause_transition_seconds:.3f} "
+            f"| {metrics.warm_waiting_seconds:.3f} | {metrics.suspended_seconds:.3f} "
+            f"| {metrics.resume_wait_seconds:.3f} | {metrics.teardown_seconds:.3f} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Sandbox suspension by case",
+            "",
+            "| Case | Pauses | Resumes | Total resume wait | Max resume wait |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for run, metrics in sandbox_runs:
+        lines.append(
+            f"| {run.case_id} | {metrics.pause_count} | {metrics.resume_count} "
+            f"| {metrics.resume_wait_seconds:.3f} | {metrics.max_resume_wait_seconds:.3f} |"
+        )
     return "\n".join(lines)
 
 
@@ -304,7 +464,9 @@ def write_report(
     summary = output_dir / "summary.md"
     timing = f"\nWall time: {wall_seconds:.1f} seconds\n" if wall_seconds is not None else ""
     summary.write_text(
-        f"# AI evaluation\n\nCase concurrency: {jobs}{timing}\n```\n{summarize(runs)}\n```\n", encoding="utf-8"
+        f"# AI evaluation\n\nCase concurrency: {jobs}{timing}\n"
+        f"## Aggregate\n\n```\n{summarize(runs)}\n```\n\n{sandbox_metrics_markdown(runs)}\n",
+        encoding="utf-8",
     )
     return summary
 
@@ -330,7 +492,13 @@ def select(cases: Sequence[EvalCase], ids: Sequence[str], categories: Sequence[s
     return chosen
 
 
-async def run_all(cases: Sequence[EvalCase], settings: AiSettings, provider: Any, jobs: int = 1) -> list[CaseRun]:
+async def run_all(
+    cases: Sequence[EvalCase],
+    settings: AiSettings,
+    provider: Any,
+    jobs: int = 1,
+    sandbox_factory: SandboxFactory | None = None,
+) -> list[CaseRun]:
     """Run selected cases with bounded parallelism and preserve dataset order."""
     if jobs <= 0:
         raise ValueError("jobs must be positive")
@@ -341,7 +509,7 @@ async def run_all(cases: Sequence[EvalCase], settings: AiSettings, provider: Any
     async def run_bounded(index: int, case: EvalCase) -> tuple[int, CaseRun]:
         nonlocal completed
         async with concurrency_limit:
-            run = await run_case(provider, settings, case)
+            run = await run_case(provider, settings, case, sandbox_factory)
         completed += 1
         mark = "pass" if run.passed else "FAIL"
         print(f"[{completed}/{len(cases)}] {mark} {run.case_id} {run.seconds:.0f}s", flush=True)
@@ -365,8 +533,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     cases = select(load_cases(arguments.cases_dir), arguments.case, arguments.category)
     settings = AiSettings.from_env()
+    sandbox_factory = create_sandbox_factory(settings)
     started = time.monotonic()
-    runs = asyncio.run(run_all(cases, settings, OpenAiCompatibleProvider(settings, include_usage=True), arguments.jobs))
+    runs = asyncio.run(
+        run_all(
+            cases,
+            settings,
+            OpenAiCompatibleProvider(settings, include_usage=True),
+            arguments.jobs,
+            sandbox_factory,
+        )
+    )
     wall_seconds = time.monotonic() - started
 
     summary = write_report(

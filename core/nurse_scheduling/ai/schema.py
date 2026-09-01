@@ -23,6 +23,15 @@ from dataclasses import dataclass
 from difflib import get_close_matches
 
 MAX_SCHEMA_RESULT_CHARS = 6_000
+SELECTOR_GUIDANCE = (
+    "Selector fidelity:\n"
+    "- Preserve an exact selector supplied by the user when validation accepts it. IDs such as `Person 3` and "
+    "`P3` are different.\n"
+    "- Keep reserved selectors such as `ALL` literal. Do not expand a group or reserved selector into its members.\n"
+    "- Keep concrete IDs distinct from group IDs. For example, shift type `D` is not group `Day`.\n"
+    "- Keep date selectors in the requested form. For example, `01`, `2025-11-01`, and a date-group ID are distinct.\n"
+    "- Quote a YAML string containing `: `, `#`, or another syntax-significant character."
+)
 
 
 @dataclass(frozen=True)
@@ -46,7 +55,14 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     "dates.range": ScheduleSchemaTopic(
         "Inclusive calendar range for the schedule.",
         fields=("required `startDate`: YYYY-MM-DD", "required `endDate`: YYYY-MM-DD"),
-        rules=("`endDate` must be on or after `startDate`.",),
+        rules=(
+            "`endDate` must be on or after `startDate`.",
+            (
+                "When shrinking the range, remove every now-out-of-range date from groups and preferences in the "
+                "same coordinated file edit. Find their current short or full date selectors with `rg` and "
+                "bounded context."
+            ),
+        ),
         example="""dates:
   range:
     startDate: 2026-01-01
@@ -80,6 +96,13 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "required `id`: string",
             "required `description`: string, which may be empty",
             "optional `history`: flat list of shift-type IDs or OFF",
+        ),
+        rules=(
+            (
+                "To remove a person entirely, remove their item, every group membership, and every preference that "
+                "names only that person in the same coordinated file edit. Locate every exact reference with "
+                "`rg --word-regexp` and bounded context."
+            ),
         ),
         example="""people:
   items:
@@ -142,6 +165,10 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "Every schedule must include `at most one shift per day`.",
             "References use flat string lists in the frontend-editable shape.",
             "Finite weights are integers. `.inf` and `-.inf` express hard preferences.",
+            (
+                "Two preference types count different things. `shift type requirement` counts how many people a "
+                "shift type needs on a date. `shift count` counts how many shifts one person works across dates."
+            ),
         ),
         related=(
             "preferences.at most one shift per day",
@@ -187,6 +214,12 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "optional `weight`, default 1",
             "optional `description`",
         ),
+        rules=(
+            (
+                "Preserve every shift token in the requested sequence. For example, E followed by D is [E, D], not "
+                "[Evening, Day]."
+            ),
+        ),
         example="""preferences:
   - type: shift type successions
     person: [P1]
@@ -196,7 +229,8 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         related=("preferences", "people", "dates", "shiftTypes"),
     ),
     "preferences.shift type requirement": ScheduleSchemaTopic(
-        "Require staffing for one shift type or one shift-type group.",
+        "Require staffing for one shift type or one shift-type group. This is the number of people a shift type "
+        "needs on a date, so it is the type for how many people work a shift.",
         fields=(
             "required `type`: shift type requirement",
             "required `shiftType`: flat list of shift-type or shift-type-group IDs",
@@ -209,6 +243,14 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         rules=(
             "Use one shift-type group in `shiftType` when coefficients cover multiple member shift types.",
             "OFF is not allowed in this preference type.",
+            (
+                "`requiredNumPeople` is the staffing that must be met. Add `preferredNumPeople` with a finite "
+                "`weight` to score a better level above it, in one preference rather than two."
+            ),
+            (
+                "Use `date: [ALL]` for every date. Do not express this as a `shift count` preference, which counts "
+                "one person's shifts instead of the people on a shift."
+            ),
         ),
         example="""preferences:
   - type: shift type requirement
@@ -221,7 +263,8 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         related=("preferences", "people.groups", "dates.groups", "shiftTypes.groups"),
     ),
     "preferences.shift count": ScheduleSchemaTopic(
-        "Constrain or score total shift counts for selected people.",
+        "Constrain or score total shift counts for selected people. This counts the shifts one person works across "
+        "the selected dates, not the people needed on a shift.",
         fields=(
             "required `type`: shift count",
             "required `person`: flat list of person or people-group IDs",
@@ -229,11 +272,17 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "required `countShiftTypes`: flat list of shift-type or group IDs, ALL, or OFF",
             "required scalar `expression`: one of x = T, x >= T, x <= T, x > T, x < T, |x - T|^2",
             "required scalar `target`: integer",
-            "optional `countShiftTypeCoefficients`, `weight`, and `description`",
+            "optional `countShiftTypeCoefficients`: [shift-type ID, integer] pairs, for example [[D, 1], [N, 2]]",
+            "optional `weight` and `description`",
         ),
         rules=(
             "`x = T` means exactly the target count. The inequality expressions set minimum or maximum counts.",
             "Use `weight: -.inf` for a hard exact or inequality constraint.",
+            (
+                "For how many people a shift type needs on a date, use `shift type requirement` instead. A staffing "
+                "level is not a per-person shift total."
+            ),
+            "Coefficients are a list of 2-item lists, not a mapping or a list of strings.",
         ),
         example="""preferences:
   - type: shift count
@@ -413,7 +462,7 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "required `type`: count",
             "required `header`: string",
             "required `countShiftTypes`: flat list of shift-type or group IDs",
-            "required `countPeople`: flat list of person or group IDs",
+            "required `countPeople`: flat list of person or group IDs. Use ALL to count every person",
             "optional `description` and `bottomBorderColor`",
         ),
         example="""export:
@@ -421,7 +470,7 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     - type: count
       header: Night staffing
       countShiftTypes: [N]
-      countPeople: [PEOPLE]""",
+      countPeople: [ALL]""",
         related=("export", "export.extraColumns"),
     ),
 }
@@ -446,13 +495,14 @@ def render_schedule_schema(path: str | None = None) -> str | None:
             "- description\n"
             "- export\n\n"
             "Choose the most specific path. A leaf example is validated and sufficient to construct that shape.\n\n"
+            f"{SELECTOR_GUIDANCE}\n\n"
             f"Available paths:\n{paths}"
         )
 
     topic = SCHEMA_TOPICS.get(path)
     if topic is None:
         return None
-    sections = [f"Path: {path}", topic.summary]
+    sections = [f"Path: {path}", topic.summary, SELECTOR_GUIDANCE]
     if topic.fields:
         sections.append("Fields:\n" + "\n".join(f"- {field}" for field in topic.fields))
     if topic.rules:
@@ -461,8 +511,8 @@ def render_schedule_schema(path: str | None = None) -> str | None:
         sections.append(f"Minimal frontend-compatible YAML:\n\n{topic.example}")
         sections.append(
             "This example is validated and authoritative for this shape. Do not search schedule.yaml for another "
-            "schema example or call get_schedule_schema again. Read only enough schedule text to preserve values "
-            "and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next."
+            "schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the "
+            "user requested a change and you have that anchor, make the edit next."
         )
     if topic.related:
         sections.append("Related paths:\n" + "\n".join(f"- {related}" for related in topic.related))

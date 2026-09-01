@@ -98,7 +98,7 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       headers: corsHeaders,
       body: [
         'event: reasoning\ndata: {"text":"The ward has one nurse, so I will add another."}\n\n',
-        'event: tool\ndata: {"name":"edit_schedule","arguments":"{\\"old_str\\":\\"  groups: []\\",\\"new_str\\":\\"  groups: []\\"}","result":"schedule.yaml is valid.","ok":true}\n\n',
+        'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"python3 /tmp/edit.py\\"}","result":"exit_code: 0","ok":true}\n\n',
         'event: delta\ndata: {"text":"I propose adding one nurse."}\n\n',
         'event: proposal\ndata: {"diff":"- people.items[0]: added {\\"id\\": \\"Proposed Nurse\\"}"}\n\n',
         'event: done\ndata: {"message_id":"answer-id"}\n\n',
@@ -119,7 +119,7 @@ test('approves a proposed schedule and applies it as one undoable step', async (
   const proposal = page.getByRole('region', { name: 'Proposed schedule change' });
   await expect(proposal).toBeVisible();
   await expect(proposal).toContainText('added');
-  await expect(page.getByText('edit_schedule')).toBeVisible();
+  await expect(page.getByText('bash')).toBeVisible();
 
   await page.getByRole('button', { name: 'Approve' }).click();
 
@@ -179,8 +179,8 @@ test('keeps reasoning and tool detail out of the way until asked for', async ({ 
   await page.getByText(/^Reasoning ·/).click();
   await expect(reasoning).toBeVisible();
 
-  await page.getByText('edit_schedule', { exact: true }).click();
-  await expect(page.getByText('schedule.yaml is valid.')).toBeVisible();
+  await page.getByText('bash', { exact: true }).click();
+  await expect(page.getByText('exit_code: 0')).toBeVisible();
 
   // Turning the categories off hides them for good, across reloads.
   await page.getByRole('checkbox', { name: 'Show reasoning' }).uncheck();

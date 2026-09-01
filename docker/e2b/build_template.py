@@ -37,7 +37,7 @@ def main() -> None:
         raise SystemExit("E2B_TEMPLATE must not be empty")
 
     dockerfile = Path(__file__).with_name("e2b.Dockerfile")
-    template = Template().from_dockerfile(str(dockerfile))
+    template = Template(file_context_path=dockerfile.parent).from_dockerfile(str(dockerfile))
     result = Template.build(
         template,
         alias=alias,

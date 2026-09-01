@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from nurse_scheduling.ai.editor import describe_schedule
+from nurse_scheduling.ai.schedule_context import describe_schedule
 from nurse_scheduling.loader import _load_yaml
 
 from .ai_eval.grading import (

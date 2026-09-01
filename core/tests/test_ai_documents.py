@@ -40,6 +40,7 @@ from nurse_scheduling.ai.documents import (
     extract_document_text,
 )
 from nurse_scheduling.ai.provider import ChatMessage, TextDelta
+from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 
 
 class FakeProvider:
@@ -230,7 +231,7 @@ def test_pdf_and_xlsx_are_extracted_for_one_provider_request() -> None:
         provider_model="test-model",
         cookie_secure=False,
     )
-    client = TestClient(create_app(settings=settings, provider=provider))
+    client = TestClient(create_app(settings=settings, provider=provider, sandbox_factory=FakeSandboxFactory()))
     session = client.post("/sessions", json={"schedule_yaml": "description: test"})
 
     response = client.post(

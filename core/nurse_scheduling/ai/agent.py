@@ -21,10 +21,10 @@
 
 import logging
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
-from .editor import ScheduleEditor, execute_tool, tool_definitions
 from .provider import (
     ChatMessage,
     ReasoningDelta,
@@ -77,80 +77,76 @@ class AgentProposal:
 
 
 AgentEvent = AgentText | AgentReasoning | AgentToolUse | AgentProposal
+ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]
+BudgetGuidance = Callable[[str, int, int], str]
 
 
-async def run_agent(
+@dataclass(frozen=True)
+class AgentToolOutcome:
+    """One provider-neutral result produced by an agent-facing tool."""
+
+    text: str
+    ok: bool
+
+
+async def run_tool_agent(
     provider: ToolCapableChatProvider,
-    editor: ScheduleEditor,
     messages: Sequence[ChatMessage],
+    tools: Sequence[dict[str, Any]],
     max_tool_calls: int,
-) -> AsyncIterator[AgentEvent]:
-    """Answer one question, letting the assistant read and edit the schedule.
-
-    The loop ends when the assistant replies without calling a tool. Calls past
-    the execution budget receive an error, followed by one tool-free response.
-    A run that fails or is abandoned leaves no proposal behind, so the user is
-    never offered a schedule from an incomplete answer.
-    """
+    execute: ToolExecutor,
+    budget_guidance: BudgetGuidance,
+) -> AsyncIterator[AgentText | AgentReasoning | AgentToolUse]:
+    """Run the bounded model/tool loop shared by agent capability layers."""
     if max_tool_calls < 0:
         raise ValueError("max_tool_calls must be non-negative")
 
     conversation = list(messages)
     tool_calls_used = 0
-    completed = False
-    try:
-        while True:
-            answer, calls = [], ()
-            async for event in provider.stream_events(conversation, tool_definitions(editor)):
-                if isinstance(event, TextDelta):
-                    answer.append(event.text)
-                    yield AgentText(event.text)
-                elif isinstance(event, ReasoningDelta):
-                    yield AgentReasoning(event.text)
-                elif isinstance(event, ToolCallRequest):
-                    calls = event.calls
-            if not calls:
-                break
+    while True:
+        answer, calls = [], ()
+        async for event in provider.stream_events(conversation, tools):
+            if isinstance(event, TextDelta):
+                answer.append(event.text)
+                yield AgentText(event.text)
+            elif isinstance(event, ReasoningDelta):
+                yield AgentReasoning(event.text)
+            elif isinstance(event, ToolCallRequest):
+                calls = event.calls
+        if not calls:
+            break
 
-            conversation.append(assistant_tool_call_message(calls, "".join(answer)))
-            rejected_call = False
-            for call in calls:
-                if tool_calls_used >= max_tool_calls:
-                    result = _tool_budget_error(tool_calls_used, max_tool_calls)
-                    logger.info("agent tool call name=%s rejected=budget_exhausted", call.name)
-                    yield AgentToolUse(call.name, call.arguments, result, False, executed=False)
-                    conversation.append(tool_result_message(call.id, result))
-                    rejected_call = True
-                    continue
+        conversation.append(assistant_tool_call_message(calls, "".join(answer)))
+        rejected_call = False
+        for call in calls:
+            if tool_calls_used >= max_tool_calls:
+                result = _tool_budget_error(tool_calls_used, max_tool_calls)
+                logger.info("agent tool call name=%s rejected=budget_exhausted", call.name)
+                yield AgentToolUse(call.name, call.arguments, result, False, executed=False)
+                conversation.append(tool_result_message(call.id, result))
+                rejected_call = True
+                continue
 
-                tool_calls_used += 1
-                outcome = execute_tool(editor, call.name, call.arguments)
-                logger.info(
-                    "agent tool call name=%s ok=%s result_chars=%s",
-                    call.name,
-                    outcome.ok,
-                    len(outcome.text),
+            tool_calls_used += 1
+            outcome = await execute(call.name, call.arguments)
+            logger.info(
+                "agent tool call name=%s ok=%s result_chars=%s",
+                call.name,
+                outcome.ok,
+                len(outcome.text),
+            )
+            yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+            conversation.append(
+                tool_result_message(
+                    call.id,
+                    budget_guidance(outcome.text, tool_calls_used, max_tool_calls),
                 )
-                yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
-                guided_result = _tool_result_with_budget_guidance(
-                    outcome.text,
-                    tool_calls_used,
-                    max_tool_calls,
-                    editor.proposal is not None,
-                )
-                conversation.append(tool_result_message(call.id, guided_result))
+            )
 
-            if rejected_call:
-                async for event in _finalize_after_tool_budget(provider, conversation):
-                    yield event
-                break
-        completed = True
-    finally:
-        if not completed:
-            editor.proposal = None
-
-    if editor.proposal is not None:
-        yield AgentProposal(editor.proposal.text, editor.proposal.diff.render())
+        if rejected_call:
+            async for event in _finalize_after_tool_budget(provider, conversation):
+                yield event
+            break
 
 
 def _tool_budget_error(used: int, limit: int) -> str:
@@ -160,25 +156,6 @@ def _tool_budget_error(used: int, limit: int) -> str:
         "This call was not executed. Do not call another tool. Answer the user using the information already "
         "collected, or explain what remains unresolved."
     )
-
-
-def _tool_result_with_budget_guidance(result: str, used: int, limit: int, proposal_exists: bool) -> str:
-    """Expose the remaining execution budget to improve tool planning."""
-    remaining = max(0, limit - used)
-    if proposal_exists:
-        guidance = "A validated schedule proposal exists. Answer the user now unless it needs correction."
-    elif remaining == 0:
-        guidance = "No tool calls remain. Answer using the information already collected."
-    elif remaining == 1:
-        guidance = (
-            "One tool call remains. If the user requested a schedule change, use edit_schedule or write_schedule now."
-        )
-    else:
-        guidance = (
-            f"{remaining} tool calls remain. If the user requested a schedule change, reserve one for "
-            "edit_schedule or write_schedule."
-        )
-    return f"{result}\n\nTool budget: {guidance}"
 
 
 async def _finalize_after_tool_budget(

@@ -125,7 +125,6 @@ class AiSettings:
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
     max_tool_calls: int = 5
-    max_schedule_edits: int = 5
     attachment_mode: AttachmentMode = "images"
     max_image_files: int = 4
     max_image_bytes: int = 5_000_000
@@ -141,8 +140,12 @@ class AiSettings:
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
     sandbox_command_timeout_seconds: float = 10.0
-    sandbox_turn_timeout_seconds: float = 120.0
+    sandbox_turn_timeout_seconds: float = 300.0
     sandbox_cleanup_timeout_seconds: float = 10.0
+    bash_tool_max_command_chars: int = 4_000
+    bash_tool_max_stdout_chars: int = 12_000
+    bash_tool_max_stderr_chars: int = 4_000
+    bash_tool_max_output_chars: int = 16_000
     cookie_secure: bool = True
 
     @classmethod
@@ -166,6 +169,8 @@ class AiSettings:
             raise ValueError("E2B_API_KEY is required when AI_SANDBOX_BACKEND=e2b")
         if sandbox_backend == "e2b" and not e2b_template:
             raise ValueError("E2B_TEMPLATE is required when AI_SANDBOX_BACKEND=e2b")
+        if sandbox_backend == "none":
+            raise ValueError("AI_SANDBOX_BACKEND must be configured")
 
         return cls(
             provider_base_url=provider_base_url,
@@ -179,7 +184,6 @@ class AiSettings:
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
             max_tool_calls=_read_max_tool_calls(),
-            max_schedule_edits=_read_positive_int("AI_MAX_SCHEDULE_EDITS", 5),
             attachment_mode=_read_attachment_mode(),
             max_image_files=_read_positive_int("AI_MAX_IMAGE_FILES", 4),
             max_image_bytes=_read_positive_int("AI_MAX_IMAGE_BYTES", 5_000_000),
@@ -195,7 +199,11 @@ class AiSettings:
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,
             sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 10.0),
-            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 120.0),
+            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 300.0),
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
+            bash_tool_max_command_chars=_read_positive_int("AI_BASH_TOOL_MAX_COMMAND_CHARS", 4_000),
+            bash_tool_max_stdout_chars=_read_positive_int("AI_BASH_TOOL_MAX_STDOUT_CHARS", 12_000),
+            bash_tool_max_stderr_chars=_read_positive_int("AI_BASH_TOOL_MAX_STDERR_CHARS", 4_000),
+            bash_tool_max_output_chars=_read_positive_int("AI_BASH_TOOL_MAX_OUTPUT_CHARS", 16_000),
             cookie_secure=_read_bool("AI_COOKIE_SECURE", True),
         )
