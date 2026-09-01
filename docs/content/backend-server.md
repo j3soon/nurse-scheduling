@@ -185,6 +185,10 @@ reports the requirement:
 Backends that predate this field omit it, and clients treat a missing
 descriptor as an open server. Send the token as a bearer credential:
 
+Use an `https://` API URL when authentication is enabled. A trusted reverse
+proxy may terminate TLS before forwarding requests to the backend. TLS protects
+both the bearer credential and the stream token from interception.
+
 ```sh
 export API_AUTH_TOKEN="<token>"
 curl -H "Authorization: Bearer $API_AUTH_TOKEN" "$API_URL/optimize/options"
