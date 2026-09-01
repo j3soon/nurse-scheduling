@@ -38,9 +38,12 @@ interface DataTableProps<T> {
   onRowClick?: (item: T, index: number) => void;
   headerAction?: ReactNode;
   footer?: ReactNode;
+  // Opt-in fixed layout keeps columns at their declared widths so a wide cell truncates
+  // instead of widening the table and hiding the trailing columns behind a scrollbar.
+  fixedLayout?: boolean;
 }
 
-export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, onRowClick, headerAction, footer }: DataTableProps<T>) {
+export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, onRowClick, headerAction, footer, fixedLayout = false }: DataTableProps<T>) {
   const draggedRowIndexRef = useRef<number | null>(null);
   const [dragOverState, setDragOverState] = useState<{ rowIndex: number; insertAfter: boolean } | null>(null);
 
@@ -103,7 +106,9 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
         <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
         {headerAction && <div className="flex items-center">{headerAction}</div>}
       </div>
-      <table className="min-w-full divide-y divide-gray-200">
+      {/* Fixed layout needs a resolved table width, so `min-w-full` alone would still let
+          content size the columns. */}
+      <table className={`divide-y divide-gray-200 ${fixedLayout ? 'w-full table-fixed' : 'min-w-full'}`}>
         <thead className="bg-gray-50">
           <tr>
             {columns.map((column, index) => {

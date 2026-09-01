@@ -69,6 +69,8 @@ from uuid import uuid4
 
 import httpx
 
+from .auth import AUTH_TOKEN_ENV_NAME
+
 DEFAULT_TARGET_URL = "https://api.nursescheduling.org"
 DEFAULT_SCENARIO_PATH = (
     Path(__file__).resolve().parents[2] / "tests/testcases/real/large-ward-with-87-people-2025-11.yaml"
@@ -132,6 +134,8 @@ class DiagnosticConfig:
     job_timeout_seconds: int = 60 * 60
     poll_seconds: float = 0.5
     submit_interval_seconds: float = 0.25
+    auth_token: str | None = None
+    """Shared token sent to a target that requires authentication."""
 
     def __post_init__(self) -> None:
         """Reject unsafe or unusable diagnostic settings."""
@@ -168,6 +172,10 @@ class DiagnosticConfig:
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive")
         object.__setattr__(self, "target_url", target)
+        auth_token = (self.auth_token or "").strip()
+        if auth_token and parsed.scheme != "https":
+            raise ValueError("DIAGNOSTIC_AUTH_TOKEN requires DIAGNOSTIC_TARGET_URL to use HTTPS")
+        object.__setattr__(self, "auth_token", auth_token or None)
 
     @classmethod
     def from_env(
@@ -195,6 +203,7 @@ class DiagnosticConfig:
             job_timeout_seconds=_positive_int_env("DIAGNOSTIC_JOB_TIMEOUT_SECONDS", 60 * 60),
             poll_seconds=_positive_float_env("DIAGNOSTIC_POLL_SECONDS", 0.5),
             submit_interval_seconds=_positive_float_env("DIAGNOSTIC_SUBMIT_INTERVAL_SECONDS", 0.25),
+            auth_token=os.getenv("DIAGNOSTIC_AUTH_TOKEN") or os.getenv(AUTH_TOKEN_ENV_NAME),
         )
 
 
@@ -266,8 +275,15 @@ class PublicDiagnostic:
             timeout=self.config.request_timeout_seconds,
             follow_redirects=False,
             transport=self.transport,
-            headers={"User-Agent": "nurse-scheduling-public-diagnostic/1"},
+            headers=self._client_headers(),
         )
+
+    def _client_headers(self) -> dict[str, str]:
+        """Build the headers shared by every diagnostic request."""
+        headers = {"User-Agent": "nurse-scheduling-public-diagnostic/1"}
+        if self.config.auth_token is not None:
+            headers["Authorization"] = f"Bearer {self.config.auth_token}"
+        return headers
 
     def _add_finding(self, level: str, code: str, message: str) -> None:
         """Append one deduplicated finding."""

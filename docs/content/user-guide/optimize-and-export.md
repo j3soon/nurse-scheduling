@@ -27,6 +27,10 @@ starts.
 
 1. Use **Auto** for the first online compatible backend, or select an approved
    server explicitly.
+1. If the server reports **Credentials required**, select **Enter token**, paste
+   the token for that backend, and select **Save**. Enable **Remember on this
+   device** to keep it for later visits, or leave it unchecked to use it only
+   until the page is reloaded.
 2. Optional: keep **Prettify XLSX** enabled to apply Export Layout.
 3. Optional: review **Anonymize schedule data**. Keep it enabled unless there
    is an approved reason to send original people IDs.
@@ -62,6 +66,7 @@ schedule.
 | --- | --- |
 | Optimize is disabled | Add dates, at least one person, and one shift. Wait for the server check. |
 | Server is offline or incompatible | Select **Check all**, start the approved backend, or select another compatible server. |
+| Server needs credentials | Select **Enter token** and paste the token for that backend. If it was rejected, select **Change** and enter the current token. |
 | Undefined staffing | Add a requirement for every listed date and working shift. |
 | Duplicate staffing | Remove unintended overlap. Intentional layered requirements all apply. |
 | Result is infeasible | Check hard staffing, requests, successions, counts, and qualified people. Relax one rule at a time. |

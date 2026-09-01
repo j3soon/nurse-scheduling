@@ -24,8 +24,11 @@ import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import {
+  buildAuthHeaders,
   createBackendApiCandidates,
   isOptimizationOptionsResponse,
+  normalizeEndpoint,
+  parseAuthRequirement,
   selectPreferredServer,
   type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
@@ -211,6 +214,70 @@ async function editBackendEndpoint(user: ReturnType<typeof userEvent.setup>, fro
   await user.type(endpointInput, to);
   await user.tab();
 }
+
+describe('backend authentication discovery', () => {
+  it('treats a backend without an auth descriptor as open', () => {
+    expect(parseAuthRequirement(undefined)).toBeNull();
+    expect(parseAuthRequirement(null)).toBeNull();
+    expect(parseAuthRequirement('bearer')).toBeNull();
+    expect(parseAuthRequirement([])).toBeNull();
+    expect(parseAuthRequirement({ scheme: 'bearer' })).toBeNull();
+  });
+
+  it('reads the advertised requirement and scheme', () => {
+    expect(parseAuthRequirement({ required: true, scheme: 'Bearer' })).toEqual({
+      required: true,
+      scheme: 'bearer',
+    });
+    expect(parseAuthRequirement({ required: false, scheme: 'bearer' })).toEqual({
+      required: false,
+      scheme: 'bearer',
+    });
+    expect(parseAuthRequirement({ required: true })).toEqual({ required: true, scheme: 'bearer' });
+  });
+
+  it('sends an Authorization header only when a token is set', () => {
+    expect(buildAuthHeaders('secret')).toEqual({ Authorization: 'Bearer secret' });
+    expect(buildAuthHeaders(null)).toEqual({});
+  });
+});
+
+describe('backend endpoint normalization', () => {
+  it.each([
+    ['api.nursescheduling.org', 'https://api.nursescheduling.org'],
+    ['api.nursescheduling.org/', 'https://api.nursescheduling.org'],
+    ['api.nursescheduling.org///', 'https://api.nursescheduling.org'],
+    ['  api.nursescheduling.org  ', 'https://api.nursescheduling.org'],
+    ['//api.nursescheduling.org', 'https://api.nursescheduling.org'],
+    ['backend.example.test:8443', 'https://backend.example.test:8443'],
+  ])('defaults a bare host to https: %s', (input, expected) => {
+    expect(normalizeEndpoint(input)).toBe(expected);
+  });
+
+  it.each([
+    ['localhost:8000', 'http://localhost:8000'],
+    ['localhost', 'http://localhost'],
+    ['127.0.0.1:8000', 'http://127.0.0.1:8000'],
+    ['LOCALHOST:8000', 'http://LOCALHOST:8000'],
+  ])('defaults a loopback host to http: %s', (input, expected) => {
+    expect(normalizeEndpoint(input)).toBe(expected);
+  });
+
+  it.each([
+    ['http://localhost:8000', 'http://localhost:8000'],
+    ['https://api.nursescheduling.org', 'https://api.nursescheduling.org'],
+    ['http://api.nursescheduling.org', 'http://api.nursescheduling.org'],
+    ['HTTPS://api.nursescheduling.org', 'HTTPS://api.nursescheduling.org'],
+    ['https://api.nursescheduling.org/', 'https://api.nursescheduling.org'],
+  ])('keeps an explicit scheme as typed: %s', (input, expected) => {
+    expect(normalizeEndpoint(input)).toBe(expected);
+  });
+
+  it('leaves an empty value empty', () => {
+    expect(normalizeEndpoint('')).toBe('');
+    expect(normalizeEndpoint('   ')).toBe('');
+  });
+});
 
 describe('optimize backend server selection', () => {
   it('excludes localhost from the default backend candidates', () => {
@@ -472,7 +539,11 @@ describe('OptimizeAndExportPage error handling', () => {
     optionsUnavailable = true;
     await user.click(screen.getByRole('button', { name: /check backend/i }));
 
-    await expect(screen.findByText(/optimization options are temporarily unavailable/i)).resolves.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText(`${LOCAL_API_URL} status: Online`)).toHaveAttribute(
+      'title',
+      'Online. Optimization options are temporarily unavailable.'
+    ));
+    expect(screen.queryByText(/optimization options are temporarily unavailable/i)).not.toBeInTheDocument();
     expect(screen.getByText('Server: Online')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: /solver/i })).toHaveValue('ortools/cp-sat');
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeEnabled();
@@ -489,7 +560,11 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByText('Server: Options unavailable')).resolves.toBeInTheDocument();
-    expect(screen.getAllByText(/backend returned invalid optimization options/i).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Options unavailable`)).toHaveAttribute(
+      'title',
+      'Options unavailable. Backend returned invalid optimization options.'
+    );
+    expect(screen.queryByText(/backend returned invalid optimization options/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Server: Incompatible')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
   });
@@ -873,8 +948,8 @@ describe('OptimizeAndExportPage error handling', () => {
   it('loads app-versioned backend settings without rewriting them', async () => {
     const versionedSettings = JSON.stringify({
       appVersion: 'newer-frontend',
-      servers: [{ endpoint: 'https://future-backend.example.test' }],
-      selectedServerEndpoint: 'https://future-backend.example.test',
+      servers: [{ endpoint: 'future-backend.example.test' }],
+      selectedServerEndpoint: 'future-backend.example.test',
       futureField: true,
     });
     window.localStorage.setItem('nurse-scheduling-optimize-server-options', versionedSettings);
@@ -882,6 +957,7 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByTitle('https://future-backend.example.test')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText('Select https://future-backend.example.test')).toBeChecked();
     expect(screen.queryByTitle(LOCAL_API_URL)).not.toBeInTheDocument();
     expect(window.localStorage.getItem('nurse-scheduling-optimize-server-options')).toBe(versionedSettings);
   });
@@ -1005,6 +1081,26 @@ describe('OptimizeAndExportPage error handling', () => {
 
     expect(screen.getByText('Double-click to add URL')).toBeInTheDocument();
     expect(screen.queryByText('Backend URL is required.')).not.toBeInTheDocument();
+  });
+
+  it('probes an https URL when only a domain name is entered', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    queueInitialLocalSelection(fetchMock);
+    fetchMock.mockImplementation((url: string) => respondWithHealthyBackend(String(url)));
+
+    render(<OptimizeAndExportPage />);
+    await editBackendEndpoint(user, LOCAL_API_URL, 'api.nursescheduling.org');
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/info',
+      expect.objectContaining({ method: 'GET' })
+    ));
+    // The corrected URL is what gets stored and shown, not the bare host that was typed.
+    await expect(screen.findByTitle('https://api.nursescheduling.org')).resolves.toBeInTheDocument();
+    expect(
+      JSON.parse(window.localStorage.getItem('nurse-scheduling-optimize-server-options') ?? '{}').servers
+    ).toEqual([{ endpoint: 'https://api.nursescheduling.org' }]);
   });
 
   it('checks a user-entered endpoint and marks it offline after the health timeout', async () => {
@@ -1179,6 +1275,52 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByText(/frontend and backend versions do not match/i)).resolves.toBeInTheDocument();
+  });
+
+  it('reports a failed info probe through the Status icon only', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(() => Promise.resolve({ ok: false, status: 503 }));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Offline`)).toHaveAttribute(
+      'title',
+      'Offline. Backend info request failed with status 503.'
+    );
+    expect(screen.queryByText(/backend info request failed/i)).not.toBeInTheDocument();
+  });
+
+  it('reports an unreachable backend through the Status icon only', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(() => Promise.reject(new Error('connection refused')));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Offline')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Offline`)).toHaveAttribute(
+      'title',
+      'Offline. Backend is not responding.'
+    );
+    expect(screen.queryByText(/is not responding/i)).not.toBeInTheDocument();
+  });
+
+  it('reports an incompatible backend through the Status icon only', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/optimize/options')
+        ? optimizationOptionsResponse()
+        : healthyResponse({ api_version: '0.1.0' })
+    ));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Incompatible')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Incompatible`)).toHaveAttribute(
+      'title',
+      'Incompatible. Unsupported API version "0.1.0". Expected "0.2.0".'
+    );
+    expect(screen.queryByText(/unsupported api version/i)).not.toBeInTheDocument();
   });
 
   it('shows a backend check failure message', async () => {
@@ -1784,5 +1926,242 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(optimizeButton);
 
     expect(fetch).not.toHaveBeenCalledWith('http://localhost:8000/optimize', expect.anything());
+  });
+});
+
+describe('OptimizeAndExportPage backend authentication', () => {
+  const AUTH_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
+  const BACKEND_TOKEN = 'shared-backend-token';
+  const protectedInfoResponse = () => healthyResponse({ auth: { required: true, scheme: 'bearer' } });
+  const unauthorizedResponse = () => ({
+    ok: false,
+    status: 401,
+    text: vi.fn().mockResolvedValue(JSON.stringify({ detail: 'Backend credentials are required.' })),
+  });
+
+  const readStoredServers = () => JSON.parse(
+    window.localStorage.getItem(AUTH_STORAGE_KEY) ?? '{"servers":[]}'
+  ).servers as Array<{ endpoint: string; token?: string }>;
+
+  const respondByUrl = (fetchMock: ReturnType<typeof vi.fn>) => {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/info')) {
+        return Promise.resolve(protectedInfoResponse());
+      }
+      if (requestUrl.endsWith('/optimize/options')) {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        return Promise.resolve(
+          headers.Authorization === `Bearer ${BACKEND_TOKEN}`
+            ? optimizationOptionsResponse()
+            : unauthorizedResponse()
+        );
+      }
+      return Promise.resolve({ ok: true, json: vi.fn().mockResolvedValue({}) });
+    });
+    return fetchMock;
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    MockEventSource.instances = [];
+    mockGenerateYamlFromState.mockReturnValue('apiVersion: alpha\ndescription: baseline\n');
+    mockRestorePeopleIdsInXlsx.mockClear();
+    mockRestorePeopleIdsInXlsx.mockImplementation(async blob => blob);
+    mockUseSchedulingData.mockReturnValue(createSchedulingData());
+    mockCurrentAppVersion.value = 'frontend-test';
+    vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('EventSource', undefined);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  });
+
+  it('keeps working unchanged against backends that do not advertise authentication', async () => {
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /enter token for/i })).not.toBeInTheDocument();
+    const optionsCall = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([url]) => String(url).endsWith('/optimize/options')
+    );
+    expect(optionsCall).toBeDefined();
+    expect((optionsCall?.[1] as RequestInit | undefined)?.headers ?? {}).not.toHaveProperty('Authorization');
+  });
+
+  it('reports that credentials are required and prompts for a token', async () => {
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Credentials required')).resolves.toBeInTheDocument();
+    // The token row and the Status icon carry this state, so the description line stays short.
+    expect(screen.getByText('Token required')).toBeInTheDocument();
+    expect(screen.queryByText(/Last checked:.*credential/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Credentials required`)).toHaveAttribute(
+      'title',
+      'Credentials required. Select Enter token to continue.'
+    );
+    expect(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+  });
+
+  it('authorizes the backend with an entered token and remembers it when asked', async () => {
+    const user = userEvent.setup();
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Credentials required');
+
+    await user.click(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` }));
+    await user.type(screen.getByLabelText(`Token for ${LOCAL_API_URL}`), BACKEND_TOKEN);
+    await user.click(screen.getByRole('checkbox', { name: /remember on this device/i }));
+    await user.click(screen.getByRole('button', { name: `Save token for ${LOCAL_API_URL}` }));
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.getByText('Token saved on this device')).toBeInTheDocument();
+    expect(readStoredServers()).toEqual([{ endpoint: LOCAL_API_URL, token: BACKEND_TOKEN }]);
+  });
+
+  it('uses a token for the session only when it is not remembered', async () => {
+    const user = userEvent.setup();
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Credentials required');
+
+    await user.click(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` }));
+    await user.type(screen.getByLabelText(`Token for ${LOCAL_API_URL}`), BACKEND_TOKEN);
+    await user.click(screen.getByRole('button', { name: `Save token for ${LOCAL_API_URL}` }));
+
+    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
+    expect(screen.getByText('Token set for this session')).toBeInTheDocument();
+    expect(readStoredServers()).toEqual([{ endpoint: LOCAL_API_URL }]);
+  });
+
+  it('sends a remembered token with optimization requests', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: LOCAL_API_URL, token: BACKEND_TOKEN }],
+      selectedServerEndpoint: 'auto',
+    }));
+    const fetchMock = respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/optimize'))).toBe(true));
+    const createCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/optimize'));
+    expect((createCall?.[1] as RequestInit).headers).toMatchObject({
+      Authorization: `Bearer ${BACKEND_TOKEN}`,
+    });
+  });
+
+  it('reports a rejected token and forgets it on request', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: LOCAL_API_URL, token: 'stale-token' }],
+      selectedServerEndpoint: 'auto',
+    }));
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Credentials required')).resolves.toBeInTheDocument();
+    // A rejected token is distinguished only by the Status icon and its hover text.
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Credentials rejected`)).toHaveAttribute(
+      'title',
+      'Credentials rejected. Select Change to enter the current token.'
+    );
+    expect(screen.queryByText(/Last checked:.*rejected/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: `Forget token for ${LOCAL_API_URL}` }));
+
+    await waitFor(() => expect(readStoredServers()).toEqual([{ endpoint: LOCAL_API_URL }]));
+    expect(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` })).toBeInTheDocument();
+  });
+
+  it('surfaces a credentials failure that happens during a run', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: LOCAL_API_URL, token: BACKEND_TOKEN }],
+      selectedServerEndpoint: 'auto',
+    }));
+    // The token is rotated on the backend after the page has already gone online, so
+    // discovery keeps succeeding while the run itself is refused.
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => {
+      const requestUrl = String(url);
+      if (requestUrl.endsWith('/info')) {
+        return Promise.resolve(protectedInfoResponse());
+      }
+      if (requestUrl.endsWith('/optimize/options')) {
+        return Promise.resolve(optimizationOptionsResponse());
+      }
+      return Promise.resolve(unauthorizedResponse());
+    });
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+
+    await expect(
+      screen.findByText('Backend credentials are missing or invalid. Enter the backend token and try again.')
+    ).resolves.toBeInTheDocument();
+  });
+
+  it('keeps each backend token scoped to its own endpoint', async () => {
+    const SECOND_API_URL = 'http://localhost:8100';
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [
+        { endpoint: LOCAL_API_URL, token: BACKEND_TOKEN },
+        { endpoint: SECOND_API_URL, token: 'second-backend-token' },
+      ],
+      selectedServerEndpoint: 'auto',
+    }));
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    respondByUrl(fetchMock);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+
+    await waitFor(() => {
+      const optionsCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/optimize/options'));
+      expect(optionsCalls.length).toBeGreaterThanOrEqual(2);
+    });
+    const tokenFor = (endpoint: string) => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url) === `${endpoint}/optimize/options`);
+      return ((call?.[1] as RequestInit | undefined)?.headers as Record<string, string> | undefined)?.Authorization;
+    };
+
+    expect(tokenFor(LOCAL_API_URL)).toBe(`Bearer ${BACKEND_TOKEN}`);
+    expect(tokenFor(SECOND_API_URL)).toBe('Bearer second-backend-token');
+  });
+
+  it('drops a stored token when the backend URL is retyped', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [{ endpoint: LOCAL_API_URL, token: BACKEND_TOKEN }],
+      selectedServerEndpoint: 'auto',
+    }));
+    respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+
+    await user.dblClick(screen.getByTitle(LOCAL_API_URL));
+    const endpointInput = screen.getByDisplayValue(LOCAL_API_URL);
+    await user.clear(endpointInput);
+    await user.type(endpointInput, 'http://localhost:9000{Enter}');
+
+    await waitFor(() => expect(readStoredServers()).toEqual([{ endpoint: 'http://localhost:9000' }]));
   });
 });

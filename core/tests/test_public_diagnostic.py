@@ -1078,3 +1078,55 @@ def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
     assert diagnostic_module.main([]) == 2
     assert "WARNING report_write_failed" in capsys.readouterr().err
     print_report.assert_called_once_with(report, None)
+
+
+def test_diagnostic_sends_the_configured_shared_token(tmp_path):
+    seen_headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json={"status": "ready"})
+
+    diagnostic = _diagnostic(tmp_path, handler, auth_token="diagnostic-shared-token")
+    diagnostic._sample_info()
+
+    assert seen_headers == ["Bearer diagnostic-shared-token"]
+
+
+def test_diagnostic_rejects_a_shared_token_for_an_http_target(tmp_path):
+    with pytest.raises(ValueError, match="DIAGNOSTIC_AUTH_TOKEN requires DIAGNOSTIC_TARGET_URL to use HTTPS"):
+        _diagnostic(
+            tmp_path,
+            target_url="http://backend.example.test",
+            auth_token="diagnostic-shared-token",
+        )
+
+
+def test_diagnostic_omits_the_header_without_a_shared_token(tmp_path):
+    seen_headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json={"status": "ready"})
+
+    diagnostic = _diagnostic(tmp_path, handler)
+    diagnostic._sample_info()
+
+    assert seen_headers == [None]
+
+
+@pytest.mark.parametrize("configured,expected", [(None, None), ("", None), ("  token  ", "token")])
+def test_diagnostic_normalizes_the_configured_shared_token(tmp_path, configured, expected):
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("apiVersion: alpha\n", encoding="utf-8")
+
+    assert _config(scenario, tmp_path, auth_token=configured).auth_token == expected
+
+
+def test_diagnostic_reads_the_shared_token_from_env(monkeypatch):
+    monkeypatch.delenv("DIAGNOSTIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("API_AUTH_TOKEN", "from-api-env")
+    assert DiagnosticConfig.from_env().auth_token == "from-api-env"
+
+    monkeypatch.setenv("DIAGNOSTIC_AUTH_TOKEN", "from-diagnostic-env")
+    assert DiagnosticConfig.from_env().auth_token == "from-diagnostic-env"

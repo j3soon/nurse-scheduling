@@ -11,11 +11,61 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 - Point the hostname service to `http://api:8000`.
 - Copy `.env.example` to `.env`.
 - Set `CLOUDFLARE_TUNNEL_TOKEN` in `.env` to the token from the dashboard.
+- Set `API_AUTH_TOKEN` in `.env`. The deployment image requires it.
 - Enable [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/).
 - (Optional) Add a WAF/rate limit rule for `POST /optimize`.
 - Keep ports `80` and `443` closed on the VM unless another service needs them.
 
 > We used Cloudflare Tunnel for ease of setup, but you can easily switch to NGINX and Certbot if you have a dedicated public IP and are comfortable exposing it to the internet.
+
+## API Authentication
+
+Compose deployments are internet-facing, so they authenticate by default.
+`Dockerfile.api` and `Dockerfile.api.staging` set `API_AUTH_REQUIRED=true` in the
+image, which makes an empty `API_AUTH_TOKEN` a startup failure:
+
+```text
+API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty
+```
+
+Generate a token and put it in the environment file:
+
+```sh
+openssl rand -base64 32
+```
+
+Serving a Compose deployment with no authentication is possible but has to be
+chosen, by setting `API_AUTH_REQUIRED=false` in `.env`. That overrides the value
+baked into the image.
+
+Running the server outside these images leaves `API_AUTH_REQUIRED` unset, so
+local development stays unauthenticated with no extra configuration.
+
+Use at least 16 characters. When `API_AUTH_REQUIRED=true`, the backend rejects a
+shorter token. When it is `false`, a shorter token is accepted with a warning for
+local testing. Requests present the token as a bearer credential:
+
+```sh
+curl -H "Authorization: Bearer ${API_AUTH_TOKEN}" https://api.nursescheduling.org/optimize/options
+```
+
+`GET /info` and `GET /ready` stay public so clients and deployment probes can
+discover the deployment without credentials. `/info` reports
+`"auth": {"required": true, "scheme": "bearer"}`, which the frontend uses to
+prompt for a token before calling a protected route. Every other application
+route, including `/` and all of `/optimize`, answers `401` with a
+`WWW-Authenticate: Bearer` header when the token is missing or wrong. Tokens
+are compared in constant time, and `401` responses are not reported to Sentry
+because unauthenticated probes of a public URL are expected.
+
+When authentication is configured, the generated `/openapi.json`, `/docs`, and
+`/redoc` routes are disabled and return `404`.
+
+Running the backend outside Compose leaves `API_AUTH_TOKEN` unset, so local
+development stays unauthenticated and needs no frontend changes.
+
+The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which both compose files
+set from `API_AUTH_TOKEN`.
 
 ## Start
 
@@ -41,7 +91,7 @@ Cloudflare Tunnel token:
 
 ```sh
 cp .env.staging.example .env.staging
-# Set CLOUDFLARE_TUNNEL_TOKEN and DIAGNOSTIC_TARGET_URL in .env.staging.
+# Set CLOUDFLARE_TUNNEL_TOKEN, API_AUTH_TOKEN, and DIAGNOSTIC_TARGET_URL in .env.staging.
 APP_VERSION="$(git -C .. describe --tags --always --dirty)" \
   docker compose --env-file .env.staging -f compose.backend.yml up -d --build
 ```
@@ -126,6 +176,8 @@ Check the API through Cloudflare:
 ```sh
 curl https://api.nursescheduling.org/ready
 curl https://api.nursescheduling.org/info
+curl -H "Authorization: Bearer ${API_AUTH_TOKEN}" \
+  https://api.nursescheduling.org/optimize/options
 ```
 
 Run the public healthcheck test:
@@ -148,9 +200,10 @@ docker compose -f compose.backend.yml exec api redis-cli -u redis://redis:6379/0
 
 `/ready` is the minimal deployment probe. `/info` performs the same readiness
 check and adds the app version, deployment ID, process instance ID, process
-start time, job backend, and opaque job store ID. Both responses disable
-caching. The frontend uses `/info` so one request provides readiness and
-version information.
+start time, job backend, opaque job store ID, and whether authentication is
+required. Both responses disable caching and stay public. The frontend uses
+`/info` so one request provides readiness, version, and authentication
+information.
 
 ## Public Diagnostic
 

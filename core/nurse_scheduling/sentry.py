@@ -96,8 +96,9 @@ def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> 
 def capture_invalid_request(request: Request, status_code: int, detail: Any) -> None:
     if not _should_enable_sentry():
         return
-    # Missing routes and expired resources are expected and not actionable.
-    if status_code == 404:
+    # Missing routes, expired resources, and unauthenticated probes of a protected
+    # deployment are expected and not actionable.
+    if status_code in (401, 404):
         return
 
     import sentry_sdk

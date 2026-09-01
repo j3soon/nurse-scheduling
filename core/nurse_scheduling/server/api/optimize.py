@@ -26,6 +26,7 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Respo
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from ..auth import create_stream_token
 from ..config import ServerSettings
 from ..jobs.controller import JobController
 from ..jobs.models import JobState
@@ -35,6 +36,8 @@ from .schemas import JobResponse, OptimizationOptionsResponse
 from .sse import format_sse_event
 
 router = APIRouter()
+# The event stream authorizes through a URL token as well, so it carries its own dependency.
+events_router = APIRouter()
 CLIENT_ID_COOKIE_NAME = "nurse_scheduling_client_id"
 """Cookie used to correlate jobs from the same browser for diagnostics."""
 CLIENT_ID_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -44,6 +47,14 @@ CLIENT_ID_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 def _controller(request: Request) -> JobController:
     """Return the application-scoped job controller."""
     return request.app.state.job_controller
+
+
+def _events_token(request: Request, job_id: str) -> str | None:
+    """Mint the stream credential embedded in a job's events link, when authentication is on."""
+    settings = _settings(request)
+    if settings.auth_token is None:
+        return None
+    return create_stream_token(settings.auth_token, job_id, ttl_seconds=settings.stream_token_ttl_seconds)
 
 
 def _settings(request: Request) -> ServerSettings:
@@ -144,7 +155,7 @@ async def create_job(
     )
     response.headers["Location"] = f"/optimize/{job.id}"
     response.headers["Retry-After"] = "1"
-    return JobResponse.from_job(job)
+    return JobResponse.from_job(job, _events_token(request, job.id))
 
 
 @router.get("/optimize/options", response_model=OptimizationOptionsResponse)
@@ -157,10 +168,10 @@ def get_optimization_options(request: Request, response: Response):
 @router.get("/optimize/{job_id}", response_model=JobResponse)
 def get_job(request: Request, job_id: str):
     """Return the current job representation."""
-    return JobResponse.from_job(_controller(request).get_job(job_id))
+    return JobResponse.from_job(_controller(request).get_job(job_id), _events_token(request, job_id))
 
 
-@router.get("/optimize/{job_id}/events")
+@events_router.get("/optimize/{job_id}/events")
 def stream_events(request: Request, job_id: str, last_event_id: str | None = Header(None)):
     """Replay and stream job events after the client's last event ID.
 
@@ -210,13 +221,13 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
 @router.post("/optimize/{job_id}/cancel", status_code=202, response_model=JobResponse)
 def cancel_job(request: Request, job_id: str):
     """Cancel a queued job or request cancellation of a running job."""
-    return JobResponse.from_job(_controller(request).cancel_job(job_id))
+    return JobResponse.from_job(_controller(request).cancel_job(job_id), _events_token(request, job_id))
 
 
 @router.post("/optimize/{job_id}/finish-now", status_code=202, response_model=JobResponse)
 def finish_job_now(request: Request, job_id: str):
     """Ask a supported running solver to return its current result."""
-    return JobResponse.from_job(_controller(request).request_early_completion(job_id))
+    return JobResponse.from_job(_controller(request).request_early_completion(job_id), _events_token(request, job_id))
 
 
 @router.get("/optimize/{job_id}/xlsx")

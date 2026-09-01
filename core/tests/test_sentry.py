@@ -284,3 +284,20 @@ def test_capture_invalid_request_ignores_not_found(monkeypatch, route):
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
 
     capture_invalid_request(request, 404, "Not Found")
+
+
+def test_capture_invalid_request_ignores_unauthorized():
+    """Unauthenticated probes of a protected public deployment are expected traffic."""
+    request = types.SimpleNamespace(
+        scope={"route": None},
+        url=types.SimpleNamespace(path="/optimize/options"),
+        method="GET",
+    )
+    fake_sentry_sdk = types.SimpleNamespace(
+        new_scope=lambda: pytest.fail("401 response reached Sentry"),
+    )
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+        monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+        capture_invalid_request(request, 401, "Backend credentials are required.")

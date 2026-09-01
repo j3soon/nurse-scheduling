@@ -453,6 +453,23 @@ export OPTIMIZE_MAX_TIMEOUT_SECONDS=3600
 export OPTIMIZE_DEFAULT_PRETTIFY=true
 ```
 
+The server is unauthenticated by default, which suits local development. Set
+`API_AUTH_TOKEN` to require a shared bearer token on every application route
+except `/info` and `/ready`:
+
+```sh
+cd core
+API_AUTH_TOKEN="$(openssl rand -base64 32)" \
+uvicorn nurse_scheduling.serve:app --no-access-log
+```
+
+`GET /info` reports `auth.required` so the frontend can prompt for the token.
+The generated `/openapi.json`, `/docs`, and `/redoc` routes are disabled while
+authentication is configured.
+The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployed backend
+refuses to start without a token, and serving one without authentication
+requires `API_AUTH_REQUIRED=false`.
+
 Only advertise solvers available on that machine. The server validates the
 configured runtimes at startup.
 
