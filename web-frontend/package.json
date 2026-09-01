@@ -17,7 +17,7 @@
     "test:e2e": "playwright test",
     "test:e2e:affected": "../scripts/test_frontend_e2e_affected.sh",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:coverage": "rm -rf .e2e-coverage coverage-e2e && E2E_COVERAGE=1 playwright test",
+    "test:e2e:coverage": "rm -rf .e2e-coverage coverage-e2e && E2E_COVERAGE=1 playwright test --reporter=dot --quiet --max-failures=1",
     "coverage:e2e:report": "node scripts/generate-e2e-coverage.mjs"
   },
   "dependencies": {

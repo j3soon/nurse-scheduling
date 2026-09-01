@@ -109,15 +109,28 @@ def kill_process_tree(process: multiprocessing.Process) -> None:
     """Forcibly terminate a child and any external solver descendants."""
     # Reap an exited direct child before signaling its group. Darwin returns
     # EPERM when a process group contains only an unreaped zombie leader.
+    process_tree_error: PermissionError | None = None
     process.join(timeout=0)
     if process.pid is not None:
-        _kill_process_tree_by_pid(process.pid)
+        try:
+            _kill_process_tree_by_pid(process.pid)
+        except PermissionError:
+            # Pipe EOF can arrive just before Darwin makes an abruptly exiting
+            # child reapable. Wait for that transition, then retry the group so
+            # any still-running solver descendants are also terminated.
+            process.join(timeout=1)
+            try:
+                _kill_process_tree_by_pid(process.pid)
+            except PermissionError as error:
+                process_tree_error = error
     if process.is_alive():
         process.kill()
     process.join(timeout=1)
     if process.is_alive():
         process.kill()
         process.join(timeout=1)
+    if process_tree_error is not None:
+        raise process_tree_error
 
 
 def _guard_process_tree(
