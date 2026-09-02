@@ -766,6 +766,8 @@ def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     assert tool["ok"] is True
     assert "Head" in tool["arguments"]
     assert "passed trusted server-side validation" in tool["result"]
+    schedule_change = next(data for name, data in events if name == "schedule_change")
+    assert "description: Head" in schedule_change["schedule_yaml"]
     proposal = next(data for name, data in events if name == "proposal")
     assert "people.items[0].description" in proposal["diff"]
     assert not any(name == "proposal" and "schedule" in data for name, data in events)
@@ -804,6 +806,7 @@ def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> No
 
     events = parse_sse(response.text)
     assert next(data for name, data in events if name == "tool")["name"] == BASH_TOOL
+    assert "description: Head" in next(data for name, data in events if name == "schedule_change")["schedule_yaml"]
     assert next(data for name, data in events if name == "proposal")["diff"] == '- description: "" -> "Head"'
     assert factory.created[0].closed
     assert "`/workspace/schedule.yaml`" in provider.calls[0][0]["content"]

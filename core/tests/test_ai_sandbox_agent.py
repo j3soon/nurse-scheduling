@@ -34,6 +34,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_README,
     REFERENCE_SCHEMA,
     WORKSPACE_SCHEDULE,
+    AgentScheduleChange,
     SandboxAgentLimits,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
@@ -119,6 +120,8 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert events[0].ok
     assert "Trusted schedule check after this command" in events[0].result
     assert "passed trusted server-side validation" in events[0].result
+    schedule_change = next(event for event in events if isinstance(event, AgentScheduleChange))
+    assert "description: Head" in schedule_change.schedule_yaml
     assert AgentText("I propose the description.") in events
     proposal = next(event for event in events if isinstance(event, AgentProposal))
     assert "description: Head" in proposal.text
@@ -219,6 +222,7 @@ def test_intermediate_trusted_validation_lets_the_model_repair_a_bad_edit():
     assert "Remaining edit attempts" not in tools[0].result
     assert tools[1].ok
     assert any(isinstance(event, AgentProposal) for event in events)
+    assert len([event for event in events if isinstance(event, AgentScheduleChange)]) == 1
     assert factory.created[0].closed
 
 

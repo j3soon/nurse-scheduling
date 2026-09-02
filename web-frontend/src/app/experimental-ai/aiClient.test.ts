@@ -221,12 +221,14 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
       'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
+      'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
       'event: done\ndata: {"message_id":"1"}\n\n',
     ])));
     const tools: string[] = [];
     const reasoning: string[] = [];
+    const scheduleChanges: string[] = [];
     const diffs: string[] = [];
     const texts: string[] = [];
 
@@ -237,6 +239,7 @@ describe('AI client', () => {
         onDelta: text => texts.push(text),
         onReasoning: text => reasoning.push(text),
         onTool: activity => tools.push(`${activity.name}:${activity.ok}:${activity.result}`),
+        onScheduleChange: scheduleYaml => scheduleChanges.push(scheduleYaml),
         onProposal: diff => diffs.push(diff),
       },
       new AbortController().signal,
@@ -244,6 +247,7 @@ describe('AI client', () => {
 
     expect(tools).toEqual(['bash:true:exit_code: 0']);
     expect(reasoning).toEqual(['Checking people.']);
+    expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
     expect(texts).toEqual(['Renamed P1.']);
     expect(diffs).toEqual(['- people.items[0].id']);
   });
@@ -301,5 +305,18 @@ describe('AI client', () => {
       new AbortController().signal);
 
     expect(tools).toEqual([{ name: 'bash', arguments: '', result: '', ok: true }]);
+  });
+
+  it('rejects malformed schedule change events', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: schedule_change\ndata: {"schedule_yaml":3}\n\n',
+    ])));
+
+    await expect(streamMessage(
+      'session-id',
+      'Look.',
+      { onDelta: () => {} },
+      new AbortController().signal,
+    )).rejects.toThrow('The AI backend returned an invalid schedule change.');
   });
 });

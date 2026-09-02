@@ -162,6 +162,7 @@ export default function ExperimentalAiPage() {
   const syncedScheduleRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const sandboxScheduleRef = useRef<string | null>(null);
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
   const isNearPageBottomRef = useRef(true);
   const composerRef = useRef<HTMLFormElement | null>(null);
@@ -337,6 +338,7 @@ export default function ExperimentalAiPage() {
     setProposalDiff(null);
     setProposalNotice(null);
     setIsStreaming(true);
+    sandboxScheduleRef.current = scheduleYaml;
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -372,6 +374,21 @@ export default function ExperimentalAiPage() {
               ? { ...message, activity: [...(message.activity ?? []), { kind: 'tool' as const, ...activity }] }
               : message
           ))),
+          onScheduleChange: candidate => {
+            const before = sandboxScheduleRef.current ?? scheduleYaml;
+            sandboxScheduleRef.current = candidate;
+            setMessages(previous => previous.map(message => (
+              message.id === assistantId
+                ? {
+                  ...message,
+                  activity: [
+                    ...(message.activity ?? []),
+                    { kind: 'schedule-change' as const, before, after: candidate },
+                  ],
+                }
+                : message
+            )));
+          },
           onProposal: diff => setProposalDiff(diff),
         },
         controller.signal,

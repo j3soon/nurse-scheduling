@@ -49,7 +49,7 @@ flowchart LR
     Provider -->|streamed deltas and tool calls| Session
     Session -->|one fresh turn| Sandbox[E2B Cloud sandbox<br/>shell working copy]
     Sandbox -->|candidate schedule| Validation[Trusted server validation<br/>and structural diff]
-    Session -->|SSE text, reasoning, tool, and proposal events| Browser
+    Session -->|SSE text, reasoning, tool, validated change, and proposal events| Browser
     Browser -->|approve with base revision| Session
 ```
 
@@ -82,6 +82,13 @@ it received, and whether the call did what it was asked. Sandbox backends return
 raw command output to the AI layer. The AI `bash` tool then bounds stdout,
 stderr, and combined output before sending it to the model or browser. This
 policy stays outside the provider-neutral sandbox interface.
+
+When a Bash command changes the schedule, the backend reads the working copy
+and validates it outside the sandbox before emitting `schedule_change`. The
+event contains that validated working copy. The browser compares it with the
+previous working copy and renders the changed lines in red and green. These
+intermediate previews do not create or apply a proposal. The final validated
+candidate still follows the separate proposal and approval lifecycle.
 
 ## Evaluation
 

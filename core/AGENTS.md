@@ -63,7 +63,8 @@ test paths when a narrower suite is known to be sufficient.
   deterministic domain guidance behind the searchable `nsctl` CLI instead of
   adding model-specific tools. Keep trusted validation after every detected
   schedule change and the structural diff at review, since those catch a
-  dropped entry that still parses.
+  dropped entry that still parses. Emit an intermediate working-copy preview
+  only after that trusted validation.
 - Retry a provider timeout only before any stream event reaches the caller.
   Once text, reasoning, usage, or a tool call is visible, surface the timeout
   rather than replaying the request and risking duplicate output or tool work.

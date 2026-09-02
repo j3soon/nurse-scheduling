@@ -31,6 +31,12 @@ const bashEntry: ActivityEntry = {
   ok: true,
 };
 
+const scheduleChangeEntry: ActivityEntry = {
+  kind: 'schedule-change',
+  before: "people:\n  - id: P1\n    description: ''\npreferences: []",
+  after: 'people:\n  - id: P1\n    description: Head\npreferences: []',
+};
+
 describe('AssistantActivity', () => {
   it('renders nothing when there is no activity', () => {
     const { container } = render(<AssistantActivity entries={[]} />);
@@ -71,6 +77,19 @@ describe('AssistantActivity', () => {
     expect(screen.getByText('exit_code: 0')).toBeVisible();
   });
 
+  it('shows a simple red and green schedule edit', async () => {
+    const user = userEvent.setup();
+    render(<AssistantActivity entries={[scheduleChangeEntry]} />);
+
+    expect(screen.getByText('schedule edit')).toBeVisible();
+    expect(screen.getByText(/description: ''/)).not.toBeVisible();
+
+    await user.click(screen.getByText('schedule edit'));
+
+    expect(screen.getByText(/description: ''/)).toHaveClass('text-red-700');
+    expect(screen.getByText(/description: Head/)).toHaveClass('text-green-700');
+  });
+
   it('reveals long output one chunk at a time', async () => {
     const user = userEvent.setup();
     const longResult = 'x'.repeat(2500);
@@ -89,12 +108,18 @@ describe('AssistantActivity', () => {
         entries={[
           { kind: 'reasoning', text: 'First thought.' },
           { kind: 'tool', name: 'bash', arguments: '{}', result: 'lines', ok: true },
+          { kind: 'schedule-change', before: 'old', after: 'new' },
           { kind: 'reasoning', text: 'Second thought.' },
         ]}
       />,
     );
 
-    const summaries = screen.getAllByText(/Reasoning ·|bash/).map(element => element.textContent);
-    expect(summaries).toEqual(['Reasoning · 14 characters', 'bash', 'Reasoning · 15 characters']);
+    const summaries = screen.getAllByText(/Reasoning ·|bash|schedule edit/).map(element => element.textContent);
+    expect(summaries).toEqual([
+      'Reasoning · 14 characters',
+      'bash',
+      'schedule edit',
+      'Reasoning · 15 characters',
+    ]);
   });
 });

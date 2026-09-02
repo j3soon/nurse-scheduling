@@ -36,7 +36,13 @@ export interface ToolEntry {
   ok: boolean;
 }
 
-export type ActivityEntry = ReasoningEntry | ToolEntry;
+export interface ScheduleChangeEntry {
+  kind: 'schedule-change';
+  before: string;
+  after: string;
+}
+
+export type ActivityEntry = ReasoningEntry | ToolEntry | ScheduleChangeEntry;
 
 // Long output is revealed a chunk at a time, so an expanded row never floods the page.
 const CHUNK_CHARS = 2000;
@@ -76,8 +82,35 @@ function ToolBody({ entry }: { entry: ToolEntry }) {
   );
 }
 
+function ScheduleChangePreview({ entry }: { entry: ScheduleChangeEntry }) {
+  const before = entry.before.split('\n');
+  const after = entry.after.split('\n');
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < before.length - prefix
+    && suffix < after.length - prefix
+    && before[before.length - suffix - 1] === after[after.length - suffix - 1]
+  ) suffix += 1;
+  const removed = before.slice(prefix, before.length - suffix);
+  const added = after.slice(prefix, after.length - suffix);
+
+  return (
+    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
+      {removed.map((line, index) => (
+        <span key={`removed-${index}`} className="block text-red-700">- {line}</span>
+      ))}
+      {added.map((line, index) => (
+        <span key={`added-${index}`} className="block text-green-700">+ {line}</span>
+      ))}
+    </pre>
+  );
+}
+
 function summaryOf(entry: ActivityEntry): string {
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCount(entry.text.length)} characters`;
+  if (entry.kind === 'schedule-change') return 'schedule edit';
   return entry.ok ? entry.name : `${entry.name} · failed`;
 }
 
@@ -92,7 +125,9 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
           <div className="mt-1 rounded bg-gray-50 p-2">
             {entry.kind === 'reasoning'
               ? <ChunkedText text={entry.text} label="reasoning" />
-              : <ToolBody entry={entry} />}
+              : entry.kind === 'tool'
+                ? <ToolBody entry={entry} />
+                : <ScheduleChangePreview entry={entry} />}
           </div>
         </details>
       ))}

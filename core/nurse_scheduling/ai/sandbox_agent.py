@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .agent import AgentEvent, AgentProposal, AgentToolOutcome, run_tool_agent
+from .agent import AgentEvent, AgentProposal, AgentToolOutcome, AgentToolUse, run_tool_agent
 from .bash_tool import BashToolLimits, SandboxBashTool
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
@@ -74,6 +74,13 @@ class SandboxCandidateError(SandboxError):
 
 class SandboxTurnTimeoutError(SandboxError):
     """The complete disposable agent turn exceeded its deadline."""
+
+
+@dataclass(frozen=True)
+class AgentScheduleChange:
+    """A server-validated working copy safe to preview in the UI."""
+
+    schedule_yaml: str
 
 
 @dataclass(frozen=True)
@@ -174,7 +181,7 @@ async def run_sandbox_agent(
     messages: Sequence[ChatMessage],
     limits: SandboxAgentLimits,
     metrics: SandboxTurnMetrics | None = None,
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
     lifecycle_started = time.monotonic()
@@ -194,15 +201,19 @@ async def run_sandbox_agent(
                     schedule_yaml,
                     limits.max_schedule_bytes,
                 )
+                pending_schedule_change: str | None = None
 
                 async def execute_command(name: str, arguments: str) -> AgentToolOutcome:
+                    nonlocal pending_schedule_change
+                    pending_schedule_change = None
                     outcome = await bash_tool.execute(name, arguments)
                     candidate_status = await candidate_tracker.review_if_changed()
                     if candidate_status is None:
                         return outcome
+                    validation, pending_schedule_change = candidate_status
                     return AgentToolOutcome(
-                        f"{outcome.text}\n\n{candidate_status.text}",
-                        outcome.ok and candidate_status.ok,
+                        f"{outcome.text}\n\n{validation.text}",
+                        outcome.ok and validation.ok,
                     )
 
                 async for event in run_tool_agent(
@@ -214,6 +225,9 @@ async def run_sandbox_agent(
                     _sandbox_budget_guidance,
                 ):
                     yield event
+                    if isinstance(event, AgentToolUse) and pending_schedule_change is not None:
+                        yield AgentScheduleChange(pending_schedule_change)
+                        pending_schedule_change = None
 
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
                 review = review_schedule_candidate(schedule_yaml, candidate, limits.max_schedule_bytes)
@@ -303,21 +317,27 @@ class _ScheduleCandidateTracker:
         self._max_bytes = max_bytes
         self._last_content = base_text.encode("utf-8")
 
-    async def review_if_changed(self) -> AgentToolOutcome | None:
+    async def review_if_changed(self) -> tuple[AgentToolOutcome, str | None] | None:
         content = await self._sandbox.read_file(WORKSPACE_SCHEDULE)
         if content == self._last_content:
             return None
         self._last_content = content
         prefix = "Trusted schedule check after this command:"
         if len(content) > self._max_bytes:
-            return AgentToolOutcome(
-                f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.",
-                False,
+            return (
+                AgentToolOutcome(
+                    f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.",
+                    False,
+                ),
+                None,
             )
         try:
             candidate = content.decode("utf-8")
         except UnicodeDecodeError:
-            return AgentToolOutcome(f"{prefix}\nThe candidate is not valid UTF-8.", False)
+            return (
+                AgentToolOutcome(f"{prefix}\nThe candidate is not valid UTF-8.", False),
+                None,
+            )
 
         review = review_schedule_candidate(self._base_text, candidate, self._max_bytes)
         logger.info(
@@ -327,11 +347,17 @@ class _ScheduleCandidateTracker:
             review.proposal is not None,
         )
         if review.proposal is not None:
-            return AgentToolOutcome(
-                f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule.",
-                True,
+            return (
+                AgentToolOutcome(
+                    f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule.",
+                    True,
+                ),
+                candidate,
             )
-        return AgentToolOutcome(f"{prefix}\n{review.outcome.text}", review.outcome.ok)
+        return (
+            AgentToolOutcome(f"{prefix}\n{review.outcome.text}", review.outcome.ok),
+            candidate if review.outcome.ok else None,
+        )
 
 
 @lru_cache(maxsize=1)

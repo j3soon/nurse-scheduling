@@ -30,6 +30,7 @@ export interface StreamCallbacks {
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
   onTool?: (activity: ToolActivity) => void;
+  onScheduleChange?: (scheduleYaml: string) => void;
   onProposal?: (diff: string) => void;
   onDone?: () => void;
 }
@@ -66,6 +67,7 @@ interface SsePayload {
   arguments?: unknown;
   result?: unknown;
   ok?: unknown;
+  schedule_yaml?: unknown;
 }
 
 export function getAiBaseUrl(): string {
@@ -161,6 +163,11 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       result: typeof payload.result === 'string' ? payload.result : '',
       ok: payload.ok !== false,
     });
+  } else if (eventType === 'schedule_change') {
+    if (typeof payload.schedule_yaml !== 'string') {
+      throw new Error('The AI backend returned an invalid schedule change.');
+    }
+    callbacks.onScheduleChange?.(payload.schedule_yaml);
   } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
     callbacks.onProposal?.(payload.diff);
   } else if (eventType === 'done') {

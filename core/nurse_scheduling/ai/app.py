@@ -45,6 +45,7 @@ from .sandbox import SandboxError, SandboxFactory
 from .sandbox.factory import create_sandbox_factory
 from .sandbox_agent import (
     SANDBOX_SYSTEM_PROMPT,
+    AgentScheduleChange,
     SandboxAgentLimits,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
@@ -620,6 +621,11 @@ def create_app(
                                     "result": event.result,
                                     "ok": event.ok,
                                 },
+                            )
+                        elif isinstance(event, AgentScheduleChange):
+                            yield _sse_event(
+                                "schedule_change",
+                                {"schedule_yaml": event.schedule_yaml},
                             )
                         elif isinstance(event, AgentProposal):
                             store.store_proposal(session_id, event.text, event.diff)

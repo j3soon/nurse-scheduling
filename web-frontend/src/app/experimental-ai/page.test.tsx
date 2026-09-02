@@ -284,7 +284,9 @@ describe('ExperimentalAiPage', () => {
       _message: string,
       callbacks: {
         onDelta: (text: string) => void;
-        onTool?: (name: string) => void;
+        onReasoning?: (text: string) => void;
+        onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
+        onScheduleChange?: (scheduleYaml: string) => void;
         onProposal?: (diff: string) => void;
       },
     ) => {
@@ -295,6 +297,7 @@ describe('ExperimentalAiPage', () => {
         result: 'exit_code: 0',
         ok: true,
       });
+      callbacks.onScheduleChange?.('description: Head');
       callbacks.onDelta('I propose renaming P1.');
       callbacks.onProposal?.('- people.items[0].description: "" -> "Head"');
     };
@@ -317,6 +320,7 @@ describe('ExperimentalAiPage', () => {
       expect(await screen.findByRole('region', { name: 'Proposed schedule change' })).toBeInTheDocument();
       expect(screen.getByText('- people.items[0].description: "" -> "Head"')).toBeInTheDocument();
       expect(screen.getByText('bash')).toBeInTheDocument();
+      expect(screen.getByText('schedule edit')).toBeInTheDocument();
       expect(screen.getByText(/^Reasoning ·/)).toBeInTheDocument();
     });
 

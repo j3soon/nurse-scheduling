@@ -31,6 +31,10 @@ until you select one.
 - **Reasoning** shows the model's own thinking for that step.
 - The `bash` tool shows the command the assistant ran and its bounded output.
   The assistant may invoke the `nsctl` schema helper from Bash.
+- **schedule edit** shows the changed lines after a Bash command changes the
+  temporary schedule. Red lines were removed and green lines were added. This
+  is a preview only. The current schedule still changes only after you approve
+  the final proposal.
 - A row marked `failed` means that step changed nothing. This is the usual
   reason an answer arrives without a proposal.
 

@@ -99,6 +99,7 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       body: [
         'event: reasoning\ndata: {"text":"The ward has one nurse, so I will add another."}\n\n',
         'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"python3 /tmp/edit.py\\"}","result":"exit_code: 0","ok":true}\n\n',
+        `event: schedule_change\ndata: ${JSON.stringify({ schedule_yaml: PROPOSED_YAML })}\n\n`,
         'event: delta\ndata: {"text":"I propose adding one nurse."}\n\n',
         'event: proposal\ndata: {"diff":"- people.items[0]: added {\\"id\\": \\"Proposed Nurse\\"}"}\n\n',
         'event: done\ndata: {"message_id":"answer-id"}\n\n',
@@ -120,6 +121,7 @@ test('approves a proposed schedule and applies it as one undoable step', async (
   await expect(proposal).toBeVisible();
   await expect(proposal).toContainText('added');
   await expect(page.getByText('bash')).toBeVisible();
+  await expect(page.getByText('schedule edit')).toBeVisible();
 
   await page.getByRole('button', { name: 'Approve' }).click();
 
