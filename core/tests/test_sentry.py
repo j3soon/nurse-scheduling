@@ -193,12 +193,15 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
     monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
     monkeypatch.setenv("SENTRY_RELEASE", "custom-release")
+    monkeypatch.setenv("SENTRY_DSN", "https://backend-key@example.ingest.sentry.io/123")
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "production")
 
     init_sentry("v1.2.3")
 
     assert init_calls == [
         {
-            "dsn": "https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
+            "dsn": "https://backend-key@example.ingest.sentry.io/123",
+            "environment": "production",
             "release": "custom-release",
             "send_default_pii": True,
             "traces_sample_rate": 1.0,
@@ -208,6 +211,25 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
         }
     ]
     assert tags == [("app", "backend")]
+
+
+def test_init_sentry_keeps_shared_development_defaults(monkeypatch):
+    init_calls = []
+    fake_sentry_sdk = types.SimpleNamespace(
+        init=lambda **kwargs: init_calls.append(kwargs),
+        set_tag=lambda _name, _value: None,
+    )
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+
+    init_sentry("v1.2.3")
+
+    assert init_calls[0]["dsn"] == (
+        "https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088"
+    )
+    assert init_calls[0]["environment"] == "development"
 
 
 def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypatch):

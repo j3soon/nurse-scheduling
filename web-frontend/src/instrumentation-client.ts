@@ -6,10 +6,12 @@ import * as Sentry from "@sentry/nextjs";
 import { getLatestSchedulingYamlForSentry } from "@/utils/sentrySchedulingState";
 
 const isSentryDisabled = process.env.NEXT_PUBLIC_DISABLE_SENTRY === "1";
+const defaultSentryDsn = "https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088";
 
 if (!isSentryDisabled) {
   Sentry.init({
-    dsn: "https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
+    dsn: process.env.NEXT_PUBLIC_SENTRY_DSN || defaultSentryDsn,
+    environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || "development",
 
     // Add optional integrations for additional features
     integrations: [

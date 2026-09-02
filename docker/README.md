@@ -67,6 +67,37 @@ development stays unauthenticated and needs no frontend changes.
 The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which both compose files
 set from `API_AUTH_TOKEN`.
 
+## Sentry
+
+Create separate Sentry projects for the browser frontend and Python backend.
+Keep all servers for one application component in the same project so issues,
+releases, alerts, and performance data stay aggregated. Use
+`SENTRY_ENVIRONMENT` to distinguish production and staging. Sentry records the
+backend host name as `server_name`, so separate backend machines remain
+filterable without creating a project for every server.
+
+Set the projects' public DSNs in the deployment environment file:
+
+```dotenv
+NEXT_PUBLIC_SENTRY_DSN=https://frontend-public-key@organization.ingest.sentry.io/frontend-project-id
+SENTRY_BACKEND_DSN=https://backend-public-key@organization.ingest.sentry.io/backend-project-id
+SENTRY_ENVIRONMENT=production
+SENTRY_PROJECT=frontend-project-slug
+```
+
+Compose passes `SENTRY_BACKEND_DSN` to the backend SDK as `SENTRY_DSN`. The
+frontend is a static Next.js export, so `NEXT_PUBLIC_SENTRY_DSN` and
+`SENTRY_ENVIRONMENT` must be present in the environment that runs the frontend
+build. The build exposes `SENTRY_ENVIRONMENT` to browser code as
+`NEXT_PUBLIC_SENTRY_ENVIRONMENT`.
+`SENTRY_PROJECT` selects the frontend project for source-map uploads. It does
+not replace the upload authentication token.
+
+Unset values retain the repository's existing shared Sentry project and use
+the `development` environment outside Docker. `DISABLE_SENTRY` and
+`NEXT_PUBLIC_DISABLE_SENTRY` continue to disable server-side and browser-side
+reporting respectively.
+
 ## Start
 
 Run these commands from the `docker/` directory.
