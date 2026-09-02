@@ -604,9 +604,11 @@ cd docker
 docker compose -f compose.backend.memory.yml up -d --build
 ```
 
-The bundled Redis service uses its default RDB snapshot policy with a persistent
-volume. Enable AOF or use a managed persistence policy when the deployment
-requires a smaller data-loss window after an abrupt Redis or host failure.
+The bundled Redis service persists an AOF with `appendfsync everysec` and keeps
+an RDB fallback after six hours when at least one write has occurred. This
+limits the usual abrupt-failure exposure to approximately the latest second,
+while an RDB-only recovery can be up to six hours behind. Redis installed
+outside the bundled Compose deployment keeps its system persistence policy.
 
 ### Documentation
 

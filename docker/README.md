@@ -83,15 +83,17 @@ SENTRY_BACKEND_DSN=https://backend-public-key@organization.ingest.sentry.io/back
 SENTRY_ENVIRONMENT=production
 ```
 
-Compose passes `SENTRY_BACKEND_DSN` to the backend SDK as `SENTRY_DSN`.
+Compose passes `SENTRY_BACKEND_DSN` to every Python service as `SENTRY_DSN`.
+The API, usage reporter, and diagnostic share the project and environment while
+remaining filterable through their `app` tags.
 `SENTRY_AUTH_TOKEN` is not needed by the running backend because the SDK sends
 events through the DSN. Do not add a frontend DSN or Sentry auth token to this
 backend environment file. Configure them in the frontend build environment as
 described in the [developer guide](../docs/content/developer-guide/index.md#sentry).
 
 An unset DSN retains the repository's existing shared Sentry project. Running
-outside Docker uses the `development` environment. `DISABLE_SENTRY` continues
-to disable backend reporting.
+outside Docker uses the `development` environment. Set `DISABLE_SENTRY=1` in
+the deployment environment file to disable reporting for every Python service.
 
 ## Start
 
@@ -150,6 +152,8 @@ with:
 - `JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0`
 - `JOB_WORKER_LEASE_SECONDS=90` by default
 - `JOB_MAX_EVENTS_PER_JOB=1000` by default
+- `USAGE_METRICS_ENABLED=true`
+- `USAGE_METRICS_RETENTION_DAYS=30` by default
 
 The backend publishes its accepted run options at `GET /optimize/options`.
 The frontend uses this response for solver choices, timeout limits,
@@ -230,6 +234,109 @@ start time, job backend, opaque job store ID, and whether authentication is
 required. Both responses disable caching and stay public. The frontend uses
 `/info` so one request provides readiness, version, and authentication
 information.
+
+## Weekly Usage Reports
+
+The Redis deployment collects minimal per-job telemetry. Collection is
+enabled by Compose and disabled by default for direct development launches.
+It records job and pseudonymous client IDs, solver, lifecycle timestamps and
+state, queue and runtime durations, outcome, failure code, solver status,
+termination reason, configured timeout, and download count. It does not record
+scheduling input, filenames, IP addresses, or email addresses.
+
+Buckets run from Sunday at 00:00 through the next Sunday at 00:00 in the host
+machine timezone. Each event belongs to the week when it occurs, so a job
+submitted on Saturday and completed on Sunday can contribute to two different
+weekly buckets. The reporter retrieves only the selected seven-day bucket. The
+API and reporter mount the host timezone files so their boundaries remain
+consistent, including daylight-saving transitions. Reports contain one CSV row
+per associated job. Fields that are not available for an ongoing job remain
+empty. Reporting does not remove telemetry. Rows and weekly membership indexes
+expire after the configured retention interval following the end of their
+event week. The interval defaults to 30 days.
+Values below nine days are rejected because they cannot cover a complete week
+before its reporting deadline.
+Set `USAGE_METRICS_ENABLED=false` in the Docker environment file to disable
+collection for a self-hosted deployment.
+
+The `reporting` profile runs one weekly service that stores delivery status in
+Redis and writes reports to its container log by default. On startup it catches
+up on completed, unsent weeks still covered by telemetry retention. It then
+sleeps until the next reporting deadline.
+
+Get the API key from the Mailgun dashboard under **Send > Sending > Domain
+settings > Sending keys**. If Mailgun reports that the sender domain does not
+exist, verify its records under **Domain settings > DNS records**. Then
+configure these values in `.env`:
+
+```dotenv
+USAGE_REPORT_TRANSPORT=mailgun
+USAGE_REPORT_SUBJECT="Nurse Scheduling backend usage: {week_id}"
+MAILGUN_API_KEY=key-example
+MAILGUN_DOMAIN=mg.example.com
+MAILGUN_FROM="Nurse Scheduling Reports <reports@mg.example.com>"
+MAILGUN_TO=operator@example.com
+```
+
+The reporter warns when Mailgun settings are present while the transport is
+still `stdout`. In `mailgun` mode, it warns and stops when required Mailgun
+settings are missing.
+
+Then start the normal deployment with the reporter:
+
+```sh
+docker compose -f compose.backend.yml --profile reporting up -d --build
+```
+
+The reporter delivers the completed week on Sunday at or shortly after 00:00 in
+the host machine timezone. Set `USAGE_REPORT_LOCAL_HOUR` to another local hour
+from 0 through 23. A Redis-backed guard leaves at least ten minutes between any
+two delivery attempts, including catch-up reports, service restarts, and two
+bounded retries during a weekly run. The scheduler also waits at least ten
+minutes between runs as a safeguard against invalid deadline logic. Delivery
+checkpoints prevent normal duplicate sends. A process failure or ambiguous
+transport error after Mailgun accepts a message but before Redis records the
+checkpoint can still cause a retry and duplicate delivery. `MAILGUN_API_URL`
+accepts Mailgun's HTTPS US or EU v3 endpoint for regional delivery.
+
+`USAGE_REPORT_SUBJECT` controls both the email subject and the first line of the
+report body. It supports the optional `{week_id}` placeholder. Invalid or
+multiline templates stop the reporter during startup.
+
+Trigger completed unsent reports immediately, without waiting for Sunday:
+
+```sh
+docker compose -f compose.backend.yml --profile reporting run --rm \
+  usage-reporter python -m nurse_scheduling.server.usage_report --once
+```
+
+The command exits with a nonzero status if any delivery fails.
+
+To send the newest retained week immediately, including the current partial
+week or one already checkpointed as sent, add `--force`:
+
+```sh
+docker compose -f compose.backend.yml --profile reporting run --rm \
+  usage-reporter python -m nurse_scheduling.server.usage_report --once --force
+```
+
+The command regenerates the entire selected Sunday-to-Sunday bucket from
+retained telemetry instead of sending only changes since the previous report.
+For the current week, it includes data recorded so far without marking the week
+complete, so the normal full report is still delivered after Sunday. Forced
+sends bypass the shared delivery interval but retain the per-week lock. No
+retained telemetry or a held lock is reported as an error with a nonzero exit
+status. A failed forced resend preserves any previous successful delivery
+checkpoint. `--force` is rejected without `--once`.
+
+For a one-time local rendering, use the default `stdout` transport. This marks
+the report as delivered, so use an isolated Redis namespace if it must still be
+emailed later:
+
+```sh
+docker compose -f compose.backend.yml --profile reporting run --rm usage-reporter \
+  python -m nurse_scheduling.server.usage_report --once
+```
 
 ## Public Diagnostic
 
@@ -339,10 +446,16 @@ When `JOB_BACKEND=redis`, optimization jobs, SSE events, YAML inputs,
 and XLSX outputs are stored in Redis so status, event, and download requests can
 be served by any backend worker.
 
-The bundled Redis service uses the image's default RDB snapshot policy and the
-`redis-data` volume. This is sufficient for multi-worker coordination, but an
-abrupt Redis or host failure can lose writes since the latest snapshot. A
-deployment that requires a smaller recovery-point window should enable Redis
-AOF persistence or use a managed Redis service with an appropriate persistence
-policy. AOF is not required for the backend's job-sharing behavior and adds
-disk I/O for stored YAML, event streams, and XLSX artifacts.
+The bundled Redis service retains an AOF and a less-frequent RDB fallback in the
+`redis-data` volume. The AOF uses `appendfsync everysec`, which limits the usual
+abrupt-failure exposure to approximately the latest second while adding disk
+I/O for stored YAML, event streams, XLSX artifacts, and telemetry. A single RDB
+rule creates a snapshot after six hours when at least one write has occurred,
+so an RDB-only recovery can be up to six hours behind. Redis also receives a
+one-minute Compose shutdown grace period so its final blocking RDB save can
+finish during planned restarts. Normal `restart` and `down` operations retain
+the named volume. `down -v` removes all persisted Redis data. Back up the volume
+when recovery from host or volume loss is required.
+
+This configuration assumes a new Redis volume. Do not switch an existing
+RDB-only volume to this configuration without migrating or discarding its data.

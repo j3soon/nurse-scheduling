@@ -39,7 +39,8 @@ def _should_enable_sentry() -> bool:
     return "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules
 
 
-def init_sentry(app_version: str) -> None:
+def init_sentry(app_version: str, *, app: str = "backend") -> None:
+    """Initialize Sentry for one named application process."""
     if not _should_enable_sentry():
         return
 
@@ -64,7 +65,17 @@ def init_sentry(app_version: str) -> None:
         # Enable logs to be sent to Sentry
         enable_logs=True,
     )
-    sentry_sdk.set_tag("app", "backend")
+    sentry_sdk.set_tag("app", app)
+
+
+def flush_sentry(timeout: float = 2.0) -> None:
+    """Flush pending events and logs before a short-lived process exits."""
+    if not _should_enable_sentry():
+        return
+
+    import sentry_sdk
+
+    sentry_sdk.flush(timeout=timeout)
 
 
 def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> None:

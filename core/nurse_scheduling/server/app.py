@@ -121,6 +121,8 @@ def _create_store(settings: ServerSettings, instance_id: str) -> JobStore:
         key_prefix=settings.redis_key_prefix,
         event_stream_keepalive_seconds=settings.sse_keepalive_seconds,
         max_events_per_job=settings.max_events_per_job,
+        usage_metrics_key_prefix=(settings.usage_metrics_key_prefix if settings.usage_metrics_enabled else None),
+        usage_metrics_retention_days=settings.usage_metrics_retention_days,
     )
 
 
