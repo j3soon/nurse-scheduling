@@ -79,7 +79,6 @@ class CaseRun:
     trajectory: dict[str, Any] = field(default_factory=dict)
     token_usage: TokenUsage | None = None
     token_usage_turns: int = 0
-    rejected_tools: list[str] = field(default_factory=list)
     llm_inference_seconds: float = 0.0
     llm_turn_seconds: list[float] = field(default_factory=list)
     sandbox_metrics: SandboxTurnMetrics | None = None
@@ -99,7 +98,6 @@ class CaseRun:
             ),
             "turns": self.turns,
             "tools": self.tools,
-            "rejected_tools": self.rejected_tools,
             "failures": self.failures,
             "proposed": self.proposed,
             "reasoning_chars": self.reasoning_chars,
@@ -174,7 +172,6 @@ async def run_case(
 
     answer: list[str] = []
     tools: list[str] = []
-    rejected_tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
     sandbox_metrics = SandboxTurnMetrics()
@@ -199,16 +196,12 @@ async def run_case(
                 reasoning += len(event.text)
                 _record_text(events, "reasoning", event.text)
             elif isinstance(event, AgentToolUse):
-                if event.executed:
-                    tools.append(event.name if event.ok else f"{event.name}(failed)")
-                else:
-                    rejected_tools.append(event.name)
+                tools.append(event.name if event.ok else f"{event.name}(failed)")
                 events.append(
                     {
                         "kind": "tool",
                         "name": event.name,
                         "ok": event.ok,
-                        "executed": event.executed,
                         "arguments": event.arguments,
                         "result": event.result,
                     }
@@ -233,7 +226,6 @@ async def run_case(
             _trajectory(case, messages, events, None),
             token_usage=counting.token_usage,
             token_usage_turns=counting.token_usage_turns,
-            rejected_tools=rejected_tools,
             llm_inference_seconds=counting.inference_seconds,
             llm_turn_seconds=counting.inference_turn_seconds,
             sandbox_metrics=sandbox_metrics,
@@ -258,7 +250,6 @@ async def run_case(
         trajectory=_trajectory(case, messages, events, proposal_event, result),
         token_usage=counting.token_usage,
         token_usage_turns=counting.token_usage_turns,
-        rejected_tools=rejected_tools,
         llm_inference_seconds=counting.inference_seconds,
         llm_turn_seconds=counting.inference_turn_seconds,
         sandbox_metrics=sandbox_metrics,

@@ -66,7 +66,6 @@ def _run_call(command: str = "edit") -> list[object]:
 
 def _limits(**overrides) -> SandboxAgentLimits:
     values = {
-        "max_tool_calls": 4,
         "max_schedule_bytes": SCHEDULE_BYTE_LIMIT,
         "turn_timeout_seconds": 2,
         "cleanup_timeout_seconds": 1,

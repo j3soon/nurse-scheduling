@@ -40,27 +40,6 @@ def _read_positive_int(name: str, default: int) -> int:
     return value
 
 
-def _read_non_negative_int(name: str, default: int) -> int:
-    """Read a non-negative integer environment setting."""
-    raw_value = os.getenv(name, str(default))
-    try:
-        value = int(raw_value)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be an integer") from exc
-    if value < 0:
-        raise ValueError(f"{name} must be non-negative")
-    return value
-
-
-def _read_max_tool_calls() -> int:
-    """Read the tool budget, translating the former turn budget if needed."""
-    if os.getenv("AI_MAX_TOOL_CALLS") is not None:
-        return _read_non_negative_int("AI_MAX_TOOL_CALLS", 5)
-    if os.getenv("AI_MAX_AGENT_TURNS") is not None:
-        return _read_positive_int("AI_MAX_AGENT_TURNS", 6) - 1
-    return 5
-
-
 def _read_positive_float(name: str, default: float) -> float:
     """Read a positive floating point environment setting."""
     raw_value = os.getenv(name, str(default))
@@ -138,7 +117,6 @@ class AiSettings:
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
-    max_tool_calls: int = 5
     attachment_mode: AttachmentMode = "images"
     max_image_files: int = 4
     max_image_bytes: int = 5_000_000
@@ -195,7 +173,6 @@ class AiSettings:
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
-            max_tool_calls=_read_max_tool_calls(),
             attachment_mode=_read_attachment_mode(),
             max_image_files=_read_positive_int("AI_MAX_IMAGE_FILES", 4),
             max_image_bytes=_read_positive_int("AI_MAX_IMAGE_BYTES", 5_000_000),

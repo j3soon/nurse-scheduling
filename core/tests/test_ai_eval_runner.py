@@ -52,7 +52,6 @@ def settings(**overrides: object) -> AiSettings:
         "provider_base_url": "https://provider.example/v1",
         "provider_api_key": "test-token",
         "provider_model": "test-model",
-        "max_tool_calls": 3,
     }
     values.update(overrides)
     return AiSettings(**values)
@@ -216,7 +215,7 @@ def test_a_failed_tool_call_is_recorded_as_such():
     assert not run.proposed
 
 
-def test_a_budget_rejection_is_separate_from_executed_tools():
+def test_tool_calls_continue_until_the_model_finishes():
     provider = ScriptedProvider(
         *[[ToolCallRequest((ToolCall(f"call_{index}", BASH_TOOL, '{"command":"true"}'),))] for index in range(4)],
         [TextDelta("I need more input.")],
@@ -224,11 +223,10 @@ def test_a_budget_rejection_is_separate_from_executed_tools():
 
     run = _run("ask-people-count", provider)
 
-    assert run.tools == [BASH_TOOL] * 3
-    assert run.rejected_tools == [BASH_TOOL]
+    assert run.tools == [BASH_TOOL] * 4
     assert run.turns == 5
     tool_events = [event for event in run.trajectory["events"] if event["kind"] == "tool"]
-    assert [event["executed"] for event in tool_events] == [True, True, True, False]
+    assert len(tool_events) == 4
 
 
 def test_a_provider_failure_is_reported_rather_than_raised():
@@ -344,7 +342,6 @@ def test_the_report_records_enough_to_explain_a_run():
         "timing",
         "turns",
         "tools",
-        "rejected_tools",
         "failures",
         "proposed",
         "reasoning_chars",

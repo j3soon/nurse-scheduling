@@ -87,7 +87,6 @@ class AgentScheduleChange:
 class SandboxAgentLimits:
     """Trusted orchestration and AI-context limits for one sandbox turn."""
 
-    max_tool_calls: int
     max_schedule_bytes: int
     turn_timeout_seconds: float
     cleanup_timeout_seconds: float
@@ -97,7 +96,6 @@ class SandboxAgentLimits:
     def from_settings(cls, settings: AiSettings) -> "SandboxAgentLimits":
         """Collect sandbox-turn limits from validated application settings."""
         return cls(
-            max_tool_calls=settings.max_tool_calls,
             max_schedule_bytes=settings.max_schedule_bytes,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
@@ -215,9 +213,7 @@ async def run_sandbox_agent(
                     provider,
                     messages,
                     bash_tool.definitions,
-                    limits.max_tool_calls,
                     execute_command,
-                    _sandbox_budget_guidance,
                 ):
                     yield event
                     if isinstance(event, AgentToolUse) and pending_schedule_change is not None:
@@ -287,20 +283,6 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
         return candidate.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SandboxCandidateError("The sandbox candidate is not valid UTF-8.") from exc
-
-
-def _sandbox_budget_guidance(result: str, used: int, limit: int) -> str:
-    remaining = max(0, limit - used)
-    if remaining == 0:
-        guidance = "No command calls remain. Answer using the current workspace state and information collected."
-    elif remaining == 1:
-        guidance = (
-            "One command call remains. If a requested change is incomplete, make the focused edit and inspect it "
-            "in that command."
-        )
-    else:
-        guidance = f"{remaining} command calls remain. Reserve one to make and inspect any requested schedule change."
-    return f"{result}\n\nTool budget: {guidance}"
 
 
 class _ScheduleCandidateTracker:

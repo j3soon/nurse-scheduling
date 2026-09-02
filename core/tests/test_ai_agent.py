@@ -1,4 +1,4 @@
-"""Tests for the bounded provider and tool loop in the AI service."""
+"""Tests for the provider and tool loop in the AI service."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -21,8 +21,6 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
-
-import pytest
 
 from nurse_scheduling.ai.agent import (
     AgentReasoning,
@@ -70,12 +68,9 @@ def _calls(count: int = 1) -> list:
     return [ToolCallRequest(calls)]
 
 
-def _run(provider: FakeProvider, max_tool_calls: int = 4, *, tool_ok: bool = True) -> list:
+def _run(provider: FakeProvider, *, tool_ok: bool = True) -> list:
     async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
         return AgentToolOutcome("command result", tool_ok)
-
-    def guidance(result: str, used: int, limit: int) -> str:
-        return f"{result}\n\n{limit - used} calls remain."
 
     async def collect() -> list:
         return [
@@ -84,9 +79,7 @@ def _run(provider: FakeProvider, max_tool_calls: int = 4, *, tool_ok: bool = Tru
                 provider,
                 QUESTION,
                 TOOLS,
-                max_tool_calls,
                 execute,
-                guidance,
             )
         ]
 
@@ -111,7 +104,7 @@ def test_a_tool_call_is_executed_and_returned_to_the_provider():
     assert second_request[-1] == {
         "role": "tool",
         "tool_call_id": "call_0",
-        "content": "command result\n\n3 calls remain.",
+        "content": "command result",
     }
 
 
@@ -133,59 +126,14 @@ def test_parallel_tool_calls_each_receive_a_result():
     assert [message["tool_call_id"] for message in results] == ["call_0", "call_1"]
 
 
-def test_an_excess_tool_call_gets_an_error_before_tool_free_finalization():
-    provider = FakeProvider(_calls(), _calls(), _text("I need more input."))
+def test_tool_calls_continue_until_the_model_finishes():
+    provider = FakeProvider(*[_calls() for _ in range(6)], _text("Done."))
 
-    events = _run(provider, max_tool_calls=1)
+    events = _run(provider)
 
-    tool_events = [event for event in events if isinstance(event, AgentToolUse)]
-    assert [event.executed for event in tool_events] == [True, False]
-    assert "1 of 1 calls have already been executed" in tool_events[1].result
-    assert [tools is None for _, tools in provider.requests] == [False, False, True]
-    assert events[-1] == AgentText("I need more input.")
-
-
-def test_parallel_calls_past_the_budget_are_rejected_without_execution():
-    provider = FakeProvider(_calls(2), _text("Done."))
-
-    events = _run(provider, max_tool_calls=1)
-
-    tool_events = [event for event in events if isinstance(event, AgentToolUse)]
-    assert [event.executed for event in tool_events] == [True, False]
-    assert "This call was not executed" in tool_events[1].result
-
-
-def test_raw_tool_markup_in_budget_finalization_is_not_shown():
-    provider = FakeProvider(_calls(), _text("Need data.\n\n<tool_call>bash</tool_call>"))
-
-    events = _run(provider, max_tool_calls=0)
-
-    answer = "".join(event.text for event in events if isinstance(event, AgentText))
-    assert "<tool_call>" not in answer
-    assert answer.startswith("Need data.")
-    assert "within the available tool-call budget" in answer
-
-
-def test_a_tool_call_during_budget_finalization_stops_without_another_turn():
-    provider = FakeProvider(_calls(), _calls())
-
-    events = _run(provider, max_tool_calls=0)
-
-    answer = "".join(event.text for event in events if isinstance(event, AgentText))
-    assert len(provider.requests) == 2
-    assert answer == (
-        "I could not complete this request within the available tool-call budget. "
-        "Please ask me to continue or narrow the request."
-    )
-
-
-def test_a_negative_tool_budget_is_rejected():
-    provider = FakeProvider(_text("Unused."))
-
-    with pytest.raises(ValueError, match="max_tool_calls must be non-negative"):
-        _run(provider, max_tool_calls=-1)
-
-    assert provider.requests == []
+    assert len([event for event in events if isinstance(event, AgentToolUse)]) == 6
+    assert len(provider.requests) == 7
+    assert events[-1] == AgentText("Done.")
 
 
 def test_reasoning_is_reported_without_entering_the_answer():

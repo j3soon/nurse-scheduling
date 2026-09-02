@@ -113,7 +113,6 @@ The runner needs the same provider settings the service uses:
 | `AI_SANDBOX_BACKEND` | Yes | Use `e2b`. |
 | `E2B_API_KEY` | Yes | E2B Cloud credential used by the trusted application. |
 | `E2B_TEMPLATE` | No | Defaults to `nurse-scheduling-ai-sandbox`. |
-| `AI_MAX_TOOL_CALLS` | No | Tool calls allowed for one case. |
 | `AI_EVAL_ARTIFACT_ROOT` | No | Report root, `artifacts` by default. |
 
 The launcher reads them from `.env.ai`, so the shortest form is:
@@ -189,6 +188,9 @@ boundaries than a local coding agent. The workspace is disposable, commands
 are bounded, secrets and canonical storage stay outside it, and a trusted
 application validates every detected change and the final candidate.
 
+The model-tool loop has no count-based Bash-call limit. Per-command and
+complete agent-turn deadlines bound execution instead.
+
 The model-facing Bash schema, timeout validation, output formatting, and tail
 truncation are a Python port pinned to
 [Pi commit `e266507`](https://github.com/earendil-works/pi/blob/e266507b606b9552fa277252644054afd4384b11/packages/coding-agent/src/core/tools/bash.ts).
@@ -253,7 +255,6 @@ across provider attempts and may end a turn before every retry is available.
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
-| `AI_MAX_TOOL_CALLS` | `5` | Maximum executed tool calls for one answer. The sandbox example uses `8`. Excess calls receive an error before one tool-free final response. |
 | `AI_ATTACHMENT_MODE` | `images` | Use `none` to disable image attachments. |
 | `AI_MAX_IMAGE_FILES` | `4` | Maximum images attached to one question. |
 | `AI_MAX_IMAGE_BYTES` | `5000000` | Maximum bytes per image. |
@@ -265,10 +266,6 @@ across provider attempts and may end a turn before every retry is available.
 | `AI_MAX_XLSX_SHEETS` | `20` | Maximum worksheets per XLSX workbook. |
 | `AI_MAX_XLSX_CELLS` | `100000` | Maximum rectangular cell span across an XLSX workbook. |
 | `AI_MAX_XLSX_UNCOMPRESSED_BYTES` | `50000000` | Maximum total expanded XLSX archive bytes. |
-
-`AI_MAX_AGENT_TURNS` remains accepted for compatibility when
-`AI_MAX_TOOL_CALLS` is unset. The service subtracts one reserved final turn
-from the former value to derive the tool-call limit.
 
 ## Run in the development container
 
