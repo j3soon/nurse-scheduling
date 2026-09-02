@@ -18,5 +18,7 @@
   """
 
 [build.environment]
+  # Configure frontend Sentry variables in Netlify's Build-scoped environment.
+  # See README.md#hosting-on-netlify. Keep SENTRY_AUTH_TOKEN out of this file.
   NODE_VERSION = "25"
   PYTHON_VERSION = "3.12"

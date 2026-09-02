@@ -39,6 +39,20 @@ describe('instrumentation-client', () => {
     vi.resetModules();
     vi.clearAllMocks();
     delete process.env.NEXT_PUBLIC_DISABLE_SENTRY;
+    delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+    delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+  });
+
+  it('uses the deployment Sentry project and environment', async () => {
+    process.env.NEXT_PUBLIC_SENTRY_DSN = 'https://frontend-key@example.ingest.sentry.io/456';
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = 'production';
+
+    await import('./instrumentation-client');
+
+    expect(sentryMocks.init).toHaveBeenCalledWith(expect.objectContaining({
+      dsn: 'https://frontend-key@example.ingest.sentry.io/456',
+      environment: 'production',
+    }));
   });
 
   it('forces the Sentry feedback widget to use the light color scheme', async () => {
