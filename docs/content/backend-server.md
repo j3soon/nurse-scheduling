@@ -336,6 +336,8 @@ All server settings are read once when the application is constructed.
 | `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
 | `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty `API_AUTH_TOKEN` a startup failure. Set in the deployment images. |
 | `DISABLE_SENTRY` | unset | Disable backend error reporting when set to a non-empty value. |
+| `SENTRY_DSN` | shared development project | Select the backend Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |
+| `SENTRY_ENVIRONMENT` | `development` | Separate events from production, staging, and development. |
 | `SENTRY_RELEASE` | derived from the app version | Override the release reported to Sentry. |
 
 Numeric values must be positive. `JOB_MAX_RETAINED` must be at least

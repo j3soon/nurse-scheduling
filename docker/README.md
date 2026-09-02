@@ -67,6 +67,32 @@ development stays unauthenticated and needs no frontend changes.
 The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which both compose files
 set from `API_AUTH_TOKEN`.
 
+## Sentry
+
+The Docker deployment configures only the Python backend. Keep all backend
+servers in one Sentry project so issues, releases, alerts, and performance data
+stay aggregated. Use `SENTRY_ENVIRONMENT` to distinguish production and
+staging. Sentry records the backend host name as `server_name`, so separate
+backend machines remain filterable without creating a project for every
+server.
+
+Set the projects' public DSNs in the deployment environment file:
+
+```dotenv
+SENTRY_BACKEND_DSN=https://backend-public-key@organization.ingest.sentry.io/backend-project-id
+SENTRY_ENVIRONMENT=production
+```
+
+Compose passes `SENTRY_BACKEND_DSN` to the backend SDK as `SENTRY_DSN`.
+`SENTRY_AUTH_TOKEN` is not needed by the running backend because the SDK sends
+events through the DSN. Do not add a frontend DSN or Sentry auth token to this
+backend environment file. Configure them in the frontend build environment as
+described in the [developer guide](../docs/content/developer-guide/index.md#sentry).
+
+An unset DSN retains the repository's existing shared Sentry project. Running
+outside Docker uses the `development` environment. `DISABLE_SENTRY` continues
+to disable backend reporting.
+
 ## Start
 
 Run these commands from the `docker/` directory.

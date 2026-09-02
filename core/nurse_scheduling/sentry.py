@@ -29,6 +29,8 @@ from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
 if TYPE_CHECKING:
     from .server.jobs.models import Job
 
+DEFAULT_SENTRY_DSN = "https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088"
+
 
 def _should_enable_sentry() -> bool:
     if os.getenv("DISABLE_SENTRY"):
@@ -45,7 +47,8 @@ def init_sentry(app_version: str, *, app: str = "backend") -> None:
     import sentry_sdk
 
     sentry_sdk.init(
-        dsn="https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
+        dsn=os.getenv("SENTRY_DSN") or DEFAULT_SENTRY_DSN,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "development"),
         release=os.getenv("SENTRY_RELEASE", f"nurse-scheduling@{app_version}"),
         # Add data like request headers and IP for users, if applicable;
         # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
