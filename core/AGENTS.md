@@ -64,6 +64,9 @@ test paths when a narrower suite is known to be sufficient.
   adding model-specific tools. Keep trusted validation after every detected
   schedule change and the structural diff at review, since those catch a
   dropped entry that still parses.
+- Retry a provider timeout only before any stream event reaches the caller.
+  Once text, reasoning, usage, or a tool call is visible, surface the timeout
+  rather than replaying the request and risking duplicate output or tool work.
 
 ## Testing
 - Normal tests live under `tests/`.

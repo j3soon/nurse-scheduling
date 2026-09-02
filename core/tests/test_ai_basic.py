@@ -563,6 +563,34 @@ def test_environment_configuration_reads_tool_call_limit(monkeypatch: pytest.Mon
     assert AiSettings.from_env().max_tool_calls == 7
 
 
+def test_environment_configuration_reads_provider_retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
+    monkeypatch.setenv("E2B_API_KEY", "e2b-key")
+    monkeypatch.setenv("AI_PROVIDER_MAX_ATTEMPTS", "4")
+    monkeypatch.setenv("AI_PROVIDER_RETRY_BACKOFF_SECONDS", "0.25")
+
+    settings = AiSettings.from_env()
+
+    assert settings.provider_max_attempts == 4
+    assert settings.provider_retry_backoff_seconds == 0.25
+
+
+def test_environment_configuration_defaults_to_three_provider_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
+    monkeypatch.setenv("E2B_API_KEY", "e2b-key")
+    monkeypatch.delenv("AI_PROVIDER_MAX_ATTEMPTS", raising=False)
+    monkeypatch.delenv("AI_PROVIDER_RETRY_BACKOFF_SECONDS", raising=False)
+
+    settings = AiSettings.from_env()
+
+    assert settings.provider_max_attempts == 3
+    assert settings.provider_retry_backoff_seconds == 1.0
+
+
 def test_environment_configuration_translates_legacy_agent_turn_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")

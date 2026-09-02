@@ -19,6 +19,7 @@
 
 # This code is mostly AI generated.
 
+import asyncio
 import json
 import logging
 import re
@@ -204,7 +205,7 @@ class OpenAiCompatibleProvider:
         messages: Sequence[ChatMessage],
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> AsyncIterator[ChatStreamEvent]:
-        """Translate provider SSE chunks into text deltas and reconstructed tool calls."""
+        """Translate provider SSE chunks and retry safe pre-stream timeouts."""
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
         headers = {"Authorization": f"Bearer {self._settings.provider_api_key}"}
         payload: dict[str, Any] = {
@@ -218,81 +219,105 @@ class OpenAiCompatibleProvider:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
 
-        try:
-            async with (
-                httpx.AsyncClient(timeout=timeout) as client,
-                client.stream(
-                    "POST",
-                    f"{self._settings.provider_base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                ) as response,
-            ):
-                if response.status_code != 200:
-                    await response.aread()
-                    error_id = str(uuid4())
-                    response_body = response.text.strip()
-                    if response_body:
-                        logger.error(
-                            "AI provider HTTP error error_id=%s status=%s response_body=%s",
-                            error_id,
-                            response.status_code,
-                            _redact_provider_error(response_body, self._settings.provider_api_key),
-                        )
-                    else:
-                        logger.error(
-                            "AI provider HTTP error error_id=%s status=%s empty_response_body=true",
-                            error_id,
-                            response.status_code,
-                        )
-                    raise ProviderError(f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.")
+        stream_started = False
+        for attempt in range(1, self._settings.provider_max_attempts + 1):
+            try:
+                async for event in self._stream_attempt(timeout, headers, payload):
+                    stream_started = True
+                    yield event
+                return
+            except ProviderError:
+                raise
+            except httpx.TimeoutException as exc:
+                if stream_started or attempt == self._settings.provider_max_attempts:
+                    raise ProviderError("The AI provider timed out.") from exc
+                delay = self._settings.provider_retry_backoff_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    "AI provider timed out before streaming attempt=%s max_attempts=%s retry_in_seconds=%.3f",
+                    attempt,
+                    self._settings.provider_max_attempts,
+                    delay,
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
+            except httpx.HTTPError as exc:
+                raise ProviderError("The AI provider is unavailable.") from exc
 
-                partial_calls: dict[int, _PartialToolCall] = {}
-                text_chars = 0
-                reasoning_chars = 0
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
+    async def _stream_attempt(
+        self,
+        timeout: httpx.Timeout,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> AsyncIterator[ChatStreamEvent]:
+        """Run one HTTP stream attempt without replay policy."""
+        async with (
+            httpx.AsyncClient(timeout=timeout) as client,
+            client.stream(
+                "POST",
+                f"{self._settings.provider_base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+            ) as response,
+        ):
+            if response.status_code != 200:
+                await response.aread()
+                error_id = str(uuid4())
+                response_body = response.text.strip()
+                if response_body:
+                    logger.error(
+                        "AI provider HTTP error error_id=%s status=%s response_body=%s",
+                        error_id,
+                        response.status_code,
+                        _redact_provider_error(response_body, self._settings.provider_api_key),
+                    )
+                else:
+                    logger.error(
+                        "AI provider HTTP error error_id=%s status=%s empty_response_body=true",
+                        error_id,
+                        response.status_code,
+                    )
+                raise ProviderError(f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.")
+
+            partial_calls: dict[int, _PartialToolCall] = {}
+            text_chars = 0
+            reasoning_chars = 0
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw_data = line.removeprefix("data:").strip()
+                if raw_data == "[DONE]":
+                    break
+                if not raw_data:
+                    continue
+                try:
+                    event = json.loads(raw_data)
+                    choices = event["choices"]
+                    if not isinstance(choices, list):
+                        raise TypeError
+                    usage = event.get("usage")
+                    if usage is not None:
+                        yield _parse_token_usage(usage)
+                    if not choices and usage is not None:
                         continue
-                    raw_data = line.removeprefix("data:").strip()
-                    if raw_data == "[DONE]":
-                        break
-                    if not raw_data:
-                        continue
-                    try:
-                        event = json.loads(raw_data)
-                        choices = event["choices"]
-                        if not isinstance(choices, list):
-                            raise TypeError
-                        usage = event.get("usage")
-                        if usage is not None:
-                            yield _parse_token_usage(usage)
-                        if not choices and usage is not None:
-                            continue
-                        delta = choices[0]["delta"]
-                        content = delta.get("content")
-                    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
-                        raise ProviderError("The AI provider returned an invalid stream.") from exc
-                    if isinstance(content, str) and content:
-                        text_chars += len(content)
-                        if text_chars > MAX_RESPONSE_TEXT_CHARS:
-                            raise ProviderError("The AI provider returned more text than one answer may contain.")
-                        yield TextDelta(content)
-                    # Providers name this field either way, and llama.cpp uses the first.
-                    reasoning = delta.get("reasoning_content") or delta.get("reasoning")
-                    if isinstance(reasoning, str) and reasoning:
-                        reasoning_chars += len(reasoning)
-                        if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
-                            raise ProviderError("The AI provider returned more reasoning than one answer may contain.")
-                        yield ReasoningDelta(reasoning)
-                    _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
-                if partial_calls:
-                    yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))
-        except ProviderError:
-            raise
-        except httpx.TimeoutException as exc:
-            raise ProviderError("The AI provider timed out.") from exc
-        except httpx.HTTPError as exc:
-            raise ProviderError("The AI provider is unavailable.") from exc
+                    delta = choices[0]["delta"]
+                    content = delta.get("content")
+                except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+                    raise ProviderError("The AI provider returned an invalid stream.") from exc
+                if isinstance(content, str) and content:
+                    text_chars += len(content)
+                    if text_chars > MAX_RESPONSE_TEXT_CHARS:
+                        raise ProviderError("The AI provider returned more text than one answer may contain.")
+                    yield TextDelta(content)
+                # Providers name this field either way, and llama.cpp uses the first.
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                if isinstance(reasoning, str) and reasoning:
+                    reasoning_chars += len(reasoning)
+                    if reasoning_chars > MAX_RESPONSE_REASONING_CHARS:
+                        raise ProviderError("The AI provider returned more reasoning than one answer may contain.")
+                    yield ReasoningDelta(reasoning)
+                _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
+            if partial_calls:
+                yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))
 
 
 def _parse_token_usage(raw_usage: object) -> TokenUsage:

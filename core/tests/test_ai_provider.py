@@ -141,12 +141,114 @@ def _streaming_provider(
     )
 
 
+def _transport_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    handler,
+    **settings_overrides,
+) -> OpenAiCompatibleProvider:
+    """Build a provider around a stateful mock transport."""
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        provider_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_async_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    settings = {
+        "provider_base_url": "https://provider.example/v1",
+        "provider_api_key": "test-token",
+        "provider_model": "test-model",
+    }
+    settings.update(settings_overrides)
+    return OpenAiCompatibleProvider(AiSettings(**settings))
+
+
 def _events(provider: OpenAiCompatibleProvider, tools: list[dict] | None = None) -> list:
     messages: list[ChatMessage] = [{"role": "user", "content": "Question"}]
     return asyncio.run(_collect(provider.stream_events(messages, tools)))
 
 
 TOOLS = [{"type": "function", "function": {"name": "schedule_patch", "parameters": {"type": "object"}}}]
+
+
+def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts: list[httpx.Request] = []
+    delays: list[float] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        attempts.append(request)
+        if len(attempts) < 3:
+            raise httpx.ReadTimeout("provider stalled", request=request)
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Recovered"})))
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", record_sleep)
+    provider = _transport_provider(
+        monkeypatch,
+        handle,
+        provider_max_attempts=3,
+        provider_retry_backoff_seconds=0.25,
+    )
+
+    assert _events(provider) == [TextDelta("Recovered")]
+    assert len(attempts) == 3
+    assert delays == [0.25, 0.5]
+
+
+def test_reports_timeout_after_all_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        attempts.append(request)
+        raise httpx.ReadTimeout("provider stalled", request=request)
+
+    provider = _transport_provider(
+        monkeypatch,
+        handle,
+        provider_max_attempts=3,
+        provider_retry_backoff_seconds=0,
+    )
+
+    with pytest.raises(ProviderError, match="The AI provider timed out"):
+        _events(provider)
+
+    assert len(attempts) == 3
+
+
+class _TimeoutAfterText(httpx.AsyncByteStream):
+    """Emit visible output before simulating a stalled response body."""
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b'data: {"choices":[{"delta":{"content":"Partial"}}]}\n\n'
+        raise httpx.ReadTimeout("provider stalled")
+
+
+def test_does_not_retry_after_streaming_has_started(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts: list[httpx.Request] = []
+    events: list[object] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        attempts.append(request)
+        return httpx.Response(200, stream=_TimeoutAfterText())
+
+    provider = _transport_provider(
+        monkeypatch,
+        handle,
+        provider_max_attempts=3,
+        provider_retry_backoff_seconds=0,
+    )
+
+    async def consume() -> None:
+        messages: list[ChatMessage] = [{"role": "user", "content": "Question"}]
+        async for event in provider.stream_events(messages):
+            events.append(event)
+
+    with pytest.raises(ProviderError, match="The AI provider timed out"):
+        asyncio.run(consume())
+
+    assert events == [TextDelta("Partial")]
+    assert len(attempts) == 1
 
 
 def test_reconstructs_one_tool_call_from_streamed_fragments(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -73,6 +73,18 @@ def _read_positive_float(name: str, default: float) -> float:
     return value
 
 
+def _read_non_negative_float(name: str, default: float) -> float:
+    """Read a non-negative floating point environment setting."""
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
 def _read_bool(name: str, default: bool) -> bool:
     """Read a conventional boolean environment setting."""
     raw_value = os.getenv(name)
@@ -118,6 +130,8 @@ class AiSettings:
     provider_api_key: str
     provider_model: str
     provider_timeout_seconds: float = 120.0
+    provider_max_attempts: int = 3
+    provider_retry_backoff_seconds: float = 1.0
     session_ttl_seconds: int = 3600
     max_sessions: int = 1000
     max_history_messages: int = 20
@@ -177,6 +191,8 @@ class AiSettings:
             provider_api_key=provider_api_key,
             provider_model=provider_model,
             provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 120.0),
+            provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
+            provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),
             session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 3600),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
             max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 20),

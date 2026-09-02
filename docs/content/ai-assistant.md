@@ -206,6 +206,13 @@ The provider boundary uses OpenAI-compatible chat completions. The
 [Cloudflare Tunnel example](https://github.com/j3soon/local-llm-notes/tree/main/examples/basic-secure-api/cloudflare)
 shows one compatible deployment pattern.
 
+A provider request gets three total attempts by default. A timeout before the
+first streamed event waits one second before the second attempt and two seconds
+before the third. Once text, reasoning, token usage, or a tool call has reached
+the application, the request is not replayed because that could duplicate
+visible output or tool work. The complete sandbox-turn deadline still applies
+across provider attempts and may end a turn before every retry is available.
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -214,6 +221,8 @@ shows one compatible deployment pattern.
 | `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `120` | Provider request timeout. |
+| `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
+| `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
