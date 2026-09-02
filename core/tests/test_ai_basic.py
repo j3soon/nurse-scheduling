@@ -33,7 +33,7 @@ from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
-from nurse_scheduling.ai.sandbox import CommandResult
+from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE
 
@@ -56,7 +56,7 @@ def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 class FakeProvider:
     """Record prompts and return deterministic streamed responses."""
 
-    def __init__(self, responses: list[list[str] | Exception] | None = None) -> None:
+    def __init__(self, responses: list[list[str | Exception] | Exception] | None = None) -> None:
         self.responses = responses or [["Hello", " from AI"]]
         self.calls: list[list[ChatMessage]] = []
         self.offered_tools: object = None
@@ -68,6 +68,8 @@ class FakeProvider:
         if isinstance(response, Exception):
             raise response
         for delta in response:
+            if isinstance(delta, Exception):
+                raise delta
             yield TextDelta(delta)
 
 
@@ -502,7 +504,7 @@ def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
 
 def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     provider_error = "The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f."
-    provider = FakeProvider([ProviderError(provider_error), ["Recovered"]])
+    provider = FakeProvider([["Provisional answer.", ProviderError(provider_error)], ["Recovered"]])
     client = TestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
@@ -515,9 +517,14 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
         json={"message": "Retry"},
     )
 
-    assert parse_sse(failed.text) == [("error", {"message": provider_error})]
+    assert parse_sse(failed.text) == [
+        ("delta", {"text": "Provisional answer."}),
+        ("error", {"message": provider_error}),
+    ]
     assert recovered.status_code == 200
-    assert all(message["content"] != "Failed question" for message in provider.calls[1])
+    recovered_prompt = json.dumps(provider.calls[1])
+    assert "Failed question" not in recovered_prompt
+    assert "Provisional answer." not in recovered_prompt
 
 
 def test_request_limits_are_enforced() -> None:
@@ -670,7 +677,12 @@ class ScriptedToolProvider:
 
     async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator[object]:
         self.calls.append(list(messages))
-        for event in self._turns[min(len(self.calls) - 1, len(self._turns) - 1)]:
+        turn = self._turns[min(len(self.calls) - 1, len(self._turns) - 1)]
+        if isinstance(turn, BaseException):
+            raise turn
+        for event in turn:
+            if isinstance(event, BaseException):
+                raise event
             yield event
 
 
@@ -736,6 +748,54 @@ def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     proposal = next(data for name, data in events if name == "proposal")
     assert "people.items[0].description" in proposal["diff"]
     assert not any(name == "proposal" and "schedule" in data for name, data in events)
+
+
+def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() -> None:
+    provider = ScriptedToolProvider(
+        rename_call(),
+        [TextDelta("Provisional answer.")],
+        [TextDelta("Recovered.")],
+    )
+
+    def rename(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        current = backend.files[WORKSPACE_SCHEDULE].decode()
+        backend.files[WORKSPACE_SCHEDULE] = current.replace(
+            "  - id: P1\n    description: ''",
+            "  - id: P1\n    description: Head",
+            1,
+        ).encode()
+        return CommandResult("updated\n", "", 0)
+
+    def backend_factory(sandbox_id: str) -> FakeSandboxBackend:
+        close_error = SandboxError("E2B cleanup failed") if sandbox_id == "fake-1" else None
+        return FakeSandboxBackend(sandbox_id, command_handler=rename, close_error=close_error)
+
+    factory = FakeSandboxFactory(backend_factory)
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            provider=provider,
+            sandbox_factory=factory,
+        )
+    )
+    schedule = schedule_yaml()
+    session_id = create_session(client, schedule)
+
+    failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Failed edit"})
+
+    events = parse_sse(failed.text)
+    assert [name for name, _ in events] == ["tool", "schedule_change", "delta", "error"]
+    assert events[-1][1]["message"] == "The temporary AI sandbox failed. Please try again."
+    revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
+    approval = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+    assert approval.status_code == 404
+
+    recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+
+    assert ("delta", {"text": "Recovered."}) in parse_sse(recovered.text)
+    recovered_prompt = json.dumps(provider.calls[2])
+    assert "Failed edit" not in recovered_prompt
+    assert "Provisional answer." not in recovered_prompt
 
 
 def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> None:

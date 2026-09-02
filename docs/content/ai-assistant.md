@@ -211,8 +211,11 @@ as one undo step. `POST /sessions/{id}/proposal/reject` drops it, and `PUT
 /sessions/{id}/schedule` replaces the snapshot when the schedule changed
 elsewhere in the app, which also drops any pending proposal.
 
-A run that fails, is cancelled, or is abandoned leaves no proposal. A run that
-only answers a question never creates one.
+A run that fails, is cancelled, or is abandoned does not commit its user
+message, assistant response, or candidate proposal. Its provisional activity
+may remain visible in the browser, but the next turn starts from the last
+successfully committed history and canonical schedule. A successful run that
+only answers a question never creates a proposal.
 
 After a Bash command changes the candidate, the trusted application returns an
 intermediate validation result so the model can repair it. The backend reads

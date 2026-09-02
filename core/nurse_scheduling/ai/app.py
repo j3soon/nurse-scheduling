@@ -212,8 +212,14 @@ class SessionStore:
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return list(session.history), session.schedule_yaml
 
-    def finish(self, session_id: str, user_message: str, assistant_message: str) -> None:
-        """Save a completed turn and release the session."""
+    def finish(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_message: str,
+        proposal: tuple[str, str] | None = None,
+    ) -> None:
+        """Atomically save a completed turn and its optional proposal."""
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
@@ -225,6 +231,8 @@ class SessionStore:
                 ]
             )
             session.history = session.history[-self._settings.max_history_messages :]
+            if proposal is not None:
+                session.proposal_yaml, session.proposal_diff = proposal
             session.active = False
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
@@ -237,14 +245,6 @@ class SessionStore:
             session.revision = schedule_revision(schedule_yaml)
             session.proposal_yaml = ""
             session.proposal_diff = ""
-
-    def store_proposal(self, session_id: str, schedule_yaml: str, diff: str) -> None:
-        """Keep the schedule a finished run proposed, for the user to approve."""
-        with self._lock:
-            session = self._sessions.get(session_id)
-            if session is not None:
-                session.proposal_yaml = schedule_yaml
-                session.proposal_diff = diff
 
     def take_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
         """Approve the pending proposal and adopt it, returning it with the schedule it replaced."""
@@ -596,6 +596,7 @@ def create_app(
 
         async def generate_events():
             assistant_parts: list[str] = []
+            pending_proposal: AgentProposal | None = None
             completed = False
             try:
                 async with concurrency_limit:
@@ -628,10 +629,14 @@ def create_app(
                                 {"schedule_yaml": event.schedule_yaml},
                             )
                         elif isinstance(event, AgentProposal):
-                            store.store_proposal(session_id, event.text, event.diff)
-                            yield _sse_event("proposal", {"diff": event.diff})
-                store.finish(session_id, history_question, "".join(assistant_parts))
+                            pending_proposal = event
+                proposal = None
+                if pending_proposal is not None:
+                    proposal = (pending_proposal.text, pending_proposal.diff)
+                store.finish(session_id, history_question, "".join(assistant_parts), proposal)
                 completed = True
+                if pending_proposal is not None:
+                    yield _sse_event("proposal", {"diff": pending_proposal.diff})
                 yield _sse_event("done", {"message_id": str(uuid4())})
             except asyncio.CancelledError:
                 raise
