@@ -37,7 +37,7 @@ from nurse_scheduling.ai.provider import (
     ToolCall,
     ToolCallRequest,
 )
-from nurse_scheduling.ai.sandbox import CommandResult
+from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnMetrics
 
@@ -213,6 +213,25 @@ def test_a_failed_tool_call_is_recorded_as_such():
     assert not run.passed
     assert run.tools == [f"{BASH_TOOL}(failed)"]
     assert not run.proposed
+
+
+def test_a_command_that_raises_is_recorded_before_the_sandbox_failure():
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"slow command"}'),))],
+    )
+
+    def fail(*_args):
+        raise SandboxError("sandbox command failed")
+
+    run = _run("description-set", provider, _factory(fail))
+
+    assert not run.passed
+    assert run.error == "sandbox command failed"
+    assert run.trajectory["events"][-1] == {
+        "kind": "tool_start",
+        "name": BASH_TOOL,
+        "arguments": '{"command":"slow command"}',
+    }
 
 
 def test_tool_calls_continue_until_the_model_finishes():
@@ -441,9 +460,9 @@ def test_a_run_records_everything_it_did():
     assert trajectory["question"].startswith("Give this schedule the description")
     assert trajectory["prompt"][0]["role"] == "system"
     kinds = [event["kind"] for event in trajectory["events"]]
-    assert kinds == ["reasoning", "tool", "text", "proposal"]
-    tool_event = trajectory["events"][1]
-    assert tool_event["arguments"] == edit
+    assert kinds == ["reasoning", "tool_start", "tool", "text", "proposal"]
+    assert trajectory["events"][1]["arguments"] == edit
+    tool_event = trajectory["events"][2]
     assert tool_event["ok"]
     assert "passed trusted server-side validation" in tool_event["result"]
     assert "March ward roster" in trajectory["proposal"]["schedule_yaml"]

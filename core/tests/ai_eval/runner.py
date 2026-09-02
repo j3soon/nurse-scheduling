@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse
+from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
 from nurse_scheduling.ai.app import build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import (
@@ -195,6 +195,14 @@ async def run_case(
             elif isinstance(event, AgentReasoning):
                 reasoning += len(event.text)
                 _record_text(events, "reasoning", event.text)
+            elif isinstance(event, AgentToolStart):
+                events.append(
+                    {
+                        "kind": "tool_start",
+                        "name": event.name,
+                        "arguments": event.arguments,
+                    }
+                )
             elif isinstance(event, AgentToolUse):
                 tools.append(event.name if event.ok else f"{event.name}(failed)")
                 events.append(

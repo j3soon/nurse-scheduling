@@ -817,7 +817,7 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Failed edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["tool", "schedule_change", "delta", "error"]
+    assert [name for name, _ in events] == ["tool_start", "tool", "schedule_change", "delta", "error"]
     assert events[-1][1]["message"] == "The temporary AI sandbox failed. Please try again."
     revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
     approval = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
@@ -829,6 +829,34 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
     recovered_prompt = json.dumps(provider.calls[2])
     assert "Failed edit" not in recovered_prompt
     assert "Provisional answer." not in recovered_prompt
+
+
+def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
+    provider = ScriptedToolProvider(rename_call())
+
+    def fail_command(*_args) -> CommandResult:
+        raise SandboxError("E2B command failed")
+
+    factory = FakeSandboxFactory(
+        lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=fail_command)
+    )
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            provider=provider,
+            sandbox_factory=factory,
+        )
+    )
+    session_id = create_session(client, schedule_yaml())
+
+    failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
+
+    events = parse_sse(failed.text)
+    assert [name for name, _ in events] == ["tool_start", "error"]
+    assert events[0][1] == {
+        "name": BASH_TOOL,
+        "arguments": json.dumps({"command": "python3 -c 'set P1 description to Head'"}),
+    }
 
 
 def test_final_validation_failure_discards_the_turn_without_a_history_note() -> None:
@@ -856,8 +884,8 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
 
     events = parse_sse(failed.text)
-    assert [name for name, _ in events] == ["tool", "delta", "error"]
-    assert events[0][1]["ok"] is False
+    assert [name for name, _ in events] == ["tool_start", "tool", "delta", "error"]
+    assert events[1][1]["ok"] is False
     assert events[-1][1]["message"] == CANDIDATE_VALIDATION_ERROR
 
     recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})

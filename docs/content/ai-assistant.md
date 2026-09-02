@@ -82,12 +82,13 @@ to the answer text, never stored in conversation history, and never sent back to
 the provider, so it cannot leak into an assistant message and costs nothing on
 later turns.
 
-The `tool` event carries the tool name, the arguments the model sent, the result
-it received, and whether the call did what it was asked. Sandbox backends return
-raw command output to the AI layer. The AI `bash` adapter combines stdout and
-stderr, keeps the last 2,000 lines or 50 KB, and stores the full output in the
-temporary sandbox when truncation occurs. This policy stays outside the
-provider-neutral sandbox interface.
+The `tool_start` event carries the tool name and arguments before execution, so
+the UI and evaluation artifact retain a command even if the sandbox fails. A
+later `tool` event carries its result and whether the call did what it was
+asked. Sandbox backends return raw command output to the AI layer. The AI
+`bash` adapter combines stdout and stderr, keeps the last 2,000 lines or 50 KB,
+and stores the full output in the temporary sandbox when truncation occurs.
+This policy stays outside the provider-neutral sandbox interface.
 
 When a Bash command changes the schedule, the backend reads the working copy
 and validates it outside the sandbox before emitting `schedule_change`. The

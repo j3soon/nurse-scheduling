@@ -67,6 +67,17 @@ describe('AssistantActivity', () => {
     expect(screen.getByText('exit_code: 1')).not.toBeVisible();
   });
 
+  it('distinguishes running and interrupted tool calls', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<AssistantActivity entries={[{ ...bashEntry, state: 'running', result: '' }]} />);
+
+    expect(screen.getByText('bash · running')).toBeInTheDocument();
+    rerender(<AssistantActivity entries={[{ ...bashEntry, state: 'interrupted', result: '' }]} />);
+    await user.click(screen.getByText('bash · interrupted'));
+
+    expect(screen.getByText('The command did not return before the turn ended.')).toBeVisible();
+  });
+
   it('shows Bash arguments and output', async () => {
     const user = userEvent.setup();
     render(<AssistantActivity entries={[bashEntry]} />);

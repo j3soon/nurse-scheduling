@@ -37,7 +37,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 
-from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolUse
+from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
 from .config import AiSettings
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .provider import ChatContent, ChatMessage, ChatProvider, OpenAiCompatibleProvider, ProviderError
@@ -640,6 +640,14 @@ def create_app(
                             yield _sse_event("delta", {"text": event.text})
                         elif isinstance(event, AgentReasoning):
                             yield _sse_event("reasoning", {"text": event.text})
+                        elif isinstance(event, AgentToolStart):
+                            yield _sse_event(
+                                "tool_start",
+                                {
+                                    "name": event.name,
+                                    "arguments": event.arguments,
+                                },
+                            )
                         elif isinstance(event, AgentToolUse):
                             yield _sse_event(
                                 "tool",

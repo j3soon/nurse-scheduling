@@ -33,6 +33,7 @@ import AssistantMarkdown from './AssistantMarkdown';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import {
   AiCapabilities,
+  ToolActivity,
   approveProposal,
   createSession,
   getCapabilities,
@@ -99,6 +100,24 @@ function messageId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random()}`;
+}
+
+function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): ActivityEntry[] {
+  let runningIndex = -1;
+  entries.forEach((entry, index) => {
+    if (entry.kind === 'tool' && entry.state === 'running') runningIndex = index;
+  });
+  const completed = { kind: 'tool' as const, ...result };
+  if (runningIndex < 0) return [...entries, completed];
+  return entries.map((entry, index) => (index === runningIndex ? completed : entry));
+}
+
+function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
+  return entries.map(entry => (
+    entry.kind === 'tool' && entry.state === 'running'
+      ? { ...entry, state: 'interrupted' as const }
+      : entry
+  ));
 }
 
 function ThinkingIndicator() {
@@ -381,11 +400,21 @@ export default function ExperimentalAiPage() {
             }
             return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
           })),
-          onTool: activity => setMessages(previous => previous.map(message => (
+          onToolStart: activity => setMessages(previous => previous.map(message => (
             message.id === assistantId
-              ? { ...message, activity: [...(message.activity ?? []), { kind: 'tool' as const, ...activity }] }
+              ? {
+                ...message,
+                activity: [
+                  ...(message.activity ?? []),
+                  { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
+                ],
+              }
               : message
           ))),
+          onTool: activity => setMessages(previous => previous.map(message => {
+            if (message.id !== assistantId) return message;
+            return { ...message, activity: finishToolActivity(message.activity ?? [], activity) };
+          })),
           onScheduleChange: candidate => {
             const before = sandboxScheduleRef.current ?? scheduleYaml;
             sandboxScheduleRef.current = candidate;
@@ -422,6 +451,7 @@ export default function ExperimentalAiPage() {
           ? {
             ...message,
             status: 'failed',
+            activity: interruptRunningTools(message.activity ?? []),
             retry: {
               question,
               requiresAttachments: attachmentsForMessage.length > 0,

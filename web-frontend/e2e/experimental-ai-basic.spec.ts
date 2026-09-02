@@ -92,6 +92,7 @@ async function mockAiBackend(
       headers: corsHeaders,
       body: firstMessageFailed
         ? [
+          `event: tool_start\ndata: ${JSON.stringify({ name: 'bash', arguments: '{"command":"sleep 30"}' })}\n\n`,
           'event: delta\ndata: {"text":"Provisional response."}\n\n',
           'event: error\ndata: {"message":"The temporary AI sandbox failed."}\n\n',
         ].join('')
@@ -131,6 +132,8 @@ test('retries a failed text turn without hiding its provisional activity', async
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
   await expect(page.getByText('This turn failed and was not saved to AI history.')).toBeVisible();
+  await page.getByText('bash · interrupted').click();
+  await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();
 
   await expect(page.getByText('Recovered response.')).toBeVisible();

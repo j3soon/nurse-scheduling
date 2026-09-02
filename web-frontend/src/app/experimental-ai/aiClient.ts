@@ -26,9 +26,12 @@ export interface ToolActivity {
   ok: boolean;
 }
 
+export type ToolStartActivity = Pick<ToolActivity, 'name' | 'arguments'>;
+
 export interface StreamCallbacks {
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
+  onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
   onProposal?: (diff: string) => void;
@@ -156,6 +159,11 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     callbacks.onDelta(payload.text);
   } else if (eventType === 'reasoning' && typeof payload.text === 'string') {
     callbacks.onReasoning?.(payload.text);
+  } else if (eventType === 'tool_start' && typeof payload.name === 'string') {
+    callbacks.onToolStart?.({
+      name: payload.name,
+      arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
+    });
   } else if (eventType === 'tool' && typeof payload.name === 'string') {
     callbacks.onTool?.({
       name: payload.name,

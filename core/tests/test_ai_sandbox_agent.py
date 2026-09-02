@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator, Sequence
 
 import pytest
 
-from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolUse
+from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolStart, AgentToolUse
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
@@ -115,10 +115,11 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert b"Path: preferences.shift count" in backend.files[REFERENCE_SCHEMA]
     assert backend.commands == [("edit", None)]
     assert [tool["function"]["name"] for tool in provider.requests[0][1]] == [BASH_TOOL]
-    assert isinstance(events[0], AgentToolUse)
-    assert events[0].ok
-    assert "Trusted schedule check after this command" in events[0].result
-    assert "passed trusted server-side validation" in events[0].result
+    assert isinstance(events[0], AgentToolStart)
+    tool_use = next(event for event in events if isinstance(event, AgentToolUse))
+    assert tool_use.ok
+    assert "Trusted schedule check after this command" in tool_use.result
+    assert "passed trusted server-side validation" in tool_use.result
     schedule_change = next(event for event in events if isinstance(event, AgentScheduleChange))
     assert "description: Head" in schedule_change.schedule_yaml
     assert AgentText("I propose the description.") in events

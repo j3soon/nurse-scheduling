@@ -34,6 +34,7 @@ export interface ToolEntry {
   arguments: string;
   result: string;
   ok: boolean;
+  state?: 'running' | 'interrupted';
 }
 
 export interface ScheduleChangeEntry {
@@ -78,6 +79,9 @@ function ToolBody({ entry }: { entry: ToolEntry }) {
     <div className="space-y-2">
       {entry.arguments && entry.arguments !== '{}' && <ChunkedText text={entry.arguments} label="arguments" />}
       {entry.result && <ChunkedText text={entry.result} label="output" />}
+      {entry.state === 'interrupted' && !entry.result && (
+        <p className="text-xs text-red-700">The command did not return before the turn ended.</p>
+      )}
     </div>
   );
 }
@@ -111,6 +115,8 @@ function ScheduleChangePreview({ entry }: { entry: ScheduleChangeEntry }) {
 function summaryOf(entry: ActivityEntry): string {
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCount(entry.text.length)} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
+  if (entry.state === 'running') return `${entry.name} · running`;
+  if (entry.state === 'interrupted') return `${entry.name} · interrupted`;
   return entry.ok ? entry.name : `${entry.name} · failed`;
 }
 

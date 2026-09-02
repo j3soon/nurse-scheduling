@@ -220,12 +220,14 @@ describe('AI client', () => {
   it('forwards tool use and a proposal to the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
+      'event: tool_start\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
       'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
       'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
       'event: done\ndata: {"message_id":"1"}\n\n',
     ])));
+    const toolStarts: string[] = [];
     const tools: string[] = [];
     const reasoning: string[] = [];
     const scheduleChanges: string[] = [];
@@ -238,6 +240,7 @@ describe('AI client', () => {
       {
         onDelta: text => texts.push(text),
         onReasoning: text => reasoning.push(text),
+        onToolStart: activity => toolStarts.push(`${activity.name}:${activity.arguments}`),
         onTool: activity => tools.push(`${activity.name}:${activity.ok}:${activity.result}`),
         onScheduleChange: scheduleYaml => scheduleChanges.push(scheduleYaml),
         onProposal: diff => diffs.push(diff),
@@ -245,6 +248,7 @@ describe('AI client', () => {
       new AbortController().signal,
     );
 
+    expect(toolStarts).toEqual(['bash:{"command":"sed -n 1p schedule.yaml"}']);
     expect(tools).toEqual(['bash:true:exit_code: 0']);
     expect(reasoning).toEqual(['Checking people.']);
     expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);

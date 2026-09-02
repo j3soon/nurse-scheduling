@@ -26,6 +26,7 @@ from nurse_scheduling.ai.agent import (
     AgentReasoning,
     AgentText,
     AgentToolOutcome,
+    AgentToolStart,
     AgentToolUse,
     run_tool_agent,
 )
@@ -98,7 +99,10 @@ def test_a_tool_call_is_executed_and_returned_to_the_provider():
 
     events = _run(provider)
 
-    assert events[0] == AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", True)
+    assert events[:2] == [
+        AgentToolStart(BASH_TOOL, '{"command":"rg people"}'),
+        AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", True),
+    ]
     second_request = provider.requests[1][0]
     assert second_request[-2]["tool_calls"][0]["function"]["name"] == BASH_TOOL
     assert second_request[-1] == {
@@ -147,4 +151,7 @@ def test_a_failed_tool_call_is_reported_as_such():
 
     events = _run(provider, tool_ok=False)
 
-    assert events[0] == AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", False)
+    assert events[:2] == [
+        AgentToolStart(BASH_TOOL, '{"command":"rg people"}'),
+        AgentToolUse(BASH_TOOL, '{"command":"rg people"}', "command result", False),
+    ]

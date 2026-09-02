@@ -52,6 +52,14 @@ class AgentReasoning:
 
 
 @dataclass(frozen=True)
+class AgentToolStart:
+    """One tool request recorded before execution begins."""
+
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True)
 class AgentToolUse:
     """One tool call the assistant made, with what it sent and received."""
 
@@ -69,7 +77,7 @@ class AgentProposal:
     diff: str
 
 
-AgentEvent = AgentText | AgentReasoning | AgentToolUse | AgentProposal
+AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentProposal
 ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]
 
 
@@ -86,7 +94,7 @@ async def run_tool_agent(
     messages: Sequence[ChatMessage],
     tools: Sequence[dict[str, Any]],
     execute: ToolExecutor,
-) -> AsyncIterator[AgentText | AgentReasoning | AgentToolUse]:
+) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
     """Run the model/tool loop shared by agent capability layers."""
     conversation = list(messages)
     while True:
@@ -104,6 +112,7 @@ async def run_tool_agent(
 
         conversation.append(assistant_tool_call_message(calls, "".join(answer)))
         for call in calls:
+            yield AgentToolStart(call.name, call.arguments)
             outcome = await execute(call.name, call.arguments)
             logger.info(
                 "agent tool call name=%s ok=%s result_chars=%s",

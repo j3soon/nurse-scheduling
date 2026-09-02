@@ -333,12 +333,17 @@ describe('ExperimentalAiPage', () => {
       callbacks: {
         onDelta: (text: string) => void;
         onReasoning?: (text: string) => void;
+        onToolStart?: (activity: { name: string; arguments: string }) => void;
         onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
         onScheduleChange?: (scheduleYaml: string) => void;
         onProposal?: (diff: string) => void;
       },
     ) => {
       callbacks.onReasoning?.('Looking at P1. ');
+      callbacks.onToolStart?.({
+        name: 'bash',
+        arguments: JSON.stringify({ command: "sed -i 's/old/new/' schedule.yaml" }),
+      });
       callbacks.onTool?.({
         name: 'bash',
         arguments: JSON.stringify({ command: "sed -i 's/old/new/' schedule.yaml" }),
