@@ -28,7 +28,7 @@ from unittest.mock import ANY
 import pytest
 from fastapi.testclient import TestClient
 
-from nurse_scheduling.ai.app import SERVICE_NAME
+from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY, SERVICE_NAME
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -724,6 +724,34 @@ def proposing_client() -> tuple[TestClient, str, str]:
     return client, session_id, hashlib.sha256(schedule.encode("utf-8")).hexdigest()
 
 
+def proposal_decision_context() -> tuple[
+    TestClient,
+    str,
+    str,
+    ScriptedToolProvider,
+    FakeSandboxFactory,
+]:
+    """Create a proposal and expose the provider and sandboxes for a follow-up turn."""
+    provider = ScriptedToolProvider(
+        rename_call(),
+        [TextDelta("Renamed P1.")],
+        [TextDelta("Decision acknowledged.")],
+    )
+    factory = rename_factory()
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            provider=provider,
+            sandbox_factory=factory,
+        )
+    )
+    schedule = schedule_yaml()
+    session_id = create_session(client, schedule)
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+    assert response.status_code == 200
+    return client, session_id, hashlib.sha256(schedule.encode("utf-8")).hexdigest(), provider, factory
+
+
 def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
     client = TestClient(
@@ -853,6 +881,18 @@ def test_approval_returns_the_proposed_schedule_once() -> None:
     assert repeated.status_code == 404
 
 
+def test_approval_is_recorded_for_the_next_fresh_turn() -> None:
+    client, session_id, revision, provider, factory = proposal_decision_context()
+
+    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
+
+    assert approved.status_code == 200
+    assert follow_up.status_code == 200
+    assert {"role": "user", "content": PROPOSAL_APPROVED_HISTORY} in provider.calls[2]
+    assert b"description: Head" in factory.created[1].files[WORKSPACE_SCHEDULE]
+
+
 def test_approval_is_refused_when_the_browser_holds_another_revision() -> None:
     client, session_id, _ = proposing_client()
 
@@ -865,13 +905,19 @@ def test_approval_is_refused_when_the_browser_holds_another_revision() -> None:
 
 
 def test_rejection_drops_the_proposal() -> None:
-    client, session_id, revision = proposing_client()
+    client, session_id, revision, provider, factory = proposal_decision_context()
 
     rejected = client.post(f"/sessions/{session_id}/proposal/reject")
+    repeated = client.post(f"/sessions/{session_id}/proposal/reject")
     approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
 
     assert rejected.status_code == 204
+    assert repeated.status_code == 204
     assert approved.status_code == 404
+    assert follow_up.status_code == 200
+    assert provider.calls[2].count({"role": "user", "content": PROPOSAL_REJECTED_HISTORY}) == 1
+    assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
 
 
 def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:

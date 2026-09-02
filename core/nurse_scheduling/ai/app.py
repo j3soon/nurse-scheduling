@@ -56,6 +56,13 @@ from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 SERVICE_NAME = "nurse-scheduling-ai-api"
 API_VERSION = "0.2.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
+PROPOSAL_APPROVED_HISTORY = (
+    "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
+)
+PROPOSAL_REJECTED_HISTORY = (
+    "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
+    "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
+)
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
     r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
@@ -267,12 +274,22 @@ class SessionStore:
             session.revision = schedule_revision(approved)
             return approved, replaced
 
+    def record_proposal_approval(self, session_id: str) -> None:
+        """Record a successfully revalidated approval for later agent turns."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is not None:
+                self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
+
     def discard_proposal(self, session_id: str, owner_token: str | None) -> None:
-        """Drop the pending proposal without changing the schedule."""
+        """Drop a pending proposal and record the user's decision once."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
+            had_proposal = bool(session.proposal_yaml)
             session.proposal_yaml = ""
             session.proposal_diff = ""
+            if had_proposal:
+                self._append_history_event(session, PROPOSAL_REJECTED_HISTORY)
 
     def abort(self, session_id: str) -> None:
         """Release a session without recording an incomplete response."""
@@ -280,6 +297,11 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is not None:
                 session.active = False
+
+    def _append_history_event(self, session: ChatSession, content: str) -> None:
+        """Append one trusted application event within the caller's lock."""
+        session.history.append(ChatMessage(role="user", content=content))
+        session.history = session.history[-self._settings.max_history_messages :]
 
     def _get_owned(self, session_id: str, owner_token: str | None) -> ChatSession:
         self._prune_expired()
@@ -688,6 +710,7 @@ def create_app(
             if new_schedule_issues(replaced_validation, validation):
                 logger.error("Approved proposal failed revalidation session_id=%s", session_id)
                 raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
+        store.record_proposal_approval(session_id)
         return ProposalResponse(schedule_yaml=approved)
 
     @app.post("/sessions/{session_id}/proposal/reject", status_code=status.HTTP_204_NO_CONTENT)

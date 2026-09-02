@@ -211,6 +211,11 @@ as one undo step. `POST /sessions/{id}/proposal/reject` drops it, and `PUT
 /sessions/{id}/schedule` replaces the snapshot when the schedule changed
 elsewhere in the app, which also drops any pending proposal.
 
+Approval and rejection add a backend-only user-action note to model history.
+The rejection note says that every schedule change from the proposed turn was
+discarded and that the next turn starts from a fresh copy of the canonical
+schedule. It never includes the discarded YAML.
+
 A run that fails, is cancelled, or is abandoned does not commit its user
 message, assistant response, or candidate proposal. Its provisional activity
 may remain visible in the browser, but the next turn starts from the last
