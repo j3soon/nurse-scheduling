@@ -222,6 +222,10 @@ may remain visible in the browser, but the next turn starts from the last
 successfully committed history and canonical schedule. A successful run that
 only answers a question never creates a proposal.
 
+If the final candidate fails trusted validation, the UI reports that every
+schedule change from the turn was discarded and that the canonical schedule
+was not changed. The failed turn does not add a history note.
+
 After a Bash command changes the candidate, the trusted application returns an
 intermediate validation result so the model can repair it. The backend reads
 the final file as untrusted input and applies authoritative validation and a

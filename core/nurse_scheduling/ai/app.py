@@ -47,6 +47,7 @@ from .sandbox_agent import (
     SANDBOX_SYSTEM_PROMPT,
     AgentScheduleChange,
     SandboxAgentLimits,
+    SandboxCandidateError,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
@@ -62,6 +63,10 @@ PROPOSAL_APPROVED_HISTORY = (
 PROPOSAL_REJECTED_HISTORY = (
     "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
     "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
+)
+CANDIDATE_VALIDATION_ERROR = (
+    "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
+    "discarded. The canonical schedule was not changed."
 )
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
@@ -666,6 +671,9 @@ def create_app(
                 yield _sse_event("error", {"message": str(exc)})
             except SandboxTurnTimeoutError as exc:
                 yield _sse_event("error", {"message": str(exc)})
+            except SandboxCandidateError as exc:
+                logger.warning("AI candidate validation failed: %s", exc)
+                yield _sse_event("error", {"message": CANDIDATE_VALIDATION_ERROR})
             except SandboxError:
                 logger.exception("AI sandbox turn failed")
                 yield _sse_event("error", {"message": "The temporary AI sandbox failed. Please try again."})

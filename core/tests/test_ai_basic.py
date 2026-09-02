@@ -28,7 +28,12 @@ from unittest.mock import ANY
 import pytest
 from fastapi.testclient import TestClient
 
-from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY, SERVICE_NAME
+from nurse_scheduling.ai.app import (
+    CANDIDATE_VALIDATION_ERROR,
+    PROPOSAL_APPROVED_HISTORY,
+    PROPOSAL_REJECTED_HISTORY,
+    SERVICE_NAME,
+)
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -824,6 +829,44 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
     recovered_prompt = json.dumps(provider.calls[2])
     assert "Failed edit" not in recovered_prompt
     assert "Provisional answer." not in recovered_prompt
+
+
+def test_final_validation_failure_discards_the_turn_without_a_history_note() -> None:
+    provider = ScriptedToolProvider(
+        rename_call(),
+        [TextDelta("Provisional invalid answer.")],
+        [TextDelta("Recovered.")],
+    )
+
+    def invalidate(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        backend.files[WORKSPACE_SCHEDULE] = b"not: [valid"
+        return CommandResult("updated\n", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+            provider=provider,
+            sandbox_factory=factory,
+        )
+    )
+    schedule = schedule_yaml()
+    session_id = create_session(client, schedule)
+
+    failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
+
+    events = parse_sse(failed.text)
+    assert [name for name, _ in events] == ["tool", "delta", "error"]
+    assert events[0][1]["ok"] is False
+    assert events[-1][1]["message"] == CANDIDATE_VALIDATION_ERROR
+
+    recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+
+    assert ("delta", {"text": "Recovered."}) in parse_sse(recovered.text)
+    recovered_prompt = json.dumps(provider.calls[2])
+    assert "Invalid edit" not in recovered_prompt
+    assert "Provisional invalid answer." not in recovered_prompt
+    assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule.encode()
 
 
 def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> None:
