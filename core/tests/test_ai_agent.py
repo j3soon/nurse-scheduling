@@ -31,7 +31,7 @@ from nurse_scheduling.ai.agent import (
     AgentToolUse,
     run_tool_agent,
 )
-from nurse_scheduling.ai.bash_tool import BASH_TOOL
+from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ReasoningDelta, TextDelta, ToolCall, ToolCallRequest
 
 QUESTION: list[ChatMessage] = [{"role": "user", "content": "Who works on the first day?"}]

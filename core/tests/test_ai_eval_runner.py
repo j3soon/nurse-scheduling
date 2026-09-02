@@ -26,8 +26,8 @@ from pathlib import Path
 
 import pytest
 
-from nurse_scheduling.ai.bash_tool import BASH_TOOL
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderError,
@@ -218,10 +218,7 @@ def test_a_failed_tool_call_is_recorded_as_such():
 
 def test_a_budget_rejection_is_separate_from_executed_tools():
     provider = ScriptedProvider(
-        *[
-            [ToolCallRequest((ToolCall(f"call_{index}", BASH_TOOL, '{"command":"true"}'),))]
-            for index in range(4)
-        ],
+        *[[ToolCallRequest((ToolCall(f"call_{index}", BASH_TOOL, '{"command":"true"}'),))] for index in range(4)],
         [TextDelta("I need more input.")],
     )
 

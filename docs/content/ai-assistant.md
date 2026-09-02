@@ -79,9 +79,10 @@ later turns.
 
 The `tool` event carries the tool name, the arguments the model sent, the result
 it received, and whether the call did what it was asked. Sandbox backends return
-raw command output to the AI layer. The AI `bash` tool then bounds stdout,
-stderr, and combined output before sending it to the model or browser. This
-policy stays outside the provider-neutral sandbox interface.
+raw command output to the AI layer. The AI `bash` adapter combines stdout and
+stderr, keeps the last 2,000 lines or 50 KB, and stores the full output in the
+temporary sandbox when truncation occurs. This policy stays outside the
+provider-neutral sandbox interface.
 
 When a Bash command changes the schedule, the backend reads the working copy
 and validates it outside the sandbox before emitting `schedule_change`. The
@@ -188,6 +189,14 @@ boundaries than a local coding agent. The workspace is disposable, commands
 are bounded, secrets and canonical storage stay outside it, and a trusted
 application validates every detected change and the final candidate.
 
+The model-facing Bash schema, timeout validation, output formatting, and tail
+truncation are a Python port pinned to
+[Pi commit `e266507`](https://github.com/earendil-works/pi/blob/e266507b606b9552fa277252644054afd4384b11/packages/coding-agent/src/core/tools/bash.ts).
+The Nurse Scheduling adapter delegates execution to `SandboxBackend` and
+enforces the configured command-timeout ceiling. E2B returns completed stdout
+and stderr separately, so the adapter concatenates them and cannot reproduce
+Pi's live stream interleaving exactly.
+
 ## Proposal lifecycle
 
 A finished run that changed the schedule leaves one pending proposal. The
@@ -233,13 +242,9 @@ across provider attempts and may end a turn before every retry is available.
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
-| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `10` | Default deadline for one shell command. |
+| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `10` | Default and maximum deadline for one shell command. |
 | `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `300` | Deadline for the complete sandbox-backed user message. |
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
-| `AI_BASH_TOOL_MAX_COMMAND_CHARS` | `4000` | Maximum model-issued shell command length. |
-| `AI_BASH_TOOL_MAX_STDOUT_CHARS` | `12000` | Stdout retained by the AI shell interface. |
-| `AI_BASH_TOOL_MAX_STDERR_CHARS` | `4000` | Stderr retained by the AI shell interface. |
-| `AI_BASH_TOOL_MAX_OUTPUT_CHARS` | `16000` | Combined stdout and stderr retained by the AI shell interface. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. |
 | `AI_SESSION_TTL_SECONDS` | `3600` | Idle session lifetime. |
@@ -404,10 +409,12 @@ cd /app/core
 ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
   tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
-  tests/test_ai_sandbox_agent.py tests/test_ai_bash_tool.py tests/test_ai_nsctl.py
+  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py \
+  tests/test_ai_sandbox_bash.py tests/test_ai_nsctl.py
 pytest -q tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
-  tests/test_ai_sandbox_agent.py tests/test_ai_bash_tool.py tests/test_ai_nsctl.py
+  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py \
+  tests/test_ai_sandbox_bash.py tests/test_ai_nsctl.py
 
 cd /app/web-frontend
 bun run test -- \

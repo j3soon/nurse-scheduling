@@ -53,7 +53,8 @@ Most tests use the in-memory fake backend and need no E2B account:
 ```sh
 cd core
 pytest -q tests/test_ai_sandbox.py tests/test_ai_sandbox_agent.py \
-  tests/test_ai_bash_tool.py tests/test_ai_nsctl.py tests/test_ai_sandbox_e2b.py
+  tests/test_ai_pi_bash.py tests/test_ai_sandbox_bash.py tests/test_ai_nsctl.py \
+  tests/test_ai_sandbox_e2b.py
 ```
 
 The opt-in cloud lifecycle checks use the prebuilt template, verify timeout

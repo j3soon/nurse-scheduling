@@ -65,6 +65,9 @@ test paths when a narrower suite is known to be sufficient.
   schedule change and the structural diff at review, since those catch a
   dropped entry that still parses. Emit an intermediate working-copy preview
   only after that trusted validation.
+- Keep the model-facing Bash contract and output behavior in the pinned Pi port
+  under `ai/pi`. Keep E2B execution and service timeout policy in the thin
+  sandbox adapter so upstream behavior remains identifiable and testable.
 - Retry a provider timeout only before any stream event reaches the caller.
   Once text, reasoning, usage, or a tool call is visible, surface the timeout
   rather than replaying the request and risking duplicate output or tool work.

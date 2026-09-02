@@ -26,7 +26,7 @@ from collections.abc import AsyncIterator, Sequence
 import pytest
 
 from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolUse
-from nurse_scheduling.ai.bash_tool import BASH_TOOL, BashToolLimits
+from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
@@ -70,7 +70,7 @@ def _limits(**overrides) -> SandboxAgentLimits:
         "max_schedule_bytes": SCHEDULE_BYTE_LIMIT,
         "turn_timeout_seconds": 2,
         "cleanup_timeout_seconds": 1,
-        "bash_tool": BashToolLimits(100, 1000, 500, 1500),
+        "bash_command_timeout_seconds": 10,
     }
     values.update(overrides)
     return SandboxAgentLimits(**values)

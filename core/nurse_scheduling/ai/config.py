@@ -156,10 +156,6 @@ class AiSettings:
     sandbox_command_timeout_seconds: float = 10.0
     sandbox_turn_timeout_seconds: float = 300.0
     sandbox_cleanup_timeout_seconds: float = 10.0
-    bash_tool_max_command_chars: int = 4_000
-    bash_tool_max_stdout_chars: int = 12_000
-    bash_tool_max_stderr_chars: int = 4_000
-    bash_tool_max_output_chars: int = 16_000
     cookie_secure: bool = True
 
     @classmethod
@@ -217,9 +213,5 @@ class AiSettings:
             sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 10.0),
             sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 300.0),
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
-            bash_tool_max_command_chars=_read_positive_int("AI_BASH_TOOL_MAX_COMMAND_CHARS", 4_000),
-            bash_tool_max_stdout_chars=_read_positive_int("AI_BASH_TOOL_MAX_STDOUT_CHARS", 12_000),
-            bash_tool_max_stderr_chars=_read_positive_int("AI_BASH_TOOL_MAX_STDERR_CHARS", 4_000),
-            bash_tool_max_output_chars=_read_positive_int("AI_BASH_TOOL_MAX_OUTPUT_CHARS", 16_000),
             cookie_secure=_read_bool("AI_COOKIE_SECURE", True),
         )

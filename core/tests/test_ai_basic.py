@@ -30,8 +30,8 @@ from fastapi.testclient import TestClient
 
 from nurse_scheduling.ai.app import SERVICE_NAME
 from nurse_scheduling.ai.app import create_app as create_ai_app
-from nurse_scheduling.ai.bash_tool import BASH_TOOL
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
@@ -668,10 +668,6 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     monkeypatch.setenv("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", "90")
     monkeypatch.setenv("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", "6")
-    monkeypatch.setenv("AI_BASH_TOOL_MAX_COMMAND_CHARS", "3000")
-    monkeypatch.setenv("AI_BASH_TOOL_MAX_STDOUT_CHARS", "9000")
-    monkeypatch.setenv("AI_BASH_TOOL_MAX_STDERR_CHARS", "3000")
-    monkeypatch.setenv("AI_BASH_TOOL_MAX_OUTPUT_CHARS", "12000")
 
     settings = AiSettings.from_env()
 
@@ -681,10 +677,6 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     assert settings.sandbox_command_timeout_seconds == 4.5
     assert settings.sandbox_turn_timeout_seconds == 90
     assert settings.sandbox_cleanup_timeout_seconds == 6
-    assert settings.bash_tool_max_command_chars == 3000
-    assert settings.bash_tool_max_stdout_chars == 9000
-    assert settings.bash_tool_max_stderr_chars == 3000
-    assert settings.bash_tool_max_output_chars == 12000
 
 
 def test_environment_configuration_requires_a_sandbox_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -797,7 +789,7 @@ def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> No
         return CommandResult("updated\n", "", 0)
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=edit))
-    settings = make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT, bash_tool_max_command_chars=1000)
+    settings = make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT)
     client = TestClient(create_test_app(settings=settings, provider=provider, sandbox_factory=factory))
     schedule = schedule_yaml()
     session_id = create_session(client, schedule)
@@ -895,7 +887,9 @@ def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
 
 def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     provider = FakeProvider()
-    client = TestClient(create_test_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider))
+    client = TestClient(
+        create_test_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider)
+    )
     schedule = schedule_yaml()
     session_id = create_session(client, schedule)
 

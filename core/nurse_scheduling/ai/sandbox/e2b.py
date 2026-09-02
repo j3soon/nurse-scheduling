@@ -242,15 +242,15 @@ class E2BSandboxBackend:
                 self._execution_seconds += duration
                 destroyed = await self._destroy_locked()
                 logger.warning(
-                    "sandbox command timed out sandbox_id=%s command_number=%s duration_seconds=%.3f",
+                    "sandbox command timed out sandbox_id=%s command_number=%s duration_seconds=%.3f destroyed=%s",
                     self.sandbox_id,
                     self._commands,
                     duration,
+                    destroyed,
                 )
-                cleanup = "The sandbox was destroyed." if destroyed else "Sandbox cleanup will be retried."
                 return CommandResult(
                     "",
-                    f"Command timed out after {timeout:g} seconds. {cleanup}",
+                    "",
                     COMMAND_TIMEOUT_EXIT_CODE,
                     duration_seconds=duration,
                     timed_out=True,

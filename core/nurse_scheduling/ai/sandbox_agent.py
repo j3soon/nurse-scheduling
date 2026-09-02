@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from .agent import AgentEvent, AgentProposal, AgentToolOutcome, AgentToolUse, run_tool_agent
-from .bash_tool import BashToolLimits, SandboxBashTool
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
 from .provider import ChatMessage, ToolCapableChatProvider
@@ -39,6 +38,7 @@ from .sandbox import (
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
+from .sandbox_bash import SandboxBashTool
 from .schema import SCHEMA_PATHS, render_schedule_schema
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
@@ -91,7 +91,7 @@ class SandboxAgentLimits:
     max_schedule_bytes: int
     turn_timeout_seconds: float
     cleanup_timeout_seconds: float
-    bash_tool: BashToolLimits
+    bash_command_timeout_seconds: float
 
     @classmethod
     def from_settings(cls, settings: AiSettings) -> "SandboxAgentLimits":
@@ -101,12 +101,7 @@ class SandboxAgentLimits:
             max_schedule_bytes=settings.max_schedule_bytes,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
-            bash_tool=BashToolLimits(
-                max_command_chars=settings.bash_tool_max_command_chars,
-                max_stdout_chars=settings.bash_tool_max_stdout_chars,
-                max_stderr_chars=settings.bash_tool_max_stderr_chars,
-                max_output_chars=settings.bash_tool_max_output_chars,
-            ),
+            bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,
         )
 
 
@@ -195,7 +190,7 @@ async def run_sandbox_agent(
             ) as sandbox:
                 await hydrate_sandbox(sandbox, schedule_yaml)
 
-                bash_tool = SandboxBashTool(sandbox, limits.bash_tool)
+                bash_tool = SandboxBashTool(sandbox, limits.bash_command_timeout_seconds)
                 candidate_tracker = _ScheduleCandidateTracker(
                     sandbox,
                     schedule_yaml,
