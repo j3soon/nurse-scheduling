@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 import pytest
 
 from nurse_scheduling.loader import _load_yaml
-from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, init_sentry
+from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, flush_sentry, init_sentry
 from nurse_scheduling.server.jobs.models import Job, JobRequest, JobState
 
 SCHEDULE_YAML = b"""\
@@ -208,6 +208,17 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
         }
     ]
     assert tags == [("app", "backend")]
+
+
+def test_flush_sentry_waits_for_pending_logs(monkeypatch):
+    flush_calls = []
+    fake_sentry_sdk = types.SimpleNamespace(flush=lambda **kwargs: flush_calls.append(kwargs))
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+    flush_sentry()
+
+    assert flush_calls == [{"timeout": 2.0}]
 
 
 def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypatch):

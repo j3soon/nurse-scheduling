@@ -53,6 +53,11 @@ test paths when a narrower suite is known to be sufficient.
   `/info`, and deployment probes must not need credentials. Gate every other
   route with the shared-token dependency.
 
+## Sentry
+- Initialize Sentry before configuration or logging in every first-party
+  standalone service process. Use a distinct `app` tag and flush Sentry before
+  short-lived processes exit.
+
 ## Testing
 - Normal tests live under `tests/`.
 - Keep server-facing solver traits in

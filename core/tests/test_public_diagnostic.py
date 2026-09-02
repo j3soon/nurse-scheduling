@@ -364,13 +364,20 @@ def test_main_runs_without_creating_process_lock(tmp_path, monkeypatch):
     runner.run.return_value = report
     diagnostic_class = Mock(return_value=runner)
     report_path = tmp_path / "report.json"
+    init_sentry = Mock()
+    flush_sentry = Mock()
 
+    monkeypatch.setattr(diagnostic_module, "get_app_version", Mock(return_value="v9.8.7-test"))
+    monkeypatch.setattr(diagnostic_module, "init_sentry", init_sentry)
+    monkeypatch.setattr(diagnostic_module, "flush_sentry", flush_sentry)
     monkeypatch.setattr(diagnostic_module.DiagnosticConfig, "from_env", Mock(return_value=config))
     monkeypatch.setattr(diagnostic_module, "PublicDiagnostic", diagnostic_class)
     monkeypatch.setattr(diagnostic_module, "write_report", Mock(return_value=report_path))
     monkeypatch.setattr(diagnostic_module, "print_report", Mock())
 
     assert diagnostic_module.main([]) == 0
+    init_sentry.assert_called_once_with("v9.8.7-test", app="diagnostic")
+    flush_sentry.assert_called_once_with()
     assert not (tmp_path / ".diagnostic.lock").exists()
     runner.run.assert_called_once_with()
 

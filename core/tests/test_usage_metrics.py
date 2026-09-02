@@ -785,6 +785,11 @@ def test_reporter_once_mode_returns_nonzero_after_delivery_failure(monkeypatch, 
     redis_client = Mock()
     reporter = Mock()
     reporter.run_once.return_value = False
+    init_sentry = Mock()
+    flush_sentry = Mock()
+    monkeypatch.setattr(usage_report, "get_app_version", Mock(return_value="v9.8.7-test"))
+    monkeypatch.setattr(usage_report, "init_sentry", init_sentry)
+    monkeypatch.setattr(usage_report, "flush_sentry", flush_sentry)
     monkeypatch.setattr(usage_report.UsageReportSettings, "from_env", Mock(return_value=settings))
     monkeypatch.setattr(usage_report.redis.Redis, "from_url", Mock(return_value=redis_client))
     monkeypatch.setattr(usage_report, "RedisUsageMetrics", Mock())
@@ -793,6 +798,8 @@ def test_reporter_once_mode_returns_nonzero_after_delivery_failure(monkeypatch, 
     monkeypatch.setattr("sys.argv", ["usage-report", *arguments])
 
     assert usage_report.main() == 1
+    init_sentry.assert_called_once_with("v9.8.7-test", app="usage-reporter")
+    flush_sentry.assert_called_once_with()
     reporter.run_once.assert_called_once_with(local_hour=0, force_latest=force_latest)
 
 

@@ -69,6 +69,8 @@ from uuid import uuid4
 
 import httpx
 
+from ..sentry import flush_sentry, init_sentry
+from ..version import get_app_version
 from .auth import AUTH_TOKEN_ENV_NAME
 
 DEFAULT_TARGET_URL = "https://api.nursescheduling.org"
@@ -1350,7 +1352,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _run(argv: list[str] | None = None) -> int:
     """Run one diagnostic process."""
     args = _parse_args(argv)
     try:
@@ -1372,6 +1374,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"WARNING report_write_failed: {error}", file=sys.stderr)
     print_report(report, report_path)
     return exit_code(report)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run diagnostics with process-specific Sentry monitoring."""
+    init_sentry(get_app_version(), app="diagnostic")
+    try:
+        return _run(argv)
+    finally:
+        flush_sentry()
 
 
 if __name__ == "__main__":

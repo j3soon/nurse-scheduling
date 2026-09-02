@@ -37,6 +37,8 @@ from urllib.parse import urlsplit
 import httpx
 import redis
 
+from ..sentry import flush_sentry, init_sentry
+from ..version import get_app_version
 from .config import DEFAULT_USAGE_METRICS_RETENTION_DAYS, MIN_USAGE_METRICS_RETENTION_DAYS
 from .usage_metrics import REPORT_LOCK_SECONDS, RedisUsageMetrics, WeeklyUsageReport, machine_timezone
 
@@ -512,7 +514,7 @@ def next_report_wait_seconds(now: datetime, report_timezone: tzinfo, local_hour:
     )
 
 
-def main() -> int:
+def _run() -> int:
     """Run once or deliver after each weekly deadline until stopped."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -570,6 +572,15 @@ def main() -> int:
             break
         reporter.run_once(datetime.now(timezone.utc), local_hour=settings.local_hour)
     return 0
+
+
+def main() -> int:
+    """Run the reporter with process-specific Sentry logging."""
+    init_sentry(get_app_version(), app="usage-reporter")
+    try:
+        return _run()
+    finally:
+        flush_sentry()
 
 
 if __name__ == "__main__":
