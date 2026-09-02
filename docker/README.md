@@ -234,8 +234,12 @@ collection for a self-hosted deployment.
 The `reporting` profile runs one weekly service that stores delivery status in
 Redis and writes reports to its container log by default. On startup it catches
 up on completed, unsent weeks still covered by telemetry retention. It then
-sleeps until the next reporting deadline. To send through Mailgun, configure
-these values in `.env`:
+sleeps until the next reporting deadline.
+
+Get the API key from the Mailgun dashboard under **Send > Sending > Domain
+settings > Sending keys**. If Mailgun reports that the sender domain does not
+exist, verify its records under **Domain settings > DNS records**. Then
+configure these values in `.env`:
 
 ```dotenv
 USAGE_REPORT_TRANSPORT=mailgun
@@ -405,14 +409,16 @@ When `JOB_BACKEND=redis`, optimization jobs, SSE events, YAML inputs,
 and XLSX outputs are stored in Redis so status, event, and download requests can
 be served by any backend worker.
 
-The bundled Redis service retains both the default RDB snapshots and an AOF in
-the `redis-data` volume. The AOF uses `appendfsync everysec`, which limits the
-usual abrupt-failure exposure to approximately the latest second while adding
-disk I/O for stored YAML, event streams, XLSX artifacts, and telemetry. Redis
-also receives a one-minute Compose shutdown grace period so its final blocking
-RDB save can finish during planned restarts. Normal `restart` and `down`
-operations retain the named volume. `down -v` removes all persisted Redis data.
-Back up the volume when recovery from host or volume loss is required.
+The bundled Redis service retains an AOF and a less-frequent RDB fallback in the
+`redis-data` volume. The AOF uses `appendfsync everysec`, which limits the usual
+abrupt-failure exposure to approximately the latest second while adding disk
+I/O for stored YAML, event streams, XLSX artifacts, and telemetry. A single RDB
+rule creates a snapshot after six hours when at least one write has occurred,
+so an RDB-only recovery can be up to six hours behind. Redis also receives a
+one-minute Compose shutdown grace period so its final blocking RDB save can
+finish during planned restarts. Normal `restart` and `down` operations retain
+the named volume. `down -v` removes all persisted Redis data. Back up the volume
+when recovery from host or volume loss is required.
 
 This configuration assumes a new Redis volume. Do not switch an existing
 RDB-only volume to this configuration without migrating or discarding its data.

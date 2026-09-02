@@ -19,6 +19,10 @@ services:
       - "yes"
       - --appendfsync
       - everysec
+      # AOF is the primary recovery log. Keep one less-frequent RDB fallback.
+      - --save
+      - "21600"
+      - "1"
     volumes:
       - redis-data:/data
     healthcheck:
