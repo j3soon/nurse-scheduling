@@ -250,6 +250,10 @@ MAILGUN_FROM="Nurse Scheduling Reports <reports@mg.example.com>"
 MAILGUN_TO=operator@example.com
 ```
 
+The reporter warns when Mailgun settings are present while the transport is
+still `stdout`. In `mailgun` mode, it warns and stops when required Mailgun
+settings are missing.
+
 Then start the normal deployment with the reporter:
 
 ```sh
@@ -280,17 +284,22 @@ docker compose -f compose.backend.yml --profile reporting run --rm \
 
 The command exits with a nonzero status if any delivery fails.
 
-To resend only the latest completed, reportable week, including one already
-checkpointed as sent, add `--force`:
+To send the newest retained week immediately, including the current partial
+week or one already checkpointed as sent, add `--force`:
 
 ```sh
 docker compose -f compose.backend.yml --profile reporting run --rm \
   usage-reporter python -m nurse_scheduling.server.usage_report --once --force
 ```
 
-Forced sends still respect the shared delivery interval and per-week lock. A
-failed forced resend preserves any previous successful delivery checkpoint.
-`--force` is rejected without `--once`.
+The command regenerates the entire selected Sunday-to-Sunday bucket from
+retained telemetry instead of sending only changes since the previous report.
+For the current week, it includes data recorded so far without marking the week
+complete, so the normal full report is still delivered after Sunday. Forced
+sends bypass the shared delivery interval but retain the per-week lock. No
+retained telemetry or a held lock is reported as an error with a nonzero exit
+status. A failed forced resend preserves any previous successful delivery
+checkpoint. `--force` is rejected without `--once`.
 
 For a one-time local rendering, use the default `stdout` transport. This marks
 the report as delivered, so use an isolated Redis namespace if it must still be

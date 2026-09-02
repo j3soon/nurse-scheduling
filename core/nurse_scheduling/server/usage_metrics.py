@@ -166,22 +166,34 @@ class RedisUsageMetrics:
             except redis.WatchError:
                 continue
 
-    def reportable_week_ids(self, now: datetime, *, local_hour: int = 0) -> list[str]:
-        """Return retained event weeks whose delivery deadline has passed."""
+    def reportable_week_ids(
+        self,
+        now: datetime,
+        *,
+        local_hour: int = 0,
+        include_current: bool = False,
+    ) -> list[str]:
+        """Return retained event weeks eligible for normal or forced delivery."""
         if now.tzinfo is None:
             raise ValueError("Reporter timestamps must include a timezone")
         if not 0 <= local_hour <= 23:
             raise ValueError("local_hour must be between 0 and 23")
 
-        candidates = self._candidate_report_week_ids(now, local_hour)
+        candidates = self._candidate_report_week_ids(now, local_hour, include_current=include_current)
         with self._redis.pipeline() as transaction:
             for week_id in candidates:
                 transaction.zcard(self._week_jobs_key(week_id))
             bucket_sizes = transaction.execute()
         return [week_id for week_id, size in zip(candidates, bucket_sizes, strict=True) if size]
 
-    def _candidate_report_week_ids(self, now: datetime, local_hour: int) -> list[str]:
-        """Return completed week IDs that may still contain telemetry."""
+    def _candidate_report_week_ids(
+        self,
+        now: datetime,
+        local_hour: int,
+        *,
+        include_current: bool = False,
+    ) -> list[str]:
+        """Return retained week IDs through the normal or current boundary."""
         local_now = now.astimezone(self._timezone)
         this_sunday = local_now.date() - timedelta(days=(local_now.weekday() + 1) % 7)
         report_time = datetime.combine(
@@ -190,10 +202,13 @@ class RedisUsageMetrics:
             tzinfo=self._timezone,
         )
 
-        latest_report_sunday = this_sunday - timedelta(days=7)
-        if local_now < report_time:
-            # The week ending this Sunday is not reportable before report_time.
-            latest_report_sunday -= timedelta(days=7)
+        if include_current:
+            latest_report_sunday = this_sunday
+        else:
+            latest_report_sunday = this_sunday - timedelta(days=7)
+            if local_now < report_time:
+                # The week ending this Sunday is not reportable before report_time.
+                latest_report_sunday -= timedelta(days=7)
 
         candidate_week_ids: list[str] = []
         sunday = latest_report_sunday
@@ -301,6 +316,36 @@ class RedisUsageMetrics:
             token,
             mapping={
                 "status": "sent",
+                "force_failed_at": failed_at.astimezone(timezone.utc).isoformat(),
+                "last_force_error": error[:500],
+            },
+        )
+
+    def record_partial_report_sent(
+        self,
+        report: WeeklyUsageReport,
+        token: str,
+        message_id: str,
+        sent_at: datetime,
+    ) -> bool:
+        """Record a forced partial send without marking the week complete."""
+        return self._finish_report_attempt(
+            report.week_id,
+            token,
+            mapping={
+                "force_message_id": message_id,
+                "force_sent_at": sent_at.astimezone(timezone.utc).isoformat(),
+                "force_failed_at": "",
+                "last_force_error": "",
+            },
+        )
+
+    def record_partial_report_failure(self, week_id: str, token: str, error: str, failed_at: datetime) -> bool:
+        """Record a failed forced partial send without completing the week."""
+        return self._finish_report_attempt(
+            week_id,
+            token,
+            mapping={
                 "force_failed_at": failed_at.astimezone(timezone.utc).isoformat(),
                 "last_force_error": error[:500],
             },

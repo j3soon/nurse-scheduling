@@ -45,6 +45,7 @@ REDIS_TIMEOUT_SECONDS = 5.0
 MAILGUN_TIMEOUT_SECONDS = 15.0
 MAILGUN_API_HOSTS = frozenset({"api.mailgun.net", "api.eu.mailgun.net"})
 MAILGUN_API_PATH = "/v3"
+DEFAULT_MAILGUN_API_URL = "https://api.mailgun.net/v3"
 DEFAULT_USAGE_REPORT_SUBJECT = "Nurse Scheduling backend usage: {week_id}"
 MIN_REPORT_INTERVAL_SECONDS = 10 * 60
 """Minimum delay between any two report delivery attempts."""
@@ -128,7 +129,7 @@ class UsageReportSettings:
         """Load and validate reporter configuration."""
         transport = os.getenv("USAGE_REPORT_TRANSPORT", "stdout").strip().lower()
         subject = _validated_subject_template(os.getenv("USAGE_REPORT_SUBJECT", DEFAULT_USAGE_REPORT_SUBJECT))
-        mailgun_api_url = os.getenv("MAILGUN_API_URL", "https://api.mailgun.net/v3").rstrip("/")
+        mailgun_api_url = os.getenv("MAILGUN_API_URL", DEFAULT_MAILGUN_API_URL).rstrip("/")
         if transport == "mailgun":
             mailgun_api_url = _validated_mailgun_api_url(mailgun_api_url)
         settings = cls(
@@ -153,6 +154,25 @@ class UsageReportSettings:
             raise ValueError(f"USAGE_METRICS_RETENTION_DAYS must be at least {MIN_USAGE_METRICS_RETENTION_DAYS}")
         if settings.transport not in {"mailgun", "stdout"}:
             raise ValueError("USAGE_REPORT_TRANSPORT must be 'mailgun' or 'stdout'")
+        if settings.transport == "stdout":
+            configured_mailgun_settings = [
+                name
+                for name, value in (
+                    ("MAILGUN_API_KEY", settings.mailgun_api_key),
+                    ("MAILGUN_DOMAIN", settings.mailgun_domain),
+                    ("MAILGUN_FROM", settings.mailgun_from),
+                    ("MAILGUN_TO", settings.mailgun_to),
+                )
+                if value.strip()
+            ]
+            if settings.mailgun_api_url.strip().rstrip("/") != DEFAULT_MAILGUN_API_URL:
+                configured_mailgun_settings.append("MAILGUN_API_URL")
+            if configured_mailgun_settings:
+                REPORTER_LOGGER.warning(
+                    "[usage-report] Mailgun settings are configured while "
+                    "USAGE_REPORT_TRANSPORT=stdout. Reports will not be emailed settings=%s",
+                    ",".join(configured_mailgun_settings),
+                )
         if settings.transport == "mailgun":
             missing = [
                 name
@@ -165,6 +185,10 @@ class UsageReportSettings:
                 if not value.strip()
             ]
             if missing:
+                REPORTER_LOGGER.warning(
+                    "[usage-report] USAGE_REPORT_TRANSPORT=mailgun but required settings are missing settings=%s",
+                    ",".join(missing),
+                )
                 raise ValueError(f"Mailgun reporting requires: {', '.join(missing)}")
         return settings
 
@@ -291,7 +315,7 @@ def render_report(report: WeeklyUsageReport, subject: str = DEFAULT_USAGE_REPORT
 
 
 class UsageReporter:
-    """Claim and deliver every retained completed week that is not checkpointed."""
+    """Claim and deliver scheduled or explicitly forced weekly usage reports."""
 
     def __init__(
         self,
@@ -330,10 +354,10 @@ class UsageReporter:
             if self._retry_wait(remaining):
                 return False
 
-    def _send(self, report: WeeklyUsageReport) -> str:
+    def _send(self, report: WeeklyUsageReport, *, bypass_delivery_interval: bool = False) -> str:
         """Send one report with bounded retries inside its delivery lease."""
         for attempt in range(len(self._retry_delays) + 1):
-            if attempt > 0 and not self._wait_for_delivery_slot():
+            if attempt > 0 and not bypass_delivery_interval and not self._wait_for_delivery_slot():
                 raise RuntimeError("Reporter stopped before delivery retry")
             try:
                 return self._transport.send(report)
@@ -361,28 +385,62 @@ class UsageReporter:
         """Attempt every due report and return whether every delivery succeeded."""
         observed_at = now or datetime.now(timezone.utc)
         successful = True
-        week_ids = self._metrics.reportable_week_ids(observed_at, local_hour=local_hour)
+        week_ids = self._metrics.reportable_week_ids(
+            observed_at,
+            local_hour=local_hour,
+            include_current=force_latest,
+        )
         if force_latest:
             week_ids = week_ids[-1:]
+            if not week_ids:
+                REPORTER_LOGGER.error("[usage-report] forced delivery failed reason=no-retained-telemetry")
+                return False
         for week_id in week_ids:
             report = self._metrics.load_week(week_id)
-            if not report.entries or (not force_latest and self._metrics.report_was_sent(week_id)):
+            if not report.entries:
+                if force_latest:
+                    REPORTER_LOGGER.error(
+                        "[usage-report] forced delivery failed week=%s reason=no-retained-entries",
+                        week_id,
+                    )
+                    successful = False
                 continue
-            if not self._wait_for_delivery_slot():
+            if not force_latest and self._metrics.report_was_sent(week_id):
+                continue
+            if not force_latest and not self._wait_for_delivery_slot():
                 break
             token = self._metrics.acquire_report(week_id, force=force_latest)
             if token is None:
+                if force_latest:
+                    REPORTER_LOGGER.error(
+                        "[usage-report] forced delivery failed week=%s reason=delivery-lock-held",
+                        week_id,
+                    )
+                    successful = False
                 continue
             preserved_sent_checkpoint = force_latest and self._metrics.report_was_sent(week_id)
+            partial_week = force_latest and observed_at < report.ends_at
             try:
-                message_id = self._send(report)
-                if not self._metrics.record_report_sent(report, token, message_id, datetime.now(timezone.utc)):
+                message_id = self._send(report, bypass_delivery_interval=force_latest)
+                sent_at = datetime.now(timezone.utc)
+                if partial_week:
+                    checkpoint_stored = self._metrics.record_partial_report_sent(report, token, message_id, sent_at)
+                else:
+                    checkpoint_stored = self._metrics.record_report_sent(report, token, message_id, sent_at)
+                if not checkpoint_stored:
                     raise RuntimeError("Report delivery lease expired before the checkpoint was stored")
-                REPORTER_LOGGER.info("[usage-report] sent week=%s message_id=%s", week_id, message_id)
+                REPORTER_LOGGER.info(
+                    "[usage-report] sent week=%s partial=%s message_id=%s",
+                    week_id,
+                    str(partial_week).lower(),
+                    message_id,
+                )
             except Exception as error:
                 successful = False
                 failed_at = datetime.now(timezone.utc)
-                if preserved_sent_checkpoint:
+                if partial_week:
+                    self._metrics.record_partial_report_failure(week_id, token, str(error), failed_at)
+                elif preserved_sent_checkpoint:
                     self._metrics.record_forced_report_failure(week_id, token, str(error), failed_at)
                 else:
                     self._metrics.record_report_failure(week_id, token, str(error), failed_at)
@@ -431,7 +489,7 @@ def main() -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Resend the latest reportable week, even if it was already sent",
+        help="Send the newest retained week now, including a partial or already sent week",
     )
     arguments = parser.parse_args()
     if arguments.force and not arguments.once:

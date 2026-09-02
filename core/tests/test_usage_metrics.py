@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import logging
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
@@ -352,7 +353,7 @@ def test_reporter_catches_up_retained_completed_weeks(redis_client):
     assert reporter.run_once(now) is True
 
 
-def test_reporter_force_resends_only_latest_reportable_week(redis_client):
+def test_reporter_force_sends_latest_retained_week_without_completing_partial_week(redis_client):
     metrics = RedisUsageMetrics(
         redis_client,
         key_prefix="test:usage",
@@ -361,20 +362,88 @@ def test_reporter_force_resends_only_latest_reportable_week(redis_client):
     )
     older = _job(datetime(2026, 8, 10, 12, tzinfo=timezone.utc), job_id="older")
     newer = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc), job_id="newer")
+    current = _job(datetime(2026, 8, 31, 12, tzinfo=timezone.utc), job_id="current")
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, older))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, newer))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, current))
     transport = _RecordingTransport()
     reporter = UsageReporter(metrics, transport, retry_delays=(), minimum_interval_seconds=0)
-    now = datetime(2026, 8, 30, 10, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 3, 10, tzinfo=timezone.utc)
 
     assert reporter.run_once(now) is True
     assert [report.week_id for report in transport.reports] == ["2026-08-09", "2026-08-23"]
 
     transport.reports.clear()
     assert reporter.run_once(now, force_latest=True) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-23"]
+    assert [report.week_id for report in transport.reports] == ["2026-08-30"]
+    assert [entry.job_id for entry in transport.reports[0].entries] == ["current"]
+    assert transport.reports[0].starts_at == datetime(2026, 8, 30, tzinfo=timezone.utc)
+    assert transport.reports[0].ends_at == datetime(2026, 9, 6, tzinfo=timezone.utc)
     assert redis_client.hget("test:usage:report:2026-08-09", "attempts") == b"1"
-    assert redis_client.hget("test:usage:report:2026-08-23", "attempts") == b"2"
+    assert redis_client.hget("test:usage:report:2026-08-23", "attempts") == b"1"
+    partial_delivery = redis_client.hgetall("test:usage:report:2026-08-30")
+    assert b"status" not in partial_delivery
+    assert partial_delivery[b"force_message_id"] == b"message-2026-08-30"
+
+    transport.reports.clear()
+    assert reporter.run_once(datetime(2026, 9, 6, 1, tzinfo=timezone.utc)) is True
+    assert [report.week_id for report in transport.reports] == ["2026-08-30"]
+    assert redis_client.hget("test:usage:report:2026-08-30", "status") == b"sent"
+    assert redis_client.hget("test:usage:report:2026-08-30", "attempts") == b"2"
+
+
+def test_forced_report_bypasses_delivery_interval(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(datetime(2026, 8, 31, 12, tzinfo=timezone.utc))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
+    reserve_delivery = Mock(return_value=10 * 60)
+    metrics.reserve_report_delivery = reserve_delivery
+    transport = _RecordingTransport()
+    reporter = UsageReporter(metrics, transport, retry_delays=())
+
+    assert reporter.run_once(datetime(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is True
+    assert [report.week_id for report in transport.reports] == ["2026-08-30"]
+    reserve_delivery.assert_not_called()
+
+
+def test_forced_report_fails_clearly_without_retained_telemetry(redis_client, caplog):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    reporter = UsageReporter(metrics, _RecordingTransport(), retry_delays=())
+
+    with caplog.at_level(logging.ERROR, logger="nurse_scheduling.usage_report"):
+        assert reporter.run_once(datetime(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is False
+
+    assert "reason=no-retained-telemetry" in caplog.text
+
+
+def test_forced_report_fails_clearly_when_week_is_locked(redis_client, caplog):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(datetime(2026, 8, 31, 12, tzinfo=timezone.utc))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
+    assert metrics.acquire_report("2026-08-30") is not None
+    transport = _RecordingTransport()
+    reporter = UsageReporter(metrics, transport, retry_delays=())
+
+    with caplog.at_level(logging.ERROR, logger="nurse_scheduling.usage_report"):
+        assert reporter.run_once(datetime(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is False
+
+    assert transport.reports == []
+    assert "reason=delivery-lock-held" in caplog.text
 
 
 def test_failed_forced_resend_preserves_successful_checkpoint(redis_client):
@@ -550,16 +619,46 @@ def test_redis_job_store_rejects_colliding_metrics_prefix():
         )
 
 
-def test_reporter_stdout_mode_does_not_require_mailgun(monkeypatch):
+def test_reporter_stdout_mode_does_not_require_mailgun(monkeypatch, caplog):
     monkeypatch.delenv("USAGE_REPORT_TRANSPORT", raising=False)
     monkeypatch.delenv("USAGE_REPORT_SUBJECT", raising=False)
     for name in ("MAILGUN_API_KEY", "MAILGUN_DOMAIN", "MAILGUN_FROM", "MAILGUN_TO"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MAILGUN_API_URL", "https://api.mailgun.net/v3")
 
-    settings = UsageReportSettings.from_env()
+    with caplog.at_level(logging.WARNING, logger="nurse_scheduling.usage_report"):
+        settings = UsageReportSettings.from_env()
+
     assert settings.transport == "stdout"
     assert settings.local_hour == 0
     assert settings.subject == "Nurse Scheduling backend usage: {week_id}"
+    assert "Mailgun settings are configured" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("MAILGUN_API_KEY", "secret-key"),
+        ("MAILGUN_DOMAIN", "mg.example.com"),
+        ("MAILGUN_FROM", "Reports <reports@mg.example.com>"),
+        ("MAILGUN_TO", "operator@example.com"),
+        ("MAILGUN_API_URL", "https://api.eu.mailgun.net/v3"),
+    ],
+)
+def test_reporter_stdout_mode_warns_about_mailgun_settings(monkeypatch, caplog, name, value):
+    monkeypatch.setenv("USAGE_REPORT_TRANSPORT", "stdout")
+    monkeypatch.setenv("MAILGUN_API_URL", "https://api.mailgun.net/v3")
+    for setting in ("MAILGUN_API_KEY", "MAILGUN_DOMAIN", "MAILGUN_FROM", "MAILGUN_TO"):
+        monkeypatch.delenv(setting, raising=False)
+    monkeypatch.setenv(name, value)
+
+    with caplog.at_level(logging.WARNING, logger="nurse_scheduling.usage_report"):
+        settings = UsageReportSettings.from_env()
+
+    assert settings.transport == "stdout"
+    assert "Mailgun settings are configured" in caplog.text
+    assert name in caplog.text
+    assert value not in caplog.text
 
 
 def test_reporter_catches_up_only_after_the_local_weekly_deadline(redis_client):
@@ -684,13 +783,19 @@ def test_next_report_wait_has_ten_minute_minimum():
     )
 
 
-def test_reporter_mailgun_mode_requires_credentials(monkeypatch):
+def test_reporter_mailgun_mode_warns_before_rejecting_missing_credentials(monkeypatch, caplog):
     monkeypatch.setenv("USAGE_REPORT_TRANSPORT", "mailgun")
     for name in ("MAILGUN_API_KEY", "MAILGUN_DOMAIN", "MAILGUN_FROM", "MAILGUN_TO"):
         monkeypatch.delenv(name, raising=False)
 
-    with pytest.raises(ValueError, match="Mailgun reporting requires"):
+    with (
+        caplog.at_level(logging.WARNING, logger="nurse_scheduling.usage_report"),
+        pytest.raises(ValueError, match="Mailgun reporting requires"),
+    ):
         UsageReportSettings.from_env()
+
+    assert "USAGE_REPORT_TRANSPORT=mailgun but required settings are missing" in caplog.text
+    assert "MAILGUN_API_KEY,MAILGUN_DOMAIN,MAILGUN_FROM,MAILGUN_TO" in caplog.text
 
 
 @pytest.mark.parametrize(
