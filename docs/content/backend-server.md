@@ -337,7 +337,7 @@ All server settings are read once when the application is constructed.
 | `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty `API_AUTH_TOKEN` a startup failure. Set in the deployment images. |
 | `DISABLE_SENTRY` | unset | Disable error reporting for all Python services when set to a non-empty value. |
 | `SENTRY_DSN` | shared development project | Select the Python services' shared Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |
-| `SENTRY_ENVIRONMENT` | `development` | Separate API, usage reporter, and diagnostic events from production, staging, and development. |
+| `SENTRY_ENVIRONMENT` | `development` | Set the Sentry environment for all Python services. The `app` tag separates backend, usage reporter, and diagnostic events. |
 | `SENTRY_RELEASE` | derived from the app version | Override the release reported to Sentry. |
 
 Numeric values must be positive. `JOB_MAX_RETAINED` must be at least
