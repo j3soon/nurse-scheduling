@@ -23,10 +23,12 @@ import argparse
 import csv
 import io
 import logging
+import math
 import os
 import signal
 import threading
 import time as time_module
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone, tzinfo
@@ -55,6 +57,15 @@ REPORT_RETRY_DELAYS_SECONDS = (MIN_REPORT_INTERVAL_SECONDS,) * 2
 """Bounded delays for transient delivery failures during one weekly run."""
 REPORT_LEASE_RENEWAL_SECONDS = REPORT_LOCK_SECONDS // 3
 """Maximum time between report lease renewals while delivery is pending."""
+RUN_MINUTES_BUCKETS = (
+    ("[0,1)", 0.0, 1.0),
+    ("[1,3)", 1.0, 3.0),
+    ("[3,10)", 3.0, 10.0),
+    ("[10,30)", 10.0, 30.0),
+    ("[30,60)", 30.0, 60.0),
+    ("[60,inf)", 60.0, None),
+)
+"""Disjoint runtime ranges used in the report summary."""
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -255,19 +266,53 @@ def report_subject(report: WeeklyUsageReport, subject: str = DEFAULT_USAGE_REPOR
     return subject.format(week_id=report.week_id)
 
 
+def _counts_summary(values: Sequence[str]) -> str:
+    """Render sorted value counts on one compact summary line."""
+    counts = Counter(values)
+    return ", ".join(f"{value}={count}" for value, count in sorted(counts.items())) or "none"
+
+
+def _run_minutes_summary(report: WeeklyUsageReport) -> str:
+    """Render disjoint runtime bucket counts, including unavailable values."""
+    counts = {label: 0 for label, _lower, _upper in RUN_MINUTES_BUCKETS}
+    unavailable = 0
+    for entry in report.entries:
+        seconds = entry.run_seconds
+        if seconds is None or not math.isfinite(seconds):
+            unavailable += 1
+            continue
+        minutes = seconds / 60
+        for label, lower, upper in RUN_MINUTES_BUCKETS:
+            if lower <= minutes and (upper is None or minutes < upper):
+                counts[label] += 1
+                break
+        else:
+            unavailable += 1
+    summaries = [f"{label}={counts[label]}" for label, _lower, _upper in RUN_MINUTES_BUCKETS]
+    summaries.append(f"unavailable={unavailable}")
+    return ", ".join(summaries)
+
+
 def render_report(report: WeeklyUsageReport, subject: str = DEFAULT_USAGE_REPORT_SUBJECT) -> str:
-    """Render a plain-text CSV table of minimal per-job telemetry."""
-    timezone_name = getattr(report.starts_at.tzinfo, "key", None) or report.starts_at.tzname() or "local time"
+    """Render a plain-text summary and CSV table of minimal per-job telemetry."""
+    local_timezone = machine_timezone()
+    starts_at = report.starts_at.astimezone(local_timezone)
+    ends_at = report.ends_at.astimezone(local_timezone)
+    timezone_name = getattr(local_timezone, "key", None) or starts_at.tzname() or "local time"
+    states = _counts_summary([entry.state.value for entry in report.entries])
+    outcomes = _counts_summary([entry.outcome or "unavailable" for entry in report.entries])
     output = io.StringIO()
     output.write(
         "\n".join(
             [
                 report_subject(report, subject),
-                (
-                    f"Period: {report.starts_at.isoformat()} to {report.ends_at.isoformat()} "
-                    f"({timezone_name}, end exclusive)"
-                ),
+                "",
+                (f"Period: {starts_at.isoformat()} to {ends_at.isoformat()} ({timezone_name}, end exclusive)"),
                 f"Jobs: {len(report.entries)}",
+                f"States: {states}",
+                f"Outcomes: {outcomes}",
+                f"Run minutes: {_run_minutes_summary(report)}",
+                "",
                 "",
             ]
         )

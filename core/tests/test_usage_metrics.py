@@ -286,6 +286,54 @@ def test_reporter_retries_failures_and_checkpoints_success(redis_client):
     assert redis_client.exists("test:usage:job:job_metrics")
 
 
+def test_render_report_adds_local_summary_before_csv(monkeypatch, redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
+    report = metrics.load_week("2026-08-23")
+    base = report.entries[0]
+    report = replace(
+        report,
+        starts_at=datetime(2026, 8, 22, 16, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 8, 29, 16, tzinfo=timezone.utc),
+        entries=(
+            base,
+            replace(base, job_id="zero", state=JobState.COMPLETED, outcome="optimal", run_seconds=0),
+            replace(base, job_id="subminute", state=JobState.COMPLETED, outcome="optimal", run_seconds=30),
+            replace(base, job_id="one", state=JobState.COMPLETED, outcome="feasible", run_seconds=60),
+            replace(base, job_id="three", state=JobState.COMPLETED, outcome="infeasible", run_seconds=180),
+            replace(base, job_id="ten", state=JobState.FAILED, run_seconds=600),
+            replace(base, job_id="thirty", state=JobState.CANCELLED, run_seconds=1800),
+            replace(base, job_id="sixty", state=JobState.RUNNING, run_seconds=3600),
+        ),
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.server.usage_report.machine_timezone",
+        lambda: timezone(timedelta(hours=8)),
+    )
+
+    rendered = render_report(report)
+
+    assert rendered.startswith(
+        "Nurse Scheduling backend usage: 2026-08-23\n"
+        "\n"
+        "Period: 2026-08-23T00:00:00+08:00 to 2026-08-30T00:00:00+08:00 "
+        "(UTC+08:00, end exclusive)\n"
+        "Jobs: 8\n"
+        "States: cancelled=1, completed=4, failed=1, queued=1, running=1\n"
+        "Outcomes: feasible=1, infeasible=1, optimal=2, unavailable=4\n"
+        "Run minutes: [0,1)=2, [1,3)=1, [3,10)=1, [10,30)=1, [30,60)=1, "
+        "[60,inf)=1, unavailable=1\n"
+        "\n"
+        "job_id,client_id,solver,state,"
+    )
+
+
 def test_reporter_retries_transport_within_one_weekly_run(redis_client):
     metrics = RedisUsageMetrics(
         redis_client,
