@@ -10,8 +10,15 @@ services:
   redis:
     image: redis:8.8
     restart: unless-stopped
-    # Keep the image's default RDB policy; deployments needing a smaller
-    # crash-loss window can enable AOF as described in docker/README.md.
+    # Allow a final RDB save to finish instead of inheriting Compose's
+    # ten-second grace period before SIGKILL.
+    stop_grace_period: 1m
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
     volumes:
       - redis-data:/data
     healthcheck:
@@ -45,6 +52,9 @@ services:
       CLAIMED_PERFORMANCE_SCORE: "${CLAIMED_PERFORMANCE_SCORE:-}"
       CLAIMED_PERFORMANCE_APP_VERSION: "${CLAIMED_PERFORMANCE_APP_VERSION:-}"
       CLAIMED_PERFORMANCE_MEASURED_AT: "${CLAIMED_PERFORMANCE_MEASURED_AT:-}"
+      USAGE_METRICS_ENABLED: ${USAGE_METRICS_ENABLED:-true}
+      USAGE_METRICS_KEY_PREFIX: nurse_scheduling:usage:v0
+      USAGE_METRICS_RETENTION_DAYS: ${USAGE_METRICS_RETENTION_DAYS:-30}
     command:
       - uvicorn
       - nurse_scheduling.serve:app
@@ -97,6 +107,30 @@ services:
     command: ["python", "-m", "nurse_scheduling.server.diagnostic"]
     volumes:
       - diagnostic-reports:/reports
+
+  usage-reporter:
+    profiles: ["reporting"]
+    image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
+    build: *api-build
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      JOB_REDIS_URL: redis://redis:6379/0
+      USAGE_METRICS_KEY_PREFIX: nurse_scheduling:usage:v0
+      USAGE_METRICS_RETENTION_DAYS: ${USAGE_METRICS_RETENTION_DAYS:-30}
+      USAGE_REPORT_LOCAL_HOUR: ${USAGE_REPORT_LOCAL_HOUR:-0}
+      USAGE_REPORT_TRANSPORT: ${USAGE_REPORT_TRANSPORT:-stdout}
+      MAILGUN_API_URL: ${MAILGUN_API_URL:-https://api.mailgun.net/v3}
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+      MAILGUN_FROM: ${MAILGUN_FROM:-}
+      MAILGUN_TO: ${MAILGUN_TO:-}
+    command: ["python", "-m", "nurse_scheduling.server.usage_report"]
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
 
 volumes:
   redis-data:
