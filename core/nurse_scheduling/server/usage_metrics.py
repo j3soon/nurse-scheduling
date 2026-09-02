@@ -227,14 +227,14 @@ class RedisUsageMetrics:
             entries=tuple(sorted(entries, key=lambda entry: (entry.created_at, entry.job_id))),
         )
 
-    def acquire_report(self, week_id: str) -> str | None:
+    def acquire_report(self, week_id: str, *, force: bool = False) -> str | None:
         """Acquire the delivery lease unless this week was already reported."""
-        if self.report_was_sent(week_id):
+        if not force and self.report_was_sent(week_id):
             return None
         token = uuid4().hex
         if not self._redis.set(self._report_lock_key(week_id), token, nx=True, ex=REPORT_LOCK_SECONDS):
             return None
-        if self.report_was_sent(week_id):
+        if not force and self.report_was_sent(week_id):
             self._release_report_lock(week_id, token)
             return None
         return token
@@ -277,6 +277,8 @@ class RedisUsageMetrics:
                 "message_id": message_id,
                 "sent_at": sent_at.astimezone(timezone.utc).isoformat(),
                 "last_error": "",
+                "force_failed_at": "",
+                "last_force_error": "",
             },
         )
 
@@ -289,6 +291,18 @@ class RedisUsageMetrics:
                 "status": "failed",
                 "failed_at": failed_at.astimezone(timezone.utc).isoformat(),
                 "last_error": error[:500],
+            },
+        )
+
+    def record_forced_report_failure(self, week_id: str, token: str, error: str, failed_at: datetime) -> bool:
+        """Preserve a successful checkpoint after a forced resend fails."""
+        return self._finish_report_attempt(
+            week_id,
+            token,
+            mapping={
+                "status": "sent",
+                "force_failed_at": failed_at.astimezone(timezone.utc).isoformat(),
+                "last_force_error": error[:500],
             },
         )
 

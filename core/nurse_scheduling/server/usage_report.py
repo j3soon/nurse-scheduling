@@ -30,6 +30,7 @@ import time as time_module
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone, tzinfo
+from string import Formatter
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -44,6 +45,7 @@ REDIS_TIMEOUT_SECONDS = 5.0
 MAILGUN_TIMEOUT_SECONDS = 15.0
 MAILGUN_API_HOSTS = frozenset({"api.mailgun.net", "api.eu.mailgun.net"})
 MAILGUN_API_PATH = "/v3"
+DEFAULT_USAGE_REPORT_SUBJECT = "Nurse Scheduling backend usage: {week_id}"
 MIN_REPORT_INTERVAL_SECONDS = 10 * 60
 """Minimum delay between any two report delivery attempts."""
 REPORT_RETRY_DELAYS_SECONDS = (MIN_REPORT_INTERVAL_SECONDS,) * 2
@@ -87,6 +89,24 @@ def _validated_mailgun_api_url(value: str) -> str:
     return f"https://{parsed.hostname}{MAILGUN_API_PATH}"
 
 
+def _validated_subject_template(value: str) -> str:
+    """Validate a one-line report subject with an optional week placeholder."""
+    subject = value.strip()
+    if not subject or "\n" in subject or "\r" in subject:
+        raise ValueError("USAGE_REPORT_SUBJECT must be one nonempty line")
+    try:
+        fields = [
+            (field_name, format_spec, conversion)
+            for _literal, field_name, format_spec, conversion in Formatter().parse(subject)
+            if field_name is not None
+        ]
+    except ValueError as error:
+        raise ValueError("USAGE_REPORT_SUBJECT must be a valid template") from error
+    if any(field_name != "week_id" or format_spec or conversion for field_name, format_spec, conversion in fields):
+        raise ValueError("USAGE_REPORT_SUBJECT supports only the {week_id} placeholder")
+    return subject
+
+
 @dataclass(frozen=True)
 class UsageReportSettings:
     """Environment-backed settings for the standalone reporter."""
@@ -95,6 +115,7 @@ class UsageReportSettings:
     metrics_key_prefix: str
     metrics_retention_days: int
     local_hour: int
+    subject: str
     transport: str
     mailgun_api_url: str
     mailgun_api_key: str
@@ -106,6 +127,7 @@ class UsageReportSettings:
     def from_env(cls) -> "UsageReportSettings":
         """Load and validate reporter configuration."""
         transport = os.getenv("USAGE_REPORT_TRANSPORT", "stdout").strip().lower()
+        subject = _validated_subject_template(os.getenv("USAGE_REPORT_SUBJECT", DEFAULT_USAGE_REPORT_SUBJECT))
         mailgun_api_url = os.getenv("MAILGUN_API_URL", "https://api.mailgun.net/v3").rstrip("/")
         if transport == "mailgun":
             mailgun_api_url = _validated_mailgun_api_url(mailgun_api_url)
@@ -117,6 +139,7 @@ class UsageReportSettings:
                 DEFAULT_USAGE_METRICS_RETENTION_DAYS,
             ),
             local_hour=_hour("USAGE_REPORT_LOCAL_HOUR", 0),
+            subject=subject,
             transport=transport,
             mailgun_api_url=mailgun_api_url,
             mailgun_api_key=os.getenv("MAILGUN_API_KEY", ""),
@@ -164,6 +187,7 @@ class MailgunReportTransport:
         self._domain = settings.mailgun_domain
         self._sender = settings.mailgun_from
         self._recipient = settings.mailgun_to
+        self._subject = _validated_subject_template(settings.subject)
 
     def send(self, report: WeeklyUsageReport) -> str:
         """Deliver one report and return Mailgun's message identifier."""
@@ -173,8 +197,8 @@ class MailgunReportTransport:
             files={
                 "from": (None, self._sender),
                 "to": (None, self._recipient),
-                "subject": (None, report_subject(report)),
-                "text": (None, render_report(report)),
+                "subject": (None, report_subject(report, self._subject)),
+                "text": (None, render_report(report, self._subject)),
             },
             timeout=MAILGUN_TIMEOUT_SECONDS,
             follow_redirects=False,
@@ -188,25 +212,29 @@ class MailgunReportTransport:
 class StdoutReportTransport:
     """Write reports to the service log for diagnostics and manual use."""
 
+    def __init__(self, subject: str = DEFAULT_USAGE_REPORT_SUBJECT):
+        """Capture the validated report subject template."""
+        self._subject = _validated_subject_template(subject)
+
     def send(self, report: WeeklyUsageReport) -> str:
         """Log one report and return a local delivery identifier."""
-        REPORTER_LOGGER.info("\n%s", render_report(report))
+        REPORTER_LOGGER.info("\n%s", render_report(report, self._subject))
         return f"stdout:{report.week_id}"
 
 
-def report_subject(report: WeeklyUsageReport) -> str:
+def report_subject(report: WeeklyUsageReport, subject: str = DEFAULT_USAGE_REPORT_SUBJECT) -> str:
     """Return a stable subject identifying the report period."""
-    return f"Nurse Scheduling backend usage: {report.week_id}"
+    return subject.format(week_id=report.week_id)
 
 
-def render_report(report: WeeklyUsageReport) -> str:
+def render_report(report: WeeklyUsageReport, subject: str = DEFAULT_USAGE_REPORT_SUBJECT) -> str:
     """Render a plain-text CSV table of minimal per-job telemetry."""
     timezone_name = getattr(report.starts_at.tzinfo, "key", None) or report.starts_at.tzname() or "local time"
     output = io.StringIO()
     output.write(
         "\n".join(
             [
-                report_subject(report),
+                report_subject(report, subject),
                 (
                     f"Period: {report.starts_at.isoformat()} to {report.ends_at.isoformat()} "
                     f"({timezone_name}, end exclusive)"
@@ -323,19 +351,29 @@ class UsageReporter:
                     raise RuntimeError("Reporter stopped before delivery retry") from error
         raise AssertionError("delivery retry loop ended without returning or raising")
 
-    def run_once(self, now: datetime | None = None, *, local_hour: int = 0) -> bool:
+    def run_once(
+        self,
+        now: datetime | None = None,
+        *,
+        local_hour: int = 0,
+        force_latest: bool = False,
+    ) -> bool:
         """Attempt every due report and return whether every delivery succeeded."""
         observed_at = now or datetime.now(timezone.utc)
         successful = True
-        for week_id in self._metrics.reportable_week_ids(observed_at, local_hour=local_hour):
+        week_ids = self._metrics.reportable_week_ids(observed_at, local_hour=local_hour)
+        if force_latest:
+            week_ids = week_ids[-1:]
+        for week_id in week_ids:
             report = self._metrics.load_week(week_id)
-            if not report.entries or self._metrics.report_was_sent(week_id):
+            if not report.entries or (not force_latest and self._metrics.report_was_sent(week_id)):
                 continue
             if not self._wait_for_delivery_slot():
                 break
-            token = self._metrics.acquire_report(week_id)
+            token = self._metrics.acquire_report(week_id, force=force_latest)
             if token is None:
                 continue
+            preserved_sent_checkpoint = force_latest and self._metrics.report_was_sent(week_id)
             try:
                 message_id = self._send(report)
                 if not self._metrics.record_report_sent(report, token, message_id, datetime.now(timezone.utc)):
@@ -343,7 +381,11 @@ class UsageReporter:
                 REPORTER_LOGGER.info("[usage-report] sent week=%s message_id=%s", week_id, message_id)
             except Exception as error:
                 successful = False
-                self._metrics.record_report_failure(week_id, token, str(error), datetime.now(timezone.utc))
+                failed_at = datetime.now(timezone.utc)
+                if preserved_sent_checkpoint:
+                    self._metrics.record_forced_report_failure(week_id, token, str(error), failed_at)
+                else:
+                    self._metrics.record_report_failure(week_id, token, str(error), failed_at)
                 REPORTER_LOGGER.exception("[usage-report] delivery failed week=%s", week_id)
         return successful
 
@@ -351,7 +393,7 @@ class UsageReporter:
 def _transport(settings: UsageReportSettings) -> ReportTransport:
     """Construct the configured delivery adapter."""
     if settings.transport == "stdout":
-        return StdoutReportTransport()
+        return StdoutReportTransport(settings.subject)
     return MailgunReportTransport(settings)
 
 
@@ -386,7 +428,14 @@ def main() -> int:
         action="store_true",
         help="Attempt completed unsent reports immediately and exit",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Resend the latest reportable week, even if it was already sent",
+    )
     arguments = parser.parse_args()
+    if arguments.force and not arguments.once:
+        parser.error("--force requires --once")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = UsageReportSettings.from_env()
     client = redis.Redis.from_url(
@@ -406,7 +455,7 @@ def main() -> int:
     stopped = threading.Event()
     reporter = UsageReporter(metrics, _transport(settings), retry_wait=stopped.wait)
     if arguments.once:
-        return 0 if reporter.run_once(local_hour=settings.local_hour) else 1
+        return 0 if reporter.run_once(local_hour=settings.local_hour, force_latest=arguments.force) else 1
 
     def request_stop(_signal_number, _frame) -> None:
         """Interrupt the weekly wait after a normal container stop signal."""

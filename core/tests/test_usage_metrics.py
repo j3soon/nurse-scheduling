@@ -352,6 +352,60 @@ def test_reporter_catches_up_retained_completed_weeks(redis_client):
     assert reporter.run_once(now) is True
 
 
+def test_reporter_force_resends_only_latest_reportable_week(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    older = _job(datetime(2026, 8, 10, 12, tzinfo=timezone.utc), job_id="older")
+    newer = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc), job_id="newer")
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, older))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, newer))
+    transport = _RecordingTransport()
+    reporter = UsageReporter(metrics, transport, retry_delays=(), minimum_interval_seconds=0)
+    now = datetime(2026, 8, 30, 10, tzinfo=timezone.utc)
+
+    assert reporter.run_once(now) is True
+    assert [report.week_id for report in transport.reports] == ["2026-08-09", "2026-08-23"]
+
+    transport.reports.clear()
+    assert reporter.run_once(now, force_latest=True) is True
+    assert [report.week_id for report in transport.reports] == ["2026-08-23"]
+    assert redis_client.hget("test:usage:report:2026-08-09", "attempts") == b"1"
+    assert redis_client.hget("test:usage:report:2026-08-23", "attempts") == b"2"
+
+
+def test_failed_forced_resend_preserves_successful_checkpoint(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
+    transport = _RecordingTransport()
+    reporter = UsageReporter(metrics, transport, retry_delays=(), minimum_interval_seconds=0)
+    now = datetime(2026, 8, 30, 10, tzinfo=timezone.utc)
+
+    assert reporter.run_once(now) is True
+    original_delivery = redis_client.hgetall("test:usage:report:2026-08-23")
+
+    transport.failures = 2
+    assert reporter.run_once(now, force_latest=True) is False
+    forced_delivery = redis_client.hgetall("test:usage:report:2026-08-23")
+    assert forced_delivery[b"status"] == b"sent"
+    assert forced_delivery[b"message_id"] == original_delivery[b"message_id"]
+    assert forced_delivery[b"sent_at"] == original_delivery[b"sent_at"]
+    assert forced_delivery[b"attempts"] == b"2"
+    assert forced_delivery[b"last_force_error"] == b"mail unavailable"
+
+    assert reporter.run_once(now) is True
+    assert len(transport.reports) == 2
+
+
 def test_report_delivery_interval_is_shared_in_redis(redis_client):
     metrics = RedisUsageMetrics(
         redis_client,
@@ -363,6 +417,18 @@ def test_report_delivery_interval_is_shared_in_redis(redis_client):
     assert metrics.reserve_report_delivery(10 * 60) == 0
     remaining = metrics.reserve_report_delivery(10 * 60)
     assert 10 * 60 - 1 <= remaining <= 10 * 60
+
+
+def test_forced_report_still_respects_the_week_lock(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+
+    assert metrics.acquire_report("2026-08-23") is not None
+    assert metrics.acquire_report("2026-08-23", force=True) is None
 
 
 def test_report_delivery_interval_repairs_guard_without_expiry(redis_client):
@@ -486,12 +552,14 @@ def test_redis_job_store_rejects_colliding_metrics_prefix():
 
 def test_reporter_stdout_mode_does_not_require_mailgun(monkeypatch):
     monkeypatch.delenv("USAGE_REPORT_TRANSPORT", raising=False)
+    monkeypatch.delenv("USAGE_REPORT_SUBJECT", raising=False)
     for name in ("MAILGUN_API_KEY", "MAILGUN_DOMAIN", "MAILGUN_FROM", "MAILGUN_TO"):
         monkeypatch.delenv(name, raising=False)
 
     settings = UsageReportSettings.from_env()
     assert settings.transport == "stdout"
     assert settings.local_hour == 0
+    assert settings.subject == "Nurse Scheduling backend usage: {week_id}"
 
 
 def test_reporter_catches_up_only_after_the_local_weekly_deadline(redis_client):
@@ -530,7 +598,14 @@ def test_reporter_catches_up_only_after_the_local_weekly_deadline(redis_client):
     assert [entry.job_id for entry in transport.reports[0].entries] == ["job_metrics"]
 
 
-def test_reporter_once_mode_returns_nonzero_after_delivery_failure(monkeypatch):
+@pytest.mark.parametrize(
+    ("arguments", "force_latest"),
+    [
+        (["--once"], False),
+        (["--once", "--force"], True),
+    ],
+)
+def test_reporter_once_mode_returns_nonzero_after_delivery_failure(monkeypatch, arguments, force_latest):
     from nurse_scheduling.server import usage_report
 
     settings = Mock(
@@ -547,10 +622,20 @@ def test_reporter_once_mode_returns_nonzero_after_delivery_failure(monkeypatch):
     monkeypatch.setattr(usage_report, "RedisUsageMetrics", Mock())
     monkeypatch.setattr(usage_report, "_transport", Mock())
     monkeypatch.setattr(usage_report, "UsageReporter", Mock(return_value=reporter))
-    monkeypatch.setattr("sys.argv", ["usage-report", "--once"])
+    monkeypatch.setattr("sys.argv", ["usage-report", *arguments])
 
     assert usage_report.main() == 1
-    reporter.run_once.assert_called_once_with(local_hour=0)
+    reporter.run_once.assert_called_once_with(local_hour=0, force_latest=force_latest)
+
+
+def test_reporter_force_requires_once(monkeypatch):
+    from nurse_scheduling.server import usage_report
+
+    monkeypatch.setattr("sys.argv", ["usage-report", "--force"])
+
+    with pytest.raises(SystemExit) as error:
+        usage_report.main()
+    assert error.value.code == 2
 
 
 def test_next_report_deadline_is_the_next_local_sunday():
@@ -609,6 +694,24 @@ def test_reporter_mailgun_mode_requires_credentials(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "subject",
+    [
+        "",
+        "Usage report\n{week_id}",
+        "Usage report {starts_at}",
+        "Usage report {week_id!r}",
+        "Usage report {week_id:>10}",
+        "Usage report {",
+    ],
+)
+def test_reporter_rejects_invalid_subject_templates(monkeypatch, subject):
+    monkeypatch.setenv("USAGE_REPORT_SUBJECT", subject)
+
+    with pytest.raises(ValueError, match="USAGE_REPORT_SUBJECT"):
+        UsageReportSettings.from_env()
+
+
+@pytest.mark.parametrize(
     "api_url",
     [
         "http://api.mailgun.net/v3",
@@ -641,6 +744,7 @@ def test_reporter_mailgun_mode_rejects_unapproved_api_urls(monkeypatch, api_url)
 )
 def test_mailgun_transport_sends_plain_text_job_table(monkeypatch, redis_client, api_url, expected_url):
     monkeypatch.setenv("USAGE_REPORT_TRANSPORT", "mailgun")
+    monkeypatch.setenv("USAGE_REPORT_SUBJECT", "Private backend report: {week_id}")
     monkeypatch.setenv("MAILGUN_API_URL", api_url)
     monkeypatch.setenv("MAILGUN_API_KEY", "secret-key")
     monkeypatch.setenv("MAILGUN_DOMAIN", "mg.example.com")
@@ -667,6 +771,8 @@ def test_mailgun_transport_sends_plain_text_job_table(monkeypatch, redis_client,
     assert post.call_args.args == (expected_url,)
     assert post.call_args.kwargs["auth"] == ("api", "secret-key")
     assert post.call_args.kwargs["follow_redirects"] is False
+    assert post.call_args.kwargs["files"]["subject"] == (None, "Private backend report: 2026-08-23")
+    assert post.call_args.kwargs["files"]["text"][1].startswith("Private backend report: 2026-08-23\n")
     assert post.call_args.kwargs["files"]["to"] == (None, "operator@example.com")
     assert "private-client-id" in post.call_args.kwargs["files"]["text"][1]
     assert "private-filename.yaml" not in post.call_args.kwargs["files"]["text"][1]

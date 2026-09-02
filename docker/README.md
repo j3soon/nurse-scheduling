@@ -239,6 +239,7 @@ these values in `.env`:
 
 ```dotenv
 USAGE_REPORT_TRANSPORT=mailgun
+USAGE_REPORT_SUBJECT="Nurse Scheduling backend usage: {week_id}"
 MAILGUN_API_KEY=key-example
 MAILGUN_DOMAIN=mg.example.com
 MAILGUN_FROM="Nurse Scheduling Reports <reports@mg.example.com>"
@@ -262,6 +263,10 @@ transport error after Mailgun accepts a message but before Redis records the
 checkpoint can still cause a retry and duplicate delivery. `MAILGUN_API_URL`
 accepts Mailgun's HTTPS US or EU v3 endpoint for regional delivery.
 
+`USAGE_REPORT_SUBJECT` controls both the email subject and the first line of the
+report body. It supports the optional `{week_id}` placeholder. Invalid or
+multiline templates stop the reporter during startup.
+
 Trigger completed unsent reports immediately, without waiting for Sunday:
 
 ```sh
@@ -270,6 +275,18 @@ docker compose -f compose.backend.yml --profile reporting run --rm \
 ```
 
 The command exits with a nonzero status if any delivery fails.
+
+To resend only the latest completed, reportable week, including one already
+checkpointed as sent, add `--force`:
+
+```sh
+docker compose -f compose.backend.yml --profile reporting run --rm \
+  usage-reporter python -m nurse_scheduling.server.usage_report --once --force
+```
+
+Forced sends still respect the shared delivery interval and per-week lock. A
+failed forced resend preserves any previous successful delivery checkpoint.
+`--force` is rejected without `--once`.
 
 For a one-time local rendering, use the default `stdout` transport. This marks
 the report as delivered, so use an isolated Redis namespace if it must still be
