@@ -130,7 +130,6 @@ class RedisUsageMetrics:
         if retention_days < MIN_USAGE_METRICS_RETENTION_DAYS:
             raise ValueError(f"USAGE_METRICS_RETENTION_DAYS must be at least {MIN_USAGE_METRICS_RETENTION_DAYS}")
         self._retention_days = retention_days
-        self._retention_seconds = int(timedelta(days=retention_days).total_seconds())
         self._timezone = report_timezone or machine_timezone()
 
     def stage_job_created(self, transaction: Any, job: Job) -> None:
@@ -161,7 +160,7 @@ class RedisUsageMetrics:
                     transaction.multi()
                     self._stage_week_reference(transaction, week_id, job_id, occurred_at)
                     transaction.hincrby(entry_key, "download_count", 1)
-                    transaction.expireat(entry_key, self._entry_expires_at(occurred_at))
+                    transaction.expireat(entry_key, self._week_expires_at(week_id))
                     transaction.execute()
                     return
             except redis.WatchError:
@@ -344,7 +343,7 @@ class RedisUsageMetrics:
         week_id = week_id_for(occurred_at, self._timezone)
         self._stage_week_reference(transaction, week_id, job.id, occurred_at)
         transaction.hset(self._entry_key(job.id), mapping=self._entry_mapping(job))
-        transaction.expireat(self._entry_key(job.id), self._entry_expires_at(occurred_at))
+        transaction.expireat(self._entry_key(job.id), self._week_expires_at(week_id))
 
     def _stage_week_reference(
         self,
@@ -356,7 +355,7 @@ class RedisUsageMetrics:
         """Associate a job with the exact week containing one event."""
         week_jobs_key = self._week_jobs_key(week_id)
         transaction.zadd(week_jobs_key, {job_id: occurred_at.timestamp()})
-        transaction.expire(week_jobs_key, self._retention_seconds)
+        transaction.expireat(week_jobs_key, self._week_expires_at(week_id))
 
     @staticmethod
     def _entry_mapping(job: Job) -> dict[str, str | int | float]:
@@ -415,10 +414,6 @@ class RedisUsageMetrics:
             timeout_seconds=int(values["timeout_seconds"]),
             download_count=int(values.get("download_count", 0)),
         )
-
-    def _entry_expires_at(self, occurred_at: datetime) -> int:
-        """Return the expiry for one telemetry row."""
-        return int((occurred_at + timedelta(days=self._retention_days)).timestamp())
 
     def _week_expires_at(self, week_id: str) -> int:
         """Return the end of one week's report eligibility window."""

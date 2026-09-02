@@ -31,6 +31,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import Protocol
+from urllib.parse import urlsplit
 
 import httpx
 import redis
@@ -41,6 +42,8 @@ from .usage_metrics import RedisUsageMetrics, WeeklyUsageReport, machine_timezon
 REPORTER_LOGGER = logging.getLogger("nurse_scheduling.usage_report")
 REDIS_TIMEOUT_SECONDS = 5.0
 MAILGUN_TIMEOUT_SECONDS = 15.0
+MAILGUN_API_HOSTS = frozenset({"api.mailgun.net", "api.eu.mailgun.net"})
+MAILGUN_API_PATH = "/v3"
 MIN_REPORT_INTERVAL_SECONDS = 10 * 60
 """Minimum delay between any two report delivery attempts."""
 REPORT_RETRY_DELAYS_SECONDS = (MIN_REPORT_INTERVAL_SECONDS,) * 2
@@ -63,6 +66,27 @@ def _hour(name: str, default: int) -> int:
     return value
 
 
+def _validated_mailgun_api_url(value: str) -> str:
+    """Validate and normalize a credential-bearing Mailgun API base URL."""
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("MAILGUN_API_URL must be an approved Mailgun HTTPS API URL") from error
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.hostname not in MAILGUN_API_HOSTS
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path.rstrip("/") != MAILGUN_API_PATH
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("MAILGUN_API_URL must be an approved Mailgun HTTPS API URL")
+    return f"https://{parsed.hostname}{MAILGUN_API_PATH}"
+
+
 @dataclass(frozen=True)
 class UsageReportSettings:
     """Environment-backed settings for the standalone reporter."""
@@ -81,6 +105,10 @@ class UsageReportSettings:
     @classmethod
     def from_env(cls) -> "UsageReportSettings":
         """Load and validate reporter configuration."""
+        transport = os.getenv("USAGE_REPORT_TRANSPORT", "stdout").strip().lower()
+        mailgun_api_url = os.getenv("MAILGUN_API_URL", "https://api.mailgun.net/v3").rstrip("/")
+        if transport == "mailgun":
+            mailgun_api_url = _validated_mailgun_api_url(mailgun_api_url)
         settings = cls(
             redis_url=os.getenv("JOB_REDIS_URL", "redis://localhost:6379/0"),
             metrics_key_prefix=os.getenv("USAGE_METRICS_KEY_PREFIX", "nurse_scheduling:usage:v0"),
@@ -89,8 +117,8 @@ class UsageReportSettings:
                 DEFAULT_USAGE_METRICS_RETENTION_DAYS,
             ),
             local_hour=_hour("USAGE_REPORT_LOCAL_HOUR", 0),
-            transport=os.getenv("USAGE_REPORT_TRANSPORT", "stdout").strip().lower(),
-            mailgun_api_url=os.getenv("MAILGUN_API_URL", "https://api.mailgun.net/v3").rstrip("/"),
+            transport=transport,
+            mailgun_api_url=mailgun_api_url,
             mailgun_api_key=os.getenv("MAILGUN_API_KEY", ""),
             mailgun_domain=os.getenv("MAILGUN_DOMAIN", ""),
             mailgun_from=os.getenv("MAILGUN_FROM", ""),
@@ -131,7 +159,7 @@ class MailgunReportTransport:
 
     def __init__(self, settings: UsageReportSettings):
         """Capture validated Mailgun endpoint and message settings."""
-        self._api_url = settings.mailgun_api_url
+        self._api_url = _validated_mailgun_api_url(settings.mailgun_api_url)
         self._api_key = settings.mailgun_api_key
         self._domain = settings.mailgun_domain
         self._sender = settings.mailgun_from
@@ -149,6 +177,7 @@ class MailgunReportTransport:
                 "text": (None, render_report(report)),
             },
             timeout=MAILGUN_TIMEOUT_SECONDS,
+            follow_redirects=False,
         )
         response.raise_for_status()
         body = response.json()

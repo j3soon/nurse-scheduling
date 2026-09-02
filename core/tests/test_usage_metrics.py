@@ -223,7 +223,7 @@ def test_telemetry_preserves_the_requested_solver(redis_client):
     assert metrics.load_week("2026-08-23").entries[0].solver == "unknown\nreport-content"
 
 
-def test_telemetry_keys_expire_by_retention_days(redis_client):
+def test_telemetry_keys_expire_after_the_report_window(redis_client):
     metrics = RedisUsageMetrics(
         redis_client,
         key_prefix="test:usage",
@@ -234,10 +234,9 @@ def test_telemetry_keys_expire_by_retention_days(redis_client):
 
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
 
-    expected_expiry = datetime(2026, 9, 23, 12, tzinfo=timezone.utc).timestamp()
+    expected_expiry = datetime(2026, 9, 29, tzinfo=timezone.utc).timestamp()
     assert redis_client.expiretime("test:usage:job:job_metrics") == expected_expiry
-    membership_ttl = redis_client.ttl("test:usage:week:2026-08-23:members")
-    assert 30 * 24 * 60 * 60 - 2 <= membership_ttl <= 30 * 24 * 60 * 60
+    assert redis_client.expiretime("test:usage:week:2026-08-23:members") == expected_expiry
 
 
 class _RecordingTransport:
@@ -418,7 +417,7 @@ def test_successful_report_retains_terminal_telemetry(redis_client):
     )
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     _stage(metrics, lambda transaction: metrics.stage_job_transition(transaction, submitted, completed))
-    terminal_expiry = int((completed.finished_at + timedelta(days=30)).timestamp())
+    terminal_expiry = int(datetime(2026, 9, 29, tzinfo=timezone.utc).timestamp())
     assert redis_client.expiretime("test:usage:job:job_metrics") == terminal_expiry
 
     reporter = UsageReporter(metrics, _RecordingTransport())
@@ -432,9 +431,8 @@ def test_successful_report_retains_terminal_telemetry(redis_client):
         redis_client.expiretime("test:usage:job:job_metrics")
         == datetime(
             2026,
-            9,
-            29,
-            2,
+            10,
+            6,
             tzinfo=timezone.utc,
         ).timestamp()
     )
@@ -521,6 +519,7 @@ def test_reporter_catches_up_only_after_the_local_weekly_deadline(redis_client):
         )
         is True
     )
+    assert transport.reports == []
     assert (
         reporter.run_once(
             datetime(2026, 8, 30, 1, tzinfo=timezone.utc),
@@ -609,9 +608,40 @@ def test_reporter_mailgun_mode_requires_credentials(monkeypatch):
         UsageReportSettings.from_env()
 
 
-def test_mailgun_transport_sends_plain_text_job_table(monkeypatch, redis_client):
+@pytest.mark.parametrize(
+    "api_url",
+    [
+        "http://api.mailgun.net/v3",
+        "https://example.com/v3",
+        "https://api.mailgun.net/v4",
+        "https://api.mailgun.net/v3?destination=example.com",
+        "https://api.mailgun.net/v3#destination",
+        "https://api.mailgun.net:444/v3",
+        "https://user@api.mailgun.net/v3",
+    ],
+)
+def test_reporter_mailgun_mode_rejects_unapproved_api_urls(monkeypatch, api_url):
     monkeypatch.setenv("USAGE_REPORT_TRANSPORT", "mailgun")
-    monkeypatch.setenv("MAILGUN_API_URL", "https://api.mailgun.net/v3")
+    monkeypatch.setenv("MAILGUN_API_URL", api_url)
+    monkeypatch.setenv("MAILGUN_API_KEY", "secret-key")
+    monkeypatch.setenv("MAILGUN_DOMAIN", "mg.example.com")
+    monkeypatch.setenv("MAILGUN_FROM", "Reports <reports@mg.example.com>")
+    monkeypatch.setenv("MAILGUN_TO", "operator@example.com")
+
+    with pytest.raises(ValueError, match="approved Mailgun HTTPS API URL"):
+        UsageReportSettings.from_env()
+
+
+@pytest.mark.parametrize(
+    ("api_url", "expected_url"),
+    [
+        ("https://api.mailgun.net:443/v3/", "https://api.mailgun.net/v3/mg.example.com/messages"),
+        ("https://api.eu.mailgun.net/v3", "https://api.eu.mailgun.net/v3/mg.example.com/messages"),
+    ],
+)
+def test_mailgun_transport_sends_plain_text_job_table(monkeypatch, redis_client, api_url, expected_url):
+    monkeypatch.setenv("USAGE_REPORT_TRANSPORT", "mailgun")
+    monkeypatch.setenv("MAILGUN_API_URL", api_url)
     monkeypatch.setenv("MAILGUN_API_KEY", "secret-key")
     monkeypatch.setenv("MAILGUN_DOMAIN", "mg.example.com")
     monkeypatch.setenv("MAILGUN_FROM", "Reports <reports@mg.example.com>")
@@ -634,8 +664,9 @@ def test_mailgun_transport_sends_plain_text_job_table(monkeypatch, redis_client)
     assert MailgunReportTransport(settings).send(report) == "mailgun-message"
 
     response.raise_for_status.assert_called_once_with()
-    assert post.call_args.args == ("https://api.mailgun.net/v3/mg.example.com/messages",)
+    assert post.call_args.args == (expected_url,)
     assert post.call_args.kwargs["auth"] == ("api", "secret-key")
+    assert post.call_args.kwargs["follow_redirects"] is False
     assert post.call_args.kwargs["files"]["to"] == (None, "operator@example.com")
     assert "private-client-id" in post.call_args.kwargs["files"]["text"][1]
     assert "private-filename.yaml" not in post.call_args.kwargs["files"]["text"][1]

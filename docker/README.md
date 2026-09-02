@@ -223,10 +223,9 @@ weekly buckets. The reporter retrieves only the selected seven-day bucket. The
 API and reporter mount the host timezone files so their boundaries remain
 consistent, including daylight-saving transitions. Reports contain one CSV row
 per associated job. Fields that are not available for an ongoing job remain
-empty. Reporting does not remove telemetry. Every row expires after the
-configured retention interval from its latest lifecycle or download update. A
-weekly membership index expires after the same interval from the latest event
-added to that bucket. The interval defaults to 30 days.
+empty. Reporting does not remove telemetry. Rows and weekly membership indexes
+expire after the configured retention interval following the end of their
+event week. The interval defaults to 30 days.
 Values below nine days are rejected because they cannot cover a complete week
 before its reporting deadline.
 Set `USAGE_METRICS_ENABLED=false` in the Docker environment file to disable
@@ -258,10 +257,10 @@ from 0 through 23. A Redis-backed guard leaves at least ten minutes between any
 two delivery attempts, including catch-up reports, service restarts, and two
 bounded retries during a weekly run. The scheduler also waits at least ten
 minutes between runs as a safeguard against invalid deadline logic. Delivery
-checkpoints prevent normal duplicate sends. A process failure in the short
-interval after Mailgun accepts a message but before Redis records the checkpoint
-can still cause a retry. Use `MAILGUN_API_URL` for a regional Mailgun endpoint
-when needed.
+checkpoints prevent normal duplicate sends. A process failure or ambiguous
+transport error after Mailgun accepts a message but before Redis records the
+checkpoint can still cause a retry and duplicate delivery. `MAILGUN_API_URL`
+accepts Mailgun's HTTPS US or EU v3 endpoint for regional delivery.
 
 Trigger completed unsent reports immediately, without waiting for Sunday:
 
