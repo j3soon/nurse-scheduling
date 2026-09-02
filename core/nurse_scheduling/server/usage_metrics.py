@@ -33,7 +33,7 @@ from .config import MIN_USAGE_METRICS_RETENTION_DAYS
 from .jobs.models import Job, JobState
 
 REPORT_LOCK_SECONDS = 30 * 60
-"""Lease covering an initial delivery and two ten-minute-spaced retries."""
+"""Report delivery lease duration, renewed while a claimed attempt remains active."""
 
 
 def _decode(value: bytes | str) -> str:
@@ -253,6 +253,24 @@ class RedisUsageMetrics:
             self._release_report_lock(week_id, token)
             return None
         return token
+
+    def renew_report(self, week_id: str, token: str) -> bool:
+        """Extend a report lease only while its token still matches."""
+        lock_key = self._report_lock_key(week_id)
+        while True:
+            try:
+                with self._redis.pipeline() as transaction:
+                    transaction.watch(lock_key)
+                    current_token = transaction.get(lock_key)
+                    if current_token is None or _decode(current_token) != token:
+                        transaction.unwatch()
+                        return False
+                    transaction.multi()
+                    transaction.expire(lock_key, REPORT_LOCK_SECONDS)
+                    renewed = transaction.execute()
+                    return bool(renewed[0])
+            except redis.WatchError:
+                continue
 
     def report_was_sent(self, week_id: str) -> bool:
         """Return whether one week's delivery is already checkpointed."""

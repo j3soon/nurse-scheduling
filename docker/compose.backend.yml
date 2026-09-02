@@ -125,7 +125,7 @@ services:
       USAGE_METRICS_KEY_PREFIX: nurse_scheduling:usage:v0
       USAGE_METRICS_RETENTION_DAYS: ${USAGE_METRICS_RETENTION_DAYS:-30}
       USAGE_REPORT_LOCAL_HOUR: ${USAGE_REPORT_LOCAL_HOUR:-0}
-      # Pass through an override; otherwise let the app supply its {week_id} template.
+      # Pass through an override. Otherwise, let the app supply its {week_id} template.
       USAGE_REPORT_SUBJECT:
       USAGE_REPORT_TRANSPORT: ${USAGE_REPORT_TRANSPORT:-stdout}
       MAILGUN_API_URL: ${MAILGUN_API_URL:-https://api.mailgun.net/v3}

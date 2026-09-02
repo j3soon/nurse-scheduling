@@ -39,7 +39,7 @@ from nurse_scheduling.server.jobs.models import (
     StoredArtifact,
     StoreLimits,
 )
-from nurse_scheduling.server.usage_metrics import RedisUsageMetrics, week_bounds, week_id_for
+from nurse_scheduling.server.usage_metrics import REPORT_LOCK_SECONDS, RedisUsageMetrics, week_bounds, week_id_for
 from nurse_scheduling.server.usage_report import (
     MailgunReportTransport,
     UsageReporter,
@@ -318,6 +318,57 @@ def test_reporter_retries_transport_within_one_weekly_run(redis_client):
     assert reserve_delivery.call_count == 2
 
 
+def test_reporter_renews_lease_through_long_retry_wait(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
+    transport = _RecordingTransport(failures=1)
+    waits = []
+
+    def wait(delay):
+        waits.append(delay)
+        return False
+
+    renew_report = Mock(wraps=metrics.renew_report)
+    metrics.renew_report = renew_report
+    reporter = UsageReporter(
+        metrics,
+        transport,
+        retry_delays=(REPORT_LOCK_SECONDS + 1,),
+        retry_wait=wait,
+        minimum_interval_seconds=0,
+    )
+
+    assert reporter.run_once(datetime(2026, 8, 30, 10, tzinfo=timezone.utc)) is True
+    assert waits == [REPORT_LOCK_SECONDS // 3] * 3 + [1]
+    assert renew_report.call_count >= len(waits) + 2
+
+
+def test_reporter_stops_before_send_when_report_lease_is_lost(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
+    metrics.renew_report = Mock(return_value=False)
+    transport = _RecordingTransport()
+    reporter = UsageReporter(metrics, transport, retry_delays=(), minimum_interval_seconds=0)
+
+    assert reporter.run_once(datetime(2026, 8, 30, 10, tzinfo=timezone.utc)) is False
+    assert transport.reports == []
+    delivery = redis_client.hgetall("test:usage:report:2026-08-23")
+    assert delivery[b"status"] == b"failed"
+    assert delivery[b"last_error"] == b"Report delivery lease expired before transport send"
+
+
 def test_reporter_catches_up_retained_completed_weeks(redis_client):
     metrics = RedisUsageMetrics(
         redis_client,
@@ -498,6 +549,24 @@ def test_forced_report_still_respects_the_week_lock(redis_client):
 
     assert metrics.acquire_report("2026-08-23") is not None
     assert metrics.acquire_report("2026-08-23", force=True) is None
+
+
+def test_report_lease_renewal_requires_matching_token(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    token = metrics.acquire_report("2026-08-23")
+    assert token is not None
+    lock_key = "test:usage:report:2026-08-23:lock"
+    redis_client.expire(lock_key, 1)
+
+    assert metrics.renew_report("2026-08-23", "wrong-token") is False
+    assert redis_client.ttl(lock_key) <= 1
+    assert metrics.renew_report("2026-08-23", token) is True
+    assert REPORT_LOCK_SECONDS - 1 <= redis_client.ttl(lock_key) <= REPORT_LOCK_SECONDS
 
 
 def test_report_delivery_interval_repairs_guard_without_expiry(redis_client):

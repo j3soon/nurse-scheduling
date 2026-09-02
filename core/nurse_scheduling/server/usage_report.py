@@ -38,7 +38,7 @@ import httpx
 import redis
 
 from .config import DEFAULT_USAGE_METRICS_RETENTION_DAYS, MIN_USAGE_METRICS_RETENTION_DAYS
-from .usage_metrics import RedisUsageMetrics, WeeklyUsageReport, machine_timezone
+from .usage_metrics import REPORT_LOCK_SECONDS, RedisUsageMetrics, WeeklyUsageReport, machine_timezone
 
 REPORTER_LOGGER = logging.getLogger("nurse_scheduling.usage_report")
 REDIS_TIMEOUT_SECONDS = 5.0
@@ -51,6 +51,8 @@ MIN_REPORT_INTERVAL_SECONDS = 10 * 60
 """Minimum delay between any two report delivery attempts."""
 REPORT_RETRY_DELAYS_SECONDS = (MIN_REPORT_INTERVAL_SECONDS,) * 2
 """Bounded delays for transient delivery failures during one weekly run."""
+REPORT_LEASE_RENEWAL_SECONDS = REPORT_LOCK_SECONDS // 3
+"""Maximum time between report lease renewals while delivery is pending."""
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -343,22 +345,54 @@ class UsageReporter:
         time_module.sleep(delay)
         return False
 
-    def _wait_for_delivery_slot(self) -> bool:
+    def _require_report_lease(self, week_id: str, token: str) -> None:
+        """Renew a report lease or stop before another delivery can begin."""
+        if not self._metrics.renew_report(week_id, token):
+            raise RuntimeError("Report delivery lease expired before transport send")
+
+    def _wait_with_report_lease(self, delay: float, week_id: str, token: str) -> bool:
+        """Wait in bounded intervals while keeping a report lease valid."""
+        self._require_report_lease(week_id, token)
+        remaining = delay
+        if remaining == 0:
+            if self._retry_wait(0):
+                return False
+            self._require_report_lease(week_id, token)
+            return True
+        while remaining > 0:
+            interval = min(remaining, REPORT_LEASE_RENEWAL_SECONDS)
+            if self._retry_wait(interval):
+                return False
+            remaining -= interval
+            self._require_report_lease(week_id, token)
+        return True
+
+    def _wait_for_delivery_slot(self, report_lease: tuple[str, str] | None = None) -> bool:
         """Reserve the shared delivery slot, waiting when another attempt owns it."""
         if self._minimum_interval_seconds == 0:
+            if report_lease is not None:
+                self._require_report_lease(*report_lease)
             return True
         while True:
             remaining = self._metrics.reserve_report_delivery(self._minimum_interval_seconds)
             if remaining == 0:
+                if report_lease is not None:
+                    self._require_report_lease(*report_lease)
                 return True
-            if self._retry_wait(remaining):
+            if report_lease is None:
+                stopped = self._retry_wait(remaining)
+            else:
+                stopped = not self._wait_with_report_lease(remaining, *report_lease)
+            if stopped:
                 return False
 
-    def _send(self, report: WeeklyUsageReport, *, bypass_delivery_interval: bool = False) -> str:
+    def _send(self, report: WeeklyUsageReport, token: str, *, bypass_delivery_interval: bool = False) -> str:
         """Send one report with bounded retries inside its delivery lease."""
+        report_lease = (report.week_id, token)
         for attempt in range(len(self._retry_delays) + 1):
-            if attempt > 0 and not bypass_delivery_interval and not self._wait_for_delivery_slot():
+            if attempt > 0 and not bypass_delivery_interval and not self._wait_for_delivery_slot(report_lease):
                 raise RuntimeError("Reporter stopped before delivery retry")
+            self._require_report_lease(*report_lease)
             try:
                 return self._transport.send(report)
             except Exception as error:
@@ -371,7 +405,7 @@ class UsageReporter:
                     delay,
                     error,
                 )
-                if self._retry_wait(delay):
+                if not self._wait_with_report_lease(delay, *report_lease):
                     raise RuntimeError("Reporter stopped before delivery retry") from error
         raise AssertionError("delivery retry loop ended without returning or raising")
 
@@ -421,7 +455,7 @@ class UsageReporter:
             preserved_sent_checkpoint = force_latest and self._metrics.report_was_sent(week_id)
             partial_week = force_latest and observed_at < report.ends_at
             try:
-                message_id = self._send(report, bypass_delivery_interval=force_latest)
+                message_id = self._send(report, token, bypass_delivery_interval=force_latest)
                 sent_at = datetime.now(timezone.utc)
                 if partial_week:
                     checkpoint_stored = self._metrics.record_partial_report_sent(report, token, message_id, sent_at)
