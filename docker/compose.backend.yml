@@ -6,6 +6,11 @@ x-api-build: &api-build
   args:
     - APP_VERSION
 
+x-sentry-environment: &sentry-environment
+  SENTRY_DSN: "${SENTRY_BACKEND_DSN:-}"
+  SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT:-production}"
+  DISABLE_SENTRY: "${DISABLE_SENTRY:-}"
+
 services:
   redis:
     image: redis:8.8
@@ -40,6 +45,7 @@ services:
       redis:
         condition: service_healthy
     environment:
+      <<: *sentry-environment
       JOB_BACKEND: redis
       JOB_REDIS_URL: redis://redis:6379/0
       JOB_REDIS_KEY_PREFIX: nurse_scheduling:jobs:v0
@@ -53,8 +59,6 @@ services:
       # without a token. Serving it open needs a deliberate API_AUTH_REQUIRED=false.
       API_AUTH_REQUIRED: "${API_AUTH_REQUIRED:-true}"
       API_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
-      SENTRY_DSN: "${SENTRY_BACKEND_DSN:-}"
-      SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT:-production}"
       CLAIMED_PERFORMANCE_SCORE: "${CLAIMED_PERFORMANCE_SCORE:-}"
       CLAIMED_PERFORMANCE_APP_VERSION: "${CLAIMED_PERFORMANCE_APP_VERSION:-}"
       CLAIMED_PERFORMANCE_MEASURED_AT: "${CLAIMED_PERFORMANCE_MEASURED_AT:-}"
@@ -100,6 +104,7 @@ services:
       cloudflared:
         condition: service_started
     environment:
+      <<: *sentry-environment
       DIAGNOSTIC_TARGET_URL: ${DIAGNOSTIC_TARGET_URL:-https://api.nursescheduling.org}
       DIAGNOSTIC_INFO_SAMPLES: ${DIAGNOSTIC_INFO_SAMPLES:-100}
       DIAGNOSTIC_PARALLEL_REQUESTS: ${DIAGNOSTIC_PARALLEL_REQUESTS:-10}
@@ -123,6 +128,7 @@ services:
       redis:
         condition: service_healthy
     environment:
+      <<: *sentry-environment
       JOB_REDIS_URL: redis://redis:6379/0
       USAGE_METRICS_KEY_PREFIX: nurse_scheduling:usage:v0
       USAGE_METRICS_RETENTION_DAYS: ${USAGE_METRICS_RETENTION_DAYS:-30}

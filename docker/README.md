@@ -83,15 +83,17 @@ SENTRY_BACKEND_DSN=https://backend-public-key@organization.ingest.sentry.io/back
 SENTRY_ENVIRONMENT=production
 ```
 
-Compose passes `SENTRY_BACKEND_DSN` to the backend SDK as `SENTRY_DSN`.
+Compose passes `SENTRY_BACKEND_DSN` to every Python service as `SENTRY_DSN`.
+The API, usage reporter, and diagnostic share the project and environment while
+remaining filterable through their `app` tags.
 `SENTRY_AUTH_TOKEN` is not needed by the running backend because the SDK sends
 events through the DSN. Do not add a frontend DSN or Sentry auth token to this
 backend environment file. Configure them in the frontend build environment as
 described in the [developer guide](../docs/content/developer-guide/index.md#sentry).
 
 An unset DSN retains the repository's existing shared Sentry project. Running
-outside Docker uses the `development` environment. `DISABLE_SENTRY` continues
-to disable backend reporting.
+outside Docker uses the `development` environment. Set `DISABLE_SENTRY=1` in
+the deployment environment file to disable reporting for every Python service.
 
 ## Start
 

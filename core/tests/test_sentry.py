@@ -22,8 +22,10 @@
 import sys
 import types
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
+from ruamel.yaml import YAML
 
 from nurse_scheduling.loader import _load_yaml
 from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, flush_sentry, init_sentry
@@ -66,6 +68,7 @@ export:
       description: Sensitive count
       countPeople: [Bob, P1]
 """
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _running_job(input_name: str) -> Job:
@@ -241,6 +244,27 @@ def test_flush_sentry_waits_for_pending_logs(monkeypatch):
     flush_sentry()
 
     assert flush_calls == [{"timeout": 2.0}]
+
+
+@pytest.mark.parametrize(
+    ("compose_file", "service_names"),
+    [
+        ("compose.backend.yml", ("api", "diagnostic", "usage-reporter")),
+        ("compose.backend.memory.yml", ("api", "diagnostic")),
+    ],
+)
+def test_compose_python_services_share_sentry_environment(compose_file, service_names):
+    compose_path = REPOSITORY_ROOT / "docker" / compose_file
+    compose = YAML(typ="safe").load(compose_path.read_text(encoding="utf-8"))
+    expected = {
+        "SENTRY_DSN": "${SENTRY_BACKEND_DSN:-}",
+        "SENTRY_ENVIRONMENT": "${SENTRY_ENVIRONMENT:-production}",
+        "DISABLE_SENTRY": "${DISABLE_SENTRY:-}",
+    }
+
+    for service_name in service_names:
+        environment = compose["services"][service_name]["environment"]
+        assert {name: environment.get(name) for name in expected} == expected
 
 
 def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypatch):

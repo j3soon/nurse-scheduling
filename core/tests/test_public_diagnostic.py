@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -374,6 +375,7 @@ def test_main_runs_without_creating_process_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(diagnostic_module, "PublicDiagnostic", diagnostic_class)
     monkeypatch.setattr(diagnostic_module, "write_report", Mock(return_value=report_path))
     monkeypatch.setattr(diagnostic_module, "print_report", Mock())
+    monkeypatch.setattr(diagnostic_module, "log_report", Mock())
 
     assert diagnostic_module.main([]) == 0
     init_sentry.assert_called_once_with("v9.8.7-test", app="diagnostic")
@@ -999,7 +1001,35 @@ def test_run_requests_cleanup_cancellation_before_identity_analysis(tmp_path):
     assert steps == ["cancel", "identity", "cleanup"]
 
 
-def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize(
+    ("outcome", "summary_level"),
+    [
+        ("pass", logging.INFO),
+        ("fail", logging.ERROR),
+        ("inconclusive", logging.WARNING),
+    ],
+)
+def test_log_report_emits_summary_and_findings(monkeypatch, caplog, outcome, summary_level):
+    report = {
+        "summary": {"outcome": outcome},
+        "findings": [
+            {"level": "error", "code": "failed_check", "message": "A check failed."},
+            {"level": "warning", "code": "uncertain_check", "message": "A check was uncertain."},
+        ],
+    }
+    monkeypatch.setattr(diagnostic_module, "format_summary", Mock(return_value="SUMMARY"))
+
+    with caplog.at_level(logging.INFO, logger=diagnostic_module.DIAGNOSTIC_LOGGER.name):
+        diagnostic_module.log_report(report)
+
+    assert [(record.levelno, record.message) for record in caplog.records] == [
+        (summary_level, "[diagnostic] SUMMARY"),
+        (logging.ERROR, "[diagnostic] finding code=failed_check message=A check failed."),
+        (logging.WARNING, "[diagnostic] finding code=uncertain_check message=A check was uncertain."),
+    ]
+
+
+def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys, caplog):
     def cleanup_handler(request: httpx.Request) -> httpx.Response:
         job_id = request.url.path.split("/")[2]
         if job_id == "transport-error":
@@ -1071,8 +1101,9 @@ def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
         "from_env",
         Mock(side_effect=ValueError("invalid configuration")),
     )
-    assert diagnostic_module.main([]) == 1
-    assert "FAIL configuration" in capsys.readouterr().err
+    with caplog.at_level(logging.INFO, logger=diagnostic_module.DIAGNOSTIC_LOGGER.name):
+        assert diagnostic_module.main([]) == 1
+    assert "[diagnostic] configuration failed error=invalid configuration" in caplog.text
 
     config = unexpected.config
     runner = Mock()
@@ -1082,8 +1113,12 @@ def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(diagnostic_module, "write_report", Mock(side_effect=OSError("disk full")))
     print_report = Mock()
     monkeypatch.setattr(diagnostic_module, "print_report", print_report)
-    assert diagnostic_module.main([]) == 2
-    assert "WARNING report_write_failed" in capsys.readouterr().err
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=diagnostic_module.DIAGNOSTIC_LOGGER.name):
+        assert diagnostic_module.main([]) == 2
+    assert "[diagnostic] report write failed error=disk full" in caplog.text
+    assert "[diagnostic] INCONCLUSIVE" in caplog.text
+    assert "[diagnostic] finding code=example message=Example warning." in caplog.text
     print_report.assert_called_once_with(report, None)
 
 

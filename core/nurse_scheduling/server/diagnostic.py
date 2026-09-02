@@ -52,9 +52,9 @@
 
 import argparse
 import json
+import logging
 import math
 import os
-import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -72,6 +72,8 @@ import httpx
 from ..sentry import flush_sentry, init_sentry
 from ..version import get_app_version
 from .auth import AUTH_TOKEN_ENV_NAME
+
+DIAGNOSTIC_LOGGER = logging.getLogger("nurse_scheduling.diagnostic")
 
 DEFAULT_TARGET_URL = "https://api.nursescheduling.org"
 DEFAULT_SCENARIO_PATH = (
@@ -1338,6 +1340,24 @@ def print_report(report: dict[str, Any], report_path: Path | None = None) -> Non
         print(f"report={report_path}")
 
 
+def log_report(report: dict[str, Any]) -> None:
+    """Send the diagnostic summary and findings through structured logging."""
+    outcome = str(report["summary"]["outcome"])
+    log_summary = {
+        "pass": DIAGNOSTIC_LOGGER.info,
+        "fail": DIAGNOSTIC_LOGGER.error,
+        "inconclusive": DIAGNOSTIC_LOGGER.warning,
+    }[outcome]
+    log_summary("[diagnostic] %s", format_summary(report))
+    for finding in report["findings"]:
+        log_finding = DIAGNOSTIC_LOGGER.error if finding["level"] == "error" else DIAGNOSTIC_LOGGER.warning
+        log_finding(
+            "[diagnostic] finding code=%s message=%s",
+            finding["code"],
+            finding["message"],
+        )
+
+
 def exit_code(report: dict[str, Any]) -> int:
     """Map report outcomes to stable process exit codes."""
     return {"pass": 0, "fail": 1, "inconclusive": 2}[str(report["summary"]["outcome"])]
@@ -1363,7 +1383,7 @@ def _run(argv: list[str] | None = None) -> int:
         )
         config.report_dir.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError) as error:
-        print(f"FAIL configuration: {error}", file=sys.stderr)
+        DIAGNOSTIC_LOGGER.error("[diagnostic] configuration failed error=%s", error)
         return 1
 
     report = PublicDiagnostic(config).run()
@@ -1371,14 +1391,16 @@ def _run(argv: list[str] | None = None) -> int:
         report_path = write_report(report, config.report_dir)
     except OSError as error:
         report_path = None
-        print(f"WARNING report_write_failed: {error}", file=sys.stderr)
+        DIAGNOSTIC_LOGGER.warning("[diagnostic] report write failed error=%s", error)
     print_report(report, report_path)
+    log_report(report)
     return exit_code(report)
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run diagnostics with process-specific Sentry monitoring."""
     init_sentry(get_app_version(), app="diagnostic")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         return _run(argv)
     finally:
