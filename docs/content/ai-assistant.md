@@ -69,6 +69,11 @@ reads the candidate, and destroys the sandbox. A later message always starts a
 new sandbox. Only conversation history, the canonical schedule revision, and a
 pending validated proposal remain in application state.
 
+When a turn fails, its provisional activity remains visible but is not added to
+backend history. **Retry** resends the original text in a fresh sandbox. For a
+request with attachments, **Prepare retry** restores the text and requires the
+files to be attached again before sending.
+
 ## Reasoning and tool activity
 
 Providers stream reasoning in a field of its own, either `reasoning_content` or

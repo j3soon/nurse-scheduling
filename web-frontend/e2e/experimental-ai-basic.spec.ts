@@ -24,6 +24,7 @@ import { expect, Page, test } from '@playwright/test';
 interface CapturedRequests {
   scheduleYaml: string;
   messageBody: string;
+  messageBodies: string[];
   messageContentType: string;
 }
 
@@ -31,8 +32,9 @@ async function mockAiBackend(
   page: Page,
   attachments: { images: boolean; documents: boolean },
   answerDeltas = ['The image and schedule ', 'were received.'],
+  failFirstMessage = false,
 ): Promise<CapturedRequests> {
-  const captured = { scheduleYaml: '', messageBody: '', messageContentType: '' };
+  const captured = { scheduleYaml: '', messageBody: '', messageBodies: [] as string[], messageContentType: '' };
 
   await page.route('**/ai/**', async route => {
     const request = route.request();
@@ -81,15 +83,22 @@ async function mockAiBackend(
     }
 
     captured.messageBody = request.postData() ?? '';
+    captured.messageBodies.push(captured.messageBody);
     captured.messageContentType = request.headers()['content-type'] ?? '';
+    const firstMessageFailed = failFirstMessage && captured.messageBodies.length === 1;
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
       headers: corsHeaders,
-      body: [
-        ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
-        'event: done\ndata: {"message_id":"answer-id"}\n\n',
-      ].join(''),
+      body: firstMessageFailed
+        ? [
+          'event: delta\ndata: {"text":"Provisional response."}\n\n',
+          'event: error\ndata: {"message":"The temporary AI sandbox failed."}\n\n',
+        ].join('')
+        : [
+          ...answerDeltas.map(text => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`),
+          'event: done\ndata: {"message_id":"answer-id"}\n\n',
+        ].join(''),
     });
   });
 
@@ -106,6 +115,29 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?' });
   expect(captured.scheduleYaml).toContain('apiVersion:');
+});
+
+test('retries a failed text turn without hiding its provisional activity', async ({ page }) => {
+  const captured = await mockAiBackend(
+    page,
+    { images: false, documents: false },
+    ['Recovered response.'],
+    true,
+  );
+
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who works first?');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByText('Provisional response.')).toBeVisible();
+  await expect(page.getByText('This turn failed and was not saved to AI history.')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry' }).click();
+
+  await expect(page.getByText('Recovered response.')).toBeVisible();
+  expect(captured.messageBodies.map(body => JSON.parse(body))).toEqual([
+    { message: 'Who works first?' },
+    { message: 'Who works first?' },
+  ]);
 });
 
 test('renders assistant Markdown with safe images and copyable code', async ({ page, context }) => {

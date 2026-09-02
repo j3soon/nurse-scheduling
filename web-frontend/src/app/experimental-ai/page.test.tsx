@@ -266,7 +266,14 @@ describe('ExperimentalAiPage', () => {
 
   it('shows backend failures without discarding the user question', async () => {
     const providerError = 'The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f.';
-    mockStreamMessage.mockRejectedValueOnce(new Error(providerError));
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: { onDelta: (text: string) => void },
+    ) => {
+      callbacks.onDelta('Provisional response.');
+      throw new Error(providerError);
+    });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
@@ -276,6 +283,47 @@ describe('ExperimentalAiPage', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(providerError);
     expect(screen.getByText('Can you help?')).toBeInTheDocument();
+    expect(screen.getByText('Provisional response.')).toBeInTheDocument();
+    expect(screen.getByText('This turn failed and was not saved to AI history.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
+    expect(mockStreamMessage).toHaveBeenCalledTimes(2);
+    expect(mockStreamMessage.mock.calls[1][1]).toBe('Can you help?');
+    expect(screen.getAllByText('Can you help?')).toHaveLength(2);
+  });
+
+  it('requires files to be reattached before retrying an attachment request', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({
+      image_attachments: {
+        enabled: true,
+        accepted_media_types: ['image/png'],
+        max_files: 2,
+        max_bytes_per_file: 1000,
+      },
+      document_attachments: {
+        enabled: false,
+        accepted_extensions: [],
+        max_files: 1,
+        max_bytes_per_file: 1,
+      },
+    });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    mockStreamMessage.mockRejectedValueOnce(new Error('The temporary AI sandbox failed.'));
+    const user = userEvent.setup();
+    const image = new File(['png'], 'ward.png', { type: 'image/png' });
+    render(<ExperimentalAiPage />);
+
+    await user.upload(await screen.findByLabelText('Attach files'), image);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check this image.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(await screen.findByRole('button', { name: 'Prepare retry' }));
+
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toHaveValue('Check this image.');
+    expect(screen.getByText('Prepare the question, then reattach its files before sending.')).toBeInTheDocument();
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
   });
 
   describe('proposals', () => {

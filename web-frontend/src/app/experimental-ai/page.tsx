@@ -47,6 +47,11 @@ interface ChatMessage {
   content: string;
   attachmentNames?: string[];
   activity?: ActivityEntry[];
+  status?: 'pending' | 'failed';
+  retry?: {
+    question: string;
+    requiresAttachments: boolean;
+  };
 }
 
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
@@ -313,12 +318,13 @@ export default function ExperimentalAiPage() {
     });
   };
 
-  const send = async (event: FormEvent) => {
-    event.preventDefault();
-    const question = draft.trim();
+  const sendRequest = async (
+    question: string,
+    attachmentsForMessage: SelectedAttachment[],
+    clearComposer: boolean,
+  ) => {
     if (!question || isStreaming) return;
 
-    const attachmentsForMessage = selectedAttachments;
     const userMessage: ChatMessage = {
       id: messageId(),
       role: 'user',
@@ -328,12 +334,18 @@ export default function ExperimentalAiPage() {
     const assistantId = messageId();
     isNearPageBottomRef.current = true;
     setShowScrollToBottom(false);
-    setMessages(previous => [...previous, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
-    setDraft('');
-    attachmentsForMessage.forEach(attachment => {
-      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-    });
-    setSelectedAttachments([]);
+    setMessages(previous => [
+      ...previous,
+      userMessage,
+      { id: assistantId, role: 'assistant', content: '', status: 'pending' },
+    ]);
+    if (clearComposer) {
+      setDraft('');
+      attachmentsForMessage.forEach(attachment => {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      });
+      setSelectedAttachments([]);
+    }
     setError(null);
     setProposalDiff(null);
     setProposalNotice(null);
@@ -401,7 +413,22 @@ export default function ExperimentalAiPage() {
             .map(attachment => attachment.file),
         },
       );
+      setMessages(previous => previous.map(message => (
+        message.id === assistantId ? { ...message, status: undefined } : message
+      )));
     } catch (streamError) {
+      setMessages(previous => previous.map(message => (
+        message.id === assistantId
+          ? {
+            ...message,
+            status: 'failed',
+            retry: {
+              question,
+              requiresAttachments: attachmentsForMessage.length > 0,
+            },
+          }
+          : message
+      )));
       if (!controller.signal.aborted) {
         setError(streamError instanceof Error ? streamError.message : 'The AI request failed.');
       }
@@ -409,6 +436,22 @@ export default function ExperimentalAiPage() {
       abortControllerRef.current = null;
       setIsStreaming(false);
     }
+  };
+
+  const send = async (event: FormEvent) => {
+    event.preventDefault();
+    const question = draft.trim();
+    if (!question || isStreaming) return;
+    await sendRequest(question, selectedAttachments, true);
+  };
+
+  const retryMessage = (question: string) => {
+    void sendRequest(question, [], false);
+  };
+
+  const prepareAttachmentRetry = (question: string) => {
+    setDraft(question);
+    setError(null);
   };
 
   const stop = () => abortControllerRef.current?.abort();
@@ -512,7 +555,7 @@ export default function ExperimentalAiPage() {
             </p>
             {message.role === 'assistant' && message.content ? (
               <AssistantMarkdown content={message.content} />
-            ) : message.role === 'assistant' && isStreaming ? (
+            ) : message.role === 'assistant' && message.status === 'pending' ? (
               <ThinkingIndicator />
             ) : (
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
@@ -528,6 +571,33 @@ export default function ExperimentalAiPage() {
                   entry.kind === 'reasoning' ? showReasoning : showTools
                 ))}
               />
+            )}
+            {message.role === 'assistant' && message.status === 'failed' && message.retry && (
+              <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
+                <p>This turn failed and was not saved to AI history.</p>
+                {message.retry.requiresAttachments ? (
+                  <>
+                    <p className="mt-1 text-xs">Prepare the question, then reattach its files before sending.</p>
+                    <button
+                      type="button"
+                      onClick={() => prepareAttachmentRetry(message.retry?.question ?? '')}
+                      disabled={isStreaming}
+                      className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Prepare retry
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => retryMessage(message.retry?.question ?? '')}
+                    disabled={isStreaming}
+                    className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
             )}
           </article>
         ))}
