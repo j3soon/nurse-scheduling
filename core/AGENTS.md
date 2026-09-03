@@ -59,12 +59,13 @@ test paths when a narrower suite is known to be sufficient.
   evaluation run, not from one trajectory. A repeated recoverable failure costs
   more than the case that exposed it, and a bounded tool should clamp an
   over-large request rather than refuse it.
-- Expose only the `bash` model tool over the disposable sandbox. Put
-  deterministic domain guidance behind the searchable `nsctl` CLI instead of
-  adding model-specific tools. Keep trusted validation after every detected
-  schedule change and the structural diff at review, since those catch a
-  dropped entry that still parses. Emit an intermediate working-copy preview
-  only after that trusted validation.
+- Expose only the `bash` model tool over the disposable sandbox. Put domain
+  guidance in task-sized reference documents that return related schema shapes
+  together instead of adding model-specific tools or fine-grained lookup
+  turns. Keep trusted validation after every detected schedule change and the
+  structural diff at review, since those catch a dropped entry that still
+  parses. Emit an intermediate working-copy preview only after that trusted
+  validation.
 - Keep the model-facing Bash contract and output behavior in the pinned Pi port
   under `ai/pi`. Keep E2B execution and service timeout policy in the thin
   sandbox adapter so upstream behavior remains identifiable and testable.

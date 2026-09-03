@@ -1137,8 +1137,11 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "Group ids: people PEOPLE" in system_prompt
     assert "Dates run from 2026-01-01 to 2026-01-02" in system_prompt
     assert "Your only tool is `bash`" in system_prompt
-    assert "`nsctl schema`" in system_prompt
-    assert "`nsctl schema show PATH`" in system_prompt
+    assert "read one\ntask-sized document" in system_prompt
+    assert "`/reference/schema-core.md`" in system_prompt
+    assert "`/reference/schema-preferences.md`" in system_prompt
+    assert "`/reference/schema-export.md`" in system_prompt
+    assert "not the PyYAML `yaml` module" in system_prompt
     assert "Preserve existing fields" in system_prompt
     assert "and exact selectors" in system_prompt
     assert "Combine a small edit with its checks" in system_prompt

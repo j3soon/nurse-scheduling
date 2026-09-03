@@ -20,11 +20,15 @@
 # This code is mostly AI generated.
 
 from dataclasses import dataclass
-from difflib import get_close_matches
 
-MAX_SCHEMA_RESULT_CHARS = 6_000
+MAX_SCHEMA_REFERENCE_CHARS = 50_000
+SCHEMA_SECTION_SEPARATOR = "\n\n---\n\n"
 SELECTOR_GUIDANCE = (
     "Selector fidelity:\n"
+    "- The document must be one YAML mapping without aliases.\n"
+    "- Unknown mapping fields are rejected. Use only fields documented for that shape.\n"
+    "- Frontend IDs and references are strings. Quote numeric-looking IDs and full-date selectors in YAML.\n"
+    "- Every reference must resolve to an existing item, supported reserved selector, or available group.\n"
     "- Preserve an exact selector supplied by the user when validation accepts it. IDs such as `Person 3` and "
     "`P3` are different.\n"
     "- Keep reserved selectors such as `ALL` literal. Do not expand a group or reserved selector into its members.\n"
@@ -46,10 +50,33 @@ class ScheduleSchemaTopic:
 
 
 SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
+    "schedule": ScheduleSchemaTopic(
+        "Top-level frontend-editable schedule document.",
+        fields=(
+            "required `apiVersion`: alpha",
+            "required `dates`",
+            "required `people`",
+            "required `shiftTypes`",
+            "required `preferences`",
+            "optional `appVersion`: string",
+            "optional `description`: string",
+            "optional `export`: mapping, default empty",
+        ),
+        related=("dates", "people", "shiftTypes", "preferences", "export"),
+    ),
     "dates": ScheduleSchemaTopic(
         "Date range and reusable date groups.",
-        fields=("required `range`", "optional `groups`, default []"),
-        rules=("Do not write `items`. Calendar dates are generated from `range`.",),
+        fields=(
+            "required `range`: mapping",
+            "optional empty `items`: list, default []",
+            "optional `groups`: list, default []",
+        ),
+        rules=(
+            (
+                "Calendar dates are generated from `range`. Do not add entries to `items`. Preserve an existing "
+                "empty `items` field unless the user asks to remove it."
+            ),
+        ),
         related=("dates.range", "dates.groups"),
     ),
     "dates.range": ScheduleSchemaTopic(
@@ -67,7 +94,18 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
   range:
     startDate: 2026-01-01
     endDate: 2026-01-31""",
-        related=("dates", "dates.groups"),
+        related=("dates", "dates.selectors", "dates.groups"),
+    ),
+    "dates.selectors": ScheduleSchemaTopic(
+        "Supported string selectors for one date or a set of dates.",
+        fields=(
+            "concrete date: D within a single-month schedule, MM-DD within a single-year schedule, or YYYY-MM-DD",
+            "inclusive range: START~END using compatible concrete-date formats",
+            "reserved set: ALL, WEEKDAY, WEEKEND, or MONDAY through SUNDAY",
+            "named date-group ID",
+        ),
+        rules=("Every resolved concrete date must fall inside `dates.range`.",),
+        related=("dates.range", "dates.groups"),
     ),
     "dates.groups": ScheduleSchemaTopic(
         "Named selectors that contain dates or other date-group IDs.",
@@ -76,17 +114,27 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "required `description`: string, which may be empty",
             "required `members`: flat list of string references",
         ),
-        rules=("Date members must fall inside `dates.range`.",),
+        rules=(
+            "Date members must resolve inside `dates.range`.",
+            (
+                "Members may name concrete dates, inclusive date ranges, date keywords, weekdays, or groups "
+                "defined earlier in the list."
+            ),
+            (
+                "Group IDs must be unique. They cannot be reserved date keywords or weekdays, and cannot look like "
+                "day-of-month, MM-DD, or YYYY-MM-DD dates. Reserved-name checks are case-insensitive."
+            ),
+        ),
         example="""dates:
   groups:
     - id: FIRST
       description: ''
       members: ['2026-01-01', '2026-01-02']""",
-        related=("dates", "dates.range"),
+        related=("dates", "dates.range", "dates.selectors"),
     ),
     "people": ScheduleSchemaTopic(
         "People and reusable people groups.",
-        fields=("required `items`", "optional `groups`, default []"),
+        fields=("required `items`: list", "optional `groups`: list, default []"),
         rules=("Frontend IDs and references must be strings.",),
         related=("people.items", "people.groups"),
     ),
@@ -98,6 +146,8 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "optional `history`: flat list of shift-type IDs or OFF",
         ),
         rules=(
+            "Person IDs must be unique and cannot case-insensitively equal the reserved selector ALL.",
+            "History may contain concrete shift-type IDs or OFF, but not ALL or shift-type group IDs.",
             (
                 "To remove a person entirely, remove their item, every group membership, and every preference that "
                 "names only that person in the same coordinated file edit. Locate every exact reference with "
@@ -121,6 +171,13 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "required `description`: string, which may be empty",
             "required `members`: flat list of string references",
         ),
+        rules=(
+            (
+                "Group IDs must be unique across people and groups and cannot case-insensitively equal the reserved "
+                "selector ALL."
+            ),
+            "Members may name people or groups defined earlier in the list.",
+        ),
         example="""people:
   groups:
     - id: ALL_NURSES
@@ -130,13 +187,16 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     ),
     "shiftTypes": ScheduleSchemaTopic(
         "Shift types and reusable shift-type groups.",
-        fields=("required `items`", "optional `groups`, default []"),
+        fields=("required `items`: list", "optional `groups`: list, default []"),
         rules=("Frontend IDs and references must be strings.",),
         related=("shiftTypes.items", "shiftTypes.groups"),
     ),
     "shiftTypes.items": ScheduleSchemaTopic(
         "Individual shift types.",
         fields=("required `id`: string", "required `description`: string, which may be empty"),
+        rules=(
+            "Shift-type IDs must be unique and cannot case-insensitively equal the reserved selectors ALL or OFF.",
+        ),
         example="""shiftTypes:
   items:
     - id: D
@@ -152,6 +212,13 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "required `description`: string, which may be empty",
             "required `members`: flat list of string references",
         ),
+        rules=(
+            (
+                "Group IDs must be unique across shift types and groups and cannot case-insensitively equal the "
+                "reserved selectors ALL or OFF."
+            ),
+            "Members may name shift types or groups defined earlier in the list.",
+        ),
         example="""shiftTypes:
   groups:
     - id: WORK
@@ -163,6 +230,7 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         "Scheduling rules and weighted preferences.",
         rules=(
             "Every schedule must include `at most one shift per day`.",
+            "Always write the exact `type` discriminator for every preference.",
             "References use flat string lists in the frontend-editable shape.",
             "Finite weights are integers. `.inf` and `-.inf` express hard preferences.",
             (
@@ -181,7 +249,7 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     ),
     "preferences.at most one shift per day": ScheduleSchemaTopic(
         "Required rule preventing multiple shifts for one person on one date.",
-        fields=("required `type`: at most one shift per day", "optional `description`"),
+        fields=("write `type`: at most one shift per day", "optional `description`: string"),
         example="""preferences:
   - type: at most one shift per day""",
         related=("preferences",),
@@ -189,12 +257,16 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     "preferences.shift request": ScheduleSchemaTopic(
         "Request one shift type for one person over one or more dates.",
         fields=(
-            "required `type`: shift request",
+            "write `type`: shift request",
             "required `person`: flat list containing exactly one person or people-group ID",
             "required `date`: flat list of date or date-group IDs",
             "required `shiftType`: flat list containing exactly one shift-type ID",
-            "optional `weight`, default 1",
-            "optional `description`",
+            "optional `weight`: integer or infinity, default 1",
+            "optional `description`: string",
+        ),
+        rules=(
+            "A positive `weight` encourages the requested assignment and a negative weight discourages it.",
+            "`.inf` requires the assignment and `-.inf` forbids it.",
         ),
         example="""preferences:
   - type: shift request
@@ -207,14 +279,16 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     "preferences.shift type successions": ScheduleSchemaTopic(
         "Reward or penalize a sequence of shift types for selected people and dates.",
         fields=(
-            "required `type`: shift type successions",
+            "write `type`: shift type successions",
             "required `person`: flat list of person or people-group IDs",
-            "required `pattern`: flat list of shift-type IDs or OFF",
+            "required `pattern`: non-empty flat list of shift-type or shift-type-group IDs or OFF",
             "required `date`: flat list of date or date-group IDs",
-            "optional `weight`, default 1",
-            "optional `description`",
+            "optional `weight`: integer or infinity, default 1",
+            "optional `description`: string",
         ),
         rules=(
+            "A positive `weight` encourages the complete sequence and a negative weight discourages it.",
+            "`.inf` requires the sequence and `-.inf` forbids it at each selected starting date.",
             (
                 "Preserve every shift token in the requested sequence. For example, E followed by D is [E, D], not "
                 "[Evening, Day]."
@@ -232,21 +306,35 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         "Require staffing for one shift type or one shift-type group. This is the number of people a shift type "
         "needs on a date, so it is the type for how many people work a shift.",
         fields=(
-            "required `type`: shift type requirement",
+            "write `type`: shift type requirement",
             "required `shiftType`: flat list of shift-type or shift-type-group IDs",
             "required `requiredNumPeople`: integer",
             "required `qualifiedPeople`: flat list of person or people-group IDs",
             "required `date`: flat list of date or date-group IDs",
             "optional `shiftTypeCoefficients`: [shift-type ID, positive integer] pairs",
-            "optional `preferredNumPeople`, `weight`, and `description`",
+            "optional `preferredNumPeople`: integer",
+            "optional `weight`: integer or infinity, default -1",
+            "optional `description`: string",
         ),
         rules=(
+            "Separate entries in `shiftType` create separate staffing requirements.",
             "Use one shift-type group in `shiftType` when coefficients cover multiple member shift types.",
-            "OFF is not allowed in this preference type.",
             (
-                "`requiredNumPeople` is the staffing that must be met. Add `preferredNumPeople` with a finite "
-                "`weight` to score a better level above it, in one preference rather than two."
+                "Coefficient entries are [shift-type or group ID, positive integer] pairs. They must be unique and "
+                "covered by the single selected requirement entry."
             ),
+            "OFF is not allowed in this preference type.",
+            "Only people selected by `qualifiedPeople` may cover the requirement's shift types on its dates.",
+            (
+                "Without `preferredNumPeople`, `requiredNumPeople` is an exact hard staffing count. With "
+                "`preferredNumPeople`, it becomes the hard minimum and the preferred value is the upper target."
+            ),
+            (
+                "A preference with `preferredNumPeople` requires a finite `weight`. Infinity weights are rejected. "
+                "Use a negative weight to encourage reaching the preferred count, and use one preference rather "
+                "than separate required and preferred entries."
+            ),
+            "Without `preferredNumPeople`, `weight` has no effect because the staffing count is an exact constraint.",
             (
                 "Use `date: [ALL]` for every date. Do not express this as a `shift count` preference, which counts "
                 "one person's shifts instead of the people on a shift."
@@ -266,23 +354,36 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         "Constrain or score total shift counts for selected people. This counts the shifts one person works across "
         "the selected dates, not the people needed on a shift.",
         fields=(
-            "required `type`: shift count",
+            "write `type`: shift count",
             "required `person`: flat list of person or people-group IDs",
             "required `countDates`: flat list of date or date-group IDs. Use ALL for the entire schedule range",
             "required `countShiftTypes`: flat list of shift-type or group IDs, ALL, or OFF",
             "required scalar `expression`: one of x = T, x >= T, x <= T, x > T, x < T, |x - T|^2",
             "required scalar `target`: integer",
-            "optional `countShiftTypeCoefficients`: [shift-type ID, integer] pairs, for example [[D, 1], [N, 2]]",
-            "optional `weight` and `description`",
+            (
+                "optional `countShiftTypeCoefficients`: [shift-type or group ID, positive integer] pairs, for example "
+                "[[D, 1], [N, 2]]"
+            ),
+            "optional `weight`: integer or infinity, default -1",
+            "optional `description`: string",
         ),
         rules=(
+            "`countShiftTypes` must resolve to at least one shift type.",
             "`x = T` means exactly the target count. The inequality expressions set minimum or maximum counts.",
+            "`target` must be non-negative.",
             "Use `weight: -.inf` for a hard exact or inequality constraint.",
+            (
+                "For `|x - T|^2`, `weight` must be non-positive or `-.inf`. Positive and `.inf` weights are "
+                "rejected."
+            ),
             (
                 "For how many people a shift type needs on a date, use `shift type requirement` instead. A staffing "
                 "level is not a per-person shift total."
             ),
-            "Coefficients are a list of 2-item lists, not a mapping or a list of strings.",
+            (
+                "Coefficients are a list of unique 2-item lists, not a mapping or a list of strings. Each selected "
+                "shift type may be covered once."
+            ),
         ),
         example="""preferences:
   - type: shift count
@@ -297,13 +398,18 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     "preferences.shift affinity": ScheduleSchemaTopic(
         "Attract or repel two sets of people on selected dates and shift types.",
         fields=(
-            "required `type`: shift affinity",
+            "write `type`: shift affinity",
             "required `date`: flat list of date or date-group IDs",
             "required `people1`: flat list of person or people-group IDs",
             "required `people2`: flat list of person or people-group IDs",
             "required `shiftTypes`: flat list of shift-type or shift-type-group IDs",
-            "optional `weight`, default 1",
-            "optional `description`",
+            "optional `weight`: integer or infinity, default 1",
+            "optional `description`: string",
+        ),
+        rules=(
+            "`people1`, `people2`, and `shiftTypes` must each be non-empty.",
+            "A positive `weight` attracts the selections. A negative `weight` repels them.",
+            "`.inf` requires the affinity match and `-.inf` forbids it.",
         ),
         example="""preferences:
   - type: shift affinity
@@ -317,9 +423,9 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     "export": ScheduleSchemaTopic(
         "Spreadsheet formatting and count-based extra rows or columns.",
         fields=(
-            "optional `formatting`, default []",
-            "optional `extraColumns`, default []",
-            "optional `extraRows`, default []",
+            "optional `formatting`: list, default []",
+            "optional `extraColumns`: list, default []",
+            "optional `extraRows`: list, default []",
         ),
         rules=(
             "If `export` is absent, add it as an optional top-level mapping. Its lists may be omitted when unused.",
@@ -328,6 +434,13 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     ),
     "export.formatting": ScheduleSchemaTopic(
         "Formatting rules selected by their `type`.",
+        fields=(
+            "all variants optionally accept `description`: string",
+            (
+                "all variants optionally accept `backgroundColor`, `bottomBorderColor`, `rightBorderColor`, and "
+                "`fontColor`"
+            ),
+        ),
         rules=(
             "Colors use six-digit #RRGGBB strings.",
             "Cell annotations and `when` conditions are supported only by type `cell`.",
@@ -387,7 +500,7 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
   formatting:
     - type: column
       dates: [FIRST]
-      backgroundColor: '#e0f2fe'""",
+      fontColor: '#ff0000'""",
         related=("export.formatting",),
     ),
     "export.formatting.date header": ScheduleSchemaTopic(
@@ -421,20 +534,56 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         fields=(
             "required `type`: cell",
             "required `people`, `dates`, and `shiftTypes`: flat string-reference lists",
-            "optional colors, `appendText`, `note: {text: ...}`, and `when`",
+            "optional common formatting fields and `appendText`: string",
+            "optional `note`: mapping with required `text`",
+            "optional `when`: formatting condition mapping",
         ),
         rules=(
             "`when.preference.types` currently supports only [shift request].",
-            "A preference condition may filter by `requestShape`, `satisfied`, or two-value `weightRange`.",
+            (
+                "`when` has the exact shape `preference: {types: [shift request], requestShape: [...], "
+                "satisfied: true, weightRange: [MIN, MAX]}`. `requestShape`, `satisfied`, and `weightRange` are "
+                "independently optional."
+            ),
         ),
         example="""export:
   formatting:
     - type: cell
-      people: [P1]
-      dates: [FIRST]
-      shiftTypes: [D]
-      backgroundColor: '#e0f2fe'""",
-        related=("export.formatting", "preferences.shift request"),
+      people: [ALL]
+      dates: [ALL]
+      shiftTypes: [ALL]
+      backgroundColor: '#00ff00'
+      when:
+        preference:
+          types: [shift request]
+          satisfied: true""",
+        related=("export.formatting", "export.formatting.condition", "preferences.shift request"),
+    ),
+    "export.formatting.condition": ScheduleSchemaTopic(
+        "Conditionally apply a cell formatting rule based on a matching preference.",
+        fields=("required `preference`: preference condition mapping",),
+        rules=("Conditions are supported only by formatting rules with `type: cell`.",),
+        related=("export.formatting.cell", "export.formatting.condition.preference"),
+    ),
+    "export.formatting.condition.preference": ScheduleSchemaTopic(
+        "Select the shift-request preferences that control conditional cell formatting.",
+        fields=(
+            "required `types`: [shift request]",
+            (
+                "optional `requestShape`: flat list containing person-item-to-date-item, "
+                "people-group-to-date-item, person-item-to-date-group, people-group-to-date-group, or ALL"
+            ),
+            "optional `satisfied`: boolean",
+            "optional `weightRange`: two-value numeric list",
+        ),
+        rules=("`weightRange` must contain exactly [minimum, maximum], with minimum no greater than maximum.",),
+        related=("export.formatting.cell", "export.formatting.condition"),
+    ),
+    "export.formatting.note": ScheduleSchemaTopic(
+        "Attach a note to a cell formatting rule.",
+        fields=("required `text`: string",),
+        rules=("Notes are supported only by formatting rules with `type: cell`.",),
+        related=("export.formatting.cell",),
     ),
     "export.extraColumns": ScheduleSchemaTopic(
         "Add per-person columns that count selected shifts over selected dates.",
@@ -443,10 +592,15 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "required `header`: string",
             "required `countShiftTypes`: flat list of shift-type or group IDs",
             "required `countDates`: flat list of date or group IDs. Use ALL for the entire schedule range",
-            "optional `countShiftTypeCoefficients`, `description`, and `rightBorderColor`",
+            (
+                "optional `countShiftTypeCoefficients`: [shift-type or group ID, positive integer] pairs covered by "
+                "`countShiftTypes`"
+            ),
+            "optional `description`: string and `rightBorderColor`: #RRGGBB string",
         ),
         rules=(
             "If `export` is absent, add this `export` mapping at the top level. Other export lists may be omitted.",
+            "Coefficient entries must be unique and may cover each selected shift type once.",
         ),
         example="""export:
   extraColumns:
@@ -463,7 +617,7 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "required `header`: string",
             "required `countShiftTypes`: flat list of shift-type or group IDs",
             "required `countPeople`: flat list of person or group IDs. Use ALL to count every person",
-            "optional `description` and `bottomBorderColor`",
+            "optional `description`: string and `bottomBorderColor`: #RRGGBB string",
         ),
         example="""export:
   extraRows:
@@ -477,32 +631,30 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
 
 SCHEMA_PATHS = tuple(SCHEMA_TOPICS)
 
+SCHEMA_REFERENCE_GROUPS: dict[str, tuple[str, ...]] = {
+    "core": tuple(
+        path
+        for path in SCHEMA_PATHS
+        if path in {"schedule", "dates", "people", "shiftTypes"}
+        or path.startswith(("dates.", "people.", "shiftTypes."))
+    ),
+    "preferences": tuple(path for path in SCHEMA_PATHS if path == "preferences" or path.startswith("preferences.")),
+    "export": tuple(path for path in SCHEMA_PATHS if path == "export" or path.startswith("export.")),
+}
 
-def render_schedule_schema(path: str | None = None) -> str | None:
-    """Render the root index or one known schema topic."""
-    if path is None:
-        paths = "\n".join(f"- {value}" for value in SCHEMA_PATHS)
-        return (
-            "Frontend-editable schedule.yaml schema\n\n"
-            "Required top-level fields:\n"
-            "- apiVersion: alpha\n"
-            "- dates\n"
-            "- people\n"
-            "- shiftTypes\n"
-            "- preferences\n\n"
-            "Optional top-level fields:\n"
-            "- appVersion\n"
-            "- description\n"
-            "- export\n\n"
-            "Choose the most specific path. A leaf example is validated and sufficient to construct that shape.\n\n"
-            f"{SELECTOR_GUIDANCE}\n\n"
-            f"Available paths:\n{paths}"
-        )
+SCHEMA_REFERENCE_TITLES = {
+    "core": "Core structure: dates, people, and shift types",
+    "preferences": "Preferences",
+    "export": "Export formatting and count rows or columns",
+}
 
+
+def _render_schema_topic(path: str) -> str | None:
+    """Render one schema topic for its task-sized reference document."""
     topic = SCHEMA_TOPICS.get(path)
     if topic is None:
         return None
-    sections = [f"Path: {path}", topic.summary, SELECTOR_GUIDANCE]
+    sections = [f"Path: {path}", topic.summary]
     if topic.fields:
         sections.append("Fields:\n" + "\n".join(f"- {field}" for field in topic.fields))
     if topic.rules:
@@ -516,10 +668,25 @@ def render_schedule_schema(path: str | None = None) -> str | None:
         )
     if topic.related:
         sections.append("Related paths:\n" + "\n".join(f"- {related}" for related in topic.related))
-    rendered = "\n\n".join(sections)
-    return rendered[:MAX_SCHEMA_RESULT_CHARS]
+    return "\n\n".join(sections)
 
 
-def closest_schema_paths(path: str) -> tuple[str, ...]:
-    """Suggest known paths for a non-conforming provider call."""
-    return tuple(get_close_matches(path, SCHEMA_PATHS, n=3, cutoff=0.25))
+def render_schedule_reference(group: str) -> str | None:
+    """Render one task-sized reference containing all related schema variants."""
+    paths = SCHEMA_REFERENCE_GROUPS.get(group)
+    if paths is None:
+        return None
+    topics = (_render_schema_topic(path) for path in paths)
+    sections = [
+        f"# Frontend-editable schedule.yaml\n\n## {SCHEMA_REFERENCE_TITLES[group]}",
+        (
+            "This document intentionally groups related shapes. Read it once when working in this domain instead "
+            "of searching for each field separately."
+        ),
+        SELECTOR_GUIDANCE,
+        *(topic for topic in topics if topic is not None),
+    ]
+    rendered = SCHEMA_SECTION_SEPARATOR.join(sections)
+    if len(rendered) > MAX_SCHEMA_REFERENCE_CHARS:
+        raise ValueError(f"{group} schedule reference exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
+    return rendered

@@ -6,10 +6,9 @@ template, hydrates `/workspace`, and destroys the sandbox after the turn.
 
 The template uses one vCPU and 512 MiB of memory. It runs as the unprivileged
 `user` account and provides Bash, Python with `ruamel.yaml`, ripgrep, sed, grep,
-diff, and the read-only `nsctl` schema helper. Runtime code writes only under
-`/workspace`. The application hydrates
-`/reference` separately so reference material stays synchronized with the
-backend.
+and diff. Runtime code writes only under `/workspace`. The application hydrates
+task-sized schema documents under `/reference` separately so reference material
+stays synchronized with the backend.
 
 ## Build
 
@@ -53,7 +52,7 @@ Most tests use the in-memory fake backend and need no E2B account:
 ```sh
 cd core
 pytest -q tests/test_ai_sandbox.py tests/test_ai_sandbox_agent.py \
-  tests/test_ai_pi_bash.py tests/test_ai_sandbox_bash.py tests/test_ai_nsctl.py \
+  tests/test_ai_pi_bash.py tests/test_ai_sandbox_bash.py \
   tests/test_ai_sandbox_e2b.py
 ```
 

@@ -31,8 +31,7 @@ from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, 
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import (
-    REFERENCE_README,
-    REFERENCE_SCHEMA,
+    REFERENCE_SCHEMAS,
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
     SandboxAgentLimits,
@@ -110,9 +109,10 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     backend = factory.created[0]
     assert backend.closed
     assert WORKSPACE_SCHEDULE in backend.files
-    assert REFERENCE_README in backend.files
-    assert REFERENCE_SCHEMA in backend.files
-    assert b"Path: preferences.shift count" in backend.files[REFERENCE_SCHEMA]
+    assert set(REFERENCE_SCHEMAS.values()) <= backend.files.keys()
+    assert b"Path: preferences.shift count" in backend.files[REFERENCE_SCHEMAS["preferences"]]
+    assert b"Path: export.formatting.cell" in backend.files[REFERENCE_SCHEMAS["export"]]
+    assert b"Path: people.items" in backend.files[REFERENCE_SCHEMAS["core"]]
     assert backend.commands == [("edit", None)]
     assert [tool["function"]["name"] for tool in provider.requests[0][1]] == [BASH_TOOL]
     assert isinstance(events[0], AgentToolStart)

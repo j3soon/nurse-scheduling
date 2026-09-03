@@ -185,10 +185,10 @@ that after this explicit kill, E2B rejects resume with `SandboxNotFoundException
 
 The model receives exactly one tool, `bash(command)`. It can use preinstalled
 Bash, Python with `ruamel.yaml`, ripgrep, sed, grep, and diff against
-`/workspace/schedule.yaml`. `nsctl` is a normal command available through Bash,
-not another model tool. Its read-only `schema`, `schema list`, `schema search`,
-and `schema show` commands expose the frontend schedule guidance copied to
-`/reference` for that turn.
+`/workspace/schedule.yaml`. The application hydrates separate core, preference,
+and export schema documents under `/reference` for each turn. Each document
+groups related variants so the model can retrieve the context for one domain in
+one Bash call instead of making a sequence of fine-grained lookups.
 
 This follows the minimalism philosophy of the [Pi coding agent](https://pi.dev/):
 prefer one general shell capability and discoverable CLI documentation over a
@@ -439,11 +439,11 @@ ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
   tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
   tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py \
-  tests/test_ai_sandbox_bash.py tests/test_ai_nsctl.py
+  tests/test_ai_sandbox_bash.py
 pytest -q tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
   tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py \
-  tests/test_ai_sandbox_bash.py tests/test_ai_nsctl.py
+  tests/test_ai_sandbox_bash.py
 
 cd /app/web-frontend
 bun run test -- \

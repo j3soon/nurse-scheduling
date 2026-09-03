@@ -15,9 +15,6 @@ RUN apt-get update \
 
 RUN python3 -m pip install --no-cache-dir 'ruamel.yaml==0.19.1'
 
-COPY --chown=root:root nsctl /usr/local/bin/nsctl
-RUN chmod 0755 /usr/local/bin/nsctl
-
 RUN mkdir -p /workspace /reference \
     && chown -R user:user /workspace /reference
 
