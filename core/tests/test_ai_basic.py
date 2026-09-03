@@ -149,9 +149,7 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
             await wait_until_cancelled()
             return CommandResult("", "", 0)
 
-        factory = FakeSandboxFactory(
-            lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=command_handler)
-        )
+        factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=command_handler))
         app = create_test_app(settings=make_settings(), provider=WaitingProvider(), sandbox_factory=factory)
         session = app.state.session_store.create("browser-owner", schedule_yaml())
         request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
@@ -738,6 +736,9 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     monkeypatch.setenv("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", "90")
     monkeypatch.setenv("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", "6")
+    monkeypatch.setenv("AI_SANDBOX_MAX_ATTEMPTS", "4")
+    monkeypatch.setenv("AI_SANDBOX_RETRY_BACKOFF_SECONDS", "0.25")
+    monkeypatch.setenv("AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", "1.5")
 
     settings = AiSettings.from_env()
 
@@ -747,6 +748,9 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     assert settings.sandbox_command_timeout_seconds == 4.5
     assert settings.sandbox_turn_timeout_seconds == 90
     assert settings.sandbox_cleanup_timeout_seconds == 6
+    assert settings.sandbox_max_attempts == 4
+    assert settings.sandbox_retry_backoff_seconds == 0.25
+    assert settings.sandbox_control_request_timeout_seconds == 1.5
 
 
 def test_environment_configuration_requires_a_sandbox_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -922,9 +926,7 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     def fail_command(*_args) -> CommandResult:
         raise SandboxError("E2B command failed")
 
-    factory = FakeSandboxFactory(
-        lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=fail_command)
-    )
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=fail_command))
     client = TestClient(
         create_test_app(
             settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),

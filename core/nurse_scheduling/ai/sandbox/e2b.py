@@ -26,10 +26,19 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from enum import Enum
-from typing import Any
+from typing import Any, TypeVar
 
 from e2b import AsyncSandbox
-from e2b.exceptions import SandboxNotFoundException, TimeoutException
+from e2b.exceptions import (
+    AuthenticationException,
+    InvalidArgumentException,
+    NotEnoughSpaceException,
+    NotFoundException,
+    SandboxException,
+    SandboxNotFoundException,
+    TemplateException,
+    TimeoutException,
+)
 from e2b.sandbox.commands.command_handle import CommandExitException
 
 from ..config import AiSettings
@@ -40,6 +49,51 @@ E2B_USER = "user"
 E2B_WORKSPACE = "/workspace"
 COMMAND_TIMEOUT_EXIT_CODE = 124
 CreateSandbox = Callable[..., Awaitable[Any]]
+RequestResult = TypeVar("RequestResult")
+NON_RETRYABLE_E2B_ERRORS = (
+    AuthenticationException,
+    InvalidArgumentException,
+    NotEnoughSpaceException,
+    NotFoundException,
+    TemplateException,
+)
+
+
+def _is_retryable_e2b_error(error: BaseException) -> bool:
+    return isinstance(error, SandboxException) and not isinstance(error, NON_RETRYABLE_E2B_ERRORS)
+
+
+async def _retry_e2b_request(
+    operation: Callable[[], Awaitable[RequestResult]],
+    *,
+    operation_name: str,
+    sandbox_id: str,
+    max_attempts: int,
+    backoff_seconds: float,
+) -> RequestResult:
+    """Retry replay-safe E2B requests without logging response contents."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await operation()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if not _is_retryable_e2b_error(error) or attempt == max_attempts:
+                raise
+            delay = backoff_seconds * (2 ** (attempt - 1))
+            logger.warning(
+                "E2B request failed operation=%s sandbox_id=%s attempt=%s max_attempts=%s "
+                "retry_in_seconds=%.3f error_type=%s",
+                operation_name,
+                sandbox_id,
+                attempt,
+                max_attempts,
+                delay,
+                type(error).__name__,
+            )
+            if delay > 0:
+                await asyncio.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 class E2BSandboxState(str, Enum):
@@ -63,6 +117,9 @@ class E2BSandboxFactory:
         template: str,
         turn_timeout_seconds: float,
         command_timeout_seconds: float,
+        max_attempts: int = 3,
+        retry_backoff_seconds: float = 0.5,
+        control_request_timeout_seconds: float = 2.0,
         create_sandbox: CreateSandbox | None = None,
     ) -> None:
         if not api_key:
@@ -73,10 +130,19 @@ class E2BSandboxFactory:
             raise ValueError("turn_timeout_seconds must be positive")
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
+        if retry_backoff_seconds < 0:
+            raise ValueError("retry_backoff_seconds must be non-negative")
+        if control_request_timeout_seconds <= 0:
+            raise ValueError("control_request_timeout_seconds must be positive")
         self._api_key = api_key
         self._template = template
         self._turn_timeout_seconds = turn_timeout_seconds
         self._command_timeout_seconds = command_timeout_seconds
+        self._max_attempts = max_attempts
+        self._retry_backoff_seconds = retry_backoff_seconds
+        self._control_request_timeout_seconds = control_request_timeout_seconds
         self._create_sandbox = create_sandbox or AsyncSandbox.create
 
     @classmethod
@@ -87,6 +153,9 @@ class E2BSandboxFactory:
             template=settings.e2b_template,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             command_timeout_seconds=settings.sandbox_command_timeout_seconds,
+            max_attempts=settings.sandbox_max_attempts,
+            retry_backoff_seconds=settings.sandbox_retry_backoff_seconds,
+            control_request_timeout_seconds=settings.sandbox_control_request_timeout_seconds,
         )
 
     async def create(self) -> "E2BSandboxBackend":
@@ -115,6 +184,9 @@ class E2BSandboxFactory:
         backend = E2BSandboxBackend(
             sandbox,
             command_timeout_seconds=self._command_timeout_seconds,
+            max_attempts=self._max_attempts,
+            retry_backoff_seconds=self._retry_backoff_seconds,
+            control_request_timeout_seconds=self._control_request_timeout_seconds,
         )
         logger.info(
             "sandbox created sandbox_id=%s provider=e2b latency_seconds=%.3f",
@@ -131,7 +203,15 @@ class E2BSandboxFactory:
             logger.exception("cancelled sandbox creation did not return a sandbox")
             return
         try:
-            await asyncio.shield(sandbox.kill())
+            await asyncio.shield(
+                _retry_e2b_request(
+                    lambda: sandbox.kill(request_timeout=self._control_request_timeout_seconds),
+                    operation_name="kill_after_cancelled_create",
+                    sandbox_id=str(sandbox.sandbox_id),
+                    max_attempts=self._max_attempts,
+                    backoff_seconds=self._retry_backoff_seconds,
+                )
+            )
         except BaseException:
             logger.exception(
                 "sandbox cleanup failed after creation cancellation sandbox_id=%s",
@@ -152,11 +232,23 @@ class E2BSandboxBackend:
         sandbox: Any,
         *,
         command_timeout_seconds: float,
+        max_attempts: int = 3,
+        retry_backoff_seconds: float = 0.5,
+        control_request_timeout_seconds: float = 2.0,
     ) -> None:
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
+        if retry_backoff_seconds < 0:
+            raise ValueError("retry_backoff_seconds must be non-negative")
+        if control_request_timeout_seconds <= 0:
+            raise ValueError("control_request_timeout_seconds must be positive")
         self._sandbox = sandbox
         self._command_timeout_seconds = command_timeout_seconds
+        self._max_attempts = max_attempts
+        self._retry_backoff_seconds = retry_backoff_seconds
+        self._control_request_timeout_seconds = control_request_timeout_seconds
         self._state = E2BSandboxState.RUNNING
         self._close_started = False
         self._lifecycle_lock = asyncio.Lock()
@@ -203,7 +295,10 @@ class E2BSandboxBackend:
         async with self._active_operation():
             started = time.monotonic()
             try:
-                await self._sandbox.files.write(path, content, user=E2B_USER)
+                await self._request_with_retry(
+                    "write_file",
+                    lambda: self._sandbox.files.write(path, content, user=E2B_USER),
+                )
             except Exception as exc:
                 raise SandboxError(f"E2B could not write sandbox file: {path}") from exc
             finally:
@@ -213,7 +308,10 @@ class E2BSandboxBackend:
         async with self._active_operation():
             started = time.monotonic()
             try:
-                content = await self._sandbox.files.read(path, format="bytes", user=E2B_USER)
+                content = await self._request_with_retry(
+                    "read_file",
+                    lambda: self._sandbox.files.read(path, format="bytes", user=E2B_USER),
+                )
             except Exception as exc:
                 raise SandboxError(f"E2B could not read sandbox file: {path}") from exc
             finally:
@@ -319,7 +417,13 @@ class E2BSandboxBackend:
                 self._state = E2BSandboxState.PAUSING
                 started = time.monotonic()
                 try:
-                    await self._sandbox.pause(keep_memory=True)
+                    await self._request_with_retry(
+                        "pause",
+                        lambda: self._sandbox.pause(
+                            keep_memory=True,
+                            request_timeout=self._control_request_timeout_seconds,
+                        ),
+                    )
                 except asyncio.CancelledError:
                     self._state = E2BSandboxState.RUNNING
                     raise
@@ -350,7 +454,10 @@ class E2BSandboxBackend:
         started = time.monotonic()
         try:
             # This filesystem request exercises E2B auto-resume without an explicit connect call.
-            await self._sandbox.files.exists(E2B_WORKSPACE, user=E2B_USER)
+            await self._request_with_retry(
+                "resume",
+                lambda: self._sandbox.files.exists(E2B_WORKSPACE, user=E2B_USER),
+            )
         except Exception as exc:
             self._state = E2BSandboxState.PAUSED
             raise SandboxError(f"E2B could not resume sandbox {self.sandbox_id}.") from exc
@@ -379,7 +486,10 @@ class E2BSandboxBackend:
         self._state = E2BSandboxState.CLOSING
         started = time.monotonic()
         try:
-            await self._sandbox.kill()
+            await self._request_with_retry(
+                "kill",
+                lambda: self._sandbox.kill(request_timeout=self._control_request_timeout_seconds),
+            )
         except SandboxNotFoundException:
             pass
         except Exception:
@@ -408,6 +518,19 @@ class E2BSandboxBackend:
             now - self._created_at,
         )
         return True
+
+    async def _request_with_retry(
+        self,
+        operation_name: str,
+        operation: Callable[[], Awaitable[RequestResult]],
+    ) -> RequestResult:
+        return await _retry_e2b_request(
+            operation,
+            operation_name=operation_name,
+            sandbox_id=self.sandbox_id,
+            max_attempts=self._max_attempts,
+            backoff_seconds=self._retry_backoff_seconds,
+        )
 
     def _cancel_pending_pause(self) -> None:
         if self._state is E2BSandboxState.RUNNING:

@@ -20,14 +20,16 @@
 # This test is mostly AI generated.
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from e2b.exceptions import TimeoutException
+from e2b.exceptions import SandboxException, TimeoutException
 from e2b.sandbox.commands.command_handle import CommandExitException
 
 from nurse_scheduling.ai.sandbox import SandboxError
+from nurse_scheduling.ai.sandbox import e2b as e2b_module
 from nurse_scheduling.ai.sandbox.e2b import (
     COMMAND_TIMEOUT_EXIT_CODE,
     E2BSandboxBackend,
@@ -56,6 +58,7 @@ def make_backend(sandbox: FakeE2BSandbox) -> E2BSandboxBackend:
     return E2BSandboxBackend(
         sandbox,
         command_timeout_seconds=3,
+        retry_backoff_seconds=0,
     )
 
 
@@ -100,7 +103,11 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
 
 
 def test_factory_redacts_provider_creation_failures():
+    attempts = 0
+
     async def create_sandbox(**_kwargs):
+        nonlocal attempts
+        attempts += 1
         raise RuntimeError("request contained secret-key")
 
     async def exercise() -> None:
@@ -116,6 +123,7 @@ def test_factory_redacts_provider_creation_failures():
         assert "secret-key" not in str(raised.value)
 
     asyncio.run(exercise())
+    assert attempts == 1
 
 
 def test_factory_cancellation_kills_a_sandbox_created_by_the_in_flight_request():
@@ -145,7 +153,7 @@ def test_factory_cancellation_kills_a_sandbox_created_by_the_in_flight_request()
         return sandbox
 
     sandbox = asyncio.run(exercise())
-    sandbox.kill.assert_awaited_once()
+    sandbox.kill.assert_awaited_once_with(request_timeout=2)
 
 
 def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
@@ -166,6 +174,111 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
     assert result.exit_code == 0
 
 
+def test_retries_a_replay_safe_file_request_with_logged_backoff(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    delays: list[float] = []
+
+    async def record_delay(delay: float) -> None:
+        delays.append(delay)
+
+    async def exercise() -> FakeE2BSandbox:
+        sandbox = FakeE2BSandbox()
+        sandbox.files.write.side_effect = [
+            SandboxException("500: temporary failure"),
+            SandboxException("500: temporary failure"),
+            None,
+        ]
+        e2b_backend = E2BSandboxBackend(
+            sandbox,
+            command_timeout_seconds=3,
+            retry_backoff_seconds=0.25,
+        )
+        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.close()
+        return sandbox
+
+    caplog.set_level(logging.WARNING, logger="nurse_scheduling.ai.sandbox.e2b")
+    monkeypatch.setattr(e2b_module.asyncio, "sleep", record_delay)
+    sandbox = asyncio.run(exercise())
+
+    assert sandbox.files.write.await_count == 3
+    assert delays == [0.25, 0.5]
+    assert "operation=write_file" in caplog.text
+    assert "attempt=1 max_attempts=3" in caplog.text
+    assert "error_type=SandboxException" in caplog.text
+    assert "temporary failure" not in caplog.text
+
+
+def test_retries_pause_before_marking_the_sandbox_paused(caplog: pytest.LogCaptureFixture):
+    async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
+        sandbox = FakeE2BSandbox()
+        sandbox.pause.side_effect = [SandboxException("500: temporary failure"), True]
+        e2b_backend = make_backend(sandbox)
+        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
+        await e2b_backend.close()
+        return sandbox, e2b_backend
+
+    caplog.set_level(logging.WARNING, logger="nurse_scheduling.ai.sandbox.e2b")
+    sandbox, backend = asyncio.run(exercise())
+
+    assert sandbox.pause.await_count == 2
+    assert backend.lifecycle_metrics.pause_count == 1
+    assert "operation=pause" in caplog.text
+
+
+def test_retries_auto_resume_before_the_next_operation(caplog: pytest.LogCaptureFixture):
+    async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
+        sandbox = FakeE2BSandbox()
+        e2b_backend = make_backend(sandbox)
+        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
+        sandbox.files.exists.side_effect = [SandboxException("500: temporary failure"), True]
+        await e2b_backend.read_file("/workspace/schedule.yaml")
+        await e2b_backend.close()
+        return sandbox, e2b_backend
+
+    caplog.set_level(logging.WARNING, logger="nurse_scheduling.ai.sandbox.e2b")
+    sandbox, backend = asyncio.run(exercise())
+
+    assert sandbox.files.exists.await_count == 2
+    assert backend.lifecycle_metrics.resume_count == 1
+    assert "operation=resume" in caplog.text
+
+
+def test_retries_idempotent_sandbox_destruction(caplog: pytest.LogCaptureFixture):
+    async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
+        sandbox = FakeE2BSandbox()
+        sandbox.kill.side_effect = [SandboxException("500: temporary failure"), True]
+        e2b_backend = make_backend(sandbox)
+        await e2b_backend.close()
+        return sandbox, e2b_backend
+
+    caplog.set_level(logging.WARNING, logger="nurse_scheduling.ai.sandbox.e2b")
+    sandbox, backend = asyncio.run(exercise())
+
+    assert sandbox.kill.await_count == 2
+    assert backend.lifecycle_state is E2BSandboxState.CLOSED
+    assert "operation=kill" in caplog.text
+
+
+def test_does_not_retry_an_ambiguous_command_failure():
+    async def exercise() -> FakeE2BSandbox:
+        sandbox = FakeE2BSandbox()
+        sandbox.commands.run.side_effect = SandboxException("500: unknown command outcome")
+        e2b_backend = make_backend(sandbox)
+        with pytest.raises(SandboxError, match="could not run"):
+            await e2b_backend.run("python edit.py")
+        await e2b_backend.close()
+        return sandbox
+
+    sandbox = asyncio.run(exercise())
+
+    sandbox.commands.run.assert_awaited_once()
+
+
 def test_backend_explicitly_pauses_with_warm_memory_after_an_operation():
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
         sandbox = FakeE2BSandbox()
@@ -176,7 +289,7 @@ def test_backend_explicitly_pauses_with_warm_memory_after_an_operation():
         return sandbox, e2b_backend
 
     sandbox, e2b_backend = asyncio.run(exercise())
-    sandbox.pause.assert_awaited_once_with(keep_memory=True)
+    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=2)
     sandbox.connect.assert_not_awaited()
     assert e2b_backend.lifecycle_metrics.pause_count == 1
     assert e2b_backend.lifecycle_metrics.suspended_seconds > 0
@@ -193,7 +306,7 @@ def test_immediate_activity_cancels_a_pending_pause():
         return sandbox, e2b_backend
 
     sandbox, e2b_backend = asyncio.run(exercise())
-    sandbox.pause.assert_awaited_once_with(keep_memory=True)
+    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=2)
     assert e2b_backend.lifecycle_metrics.pause_count == 1
 
 
@@ -249,7 +362,7 @@ def test_command_timeout_returns_a_failure_and_destroys_the_sandbox():
     assert result.exit_code == COMMAND_TIMEOUT_EXIT_CODE
     assert result.timed_out
     assert result.stderr == ""
-    sandbox.kill.assert_awaited_once()
+    sandbox.kill.assert_awaited_once_with(request_timeout=2)
     with pytest.raises(SandboxError, match="is closed"):
         asyncio.run(backend.run("echo late"))
 
@@ -265,7 +378,7 @@ def test_close_is_idempotent():
         return sandbox
 
     sandbox = asyncio.run(exercise())
-    sandbox.kill.assert_awaited_once()
+    sandbox.kill.assert_awaited_once_with(request_timeout=2)
     sandbox.pause.assert_not_awaited()
 
 
@@ -293,7 +406,7 @@ def test_close_waits_for_a_running_operation_before_destroying():
         return sandbox, e2b_backend
 
     sandbox, e2b_backend = asyncio.run(exercise())
-    sandbox.kill.assert_awaited_once()
+    sandbox.kill.assert_awaited_once_with(request_timeout=2)
     assert e2b_backend.lifecycle_state is E2BSandboxState.CLOSED
 
 
@@ -303,8 +416,9 @@ def test_close_waits_for_an_in_progress_pause_then_kills():
         release = asyncio.Event()
         sandbox = FakeE2BSandbox()
 
-        async def pause(*, keep_memory: bool):
+        async def pause(*, keep_memory: bool, request_timeout: float):
             assert keep_memory
+            assert request_timeout == 2
             entered.set()
             await release.wait()
 
@@ -321,8 +435,8 @@ def test_close_waits_for_an_in_progress_pause_then_kills():
         return sandbox, e2b_backend
 
     sandbox, e2b_backend = asyncio.run(exercise())
-    sandbox.pause.assert_awaited_once_with(keep_memory=True)
-    sandbox.kill.assert_awaited_once()
+    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=2)
+    sandbox.kill.assert_awaited_once_with(request_timeout=2)
     assert e2b_backend.lifecycle_state is E2BSandboxState.CLOSED
 
 
@@ -357,5 +471,5 @@ def test_close_waits_for_an_in_progress_auto_resume_then_destroys():
     sandbox, e2b_backend = asyncio.run(exercise())
     sandbox.files.exists.assert_awaited_once()
     sandbox.connect.assert_not_awaited()
-    sandbox.kill.assert_awaited_once()
+    sandbox.kill.assert_awaited_once_with(request_timeout=2)
     assert e2b_backend.lifecycle_state is E2BSandboxState.CLOSED
