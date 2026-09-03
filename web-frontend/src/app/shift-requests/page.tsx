@@ -1242,10 +1242,11 @@ export default function ShiftRequestsPage() {
     }
   };
 
-  const getHistoryValue = (history: string[], columnIndex: number): string => {
-    const offset = historyColumnsCount - history.length;  // Note that we always have one extra column for the history
+  const getHistoryValue = (history: string[] | undefined, columnIndex: number): string => {
+    const h = history ?? [];
+    const offset = historyColumnsCount - h.length;  // Note that we always have one extra column for the history
     if (columnIndex < offset) return '';
-    return history[columnIndex - offset];
+    return h[columnIndex - offset];
   };
 
   const openHistoryEditor = (personId: string, historyIndex: number) => {
@@ -1779,8 +1780,8 @@ export default function ShiftRequestsPage() {
                           );
                         }
 
-                        const historyValue = getHistoryValue(person!.history!, index);
-                        const offset = historyColumnsCount - person!.history!.length;
+                        const historyValue = getHistoryValue(person!.history, index);
+                        const offset = historyColumnsCount - (person!.history?.length ?? 0);
 
                         // Only show one extra clickable cell, others are empty non-clickable
                         const isClickable = index >= offset - 1;
@@ -2056,7 +2057,7 @@ export default function ShiftRequestsPage() {
                     console.error(`Person ${historyEditState.personId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
                     return '';
                   }
-                  return getHistoryValue(person.history!, historyEditState.historyIndex);
+                  return getHistoryValue(person.history, historyEditState.historyIndex);
                 })()}
                 onChange={(e) => handleSaveHistory(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
