@@ -129,7 +129,7 @@ function IdColumn({
         error={error}
       />
       <InlineEdit
-        value={item.description}
+        value={item.description ?? ''}
         isEditing={mode === Mode.INLINE_EDITING && inlineEditingId === item.id && inlineEditingField === 'description'}
         onSave={(value) => onInlineSave(item.id, 'description', isItem, value)}
         onCancel={onInlineCancel}
