@@ -193,6 +193,14 @@ def test_export_reference_includes_common_fields_and_nested_condition_shape():
     assert "weightRange" in reference
 
 
+def test_export_column_guidance_preserves_day_of_month_selector():
+    topic = SCHEMA_TOPICS["export.formatting.column"]
+
+    assert "day-of-month request" in " ".join(topic.rules)
+    assert "quoted two-digit selector `01`" in " ".join(topic.rules)
+    assert "dates: ['01']" in (topic.example or "")
+
+
 def test_every_concrete_yaml_pydantic_model_is_mapped_to_reference_topics():
     yaml_models = {
         model

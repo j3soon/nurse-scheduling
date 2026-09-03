@@ -1147,6 +1147,9 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "Combine a small edit with its checks" in system_prompt
     assert "trusted validation status" in system_prompt
     assert "explicit user approval" in system_prompt
+    assert "say it does not exist and make no change" in system_prompt
+    assert "cannot run the scheduling optimizer" in system_prompt
+    assert "do not probe installed programs" in system_prompt
     summary = system_prompt.split("Current schedule summary:\n")[1]
     assert len(summary) < len(schedule) / 2
 

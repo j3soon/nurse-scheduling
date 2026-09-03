@@ -496,10 +496,16 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     "export.formatting.column": ScheduleSchemaTopic(
         "Format spreadsheet columns for selected dates.",
         fields=("required `type`: column", "required `dates`: flat list of date or group IDs", "optional colors"),
+        rules=(
+            (
+                "For a day-of-month request such as 'the 1st', use the quoted two-digit selector `01`. Do not replace "
+                "it with a full date unless the user supplied that full-date selector."
+            ),
+        ),
         example="""export:
   formatting:
     - type: column
-      dates: [FIRST]
+      dates: ['01']
       fontColor: '#ff0000'""",
         related=("export.formatting",),
     ),
