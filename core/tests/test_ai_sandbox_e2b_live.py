@@ -26,8 +26,12 @@ import pytest
 from e2b import AsyncSandbox
 from e2b.exceptions import SandboxNotFoundException
 
+from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
+from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.sandbox import managed_sandbox
 from nurse_scheduling.ai.sandbox.e2b import E2BSandboxBackend, E2BSandboxFactory, E2BSandboxState
+from nurse_scheduling.ai.sandbox_tools import SandboxPiTools
 
 E2B_API_KEY = os.getenv("E2B_API_KEY", "").strip()
 RUN_LIVE = os.getenv("RUN_E2B_INTEGRATION", "") == "1"
@@ -70,6 +74,33 @@ def test_prebuilt_e2b_template_supports_the_raw_backend_lifecycle():
                 "2:  - id: P1\nP1\n# Core schema\n\nPath: people.items\nPeople available for scheduling.\n"
             )
             assert await sandbox.read_file("/workspace/schedule.yaml") == b"people:\n  - id: P1\n"
+
+    asyncio.run(exercise())
+
+
+def test_prebuilt_e2b_template_supports_the_selected_pi_tools():
+    async def exercise() -> None:
+        factory = E2BSandboxFactory(
+            api_key=E2B_API_KEY,
+            template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
+            turn_timeout_seconds=30,
+            command_timeout_seconds=5,
+        )
+        async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
+            tools = SandboxPiTools(sandbox, 5)
+            write = await tools.execute(
+                WRITE_TOOL,
+                '{"path":"scratch/note.txt","content":"one\\ntwo\\nthree"}',
+            )
+            read = await tools.execute(READ_TOOL, '{"path":"scratch/note.txt","offset":2,"limit":1}')
+            bash = await tools.execute(BASH_TOOL, '{"command":"wc -l scratch/note.txt"}')
+
+            assert write.ok
+            assert write.text == "Successfully wrote to scratch/note.txt"
+            assert read.ok
+            assert read.text == "two\n\n[1 more lines in file. Use offset=3 to continue.]"
+            assert bash.ok
+            assert bash.text == "2 scratch/note.txt\n"
 
     asyncio.run(exercise())
 

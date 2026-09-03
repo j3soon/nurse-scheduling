@@ -25,10 +25,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from e2b.exceptions import SandboxException, TimeoutException
+from e2b.exceptions import FileNotFoundException, SandboxException, TimeoutException
 from e2b.sandbox.commands.command_handle import CommandExitException
 
-from nurse_scheduling.ai.sandbox import SandboxError
+from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
 from nurse_scheduling.ai.sandbox.e2b import (
     COMMAND_TIMEOUT_EXIT_CODE,
@@ -172,6 +172,19 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
     sandbox.commands.run.assert_awaited_once_with("rg P1 schedule.yaml", user="user", cwd="/workspace", timeout=3)
     assert result.stdout == "ok\n"
     assert result.exit_code == 0
+
+
+def test_backend_distinguishes_a_missing_file_from_a_service_failure():
+    async def exercise() -> None:
+        sandbox = FakeE2BSandbox()
+        sandbox.files.read.side_effect = FileNotFoundException("missing")
+        e2b_backend = make_backend(sandbox)
+
+        with pytest.raises(SandboxFileNotFoundError, match="Sandbox file not found"):
+            await e2b_backend.read_file("/workspace/missing.txt")
+        await e2b_backend.close()
+
+    asyncio.run(exercise())
 
 
 def test_retries_a_replay_safe_file_request_with_logged_backoff(

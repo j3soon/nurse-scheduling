@@ -25,6 +25,7 @@ from collections.abc import Awaitable, Callable
 from .base import (
     CommandResult,
     SandboxError,
+    SandboxFileNotFoundError,
 )
 
 CommandHandler = Callable[[str, float | None, "FakeSandboxBackend"], CommandResult | Awaitable[CommandResult]]
@@ -62,7 +63,7 @@ class FakeSandboxBackend:
         try:
             content = self.files[path]
         except KeyError as exc:
-            raise SandboxError(f"Sandbox file not found: {path}") from exc
+            raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
         return content
 
     async def run(self, command: str, *, timeout_seconds: float | None = None) -> CommandResult:

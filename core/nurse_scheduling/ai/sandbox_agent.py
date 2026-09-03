@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from .agent import AgentEvent, AgentProposal, AgentToolOutcome, AgentToolUse, run_tool_agent
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
+from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import (
     SandboxBackend,
@@ -37,7 +38,7 @@ from .sandbox import (
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
-from .sandbox_bash import SandboxBashTool
+from .sandbox_tools import SandboxPiTools
 from .schema import SCHEMA_REFERENCE_GROUPS, render_schedule_reference
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
@@ -46,13 +47,14 @@ REFERENCE_SCHEMAS = {group: f"/reference/schema-{group}.md" for group in SCHEMA_
 
 SANDBOX_SYSTEM_PROMPT = """You are the experimental Nurse Scheduling assistant.
 The current schedule is `/workspace/schedule.yaml` in a temporary shell workspace. Inspect relevant content before
-answering questions about it or editing it. Your only tool is `bash`, which executes one foreground shell command from
-`/workspace`. Use focused `rg`, `sed`, `grep`, `diff`, and Python commands. When schema guidance is needed, read one
-task-sized document: `/reference/schema-core.md` for dates, people, and shift types, `/reference/schema-preferences.md`
-for preferences, or `/reference/schema-export.md` for exports. Related variants are grouped together to avoid repeated
-lookups. Python includes `ruamel.yaml`, not the PyYAML `yaml` module. Combine a small edit with its checks when that
-saves tool calls. Preserve existing fields and exact selectors that the user did not ask to change, even when a
-minimal reference example omits them.
+answering questions about it or editing it. Your tools are `read`, `bash`, and `write`. Use `read` to examine files
+instead of `cat` or `sed`. Use `write` only for new files or complete rewrites. It overwrites the whole target file.
+Use focused `bash` commands with `rg`, `grep`, `diff`, and Python for searches, checks, or precise edits. When schema
+guidance is needed, read one task-sized document: `/reference/schema-core.md` for dates, people, and shift types,
+`/reference/schema-preferences.md` for preferences, or `/reference/schema-export.md` for exports. Related variants are
+grouped together to avoid repeated lookups. Python includes `ruamel.yaml`, not the PyYAML `yaml` module. Combine a
+small edit with its checks when that saves tool calls. Preserve existing fields and exact selectors that the user did
+not ask to change, even when a minimal reference example omits them.
 
 Treat edit verbs literally. An update, rename, or removal applies only to an existing entity. If the exact entity
 does not exist, say it does not exist and make no change. Never create a replacement unless the user explicitly asks
@@ -193,7 +195,7 @@ async def run_sandbox_agent(
             ) as sandbox:
                 await hydrate_sandbox(sandbox, schedule_yaml)
 
-                bash_tool = SandboxBashTool(sandbox, limits.bash_command_timeout_seconds)
+                sandbox_tools = SandboxPiTools(sandbox, limits.bash_command_timeout_seconds)
                 candidate_tracker = _ScheduleCandidateTracker(
                     sandbox,
                     schedule_yaml,
@@ -204,7 +206,9 @@ async def run_sandbox_agent(
                 async def execute_command(name: str, arguments: str) -> AgentToolOutcome:
                     nonlocal pending_schedule_change
                     pending_schedule_change = None
-                    outcome = await bash_tool.execute(name, arguments)
+                    outcome = await sandbox_tools.execute(name, arguments)
+                    if name == READ_TOOL:
+                        return outcome
                     candidate_status = await candidate_tracker.review_if_changed()
                     if candidate_status is None:
                         return outcome
@@ -217,7 +221,7 @@ async def run_sandbox_agent(
                 async for event in run_tool_agent(
                     provider,
                     messages,
-                    bash_tool.definitions,
+                    sandbox_tools.definitions,
                     execute_command,
                 ):
                     yield event

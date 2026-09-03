@@ -27,6 +27,8 @@ import pytest
 
 from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolStart, AgentToolUse
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
+from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
@@ -114,7 +116,7 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert b"Path: export.formatting.cell" in backend.files[REFERENCE_SCHEMAS["export"]]
     assert b"Path: people.items" in backend.files[REFERENCE_SCHEMAS["core"]]
     assert backend.commands == [("edit", None)]
-    assert [tool["function"]["name"] for tool in provider.requests[0][1]] == [BASH_TOOL]
+    assert [tool["function"]["name"] for tool in provider.requests[0][1]] == [READ_TOOL, BASH_TOOL, WRITE_TOOL]
     assert isinstance(events[0], AgentToolStart)
     tool_use = next(event for event in events if isinstance(event, AgentToolUse))
     assert tool_use.ok
@@ -126,6 +128,58 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     proposal = next(event for event in events if isinstance(event, AgentProposal))
     assert "description: Head" in proposal.text
     assert "people.items[0].description" in proposal.diff
+
+
+def test_write_tool_rewrites_validates_and_proposes_the_schedule():
+    schedule = schedule_yaml()
+    changed = schedule.replace(
+        "  - id: P1\n    description: ''",
+        "  - id: P1\n    description: Head",
+        1,
+    )
+    write_call = ToolCallRequest(
+        (
+            ToolCall(
+                "call-1",
+                WRITE_TOOL,
+                json.dumps({"path": "schedule.yaml", "content": changed}),
+            ),
+        )
+    )
+    provider = ScriptedProvider([write_call], [TextDelta("I propose the description.")])
+    factory = FakeSandboxFactory()
+
+    events = _collect(provider, factory)
+
+    tool_use = next(event for event in events if isinstance(event, AgentToolUse))
+    assert tool_use.name == WRITE_TOOL
+    assert tool_use.ok
+    assert "passed trusted server-side validation" in tool_use.result
+    assert any(isinstance(event, AgentScheduleChange) for event in events)
+    assert any(isinstance(event, AgentProposal) for event in events)
+
+
+def test_read_tool_does_not_trigger_a_redundant_schedule_change_scan():
+    class CountingReadBackend(FakeSandboxBackend):
+        def __init__(self, sandbox_id: str) -> None:
+            super().__init__(sandbox_id)
+            self.read_paths: list[str] = []
+
+        async def read_file(self, path: str) -> bytes:
+            self.read_paths.append(path)
+            return await super().read_file(path)
+
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call-1", READ_TOOL, '{"path":"schedule.yaml"}'),))],
+        [TextDelta("Read it.")],
+    )
+    factory = FakeSandboxFactory(CountingReadBackend)
+
+    _collect(provider, factory)
+
+    backend = factory.created[0]
+    assert isinstance(backend, CountingReadBackend)
+    assert backend.read_paths.count(WORKSPACE_SCHEDULE) == 2
 
 
 def test_separate_agent_turns_get_fresh_isolated_sandboxes():

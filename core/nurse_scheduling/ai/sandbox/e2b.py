@@ -31,6 +31,7 @@ from typing import Any, TypeVar
 from e2b import AsyncSandbox
 from e2b.exceptions import (
     AuthenticationException,
+    FileNotFoundException,
     InvalidArgumentException,
     NotEnoughSpaceException,
     NotFoundException,
@@ -42,7 +43,7 @@ from e2b.exceptions import (
 from e2b.sandbox.commands.command_handle import CommandExitException
 
 from ..config import AiSettings
-from .base import CommandResult, SandboxError, SandboxLifecycleMetrics
+from .base import CommandResult, SandboxError, SandboxFileNotFoundError, SandboxLifecycleMetrics
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox.e2b")
 E2B_USER = "user"
@@ -312,6 +313,8 @@ class E2BSandboxBackend:
                     "read_file",
                     lambda: self._sandbox.files.read(path, format="bytes", user=E2B_USER),
                 )
+            except FileNotFoundException as exc:
+                raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
             except Exception as exc:
                 raise SandboxError(f"E2B could not read sandbox file: {path}") from exc
             finally:

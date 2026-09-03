@@ -38,6 +38,10 @@ class SandboxCleanupError(SandboxError):
     """A sandbox could not be destroyed within the cleanup boundary."""
 
 
+class SandboxFileNotFoundError(SandboxError):
+    """A requested path does not exist inside an otherwise healthy sandbox."""
+
+
 @dataclass(frozen=True)
 class CommandResult:
     """Provider-independent result from one foreground shell command."""

@@ -183,30 +183,36 @@ that after this explicit kill, E2B rejects resume with `SandboxNotFoundException
 
 ## Agent capabilities
 
-The model receives exactly one tool, `bash(command)`. It can use preinstalled
-Bash, Python with `ruamel.yaml`, ripgrep, sed, grep, and diff against
-`/workspace/schedule.yaml`. The application hydrates separate core, preference,
-and export schema documents under `/reference` for each turn. Each document
-groups related variants so the model can retrieve the context for one domain in
-one Bash call instead of making a sequence of fine-grained lookups.
+The model receives exactly three Pi-style tools: `read`, `bash`, and `write`.
+`read` provides bounded text-file inspection with offsets. `write` creates or
+overwrites one complete file. `bash` remains available for searches, checks,
+and precise edits using preinstalled Bash, Python with `ruamel.yaml`, ripgrep,
+grep, and diff. All relative paths resolve from `/workspace`. The application
+hydrates separate core, preference, and export schema documents under
+`/reference` for each turn. Each document groups related variants so the model
+can retrieve the context for one domain in one read instead of making a
+sequence of fine-grained lookups.
 
 This follows the minimalism philosophy of the [Pi coding agent](https://pi.dev/):
-prefer one general shell capability and discoverable CLI documentation over a
-growing set of model-specific tools. Nurse Scheduling retains stricter service
-boundaries than a local coding agent. The workspace is disposable, commands
-are bounded, secrets and canonical storage stay outside it, and a trusted
-application validates every detected change and the final candidate.
+prefer a small set of general file and shell capabilities with discoverable
+documentation over a growing set of domain-specific tools. Nurse Scheduling
+retains stricter service boundaries than a local coding agent. The workspace is
+disposable, tool output is bounded, secrets and canonical storage stay outside
+it, and a trusted application validates every possible schedule change and the
+final candidate.
 
-The model-tool loop has no count-based Bash-call limit. Per-command and
-complete agent-turn deadlines bound execution instead.
+The model-tool loop has no count-based tool-call limit. Per-command and complete
+agent-turn deadlines bound execution instead.
 
-The model-facing Bash schema, timeout validation, output formatting, and tail
-truncation are a Python port pinned to
-[Pi commit `e266507`](https://github.com/earendil-works/pi/blob/e266507b606b9552fa277252644054afd4384b11/packages/coding-agent/src/core/tools/bash.ts).
-The Nurse Scheduling adapter delegates execution to `SandboxBackend` and
-enforces the configured command-timeout ceiling. E2B returns completed stdout
-and stderr separately, so the adapter concatenates them and cannot reproduce
-Pi's live stream interleaving exactly.
+The model-facing tool schemas and text behavior are Python ports pinned to Pi
+commit [`e266507`](https://github.com/earendil-works/pi/tree/e266507b606b9552fa277252644054afd4384b11/packages/coding-agent/src/core/tools).
+Pi's image-read result is intentionally omitted because this service's tool
+result channel is text-only. Image attachments continue through the existing
+provider attachment path. The Nurse Scheduling adapter delegates file and
+command operations to `SandboxBackend` and enforces the configured command
+timeout ceiling. E2B returns completed stdout and stderr separately, so the
+adapter concatenates them and cannot reproduce Pi's live stream interleaving
+exactly.
 
 ## Proposal lifecycle
 
@@ -439,11 +445,11 @@ ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
   tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
   tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py \
-  tests/test_ai_sandbox_bash.py
+  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py
 pytest -q tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
   tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py \
-  tests/test_ai_sandbox_bash.py
+  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py
 
 cd /app/web-frontend
 bun run test -- \

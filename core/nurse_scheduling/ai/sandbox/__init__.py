@@ -25,6 +25,7 @@ from .base import (
     SandboxCleanupError,
     SandboxError,
     SandboxFactory,
+    SandboxFileNotFoundError,
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "SandboxCleanupError",
     "SandboxError",
     "SandboxFactory",
+    "SandboxFileNotFoundError",
     "SandboxLifecycleMetrics",
     "managed_sandbox",
 ]
