@@ -25,6 +25,10 @@ from pathlib import Path
 
 import pytest
 
+from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.edit import EDIT_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
+from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.schedule_context import describe_schedule
 from nurse_scheduling.loader import _load_yaml
 
@@ -258,6 +262,67 @@ def test_answer_values_come_from_the_fixture(tmp_path: Path):
     assert not failing.passed
 
 
+def test_optional_tool_usage_grades_required_forbidden_and_bounded_calls(tmp_path: Path):
+    case = _case(
+        expect_proposal=False,
+        tool_usage={
+            "required": ["edit"],
+            "forbidden": ["write"],
+            "max_total": 2,
+            "max_per_tool": {"edit": 1},
+        },
+    )
+    loaded = load_cases(_write(tmp_path, case))[0]
+    passing = RunOutcome(
+        activity=[
+            {"kind": "tool", "name": "read", "ok": True},
+            {"kind": "tool", "name": "edit", "ok": True},
+        ]
+    )
+    failing = RunOutcome(
+        activity=[
+            {"kind": "tool", "name": "edit", "ok": False},
+            {"kind": "tool", "name": "edit", "ok": True},
+            {"kind": "tool", "name": "write", "ok": True},
+        ]
+    )
+
+    assert grade(loaded, passing).passed
+    result = grade(loaded, failing)
+    assert not result.passed
+    descriptions = {check.description: check for check in result.checks}
+    assert descriptions["does not use write tool"].detail == "used 1 time(s)"
+    assert descriptions["uses at most 2 tool call(s)"].detail == "used 3"
+    assert descriptions["uses edit at most 1 time(s)"].detail == "used 2"
+
+
+def test_a_failed_required_tool_does_not_count_as_successful_use(tmp_path: Path):
+    case = _case(expect_proposal=False, tool_usage={"required": ["read"]})
+    loaded = load_cases(_write(tmp_path, case))[0]
+
+    result = grade(loaded, RunOutcome(activity=[{"kind": "tool", "name": "read", "ok": False}]))
+
+    assert not result.passed
+    assert result.failures()[0].description == "uses successful read tool"
+
+
+@pytest.mark.parametrize(
+    ("tool_usage", "message"),
+    [
+        ("read", "must be an object"),
+        ({"unknown": []}, "unknown fields"),
+        ({"required": "read"}, "must be a list"),
+        ({"required": ["read", "read"]}, "repeats a tool name"),
+        ({"required": ["read"], "forbidden": ["read"]}, "requires and forbids"),
+        ({"max_total": -1}, "must be a non-negative integer"),
+        ({"max_per_tool": {"read": True}}, "must map tool names"),
+    ],
+)
+def test_invalid_tool_usage_is_rejected(tmp_path: Path, tool_usage: object, message: str):
+    with pytest.raises(EvalCaseError, match=message):
+        load_cases(_write(tmp_path, _case(expect_proposal=False, tool_usage=tool_usage)))
+
+
 @pytest.mark.parametrize(
     ("entry", "message"),
     [
@@ -365,10 +430,19 @@ def test_the_dataset_covers_every_editable_section():
         assert section in covered, f"{section} is not covered"
 
 
+def test_the_dataset_has_a_focused_case_for_every_exposed_tool():
+    required_tools = {
+        name for case in load_cases(CASES_PATH) if case.tool_usage is not None for name in case.tool_usage.required
+    }
+
+    assert required_tools == {READ_TOOL, BASH_TOOL, EDIT_TOOL, WRITE_TOOL}
+
+
 def test_every_case_sits_in_a_category_directory():
     cases = load_cases(CASES_PATH)
 
     assert {case.category for case in cases} == {
+        "00-tools",
         "00-summary",
         "01-reading",
         "02-basic-edit",

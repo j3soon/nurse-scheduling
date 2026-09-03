@@ -262,7 +262,7 @@ async def run_case(
     elapsed = time.monotonic() - started
     initial = _load_yaml(text.encode("utf-8"))
     proposed = _load_yaml(proposal_event.text.encode("utf-8")) if proposal_event else None
-    outcome = RunOutcome(answer="".join(answer), proposed=proposed, initial=initial)
+    outcome = RunOutcome(answer="".join(answer), proposed=proposed, initial=initial, activity=events)
     result = grade(case, outcome, computed_values(initial))
     return CaseRun(
         case_id=case.id,

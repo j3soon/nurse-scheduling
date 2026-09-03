@@ -28,6 +28,7 @@ import pytest
 
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderAttempt,
@@ -42,7 +43,7 @@ from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnMetrics
 
-from .ai_eval.grading import load_cases
+from .ai_eval.grading import EvalCase, ToolUsageExpectation, load_cases
 from .ai_eval.runner import CASES, CaseRun, default_output_dir, run_all, run_case, select, summarize, write_report
 
 CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
@@ -171,6 +172,25 @@ def test_an_edit_case_records_the_tools_and_the_proposal():
     assert run.tools == [BASH_TOOL]
     assert run.proposed
     assert run.turns == 2
+
+
+def test_run_case_passes_tool_activity_to_focused_trajectory_grading():
+    case = EvalCase(
+        id="focused-edit",
+        fixture="new-schedule",
+        question="Try an edit.",
+        expect_proposal=False,
+        tool_usage=ToolUsageExpectation(required=(EDIT_TOOL,)),
+    )
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call_0", EDIT_TOOL, '{"path":"missing","edits":[]}'),))],
+        [TextDelta("Done.")],
+    )
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory()))
+
+    assert not run.passed
+    assert "not used successfully" in "; ".join(run.failures)
 
 
 def test_eval_uses_the_sandbox_runner_and_closes_its_backend():

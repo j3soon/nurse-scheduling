@@ -1,0 +1,23 @@
+{
+  "id": "tool-bash-count-weight",
+  "fixture": "ward87",
+  "question": "Use exactly one bash tool call to run `grep -cE '^[[:space:]]*weight: 11000000000[[:space:]]*$' /workspace/schedule.yaml`. Report its stdout count without running any other command or modifying the schedule.",
+  "expect_proposal": false,
+  "answer_contains": [
+    "89"
+  ],
+  "tool_usage": {
+    "required": [
+      "bash"
+    ],
+    "forbidden": [
+      "read",
+      "edit",
+      "write"
+    ],
+    "max_total": 1,
+    "max_per_tool": {
+      "bash": 1
+    }
+  }
+}

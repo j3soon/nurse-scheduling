@@ -1,0 +1,80 @@
+{
+  "id": "tool-write-minimal-schedule",
+  "fixture": "new-schedule",
+  "question": "Rewrite the entire schedule as a fresh minimal schedule for the single calendar day March 1, 2026. Both startDate and endDate must be 2026-03-01. Set its description to 'Minimal March schedule'. Keep exactly one person, Alex, described as 'Only nurse', with empty history. Keep exactly one shift type, D, described as 'Day'. Remove all date groups, people groups, and shift-type groups, and keep only the required 'at most one shift per day' preference. Preserve the existing apiVersion and appVersion. Use write once for this complete-file rewrite.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "description",
+      "equals": "Minimal March schedule"
+    },
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "dates.groups",
+      "count": 0
+    },
+    {
+      "path": "people.items",
+      "count": 1
+    },
+    {
+      "path": "people.items[?id=Alex].description",
+      "equals": "Only nurse"
+    },
+    {
+      "path": "people.items[?id=Alex].history",
+      "count": 0
+    },
+    {
+      "path": "people.groups",
+      "count": 0
+    },
+    {
+      "path": "shiftTypes.items",
+      "count": 1
+    },
+    {
+      "path": "shiftTypes.items[?id=D].description",
+      "equals": "Day"
+    },
+    {
+      "path": "shiftTypes.groups",
+      "count": 0
+    },
+    {
+      "path": "preferences",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=at most one shift per day]",
+      "count": 1
+    }
+  ],
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences"
+  ],
+  "tool_usage": {
+    "required": [
+      "write"
+    ],
+    "forbidden": [
+      "bash",
+      "edit"
+    ],
+    "max_total": 4,
+    "max_per_tool": {
+      "write": 1
+    }
+  }
+}

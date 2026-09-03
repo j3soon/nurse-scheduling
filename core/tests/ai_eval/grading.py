@@ -27,10 +27,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Cases are graded on the schedule a run produced, not on the tool calls it made,
-# so a correct answer reached a different way still passes.
+# Most cases grade only the produced schedule or answer. Focused capability cases
+# may also assert a small, intentional tool trajectory.
 _STEP = re.compile(r"\.?([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]|\[\?([^=\]]+)=([^\]]*)\]|(\[\])")
 _ASSERTION_KINDS = ("equals", "one_of", "contains", "count", "delta", "added", "removed", "absent", "present")
+_TOOL_USAGE_KEYS = {"required", "forbidden", "max_total", "max_per_tool"}
 
 
 class EvalCaseError(ValueError):
@@ -52,6 +53,16 @@ class Assertion:
 
 
 @dataclass(frozen=True)
+class ToolUsageExpectation:
+    """Optional trajectory checks for cases designed to exercise model tools."""
+
+    required: tuple[str, ...] = ()
+    forbidden: tuple[str, ...] = ()
+    max_total: int | None = None
+    max_per_tool: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
 class EvalCase:
     """One question with verifiable criteria for the schedule it should produce."""
 
@@ -63,6 +74,7 @@ class EvalCase:
     assertions: tuple[Assertion, ...] = ()
     changes: tuple[str, ...] = ()
     answer_contains: tuple[str | tuple[str, ...], ...] = ()
+    tool_usage: ToolUsageExpectation | None = None
     note: str = ""
 
 
@@ -149,8 +161,45 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
         ),
+        tool_usage=_build_tool_usage(entry.get("tool_usage"), source),
         note=str(entry.get("note", "")),
     )
+
+
+def _build_tool_usage(raw: object, source: str) -> ToolUsageExpectation | None:
+    """Validate optional tool-trajectory criteria without affecting outcome-only cases."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise EvalCaseError(f"{source} `tool_usage` must be an object.")
+    unknown = set(raw) - _TOOL_USAGE_KEYS
+    if unknown:
+        raise EvalCaseError(f"{source} `tool_usage` has unknown fields: {', '.join(sorted(unknown))}.")
+
+    required = _tool_names(raw.get("required", []), source, "required")
+    forbidden = _tool_names(raw.get("forbidden", []), source, "forbidden")
+    overlap = sorted(set(required) & set(forbidden))
+    if overlap:
+        raise EvalCaseError(f"{source} requires and forbids the same tools: {', '.join(overlap)}.")
+
+    max_total = raw.get("max_total")
+    if max_total is not None and (isinstance(max_total, bool) or not isinstance(max_total, int) or max_total < 0):
+        raise EvalCaseError(f"{source} `tool_usage.max_total` must be a non-negative integer.")
+    raw_per_tool = raw.get("max_per_tool", {})
+    if not isinstance(raw_per_tool, dict) or not all(
+        isinstance(name, str) and name and not isinstance(limit, bool) and isinstance(limit, int) and limit >= 0
+        for name, limit in raw_per_tool.items()
+    ):
+        raise EvalCaseError(f"{source} `tool_usage.max_per_tool` must map tool names to non-negative integers.")
+    return ToolUsageExpectation(required, forbidden, max_total, tuple(sorted(raw_per_tool.items())))
+
+
+def _tool_names(raw: object, source: str, field_name: str) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not all(isinstance(name, str) and name for name in raw):
+        raise EvalCaseError(f"{source} `tool_usage.{field_name}` must be a list of tool names.")
+    if len(raw) != len(set(raw)):
+        raise EvalCaseError(f"{source} `tool_usage.{field_name}` repeats a tool name.")
+    return tuple(raw)
 
 
 def _build_assertion(raw: dict[str, Any], source: str) -> Assertion:
@@ -180,7 +229,54 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
         checks.append(_check_nothing_else_changed(outcome, case.changes))
     checks.extend(_check_answer(outcome.answer, expected, computed or {}) for expected in case.answer_contains)
+    if case.tool_usage is not None:
+        checks.extend(_check_tool_usage(outcome.activity, case.tool_usage))
     return CaseResult(case_id=case.id, checks=tuple(checks))
+
+
+def _check_tool_usage(
+    activity: Sequence[dict[str, Any]],
+    expected: ToolUsageExpectation,
+) -> list[CheckResult]:
+    """Grade completed tool calls while distinguishing successful required use."""
+    tool_events = [event for event in activity if event.get("kind") == "tool" and isinstance(event.get("name"), str)]
+    counts = Counter(event["name"] for event in tool_events)
+    successful = Counter(event["name"] for event in tool_events if event.get("ok") is True)
+    checks = [
+        CheckResult(
+            f"uses successful {name} tool",
+            successful[name] > 0,
+            "not used successfully" if successful[name] == 0 else "",
+        )
+        for name in expected.required
+    ]
+    checks.extend(
+        CheckResult(
+            f"does not use {name} tool",
+            counts[name] == 0,
+            f"used {counts[name]} time(s)" if counts[name] else "",
+        )
+        for name in expected.forbidden
+    )
+    if expected.max_total is not None:
+        within_total = len(tool_events) <= expected.max_total
+        checks.append(
+            CheckResult(
+                f"uses at most {expected.max_total} tool call(s)",
+                within_total,
+                "" if within_total else f"used {len(tool_events)}",
+            )
+        )
+    for name, limit in expected.max_per_tool:
+        within_limit = counts[name] <= limit
+        checks.append(
+            CheckResult(
+                f"uses {name} at most {limit} time(s)",
+                within_limit,
+                "" if within_limit else f"used {counts[name]}",
+            )
+        )
+    return checks
 
 
 def _check_assertion(outcome: RunOutcome, assertion: Assertion) -> CheckResult:
