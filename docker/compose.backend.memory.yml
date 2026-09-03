@@ -19,6 +19,10 @@ services:
     environment:
       <<: *sentry-environment
       JOB_BACKEND: memory
+      # cloudflared is a separate container, so Uvicorn's peer is a Compose-network address
+      # rather than the caller. Trusting private ranges lets it resolve the real client
+      # address from X-Forwarded-For, which error reports are attributed to.
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
       OPTIMIZE_SOLVERS: "${OPTIMIZE_SOLVERS:-ortools/cp-sat}"
       OPTIMIZE_DEFAULT_SOLVER: "${OPTIMIZE_DEFAULT_SOLVER:-ortools/cp-sat}"
       OPTIMIZE_MIN_TIMEOUT_SECONDS: "${OPTIMIZE_MIN_TIMEOUT_SECONDS:-1}"

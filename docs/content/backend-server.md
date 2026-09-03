@@ -299,6 +299,26 @@ A stale browser tab can produce `job_id_probe` after its job is deleted or
 expires, and a mistyped token produces `rejected_bearer_token`, so both are
 reported as warnings rather than errors.
 
+Every event carries a `client.address` tag holding the address its request
+connected from. Sentry's own attribution is left alone, and it infers the
+address from the leftmost `X-Forwarded-For` entry, which the caller supplies.
+Uvicorn resolves the address from the proxy chain it trusts instead, so a caller
+claiming a different one shows up as a disagreement between the tag and the
+reported address. A peer that is not an address, such as a Unix socket, is not
+tagged.
+
+The tag depends on `FORWARDED_ALLOW_IPS`, because `cloudflared` runs as a
+separate container and Uvicorn's peer is a Compose-network address rather than
+the caller. The Compose deployments set it to the private ranges the tunnel
+connects from. Narrow it when publishing the API port directly rather than
+through a tunnel.
+
+Cloudflare appends the connecting address to whatever `X-Forwarded-For` a caller
+sent, so the header arriving at the origin ends with the real address and may
+begin with a claimed one. Uvicorn reads it from right to left and takes the
+first entry outside the trusted ranges, which is why the tag holds the caller's
+real address while Sentry, reading the leftmost entry, reports the claimed one.
+
 ## Storage and Scaling
 
 | Backend | Intended use | Behavior |
@@ -356,6 +376,7 @@ All server settings are read once when the application is constructed.
 | `CLAIMED_PERFORMANCE_MEASURED_AT` | unset | Record the benchmark report time as an ISO 8601 date and time with a timezone. |
 | `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
 | `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty `API_AUTH_TOKEN` a startup failure. Set in the deployment images. |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Trust `X-Forwarded-For` from these peers, read by Uvicorn. The Compose deployments set the private ranges their tunnel connects from. |
 | `DISABLE_SENTRY` | unset | Disable error reporting for all Python services when set to a non-empty value. |
 | `SENTRY_DSN` | shared development project | Select the Python services' shared Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |
 | `SENTRY_ENVIRONMENT` | `development` | Set the Sentry environment for all Python services. The `app` tag separates backend, usage reporter, and diagnostic events. |

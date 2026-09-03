@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from nurse_scheduling.sentry import CLIENT_ADDRESS_TAG
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.auth import create_stream_token, describe_stream_token
 from nurse_scheduling.server.config import ServerSettings
@@ -40,6 +41,7 @@ FORGED_SIGNATURE = "f" * 64
 def captured(monkeypatch):
     """Collect Sentry messages, levels, and contexts instead of sending them."""
     events = []
+    tags = {}
 
     class FakeScope:
         def __init__(self):
@@ -76,15 +78,16 @@ def captured(monkeypatch):
         types.SimpleNamespace(
             # `create_app` initializes Sentry, which this fake accepts and discards.
             init=lambda **kwargs: None,
-            set_tag=lambda name, value: None,
+            # Every request records the address it connected from before routing.
+            set_tag=lambda name, value: tags.__setitem__(name, value),
             new_scope=new_scope,
             capture_message=capture_message,
         ),
     )
-    return events
+    return types.SimpleNamespace(events=events, tags=tags)
 
 
-def _client(*, auth_token=None) -> TestClient:
+def _client(*, auth_token=None, connected_from=("203.0.113.7", 40000)) -> TestClient:
     settings = ServerSettings(
         claim_poll_seconds=0.005,
         maintenance_interval_seconds=60,
@@ -92,14 +95,14 @@ def _client(*, auth_token=None) -> TestClient:
         auth_token=auth_token,
     )
     app = create_app(settings=settings, store=MemoryJobStore(), start_background=False)
-    return TestClient(app)
+    return TestClient(app, client=connected_from)
 
 
-def _signals(events) -> list[tuple[str, str]]:
+def _signals(captured) -> list[tuple[str, str]]:
     """Return the reported signal name and level of every suspicious-request event."""
     return [
         (event["scope"].contexts["suspicious_request"]["signal"], event["level"])
-        for event in events
+        for event in captured.events
         if "suspicious_request" in event["scope"].contexts
     ]
 
@@ -114,8 +117,8 @@ def test_missing_job_through_a_real_route_is_reported(captured):
 
     assert response.status_code == 404
     assert _signals(captured) == [("job_id_probe", "warning")]
-    assert captured[0]["scope"].contexts["suspicious_request"]["job_id"] == "issued_shape"
-    assert captured[0]["scope"].fingerprint == ["suspicious-request", "job_id_probe"]
+    assert captured.events[0]["scope"].contexts["suspicious_request"]["job_id"] == "issued_shape"
+    assert captured.events[0]["scope"].fingerprint == ["suspicious-request", "job_id_probe"]
 
 
 def test_missing_job_with_an_unissued_identifier_shape_is_reported(captured):
@@ -125,7 +128,7 @@ def test_missing_job_with_an_unissued_identifier_shape_is_reported(captured):
 
     assert response.status_code == 404
     assert _signals(captured) == [("job_id_probe", "warning")]
-    assert captured[0]["scope"].contexts["suspicious_request"]["job_id"] == "unissued_shape"
+    assert captured.events[0]["scope"].contexts["suspicious_request"]["job_id"] == "unissued_shape"
 
 
 def test_forged_stream_token_is_reported_as_an_error(captured):
@@ -137,7 +140,7 @@ def test_forged_stream_token_is_reported_as_an_error(captured):
     assert response.status_code == 401
     assert _signals(captured) == [("forged_stream_token", "error")]
     # Sentry scrubs a field whose name contains "token", so this one must not.
-    assert captured[0]["scope"].contexts["suspicious_request"]["stream_state"] == "live"
+    assert captured.events[0]["scope"].contexts["suspicious_request"]["stream_state"] == "live"
 
 
 def test_rejected_bearer_token_is_reported(captured):
@@ -147,7 +150,7 @@ def test_rejected_bearer_token_is_reported(captured):
 
     assert response.status_code == 401
     assert _signals(captured) == [("rejected_bearer_token", "warning")]
-    assert captured[0]["scope"].contexts["suspicious_request"]["bearer_presented"] is True
+    assert captured.events[0]["scope"].contexts["suspicious_request"]["bearer_presented"] is True
 
 
 def test_timeout_beyond_the_advertised_maximum_is_reported(captured):
@@ -171,7 +174,7 @@ def test_unmatched_route_is_not_reported(captured):
     response = client.get("/wp-admin/setup-config.php")
 
     assert response.status_code == 404
-    assert captured == []
+    assert captured.events == []
 
 
 def test_missing_credentials_are_not_reported(captured):
@@ -180,7 +183,7 @@ def test_missing_credentials_are_not_reported(captured):
     response = client.get("/optimize/options")
 
     assert response.status_code == 401
-    assert captured == []
+    assert captured.events == []
 
 
 def test_expired_stream_token_is_not_reported(captured):
@@ -195,7 +198,7 @@ def test_expired_stream_token_is_not_reported(captured):
     response = client.get(f"/optimize/{ISSUED_JOB_ID}/events?token={expired}")
 
     assert response.status_code == 401
-    assert captured == []
+    assert captured.events == []
 
 
 def test_accepted_request_within_the_advertised_range_is_not_reported(captured):
@@ -207,7 +210,7 @@ def test_accepted_request_within_the_advertised_range_is_not_reported(captured):
     )
 
     assert response.status_code == 202
-    assert captured == []
+    assert captured.events == []
 
 
 # Token description underpins the stream-token signal.
@@ -231,3 +234,26 @@ def test_describe_stream_token_reports_an_unexpired_token_as_live():
     live = create_stream_token(AUTH_TOKEN, ISSUED_JOB_ID, ttl_seconds=3600)
 
     assert describe_stream_token(live) == "live"
+
+
+# Address attribution: the connection address is recorded beside Sentry's own.
+
+
+def test_a_peer_that_is_not_an_address_is_left_to_sentry(captured):
+    """Recording a name Sentry cannot parse would tag every such event as invalid."""
+    client = _client(connected_from=("not-an-address", 50000))
+
+    response = client.get(f"/optimize/{ISSUED_JOB_ID}")
+
+    assert response.status_code == 404
+    assert _signals(captured) == [("job_id_probe", "warning")]
+    assert CLIENT_ADDRESS_TAG not in captured.tags
+
+
+def test_a_connection_address_is_recorded_on_every_request(captured):
+    client = _client(connected_from=("203.0.113.7", 40000))
+
+    client.get("/ready", headers={"X-Forwarded-For": "192.0.2.99"})
+
+    # Sentry's own attribution keeps the claimed address; this records the real one.
+    assert captured.tags[CLIENT_ADDRESS_TAG] == "203.0.113.7"

@@ -31,7 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ..sentry import capture_invalid_request, init_sentry
+from ..sentry import capture_invalid_request, init_sentry, tag_client_address
 from .api.optimize import events_router as optimize_events_router
 from .api.optimize import router as optimize_router
 from .auth import AUTH_SCHEME, create_auth_dependency, create_stream_auth_dependency
@@ -290,6 +290,12 @@ def create_app(
         if 400 <= exc.status_code < 500:
             capture_invalid_request(request, exc.status_code, exc.detail)
         return await http_exception_handler(request, exc)
+
+    @app.middleware("http")
+    async def tag_sentry_client_address(request: Request, call_next):
+        """Record the connection address on every request's events."""
+        tag_client_address(request)
+        return await call_next(request)
 
     app.add_middleware(
         CORSMiddleware,

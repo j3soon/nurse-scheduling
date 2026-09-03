@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import ipaddress
 import os
 import re
 import sys
@@ -78,6 +79,46 @@ def flush_sentry(timeout: float = 2.0) -> None:
     import sentry_sdk
 
     sentry_sdk.flush(timeout=timeout)
+
+
+def _connection_address(request: Request) -> str | None:
+    """Return the address a request connected from, or `None` when it is not one.
+
+    A peer is not always an address. A Unix socket has none, and a proxy chain can resolve
+    to a name, so reporting the value unchecked would attribute events to something Sentry
+    rejects as an address.
+    """
+    client = request.client
+    if client is None:
+        return None
+    try:
+        ipaddress.ip_address(client.host)
+    except ValueError:
+        return None
+    return client.host
+
+
+CLIENT_ADDRESS_TAG = "client.address"
+"""Tag naming the address a request connected from."""
+
+
+def tag_client_address(request: Request) -> None:
+    """Record the address a request connected from, alongside Sentry's own attribution.
+
+    Sentry infers a request's address from the leftmost `X-Forwarded-For` entry, which the
+    caller supplies. Uvicorn resolves the address from the proxy chain it trusts instead.
+    Recording that separately leaves Sentry's attribution untouched and makes a caller
+    claiming a different address visible as a disagreement between the two.
+    """
+    if not _should_enable_sentry():
+        return
+    address = _connection_address(request)
+    if address is None:
+        return
+
+    import sentry_sdk
+
+    sentry_sdk.set_tag(CLIENT_ADDRESS_TAG, address)
 
 
 def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> None:

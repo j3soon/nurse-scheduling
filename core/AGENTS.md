@@ -61,6 +61,10 @@ test paths when a narrower suite is known to be sufficient.
   a scanner cannot have. Missing routes and unauthenticated probes stay
   unreported. Add new signals to `classify_suspicious_request`, and never let a
   signal change the response a caller sees.
+- Record the address a request connected from as a tag rather than overriding
+  Sentry's own attribution, so a caller claiming another address stays visible.
+  `tag_client_address` does this for every request and depends on
+  `FORWARDED_ALLOW_IPS` naming the deployment's trusted proxies.
 
 ## Testing
 - Normal tests live under `tests/`.
