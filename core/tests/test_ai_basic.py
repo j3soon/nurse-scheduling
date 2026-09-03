@@ -1133,26 +1133,28 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     client.post(f"/sessions/{session_id}/messages", json={"message": "How many people?"})
 
     system_prompt = provider.calls[0][0]["content"]
-    assert "2 people, 2 shift types, 2 preferences" in system_prompt
-    assert "Group ids: people PEOPLE" in system_prompt
-    assert "Dates run from 2026-01-01 to 2026-01-02" in system_prompt
-    assert "Your tools are `read`, `bash`, and `write`" in system_prompt
-    assert "Use `read` to examine files" in system_prompt
-    assert "Use `write` only for new files or complete rewrites" in system_prompt
-    assert "It overwrites the whole target file" in system_prompt
-    assert "read one task-sized document" in system_prompt
-    assert "`/reference/schema-core.md`" in system_prompt
-    assert "`/reference/schema-preferences.md`" in system_prompt
-    assert "`/reference/schema-export.md`" in system_prompt
-    assert "not the PyYAML `yaml` module" in system_prompt
-    assert "Preserve existing fields" in system_prompt
-    assert "and exact selectors" in system_prompt
-    assert "small edit with its checks" in system_prompt
-    assert "trusted validation status" in system_prompt
-    assert "explicit user approval" in system_prompt
-    assert "say it does not exist and make no change" in system_prompt
-    assert "cannot run the scheduling optimizer" in system_prompt
-    assert "do not probe installed programs" in system_prompt
+    normalized_prompt = " ".join(system_prompt.split())
+    assert "2 people, 2 shift types, 2 preferences" in normalized_prompt
+    assert "Group ids: people PEOPLE" in normalized_prompt
+    assert "Dates run from 2026-01-01 to 2026-01-02" in normalized_prompt
+    assert "Your tools are `read`, `bash`, `edit`, and `write`" in normalized_prompt
+    assert "Use `read` to examine files" in normalized_prompt
+    assert "Use `edit` for precise changes with unique exact text" in normalized_prompt
+    assert "multiple disjoint replacements" in normalized_prompt
+    assert "Use `write` only for new files or complete rewrites" in normalized_prompt
+    assert "It overwrites the whole target file" in normalized_prompt
+    assert "read one task-sized document" in normalized_prompt
+    assert "`/reference/schema-core.md`" in normalized_prompt
+    assert "`/reference/schema-preferences.md`" in normalized_prompt
+    assert "`/reference/schema-export.md`" in normalized_prompt
+    assert "not the PyYAML `yaml` module" in normalized_prompt
+    assert "Preserve existing fields" in normalized_prompt
+    assert "exact selectors" in normalized_prompt
+    assert "trusted validation status" in normalized_prompt
+    assert "explicit user approval" in normalized_prompt
+    assert "say it does not exist and make no change" in normalized_prompt
+    assert "cannot run the scheduling optimizer" in normalized_prompt
+    assert "do not probe installed programs" in normalized_prompt
     summary = system_prompt.split("Current schedule summary:\n")[1]
     assert len(summary) < len(schedule) / 2
 

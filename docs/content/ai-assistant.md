@@ -183,15 +183,16 @@ that after this explicit kill, E2B rejects resume with `SandboxNotFoundException
 
 ## Agent capabilities
 
-The model receives exactly three Pi-style tools: `read`, `bash`, and `write`.
-`read` provides bounded text-file inspection with offsets. `write` creates or
-overwrites one complete file. `bash` remains available for searches, checks,
-and precise edits using preinstalled Bash, Python with `ruamel.yaml`, ripgrep,
-grep, and diff. All relative paths resolve from `/workspace`. The application
-hydrates separate core, preference, and export schema documents under
-`/reference` for each turn. Each document groups related variants so the model
-can retrieve the context for one domain in one read instead of making a
-sequence of fine-grained lookups.
+The model receives Pi's four default coding tools: `read`, `bash`, `edit`, and
+`write`. `read` provides bounded text-file inspection with offsets. `edit`
+applies one or more unique, non-overlapping exact-text replacements against the
+same original file snapshot. `write` creates or overwrites one complete file.
+`bash` remains available for searches, checks, and complex operations using
+preinstalled Bash, Python with `ruamel.yaml`, ripgrep, grep, and diff. All
+relative paths resolve from `/workspace`. The application hydrates separate
+core, preference, and export schema documents under `/reference` for each turn.
+Each document groups related variants so the model can retrieve the context for
+one domain in one read instead of making a sequence of fine-grained lookups.
 
 This follows the minimalism philosophy of the [Pi coding agent](https://pi.dev/):
 prefer a small set of general file and shell capabilities with discoverable
@@ -444,11 +445,11 @@ cd /app/core
 ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
   tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
-  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py \
+  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py \
   tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py
 pytest -q tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
-  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py \
+  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py \
   tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py
 
 cd /app/web-frontend

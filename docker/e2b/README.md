@@ -52,8 +52,8 @@ Most tests use the in-memory fake backend and need no E2B account:
 ```sh
 cd core
 pytest -q tests/test_ai_sandbox.py tests/test_ai_sandbox_agent.py \
-  tests/test_ai_pi_bash.py tests/test_ai_pi_read.py tests/test_ai_pi_write.py \
-  tests/test_ai_sandbox_tools.py \
+  tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py tests/test_ai_pi_read.py \
+  tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py \
   tests/test_ai_sandbox_e2b.py
 ```
 

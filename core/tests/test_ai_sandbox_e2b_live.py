@@ -27,6 +27,7 @@ from e2b import AsyncSandbox
 from e2b.exceptions import SandboxNotFoundException
 
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.sandbox import managed_sandbox
@@ -92,13 +93,19 @@ def test_prebuilt_e2b_template_supports_the_selected_pi_tools():
                 WRITE_TOOL,
                 '{"path":"scratch/note.txt","content":"one\\ntwo\\nthree"}',
             )
+            edit = await tools.execute(
+                EDIT_TOOL,
+                '{"path":"scratch/note.txt","edits":[{"oldText":"two","newText":"TWO"}]}',
+            )
             read = await tools.execute(READ_TOOL, '{"path":"scratch/note.txt","offset":2,"limit":1}')
             bash = await tools.execute(BASH_TOOL, '{"command":"wc -l scratch/note.txt"}')
 
             assert write.ok
             assert write.text == "Successfully wrote to scratch/note.txt"
+            assert edit.ok
+            assert edit.text == "Successfully replaced 1 block(s) in scratch/note.txt."
             assert read.ok
-            assert read.text == "two\n\n[1 more lines in file. Use offset=3 to continue.]"
+            assert read.text == "TWO\n\n[1 more lines in file. Use offset=3 to continue.]"
             assert bash.ok
             assert bash.text == "2 scratch/note.txt\n"
 

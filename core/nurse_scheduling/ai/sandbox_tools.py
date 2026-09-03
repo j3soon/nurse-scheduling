@@ -33,6 +33,16 @@ from .pi.bash import (
     prepare_bash_output,
     render_bash_result,
 )
+from .pi.edit import (
+    EDIT_TOOL,
+    EDIT_TOOL_DESCRIPTION,
+    EditApplyError,
+    EditArgumentError,
+    apply_edit,
+    edit_parameters,
+    parse_edit_input,
+    render_edit_result,
+)
 from .pi.read import (
     READ_TOOL,
     READ_TOOL_DESCRIPTION,
@@ -53,7 +63,7 @@ from .sandbox import SandboxBackend, SandboxFileNotFoundError
 
 FULL_OUTPUT_DIRECTORY = "/tmp"
 SANDBOX_WORKSPACE = "/workspace"
-TOOL_NAMES = (READ_TOOL, BASH_TOOL, WRITE_TOOL)
+TOOL_NAMES = (READ_TOOL, BASH_TOOL, EDIT_TOOL, WRITE_TOOL)
 
 
 class SandboxPiTools:
@@ -70,6 +80,7 @@ class SandboxPiTools:
         return [
             _tool_definition(READ_TOOL, READ_TOOL_DESCRIPTION, read_parameters()),
             _tool_definition(BASH_TOOL, BASH_TOOL_DESCRIPTION, bash_parameters()),
+            _tool_definition(EDIT_TOOL, EDIT_TOOL_DESCRIPTION, edit_parameters()),
             _tool_definition(WRITE_TOOL, WRITE_TOOL_DESCRIPTION, write_parameters()),
         ]
 
@@ -79,6 +90,8 @@ class SandboxPiTools:
             return await self._read(arguments)
         if name == BASH_TOOL:
             return await self._bash(arguments)
+        if name == EDIT_TOOL:
+            return await self._edit(arguments)
         if name == WRITE_TOOL:
             return await self._write(arguments)
         return AgentToolOutcome(
@@ -127,6 +140,23 @@ class SandboxPiTools:
             timeout_seconds=effective_timeout or self._command_timeout_seconds,
         )
         return AgentToolOutcome(rendered.text, rendered.ok)
+
+    async def _edit(self, arguments: str) -> AgentToolOutcome:
+        try:
+            call = parse_edit_input(arguments)
+        except EditArgumentError as exc:
+            return AgentToolOutcome(str(exc), False)
+        path = _resolve_path(call.path)
+        try:
+            content = await self._sandbox.read_file(path)
+        except SandboxFileNotFoundError as exc:
+            return AgentToolOutcome(str(exc), False)
+        try:
+            edited = apply_edit(content, call)
+        except EditApplyError as exc:
+            return AgentToolOutcome(str(exc), False)
+        await self._sandbox.write_file(path, edited)
+        return AgentToolOutcome(render_edit_result(call.path, len(call.edits)), True)
 
     async def _write(self, arguments: str) -> AgentToolOutcome:
         try:

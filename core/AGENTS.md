@@ -59,14 +59,15 @@ test paths when a narrower suite is known to be sufficient.
   evaluation run, not from one trajectory. A repeated recoverable failure costs
   more than the case that exposed it, and a bounded tool should clamp an
   over-large request rather than refuse it.
-- Expose only the selected Pi `read`, `bash`, and `write` model tools over the
-  disposable sandbox. Use `read` for bounded inspection and `write` only for a
-  complete file rewrite. Put domain guidance in task-sized reference documents
-  that return related schema shapes together instead of adding model-specific
-  tools or fine-grained lookup turns. Keep trusted validation after every
-  possible schedule change and the structural diff at review, since those catch
-  a dropped entry that still parses. Emit an intermediate working-copy preview
-  only after that trusted validation.
+- Expose only Pi's default `read`, `bash`, `edit`, and `write` model tools over
+  the disposable sandbox. Use `read` for bounded inspection, `edit` for unique
+  exact-text replacements, and `write` only for a complete file rewrite. Put
+  domain guidance in task-sized reference documents that return related schema
+  shapes together instead of adding model-specific tools or fine-grained lookup
+  turns. Keep trusted validation after every possible schedule change and the
+  structural diff at review, since those catch a dropped entry that still
+  parses. Emit an intermediate working-copy preview only after that trusted
+  validation.
 - Keep model-facing tool contracts and output behavior in pinned Pi ports under
   `ai/pi`. Keep E2B execution and service timeout policy in the thin sandbox
   adapter so upstream behavior remains identifiable and testable.

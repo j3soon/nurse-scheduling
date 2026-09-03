@@ -27,6 +27,7 @@ import pytest
 
 from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolStart, AgentToolUse
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
@@ -116,7 +117,12 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert b"Path: export.formatting.cell" in backend.files[REFERENCE_SCHEMAS["export"]]
     assert b"Path: people.items" in backend.files[REFERENCE_SCHEMAS["core"]]
     assert backend.commands == [("edit", None)]
-    assert [tool["function"]["name"] for tool in provider.requests[0][1]] == [READ_TOOL, BASH_TOOL, WRITE_TOOL]
+    assert [tool["function"]["name"] for tool in provider.requests[0][1]] == [
+        READ_TOOL,
+        BASH_TOOL,
+        EDIT_TOOL,
+        WRITE_TOOL,
+    ]
     assert isinstance(events[0], AgentToolStart)
     tool_use = next(event for event in events if isinstance(event, AgentToolUse))
     assert tool_use.ok
@@ -153,6 +159,39 @@ def test_write_tool_rewrites_validates_and_proposes_the_schedule():
 
     tool_use = next(event for event in events if isinstance(event, AgentToolUse))
     assert tool_use.name == WRITE_TOOL
+    assert tool_use.ok
+    assert "passed trusted server-side validation" in tool_use.result
+    assert any(isinstance(event, AgentScheduleChange) for event in events)
+    assert any(isinstance(event, AgentProposal) for event in events)
+
+
+def test_edit_tool_replaces_validates_and_proposes_the_schedule():
+    edit_call = ToolCallRequest(
+        (
+            ToolCall(
+                "call-1",
+                EDIT_TOOL,
+                json.dumps(
+                    {
+                        "path": "schedule.yaml",
+                        "edits": [
+                            {
+                                "oldText": "  - id: P1\n    description: ''",
+                                "newText": "  - id: P1\n    description: Head",
+                            }
+                        ],
+                    }
+                ),
+            ),
+        )
+    )
+    provider = ScriptedProvider([edit_call], [TextDelta("I propose the description.")])
+    factory = FakeSandboxFactory()
+
+    events = _collect(provider, factory)
+
+    tool_use = next(event for event in events if isinstance(event, AgentToolUse))
+    assert tool_use.name == EDIT_TOOL
     assert tool_use.ok
     assert "passed trusted server-side validation" in tool_use.result
     assert any(isinstance(event, AgentScheduleChange) for event in events)
