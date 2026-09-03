@@ -278,6 +278,27 @@ Request parsing and validation errors retain FastAPI's standard error format.
 Common status codes include `404` for missing resources, `409` for invalid job
 operations, `413` for oversized YAML, and `429` when job capacity is exhausted.
 
+### Suspicious request reporting
+
+Missing routes and unauthenticated probes are internet background noise and are
+not reported. Client errors that instead require knowledge of this API's
+contract are sent to Sentry, because a scanner cannot produce them:
+
+| Signal | Meaning | Level |
+| --- | --- | --- |
+| `forged_stream_token` | An event-stream token was well-formed and unexpired but failed verification, so it was constructed rather than issued. | error |
+| `job_id_probe` | A job was requested through a real job route and does not exist. | warning |
+| `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
+| `timeout_out_of_range` | An optimization timeout fell outside the range advertised by `GET /optimize/options`. | warning |
+
+Responses are unchanged, so a caller cannot tell which requests were reported.
+Each signal groups into its own Sentry issue, so repetition is visible from the
+issue's event count without any server-side tracking.
+
+A stale browser tab can produce `job_id_probe` after its job is deleted or
+expires, and a mistyped token produces `rejected_bearer_token`, so both are
+reported as warnings rather than errors.
+
 ## Storage and Scaling
 
 | Backend | Intended use | Behavior |

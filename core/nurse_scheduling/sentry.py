@@ -18,6 +18,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
+import re
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,7 @@ from fastapi import Request
 from fastapi.encoders import jsonable_encoder
 
 from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
+from .server.auth import describe_stream_token, extract_bearer_token
 
 if TYPE_CHECKING:
     from .server.jobs.models import Job
@@ -107,12 +109,61 @@ def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> 
         sentry_sdk.capture_exception(error)
 
 
-def capture_invalid_request(request: Request, status_code: int, detail: Any) -> None:
+JOB_ID_SHAPE = re.compile(r"^job_[0-9a-f]{32}$")
+"""Shape of an issued job identifier, used to describe a request for a missing one."""
+STREAM_ROUTE_SUFFIX = "/events"
+"""Route suffix of the only endpoint accepting a stream token."""
+
+
+def _describe_job_id(request: Request) -> str | None:
+    """Describe a requested job identifier's shape without repeating the identifier."""
+    job_id = request.path_params.get("job_id")
+    if job_id is None:
+        return None
+    return "issued_shape" if JOB_ID_SHAPE.match(job_id) else "unissued_shape"
+
+
+def classify_suspicious_request(
+    request: Request,
+    status_code: int,
+    error_code: str | None,
+) -> tuple[str, str] | None:
+    """Return a suspicious request's signal name and Sentry level, or `None` when it is noise.
+
+    Internet background traffic probes paths that do not exist and endpoints it cannot
+    authenticate against. The signals below instead require knowledge of this API's contract,
+    so they are worth reporting even though they arrive as ordinary client errors.
+    """
+    if status_code == 401:
+        # Only the deployment secret can sign a token, so a well-formed unexpired one that
+        # failed verification was constructed rather than issued.
+        stream_token_is_live = describe_stream_token(request.query_params.get("token")) == "live"
+        if request.url.path.endswith(STREAM_ROUTE_SUFFIX) and stream_token_is_live:
+            return "forged_stream_token", "error"
+        if extract_bearer_token(request.headers.get("Authorization")) is not None:
+            return "rejected_bearer_token", "warning"
+        return None
+    if status_code == 404:
+        # A missing route is noise. A missing job was addressed through a real route.
+        return ("job_id_probe", "warning") if error_code == "job_not_found" else None
+    invalid_reason = getattr(request.state, "invalid_reason", None)
+    if invalid_reason is not None:
+        return invalid_reason, "warning"
+    return None
+
+
+def capture_invalid_request(
+    request: Request,
+    status_code: int,
+    detail: Any,
+    error_code: str | None = None,
+) -> None:
     if not _should_enable_sentry():
         return
+    signal = classify_suspicious_request(request, status_code, error_code)
     # Missing routes, expired resources, and unauthenticated probes of a protected
     # deployment are expected and not actionable.
-    if status_code in (401, 404):
+    if signal is None and status_code in (401, 404):
         return
 
     import sentry_sdk
@@ -120,8 +171,32 @@ def capture_invalid_request(request: Request, status_code: int, detail: Any) -> 
     route = request.scope.get("route")
     route_path = getattr(route, "path", request.url.path)
     serialized_detail = jsonable_encoder(detail)
+    message = "Invalid API request"
+    level = "warning"
+    fingerprint = ["invalid-request", str(status_code), route_path]
 
     with sentry_sdk.new_scope() as scope:
+        if signal is not None:
+            # Imported here so processes that only report errors do not load the routes.
+            from .server.api.optimize import CLIENT_ID_COOKIE_NAME
+
+            signal_name, level = signal
+            message = f"Suspicious API request: {signal_name}"
+            fingerprint = ["suspicious-request", signal_name]
+            scope.set_tag("request.suspicious", signal_name)
+            scope.set_context(
+                "suspicious_request",
+                {
+                    "signal": signal_name,
+                    "job_id": _describe_job_id(request),
+                    # Named without "token", which Sentry scrubs from a field name.
+                    "stream_state": describe_stream_token(request.query_params.get("token")),
+                    "bearer_presented": extract_bearer_token(request.headers.get("Authorization")) is not None,
+                    "client_id": request.cookies.get(CLIENT_ID_COOKIE_NAME),
+                    "user_agent": request.headers.get("User-Agent"),
+                    "origin": request.headers.get("Origin"),
+                },
+            )
         scope.set_tag("request.invalid", True)
         scope.set_tag("http.status_code", status_code)
         scope.set_tag("http.method", request.method)
@@ -136,5 +211,5 @@ def capture_invalid_request(request: Request, status_code: int, detail: Any) -> 
                 "detail": serialized_detail,
             },
         )
-        scope.fingerprint = ["invalid-request", str(status_code), route_path]
-        sentry_sdk.capture_message("Invalid API request", level="warning")
+        scope.fingerprint = fingerprint
+        sentry_sdk.capture_message(message, level=level)

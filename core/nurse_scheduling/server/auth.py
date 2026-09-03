@@ -20,6 +20,7 @@
 import hashlib
 import hmac
 import logging
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -114,6 +115,26 @@ def verify_stream_token(secret: str, job_id: str, token: str | None, *, now: dat
     if current_time > expires_at:
         return False
     return hmac.compare_digest(signature, _stream_signature(secret, job_id, expires_at))
+
+
+STREAM_TOKEN_SHAPE = re.compile(r"^[0-9]{1,20}\.[0-9a-f]{64}$")
+"""Shape of a minted stream token, used only to describe a rejected one."""
+
+
+def describe_stream_token(token: str | None, *, now: datetime | None = None) -> str:
+    """Describe a stream token's shape and freshness without verifying its signature.
+
+    Reporting separates a stale link from a constructed one. Only the deployment secret can
+    produce a valid signature, so a well-formed unexpired token that authentication rejected
+    was forged rather than merely outdated.
+    """
+    if not token:
+        return "absent"
+    if not STREAM_TOKEN_SHAPE.match(token):
+        return "malformed"
+    expires_at = int(token.partition(".")[0])
+    current_time = int((now or datetime.now(timezone.utc)).timestamp())
+    return "expired" if current_time > expires_at else "live"
 
 
 def create_auth_dependency(expected_token: str | None) -> Callable[[Request], None]:

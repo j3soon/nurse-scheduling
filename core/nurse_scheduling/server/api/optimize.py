@@ -134,6 +134,8 @@ async def create_job(
         raise HTTPException(status_code=400, detail=f"Solver must be one of: {choices}")
     timeout_seconds = timeout if timeout is not None else settings.default_timeout_seconds
     if timeout_seconds < settings.min_timeout_seconds or timeout_seconds > settings.max_timeout_seconds:
+        # Clients discover this range from GET /optimize/options, so exceeding it is reported.
+        request.state.invalid_reason = "timeout_out_of_range"
         raise HTTPException(
             status_code=400,
             detail=(

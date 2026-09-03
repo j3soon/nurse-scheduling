@@ -57,6 +57,10 @@ test paths when a narrower suite is known to be sufficient.
 - Initialize Sentry before configuration or logging in every first-party
   standalone service process. Use a distinct `app` tag and flush Sentry before
   short-lived processes exit.
+- Report a client error only when it requires knowledge of the API contract that
+  a scanner cannot have. Missing routes and unauthenticated probes stay
+  unreported. Add new signals to `classify_suspicious_request`, and never let a
+  signal change the response a caller sees.
 
 ## Testing
 - Normal tests live under `tests/`.

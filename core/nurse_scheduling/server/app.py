@@ -261,7 +261,7 @@ def create_app(
         else:
             status_code = 500
         if status_code < 500:
-            capture_invalid_request(request, status_code, str(exc))
+            capture_invalid_request(request, status_code, str(exc), exc.code)
         else:
             server_logger.exception(
                 "[server:request] unexpected application error method=%s path=%s",
