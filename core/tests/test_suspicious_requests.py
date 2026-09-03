@@ -125,14 +125,15 @@ def test_missing_job_through_a_real_route_is_reported(captured):
     assert captured.events[0]["scope"].fingerprint == ["suspicious-request", "job_id_probe"]
 
 
-def test_missing_job_with_an_unissued_identifier_shape_is_reported(captured):
+@pytest.mark.parametrize("path", ["/optimize/not-a-job-id", "/optimize/.env", "/optimize/wp-login.php"])
+def test_a_wordlist_path_on_the_job_route_is_not_reported(captured, path):
+    """The job route matches any single segment, so a scanner reaches it without knowing it."""
     client = _client()
 
-    response = client.get("/optimize/not-a-job-id")
+    response = client.get(path)
 
     assert response.status_code == 404
-    assert _signals(captured) == [("job_id_probe", "warning")]
-    assert captured.events[0]["scope"].contexts["suspicious_request"]["job_id"] == "unissued_shape"
+    assert captured.events == []
 
 
 def test_forged_stream_token_is_reported_as_an_error(captured):
@@ -145,6 +146,27 @@ def test_forged_stream_token_is_reported_as_an_error(captured):
     assert _signals(captured) == [("forged_stream_token", "error")]
     # Sentry scrubs a field whose name contains "token", so this one must not.
     assert captured.events[0]["scope"].contexts["suspicious_request"]["stream_state"] == "live"
+
+
+@pytest.mark.parametrize(
+    ("encoding", "level"),
+    [
+        ("{exp}.{sig}", "error"),
+        ("+{exp}.{sig}", "warning"),
+        ("{exp}.{SIG}", "warning"),
+        (" {exp}.{sig}", "warning"),
+    ],
+)
+def test_a_forged_token_cannot_hide_behind_another_spelling(captured, encoding, level):
+    """`int` accepts spellings this server never mints, so shape alone must not gate reporting."""
+    client = _client(auth_token=AUTH_TOKEN)
+    expires_at = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+    token = encoding.format(exp=expires_at, sig=FORGED_SIGNATURE, SIG=FORGED_SIGNATURE.upper())
+
+    response = client.get(f"/optimize/{ISSUED_JOB_ID}/events", params={"token": token})
+
+    assert response.status_code == 401
+    assert _signals(captured) == [("forged_stream_token", level)]
 
 
 def test_rejected_bearer_token_is_reported(captured):
@@ -300,3 +322,71 @@ def test_counting_is_skipped_when_disabled(captured):
 
     assert _signals(captured) == [("job_id_probe", "warning")]
     assert captured.events[0]["scope"].contexts["suspicious_request"]["occurrences"] is None
+
+
+# Invariants: reporting must be invisible to the caller and unable to fail a request.
+
+
+def test_a_reported_request_answers_exactly_like_an_unreported_one(captured):
+    """A caller must not be able to tell which requests were reported.
+
+    Both requests miss a job and answer identically. Only one is reported, because only one
+    used an identifier this server could have issued.
+    """
+    client = _client()
+
+    reported = client.get(f"/optimize/{ISSUED_JOB_ID}")
+    unreported = client.get("/optimize/wp-login.php")
+
+    assert _signals(captured) == [("job_id_probe", "warning")]
+    assert (reported.status_code, reported.content) == (unreported.status_code, unreported.content)
+    ignored = {"date", "server"}
+    assert {k: v for k, v in reported.headers.items() if k.lower() not in ignored} == {
+        k: v for k, v in unreported.headers.items() if k.lower() not in ignored
+    }
+
+
+def test_a_failing_tracker_leaves_the_response_alone(captured):
+    """Counting is advisory, so any failure in it must not become a server error."""
+
+    class FailingTracker:
+        escalate_count = 5
+
+        def record(self, signal, address):
+            raise RuntimeError("redis pool exhausted")
+
+    app = _app()
+    app.state.suspicion_tracker = FailingTracker()
+
+    response = TestClient(app, client=("203.0.113.7", 40000)).get(f"/optimize/{ISSUED_JOB_ID}")
+
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "job_not_found", "message": "Job was not found"}}
+
+
+def test_a_failing_address_tag_leaves_the_response_alone(monkeypatch, captured):
+    """The tag runs on every request, so its failure must not fail an ordinary one."""
+
+    def explode(request):
+        raise RuntimeError("scope unavailable")
+
+    # Fails inside the reporting helper, which is where a real failure would arise.
+    monkeypatch.setattr("nurse_scheduling.sentry._connection_address", explode)
+
+    response = _client().get("/ready")
+
+    assert response.status_code == 200
+
+
+def test_one_address_cannot_spend_the_event_quota(captured):
+    """Repeats past the escalation point keep counting but stop being reported."""
+    client = _client(suspicion_escalate_count=3)
+
+    for _ in range(8):
+        client.get(f"/optimize/{ISSUED_JOB_ID}")
+
+    assert _signals(captured) == [
+        ("job_id_probe", "warning"),
+        ("job_id_probe", "warning"),
+        ("job_id_probe", "error"),
+    ]

@@ -33,6 +33,9 @@ MAX_TRACKED_COUNTERS = 4096
 """Counters one process retains without Redis, oldest discarded first."""
 DIGEST_LENGTH = 16
 """Characters of the salted address digest kept in a counter key."""
+REDIS_OPERATION_TIMEOUT_SECONDS = 0.25
+"""Longest a count may block. Counting runs inline on the event loop, so a degraded Redis
+must cost a bounded pause rather than stall every request the process is serving."""
 
 
 def address_digest(salt: str, address: str) -> str:
@@ -117,8 +120,6 @@ class RedisSuspicionTracker:
         Returns `0` when Redis is unavailable. Counting is advisory, so a failure must
         neither change the response nor lose the report it would have escalated.
         """
-        import redis
-
         window = int(self._clock() // self._window_seconds)
         key = f"{KEY_PREFIX}:{signal}:{address_digest(self._salt, address)}:{window}"
         try:
@@ -128,7 +129,7 @@ class RedisSuspicionTracker:
                 pipeline.expire(key, self._window_seconds * 2)
                 total, _ = pipeline.execute()
             return int(total)
-        except redis.RedisError:
+        except Exception:  # noqa: BLE001
             return 0
 
 
@@ -145,7 +146,12 @@ def create_suspicion_tracker(settings: "ServerSettings", *, salt: str) -> Suspic
     import redis
 
     return RedisSuspicionTracker(
-        redis.Redis.from_url(settings.redis_url, decode_responses=False),
+        redis.Redis.from_url(
+            settings.redis_url,
+            decode_responses=False,
+            socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            socket_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+        ),
         salt=salt,
         window_seconds=settings.suspicion_window_seconds,
         escalate_count=settings.suspicion_escalate_count,

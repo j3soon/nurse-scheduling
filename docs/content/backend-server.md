@@ -286,18 +286,22 @@ contract are sent to Sentry, because a scanner cannot produce them:
 
 | Signal | Meaning | Level |
 | --- | --- | --- |
-| `forged_stream_token` | An event-stream token was well-formed and unexpired but failed verification, so it was constructed rather than issued. | error |
-| `job_id_probe` | A job was requested through a real job route and does not exist. | warning |
+| `forged_stream_token` | An event-stream token failed verification and had not merely expired, so it was constructed rather than issued. Error when it was unexpired and of the minted shape, warning otherwise. | error |
+| `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |
 | `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
 | `timeout_out_of_range` | An optimization timeout fell outside the range advertised by `GET /optimize/options`. | warning |
 
-Responses are unchanged, so a caller cannot tell which requests were reported.
-Each signal groups into its own Sentry issue, so repetition is visible from the
-issue's event count without any server-side tracking.
+A reported request answers exactly like an unreported one, so its body, status,
+and headers reveal nothing. Reporting still costs a little time, so a caller
+measuring closely can infer that something happened. Each signal groups into its
+own Sentry issue.
 
-Repeats of one signal from one address are counted within a rolling window, and a
+Repeats of one signal from one address are counted within a fixed window, and a
 signal that reaches `SUSPICION_ESCALATE_COUNT` is reported as an error rather
-than a warning, carrying its `occurrences` count. Addresses are counted as a
+than a warning, carrying its `occurrences` count. Further repeats within that
+window keep counting but are not reported, so one address cannot spend the
+project's event quota. Because the window is fixed rather than sliding, repeats
+spread across a boundary can stay below the threshold. Addresses are counted as a
 salted digest, so the counters hold no record of who connected, and the salt is
 per deployment launch. Redis deployments share counters across worker processes.
 A memory deployment counts per process, so it reaches the threshold later.
@@ -306,7 +310,9 @@ than losing it.
 
 A stale browser tab can produce `job_id_probe` after its job is deleted or
 expires, and a mistyped token produces `rejected_bearer_token`, so both are
-reported as warnings rather than errors.
+reported as warnings rather than errors. Changing `API_AUTH_TOKEN` invalidates
+every stream token already handed out, so expect `forged_stream_token` from real
+clients until the longest outstanding one expires.
 
 Every event carries a `client.address` tag holding the address its request
 connected from. Sentry's own attribution is left alone, and it infers the

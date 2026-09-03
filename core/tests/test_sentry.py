@@ -28,7 +28,13 @@ import pytest
 from ruamel.yaml import YAML
 
 from nurse_scheduling.loader import _load_yaml
-from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, flush_sentry, init_sentry
+from nurse_scheduling.sentry import (
+    _redact_stream_token,
+    capture_invalid_request,
+    capture_optimize_exception,
+    flush_sentry,
+    init_sentry,
+)
 from nurse_scheduling.server.jobs.models import Job, JobRequest, JobState
 
 SCHEDULE_YAML = b"""\
@@ -211,6 +217,9 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
             "profile_session_sample_rate": 1.0,
             "profile_lifecycle": "trace",
             "enable_logs": True,
+            # A stream token is a live credential and Sentry does not scrub a query string.
+            "before_send": _redact_stream_token,
+            "before_send_transaction": _redact_stream_token,
         }
     ]
     assert tags == [("app", "backend")]
