@@ -33,6 +33,7 @@ from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     OpenAiCompatibleProvider,
+    ProviderAttempt,
     ProviderError,
     ReasoningDelta,
     TextDelta,
@@ -144,6 +145,8 @@ def _streaming_provider(
 def _transport_provider(
     monkeypatch: pytest.MonkeyPatch,
     handler,
+    *,
+    include_attempts: bool = False,
     **settings_overrides,
 ) -> OpenAiCompatibleProvider:
     """Build a provider around a stateful mock transport."""
@@ -159,7 +162,7 @@ def _transport_provider(
         "provider_model": "test-model",
     }
     settings.update(settings_overrides)
-    return OpenAiCompatibleProvider(AiSettings(**settings))
+    return OpenAiCompatibleProvider(AiSettings(**settings), include_attempts=include_attempts)
 
 
 def _events(provider: OpenAiCompatibleProvider, tools: list[dict] | None = None) -> list:
@@ -187,11 +190,12 @@ def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytes
     provider = _transport_provider(
         monkeypatch,
         handle,
+        include_attempts=True,
         provider_max_attempts=3,
         provider_retry_backoff_seconds=0.25,
     )
 
-    assert _events(provider) == [TextDelta("Recovered")]
+    assert _events(provider) == [ProviderAttempt(1), ProviderAttempt(2), ProviderAttempt(3), TextDelta("Recovered")]
     assert len(attempts) == 3
     assert delays == [0.25, 0.5]
 

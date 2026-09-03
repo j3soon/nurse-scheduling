@@ -30,6 +30,7 @@ from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
+    ProviderAttempt,
     ProviderError,
     ReasoningDelta,
     TextDelta,
@@ -128,6 +129,21 @@ def test_provider_wait_time_is_recorded_per_inference_turn():
 
     assert run.llm_inference_seconds >= 0.005
     assert run.llm_turn_seconds == pytest.approx([run.llm_inference_seconds])
+
+
+def test_provider_retries_are_reported_separately_from_logical_turns():
+    run = _run(
+        "ask-people-count",
+        ScriptedProvider([ProviderAttempt(1), ProviderAttempt(2), TextDelta("There are 87 people.")]),
+    )
+
+    assert run.as_record()["provider_requests"] == {
+        "turns": 1,
+        "attempts": 2,
+        "retries": 1,
+        "retried_turns": 1,
+        "attempts_per_turn": [2],
+    }
 
 
 def test_an_answer_in_words_is_accepted():
@@ -335,7 +351,7 @@ def test_run_all_rejects_non_positive_jobs():
 
 def test_the_summary_reports_each_category_and_every_failure():
     runs = [
-        CaseRun("a", "00-summary", True, 2.0, 1, []),
+        CaseRun("a", "00-summary", True, 2.0, 1, [], provider_attempts=2, provider_attempts_per_turn=[2]),
         CaseRun("b", "01-reading", False, 7.0, 2, [BASH_TOOL], ["answer mentions '27': not mentioned"]),
     ]
 
@@ -344,6 +360,8 @@ def test_the_summary_reports_each_category_and_every_failure():
     assert "00-summary         1/1" in report
     assert "01-reading         0/1" in report
     assert "total              1/2" in report
+    assert "attempts" in report
+    assert "retries" in report
     assert "b: answer mentions '27': not mentioned" in report
     assert summarize([]) == "No cases ran."
 
@@ -367,6 +385,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "answer",
         "error",
         "token_usage",
+        "provider_requests",
     }
     assert record["timing"]["end_to_end_seconds"] == pytest.approx(run.seconds, abs=0.001)
     assert record["timing"]["llm_inference_seconds"] == pytest.approx(run.llm_inference_seconds, abs=0.001)

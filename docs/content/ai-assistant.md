@@ -142,9 +142,9 @@ running the complete evaluation.
 Every run writes a report to its own directory under
 `artifacts/ai-evals/<timestamp>/`, alongside the performance benchmark reports,
 and prints the path when it finishes. `summary.md` holds the pass count, median
-seconds, LLM inference time, and the aggregate sandbox timing per category. It
-also includes per-case tables for every sandbox timing and suspension metric.
-`results.jsonl` holds one line per case, and
+seconds, LLM inference time, provider HTTP attempt and retry counts, and the
+aggregate sandbox timing per category. It also includes per-case tables for
+every sandbox timing and suspension metric. `results.jsonl` holds one line per case, and
 `cases/<id>.json` holds the whole run for one case: the prompt it was given,
 its reasoning, every tool call with its arguments and result, the answer, the
 proposed schedule, timing breakdown, and each criterion with its outcome. Pass `--output-dir` to
@@ -153,7 +153,10 @@ choose the directory, which must not already exist, or set
 
 Timing fields use wall-clock seconds. `end_to_end_seconds` covers the agent run.
 `llm_inference_seconds` sums only time awaiting provider stream events.
-`llm_turn_seconds` records that wait separately for each provider request.
+`llm_turn_seconds` records that wait separately for each logical model turn.
+`provider_requests` reports the underlying HTTP attempts, retries, retried
+turns, and attempts per logical turn. A successful retry therefore remains
+visible in both the case artifact and aggregate summary.
 `sandbox.lifetime_seconds` covers the complete create-to-destroy lifecycle. Its
 mutually exclusive components are provisioning, execution, pause transition,
 warm waiting, suspended, resume wait, and teardown. Their sum equals the

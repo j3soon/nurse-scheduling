@@ -136,7 +136,14 @@ class TokenUsage:
         )
 
 
-ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest | TokenUsage
+@dataclass(frozen=True)
+class ProviderAttempt:
+    """One underlying HTTP attempt for a logical provider turn."""
+
+    number: int
+
+
+ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest | TokenUsage | ProviderAttempt
 
 
 class ChatProvider(Protocol):
@@ -190,9 +197,16 @@ def _redact_provider_error(response_body: str, provider_api_key: str) -> str:
 class OpenAiCompatibleProvider:
     """Stream chat completions from an OpenAI-compatible HTTP endpoint."""
 
-    def __init__(self, settings: AiSettings, *, include_usage: bool = False) -> None:
+    def __init__(
+        self,
+        settings: AiSettings,
+        *,
+        include_usage: bool = False,
+        include_attempts: bool = False,
+    ) -> None:
         self._settings = settings
         self._include_usage = include_usage
+        self._include_attempts = include_attempts
 
     async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
         """Translate provider SSE chunks into plain text deltas."""
@@ -221,6 +235,8 @@ class OpenAiCompatibleProvider:
 
         stream_started = False
         for attempt in range(1, self._settings.provider_max_attempts + 1):
+            if self._include_attempts:
+                yield ProviderAttempt(attempt)
             try:
                 async for event in self._stream_attempt(timeout, headers, payload):
                     stream_started = True

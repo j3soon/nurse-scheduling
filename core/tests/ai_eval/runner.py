@@ -37,6 +37,7 @@ from nurse_scheduling.ai.provider import (
     ChatMessage,
     ChatStreamEvent,
     OpenAiCompatibleProvider,
+    ProviderAttempt,
     ProviderError,
     TokenUsage,
 )
@@ -82,6 +83,8 @@ class CaseRun:
     llm_inference_seconds: float = 0.0
     llm_turn_seconds: list[float] = field(default_factory=list)
     sandbox_metrics: SandboxTurnMetrics | None = None
+    provider_attempts: int = 0
+    provider_attempts_per_turn: list[int] = field(default_factory=list)
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
@@ -104,6 +107,11 @@ class CaseRun:
             "answer": self.answer,
             "error": self.error,
             "token_usage": _token_usage_record(self.token_usage, self.token_usage_turns, self.turns),
+            "provider_requests": _provider_request_record(
+                self.turns,
+                self.provider_attempts,
+                self.provider_attempts_per_turn,
+            ),
         }
 
     def as_trajectory(self) -> dict[str, Any]:
@@ -121,6 +129,8 @@ class _CountingProvider:
         self.token_usage_turns = 0
         self.inference_seconds = 0.0
         self.inference_turn_seconds: list[float] = []
+        self.attempts = 0
+        self.attempts_per_turn: list[int] = []
 
     async def stream_events(
         self,
@@ -130,6 +140,7 @@ class _CountingProvider:
         self.turns += 1
         stream = self._provider.stream_events(messages, tools).__aiter__()
         turn_seconds = 0.0
+        turn_attempts = 0
         try:
             while True:
                 started = time.monotonic()
@@ -145,8 +156,15 @@ class _CountingProvider:
                     self.token_usage = event if self.token_usage is None else self.token_usage + event
                     self.token_usage_turns += 1
                     continue
+                if isinstance(event, ProviderAttempt):
+                    turn_attempts += 1
+                    continue
                 yield event
         finally:
+            if turn_attempts == 0:
+                turn_attempts = 1
+            self.attempts += turn_attempts
+            self.attempts_per_turn.append(turn_attempts)
             self.inference_turn_seconds.append(turn_seconds)
             close = getattr(stream, "aclose", None)
             if close is not None:
@@ -237,6 +255,8 @@ async def run_case(
             llm_inference_seconds=counting.inference_seconds,
             llm_turn_seconds=counting.inference_turn_seconds,
             sandbox_metrics=sandbox_metrics,
+            provider_attempts=counting.attempts,
+            provider_attempts_per_turn=counting.attempts_per_turn,
         )
 
     elapsed = time.monotonic() - started
@@ -261,6 +281,8 @@ async def run_case(
         llm_inference_seconds=counting.inference_seconds,
         llm_turn_seconds=counting.inference_turn_seconds,
         sandbox_metrics=sandbox_metrics,
+        provider_attempts=counting.attempts,
+        provider_attempts_per_turn=counting.attempts_per_turn,
     )
 
 
@@ -319,6 +341,19 @@ def _token_usage_record(usage: TokenUsage | None, reported_turns: int, turns: in
     }
 
 
+def _provider_request_record(turns: int, attempts: int, attempts_per_turn: Sequence[int]) -> dict[str, Any]:
+    """Separate logical model turns from retried HTTP requests."""
+    effective_attempts = attempts or turns
+    effective_per_turn = list(attempts_per_turn) or [1] * turns
+    return {
+        "turns": turns,
+        "attempts": effective_attempts,
+        "retries": max(0, effective_attempts - turns),
+        "retried_turns": sum(attempts > 1 for attempts in effective_per_turn),
+        "attempts_per_turn": effective_per_turn,
+    }
+
+
 def _timing_record(
     end_to_end_seconds: float,
     llm_inference_seconds: float,
@@ -357,7 +392,7 @@ def summarize(runs: Sequence[CaseRun]) -> str:
         (
             f"{'category':<16}{'pass':>8}{'e2e s':>9}{'LLM s':>9}{'lifetime s':>11}"
             f"{'execute s':>10}{'warm wait':>10}{'suspend s':>10}{'resume s':>10}"
-            f"{'pauses':>8}{'turns':>8}{'tools':>8}"
+            f"{'pauses':>8}{'turns':>8}{'attempts':>10}{'retries':>9}{'tools':>8}"
         )
     ]
     for category in sorted({run.category for run in runs}):
@@ -373,6 +408,8 @@ def summarize(runs: Sequence[CaseRun]) -> str:
             f"{_median([run.sandbox_metrics.resume_wait_seconds for run in group if run.sandbox_metrics]):>10.1f}"
             f"{_median([float(run.sandbox_metrics.pause_count) for run in group if run.sandbox_metrics]):>8.1f}"
             f"{_median([float(run.turns) for run in group]):>8.1f}"
+            f"{_median([float(run.provider_attempts or run.turns) for run in group]):>10.1f}"
+            f"{_median([float(max(0, (run.provider_attempts or run.turns) - run.turns)) for run in group]):>9.1f}"
             f"{_median([float(len(run.tools)) for run in group]):>8.1f}"
         )
     total = sum(run.passed for run in runs)
@@ -388,6 +425,8 @@ def summarize(runs: Sequence[CaseRun]) -> str:
         f"{sum(metrics.resume_wait_seconds for metrics in sandbox_runs):>10.1f}"
         f"{sum(metrics.pause_count for metrics in sandbox_runs):>8}"
         f"{sum(run.turns for run in runs):>8}"
+        f"{sum(run.provider_attempts or run.turns for run in runs):>10}"
+        f"{sum(max(0, (run.provider_attempts or run.turns) - run.turns) for run in runs):>9}"
         f"{sum(len(run.tools) for run in runs):>8}"
     )
     lines.append("Category timing rows are medians. The total row contains sums.")
@@ -538,7 +577,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_all(
             cases,
             settings,
-            OpenAiCompatibleProvider(settings, include_usage=True),
+            OpenAiCompatibleProvider(settings, include_usage=True, include_attempts=True),
             arguments.jobs,
             sandbox_factory,
         )
