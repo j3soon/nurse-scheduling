@@ -164,6 +164,23 @@ def _describe_job_id(request: Request) -> str | None:
     return "issued_shape" if JOB_ID_SHAPE.match(job_id) else "unissued_shape"
 
 
+def _record_suspicion(request: Request, signal_name: str) -> int:
+    """Count this signal's repeats from one address, or `0` when they are not counted."""
+    tracker = getattr(request.app.state, "suspicion_tracker", None)
+    if tracker is None:
+        return 0
+    address = _connection_address(request)
+    if address is None:
+        return 0
+    return tracker.record(signal_name, address)
+
+
+def _escalate_count(request: Request) -> int:
+    """Return the repeat count that escalates a signal, or `0` when none escalates it."""
+    tracker = getattr(request.app.state, "suspicion_tracker", None)
+    return getattr(tracker, "escalate_count", 0) or 0
+
+
 def classify_suspicious_request(
     request: Request,
     status_code: int,
@@ -222,6 +239,11 @@ def capture_invalid_request(
             from .server.api.optimize import CLIENT_ID_COOKIE_NAME
 
             signal_name, level = signal
+            occurrences = _record_suspicion(request, signal_name)
+            escalate_count = _escalate_count(request)
+            if occurrences and escalate_count and occurrences >= escalate_count:
+                # Repetition from one address is deliberate in a way one request is not.
+                level = "error"
             message = f"Suspicious API request: {signal_name}"
             fingerprint = ["suspicious-request", signal_name]
             scope.set_tag("request.suspicious", signal_name)
@@ -229,6 +251,7 @@ def capture_invalid_request(
                 "suspicious_request",
                 {
                     "signal": signal_name,
+                    "occurrences": occurrences or None,
                     "job_id": _describe_job_id(request),
                     # Named without "token", which Sentry scrubs from a field name.
                     "stream_state": describe_stream_token(request.query_params.get("token")),

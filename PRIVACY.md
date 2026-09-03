@@ -28,6 +28,7 @@ Clicking **Optimize** sends the current scheduling YAML to the backend shown in 
 - Submitted YAML, XLSX results, and operational job metadata are retained in the hosted backend's Redis job store for up to 24 hours after completion unless capacity cleanup or an explicit deletion removes them earlier. The hosted frontend attempts deletion after a successful download. Minimal reporting telemetry is stored separately as described below.
 - Operational logs may include job IDs, pseudonymous client IDs, filenames, statuses, timing, and errors.
 - The backend sets a pseudonymous client UUID cookie for up to 7 days.
+- The backend counts repeated suspicious requests as a salted digest of the connecting address, never the address itself. Counters expire within minutes and are excluded from reporting telemetry.
 - Docker Redis deployments retain minimal per-job telemetry for weekly reports, including job and pseudonymous client IDs, solver, lifecycle timestamps and state, queue and runtime durations, outcome, failure code, solver status, termination reason, configured timeout, and download count. Telemetry excludes scheduling inputs, filenames, IP addresses, and email addresses. Reporting does not remove telemetry. Rows expire 30 days after the end of their event week by default. Operators may send this telemetry through a configured reporting provider such as Mailgun.
 
 ## Opting Out While Using Hosted Services

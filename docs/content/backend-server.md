@@ -295,6 +295,15 @@ Responses are unchanged, so a caller cannot tell which requests were reported.
 Each signal groups into its own Sentry issue, so repetition is visible from the
 issue's event count without any server-side tracking.
 
+Repeats of one signal from one address are counted within a rolling window, and a
+signal that reaches `SUSPICION_ESCALATE_COUNT` is reported as an error rather
+than a warning, carrying its `occurrences` count. Addresses are counted as a
+salted digest, so the counters hold no record of who connected, and the salt is
+per deployment launch. Redis deployments share counters across worker processes.
+A memory deployment counts per process, so it reaches the threshold later.
+Counting is advisory, and a storage failure leaves the report unescalated rather
+than losing it.
+
 A stale browser tab can produce `job_id_probe` after its job is deleted or
 expires, and a mistyped token produces `rejected_bearer_token`, so both are
 reported as warnings rather than errors.
@@ -376,6 +385,9 @@ All server settings are read once when the application is constructed.
 | `CLAIMED_PERFORMANCE_MEASURED_AT` | unset | Record the benchmark report time as an ISO 8601 date and time with a timezone. |
 | `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
 | `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty `API_AUTH_TOKEN` a startup failure. Set in the deployment images. |
+| `SUSPICION_COUNTER_ENABLED` | `true` | Count repeats of one signal from one address and escalate them. |
+| `SUSPICION_WINDOW_SECONDS` | `300` | Length of the window over which repeats are counted. |
+| `SUSPICION_ESCALATE_COUNT` | `5` | Repeats within a window that make a signal an error. |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Trust `X-Forwarded-For` from these peers, read by Uvicorn. The Compose deployments set the private ranges their tunnel connects from. |
 | `DISABLE_SENTRY` | unset | Disable error reporting for all Python services when set to a non-empty value. |
 | `SENTRY_DSN` | shared development project | Select the Python services' shared Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |

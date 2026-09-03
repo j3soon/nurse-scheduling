@@ -65,6 +65,9 @@ test paths when a narrower suite is known to be sufficient.
   Sentry's own attribution, so a caller claiming another address stays visible.
   `tag_client_address` does this for every request and depends on
   `FORWARDED_ALLOW_IPS` naming the deployment's trusted proxies.
+- Count repeats in `server/suspicion.py`, keyed by signal and a salted address
+  digest. Counting is advisory, so a storage failure must leave a report
+  unescalated rather than drop it or change the response.
 
 ## Testing
 - Normal tests live under `tests/`.

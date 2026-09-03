@@ -55,6 +55,7 @@ from .maintenance import JobMaintenance
 from .runtime_identity import get_deployment_id
 from .solver_options import validate_solver_availability
 from .stores.memory import MemoryJobStore
+from .suspicion import create_suspicion_tracker
 
 TITLE = "Nurse Scheduling API"
 SERVICE_NAME = "nurse-scheduling-api"
@@ -200,6 +201,8 @@ def create_app(
         unexpected_error_formatter=_format_unexpected_error,
     )
     maintenance = JobMaintenance(controller, interval_seconds=settings.maintenance_interval_seconds)
+    # Salted per deployment launch, which every worker of that launch shares.
+    suspicion_tracker = create_suspicion_tracker(settings, salt=deployment_id)
     init_sentry(app_version)
 
     @asynccontextmanager
@@ -247,6 +250,7 @@ def create_app(
     app.state.instance_id = instance_id
     app.state.started_at = started_at
     app.state.runtime_identity = runtime_identity
+    app.state.suspicion_tracker = suspicion_tracker
 
     @app.exception_handler(ServerApplicationError)
     async def application_error_handler(request: Request, exc: ServerApplicationError):

@@ -87,15 +87,19 @@ def captured(monkeypatch):
     return types.SimpleNamespace(events=events, tags=tags)
 
 
-def _client(*, auth_token=None, connected_from=("203.0.113.7", 40000)) -> TestClient:
+def _app(*, auth_token=None, **overrides):
     settings = ServerSettings(
         claim_poll_seconds=0.005,
         maintenance_interval_seconds=60,
         sse_keepalive_seconds=0.01,
         auth_token=auth_token,
+        **overrides,
     )
-    app = create_app(settings=settings, store=MemoryJobStore(), start_background=False)
-    return TestClient(app, client=connected_from)
+    return create_app(settings=settings, store=MemoryJobStore(), start_background=False)
+
+
+def _client(*, auth_token=None, connected_from=("203.0.113.7", 40000), **overrides) -> TestClient:
+    return TestClient(_app(auth_token=auth_token, **overrides), client=connected_from)
 
 
 def _signals(captured) -> list[tuple[str, str]]:
@@ -257,3 +261,42 @@ def test_a_connection_address_is_recorded_on_every_request(captured):
 
     # Sentry's own attribution keeps the claimed address; this records the real one.
     assert captured.tags[CLIENT_ADDRESS_TAG] == "203.0.113.7"
+
+
+# Repetition: one request is a mistake, the same one repeated is deliberate.
+
+
+def test_repeated_probes_from_one_address_escalate_to_an_error(captured):
+    client = _client(suspicion_escalate_count=3)
+
+    for _ in range(3):
+        client.get(f"/optimize/{ISSUED_JOB_ID}")
+
+    assert _signals(captured) == [
+        ("job_id_probe", "warning"),
+        ("job_id_probe", "warning"),
+        ("job_id_probe", "error"),
+    ]
+    contexts = [event["scope"].contexts["suspicious_request"] for event in captured.events]
+    assert [context["occurrences"] for context in contexts] == [1, 2, 3]
+
+
+def test_probes_from_different_addresses_do_not_escalate_each_other(captured):
+    # One application, so one shared tracker, which is what makes the addresses the variable.
+    app = _app(suspicion_escalate_count=3)
+
+    for last_octet in range(3):
+        TestClient(app, client=(f"203.0.113.{last_octet}", 40000)).get(f"/optimize/{ISSUED_JOB_ID}")
+
+    assert {level for _, level in _signals(captured)} == {"warning"}
+    contexts = [event["scope"].contexts["suspicious_request"] for event in captured.events]
+    assert [context["occurrences"] for context in contexts] == [1, 1, 1]
+
+
+def test_counting_is_skipped_when_disabled(captured):
+    client = _client(suspicion_enabled=False)
+
+    client.get(f"/optimize/{ISSUED_JOB_ID}")
+
+    assert _signals(captured) == [("job_id_probe", "warning")]
+    assert captured.events[0]["scope"].contexts["suspicious_request"]["occurrences"] is None
