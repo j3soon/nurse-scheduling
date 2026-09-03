@@ -20,12 +20,83 @@
 // This test is mostly AI generated.
 
 import { expect, Page, test } from '@playwright/test';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 interface CapturedRequests {
   scheduleYaml: string;
   messageBody: string;
   messageBodies: string[];
   messageContentType: string;
+}
+
+async function startCancelableAiBackend() {
+  let disconnected = false;
+  const server = createServer((request, response) => {
+    request.resume();
+    const headers = {
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Origin': request.headers.origin ?? '*',
+    };
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204, headers).end();
+      return;
+    }
+    if (request.url === '/ai/capabilities') {
+      response.writeHead(200, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify({
+        image_attachments: {
+          enabled: false,
+          accepted_media_types: ['image/png'],
+          max_files: 1,
+          max_bytes_per_file: 1000,
+        },
+        document_attachments: {
+          enabled: false,
+          accepted_extensions: ['.txt'],
+          max_files: 1,
+          max_bytes_per_file: 1000,
+        },
+      }));
+      return;
+    }
+    if (request.url === '/ai/sessions') {
+      response.writeHead(201, { ...headers, 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ id: 'cancel-session' }));
+      return;
+    }
+    if (request.url === '/ai/sessions/cancel-session/messages') {
+      response.writeHead(200, {
+        ...headers,
+        'Cache-Control': 'no-cache',
+        'Content-Type': 'text/event-stream',
+      });
+      response.write('event: tool_start\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sleep 30\\"}"}\n\n');
+      response.on('close', () => {
+        if (!response.writableEnded) disconnected = true;
+      });
+      return;
+    }
+    response.writeHead(404, headers).end();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address() as AddressInfo;
+
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    wasDisconnected: () => disconnected,
+    close: async () => {
+      const closed = new Promise<void>((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+      });
+      server.closeAllConnections();
+      await closed;
+    },
+  };
 }
 
 async function mockAiBackend(
@@ -141,6 +212,29 @@ test('retries a failed text turn without hiding its provisional activity', async
     { message: 'Who works first?' },
     { message: 'Who works first?' },
   ]);
+});
+
+test('Stop aborts the active AI stream', async ({ page }) => {
+  const backend = await startCancelableAiBackend();
+  await page.route('**/ai/**', route => {
+    const requestUrl = new URL(route.request().url());
+    return route.continue({ url: `${backend.origin}${requestUrl.pathname}${requestUrl.search}` });
+  });
+
+  try {
+    await page.goto('/experimental-ai');
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Wait for this command.');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    await expect(page.getByText('bash · running')).toBeVisible();
+    await page.getByRole('button', { name: 'Stop' }).click();
+
+    await expect.poll(backend.wasDisconnected).toBe(true);
+    await expect(page.getByText('bash · interrupted')).toBeVisible();
+    await expect(page.getByText('This turn failed and was not saved to AI history.')).toBeVisible();
+  } finally {
+    await backend.close();
+  }
 });
 
 test('renders assistant Markdown with safe images and copyable code', async ({ page, context }) => {

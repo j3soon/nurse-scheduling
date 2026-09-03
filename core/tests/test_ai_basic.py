@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -30,6 +31,7 @@ from fastapi.testclient import TestClient
 
 from nurse_scheduling.ai.app import (
     CANDIDATE_VALIDATION_ERROR,
+    OWNER_COOKIE,
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
     SERVICE_NAME,
@@ -120,6 +122,89 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
         data = next(json.loads(line.removeprefix("data: ")) for line in lines if line.startswith("data: "))
         events.append((event_type, data))
     return events
+
+
+@pytest.mark.parametrize("wait_stage", ["provider", "command"])
+def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str) -> None:
+    async def exercise() -> tuple[FakeSandboxBackend, bool, bool, list[ChatMessage]]:
+        operation_started = asyncio.Event()
+        operation_cancelled = asyncio.Event()
+
+        async def wait_until_cancelled() -> None:
+            operation_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                operation_cancelled.set()
+                raise
+
+        class WaitingProvider:
+            async def stream_events(self, _messages, tools=None):
+                if wait_stage == "provider":
+                    await wait_until_cancelled()
+                    return
+                yield ToolCallRequest((ToolCall("call-1", BASH_TOOL, '{"command":"sleep 30"}'),))
+
+        async def command_handler(*_args) -> CommandResult:
+            await wait_until_cancelled()
+            return CommandResult("", "", 0)
+
+        factory = FakeSandboxFactory(
+            lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=command_handler)
+        )
+        app = create_test_app(settings=make_settings(), provider=WaitingProvider(), sandbox_factory=factory)
+        session = app.state.session_store.create("browser-owner", schedule_yaml())
+        request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        await request_events.put(
+            {
+                "type": "http.request",
+                "body": json.dumps({"message": "Wait for me"}).encode(),
+                "more_body": False,
+            }
+        )
+        response_started = asyncio.Event()
+
+        async def receive() -> dict[str, object]:
+            return await request_events.get()
+
+        async def send(message: dict[str, object]) -> None:
+            if message["type"] == "http.response.start":
+                response_started.set()
+
+        path = f"/sessions/{session.id}/messages"
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"cookie", f"{OWNER_COOKIE}=browser-owner".encode()),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        }
+        request_task = asyncio.create_task(app(scope, receive, send))
+        await asyncio.wait_for(operation_started.wait(), timeout=1)
+        await asyncio.wait_for(response_started.wait(), timeout=1)
+        await request_events.put({"type": "http.disconnect"})
+        await asyncio.wait_for(request_task, timeout=1)
+
+        backend = factory.created[0]
+        return backend, operation_cancelled.is_set(), session.active, list(session.history)
+
+    backend, operation_cancelled, session_active, history = asyncio.run(exercise())
+
+    assert operation_cancelled
+    assert backend.closed
+    assert backend.close_calls == 1
+    assert not session_active
+    assert history == []
 
 
 def test_health_and_streamed_schedule_question() -> None:
