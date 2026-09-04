@@ -55,5 +55,6 @@ def test_candidate_with_new_validation_problem_is_rejected():
     review = review_schedule_candidate(base, "not: [valid", SCHEDULE_BYTE_LIMIT)
 
     assert not review.outcome.ok
+    assert "cannot become a proposal" in review.outcome.text
     assert "introduces problems" in review.outcome.text
     assert review.proposal is None

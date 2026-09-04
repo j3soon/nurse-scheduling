@@ -344,7 +344,12 @@ class _ScheduleCandidateTracker:
                 ),
                 candidate,
             )
+        guidance = ""
+        if not review.outcome.ok:
+            guidance = (
+                "The working copy retains this command's changes. Repair the reported problems before finishing.\n"
+            )
         return (
-            AgentToolOutcome(f"{prefix}\n{review.outcome.text}", review.outcome.ok),
+            AgentToolOutcome(f"{prefix}\n{guidance}{review.outcome.text}", review.outcome.ok),
             candidate if review.outcome.ok else None,
         )

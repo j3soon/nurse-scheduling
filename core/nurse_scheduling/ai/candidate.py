@@ -66,7 +66,7 @@ def review_schedule_candidate(base_text: str, candidate: str, max_bytes: int) ->
         problems = "\n".join(f"- {issue.location}: {issue.message}" for issue in introduced)
         return ScheduleCandidateReview(
             CandidateOutcome(
-                f"{SCHEDULE_FILENAME} was not changed, because the edit introduces problems.\n{problems}",
+                f"{SCHEDULE_FILENAME} introduces problems and cannot become a proposal.\n{problems}",
                 False,
             ),
             None,

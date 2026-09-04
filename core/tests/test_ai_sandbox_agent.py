@@ -311,6 +311,8 @@ def test_intermediate_trusted_validation_lets_the_model_repair_a_bad_edit():
 
     tools = [event for event in events if isinstance(event, AgentToolUse)]
     assert not tools[0].ok
+    assert "working copy retains this command's changes" in tools[0].result
+    assert "Repair the reported problems before finishing" in tools[0].result
     assert "introduces problems" in tools[0].result
     assert "Remaining edit attempts" not in tools[0].result
     assert tools[1].ok
