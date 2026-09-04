@@ -28,20 +28,21 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import Cookie, FastAPI, HTTPException, Request, Response, status
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 
 from ..sentry import init_sentry
+from ..server.auth import AUTH_SCHEME, create_auth_dependency
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
-from .config import AiSettings
+from .config import AiSettings, validate_ai_auth_token
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .provider import ChatContent, ChatMessage, ChatProvider, OpenAiCompatibleProvider, ProviderError
 from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
@@ -154,6 +155,7 @@ class CapabilitiesResponse(BaseModel):
 
     image_attachments: ImageAttachmentCapability
     document_attachments: DocumentAttachmentCapability
+    auth: dict[str, bool | str]
 
 
 @dataclass(frozen=True)
@@ -533,24 +535,37 @@ def create_app(
     """Construct the independently deployable AI application."""
     init_sentry(API_VERSION, app="ai-backend")
     settings = settings or AiSettings.from_env()
+    settings = replace(
+        settings,
+        auth_token=validate_ai_auth_token(settings.auth_token, required=settings.auth_required),
+    )
     provider = provider or OpenAiCompatibleProvider(settings)
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
+    require_auth = create_auth_dependency(settings.auth_token)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         async with managed_sandbox_factory(sandbox_factory):
             yield
 
-    app = FastAPI(title="Nurse Scheduling AI API", version=API_VERSION, lifespan=lifespan)
+    generated_docs_are_public = settings.auth_token is None
+    app = FastAPI(
+        title="Nurse Scheduling AI API",
+        version=API_VERSION,
+        lifespan=lifespan,
+        openapi_url="/openapi.json" if generated_docs_are_public else None,
+        docs_url="/docs" if generated_docs_are_public else None,
+        redoc_url="/redoc" if generated_docs_are_public else None,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Authorization", "Content-Type"],
     )
     app.state.settings = settings
     app.state.session_store = store
@@ -583,9 +598,15 @@ def create_app(
                 max_files=settings.max_document_files,
                 max_bytes_per_file=settings.max_document_bytes,
             ),
+            auth={"required": settings.auth_token is not None, "scheme": AUTH_SCHEME},
         )
 
-    @app.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/sessions",
+        response_model=CreateSessionResponse,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_auth)],
+    )
     async def create_session(
         request: CreateSessionRequest,
         response: Response,
@@ -606,7 +627,7 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
-    @app.post("/sessions/{session_id}/messages")
+    @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
         session_id: str,
         request: Request,
@@ -707,7 +728,11 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.put("/sessions/{session_id}/schedule", status_code=status.HTTP_204_NO_CONTENT)
+    @app.put(
+        "/sessions/{session_id}/schedule",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_auth)],
+    )
     async def update_schedule(
         session_id: str,
         request: UpdateScheduleRequest,
@@ -719,7 +744,11 @@ def create_app(
         store.update_schedule(session_id, owner, request.schedule_yaml)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    @app.post("/sessions/{session_id}/proposal/approve", response_model=ProposalResponse)
+    @app.post(
+        "/sessions/{session_id}/proposal/approve",
+        response_model=ProposalResponse,
+        dependencies=[Depends(require_auth)],
+    )
     async def approve_proposal(
         session_id: str,
         request: ApproveProposalRequest,
@@ -738,7 +767,11 @@ def create_app(
         store.record_proposal_approval(session_id)
         return ProposalResponse(schedule_yaml=approved)
 
-    @app.post("/sessions/{session_id}/proposal/reject", status_code=status.HTTP_204_NO_CONTENT)
+    @app.post(
+        "/sessions/{session_id}/proposal/reject",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_auth)],
+    )
     async def reject_proposal(
         session_id: str,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),

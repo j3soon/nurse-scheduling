@@ -16,6 +16,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Avoid trailing spaces. End files with a newline.
 - Store screenshots and other disposable review output in the Git-ignored
   repository-root `artifacts/`.
+- Keep local service configuration in the ignored `docker/.env`. Its tracked
+  `docker/.env.example` separates services with comment blocks and uses empty
+  assignments for secrets and URLs.
 - Derive Git versions on the host for local Docker builds. Never copy `.git`
   into build contexts because linked worktrees store metadata elsewhere.
 - Note wasteful token use and uninformative tests, scripts, or runs. Fix when

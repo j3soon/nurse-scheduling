@@ -339,11 +339,12 @@ default. Disable them independently with `AI_ATTACHMENT_MODE=none` and
 process and sends the schedule and enabled inputs to an OpenAI-compatible
 provider.
 
-Create a local configuration file. The real `.env.ai` file is ignored by Git:
+Create a local configuration file. The real `docker/.env` file is ignored by Git:
 
 ```sh
-cp .env.ai.example .env.ai
-# Review and update the values in .env.ai.
+cp docker/.env.example docker/.env
+# Review and update the AI values. Set AI_AUTH_REQUIRED=false and leave
+# AI_AUTH_TOKEN empty only when intentionally serving locally without auth.
 ```
 
 Start the AI backend and frontend in separate terminals:

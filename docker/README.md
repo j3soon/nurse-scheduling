@@ -67,6 +67,13 @@ development stays unauthenticated and needs no frontend changes.
 The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which both compose files
 set from `API_AUTH_TOKEN`.
 
+The AI service in both backend Compose files applies the same secure default
+with `AI_AUTH_REQUIRED=true`. Set `AI_AUTH_TOKEN` before starting Compose. To
+deliberately serve without AI authentication, set
+`AI_AUTH_REQUIRED=false` in `docker/.env` and leave `AI_AUTH_TOKEN` empty. Native
+runs leave required mode disabled, although setting a token still enables bearer
+authentication.
+
 ## Sentry
 
 The Docker deployment configures only the Python backend. Keep all backend
@@ -113,6 +120,14 @@ docker compose -f compose.backend.yml up -d --build
 The API derives one deployment ID from its container and server-launch
 identity and shares it across all Uvicorn workers. The one-shot public
 diagnostic is opt-in and does not start with the normal deployment command.
+The normal Compose startup also starts one experimental AI worker. Configure
+the AI block in `.env` before running:
+
+```sh
+docker compose -f compose.backend.yml up -d --build
+```
+
+The same behavior applies to `compose.backend.memory.yml`.
 
 For staging, create a separate ignored environment file and use a staging-only
 Cloudflare Tunnel token:

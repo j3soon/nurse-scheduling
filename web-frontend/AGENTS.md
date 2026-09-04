@@ -53,6 +53,10 @@ the mapping in `src/constants/urls.ts` synchronized with `../zensical.toml`.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
+Treat an absent AI auth descriptor as a legacy open backend. When auth is
+required, send the AI token through the shared authorized-header helper on
+every session request, including the fetch-based event stream. Store it only
+when the user explicitly opts in to unencrypted device storage.
 Local development calls the AI backend directly because Next.js development
 rewrites buffer SSE. Production uses the same-origin `/ai` reverse-proxy route
 with response buffering disabled. When a capability-gated control is missing,

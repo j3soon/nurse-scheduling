@@ -23,9 +23,30 @@ import os
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from ..server.auth import RECOMMENDED_AUTH_TOKEN_LENGTH, normalize_auth_token
+
 AttachmentMode = Literal["none", "images"]
 DocumentAttachmentMode = Literal["none", "text"]
 SandboxBackendName = Literal["none", "e2b"]
+AI_AUTH_TOKEN_ENV_NAME = "AI_AUTH_TOKEN"
+AI_AUTH_REQUIRED_ENV_NAME = "AI_AUTH_REQUIRED"
+
+
+def validate_ai_auth_token(value: str | None, *, required: bool) -> str | None:
+    """Normalize an optional token and enforce deployment requirements."""
+    auth_token = normalize_auth_token(
+        value,
+        name=AI_AUTH_TOKEN_ENV_NAME,
+        warn_on_short=not required,
+    )
+    if required and auth_token is None:
+        raise ValueError(f"{AI_AUTH_REQUIRED_ENV_NAME} is set, so {AI_AUTH_TOKEN_ENV_NAME} must not be empty")
+    if required and auth_token is not None and len(auth_token) < RECOMMENDED_AUTH_TOKEN_LENGTH:
+        raise ValueError(
+            f"{AI_AUTH_TOKEN_ENV_NAME} must be at least {RECOMMENDED_AUTH_TOKEN_LENGTH} characters "
+            f"when {AI_AUTH_REQUIRED_ENV_NAME} is set"
+        )
+    return auth_token
 
 
 def _read_positive_int(name: str, default: int) -> int:
@@ -108,6 +129,8 @@ class AiSettings:
     provider_base_url: str
     provider_api_key: str
     provider_model: str
+    auth_token: str | None = None
+    auth_required: bool = False
     provider_timeout_seconds: float = 120.0
     provider_max_attempts: int = 3
     provider_retry_backoff_seconds: float = 1.0
@@ -144,6 +167,7 @@ class AiSettings:
     @classmethod
     def from_env(cls) -> "AiSettings":
         """Load settings without embedding provider credentials in the repository."""
+        auth_token = os.getenv(AI_AUTH_TOKEN_ENV_NAME)
         provider_api_key = os.getenv("AI_PROVIDER_API_KEY", "").strip()
         if not provider_api_key:
             raise ValueError("AI_PROVIDER_API_KEY is required")
@@ -169,6 +193,8 @@ class AiSettings:
             provider_base_url=provider_base_url,
             provider_api_key=provider_api_key,
             provider_model=provider_model,
+            auth_token=auth_token,
+            auth_required=_read_bool(AI_AUTH_REQUIRED_ENV_NAME, False),
             provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 120.0),
             provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
             provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),

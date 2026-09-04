@@ -19,6 +19,12 @@
 
 // This code is mostly AI generated.
 
+import {
+  buildAuthHeaders,
+  parseAuthRequirement,
+  type AuthRequirement,
+} from '@/utils/backendAuth';
+
 export interface ToolActivity {
   name: string;
   arguments: string;
@@ -39,6 +45,7 @@ export interface StreamCallbacks {
 }
 
 export interface AiCapabilities {
+  auth: AuthRequirement | null;
   image_attachments: {
     enabled: boolean;
     accepted_media_types: string[];
@@ -73,6 +80,13 @@ interface SsePayload {
   schedule_yaml?: unknown;
 }
 
+export class AiHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'AiHttpError';
+  }
+}
+
 export function getAiBaseUrl(): string {
   const configuredUrl = process.env.NEXT_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');
   if (configuredUrl) return configuredUrl;
@@ -85,11 +99,19 @@ export function getAiBaseUrl(): string {
 async function responseError(response: Response): Promise<Error> {
   try {
     const body = await response.json() as { detail?: unknown };
-    if (typeof body.detail === 'string') return new Error(body.detail);
+    if (typeof body.detail === 'string') return new AiHttpError(body.detail, response.status);
   } catch {
     // Fall back to a stable error when the response is not JSON.
   }
-  return new Error(`The AI backend returned HTTP ${response.status}.`);
+  return new AiHttpError(`The AI backend returned HTTP ${response.status}.`, response.status);
+}
+
+function authorizedHeaders(
+  token: string | null,
+  headers?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (token === null && headers === undefined) return undefined;
+  return { ...headers, ...buildAuthHeaders(token) };
 }
 
 export async function getCapabilities(signal?: AbortSignal): Promise<AiCapabilities> {
@@ -100,6 +122,7 @@ export async function getCapabilities(signal?: AbortSignal): Promise<AiCapabilit
   if (!response.ok) throw await responseError(response);
 
   const body = await response.json() as Partial<AiCapabilities>;
+  const auth = parseAuthRequirement(body.auth);
   const images = body.image_attachments;
   const documents = body.document_attachments;
   if (
@@ -120,14 +143,14 @@ export async function getCapabilities(signal?: AbortSignal): Promise<AiCapabilit
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
-  return body as AiCapabilities;
+  return { ...body, auth } as AiCapabilities;
 }
 
-export async function createSession(scheduleYaml: string): Promise<string> {
+export async function createSession(scheduleYaml: string, authToken: string | null): Promise<string> {
   const response = await fetch(`${getAiBaseUrl()}/sessions`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ schedule_yaml: scheduleYaml }),
   });
   if (!response.ok) throw await responseError(response);
@@ -190,12 +213,13 @@ export async function streamMessage(
   message: string,
   callbacks: StreamCallbacks,
   signal: AbortSignal,
+  authToken: string | null,
   attachments: MessageAttachments = {},
 ): Promise<void> {
   const images = attachments.images ?? [];
   const documents = attachments.documents ?? [];
   let body: BodyInit;
-  let headers: HeadersInit | undefined;
+  let headers: Record<string, string> | undefined;
   if (images.length > 0 || documents.length > 0) {
     const form = new FormData();
     form.append('message', message);
@@ -210,7 +234,7 @@ export async function streamMessage(
   const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     credentials: 'include',
-    headers,
+    headers: authorizedHeaders(authToken, headers),
     body,
     signal,
   });
@@ -245,21 +269,29 @@ export async function scheduleRevision(scheduleYaml: string): Promise<string> {
     .join('');
 }
 
-export async function updateSessionSchedule(sessionId: string, scheduleYaml: string): Promise<void> {
+export async function updateSessionSchedule(
+  sessionId: string,
+  scheduleYaml: string,
+  authToken: string | null,
+): Promise<void> {
   const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/schedule`, {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ schedule_yaml: scheduleYaml }),
   });
   if (!response.ok) throw await responseError(response);
 }
 
-export async function approveProposal(sessionId: string, scheduleYaml: string): Promise<string> {
+export async function approveProposal(
+  sessionId: string,
+  scheduleYaml: string,
+  authToken: string | null,
+): Promise<string> {
   const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/proposal/approve`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ base_sha256: await scheduleRevision(scheduleYaml) }),
   });
   if (!response.ok) throw await responseError(response);
@@ -271,10 +303,11 @@ export async function approveProposal(sessionId: string, scheduleYaml: string): 
   return body.schedule_yaml;
 }
 
-export async function rejectProposal(sessionId: string): Promise<void> {
+export async function rejectProposal(sessionId: string, authToken: string | null): Promise<void> {
   const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/proposal/reject`, {
     method: 'POST',
     credentials: 'include',
+    headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
 }

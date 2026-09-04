@@ -68,6 +68,7 @@ def settings(**overrides: object) -> AiSettings:
         "provider_base_url": "https://provider.example/v1",
         "provider_api_key": "test-token",
         "provider_model": "test-model",
+        "auth_token": "ai-shared-test-token",
     }
     values.update(overrides)
     return AiSettings(**values)

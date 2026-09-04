@@ -14,23 +14,25 @@ excludes retrieval and repository access.
 
 ## Run locally
 
-Copy the secret-free template from the repository root:
+Copy the shared secret-free template from the `docker/` directory:
 
 ```sh
-cp .env.ai.example .env.ai
+cp docker/.env.example docker/.env
 ```
 
-Review the values in `.env.ai`. Set the provider URL, API key, model, and other
-settings for your environment, then start the service:
+Review the AI assistant block in `docker/.env`. Set the provider URL, API key,
+model, and other settings for your environment. For an authenticated service,
+also set the AI token. To serve locally without auth, explicitly set
+`AI_AUTH_REQUIRED=false` and leave `AI_AUTH_TOKEN` empty. Then start the service:
 
 ```sh
 ./scripts/start_ai_backend.sh
 curl http://localhost:8001/health
 ```
 
-The launcher reads `.env.ai` automatically. Set `AI_ENV_FILE` to load another
-path. Port `8001` avoids the normal backend on `8000`. Use another port for a
-local documentation server when both services run at the same time. The
+The launcher reads `docker/.env` automatically. Set `AI_ENV_FILE` to load
+another path. Port `8001` avoids the normal backend on `8000`. Use another port
+for a local documentation server when both services run at the same time. The
 documented local Zensical port is `8003`.
 
 During local development, the frontend calls port `8001` on the browser's
@@ -121,7 +123,7 @@ The runner needs the same provider settings the service uses:
 | `E2B_TEMPLATE` | No | Defaults to `nurse-scheduling-ai-sandbox`. |
 | `AI_EVAL_ARTIFACT_ROOT` | No | Report root, `artifacts` by default. |
 
-The launcher reads them from `.env.ai`, so the shortest form is:
+The launcher reads them from `docker/.env`, so the shortest form is:
 
 ```sh
 ./scripts/run_ai_eval.sh
@@ -131,7 +133,7 @@ The launcher reads them from `.env.ai`, so the shortest form is:
 To run it without the launcher, load the settings first:
 
 ```sh
-set -a && . ./.env.ai && set +a
+set -a && . ./docker/.env && set +a
 cd core && python -m tests.ai_eval.runner --category 01-reading
 ```
 
@@ -317,6 +319,8 @@ response cannot prove that the original operation did not take effect.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `AI_AUTH_TOKEN` | Unset | Shared bearer token. Setting it protects every AI session route. Use at least 16 ASCII characters. |
+| `AI_AUTH_REQUIRED` | `false` (`true` in Docker) | Fail startup unless a token of at least 16 ASCII characters is configured. |
 | `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
 | `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
@@ -363,7 +367,7 @@ docker build -f docker/Dockerfile -t nurse-scheduling:dev .
 docker run --rm -it \
   --name nurse-scheduling-dev \
   --network=host \
-  --env-file .env.ai \
+  --env-file docker/.env \
   -v "$(pwd):/app" \
   nurse-scheduling:dev
 ```
@@ -383,6 +387,19 @@ docker exec -it -w /app nurse-scheduling-dev \
 
 The normal optimization backend is optional for this chat flow.
 
+## Run with Docker Compose
+
+Both backend Compose variants start the AI service by default. Configure the AI
+assistant block in `docker/.env`, then run from the `docker/` directory:
+
+```sh
+docker compose -f compose.backend.yml up -d --build
+```
+
+Use `compose.backend.memory.yml` in the same command when running the
+process-local optimization backend. The AI service itself remains process-local
+in both variants and listens on port `8001` inside the Compose network.
+
 ## Production proxy
 
 Disable response buffering on the streaming AI route. See the
@@ -390,7 +407,7 @@ Disable response buffering on the streaming AI route. See the
 
 ```nginx
 location /ai/ {
-    proxy_pass http://ai-backend:8001/;
+    proxy_pass http://ai:8001/;
     proxy_http_version 1.1;
     proxy_buffering off;
     proxy_cache off;
@@ -411,10 +428,34 @@ Multipart requests use one `message` field, repeated `images` file fields, and
 repeated `documents` file fields. Sessions are process-local. Use one AI
 backend instance until shared AI storage is added.
 
+`GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
+probes work and the frontend can discover authentication and attachment limits.
+Capabilities reports whether bearer auth is active. When `AI_AUTH_TOKEN` is
+set, every session route requires `Authorization: Bearer <AI_AUTH_TOKEN>` and
+returns `401` when the credential is missing or wrong. Native runs may leave the
+token unset to serve locally without auth. Docker Compose sets
+`AI_AUTH_REQUIRED=true` on the service, so its env file must explicitly set `AI_AUTH_REQUIRED=false` and
+leave `AI_AUTH_TOKEN` empty to serve without authentication. Required mode
+refuses to start with a missing, blank, shorter than 16 character, or non-ASCII
+token.
+
+For example, create a session directly with:
+
+```sh
+curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{"schedule_yaml":"description: test"}' \
+  http://localhost:8001/sessions
+```
+
 ## Security notes
 
-- Keep `.env.ai` private. Git ignores it, while `.env.ai.example` contains only
-  placeholders.
+- Keep `docker/.env` private. Git ignores it, while `docker/.env.example`
+  contains only empty secret fields and documented defaults.
+- The browser keeps the AI token in memory unless the user explicitly chooses
+  to store it unencrypted on that device. A stored token is scoped to the AI
+  endpoint that requested it. The AI token is independent from the optimizer's
+  `API_AUTH_TOKEN`, although an operator may configure equal values.
 - E2B Cloud is currently the only sandbox backend. The agent depends on the
   project `SandboxBackend` contract so a future self-hosted E2B or remote gVisor
   backend does not require changing model logic.

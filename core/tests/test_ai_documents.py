@@ -229,9 +229,13 @@ def test_pdf_and_xlsx_are_extracted_for_one_provider_request() -> None:
         provider_base_url="https://provider.example/v1",
         provider_api_key="test-token",
         provider_model="test-model",
+        auth_token="ai-shared-test-token",
         cookie_secure=False,
     )
-    client = TestClient(create_app(settings=settings, provider=provider, sandbox_factory=FakeSandboxFactory()))
+    client = TestClient(
+        create_app(settings=settings, provider=provider, sandbox_factory=FakeSandboxFactory()),
+        headers={"Authorization": "Bearer ai-shared-test-token"},
+    )
     session = client.post("/sessions", json={"schedule_yaml": "description: test"})
 
     response = client.post(

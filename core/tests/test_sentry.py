@@ -263,8 +263,8 @@ def test_flush_sentry_waits_for_pending_logs(monkeypatch):
 @pytest.mark.parametrize(
     ("compose_file", "service_names"),
     [
-        ("compose.backend.yml", ("api", "diagnostic", "usage-reporter")),
-        ("compose.backend.memory.yml", ("api", "diagnostic")),
+        ("compose.backend.yml", ("api", "ai", "diagnostic", "usage-reporter")),
+        ("compose.backend.memory.yml", ("api", "ai", "diagnostic")),
     ],
 )
 def test_compose_python_services_share_sentry_environment(compose_file, service_names):

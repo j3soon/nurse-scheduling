@@ -42,7 +42,12 @@ _AUTHENTICATE_HEADERS = {"WWW-Authenticate": "Bearer"}
 auth_logger = logging.getLogger("nurse_scheduling.server.auth")
 
 
-def normalize_auth_token(value: str | None, *, warn_on_short: bool = True) -> str | None:
+def normalize_auth_token(
+    value: str | None,
+    *,
+    name: str = AUTH_TOKEN_ENV_NAME,
+    warn_on_short: bool = True,
+) -> str | None:
     """Return the shared token, or `None` when authentication is disabled.
 
     A short token is accepted with a warning rather than refused, so local testing is not
@@ -56,11 +61,11 @@ def normalize_auth_token(value: str | None, *, warn_on_short: bool = True) -> st
     # A non-ASCII token cannot be carried by an HTTP header, so accepting one would start a
     # server that rejects every client for a reason no response explains.
     if not token.isascii():
-        raise ValueError(f"{AUTH_TOKEN_ENV_NAME} must contain only ASCII characters")
+        raise ValueError(f"{name} must contain only ASCII characters")
     if warn_on_short and len(token) < RECOMMENDED_AUTH_TOKEN_LENGTH:
         auth_logger.warning(
             "[server:auth] %s is shorter than %d characters and is unsafe outside local testing",
-            AUTH_TOKEN_ENV_NAME,
+            name,
             RECOMMENDED_AUTH_TOKEN_LENGTH,
         )
     return token

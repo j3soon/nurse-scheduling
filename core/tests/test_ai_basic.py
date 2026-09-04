@@ -51,11 +51,23 @@ PNG_BYTES = base64.b64decode(
 )
 JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
 WEBP_BYTES = b"RIFF\x04\x00\x00\x00WEBP"
+AI_AUTH_TOKEN = "ai-shared-test-token"
+AI_AUTH_HEADERS = {"Authorization": f"Bearer {AI_AUTH_TOKEN}"}
+
+
+class AuthenticatedTestClient(TestClient):
+    """Test client carrying the mandatory AI service credential by default."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        headers = {**AI_AUTH_HEADERS, **kwargs.pop("headers", {})}
+        super().__init__(*args, headers=headers, **kwargs)
 
 
 @pytest.fixture(autouse=True)
 def configured_sandbox_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Give positive environment parsing tests the required sandbox settings."""
+    monkeypatch.setenv("AI_AUTH_TOKEN", AI_AUTH_TOKEN)
+    monkeypatch.delenv("AI_AUTH_REQUIRED", raising=False)
     monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
     monkeypatch.setenv("E2B_API_KEY", "test-e2b-key")
 
@@ -86,6 +98,7 @@ def make_settings(**overrides: object) -> AiSettings:
         "provider_base_url": "https://provider.example/v1",
         "provider_api_key": "test-token",
         "provider_model": "test-model",
+        "auth_token": AI_AUTH_TOKEN,
         "max_sessions": 10,
         "max_history_messages": 20,
         "max_message_chars": 100,
@@ -127,13 +140,86 @@ def test_application_lifespan_runs_sandbox_cleanup_supervision():
             self.stops += 1
 
     factory = LifecycleFactory()
-    with TestClient(
+    with AuthenticatedTestClient(
         create_test_app(settings=make_settings(), provider=FakeProvider(), sandbox_factory=factory)
     ) as client:
         assert client.get("/health").status_code == 200
         assert factory.starts == 1
 
     assert factory.stops == 1
+
+
+def test_ai_authentication_discovery_and_healthchecks_stay_public() -> None:
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/ready").status_code == 200
+    capabilities = client.get("/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json()["auth"] == {"required": True, "scheme": "bearer"}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json_body"),
+    [
+        ("post", "/sessions", {"schedule_yaml": "description: test"}),
+        ("post", "/sessions/missing/messages", {"message": "Hello"}),
+        ("put", "/sessions/missing/schedule", {"schedule_yaml": "description: changed"}),
+        ("post", "/sessions/missing/proposal/approve", {"base_sha256": "0" * 64}),
+        ("post", "/sessions/missing/proposal/reject", None),
+    ],
+)
+def test_ai_session_routes_require_authentication(method: str, path: str, json_body: dict | None) -> None:
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+
+    response = client.request(method, path, json=json_body)
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert response.json()["detail"] == "Backend credentials are required."
+
+
+def test_ai_session_routes_reject_invalid_credentials_and_accept_the_configured_token() -> None:
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+
+    rejected = client.post(
+        "/sessions",
+        headers={"Authorization": "Bearer wrong-ai-token"},
+        json={"schedule_yaml": "description: test"},
+    )
+    accepted = client.post(
+        "/sessions",
+        headers=AI_AUTH_HEADERS,
+        json={"schedule_yaml": "description: test"},
+    )
+
+    assert rejected.status_code == 401
+    assert rejected.json()["detail"] == "Backend credentials are invalid."
+    assert accepted.status_code == 201
+
+
+def test_ai_cors_preflight_allows_the_authorization_header() -> None:
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+
+    response = client.options(
+        "/sessions",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    allowed = response.headers["access-control-allow-headers"].lower()
+    assert "authorization" in allowed
+
+
+def test_ai_generated_api_docs_are_disabled() -> None:
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        assert client.get(path, headers=AI_AUTH_HEADERS).status_code == 404
 
 
 def create_session(client: TestClient, schedule_yaml: str = "description: test") -> str:
@@ -211,6 +297,7 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
             "query_string": b"",
             "root_path": "",
             "headers": [
+                (b"authorization", f"Bearer {AI_AUTH_TOKEN}".encode()),
                 (b"content-type", b"application/json"),
                 (b"cookie", f"{OWNER_COOKIE}=browser-owner".encode()),
             ],
@@ -237,7 +324,7 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
 
 def test_health_and_streamed_schedule_question() -> None:
     provider = FakeProvider()
-    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
 
     health = client.get("/health")
     assert health.status_code == 200
@@ -265,7 +352,7 @@ def test_health_and_streamed_schedule_question() -> None:
 
 
 def test_capabilities_report_configured_attachment_limits() -> None:
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(
                 attachment_mode="images",
@@ -295,12 +382,15 @@ def test_capabilities_report_configured_attachment_limits() -> None:
             "max_files": 3,
             "max_bytes_per_file": 4321,
         },
+        "auth": {"required": True, "scheme": "bearer"},
     }
 
 
 def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
     provider = FakeProvider([["Image answer"], ["Follow-up answer"]])
-    client = TestClient(create_test_app(settings=make_settings(attachment_mode="images"), provider=provider))
+    client = AuthenticatedTestClient(
+        create_test_app(settings=make_settings(attachment_mode="images"), provider=provider)
+    )
     session_id = create_session(client)
 
     image_response = client.post(
@@ -337,7 +427,9 @@ def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
 )
 def test_supported_image_signatures_are_sent_to_provider(filename: str, media_type: str, data: bytes) -> None:
     provider = FakeProvider()
-    client = TestClient(create_test_app(settings=make_settings(attachment_mode="images"), provider=provider))
+    client = AuthenticatedTestClient(
+        create_test_app(settings=make_settings(attachment_mode="images"), provider=provider)
+    )
     session_id = create_session(client)
 
     response = client.post(
@@ -354,7 +446,7 @@ def test_supported_image_signatures_are_sent_to_provider(filename: str, media_ty
 
 def test_documents_are_sent_to_provider_but_contents_are_not_retained() -> None:
     provider = FakeProvider([["Document answer"], ["Follow-up answer"]])
-    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
     document_response = client.post(
@@ -395,7 +487,7 @@ def test_documents_are_sent_to_provider_but_contents_are_not_retained() -> None:
     ],
 )
 def test_text_documents_accept_each_advertised_media_type(filename: str, media_type: str) -> None:
-    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
 
     response = client.post(
@@ -409,7 +501,7 @@ def test_text_documents_accept_each_advertised_media_type(filename: str, media_t
 
 def test_images_and_documents_share_one_provider_user_message() -> None:
     provider = FakeProvider()
-    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
     response = client.post(
@@ -466,7 +558,7 @@ def test_image_attachment_limits(
     expected_status: int,
     expected_detail: str,
 ) -> None:
-    client = TestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
     session_id = create_session(client)
 
     response = client.post(
@@ -553,7 +645,7 @@ def test_document_attachment_limits(
     expected_status: int,
     expected_detail: str,
 ) -> None:
-    client = TestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
     session_id = create_session(client)
 
     response = client.post(
@@ -568,7 +660,7 @@ def test_document_attachment_limits(
 
 def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     provider = FakeProvider([["First answer"], ["Second answer"]])
-    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client, "description: current")
 
     first = client.post(
@@ -590,7 +682,7 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
 
 
 def test_private_container_origin_can_call_ai_backend_directly() -> None:
-    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     response = client.options(
         "/capabilities",
@@ -606,8 +698,8 @@ def test_private_container_origin_can_call_ai_backend_directly() -> None:
 
 def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
-    owner_client = TestClient(app)
-    other_client = TestClient(app)
+    owner_client = AuthenticatedTestClient(app)
+    other_client = AuthenticatedTestClient(app)
     session_id = create_session(owner_client)
     create_session(other_client)
 
@@ -623,7 +715,7 @@ def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
 def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     provider_error = "The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f."
     provider = FakeProvider([["Provisional answer.", ProviderError(provider_error)], ["Recovered"]])
-    client = TestClient(create_test_app(settings=make_settings(), provider=provider))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
     failed = client.post(
@@ -646,7 +738,7 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
 
 
 def test_request_limits_are_enforced() -> None:
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(max_message_chars=5, max_schedule_bytes=5),
             provider=FakeProvider(),
@@ -662,11 +754,69 @@ def test_request_limits_are_enforced() -> None:
     assert message_response.json()["detail"] == "Message is too large."
 
 
-def test_environment_configuration_requires_a_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_configuration_requires_a_provider_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_PROVIDER_API_KEY", raising=False)
 
     with pytest.raises(ValueError, match="AI_PROVIDER_API_KEY is required"):
         AiSettings.from_env()
+
+
+def test_environment_configuration_allows_local_ai_without_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_AUTH_TOKEN", raising=False)
+
+    settings = AiSettings.from_env()
+    client = TestClient(create_test_app(settings=settings, provider=FakeProvider()))
+
+    assert settings.auth_required is False
+    assert client.get("/capabilities").json()["auth"] == {"required": False, "scheme": "bearer"}
+    assert client.post("/sessions", json={"schedule_yaml": "description: test"}).status_code == 201
+    assert client.get("/docs").status_code == 200
+
+
+@pytest.mark.parametrize("token", ["short", "   "])
+def test_required_ai_auth_rejects_an_unsafe_token(token: str) -> None:
+    with pytest.raises(ValueError, match="AI_AUTH_TOKEN must"):
+        create_test_app(settings=make_settings(auth_token=token, auth_required=True), provider=FakeProvider())
+
+
+def test_required_ai_auth_rejects_a_missing_token() -> None:
+    with pytest.raises(ValueError, match="AI_AUTH_REQUIRED is set, so AI_AUTH_TOKEN must not be empty"):
+        create_test_app(settings=make_settings(auth_token=None, auth_required=True), provider=FakeProvider())
+
+
+def test_optional_short_ai_auth_token_still_enables_authentication(caplog: pytest.LogCaptureFixture) -> None:
+    client = TestClient(create_test_app(settings=make_settings(auth_token="short"), provider=FakeProvider()))
+
+    assert client.get("/capabilities").json()["auth"] == {"required": True, "scheme": "bearer"}
+    assert client.post("/sessions", json={"schedule_yaml": "description: test"}).status_code == 401
+    assert "AI_AUTH_TOKEN is shorter than 16 characters" in caplog.text
+
+
+@pytest.mark.parametrize("raw_value, expected", [("true", True), ("1", True), ("false", False), ("0", False)])
+def test_environment_configuration_reads_ai_auth_required(
+    monkeypatch: pytest.MonkeyPatch, raw_value: str, expected: bool
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_AUTH_REQUIRED", raw_value)
+
+    assert AiSettings.from_env().auth_required is expected
+
+
+def test_environment_configuration_rejects_invalid_ai_auth_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_AUTH_REQUIRED", "maybe")
+
+    with pytest.raises(ValueError, match="AI_AUTH_REQUIRED must be a boolean"):
+        AiSettings.from_env()
+
+
+def test_environment_configuration_rejects_a_non_ascii_ai_auth_token() -> None:
+    with pytest.raises(ValueError, match="AI_AUTH_TOKEN must contain only ASCII characters"):
+        create_test_app(settings=make_settings(auth_token="long-enough-auth-token-密"), provider=FakeProvider())
 
 
 def test_environment_configuration_enables_images_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -850,7 +1000,7 @@ def rename_factory() -> FakeSandboxFactory:
 def proposing_client() -> tuple[TestClient, str, str]:
     """Run one proposing turn and return the client, session, and base revision."""
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
             provider=provider,
@@ -878,7 +1028,7 @@ def proposal_decision_context() -> tuple[
         [TextDelta("Decision acknowledged.")],
     )
     factory = rename_factory()
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
             provider=provider,
@@ -894,7 +1044,7 @@ def proposal_decision_context() -> tuple[
 
 def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
             provider=provider,
@@ -939,7 +1089,7 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_proposal() 
         return FakeSandboxBackend(sandbox_id, command_handler=rename, close_error=close_error)
 
     factory = FakeSandboxFactory(backend_factory)
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
             provider=provider,
@@ -973,7 +1123,7 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
         raise SandboxError("E2B command failed")
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=fail_command))
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
             provider=provider,
@@ -1004,7 +1154,7 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
         return CommandResult("updated\n", "", 0)
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
             provider=provider,
@@ -1055,7 +1205,7 @@ def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> No
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=edit))
     settings = make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT)
-    client = TestClient(create_test_app(settings=settings, provider=provider, sandbox_factory=factory))
+    client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider, sandbox_factory=factory))
     schedule = schedule_yaml()
     session_id = create_session(client, schedule)
 
@@ -1138,7 +1288,7 @@ def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
 
 def test_sessions_are_private_to_their_browser() -> None:
     _, session_id, revision = proposing_client()
-    other = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    other = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     assert other.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision}).status_code == 404
     assert other.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "a: 1"}).status_code == 404
@@ -1148,7 +1298,7 @@ def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
     payload = base_schedule_payload()
     payload["preferences"] = []
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
             provider=provider,
@@ -1170,7 +1320,7 @@ def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
 
 def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     provider = FakeProvider()
-    client = TestClient(
+    client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider)
     )
     schedule = schedule_yaml()
@@ -1206,7 +1356,7 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
 
 
 def test_a_browser_may_send_the_newer_schedule_across_origins() -> None:
-    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     preflight = client.options(
         "/sessions/any/schedule",

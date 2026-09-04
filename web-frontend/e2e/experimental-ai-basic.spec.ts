@@ -28,6 +28,7 @@ interface CapturedRequests {
   messageBody: string;
   messageBodies: string[];
   messageContentType: string;
+  authorizationHeaders: string[];
 }
 
 async function startCancelableAiBackend() {
@@ -104,15 +105,22 @@ async function mockAiBackend(
   attachments: { images: boolean; documents: boolean },
   answerDeltas = ['The image and schedule ', 'were received.'],
   failFirstMessage = false,
+  requiredAuthToken?: string,
 ): Promise<CapturedRequests> {
-  const captured = { scheduleYaml: '', messageBody: '', messageBodies: [] as string[], messageContentType: '' };
+  const captured = {
+    scheduleYaml: '',
+    messageBody: '',
+    messageBodies: [] as string[],
+    messageContentType: '',
+    authorizationHeaders: [] as string[],
+  };
 
   await page.route('**/ai/**', async route => {
     const request = route.request();
     const frontendOrigin = request.headers()['origin'] ?? 'http://127.0.0.1:3000';
     const corsHeaders = {
       'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Origin': frontendOrigin,
     };
@@ -126,6 +134,7 @@ async function mockAiBackend(
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({
+          ...(requiredAuthToken ? { auth: { required: true, scheme: 'bearer' } } : {}),
           image_attachments: {
             enabled: attachments.images,
             accepted_media_types: ['image/jpeg', 'image/png', 'image/webp'],
@@ -139,6 +148,17 @@ async function mockAiBackend(
             max_bytes_per_file: 5_000_000,
           },
         }),
+      });
+      return;
+    }
+    const authorization = request.headers()['authorization'] ?? '';
+    captured.authorizationHeaders.push(authorization);
+    if (requiredAuthToken && authorization !== `Bearer ${requiredAuthToken}`) {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({ detail: 'Backend credentials are invalid.' }),
       });
       return;
     }
@@ -187,6 +207,38 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?' });
   expect(captured.scheduleYaml).toContain('apiVersion:');
+});
+
+test('authenticates AI session requests with an explicitly remembered token', async ({ page }) => {
+  const authToken = 'browser-ai-auth-token';
+  const captured = await mockAiBackend(
+    page,
+    { images: false, documents: false },
+    ['Authenticated response.'],
+    false,
+    authToken,
+  );
+
+  await page.goto('/experimental-ai');
+  const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await expect(composer).toBeDisabled();
+  await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
+  await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill(authToken);
+  await page.getByRole('checkbox', { name: /remember on this device/i }).check();
+  await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
+
+  await expect(composer).toBeEnabled();
+  await composer.fill('Use the protected service.');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByText('Authenticated response.')).toBeVisible();
+  expect(captured.authorizationHeaders).toEqual([
+    `Bearer ${authToken}`,
+    `Bearer ${authToken}`,
+  ]);
+  expect(await page.evaluate(() => localStorage.getItem('nurse-scheduling-ai-auth'))).toBe(
+    JSON.stringify({ endpoint: '/ai', token: authToken }),
+  );
 });
 
 test('retries a failed text turn without hiding its provisional activity', async ({ page }) => {

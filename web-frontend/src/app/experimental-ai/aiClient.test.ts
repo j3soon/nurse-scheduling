@@ -58,11 +58,11 @@ describe('AI client', () => {
     ));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(createSession('description: test')).resolves.toBe('session-id');
+    await expect(createSession('description: test', 'ai-client-token')).resolves.toBe('session-id');
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:8001/sessions', {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ai-client-token' },
       body: JSON.stringify({ schedule_yaml: 'description: test' }),
     });
   });
@@ -84,6 +84,7 @@ describe('AI client', () => {
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
 
     await expect(getCapabilities()).resolves.toEqual({
+      auth: null,
       image_attachments: {
         enabled: true,
         accepted_media_types: ['image/png'],
@@ -96,6 +97,40 @@ describe('AI client', () => {
         max_files: 3,
         max_bytes_per_file: 5000000,
       },
+    });
+  });
+
+  it('reads the advertised AI authentication requirement', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      auth: { required: true, scheme: 'Bearer' },
+      image_attachments: {
+        enabled: false,
+        accepted_media_types: [],
+        max_files: 1,
+        max_bytes_per_file: 1,
+      },
+      document_attachments: {
+        enabled: false,
+        accepted_extensions: [],
+        max_files: 1,
+        max_bytes_per_file: 1,
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+
+    await expect(getCapabilities()).resolves.toMatchObject({
+      auth: { required: true, scheme: 'bearer' },
+    });
+  });
+
+  it('preserves an authentication failure status for the credential UI', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'Backend credentials are invalid.' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    await expect(createSession('description: test', 'stale-token')).rejects.toMatchObject({
+      message: 'Backend credentials are invalid.',
+      status: 401,
     });
   });
 
@@ -115,6 +150,7 @@ describe('AI client', () => {
       'Who works?',
       { onDelta: delta => deltas.push(delta), onDone },
       controller.signal,
+      'stream-token',
     );
 
     expect(deltas).toEqual(['Hello', ' world']);
@@ -124,6 +160,7 @@ describe('AI client', () => {
       expect.objectContaining({
         body: JSON.stringify({ message: 'Who works?' }),
         credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
       }),
     );
   });
@@ -145,6 +182,7 @@ describe('AI client', () => {
       'Question',
       { onDelta: delta => deltas.push(delta), onDone },
       new AbortController().signal,
+      null,
     );
     streamController?.enqueue(encoder.encode('event: delta\ndata: {"text":"First"}\n\n'));
 
@@ -168,6 +206,7 @@ describe('AI client', () => {
       'Question',
       { onDelta: vi.fn() },
       new AbortController().signal,
+      null,
     )).rejects.toThrow(providerError);
   });
 
@@ -183,6 +222,7 @@ describe('AI client', () => {
       'What is shown?',
       { onDelta: vi.fn() },
       new AbortController().signal,
+      null,
       { images: [image] },
     );
 
@@ -206,6 +246,7 @@ describe('AI client', () => {
       'Check the file.',
       { onDelta: vi.fn() },
       new AbortController().signal,
+      null,
       { documents: [document] },
     );
 
@@ -246,6 +287,7 @@ describe('AI client', () => {
         onProposal: diff => diffs.push(diff),
       },
       new AbortController().signal,
+      null,
     );
 
     expect(toolStarts).toEqual(['bash:{"command":"sed -n 1p schedule.yaml"}']);
@@ -263,11 +305,13 @@ describe('AI client', () => {
     ));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(approveProposal('session-id', 'description: test')).resolves.toBe('description: approved\n');
+    await expect(approveProposal('session-id', 'description: test', 'proposal-token')).resolves.toBe(
+      'description: approved\n',
+    );
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:8001/sessions/session-id/proposal/approve', {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer proposal-token' },
       body: JSON.stringify({ base_sha256: await scheduleRevision('description: test') }),
     });
   });
@@ -278,7 +322,7 @@ describe('AI client', () => {
       { status: 409, headers: { 'Content-Type': 'application/json' } },
     )));
 
-    await expect(approveProposal('session-id', 'description: test')).rejects.toThrow(
+    await expect(approveProposal('session-id', 'description: test', null)).rejects.toThrow(
       'The schedule changed after this proposal was created, so it was discarded.',
     );
   });
@@ -287,13 +331,17 @@ describe('AI client', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await rejectProposal('session-id');
-    await updateSessionSchedule('session-id', 'description: newer');
+    await rejectProposal('session-id', 'session-token');
+    await updateSessionSchedule('session-id', 'description: newer', 'session-token');
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8001/sessions/session-id/proposal/reject');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      headers: { Authorization: 'Bearer session-token' },
+    });
     expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:8001/sessions/session-id/schedule');
     expect(fetchMock.mock.calls[1][1]).toMatchObject({
       method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer session-token' },
       body: JSON.stringify({ schedule_yaml: 'description: newer' }),
     });
   });
@@ -306,7 +354,7 @@ describe('AI client', () => {
     const tools: { name: string; ok: boolean; result: string }[] = [];
 
     await streamMessage('session-id', 'Look.', { onDelta: () => {}, onTool: activity => tools.push(activity) },
-      new AbortController().signal);
+      new AbortController().signal, null);
 
     expect(tools).toEqual([{ name: 'bash', arguments: '', result: '', ok: true }]);
   });
@@ -321,6 +369,7 @@ describe('AI client', () => {
       'Look.',
       { onDelta: () => {} },
       new AbortController().signal,
+      null,
     )).rejects.toThrow('The AI backend returned an invalid schedule change.');
   });
 });

@@ -13,13 +13,13 @@ stays synchronized with the backend.
 ## Build
 
 Set `E2B_API_KEY` and optionally override `E2B_TEMPLATE` in the ignored
-repository-root `.env.ai` file. Install the core dependencies, then run from the
+`docker/.env` file. Install the core dependencies, then run from the
 repository root:
 
 ```sh
 source core/.venv/bin/activate
 set -a
-source .env.ai
+source docker/.env
 set +a
 python docker/e2b/build_template.py
 ```
@@ -75,7 +75,7 @@ manually paused timeout behavior. Every test destroys its sandbox on exit:
 
 ```sh
 set -a
-source .env.ai
+source docker/.env
 set +a
 cd core
 RUN_E2B_INTEGRATION=1 pytest -q tests/test_ai_sandbox_e2b_live.py

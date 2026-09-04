@@ -84,6 +84,7 @@ def test_provider_http_error_logs_redacted_body_and_returns_error_id(
             provider_base_url="https://provider.example/v1",
             provider_api_key="test-token",
             provider_model="test-model",
+            auth_token="ai-shared-test-token",
         )
     )
     messages: list[ChatMessage] = [{"role": "user", "content": "Question"}]
@@ -122,6 +123,7 @@ def test_provider_http_error_bounds_untrusted_response_excerpt(
             provider_base_url="https://provider.example/v1",
             provider_api_key="test-token",
             provider_model="test-model",
+            auth_token="ai-shared-test-token",
         )
     )
     caplog.set_level(logging.ERROR, logger="nurse_scheduling.ai.provider")
@@ -173,6 +175,7 @@ def _streaming_provider(
             provider_base_url="https://provider.example/v1",
             provider_api_key="test-token",
             provider_model="test-model",
+            auth_token="ai-shared-test-token",
         ),
         include_usage=include_usage,
     )
@@ -196,6 +199,7 @@ def _transport_provider(
         "provider_base_url": "https://provider.example/v1",
         "provider_api_key": "test-token",
         "provider_model": "test-model",
+        "auth_token": "ai-shared-test-token",
     }
     settings.update(settings_overrides)
     return OpenAiCompatibleProvider(AiSettings(**settings), include_attempts=include_attempts)

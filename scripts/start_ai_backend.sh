@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="${REPO_ROOT}/core"
-AI_ENV_FILE="${AI_ENV_FILE:-${REPO_ROOT}/.env.ai}"
+AI_ENV_FILE="${AI_ENV_FILE:-${REPO_ROOT}/docker/.env}"
 
 if [[ -f "${AI_ENV_FILE}" ]]; then
   set -a
@@ -34,7 +34,6 @@ if [[ -z "${AI_PROVIDER_BASE_URL:-}" ]]; then
   echo "AI_PROVIDER_BASE_URL is required." >&2
   exit 1
 fi
-
 export AI_PROVIDER_API_KEY
 export AI_PROVIDER_BASE_URL
 export AI_PROVIDER_MODEL="${AI_PROVIDER_MODEL:-local-model}"

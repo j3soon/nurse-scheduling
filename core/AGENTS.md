@@ -89,6 +89,12 @@ test paths when a narrower suite is known to be sufficient.
 - Keep `/info` and `/ready` public. Clients discover the requirement from
   `/info`, and deployment probes must not need credentials. Gate every other
   route with the shared-token dependency.
+- The separately deployed AI service uses `AI_AUTH_TOKEN` when configured. Keep
+  `/health`, `/ready`, and `/capabilities` public, advertise the effective bearer
+  auth requirement through `/capabilities`, and gate every session route when a
+  token is set. Native runs may omit auth. Docker Compose services set
+  `AI_AUTH_REQUIRED=true`; opting out must be explicit in the env file and must
+  leave `AI_AUTH_TOKEN` empty.
 
 ## Sentry
 - Initialize Sentry before configuration or logging in every first-party

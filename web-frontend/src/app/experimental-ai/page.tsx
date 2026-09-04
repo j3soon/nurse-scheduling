@@ -24,6 +24,7 @@
 import Image from 'next/image';
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { FiArrowDown } from 'react-icons/fi';
+import BackendTokenField from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
@@ -36,6 +37,7 @@ import {
   ToolActivity,
   approveProposal,
   createSession,
+  getAiBaseUrl,
   getCapabilities,
   rejectProposal,
   streamMessage,
@@ -56,10 +58,16 @@ interface ChatMessage {
 }
 
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
+const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 
 interface AiPreferences {
   showReasoning: boolean;
   showTools: boolean;
+}
+
+interface StoredAiAuth {
+  endpoint?: unknown;
+  token?: unknown;
 }
 
 interface SelectedAttachment {
@@ -100,6 +108,13 @@ function messageId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random()}`;
+}
+
+function isAuthenticationError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'status' in error
+    && error.status === 401;
 }
 
 function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): ActivityEntry[] {
@@ -172,6 +187,11 @@ export default function ExperimentalAiPage() {
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isClientReady, setIsClientReady] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [rememberAuthToken, setRememberAuthToken] = useState(false);
+  const [isEditingAuthToken, setIsEditingAuthToken] = useState(false);
+  const [authRejected, setAuthRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
   const [imageCapability, setImageCapability] = useState(DISABLED_IMAGE_CAPABILITY);
@@ -195,12 +215,24 @@ export default function ExperimentalAiPage() {
     // Reading the stored preferences here keeps the server-rendered markup stable.
     try {
       const stored = window.localStorage.getItem(AI_STORAGE_KEY);
-      if (stored === null) return;
-      const preferences = JSON.parse(stored) as Partial<AiPreferences>;
-      if (typeof preferences.showReasoning === 'boolean') setShowReasoning(preferences.showReasoning);
-      if (typeof preferences.showTools === 'boolean') setShowTools(preferences.showTools);
+      if (stored !== null) {
+        const preferences = JSON.parse(stored) as Partial<AiPreferences>;
+        if (typeof preferences.showReasoning === 'boolean') setShowReasoning(preferences.showReasoning);
+        if (typeof preferences.showTools === 'boolean') setShowTools(preferences.showTools);
+      }
     } catch {
       // Unreadable storage keeps the defaults rather than blocking the page.
+    }
+    try {
+      const stored = window.localStorage.getItem(AI_AUTH_STORAGE_KEY);
+      if (stored === null) return;
+      const auth = JSON.parse(stored) as StoredAiAuth;
+      if (auth.endpoint === getAiBaseUrl() && typeof auth.token === 'string' && auth.token.trim()) {
+        setAuthToken(auth.token.trim());
+        setRememberAuthToken(true);
+      }
+    } catch {
+      // Unreadable authentication storage keeps the service locked.
     }
   }, []);
 
@@ -219,6 +251,7 @@ export default function ExperimentalAiPage() {
     setIsClientReady(true);
     getCapabilities(capabilitiesController.signal)
       .then(capabilities => {
+        setAuthRequired(capabilities.auth?.required ?? false);
         setImageCapability(capabilities.image_attachments);
         setDocumentCapability(capabilities.document_attachments);
       })
@@ -263,6 +296,47 @@ export default function ExperimentalAiPage() {
     isNearPageBottomRef.current = true;
     setShowScrollToBottom(false);
     composerRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  };
+
+  const saveAuthToken = (token: string, remember: boolean) => {
+    setAuthToken(token);
+    setRememberAuthToken(remember);
+    setIsEditingAuthToken(false);
+    setAuthRejected(false);
+    setError(null);
+    try {
+      if (remember) {
+        window.localStorage.setItem(AI_AUTH_STORAGE_KEY, JSON.stringify({ endpoint: getAiBaseUrl(), token }));
+      } else {
+        window.localStorage.removeItem(AI_AUTH_STORAGE_KEY);
+      }
+    } catch {
+      // A browser that refuses storage still applies the token for this visit.
+    }
+  };
+
+  const clearAuthToken = () => {
+    setAuthToken(null);
+    setRememberAuthToken(false);
+    setIsEditingAuthToken(false);
+    setAuthRejected(false);
+    setError(null);
+    try {
+      window.localStorage.removeItem(AI_AUTH_STORAGE_KEY);
+    } catch {
+      // The in-memory token is still forgotten when storage is unavailable.
+    }
+  };
+
+  const reportRequestError = (requestError: unknown, fallback: string) => {
+    if (isAuthenticationError(requestError)) {
+      setAuthRequired(true);
+      setAuthRejected(true);
+      setIsEditingAuthToken(true);
+      setError('AI credentials were rejected. Enter the current AI token and try again.');
+      return;
+    }
+    setError(requestError instanceof Error ? requestError.message : fallback);
   };
 
   const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
@@ -342,7 +416,7 @@ export default function ExperimentalAiPage() {
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
   ) => {
-    if (!question || isStreaming) return;
+    if (!question || isStreaming || (authRequired && authToken === null)) return;
 
     const userMessage: ChatMessage = {
       id: messageId(),
@@ -376,11 +450,11 @@ export default function ExperimentalAiPage() {
     try {
       let sessionId = sessionIdRef.current;
       if (sessionId === null) {
-        sessionId = await createSession(scheduleYaml);
+        sessionId = await createSession(scheduleYaml, authToken);
         sessionIdRef.current = sessionId;
       } else if (syncedScheduleRef.current !== scheduleYaml) {
         // The schedule can change elsewhere in the app between questions.
-        await updateSessionSchedule(sessionId, scheduleYaml);
+        await updateSessionSchedule(sessionId, scheduleYaml, authToken);
       }
       syncedScheduleRef.current = scheduleYaml;
       await streamMessage(
@@ -433,6 +507,7 @@ export default function ExperimentalAiPage() {
           onProposal: diff => setProposalDiff(diff),
         },
         controller.signal,
+        authToken,
         {
           images: attachmentsForMessage
             .filter(attachment => attachment.kind === 'image')
@@ -460,7 +535,7 @@ export default function ExperimentalAiPage() {
           : message
       )));
       if (!controller.signal.aborted) {
-        setError(streamError instanceof Error ? streamError.message : 'The AI request failed.');
+        reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {
       abortControllerRef.current = null;
@@ -471,7 +546,7 @@ export default function ExperimentalAiPage() {
   const send = async (event: FormEvent) => {
     event.preventDefault();
     const question = draft.trim();
-    if (!question || isStreaming) return;
+    if (!question || isStreaming || (authRequired && authToken === null)) return;
     await sendRequest(question, selectedAttachments, true);
   };
 
@@ -487,7 +562,8 @@ export default function ExperimentalAiPage() {
   const stop = () => abortControllerRef.current?.abort();
   const selectedImageCount = selectedAttachments.filter(attachment => attachment.kind === 'image').length;
   const selectedDocumentCount = selectedAttachments.length - selectedImageCount;
-  const attachmentPickerDisabled = isStreaming || (
+  const credentialsMissing = authRequired && authToken === null;
+  const attachmentPickerDisabled = isStreaming || credentialsMissing || (
     (!imageCapability.enabled || selectedImageCount >= imageCapability.max_files)
     && (!documentCapability.enabled || selectedDocumentCount >= documentCapability.max_files)
   );
@@ -498,14 +574,14 @@ export default function ExperimentalAiPage() {
     setIsApplyingProposal(true);
     setError(null);
     try {
-      const approvedYaml = await approveProposal(sessionId, scheduleYaml);
+      const approvedYaml = await approveProposal(sessionId, scheduleYaml, authToken);
       // One import call is one history entry, so undo reverts the whole proposal.
       loadFromYaml(yaml.load(approvedYaml));
       syncedScheduleRef.current = approvedYaml;
       setProposalDiff(null);
       setProposalNotice('The proposed schedule was applied. Undo reverts it in one step.');
     } catch (approveError) {
-      setError(approveError instanceof Error ? approveError.message : 'The proposal could not be applied.');
+      reportRequestError(approveError, 'The proposal could not be applied.');
     } finally {
       setIsApplyingProposal(false);
     }
@@ -517,9 +593,11 @@ export default function ExperimentalAiPage() {
     setProposalNotice(null);
     if (sessionId === null) return;
     try {
-      await rejectProposal(sessionId);
-    } catch {
-      // The proposal is already gone from this page, so a failed reject is not shown.
+      await rejectProposal(sessionId, authToken);
+    } catch (rejectError) {
+      if (isAuthenticationError(rejectError)) {
+        reportRequestError(rejectError, 'The proposal could not be rejected.');
+      }
     }
   };
 
@@ -559,6 +637,24 @@ export default function ExperimentalAiPage() {
             Show tool activity
           </label>
         </div>
+        {(authRequired || authToken !== null) && (
+          <div className="mt-3 max-w-md rounded-lg border border-gray-200 bg-white px-3 py-2">
+            <BackendTokenField
+              endpoint="AI assistant"
+              token={authToken}
+              rememberToken={rememberAuthToken}
+              isEditing={isEditingAuthToken}
+              disabled={isStreaming}
+              onEdit={() => setIsEditingAuthToken(true)}
+              onCancel={() => setIsEditingAuthToken(false)}
+              onSave={saveAuthToken}
+              onClear={clearAuthToken}
+            />
+            {authRejected && !isEditingAuthToken && (
+              <p className="mt-1 text-xs text-red-700">The credentials were rejected.</p>
+            )}
+          </div>
+        )}
       </div>
 
       <section
@@ -760,7 +856,7 @@ export default function ExperimentalAiPage() {
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              disabled={!isClientReady || isStreaming}
+              disabled={!isClientReady || isStreaming || credentialsMissing}
               rows={3}
               maxLength={8000}
               placeholder="Ask about the current schedule…"
@@ -778,7 +874,7 @@ export default function ExperimentalAiPage() {
           ) : (
             <button
               type="submit"
-              disabled={!isClientReady || !draft.trim()}
+              disabled={!isClientReady || credentialsMissing || !draft.trim()}
               className="order-3 rounded-xl bg-blue-600 px-5 py-3 font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               Send
