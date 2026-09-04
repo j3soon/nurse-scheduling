@@ -514,6 +514,9 @@ describe('ExperimentalAiPage', () => {
       expect(screen.getByText('bash')).toBeInTheDocument();
       expect(screen.getByText('schedule edit')).toBeInTheDocument();
       expect(screen.getByText(/^Reasoning ·/)).toBeInTheDocument();
+      const activity = screen.getByLabelText('Assistant activity');
+      const response = screen.getByText('I propose renaming P1.');
+      expect(activity.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it('applies an approved proposal as one history entry', async () => {

@@ -124,7 +124,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
   if (entries.length === 0) return null;
 
   return (
-    <div aria-label="Assistant activity" className="mt-3 space-y-1 border-t border-gray-200 pt-2">
+    <div aria-label="Assistant activity" className="mb-3 space-y-1 border-b border-gray-200 pb-2">
       {entries.map((entry, index) => (
         <details key={index} className="text-xs text-gray-500">
           <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{summaryOf(entry)}</summary>

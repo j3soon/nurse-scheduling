@@ -679,6 +679,13 @@ export default function ExperimentalAiPage() {
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
               {message.role === 'user' ? 'You' : 'Assistant'}
             </p>
+            {message.activity && (
+              <AssistantActivity
+                entries={message.activity.filter(entry => (
+                  entry.kind === 'reasoning' ? showReasoning : showTools
+                ))}
+              />
+            )}
             {message.role === 'assistant' && message.content ? (
               <AssistantMarkdown content={message.content} />
             ) : message.role === 'assistant' && message.status === 'pending' ? (
@@ -690,13 +697,6 @@ export default function ExperimentalAiPage() {
               <p className="mt-2 text-xs opacity-80">
                 Attached: {message.attachmentNames.join(', ')}
               </p>
-            )}
-            {message.activity && (
-              <AssistantActivity
-                entries={message.activity.filter(entry => (
-                  entry.kind === 'reasoning' ? showReasoning : showTools
-                ))}
-              />
             )}
             {message.role === 'assistant' && message.status === 'failed' && message.retry && (
               <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
