@@ -29,6 +29,7 @@ import OptimizationProgressChart, { OptimizationProgressPoint } from '@/componen
 import NumberInput from '@/components/NumberInput';
 import BackendTokenField from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
+import StarRepoNudge from '@/components/StarRepoNudge';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizeSchedulingStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
@@ -2267,11 +2268,12 @@ export default function OptimizeAndExportPage() {
             )}
 
             {successMessage && (
-              <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-                <div className="flex gap-2">
+              <div className="space-y-2">
+                <div className="flex gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
                   <FiCheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{successMessage}</span>
                 </div>
+                <StarRepoNudge />
               </div>
             )}
 
