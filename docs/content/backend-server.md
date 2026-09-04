@@ -278,6 +278,11 @@ Request parsing and validation errors retain FastAPI's standard error format.
 Common status codes include `404` for missing resources, `409` for invalid job
 operations, `413` for oversized YAML, and `429` when job capacity is exhausted.
 
+Submitted YAML is also bounded by how far its aliases expand, not only by its
+byte size. An alias is a reference, so a small document can name hundreds of
+millions of nodes that every later traversal pays for. Data expanding past the
+limit is refused with `400` before a job is queued.
+
 ### Suspicious request reporting
 
 Missing routes and unauthenticated probes are internet background noise and are
@@ -287,6 +292,7 @@ contract are sent to Sentry, because a scanner cannot produce them:
 | Signal | Meaning | Level |
 | --- | --- | --- |
 | `forged_stream_token` | An event-stream token failed verification and had not merely expired, so it was constructed rather than issued. Error when it was unexpired and of the minted shape, warning otherwise. | error |
+| `yaml_expansion_bomb` | Submitted data expands through YAML aliases to more nodes than the server processes. | warning |
 | `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |
 | `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
 | `timeout_out_of_range` | An optimization timeout fell outside the range advertised by `GET /optimize/options`. | warning |

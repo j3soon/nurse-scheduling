@@ -21,6 +21,7 @@
 
 import os
 import sys
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -28,7 +29,13 @@ from pydantic import ValidationError
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nurse_scheduling.loader import _load_yaml, load_data
+from nurse_scheduling.loader import (
+    MAX_EXPANDED_NODES,
+    SchedulingDataTooComplexError,
+    _load_yaml,
+    expanded_node_count,
+    load_data,
+)
 
 SENTRY_MOJIBAKE_YAML = """\
 嚜瘸piVersion: alpha
@@ -120,3 +127,47 @@ def test_load_yaml_preserves_bom_corrupted_api_version_keys(api_version_key):
 
     assert data[api_version_key] == "alpha"
     assert "apiVersion" not in data
+
+
+def _alias_bomb(depth: int = 8, width: int = 9) -> bytes:
+    """Build a document whose aliases expand to width ** depth references."""
+    content = b"apiVersion: alpha\ndescription: &a [" + b",".join([b"x"] * width) + b"]\n"
+    for index in range(1, depth):
+        previous = chr(ord("a") + index - 1)
+        current = chr(ord("a") + index)
+        row = ",".join(f"*{previous}" for _ in range(width))
+        content += f"k{current}: &{current} [{row}]\n".encode()
+    return content
+
+
+def test_alias_expansion_is_refused_before_anything_walks_it():
+    """A few hundred bytes expanded to hundreds of millions of references."""
+    bomb = _alias_bomb()
+
+    assert len(bomb) < 1024
+    with pytest.raises(SchedulingDataTooComplexError):
+        expanded_node_count(bomb)
+    with pytest.raises(SchedulingDataTooComplexError):
+        load_data(bomb)
+
+
+def test_modest_alias_use_is_still_accepted():
+    """Aliases are legitimate in hand-written data, so only the expansion is bounded."""
+    base = b"apiVersion: alpha\npeople: &people [Alice, Bob]\n"
+    one_alias = base + b"a: *people\n"
+    two_aliases = one_alias + b"b: *people\n"
+
+    # Each alias counts the three nodes it stands for, plus its own key.
+    assert expanded_node_count(two_aliases) - expanded_node_count(one_alias) == 4
+    assert expanded_node_count(two_aliases) < MAX_EXPANDED_NODES
+
+
+def test_a_real_scenario_stays_far_below_the_limit():
+    scenario = Path(__file__).parent / "testcases/real/large-ward-with-87-people-2025-11.yaml"
+
+    assert expanded_node_count(scenario.read_bytes()) < MAX_EXPANDED_NODES // 10
+
+
+def test_the_limit_is_reported_with_the_number_it_exceeded():
+    with pytest.raises(SchedulingDataTooComplexError, match="200000"):
+        expanded_node_count(_alias_bomb())

@@ -72,6 +72,11 @@ test paths when a narrower suite is known to be sufficient.
   digest. Counting is advisory, so a storage failure must leave a report
   unescalated rather than drop it or change the response.
 
+## Input Limits
+- Bound submitted scheduling data by its alias expansion as well as its byte
+  size. `loader.expanded_node_count` measures it from the parse events without
+  building the structure, and both the API and `load_data` refuse past the limit.
+
 ## Testing
 - Normal tests live under `tests/`.
 - Keep server-facing solver traits in

@@ -2432,5 +2432,9 @@ def test_a_store_outage_reports_once_rather_than_once_per_attempt(caplog):
             time.sleep(0.01)
 
     assert store.claim_attempts >= 5
-    claim_failures = [r for r in caplog.records if "failed to claim job" in r.getMessage()]
+    # Other tests run their own workers, so count only this application's.
+    worker_id = app.state.instance_id
+    claim_failures = [
+        r for r in caplog.records if "failed to claim job" in r.getMessage() and worker_id in r.getMessage()
+    ]
     assert len(claim_failures) == 1

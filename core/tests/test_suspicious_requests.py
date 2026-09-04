@@ -179,6 +179,29 @@ def test_rejected_bearer_token_is_reported(captured):
     assert captured.events[0]["scope"].contexts["suspicious_request"]["bearer_presented"] is True
 
 
+def test_yaml_that_expands_past_the_limit_is_refused_and_reported(captured):
+    """A few hundred bytes of aliases would otherwise spend a worker on their expansion."""
+    client = _client()
+    bomb = b"apiVersion: alpha\ndescription: &a [" + b",".join([b"x"] * 9) + b"]\n"
+    for index in range(1, 8):
+        previous, current = chr(ord("a") + index - 1), chr(ord("a") + index)
+        bomb += f"k{current}: &{current} [{','.join(f'*{previous}' for _ in range(9))}]\n".encode()
+
+    response = client.post("/optimize", data={"yaml_content": bomb.decode()})
+
+    assert response.status_code == 400
+    assert _signals(captured) == [("yaml_expansion_bomb", "warning")]
+
+
+def test_ordinary_yaml_is_not_refused_as_an_expansion(captured):
+    client = _client()
+
+    response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+
+    assert response.status_code == 202
+    assert captured.events == []
+
+
 def test_timeout_beyond_the_advertised_maximum_is_reported(captured):
     client = _client()
 
