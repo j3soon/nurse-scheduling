@@ -129,16 +129,6 @@ async def create_job(
     settings = _settings(request)
     content, input_name = await _read_input(file, yaml_content, settings.max_yaml_bytes)
     try:
-        # Refuse before queueing, so an expansion cannot spend a worker on its own. Reading
-        # untrusted data is offloaded, because this route must not block the event loop.
-        expansion = await run_in_threadpool(measure_yaml_expansion, content)
-    except SchedulingDataTooComplexError as error:
-        request.state.invalid_reason = "yaml_expansion_bomb"
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    except YAMLError:
-        # The optimization reports the parse error usefully, so the request is still accepted.
-        expansion = None
-    try:
         normalized_solver = normalize_solver_option(solver if solver is not None else settings.default_solver)
     except ValueError:
         normalized_solver = ""
@@ -156,6 +146,16 @@ async def create_job(
                 f"{settings.min_timeout_seconds} and {settings.max_timeout_seconds} seconds"
             ),
         )
+    try:
+        # Read only once the free checks above have passed, so a request that was going to be
+        # rejected never pays for it, and off the event loop because the data is untrusted.
+        expansion = await run_in_threadpool(measure_yaml_expansion, content)
+    except SchedulingDataTooComplexError as error:
+        request.state.invalid_reason = "yaml_expansion_bomb"
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except YAMLError:
+        # The optimization reports the parse error usefully, so the request is still accepted.
+        expansion = None
     # Unlike the synchronous endpoints below, create_job must remain async for
     # upload reading. Offload its synchronous controller/store write so it cannot
     # block the ASGI event loop.
@@ -169,6 +169,7 @@ async def create_job(
         input_bytes=content,
     )
     # This project's own data is plain and always parses, so neither shape comes from it.
+    # The job is queued by now, so reporting must not be able to fail the response for it.
     if expansion is None:
         report_suspicious_request(request, "yaml_unparseable", "warning")
     elif expansion.aliases:

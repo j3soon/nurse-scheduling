@@ -424,7 +424,7 @@ def test_a_failing_tracker_leaves_the_response_alone(captured):
     class FailingTracker:
         escalate_count = 5
 
-        def record(self, signal, address):
+        def record(self, signal, address, subject=None):
             raise RuntimeError("redis pool exhausted")
 
     app = _app()
@@ -462,3 +462,57 @@ def test_one_address_cannot_spend_the_event_quota(captured):
         ("job_id_probe", "warning"),
         ("job_id_probe", "error"),
     ]
+
+
+def test_a_failing_tracker_leaves_an_accepted_response_alone(captured):
+    """The job is queued before this reports, so a failure here would lose a running job."""
+
+    class FailingTracker:
+        escalate_count = 5
+
+        def record(self, signal, address, subject=None):
+            raise RuntimeError("redis pool exhausted")
+
+    app = _app()
+    app.state.suspicion_tracker = FailingTracker()
+    client = TestClient(app, client=("203.0.113.7", 40000))
+
+    response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n  bad: ["})
+
+    assert response.status_code == 202
+    assert response.json()["id"].startswith("job_")
+
+
+def test_an_unsupported_version_directive_is_not_a_server_error(captured):
+    """The parser raises a bare assertion for this, which would otherwise reach the client."""
+    client = _client()
+
+    response = client.post("/optimize", data={"yaml_content": "%YAML 1.3\n---\na: 1\n"})
+
+    assert response.status_code == 202
+    assert _signals(captured) == [("yaml_unparseable", "warning")]
+
+
+def test_a_job_route_cannot_hold_down_another_signal(captured):
+    """Counting subjects from whichever request carried one would let a caller mix them in."""
+    client = _client(auth_token=AUTH_TOKEN, suspicion_escalate_count=3)
+    wrong = {"Authorization": "Bearer wrong-token-value"}
+
+    client.get("/optimize/options", headers=wrong)
+    client.get("/optimize/options", headers=wrong)
+    # A job route names a job, which must not become this signal's spread.
+    client.get(f"/optimize/{ISSUED_JOB_ID}", headers=wrong)
+
+    assert _signals(captured)[-1] == ("rejected_bearer_token", "error")
+
+
+def test_spreading_slowly_past_the_cap_still_reports_the_escalation(captured):
+    """Repeating one identifier first would otherwise push the escalation past the cap."""
+    client = _client(suspicion_escalate_count=3)
+
+    client.get(f"/optimize/{ISSUED_JOB_ID}")
+    client.get(f"/optimize/{ISSUED_JOB_ID}")
+    for index in range(3):
+        client.get(f"/optimize/job_{index:032x}")
+
+    assert ("job_id_probe", "error") in _signals(captured)

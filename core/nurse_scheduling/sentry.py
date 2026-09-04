@@ -178,11 +178,13 @@ def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> 
 
 
 JOB_ID_SHAPE = re.compile(r"^job_[0-9a-f]{32}$")
+"""Shape of an issued job identifier, used to describe a request for a missing one."""
 ISSUED_JOB_ID_SHAPE = "issued_shape"
 """Description of a job identifier that this server could have issued."""
-"""Shape of an issued job identifier, used to describe a request for a missing one."""
 STREAM_ROUTE_SUFFIX = "/events"
 """Route suffix of the only endpoint accepting a stream token."""
+SUBJECT_SIGNALS = frozenset({"job_id_probe"})
+"""Signals whose every request names a job, so spread is what makes them deliberate."""
 INVALID_REASON_LEVELS = {"yaml_expansion_bomb": "error"}
 """Levels for a signal a route names directly, defaulting to a warning."""
 
@@ -205,9 +207,11 @@ def _record_suspicion(request: Request, signal_name: str) -> "SuspicionCount":
     address = _connection_address(request)
     if address is None:
         return SuspicionCount()
-    # A job route names the job it asked for, which separates one stuck client from a
-    # caller working through identifiers.
-    return tracker.record(signal_name, address, request.path_params.get("job_id"))
+    # Only a signal whose every request names a job counts subjects. Taking the subject from
+    # whichever requests happened to carry one would let a caller mix in a job route to hold
+    # an unrelated signal's spread down.
+    subject = request.path_params.get("job_id") if signal_name in SUBJECT_SIGNALS else None
+    return tracker.record(signal_name, address, subject)
 
 
 def _escalate_count(request: Request) -> int:
@@ -279,6 +283,24 @@ def report_suspicious_request(
     cannot spend the project's event quota. An accepted request can be reported too, because
     what makes one worth keeping is the request itself rather than how it was answered.
     """
+    if not _should_enable_sentry():
+        return
+    try:
+        _report_suspicious_request(request, signal_name, level, invalid_request=invalid_request)
+    except Exception:
+        # Reporting is never worth failing a request over, and this runs for requests that
+        # were already accepted, whose work is done by the time it is reached.
+        sentry_logger.warning("[sentry:report] could not report a suspicious request", exc_info=True)
+
+
+def _report_suspicious_request(
+    request: Request,
+    signal_name: str,
+    level: str,
+    *,
+    invalid_request: dict | None = None,
+) -> None:
+    """Build and send one suspicious-request report."""
     import sentry_sdk
 
     # Imported here so processes that only report errors do not load the routes.
@@ -288,15 +310,16 @@ def report_suspicious_request(
     occurrences = counted.occurrences
     escalate_count = _escalate_count(request)
     if occurrences and escalate_count:
-        if occurrences > escalate_count:
-            # The escalated report already names the address, and its counter keeps rising.
-            return
         # Escalate on how far a caller spread, not how often it repeated, so a client stuck
         # on one job never reaches an error however many times it retries.
-        spread = counted.distinct_subjects or occurrences
-        if spread >= escalate_count and occurrences == escalate_count:
+        spread = counted.distinct_subjects if signal_name in SUBJECT_SIGNALS else occurrences
+        if spread >= escalate_count:
             # Repetition from one address is deliberate in a way one request is not.
             level = "error"
+        # One address cannot spend the project's event quota. The request that first reaches
+        # the threshold is still reported, so spreading slowly cannot buy silence.
+        if occurrences > escalate_count and spread != escalate_count:
+            return
 
     route = request.scope.get("route")
     route_path = getattr(route, "path", request.url.path)
@@ -350,7 +373,7 @@ def _capture_invalid_request(
         "detail": jsonable_encoder(detail),
     }
     if signal is not None:
-        report_suspicious_request(request, signal[0], signal[1], invalid_request=invalid_request)
+        _report_suspicious_request(request, signal[0], signal[1], invalid_request=invalid_request)
         return
 
     import sentry_sdk

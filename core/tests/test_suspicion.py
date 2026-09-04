@@ -99,7 +99,7 @@ def test_a_digest_hides_the_address_and_does_not_compare_across_salts():
     assert digest != address_digest("other-salt", "203.0.113.7")
 
 
-def test_redis_counting_failure_reports_an_unknown_total():
+def test_redis_counting_failure_keeps_counting_in_this_process():
     import redis
 
     class FailingRedis:
@@ -115,9 +115,10 @@ def test_redis_counting_failure_reports_an_unknown_total():
     )
 
     # Counting is advisory, so an unavailable Redis must not lose the report it would escalate.
-    counted = tracker.record("job_id_probe", "203.0.113.7")
+    counts = [tracker.record("job_id_probe", "203.0.113.7", "job_a").occurrences for _ in range(3)]
 
-    assert (counted.occurrences, counted.distinct_subjects) == (0, 0)
+    # A report is capped by its count, so an outage must not leave it uncounted.
+    assert counts == [1, 2, 3]
 
 
 @pytest.mark.parametrize("enabled", [True, False])

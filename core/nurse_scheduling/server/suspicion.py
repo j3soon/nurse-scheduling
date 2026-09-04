@@ -32,8 +32,11 @@ KEY_PREFIX = "nurse_scheduling:suspicion:v0"
 """Namespace and schema version prepended to every counter key."""
 MAX_TRACKED_COUNTERS = 4096
 """Counters one process retains without Redis, oldest discarded first."""
-MAX_TRACKED_SUBJECTS = 256
-"""Distinct subjects one counter retains without Redis, which is past every threshold."""
+MAX_TRACKED_SUBJECTS = 64
+"""Distinct subjects one counter retains without Redis, which is past every threshold.
+
+Bounded low because every counter may hold this many at once, and the retained digests
+are released only by insertion pressure."""
 DIGEST_LENGTH = 16
 """Characters of the salted address digest kept in a counter key."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 0.25
@@ -96,7 +99,7 @@ class MemorySuspicionTracker:
         self._window_seconds = window_seconds
         self._clock = clock
         self._counters: OrderedDict[tuple[str, str, int], int] = OrderedDict()
-        self._subjects: OrderedDict[tuple[str, str, int], set[str]] = OrderedDict()
+        self._subjects: OrderedDict[tuple[str, str, int], set[int]] = OrderedDict()
         self._lock = threading.Lock()
 
     def record(self, signal: str, address: str, subject: str | None = None) -> SuspicionCount:
@@ -111,7 +114,7 @@ class MemorySuspicionTracker:
             if subject is not None:
                 seen = self._subjects.pop(key, set())
                 if len(seen) < MAX_TRACKED_SUBJECTS:
-                    seen.add(address_digest(self._salt, subject))
+                    seen.add(hash(address_digest(self._salt, subject)))
                 self._subjects[key] = seen
                 distinct = len(seen)
                 while len(self._subjects) > MAX_TRACKED_COUNTERS:
@@ -137,12 +140,24 @@ class RedisSuspicionTracker:
         self._salt = salt
         self._window_seconds = window_seconds
         self._clock = clock
+        self._fallback = MemorySuspicionTracker(
+            salt=salt,
+            window_seconds=window_seconds,
+            escalate_count=escalate_count,
+            clock=clock,
+        )
+        """Counts within this process while Redis is unavailable.
+
+        A report is capped by its count, so losing the count during an outage would remove
+        the cap at the moment the error budget matters most.
+        """
 
     def record(self, signal: str, address: str, subject: str | None = None) -> SuspicionCount:
         """Record one occurrence and return what this address has done in this window.
 
-        Returns an empty count when Redis is unavailable. Counting is advisory, so a failure
-        must neither change the response nor lose the report it would have escalated.
+        Falls back to counting within this process when Redis is unavailable, which counts
+        only what this process saw but keeps a count rather than none. Counting is advisory,
+        so a failure must neither change the response nor lose the report it would escalate.
 
         Distinct subjects are counted approximately, which is exact at the small counts a
         threshold compares against and only loses precision far above one.
@@ -166,7 +181,7 @@ class RedisSuspicionTracker:
                 distinct_subjects=int(results[-1]) if subject is not None else 0,
             )
         except Exception:  # noqa: BLE001
-            return SuspicionCount()
+            return self._fallback.record(signal, address, subject)
 
 
 def create_suspicion_tracker(settings: "ServerSettings", *, salt: str) -> SuspicionTracker | None:

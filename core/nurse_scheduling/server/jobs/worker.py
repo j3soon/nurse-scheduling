@@ -265,6 +265,7 @@ class JobWorker:
         server_logger.error("[server:worker] worker lease expired worker_id=%s", self._worker_id)
         while not self._stop.is_set():
             if not self._claim_loop_is_alive():
+                self._recover_failures.recovered()
                 self._unregister_stopped_worker()
                 return None
             try:
@@ -272,6 +273,7 @@ class JobWorker:
                 if not self._executing.is_set():
                     recovered_lease = self._controller.register_worker(self._worker_id)
                     if recovered_lease is not None:
+                        self._recover_failures.recovered()
                         server_logger.info("[server:worker] worker lease recovered worker_id=%s", self._worker_id)
                         return recovered_lease
             except Exception:

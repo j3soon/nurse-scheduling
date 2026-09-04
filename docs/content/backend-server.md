@@ -284,8 +284,10 @@ changing how the request is answered. Submitted YAML is also bounded by how far
 its aliases expand and how deeply it nests, not only by its byte size. An alias
 is a reference, so a small document can name hundreds of millions of nodes that
 every later traversal pays for, and parsing costs grow faster than nesting
-depth. Data passing either bound is refused with `400` before a job is queued,
-and is read on a worker thread so a large document never blocks the server.
+depth. Nesting is refused from the raw bytes before the parser reads them, and
+data passing either bound is refused with `400` before a job is queued. Reading
+happens on a worker thread and only after the checks that cost nothing, so a
+request that was going to be rejected never pays for it.
 
 ### Suspicious request reporting
 
@@ -313,7 +315,9 @@ signal that reaches `SUSPICION_ESCALATE_COUNT` is reported as an error rather
 than a warning, carrying its `occurrences` count. A signal naming a job also
 carries `distinct_job_ids`, and escalates only when that count reaches the
 threshold, so a client retrying one job stays a warning however often it repeats
-while a caller working through identifiers does not. Further repeats within that
+while a caller working through identifiers does not. Only a signal whose every
+request names a job counts them, so mixing one job request into another signal
+cannot hold that signal's escalation down. Further repeats within that
 window keep counting but are not reported, so one address cannot spend the
 project's event quota. Because the window is fixed rather than sliding, repeats
 spread across a boundary can stay below the threshold. Addresses are counted as a

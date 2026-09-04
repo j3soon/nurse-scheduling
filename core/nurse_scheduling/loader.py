@@ -22,6 +22,7 @@ from io import BytesIO
 from typing import Any
 
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 from ruamel.yaml.events import (
     AliasEvent,
     MappingEndEvent,
@@ -38,6 +39,14 @@ yaml = YAML(typ="safe")
 
 MAX_EXPANDED_NODES = 200_000
 """Largest number of nodes a document may expand to once aliases are followed."""
+MAX_RAW_NESTING_DEPTH = 256
+"""Bracket nesting refused before parsing.
+
+The YAML scanner does work proportional to how deep it currently is for every token it
+reads, so a document need only nest to be expensive to look at. Counting brackets in the
+raw bytes over-counts any that appear inside quoted text, so this bound sits well above
+the parsed one, which is what actually enforces the shape.
+"""
 MAX_NESTING_DEPTH = 64
 """Deepest a document may nest. Parsing costs grow faster than depth, and this project's
 own data nests five deep, so a bound well above that keeps a deep document from being
@@ -46,6 +55,26 @@ expensive to even look at."""
 
 class SchedulingDataTooComplexError(ValueError):
     """Scheduling data expands to more nodes than this project will process."""
+
+
+_NON_BRACKETS = bytes(value for value in range(256) if value not in b"[]{}")
+"""Every byte that is not a flow collection marker, deleted before measuring nesting."""
+
+
+def raw_nesting_depth(content: bytes) -> int:
+    """Return the deepest bracket nesting in the raw bytes, ignoring YAML structure.
+
+    The brackets are extracted at native speed first, so a document large enough to be
+    worth rejecting is not expensive to reject.
+    """
+    depth = deepest = 0
+    for bracket in content.translate(None, _NON_BRACKETS):
+        if bracket in b"[{":
+            depth += 1
+            deepest = max(deepest, depth)
+        else:
+            depth -= 1
+    return deepest
 
 
 @dataclass(frozen=True)
@@ -58,6 +87,21 @@ class YamlExpansion:
     """Aliases the document uses, which this project's own data never does."""
 
 
+def _parse_events(content: bytes):
+    """Yield parse events, reporting every malformed document as a YAML error.
+
+    The parser raises bare assertions for some malformed input, such as an unsupported
+    version directive. Callers separate unusable data from unusable requests, so every
+    such failure has to arrive as one kind of error.
+    """
+    try:
+        yield from YAML(typ="safe").parse(content)
+    except (SchedulingDataTooComplexError, YAMLError):
+        raise
+    except Exception as error:
+        raise YAMLError(f"Scheduling data could not be read: {error}") from error
+
+
 def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -> YamlExpansion:
     """Return how far this document expands, counting each alias in full.
 
@@ -68,15 +112,19 @@ def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -
     Raises:
         SchedulingDataTooComplexError: If the expansion or the nesting exceeds its bound.
     """
+    if raw_nesting_depth(content) > MAX_RAW_NESTING_DEPTH:
+        raise SchedulingDataTooComplexError(
+            f"Scheduling data nests deeper than {MAX_NESTING_DEPTH} levels, which this server refuses to process"
+        )
     anchor_sizes: dict[str, int] = {}
     aliases = 0
     # Each open collection accumulates its own size, and the root frame holds the total.
     frames: list[list] = [[0, None]]
-    for event in YAML(typ="safe").parse(content):
+    for event in _parse_events(content):
         anchor = getattr(event, "anchor", None)
         if isinstance(event, (MappingStartEvent, SequenceStartEvent)):
             frames.append([1, anchor])
-            if len(frames) > MAX_NESTING_DEPTH:
+            if len(frames) - 1 > MAX_NESTING_DEPTH:
                 # Raised while parsing, so the rest of a deep document is never read.
                 raise SchedulingDataTooComplexError(
                     f"Scheduling data nests deeper than {MAX_NESTING_DEPTH} levels, "

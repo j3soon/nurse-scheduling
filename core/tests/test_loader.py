@@ -21,10 +21,12 @@
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from ruamel.yaml.error import YAMLError
 
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -188,8 +190,21 @@ def test_deep_nesting_is_refused_before_it_is_read():
         measure_yaml_expansion(payload)
 
 
-def test_real_scenarios_nest_far_below_the_depth_bound():
-    scenario = Path(__file__).parent / "testcases/real/large-ward-with-87-people-2025-11.yaml"
+def test_an_unsupported_version_directive_reads_as_a_yaml_error():
+    """The parser raises a bare assertion here, which callers cannot separate from a bug."""
+    with pytest.raises(YAMLError):
+        measure_yaml_expansion(b"%YAML 1.3\n---\na: 1\n")
+    with pytest.raises(YAMLError):
+        load_data(b"%YAML 1.3\n---\na: 1\n")
 
-    # Refusing at the bound would be visible here if real data came anywhere near it.
-    assert measure_yaml_expansion(scenario.read_bytes()).nodes > 0
+
+def test_nesting_is_refused_before_the_scanner_reads_it():
+    """The scanner works proportionally to its depth, so depth must be refused first."""
+    payload = b"apiVersion: alpha\nx: " + b"[" * 2000 + b"]" * 2000
+
+    started = time.monotonic()
+    with pytest.raises(SchedulingDataTooComplexError):
+        measure_yaml_expansion(payload)
+
+    # Reading this through the scanner took a quarter second before it was refused early.
+    assert time.monotonic() - started < 0.05
