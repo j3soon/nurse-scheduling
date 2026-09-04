@@ -738,6 +738,7 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     monkeypatch.setenv("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", "6")
     monkeypatch.setenv("AI_SANDBOX_MAX_ATTEMPTS", "4")
     monkeypatch.setenv("AI_SANDBOX_RETRY_BACKOFF_SECONDS", "0.25")
+    monkeypatch.setenv("AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", "1.5")
 
     settings = AiSettings.from_env()
@@ -750,6 +751,7 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     assert settings.sandbox_cleanup_timeout_seconds == 6
     assert settings.sandbox_max_attempts == 4
     assert settings.sandbox_retry_backoff_seconds == 0.25
+    assert settings.sandbox_pause_request_timeout_seconds == 4.5
     assert settings.sandbox_control_request_timeout_seconds == 1.5
 
 

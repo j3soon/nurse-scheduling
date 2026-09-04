@@ -123,6 +123,7 @@ class E2BSandboxFactory:
         command_timeout_seconds: float,
         max_attempts: int = 3,
         retry_backoff_seconds: float = 0.5,
+        pause_request_timeout_seconds: float = 5.0,
         control_request_timeout_seconds: float = 2.0,
         create_sandbox: CreateSandbox | None = None,
     ) -> None:
@@ -138,6 +139,8 @@ class E2BSandboxFactory:
             raise ValueError("max_attempts must be positive")
         if retry_backoff_seconds < 0:
             raise ValueError("retry_backoff_seconds must be non-negative")
+        if pause_request_timeout_seconds <= 0:
+            raise ValueError("pause_request_timeout_seconds must be positive")
         if control_request_timeout_seconds <= 0:
             raise ValueError("control_request_timeout_seconds must be positive")
         self._api_key = api_key
@@ -146,6 +149,7 @@ class E2BSandboxFactory:
         self._command_timeout_seconds = command_timeout_seconds
         self._max_attempts = max_attempts
         self._retry_backoff_seconds = retry_backoff_seconds
+        self._pause_request_timeout_seconds = pause_request_timeout_seconds
         self._control_request_timeout_seconds = control_request_timeout_seconds
         self._create_sandbox = create_sandbox or AsyncSandbox.create
 
@@ -159,6 +163,7 @@ class E2BSandboxFactory:
             command_timeout_seconds=settings.sandbox_command_timeout_seconds,
             max_attempts=settings.sandbox_max_attempts,
             retry_backoff_seconds=settings.sandbox_retry_backoff_seconds,
+            pause_request_timeout_seconds=settings.sandbox_pause_request_timeout_seconds,
             control_request_timeout_seconds=settings.sandbox_control_request_timeout_seconds,
         )
 
@@ -190,6 +195,7 @@ class E2BSandboxFactory:
             command_timeout_seconds=self._command_timeout_seconds,
             max_attempts=self._max_attempts,
             retry_backoff_seconds=self._retry_backoff_seconds,
+            pause_request_timeout_seconds=self._pause_request_timeout_seconds,
             control_request_timeout_seconds=self._control_request_timeout_seconds,
         )
         logger.info(
@@ -238,6 +244,7 @@ class E2BSandboxBackend:
         command_timeout_seconds: float,
         max_attempts: int = 3,
         retry_backoff_seconds: float = 0.5,
+        pause_request_timeout_seconds: float = 5.0,
         control_request_timeout_seconds: float = 2.0,
     ) -> None:
         if command_timeout_seconds <= 0:
@@ -246,12 +253,15 @@ class E2BSandboxBackend:
             raise ValueError("max_attempts must be positive")
         if retry_backoff_seconds < 0:
             raise ValueError("retry_backoff_seconds must be non-negative")
+        if pause_request_timeout_seconds <= 0:
+            raise ValueError("pause_request_timeout_seconds must be positive")
         if control_request_timeout_seconds <= 0:
             raise ValueError("control_request_timeout_seconds must be positive")
         self._sandbox = sandbox
         self._command_timeout_seconds = command_timeout_seconds
         self._max_attempts = max_attempts
         self._retry_backoff_seconds = retry_backoff_seconds
+        self._pause_request_timeout_seconds = pause_request_timeout_seconds
         self._control_request_timeout_seconds = control_request_timeout_seconds
         self._state = E2BSandboxState.RUNNING
         self._close_started = False
@@ -431,10 +441,10 @@ class E2BSandboxBackend:
                 self._state = E2BSandboxState.PAUSING
                 started = time.monotonic()
                 try:
-                    async with asyncio.timeout(self._control_request_timeout_seconds):
+                    async with asyncio.timeout(self._pause_request_timeout_seconds):
                         await self._sandbox.pause(
                             keep_memory=True,
-                            request_timeout=self._control_request_timeout_seconds,
+                            request_timeout=self._pause_request_timeout_seconds,
                         )
                 except asyncio.CancelledError:
                     self._state = E2BSandboxState.RUNNING
@@ -448,7 +458,7 @@ class E2BSandboxBackend:
                     logger.warning(
                         "sandbox pause timed out sandbox_id=%s timeout_seconds=%.3f outcome=unknown",
                         self.sandbox_id,
-                        self._control_request_timeout_seconds,
+                        self._pause_request_timeout_seconds,
                     )
                     return
                 except Exception:

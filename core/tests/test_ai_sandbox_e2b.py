@@ -57,12 +57,14 @@ class FakeE2BSandbox:
 def make_backend(
     sandbox: FakeE2BSandbox,
     *,
+    pause_request_timeout_seconds: float = 5,
     control_request_timeout_seconds: float = 2,
 ) -> E2BSandboxBackend:
     return E2BSandboxBackend(
         sandbox,
         command_timeout_seconds=3,
         retry_backoff_seconds=0,
+        pause_request_timeout_seconds=pause_request_timeout_seconds,
         control_request_timeout_seconds=control_request_timeout_seconds,
     )
 
@@ -267,7 +269,7 @@ def test_pause_deadline_reconciles_before_the_next_operation(caplog: pytest.LogC
             return True
 
         sandbox.pause.side_effect = pause_forever
-        e2b_backend = make_backend(sandbox, control_request_timeout_seconds=0.01)
+        e2b_backend = make_backend(sandbox, pause_request_timeout_seconds=0.01)
         await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSE_UNKNOWN)
         started = asyncio.get_running_loop().time()
@@ -374,7 +376,7 @@ def test_backend_explicitly_pauses_with_warm_memory_after_an_operation():
         return sandbox, e2b_backend
 
     sandbox, e2b_backend = asyncio.run(exercise())
-    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=2)
+    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=5)
     sandbox.connect.assert_not_awaited()
     assert e2b_backend.lifecycle_metrics.pause_count == 1
     assert e2b_backend.lifecycle_metrics.suspended_seconds > 0
@@ -391,7 +393,7 @@ def test_immediate_activity_cancels_a_pending_pause():
         return sandbox, e2b_backend
 
     sandbox, e2b_backend = asyncio.run(exercise())
-    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=2)
+    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=5)
     assert e2b_backend.lifecycle_metrics.pause_count == 1
 
 
@@ -403,7 +405,7 @@ def test_activity_cancels_an_in_progress_pause_before_running():
 
         async def pause(*, keep_memory: bool, request_timeout: float):
             assert keep_memory
-            assert request_timeout == 2
+            assert request_timeout == 5
             entered.set()
             try:
                 await asyncio.Event().wait()
@@ -559,7 +561,7 @@ def test_close_cancels_an_in_progress_pause_then_kills():
 
         async def pause(*, keep_memory: bool, request_timeout: float):
             assert keep_memory
-            assert request_timeout == 2
+            assert request_timeout == 5
             entered.set()
             await asyncio.Event().wait()
 
@@ -573,7 +575,7 @@ def test_close_cancels_an_in_progress_pause_then_kills():
         return sandbox, e2b_backend
 
     sandbox, e2b_backend = asyncio.run(exercise())
-    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=2)
+    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=5)
     sandbox.kill.assert_awaited_once_with(request_timeout=2)
     assert e2b_backend.lifecycle_state is E2BSandboxState.CLOSED
 

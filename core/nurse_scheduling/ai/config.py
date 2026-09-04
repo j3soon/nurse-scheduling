@@ -136,6 +136,7 @@ class AiSettings:
     sandbox_cleanup_timeout_seconds: float = 10.0
     sandbox_max_attempts: int = 3
     sandbox_retry_backoff_seconds: float = 0.5
+    sandbox_pause_request_timeout_seconds: float = 5.0
     sandbox_control_request_timeout_seconds: float = 2.0
     cookie_secure: bool = True
 
@@ -195,6 +196,7 @@ class AiSettings:
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
             sandbox_max_attempts=_read_positive_int("AI_SANDBOX_MAX_ATTEMPTS", 3),
             sandbox_retry_backoff_seconds=_read_non_negative_float("AI_SANDBOX_RETRY_BACKOFF_SECONDS", 0.5),
+            sandbox_pause_request_timeout_seconds=_read_positive_float("AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS", 5.0),
             sandbox_control_request_timeout_seconds=_read_positive_float(
                 "AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", 2.0
             ),

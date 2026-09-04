@@ -177,11 +177,13 @@ fresh disk-only resume trials took 5.95 to 12.62 seconds, with an 8.01-second
 median. Commands, file operations, pause/resume transitions, and close share
 one serialized lifecycle lock.
 
-Pause is optional optimization work and has an application-enforced control
-request deadline. A failed or timed-out pause is not retried. Because a timeout
-cannot prove whether E2B accepted the request, the next operation first uses
-the bounded, replay-safe auto-resume probe. A later idle pause may still be
-attempted because the control-plane failure may have been transient.
+Pause is optional optimization work and has a five-second application deadline.
+The longer background deadline does not delay foreground work because new
+activity cancels an in-progress pause. A failed or timed-out pause is not
+retried. Because a timeout cannot prove whether E2B accepted the request, the
+next operation first uses the separately bounded, replay-safe auto-resume probe.
+A later idle pause may still be attempted because the control-plane failure may
+have been transient.
 
 The E2B creation timeout is not the hard deadline. E2B 2.46.0 testing showed
 that an `on_timeout=kill` deadline did not kill a manually paused sandbox. The
@@ -294,7 +296,8 @@ response cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
 | `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
 | `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
-| `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Application deadline for idle pause and each auto-resume attempt, and the E2B request timeout for destruction. |
+| `AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS` | `5` | Deadline for the cancellable background pause request. |
+| `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Deadline for each foreground auto-resume attempt and the E2B request timeout for destruction. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. |
 | `AI_SESSION_TTL_SECONDS` | `3600` | Idle session lifetime. |
