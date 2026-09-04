@@ -199,9 +199,7 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
     "shiftTypes.items": ScheduleSchemaTopic(
         "Individual shift types.",
         fields=("required `id`: string", "required `description`: string, which may be empty"),
-        rules=(
-            "Shift-type IDs must be unique and cannot case-insensitively equal the reserved selectors ALL or OFF.",
-        ),
+        rules=("Shift-type IDs must be unique and cannot case-insensitively equal the reserved selectors ALL or OFF.",),
         example="""shiftTypes:
   items:
     - id: D
@@ -391,10 +389,7 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "`x = T` means exactly the target count. The inequality expressions set minimum or maximum counts.",
             "`target` must be non-negative.",
             "Use `weight: -.inf` for a hard exact or inequality constraint.",
-            (
-                "For `|x - T|^2`, `weight` must be non-positive or `-.inf`. Positive and `.inf` weights are "
-                "rejected."
-            ),
+            ("For `|x - T|^2`, `weight` must be non-positive or `-.inf`. Positive and `.inf` weights are rejected."),
             (
                 "For how many people a shift type needs on a date, use `shift type requirement` instead. A staffing "
                 "level is not a per-person shift total."

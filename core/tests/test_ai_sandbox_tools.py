@@ -163,7 +163,7 @@ def test_sandbox_adapter_rejects_bad_envelopes_without_touching_the_sandbox():
     tools = SandboxPiTools(backend, 10)
 
     invalid_json = asyncio.run(tools.execute(BASH_TOOL, "{"))
-    missing_path = asyncio.run(tools.execute(READ_TOOL, '{}'))
+    missing_path = asyncio.run(tools.execute(READ_TOOL, "{}"))
     missing_edits = asyncio.run(tools.execute(EDIT_TOOL, '{"path":"new.txt"}'))
     missing_content = asyncio.run(tools.execute(WRITE_TOOL, '{"path":"new.txt"}'))
     unknown = asyncio.run(tools.execute("e2b_run", '{"command":"rg x"}'))

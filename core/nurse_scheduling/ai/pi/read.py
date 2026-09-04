@@ -113,9 +113,7 @@ def render_read_result(content: bytes, call: ReadInput) -> ReadResult:
     start_line = max(0, (call.offset or 1) - 1)
     start_line_display = start_line + 1
     if start_line >= total_file_lines:
-        raise ReadArgumentError(
-            f"Offset {call.offset} is beyond end of file ({total_file_lines} lines total)"
-        )
+        raise ReadArgumentError(f"Offset {call.offset} is beyond end of file ({total_file_lines} lines total)")
 
     user_limited_lines: int | None = None
     if call.limit is not None:

@@ -30,7 +30,9 @@ from typing import Any
 from .bash import UPSTREAM_COMMIT
 
 EDIT_TOOL = "edit"
-EDIT_PROMPT_SNIPPET = "Make precise file edits with exact text replacement, including multiple disjoint edits in one call"
+EDIT_PROMPT_SNIPPET = (
+    "Make precise file edits with exact text replacement, including multiple disjoint edits in one call"
+)
 EDIT_PROMPT_GUIDELINES = (
     "Use edit for precise changes (edits[].oldText must match exactly)",
     (
@@ -158,9 +160,11 @@ def parse_edit_input(arguments: str) -> EditInput:
     legacy_old_text = parsed.get("oldText")
     legacy_new_text = parsed.get("newText")
     if isinstance(legacy_old_text, str) and isinstance(legacy_new_text, str):
-        raw_edits = [*raw_edits, {"oldText": legacy_old_text, "newText": legacy_new_text}] if isinstance(
-            raw_edits, list
-        ) else [{"oldText": legacy_old_text, "newText": legacy_new_text}]
+        raw_edits = (
+            [*raw_edits, {"oldText": legacy_old_text, "newText": legacy_new_text}]
+            if isinstance(raw_edits, list)
+            else [{"oldText": legacy_old_text, "newText": legacy_new_text}]
+        )
 
     if not isinstance(raw_edits, list) or not raw_edits:
         raise EditArgumentError("Edit tool input is invalid. edits must contain at least one replacement.")
@@ -306,11 +310,7 @@ def _apply_replacements(content: str, replacements: list[_MatchedEdit], offset: 
     result = content
     for replacement in reversed(replacements):
         match_index = replacement.match_index - offset
-        result = (
-            result[:match_index]
-            + replacement.new_text
-            + result[match_index + replacement.match_length :]
-        )
+        result = result[:match_index] + replacement.new_text + result[match_index + replacement.match_length :]
     return result
 
 
@@ -386,11 +386,7 @@ def _split_bom(content: str) -> tuple[str, str]:
 
 
 def _is_edit_mapping(value: object) -> bool:
-    return (
-        isinstance(value, dict)
-        and isinstance(value.get("oldText"), str)
-        and isinstance(value.get("newText"), str)
-    )
+    return isinstance(value, dict) and isinstance(value.get("oldText"), str) and isinstance(value.get("newText"), str)
 
 
 def _not_found_error(path: str, index: int, total: int) -> str:
@@ -418,7 +414,11 @@ def _duplicate_error(path: str, index: int, total: int, occurrences: int) -> str
 
 
 def _empty_old_text_error(path: str, index: int, total: int) -> str:
-    return f"oldText must not be empty in {path}." if total == 1 else f"edits[{index}].oldText must not be empty in {path}."
+    return (
+        f"oldText must not be empty in {path}."
+        if total == 1
+        else f"edits[{index}].oldText must not be empty in {path}."
+    )
 
 
 def _no_change_error(path: str, total: int) -> str:

@@ -214,14 +214,9 @@ def test_every_concrete_yaml_pydantic_model_is_mapped_to_reference_topics():
 @pytest.mark.parametrize("model", MODEL_TOPIC_COVERAGE, ids=lambda model: model.__name__)
 def test_reference_topics_name_every_authoritative_pydantic_field(model: type[BaseModel]):
     paths = MODEL_TOPIC_COVERAGE[model]
-    guidance = " ".join(
-        text for path in paths for text in (*SCHEMA_TOPICS[path].fields, *SCHEMA_TOPICS[path].rules)
-    )
+    guidance = " ".join(text for path in paths for text in (*SCHEMA_TOPICS[path].fields, *SCHEMA_TOPICS[path].rules))
     classified_fields = {
-        field
-        for path in paths
-        for fields in CANONICAL_FIELD_REQUIREMENTS[path].values()
-        for field in fields
+        field for path in paths for fields in CANONICAL_FIELD_REQUIREMENTS[path].values() for field in fields
     }
 
     assert all(f"`{field}`" in guidance for field in model.model_fields)
@@ -243,7 +238,9 @@ def test_frontend_flat_list_restrictions_are_documented(path: str, field: str):
     assert "flat" in _field_guidance(path, field)
 
 
-@pytest.mark.parametrize("path", ("dates.groups", "people.items", "people.groups", "shiftTypes.items", "shiftTypes.groups"))
+@pytest.mark.parametrize(
+    "path", ("dates.groups", "people.items", "people.groups", "shiftTypes.items", "shiftTypes.groups")
+)
 def test_frontend_required_descriptions_are_documented(path: str):
     assert "required `description`" in _field_guidance(path, "description")
 
