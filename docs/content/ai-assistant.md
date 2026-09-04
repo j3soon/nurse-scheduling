@@ -201,6 +201,13 @@ queues overdue instances. This avoids a full-account scan and lets a restarted
 process recover cleanup work after a crash. If the application remains down,
 no in-process cleanup can run, so deployments requiring cleanup during a full
 service outage should invoke the same reconciliation from an external job.
+The AI service initializes the shared Sentry integration with the
+`app=ai-backend` tag. An unconfirmed request cleanup is logged as a warning.
+An overdue sandbox or three consecutive background deletion failures is logged
+as an error. All later attempts remain visible as warning logs, and a successful
+cleanup is logged as confirmation. Sentry log alerts can use these severities
+and the structured sandbox cleanup fields to notify administrators without an
+error event for every retry.
 
 ## Agent capabilities
 

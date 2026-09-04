@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import asyncio
+import logging
 from types import SimpleNamespace
 
 from e2b.api.client.models.sandbox_state import SandboxState
@@ -58,7 +59,7 @@ def test_metadata_records_ownership_and_the_turn_hard_deadline():
     }
 
 
-def test_reconciliation_lists_only_owned_running_and_paused_sandboxes_and_kills_stale_ones():
+def test_reconciliation_lists_only_owned_running_and_paused_sandboxes_and_kills_stale_ones(caplog):
     async def exercise() -> tuple[list[dict], list[str], E2BSandboxCleanupManager]:
         list_calls: list[dict] = []
         kill_calls: list[str] = []
@@ -70,10 +71,12 @@ def test_reconciliation_lists_only_owned_running_and_paused_sandboxes_and_kills_
                     SimpleNamespace(
                         sandbox_id="stale",
                         metadata={HARD_DEADLINE_METADATA_KEY: "99"},
+                        state=SandboxState.PAUSED,
                     ),
                     SimpleNamespace(
                         sandbox_id="active",
                         metadata={HARD_DEADLINE_METADATA_KEY: "101"},
+                        state=SandboxState.RUNNING,
                     ),
                 ]
             )
@@ -93,10 +96,12 @@ def test_reconciliation_lists_only_owned_running_and_paused_sandboxes_and_kills_
             monotonic=lambda: 0,
         )
         await manager.reconcile_once()
+        await manager.reconcile_once()
         await manager.retry_deferred_once()
         return list_calls, kill_calls, manager
 
-    list_calls, kill_calls, manager = asyncio.run(exercise())
+    with caplog.at_level(logging.INFO, logger="nurse_scheduling.ai.sandbox.e2b_cleanup"):
+        list_calls, kill_calls, manager = asyncio.run(exercise())
 
     assert kill_calls == ["stale"]
     assert manager.pending_count == 0
@@ -105,6 +110,11 @@ def test_reconciliation_lists_only_owned_running_and_paused_sandboxes_and_kills_
     assert query.state == [SandboxState.RUNNING, SandboxState.PAUSED]
     assert list_calls[0]["limit"] == 100
     assert list_calls[0]["request_timeout"] == 2
+    overdue_record = next(record for record in caplog.records if record.message.startswith("overdue sandbox"))
+    assert overdue_record.levelno == logging.ERROR
+    assert overdue_record.sandbox_id == "stale"
+    assert overdue_record.overdue_seconds == 1
+    assert sum(record.message.startswith("overdue sandbox") for record in caplog.records) == 1
 
 
 def test_deferred_cleanup_retries_with_exponential_backoff_until_absent():
@@ -140,6 +150,41 @@ def test_deferred_cleanup_retries_with_exponential_backoff_until_absent():
 
     assert attempted_at == [0.0, 0.5, 1.5]
     assert manager.pending_count == 0
+
+
+def test_deferred_cleanup_escalates_only_the_third_consecutive_failure(caplog):
+    async def exercise() -> None:
+        now = [0.0]
+
+        async def kill_sandbox(_sandbox_id: str, **_kwargs) -> bool:
+            raise TimeoutError
+
+        manager = E2BSandboxCleanupManager(
+            api_key="key",
+            request_timeout_seconds=2,
+            retry_backoff_seconds=0.5,
+            reaper_interval_seconds=30,
+            list_sandboxes=lambda **_kwargs: FakePaginator([]),
+            kill_sandbox=kill_sandbox,
+            monotonic=lambda: now[0],
+        )
+        manager.defer("sandbox-1")
+        for instant in (0.0, 0.5, 1.5, 3.5):
+            now[0] = instant
+            await manager.retry_deferred_once()
+
+    with caplog.at_level(logging.WARNING, logger="nurse_scheduling.ai.sandbox.e2b_cleanup"):
+        asyncio.run(exercise())
+
+    failures = [record for record in caplog.records if record.message.startswith("deferred sandbox cleanup failed")]
+    assert [record.levelno for record in failures] == [
+        logging.WARNING,
+        logging.WARNING,
+        logging.ERROR,
+        logging.WARNING,
+    ]
+    assert failures[2].sandbox_id == "sandbox-1"
+    assert failures[2].cleanup_attempt == 3
 
 
 def test_cleanup_worker_runs_reconciliation_on_start_and_stops_cleanly():

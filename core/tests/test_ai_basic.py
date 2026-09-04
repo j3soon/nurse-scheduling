@@ -106,6 +106,15 @@ def create_test_app(*, settings: AiSettings, provider, sandbox_factory=None):
     )
 
 
+def test_application_initializes_sentry_for_ai_service(monkeypatch):
+    calls = []
+    monkeypatch.setattr("nurse_scheduling.ai.app.init_sentry", lambda version, *, app: calls.append((version, app)))
+
+    create_test_app(settings=make_settings(), provider=FakeProvider())
+
+    assert calls == [("0.2.0", "ai-backend")]
+
+
 def test_application_lifespan_runs_sandbox_cleanup_supervision():
     class LifecycleFactory(FakeSandboxFactory):
         starts = 0

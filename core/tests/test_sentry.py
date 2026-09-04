@@ -210,6 +210,20 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
     assert tags == [("app", "backend")]
 
 
+def test_init_sentry_accepts_service_tag(monkeypatch):
+    tags = []
+    fake_sentry_sdk = types.SimpleNamespace(
+        init=lambda **_kwargs: None,
+        set_tag=lambda name, value: tags.append((name, value)),
+    )
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+    init_sentry("v1.2.3", app="ai-backend")
+
+    assert tags == [("app", "ai-backend")]
+
+
 def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypatch):
     scopes = []
     messages = []

@@ -37,7 +37,7 @@ def _should_enable_sentry() -> bool:
     return "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules
 
 
-def init_sentry(app_version: str) -> None:
+def init_sentry(app_version: str, *, app: str = "backend") -> None:
     if not _should_enable_sentry():
         return
 
@@ -61,7 +61,7 @@ def init_sentry(app_version: str) -> None:
         # Enable logs to be sent to Sentry
         enable_logs=True,
     )
-    sentry_sdk.set_tag("app", "backend")
+    sentry_sdk.set_tag("app", app)
 
 
 def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> None:

@@ -47,6 +47,7 @@ class _DeferredCleanup:
 
     attempts: int = 0
     next_attempt_at: float = 0.0
+    failure_escalated: bool = False
 
 
 class E2BSandboxCleanupManager:
@@ -117,7 +118,11 @@ class E2BSandboxCleanupManager:
         """Queue an unconfirmed deletion without extending the user request."""
         if sandbox_id not in self._pending:
             self._pending[sandbox_id] = _DeferredCleanup(next_attempt_at=self._monotonic())
-            logger.error("sandbox cleanup deferred sandbox_id=%s", sandbox_id)
+            logger.warning(
+                "sandbox deletion unconfirmed, background cleanup queued sandbox_id=%s",
+                sandbox_id,
+                extra={"sandbox_id": sandbox_id},
+            )
         self._wake.set()
 
     async def reconcile_once(self) -> None:
@@ -136,7 +141,23 @@ class E2BSandboxCleanupManager:
                 for sandbox in await paginator.next_items():
                     deadline = _parse_deadline(sandbox.metadata.get(HARD_DEADLINE_METADATA_KEY))
                     if deadline is not None and deadline <= self._wall_clock():
-                        self.defer(str(sandbox.sandbox_id))
+                        sandbox_id = str(sandbox.sandbox_id)
+                        if sandbox_id in self._pending:
+                            continue
+                        overdue_seconds = self._wall_clock() - deadline
+                        state = str(getattr(sandbox, "state", "unknown"))
+                        logger.error(
+                            "overdue sandbox discovered sandbox_id=%s state=%s overdue_seconds=%.3f",
+                            sandbox_id,
+                            state,
+                            overdue_seconds,
+                            extra={
+                                "sandbox_id": sandbox_id,
+                                "sandbox_state": state,
+                                "overdue_seconds": overdue_seconds,
+                            },
+                        )
+                        self.defer(sandbox_id)
         except asyncio.CancelledError:
             raise
         except (SandboxException, TimeoutError):
@@ -166,12 +187,22 @@ class E2BSandboxCleanupManager:
                     MAX_CLEANUP_BACKOFF_SECONDS,
                 )
                 cleanup.next_attempt_at = now + delay
-                logger.warning(
+                log = logger.warning
+                if cleanup.attempts >= 3 and not cleanup.failure_escalated:
+                    cleanup.failure_escalated = True
+                    log = logger.error
+                log(
                     "deferred sandbox cleanup failed sandbox_id=%s attempt=%s retry_in_seconds=%.3f error_type=%s",
                     sandbox_id,
                     cleanup.attempts,
                     delay,
                     type(error).__name__,
+                    extra={
+                        "sandbox_id": sandbox_id,
+                        "cleanup_attempt": cleanup.attempts,
+                        "retry_in_seconds": delay,
+                        "error_type": type(error).__name__,
+                    },
                 )
                 continue
 
@@ -180,6 +211,11 @@ class E2BSandboxCleanupManager:
                 "deferred sandbox cleanup confirmed sandbox_id=%s outcome=%s",
                 sandbox_id,
                 "killed" if killed else "already_absent",
+                extra={
+                    "sandbox_id": sandbox_id,
+                    "cleanup_attempts": cleanup.attempts + 1,
+                    "cleanup_outcome": "killed" if killed else "already_absent",
+                },
             )
 
     async def _run(self) -> None:

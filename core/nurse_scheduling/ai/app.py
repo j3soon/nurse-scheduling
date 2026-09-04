@@ -39,6 +39,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 
+from ..sentry import init_sentry
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
 from .config import AiSettings
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
@@ -530,6 +531,7 @@ def create_app(
     sandbox_factory: SandboxFactory | None = None,
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
+    init_sentry(API_VERSION, app="ai-backend")
     settings = settings or AiSettings.from_env()
     provider = provider or OpenAiCompatibleProvider(settings)
     if sandbox_factory is None:
