@@ -635,6 +635,8 @@ zensical build --clean --strict
 
 This project would not have been possible without the contributors in [CONTRIBUTORS.md](https://github.com/j3soon/nurse-scheduling/blob/dev/CONTRIBUTORS.md).
 
+See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for the free services this project relies on.
+
 ## License
 
 This project is licensed under the [AGPL-3.0 License](https://github.com/j3soon/nurse-scheduling/blob/dev/LICENSE).
