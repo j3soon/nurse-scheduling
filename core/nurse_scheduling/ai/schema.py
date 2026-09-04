@@ -408,8 +408,15 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         ),
         rules=(
             "`people1`, `people2`, and `shiftTypes` must each be non-empty.",
-            "A positive `weight` attracts the selections. A negative `weight` repels them.",
-            "`.inf` requires the affinity match and `-.inf` forbids it.",
+            (
+                "A positive `weight` rewards both selections matching on a date. A negative `weight` penalizes that "
+                "joint match. It does not require the two people to have identical schedules."
+            ),
+            (
+                "When the user says people should work together without specifying strength, omit `weight` to use "
+                "the soft default 1. Do not infer a stronger weight from unrelated preferences."
+            ),
+            "Use `.inf` or `-.inf` only when the user explicitly asks to require or forbid the affinity match.",
         ),
         example="""preferences:
   - type: shift affinity

@@ -275,6 +275,16 @@ def test_schema_separates_the_two_counting_preferences():
     assert "use `shift type requirement` instead" in reference
 
 
+def test_schema_documents_soft_affinity_default():
+    reference = render_schedule_reference("preferences")
+
+    assert reference is not None
+    assert "omit `weight` to use the soft default 1" in reference
+    assert "Do not infer a stronger weight from unrelated preferences" in reference
+    assert "only when the user explicitly asks to require or forbid" in reference
+    assert "does not require the two people to have identical schedules" in reference
+
+
 def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
     core = render_schedule_reference("core")
     preferences = render_schedule_reference("preferences")
