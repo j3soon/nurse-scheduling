@@ -43,6 +43,9 @@ MAX_TOOL_CALLS_PER_RESPONSE = 8
 MAX_TOOL_ARGUMENT_CHARS = 20_000
 MAX_RESPONSE_TEXT_CHARS = 200_000
 MAX_RESPONSE_REASONING_CHARS = 400_000
+MAX_PROVIDER_ERROR_EXCERPT_CHARS = 1_000
+MAX_PROVIDER_CONTENT_TYPE_CHARS = 100
+PROVIDER_ERROR_TRUNCATION_MARKER = "...[truncated]"
 
 
 class TextContentPart(TypedDict):
@@ -194,6 +197,15 @@ def _redact_provider_error(response_body: str, provider_api_key: str) -> str:
     return SECRET_ASSIGNMENT_PATTERN.sub(r"\1[REDACTED]", redacted)
 
 
+def _provider_error_excerpt(response_body: str, provider_api_key: str) -> str:
+    """Return one bounded log line from an untrusted provider response."""
+    excerpt = " ".join(_redact_provider_error(response_body, provider_api_key).split())
+    if len(excerpt) <= MAX_PROVIDER_ERROR_EXCERPT_CHARS:
+        return excerpt
+    content_chars = MAX_PROVIDER_ERROR_EXCERPT_CHARS - len(PROVIDER_ERROR_TRUNCATION_MARKER)
+    return excerpt[:content_chars] + PROVIDER_ERROR_TRUNCATION_MARKER
+
+
 class OpenAiCompatibleProvider:
     """Stream chat completions from an OpenAI-compatible HTTP endpoint."""
 
@@ -279,18 +291,23 @@ class OpenAiCompatibleProvider:
                 await response.aread()
                 error_id = str(uuid4())
                 response_body = response.text.strip()
+                content_type = " ".join(response.headers.get("content-type", "unknown").split())[
+                    :MAX_PROVIDER_CONTENT_TYPE_CHARS
+                ]
                 if response_body:
                     logger.error(
-                        "AI provider HTTP error error_id=%s status=%s response_body=%s",
+                        "AI provider HTTP error error_id=%s status=%s content_type=%s response_excerpt=%s",
                         error_id,
                         response.status_code,
-                        _redact_provider_error(response_body, self._settings.provider_api_key),
+                        content_type,
+                        _provider_error_excerpt(response_body, self._settings.provider_api_key),
                     )
                 else:
                     logger.error(
-                        "AI provider HTTP error error_id=%s status=%s empty_response_body=true",
+                        "AI provider HTTP error error_id=%s status=%s content_type=%s empty_response_body=true",
                         error_id,
                         response.status_code,
+                        content_type,
                     )
                 raise ProviderError(f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.")
 

@@ -59,7 +59,7 @@ async def _collect(stream: AsyncIterator) -> list:
         (
             "text/html",
             "<html>\n<body>Cloud proxy error 525</body>\n</html>",
-            "<html>\n<body>Cloud proxy error 525</body>\n</html>",
+            "<html> <body>Cloud proxy error 525</body> </html>",
         ),
     ],
 )
@@ -98,8 +98,44 @@ def test_provider_http_error_logs_redacted_body_and_returns_error_id(
     )
     assert error_match is not None
     assert f"error_id={error_match.group(1)} status=525" in caplog.text
+    assert f"content_type={content_type}" in caplog.text
     assert expected_logged_body in caplog.text
     assert "test-token" not in caplog.text
+
+
+def test_provider_http_error_bounds_untrusted_response_excerpt(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response_body = "authorization: Bearer exposed-token\n" + "x" * 5_000
+    real_async_client = httpx.AsyncClient
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(520, headers={"Content-Type": "text/html; charset=UTF-8"}, text=response_body)
+    )
+    monkeypatch.setattr(
+        provider_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_async_client(transport=transport, **kwargs),
+    )
+    provider = OpenAiCompatibleProvider(
+        AiSettings(
+            provider_base_url="https://provider.example/v1",
+            provider_api_key="test-token",
+            provider_model="test-model",
+        )
+    )
+    caplog.set_level(logging.ERROR, logger="nurse_scheduling.ai.provider")
+
+    with pytest.raises(ProviderError, match="HTTP 520"):
+        asyncio.run(_collect(provider.stream_chat([{"role": "user", "content": "Question"}])))
+
+    message = caplog.records[-1].getMessage()
+    excerpt = message.split(" response_excerpt=", maxsplit=1)[1]
+    assert "content_type=text/html; charset=UTF-8" in message
+    assert "[REDACTED]" in excerpt
+    assert "exposed-token" not in excerpt
+    assert excerpt.endswith(provider_module.PROVIDER_ERROR_TRUNCATION_MARKER)
+    assert len(excerpt) == provider_module.MAX_PROVIDER_ERROR_EXCERPT_CHARS
 
 
 def _sse_body(*chunks: dict) -> str:
