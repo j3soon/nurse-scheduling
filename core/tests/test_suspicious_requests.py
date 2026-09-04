@@ -190,7 +190,7 @@ def test_yaml_that_expands_past_the_limit_is_refused_and_reported(captured):
     response = client.post("/optimize", data={"yaml_content": bomb.decode()})
 
     assert response.status_code == 400
-    assert _signals(captured) == [("yaml_expansion_bomb", "warning")]
+    assert _signals(captured) == [("yaml_expansion_bomb", "error")]
 
 
 def test_ordinary_yaml_is_not_refused_as_an_expansion(captured):
@@ -200,6 +200,29 @@ def test_ordinary_yaml_is_not_refused_as_an_expansion(captured):
 
     assert response.status_code == 202
     assert captured.events == []
+
+
+def test_accepted_yaml_using_aliases_is_reported(captured):
+    """Nothing this project produces uses an alias, so one marks a hand-built client."""
+    client = _client()
+
+    response = client.post(
+        "/optimize",
+        data={"yaml_content": "apiVersion: alpha\npeople: &p [Alice, Bob]\na: *p\n"},
+    )
+
+    assert response.status_code == 202
+    assert _signals(captured) == [("yaml_aliases_used", "warning")]
+
+
+def test_accepted_yaml_that_does_not_parse_is_reported(captured):
+    """A real client serializes its data, so it does not submit something unparseable."""
+    client = _client()
+
+    response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n  bad: ["})
+
+    assert response.status_code == 202
+    assert _signals(captured) == [("yaml_unparseable", "warning")]
 
 
 def test_timeout_beyond_the_advertised_maximum_is_reported(captured):

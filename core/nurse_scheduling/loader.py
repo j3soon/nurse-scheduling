@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
@@ -43,8 +44,18 @@ class SchedulingDataTooComplexError(ValueError):
     """Scheduling data expands to more nodes than this project will process."""
 
 
-def expanded_node_count(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -> int:
-    """Return how many nodes this document expands to, counting each alias in full.
+@dataclass(frozen=True)
+class YamlExpansion:
+    """How far a document expands once its aliases are followed."""
+
+    nodes: int
+    """Nodes the document expands to, counting each alias in full."""
+    aliases: int
+    """Aliases the document uses, which this project's own data never does."""
+
+
+def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -> YamlExpansion:
+    """Return how far this document expands, counting each alias in full.
 
     An alias is a reference, so parsing a document that nests them stays cheap while
     everything that later walks the result pays for the expansion. Counting the expansion
@@ -54,6 +65,7 @@ def expanded_node_count(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -> i
         SchedulingDataTooComplexError: If the expansion exceeds `limit`.
     """
     anchor_sizes: dict[str, int] = {}
+    aliases = 0
     # Each open collection accumulates its own size, and the root frame holds the total.
     frames: list[list] = [[0, None]]
     for event in YAML(typ="safe").parse(content):
@@ -71,6 +83,7 @@ def expanded_node_count(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -> i
                 anchor_sizes[anchor] = 1
             frames[-1][0] += 1
         elif isinstance(event, AliasEvent):
+            aliases += 1
             frames[-1][0] += anchor_sizes.get(event.anchor, 1)
         else:
             continue
@@ -78,7 +91,7 @@ def expanded_node_count(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -> i
             raise SchedulingDataTooComplexError(
                 f"Scheduling data expands to more than {limit} nodes, which this server refuses to process"
             )
-    return frames[0][0]
+    return YamlExpansion(nodes=frames[0][0], aliases=aliases)
 
 
 def _load_yaml(content: bytes) -> dict[str, Any]:
@@ -110,6 +123,6 @@ def load_data(content: bytes) -> NurseSchedulingData:
         SchedulingDataTooComplexError: If the data expands to more nodes than are processed.
     """
     # Validation walks every node an alias expands to, so bound the expansion before it does.
-    expanded_node_count(content)
+    measure_yaml_expansion(content)
     data = _load_yaml(content)
     return NurseSchedulingData(**data)

@@ -182,6 +182,8 @@ ISSUED_JOB_ID_SHAPE = "issued_shape"
 """Shape of an issued job identifier, used to describe a request for a missing one."""
 STREAM_ROUTE_SUFFIX = "/events"
 """Route suffix of the only endpoint accepting a stream token."""
+INVALID_REASON_LEVELS = {"yaml_expansion_bomb": "error"}
+"""Levels for a signal a route names directly, defaulting to a warning."""
 
 
 def _describe_job_id(request: Request) -> str | None:
@@ -239,7 +241,7 @@ def classify_suspicious_request(
         return None
     invalid_reason = getattr(request.state, "invalid_reason", None)
     if invalid_reason is not None:
-        return invalid_reason, "warning"
+        return invalid_reason, INVALID_REASON_LEVELS.get(invalid_reason, "warning")
     return None
 
 
@@ -259,6 +261,62 @@ def capture_invalid_request(
         sentry_logger.warning("[sentry:report] could not report an invalid request", exc_info=True)
 
 
+def report_suspicious_request(
+    request: Request,
+    signal_name: str,
+    level: str,
+    *,
+    invalid_request: dict | None = None,
+) -> None:
+    """Send one report for a request that showed knowledge of the API contract.
+
+    Repeats from one address escalate the level and then stop being reported, so a caller
+    cannot spend the project's event quota. An accepted request can be reported too, because
+    what makes one worth keeping is the request itself rather than how it was answered.
+    """
+    import sentry_sdk
+
+    # Imported here so processes that only report errors do not load the routes.
+    from .server.api.optimize import CLIENT_ID_COOKIE_NAME
+
+    occurrences = _record_suspicion(request, signal_name)
+    escalate_count = _escalate_count(request)
+    if occurrences and escalate_count:
+        if occurrences > escalate_count:
+            # The escalated report already names the address, and its counter keeps rising.
+            return
+        if occurrences == escalate_count:
+            # Repetition from one address is deliberate in a way one request is not.
+            level = "error"
+
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", request.url.path)
+    with sentry_sdk.new_scope() as scope:
+        scope.set_tag("request.suspicious", signal_name)
+        scope.set_tag("http.method", request.method)
+        scope.set_tag("http.route", route_path)
+        scope.set_context(
+            "suspicious_request",
+            {
+                "signal": signal_name,
+                "occurrences": occurrences or None,
+                "job_id": _describe_job_id(request),
+                # Named without "token", which Sentry scrubs from a field name.
+                "stream_state": describe_stream_token(request.query_params.get("token")),
+                "bearer_presented": extract_bearer_token(request.headers.get("Authorization")) is not None,
+                "client_id": request.cookies.get(CLIENT_ID_COOKIE_NAME),
+                "user_agent": request.headers.get("User-Agent"),
+                "origin": request.headers.get("Origin"),
+            },
+        )
+        if invalid_request is not None:
+            scope.set_tag("request.invalid", True)
+            scope.set_tag("http.status_code", invalid_request["status_code"])
+            scope.set_context("invalid_request", invalid_request)
+        scope.fingerprint = ["suspicious-request", signal_name]
+        sentry_sdk.capture_message(f"Suspicious API request: {signal_name}", level=level)
+
+
 def _capture_invalid_request(
     request: Request,
     status_code: int,
@@ -272,65 +330,26 @@ def _capture_invalid_request(
     if signal is None and status_code in (401, 404):
         return
 
-    import sentry_sdk
-
-    level = "warning"
-    occurrences = 0
-    if signal is not None:
-        signal_name, level = signal
-        occurrences = _record_suspicion(request, signal_name)
-        escalate_count = _escalate_count(request)
-        if occurrences and escalate_count:
-            if occurrences > escalate_count:
-                # One address cannot spend the project's event quota. The escalated report
-                # already names the address, and its counter keeps rising unreported.
-                return
-            if occurrences == escalate_count:
-                # Repetition from one address is deliberate in a way one request is not.
-                level = "error"
-
     route = request.scope.get("route")
     route_path = getattr(route, "path", request.url.path)
-    serialized_detail = jsonable_encoder(detail)
-    message = "Invalid API request"
-    fingerprint = ["invalid-request", str(status_code), route_path]
+    invalid_request = {
+        "path": request.url.path,
+        "route": route_path,
+        "method": request.method,
+        "status_code": status_code,
+        "detail": jsonable_encoder(detail),
+    }
+    if signal is not None:
+        report_suspicious_request(request, signal[0], signal[1], invalid_request=invalid_request)
+        return
+
+    import sentry_sdk
 
     with sentry_sdk.new_scope() as scope:
-        if signal is not None:
-            # Imported here so processes that only report errors do not load the routes.
-            from .server.api.optimize import CLIENT_ID_COOKIE_NAME
-
-            signal_name = signal[0]
-            message = f"Suspicious API request: {signal_name}"
-            fingerprint = ["suspicious-request", signal_name]
-            scope.set_tag("request.suspicious", signal_name)
-            scope.set_context(
-                "suspicious_request",
-                {
-                    "signal": signal_name,
-                    "occurrences": occurrences or None,
-                    "job_id": _describe_job_id(request),
-                    # Named without "token", which Sentry scrubs from a field name.
-                    "stream_state": describe_stream_token(request.query_params.get("token")),
-                    "bearer_presented": extract_bearer_token(request.headers.get("Authorization")) is not None,
-                    "client_id": request.cookies.get(CLIENT_ID_COOKIE_NAME),
-                    "user_agent": request.headers.get("User-Agent"),
-                    "origin": request.headers.get("Origin"),
-                },
-            )
         scope.set_tag("request.invalid", True)
         scope.set_tag("http.status_code", status_code)
         scope.set_tag("http.method", request.method)
         scope.set_tag("http.route", route_path)
-        scope.set_context(
-            "invalid_request",
-            {
-                "path": request.url.path,
-                "route": route_path,
-                "method": request.method,
-                "status_code": status_code,
-                "detail": serialized_detail,
-            },
-        )
-        scope.fingerprint = fingerprint
-        sentry_sdk.capture_message(message, level=level)
+        scope.set_context("invalid_request", invalid_request)
+        scope.fingerprint = ["invalid-request", str(status_code), route_path]
+        sentry_sdk.capture_message("Invalid API request", level="warning")
