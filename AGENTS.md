@@ -31,6 +31,11 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   the commit message instead.
 - Note potentially wasteful token use and uninformative tests, scripts, or runs.
   Fix them when practical, otherwise report or document them for review.
+- For model prompt, schema reference, or other AI guidance changes motivated by
+  an evaluation, name the relevant testcase in the commit body and briefly
+  record the before and after behavior or trajectory. Before removing or
+  consolidating that guidance, use Git blame or history to recover its rationale
+  and rerun the named testcase to check for regression.
 - Inspect the repository with narrow queries. Filter to the paths, revisions, or
   lines in question instead of listing every branch, printing whole files, or
   dumping full status output.
