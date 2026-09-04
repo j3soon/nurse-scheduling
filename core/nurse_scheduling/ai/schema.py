@@ -326,6 +326,12 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
             "OFF is not allowed in this preference type.",
             "Only people selected by `qualifiedPeople` may cover the requirement's shift types on its dates.",
             (
+                "A requested shift type, staffing count, qualified people selector, and date selector map directly "
+                "to `shiftType`, `requiredNumPeople`, `qualifiedPeople`, and `date`. Confirm those selectors and any "
+                "existing requirement in one focused search. Do not inspect unrelated shift requests or expand group "
+                "members to infer eligibility."
+            ),
+            (
                 "Without `preferredNumPeople`, `requiredNumPeople` is an exact hard staffing count. With "
                 "`preferredNumPeople`, it becomes the hard minimum and the preferred value is the upper target."
             ),

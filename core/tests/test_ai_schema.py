@@ -273,6 +273,8 @@ def test_schema_separates_the_two_counting_preferences():
     assert "requires a finite `weight`" in reference
     assert "not the people needed on a shift" in reference
     assert "use `shift type requirement` instead" in reference
+    assert "map directly to `shiftType`, `requiredNumPeople`, `qualifiedPeople`, and `date`" in reference
+    assert "Do not inspect unrelated shift requests or expand group members" in reference
 
 
 def test_schema_documents_soft_affinity_default():
