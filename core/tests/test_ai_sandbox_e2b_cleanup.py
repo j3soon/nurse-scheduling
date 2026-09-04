@@ -66,6 +66,8 @@ def test_reconciliation_lists_only_owned_running_and_paused_sandboxes_and_kills_
 
         def list_sandboxes(**kwargs):
             list_calls.append(kwargs)
+            if kill_calls:
+                return FakePaginator([])
             return FakePaginator(
                 [
                     SimpleNamespace(
@@ -115,6 +117,40 @@ def test_reconciliation_lists_only_owned_running_and_paused_sandboxes_and_kills_
     assert overdue_record.sandbox_id == "stale"
     assert overdue_record.overdue_seconds == 1
     assert sum(record.message.startswith("overdue sandbox") for record in caplog.records) == 1
+
+
+def test_confirmation_rekills_a_sandbox_resurrected_by_a_late_resume():
+    async def exercise() -> tuple[list[float], E2BSandboxCleanupManager]:
+        now = [0.0]
+        kill_calls: list[float] = []
+        list_results = [
+            [SimpleNamespace(sandbox_id="sandbox-1")],
+            [],
+        ]
+
+        async def kill_sandbox(_sandbox_id: str, **_kwargs) -> bool:
+            kill_calls.append(now[0])
+            return True
+
+        manager = E2BSandboxCleanupManager(
+            api_key="key",
+            request_timeout_seconds=2,
+            retry_backoff_seconds=0.5,
+            reaper_interval_seconds=30,
+            list_sandboxes=lambda **_kwargs: FakePaginator(list_results.pop(0)),
+            kill_sandbox=kill_sandbox,
+            monotonic=lambda: now[0],
+        )
+        manager.confirm("sandbox-1")
+        for instant in (1.99, 2.0, 2.49, 2.5):
+            now[0] = instant
+            await manager.retry_deferred_once()
+        return kill_calls, manager
+
+    kill_calls, manager = asyncio.run(exercise())
+
+    assert kill_calls == [2.0, 2.5]
+    assert manager.pending_count == 0
 
 
 def test_deferred_cleanup_retries_with_exponential_backoff_until_absent():

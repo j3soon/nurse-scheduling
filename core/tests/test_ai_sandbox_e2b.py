@@ -60,6 +60,7 @@ def make_backend(
     pause_request_timeout_seconds: float = 5,
     control_request_timeout_seconds: float = 2,
     defer_cleanup=None,
+    confirm_cleanup=None,
 ) -> E2BSandboxBackend:
     return E2BSandboxBackend(
         sandbox,
@@ -68,6 +69,7 @@ def make_backend(
         pause_request_timeout_seconds=pause_request_timeout_seconds,
         control_request_timeout_seconds=control_request_timeout_seconds,
         defer_cleanup=defer_cleanup,
+        confirm_cleanup=confirm_cleanup,
     )
 
 
@@ -354,6 +356,17 @@ def test_retries_idempotent_sandbox_destruction(caplog: pytest.LogCaptureFixture
     assert sandbox.kill.await_count == 2
     assert backend.lifecycle_state is E2BSandboxState.CLOSED
     assert "operation=kill" in caplog.text
+
+
+def test_successful_destruction_schedules_independent_confirmation():
+    async def exercise() -> list[str]:
+        confirmations: list[str] = []
+        sandbox = FakeE2BSandbox()
+        e2b_backend = make_backend(sandbox, confirm_cleanup=confirmations.append)
+        await e2b_backend.close()
+        return confirmations
+
+    assert asyncio.run(exercise()) == ["sandbox-123"]
 
 
 def test_defers_cleanup_when_kill_retries_are_exhausted():

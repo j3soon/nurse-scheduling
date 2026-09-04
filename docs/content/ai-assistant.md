@@ -208,6 +208,11 @@ as an error. All later attempts remain visible as warning logs, and a successful
 cleanup is logged as confirmation. Sentry log alerts can use these severities
 and the structured sandbox cleanup fields to notify administrators without an
 error event for every retry.
+Even a successful foreground kill is checked again in the background after one
+E2B control-request timeout. This settling period covers a late pause or resume
+request that can otherwise make a sandbox reappear after the kill response.
+Confirmation lists only application-owned running and paused sandboxes. A
+still-present ID is killed again with capped exponential backoff.
 
 Deployments can run the same metadata-filtered cleanup independently of the AI
 service with:

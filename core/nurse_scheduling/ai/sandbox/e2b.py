@@ -219,6 +219,7 @@ class E2BSandboxFactory:
             pause_request_timeout_seconds=self._pause_request_timeout_seconds,
             control_request_timeout_seconds=self._control_request_timeout_seconds,
             defer_cleanup=self._cleanup_manager.defer,
+            confirm_cleanup=self._cleanup_manager.confirm,
         )
         logger.info(
             "sandbox created sandbox_id=%s provider=e2b latency_seconds=%.3f",
@@ -270,6 +271,7 @@ class E2BSandboxBackend:
         pause_request_timeout_seconds: float = 5.0,
         control_request_timeout_seconds: float = 2.0,
         defer_cleanup: Callable[[str], None] | None = None,
+        confirm_cleanup: Callable[[str], None] | None = None,
     ) -> None:
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
@@ -288,6 +290,7 @@ class E2BSandboxBackend:
         self._pause_request_timeout_seconds = pause_request_timeout_seconds
         self._control_request_timeout_seconds = control_request_timeout_seconds
         self._defer_cleanup = defer_cleanup
+        self._confirm_cleanup = confirm_cleanup
         self._state = E2BSandboxState.RUNNING
         self._close_started = False
         self._lifecycle_lock = asyncio.Lock()
@@ -428,6 +431,8 @@ class E2BSandboxBackend:
                     return
                 if not await self._destroy_locked():
                     raise SandboxError(f"E2B could not destroy sandbox {self.sandbox_id}.")
+                if self._confirm_cleanup is not None:
+                    self._confirm_cleanup(self.sandbox_id)
         except BaseException:
             if self._defer_cleanup is not None:
                 self._defer_cleanup(self.sandbox_id)

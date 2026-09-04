@@ -125,6 +125,20 @@ class E2BSandboxCleanupManager:
             )
         self._wake.set()
 
+    def confirm(self, sandbox_id: str) -> None:
+        """Confirm a successful kill after outstanding control requests settle."""
+        if sandbox_id not in self._pending:
+            self._pending[sandbox_id] = _DeferredCleanup(
+                next_attempt_at=self._monotonic() + self._request_timeout_seconds
+            )
+            logger.info(
+                "sandbox deletion confirmation scheduled sandbox_id=%s settle_seconds=%.3f",
+                sandbox_id,
+                self._request_timeout_seconds,
+                extra={"sandbox_id": sandbox_id},
+            )
+        self._wake.set()
+
     async def reconcile_once(self) -> bool:
         """Find owned running or paused sandboxes beyond their hard deadline."""
         try:
@@ -182,30 +196,18 @@ class E2BSandboxCleanupManager:
             except SandboxNotFoundException:
                 killed = False
             except (SandboxException, TimeoutError) as error:
-                cleanup.attempts += 1
-                exponent = min(cleanup.attempts - 1, 16)
-                delay = min(
-                    max(self._retry_backoff_seconds, 0.1) * (2**exponent),
-                    MAX_CLEANUP_BACKOFF_SECONDS,
-                )
-                cleanup.next_attempt_at = now + delay
-                log = logger.warning
-                if cleanup.attempts >= 3 and not cleanup.failure_escalated:
-                    cleanup.failure_escalated = True
-                    log = logger.error
-                log(
-                    "deferred sandbox cleanup failed sandbox_id=%s attempt=%s retry_in_seconds=%.3f error_type=%s",
-                    sandbox_id,
-                    cleanup.attempts,
-                    delay,
-                    type(error).__name__,
-                    extra={
-                        "sandbox_id": sandbox_id,
-                        "cleanup_attempt": cleanup.attempts,
-                        "retry_in_seconds": delay,
-                        "error_type": type(error).__name__,
-                    },
-                )
+                self._record_failure(sandbox_id, cleanup, now, type(error).__name__)
+                continue
+
+            try:
+                still_exists = await self._is_listed(sandbox_id)
+            except asyncio.CancelledError:
+                raise
+            except (SandboxException, TimeoutError) as error:
+                self._record_failure(sandbox_id, cleanup, now, type(error).__name__)
+                continue
+            if still_exists:
+                self._record_failure(sandbox_id, cleanup, now, "SandboxStillPresent")
                 continue
 
             self._pending.pop(sandbox_id, None)
@@ -219,6 +221,53 @@ class E2BSandboxCleanupManager:
                     "cleanup_outcome": "killed" if killed else "already_absent",
                 },
             )
+
+    async def _is_listed(self, sandbox_id: str) -> bool:
+        paginator = self._list_sandboxes(
+            query=SandboxQuery(
+                metadata={MANAGED_METADATA_KEY: MANAGED_METADATA_VALUE},
+                state=[SandboxState.RUNNING, SandboxState.PAUSED],
+            ),
+            limit=100,
+            api_key=self._api_key,
+            request_timeout=self._request_timeout_seconds,
+        )
+        while paginator.has_next:
+            if any(str(item.sandbox_id) == sandbox_id for item in await paginator.next_items()):
+                return True
+        return False
+
+    def _record_failure(
+        self,
+        sandbox_id: str,
+        cleanup: _DeferredCleanup,
+        now: float,
+        error_type: str,
+    ) -> None:
+        cleanup.attempts += 1
+        exponent = min(cleanup.attempts - 1, 16)
+        delay = min(
+            max(self._retry_backoff_seconds, 0.1) * (2**exponent),
+            MAX_CLEANUP_BACKOFF_SECONDS,
+        )
+        cleanup.next_attempt_at = now + delay
+        log = logger.warning
+        if cleanup.attempts >= 3 and not cleanup.failure_escalated:
+            cleanup.failure_escalated = True
+            log = logger.error
+        log(
+            "deferred sandbox cleanup failed sandbox_id=%s attempt=%s retry_in_seconds=%.3f error_type=%s",
+            sandbox_id,
+            cleanup.attempts,
+            delay,
+            error_type,
+            extra={
+                "sandbox_id": sandbox_id,
+                "cleanup_attempt": cleanup.attempts,
+                "retry_in_seconds": delay,
+                "error_type": error_type,
+            },
+        )
 
     async def _run(self) -> None:
         next_reconciliation = self._monotonic()
