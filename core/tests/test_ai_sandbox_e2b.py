@@ -28,7 +28,7 @@ import pytest
 from e2b.exceptions import FileNotFoundException, SandboxException, TimeoutException
 from e2b.sandbox.commands.command_handle import CommandExitException
 
-from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError
+from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, managed_sandbox
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
 from nurse_scheduling.ai.sandbox.e2b import (
     COMMAND_TIMEOUT_EXIT_CODE,
@@ -393,6 +393,21 @@ def test_close_is_idempotent():
     sandbox = asyncio.run(exercise())
     sandbox.kill.assert_awaited_once_with(request_timeout=2)
     sandbox.pause.assert_not_awaited()
+
+
+def test_managed_cleanup_cancels_a_terminal_pause_before_it_starts():
+    async def exercise() -> FakeE2BSandbox:
+        sandbox = FakeE2BSandbox()
+        e2b_backend = make_backend(sandbox)
+        factory = SimpleNamespace(create=AsyncMock(return_value=e2b_backend))
+        async with managed_sandbox(factory):
+            await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await asyncio.sleep(0)
+        return sandbox
+
+    sandbox = asyncio.run(exercise())
+    sandbox.pause.assert_not_awaited()
+    sandbox.kill.assert_awaited_once_with(request_timeout=2)
 
 
 def test_close_waits_for_a_running_operation_before_destroying():

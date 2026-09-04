@@ -410,6 +410,10 @@ class E2BSandboxBackend:
         """Explicitly warm-pause unless another operation arrives first."""
         current_task = asyncio.current_task()
         try:
+            # Cleanup runs in a separate cancellation-shielded task. Yield once so
+            # it can mark the sandbox as closing and cancel this terminal pause
+            # before the request reaches E2B.
+            await asyncio.sleep(0)
             async with self._lifecycle_lock:
                 if (
                     self._close_started
