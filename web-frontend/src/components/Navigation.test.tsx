@@ -19,10 +19,11 @@
 
 // This test is mostly AI generated.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect } from 'react';
 import Navigation from '@/components/Navigation';
+import { SchedulingDataProvider } from '@/hooks/useSchedulingData';
 import {
   UnsavedEditingStateProvider,
   useUnsavedEditingState,
@@ -55,14 +56,46 @@ function renderNavigation({ tabSwitchWarningActive = false } = {}) {
   return render(
     <UnsavedEditingStateProvider>
       {tabSwitchWarningActive && <TestTabSwitchWarning />}
-      <Navigation />
+      <SchedulingDataProvider>
+        <Navigation />
+      </SchedulingDataProvider>
     </UnsavedEditingStateProvider>
   );
+}
+
+const STORAGE_KEY = 'nurse-scheduling-data';
+
+function seedCustomExportLayoutState() {
+  const state = {
+    apiVersion: 'test',
+    description: 'custom export layout navigation seed',
+    dates: {
+      range: { startDate: '2026-01-01T12:00:00.000Z', endDate: '2026-01-02T12:00:00.000Z' },
+      items: undefined,
+      groups: [],
+    },
+    people: {
+      items: [{ id: 'P1', description: '', history: [] }],
+      groups: [],
+      history: [],
+    },
+    shiftTypes: {
+      items: [{ id: 'D', description: 'Day' }],
+      groups: [],
+    },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: {
+      formatting: [{ type: 'cell', people: ['P1'], dates: ['01'], shiftTypes: ['D'], backgroundColor: '#111111' }],
+    },
+  };
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ state, history: [state], currentHistoryIndex: 0 }));
 }
 
 describe('Navigation', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    localStorage.clear();
     mockPush.mockReset();
     mockPrefetch.mockReset();
     mockUsePathname.mockReturnValue('/people');
@@ -156,7 +189,9 @@ describe('Navigation', () => {
     mockUsePathname.mockReturnValue('/save-and-load');
     rerender(
       <UnsavedEditingStateProvider>
-        <Navigation />
+        <SchedulingDataProvider>
+          <Navigation />
+        </SchedulingDataProvider>
       </UnsavedEditingStateProvider>
     );
 
@@ -180,7 +215,9 @@ describe('Navigation', () => {
     mockUsePathname.mockReturnValue('/optimize-and-export');
     rerender(
       <UnsavedEditingStateProvider>
-        <Navigation />
+        <SchedulingDataProvider>
+          <Navigation />
+        </SchedulingDataProvider>
       </UnsavedEditingStateProvider>
     );
 
@@ -237,7 +274,9 @@ describe('Navigation', () => {
     mockUsePathname.mockReturnValue('/shift-requests');
     rerender(
       <UnsavedEditingStateProvider>
-        <Navigation />
+        <SchedulingDataProvider>
+          <Navigation />
+        </SchedulingDataProvider>
       </UnsavedEditingStateProvider>
     );
 
@@ -255,5 +294,29 @@ describe('Navigation', () => {
     fireEvent.keyDown(document, { key: '5' });
 
     expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  describe('custom export layout indicator', () => {
+    it('is hidden while the default auto-updating layout is active', () => {
+      renderNavigation();
+
+      expect(screen.queryByTestId('custom-export-layout-indicator')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '9. Export Layout' })).not.toHaveAttribute('title');
+    });
+
+    it('is shown on the Export Layout tab when a custom layout is stored', async () => {
+      seedCustomExportLayoutState();
+
+      renderNavigation();
+
+      const indicator = await screen.findByTestId('custom-export-layout-indicator');
+      const button = indicator.closest('button');
+
+      expect(button).not.toBeNull();
+      expect(button).toHaveTextContent('9. Export Layout');
+      await waitFor(() => {
+        expect(button).toHaveAttribute('title', expect.stringContaining('Clear All and Regenerate'));
+      });
+    });
   });
 });

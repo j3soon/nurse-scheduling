@@ -1113,7 +1113,9 @@ export default function ExportFormattingPage() {
         <div className="flex items-start gap-2">
           <FiAlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
           <p>
-            This page is experimental. Only modify export layout entries if you know exactly what you&apos;re doing.
+            This page is experimental. Saving any entry pins the layout, so the default layout stops
+            auto-updating as shift types and date groups change. Use Clear All and Regenerate to restore
+            auto-updates.
           </p>
         </div>
       </div>
