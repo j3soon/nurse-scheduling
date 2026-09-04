@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 
@@ -31,6 +31,7 @@ const mockApproveProposal = vi.hoisted(() => vi.fn());
 const mockRejectProposal = vi.hoisted(() => vi.fn());
 const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
+const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
 
 vi.mock('./aiClient', () => ({
   createSession: mockCreateSession,
@@ -60,8 +61,14 @@ vi.mock('@/hooks/useSchedulingData', () => ({
   }),
 }));
 
+vi.mock('@/utils/unsavedEditingState', () => ({
+  useTabSwitchWarning: mockUseTabSwitchWarning,
+}));
+
 describe('ExperimentalAiPage', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
     mockGetCapabilities.mockReset().mockResolvedValue({
       image_attachments: {
@@ -90,6 +97,7 @@ describe('ExperimentalAiPage', () => {
     mockRejectProposal.mockReset().mockResolvedValue(undefined);
     mockUpdateSessionSchedule.mockReset().mockResolvedValue(undefined);
     mockLoadFromYaml.mockReset();
+    mockUseTabSwitchWarning.mockReset();
     window.localStorage.clear();
   });
 
@@ -115,6 +123,278 @@ describe('ExperimentalAiPage', () => {
       null,
       { images: [], documents: [] },
     );
+    expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(true);
+  });
+
+  it('ignores non-user scroll events while following streamed text', async () => {
+    const user = userEvent.setup();
+    let sendDelta: ((text: string) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: { onDelta: (text: string) => void },
+    ) => {
+      sendDelta = callbacks.onDelta;
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    const scrollTo = vi.mocked(window.scrollTo);
+    scrollTo.mockClear();
+    let scrollYPosition = 100;
+    const scrollHeight = vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(900);
+    const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
+
+    try {
+      render(<ExperimentalAiPage />);
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(sendDelta).toBeDefined());
+      await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+
+      scrollYPosition = 99;
+      act(() => {
+        window.dispatchEvent(new Event('scroll'));
+      });
+      const callsBeforeDelta = scrollTo.mock.calls.length;
+      act(() => sendDelta?.('More streamed content.'));
+
+      await waitFor(() => expect(screen.getByText('More streamed content.')).toBeInTheDocument());
+      expect(scrollTo.mock.calls.length).toBeGreaterThan(callsBeforeDelta);
+      expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).not.toBeInTheDocument();
+      await act(async () => finishStream?.());
+    } finally {
+      scrollHeight.mockRestore();
+      innerHeight.mockRestore();
+      scrollY.mockRestore();
+    }
+  });
+
+  it('stops following streamed text after a user scrolls above the bottom', async () => {
+    const user = userEvent.setup();
+    let sendDelta: ((text: string) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: { onDelta: (text: string) => void },
+    ) => {
+      sendDelta = callbacks.onDelta;
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    const scrollTo = vi.mocked(window.scrollTo);
+    const scrollHeight = vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(900);
+    const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    let scrollYPosition = 100;
+    const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
+
+    try {
+      render(<ExperimentalAiPage />);
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(sendDelta).toBeDefined());
+      await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+
+      scrollYPosition = 99;
+      act(() => {
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: -1 }));
+        window.dispatchEvent(new Event('scroll'));
+      });
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Scroll to bottom' })).toBeInTheDocument());
+      const callsBeforeDelta = scrollTo.mock.calls.length;
+      act(() => sendDelta?.('More streamed content.'));
+
+      await waitFor(() => expect(screen.getByText('More streamed content.')).toBeInTheDocument());
+      expect(scrollTo).toHaveBeenCalledTimes(callsBeforeDelta);
+      await act(async () => finishStream?.());
+    } finally {
+      scrollHeight.mockRestore();
+      innerHeight.mockRestore();
+      scrollY.mockRestore();
+    }
+  });
+
+  it('resumes following streamed text when the user scrolls to the current bottom', async () => {
+    const user = userEvent.setup();
+    let sendDelta: ((text: string) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: { onDelta: (text: string) => void },
+    ) => {
+      sendDelta = callbacks.onDelta;
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    let pageHeight = 900;
+    let scrollYPosition = 100;
+    const scrollTo = vi.mocked(window.scrollTo);
+    const scrollHeight = vi.spyOn(document.documentElement, 'scrollHeight', 'get')
+      .mockImplementation(() => pageHeight);
+    const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
+
+    try {
+      render(<ExperimentalAiPage />);
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(sendDelta).toBeDefined());
+
+      scrollYPosition = 99;
+      act(() => {
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: -1 }));
+        window.dispatchEvent(new Event('scroll'));
+      });
+      await screen.findByRole('button', { name: 'Scroll to bottom' });
+
+      scrollYPosition = 100;
+      act(() => {
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1 }));
+        window.dispatchEvent(new Event('scroll'));
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: 'Scroll to bottom' })).not.toBeInTheDocument();
+      });
+
+      const callsBeforeGrowth = scrollTo.mock.calls.length;
+      pageHeight = 901;
+      act(() => sendDelta?.('More streamed content.'));
+      await waitFor(() => expect(scrollTo.mock.calls.length).toBeGreaterThan(callsBeforeGrowth));
+      await act(async () => finishStream?.());
+    } finally {
+      scrollHeight.mockRestore();
+      innerHeight.mockRestore();
+      scrollY.mockRestore();
+    }
+  });
+
+  it('uses the same follow flag for streamed tool activity', async () => {
+    const user = userEvent.setup();
+    let startTool: ((activity: { name: string; arguments: string }) => void) | undefined;
+    let finishTool: ((activity: { name: string; arguments: string; result: string; ok: boolean }) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: {
+        onToolStart?: (activity: { name: string; arguments: string }) => void;
+        onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
+      },
+    ) => {
+      startTool = callbacks.onToolStart;
+      finishTool = callbacks.onTool;
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    let scrollYPosition = 100;
+    const scrollTo = vi.mocked(window.scrollTo);
+    const scrollHeight = vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(900);
+    const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
+    const tool = { name: 'bash', arguments: '{"command":"date"}' };
+
+    try {
+      render(<ExperimentalAiPage />);
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the schedule.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await waitFor(() => expect(startTool).toBeDefined());
+
+      const callsBeforeTool = scrollTo.mock.calls.length;
+      act(() => startTool?.(tool));
+      await waitFor(() => expect(scrollTo.mock.calls.length).toBeGreaterThan(callsBeforeTool));
+
+      scrollYPosition = 99;
+      act(() => {
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: -1 }));
+        window.dispatchEvent(new Event('scroll'));
+      });
+      await screen.findByRole('button', { name: 'Scroll to bottom' });
+      const callsBeforeResult = scrollTo.mock.calls.length;
+      act(() => finishTool?.({ ...tool, result: 'exit_code: 0', ok: true }));
+
+      await waitFor(() => expect(screen.getByText('bash')).toBeInTheDocument());
+      expect(scrollTo).toHaveBeenCalledTimes(callsBeforeResult);
+      await act(async () => finishStream?.());
+    } finally {
+      scrollHeight.mockRestore();
+      innerHeight.mockRestore();
+      scrollY.mockRestore();
+    }
+  });
+
+  it('keeps alternating response and tool events in stream order', async () => {
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: {
+        onDelta: (text: string) => void;
+        onReasoning?: (text: string) => void;
+        onToolStart?: (activity: { name: string; arguments: string }) => void;
+        onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
+      },
+    ) => {
+      callbacks.onReasoning?.('First thought.');
+      callbacks.onDelta('First response.');
+      callbacks.onDelta(' Continued.');
+      callbacks.onToolStart?.({ name: 'lookup', arguments: '{}' });
+      callbacks.onTool?.({ name: 'lookup', arguments: '{}', result: 'found', ok: true });
+      callbacks.onDelta('Second response.');
+      callbacks.onToolStart?.({ name: 'calculate', arguments: '{}' });
+      callbacks.onTool?.({ name: 'calculate', arguments: '{}', result: '42', ok: true });
+      callbacks.onDelta('Final response.');
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Work in stages.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const activity = await screen.findByLabelText('Assistant activity');
+    const ordered = [
+      screen.getByText('Reasoning · 14 characters'),
+      screen.getByText('First response. Continued.'),
+      screen.getByText('lookup'),
+      screen.getByText('Second response.'),
+      screen.getByText('calculate'),
+      screen.getByText('Final response.'),
+    ];
+    ordered.slice(1).forEach((entry, index) => {
+      expect(ordered[index].compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+    expect(activity.querySelectorAll('hr')).toHaveLength(5);
+  });
+
+  it('allows drafting the next question while a response is streaming', async () => {
+    const user = userEvent.setup();
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    await user.type(composer, 'First question.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Stop' });
+
+    expect(composer).toBeEnabled();
+    await user.type(composer, 'Next question.');
+    await user.keyboard('{Enter}');
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(composer).toHaveValue('Next question.');
+
+    finishStream?.();
+    await screen.findByRole('button', { name: 'Send' });
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
   });
 
   it('requires the advertised AI token and uses a session-only credential', async () => {

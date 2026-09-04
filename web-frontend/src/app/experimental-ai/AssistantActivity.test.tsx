@@ -133,4 +133,44 @@ describe('AssistantActivity', () => {
       'Reasoning · 15 characters',
     ]);
   });
+
+  it('separates alternating reasoning, responses, and tools', () => {
+    render(
+      <AssistantActivity
+        entries={[
+          { kind: 'reasoning', text: 'First thought.' },
+          { kind: 'response', text: 'First response.' },
+          bashEntry,
+          { kind: 'response', text: 'Second response.' },
+        ]}
+      />,
+    );
+
+    const activity = screen.getByLabelText('Assistant activity');
+    const ordered = [
+      screen.getByText('Reasoning · 14 characters'),
+      screen.getByText('First response.'),
+      screen.getByText('bash'),
+      screen.getByText('Second response.'),
+    ];
+    ordered.slice(1).forEach((entry, index) => {
+      expect(ordered[index].compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+    expect(activity.querySelectorAll('hr')).toHaveLength(3);
+  });
+
+  it('does not separate adjacent non-response activity', () => {
+    render(
+      <AssistantActivity
+        entries={[
+          { ...bashEntry, name: 'first tool' },
+          { kind: 'reasoning', text: 'Checking the result.' },
+          { ...bashEntry, name: 'second tool' },
+          { kind: 'response', text: 'Finished.' },
+        ]}
+      />,
+    );
+
+    expect(screen.getByLabelText('Assistant activity').querySelectorAll('hr')).toHaveLength(1);
+  });
 });

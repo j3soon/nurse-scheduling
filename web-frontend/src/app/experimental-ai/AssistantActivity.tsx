@@ -22,6 +22,12 @@
 'use client';
 
 import { useState } from 'react';
+import AssistantMarkdown from './AssistantMarkdown';
+
+export interface ResponseEntry {
+  kind: 'response';
+  text: string;
+}
 
 export interface ReasoningEntry {
   kind: 'reasoning';
@@ -43,7 +49,7 @@ export interface ScheduleChangeEntry {
   after: string;
 }
 
-export type ActivityEntry = ReasoningEntry | ToolEntry | ScheduleChangeEntry;
+export type ActivityEntry = ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry;
 
 // Long output is revealed a chunk at a time, so an expanded row never floods the page.
 const CHUNK_CHARS = 2000;
@@ -113,6 +119,7 @@ function ScheduleChangePreview({ entry }: { entry: ScheduleChangeEntry }) {
 }
 
 function summaryOf(entry: ActivityEntry): string {
+  if (entry.kind === 'response') return '';
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCount(entry.text.length)} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
   if (entry.state === 'running') return `${entry.name} · running`;
@@ -124,18 +131,27 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
   if (entries.length === 0) return null;
 
   return (
-    <div aria-label="Assistant activity" className="mb-3 space-y-1 border-b border-gray-200 pb-2">
+    <div aria-label="Assistant activity">
       {entries.map((entry, index) => (
-        <details key={index} className="text-xs text-gray-500">
-          <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{summaryOf(entry)}</summary>
-          <div className="mt-1 rounded bg-gray-50 p-2">
-            {entry.kind === 'reasoning'
-              ? <ChunkedText text={entry.text} label="reasoning" />
-              : entry.kind === 'tool'
-                ? <ToolBody entry={entry} />
-                : <ScheduleChangePreview entry={entry} />}
-          </div>
-        </details>
+        <div key={index}>
+          {index > 0 && (entry.kind === 'response' || entries[index - 1].kind === 'response') && (
+            <hr className="my-3 border-gray-200" />
+          )}
+          {entry.kind === 'response' ? (
+            <AssistantMarkdown content={entry.text} />
+          ) : (
+            <details className="text-xs text-gray-500">
+              <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{summaryOf(entry)}</summary>
+              <div className="mt-1 rounded bg-gray-50 p-2">
+                {entry.kind === 'reasoning'
+                  ? <ChunkedText text={entry.text} label="reasoning" />
+                  : entry.kind === 'tool'
+                    ? <ToolBody entry={entry} />
+                    : <ScheduleChangePreview entry={entry} />}
+              </div>
+            </details>
+          )}
+        </div>
       ))}
     </div>
   );

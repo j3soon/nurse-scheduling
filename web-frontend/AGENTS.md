@@ -51,6 +51,10 @@ material to the change.
 Page-title help icons link to the matching Zensical page under `/docs`. Keep
 the mapping in `src/constants/urls.ts` synchronized with `../zensical.toml`.
 
+Protect transient in-memory user work with `useTabSwitchWarning` when changing
+tabs would discard it. Add a `beforeunload` guard when reload or close also
+destroys that state.
+
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
 Treat an absent AI auth descriptor as a legacy open backend. When auth is

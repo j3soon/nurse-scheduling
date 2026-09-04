@@ -22,15 +22,15 @@
 'use client';
 
 import Image from 'next/image';
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FiArrowDown } from 'react-icons/fi';
 import BackendTokenField from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
-import AssistantMarkdown from './AssistantMarkdown';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import {
   AiCapabilities,
@@ -135,6 +135,14 @@ function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
   ));
 }
 
+function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
+  const last = entries[entries.length - 1];
+  if (last?.kind === 'response') {
+    return [...entries.slice(0, -1), { ...last, text: last.text + text }];
+  }
+  return [...entries, { kind: 'response', text }];
+}
+
 function ThinkingIndicator() {
   return (
     <span role="status" aria-label="Thinking" className="inline-flex items-center gap-2 text-gray-600">
@@ -208,8 +216,11 @@ export default function ExperimentalAiPage() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const sandboxScheduleRef = useRef<string | null>(null);
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
-  const isNearPageBottomRef = useRef(true);
+  const followPageBottomRef = useRef(true);
+  const hasMessagesRef = useRef(false);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  hasMessagesRef.current = messages.length > 0;
+  useTabSwitchWarning(messages.length > 0);
 
   useEffect(() => {
     // Reading the stored preferences here keeps the server-rendered markup stable.
@@ -276,26 +287,90 @@ export default function ExperimentalAiPage() {
   }, [selectedAttachments]);
 
   useEffect(() => {
-    const composer = composerRef.current;
-    if (!composer || typeof IntersectionObserver === 'undefined') return;
-    const observer = new IntersectionObserver(([entry]) => {
-      isNearPageBottomRef.current = entry.isIntersecting;
-      setShowScrollToBottom(messages.length > 0 && !entry.isIntersecting);
-    });
-    observer.observe(composer);
-    return () => observer.disconnect();
+    if (messages.length === 0) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [messages.length]);
 
   useEffect(() => {
-    if (isNearPageBottomRef.current && typeof composerRef.current?.scrollIntoView === 'function') {
-      composerRef.current.scrollIntoView({ block: 'end', behavior: 'instant' });
+    // Scroll events do not identify their source, so only user input may change the follow flag.
+    let userScrollPending = false;
+    let pointerScrollActive = false;
+    let clearUserScrollTimer: ReturnType<typeof setTimeout> | undefined;
+    const setFollowPageBottom = (followPageBottom: boolean) => {
+      followPageBottomRef.current = followPageBottom;
+      setShowScrollToBottom(hasMessagesRef.current && !followPageBottom);
+    };
+    const armUserScroll = () => {
+      userScrollPending = true;
+      clearTimeout(clearUserScrollTimer);
+      clearUserScrollTimer = setTimeout(() => {
+        userScrollPending = false;
+      }, 200);
+    };
+    const handleScroll = () => {
+      if (!userScrollPending && !pointerScrollActive) return;
+      const pageBottom = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      setFollowPageBottom(window.scrollY >= pageBottom);
+    };
+    const handleScrollEnd = () => {
+      if (!pointerScrollActive) userScrollPending = false;
+    };
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) armUserScroll();
+    };
+    const handlePointerDown = () => {
+      pointerScrollActive = true;
+    };
+    const handlePointerUp = () => {
+      pointerScrollActive = false;
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      const isEditable = target instanceof HTMLElement
+        && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+      if (!isEditable && ['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' '].includes(event.key)) {
+        armUserScroll();
+      }
+    };
+
+    const pageBottom = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    setFollowPageBottom(window.scrollY >= pageBottom);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('scrollend', handleScrollEnd, { passive: true });
+    window.addEventListener('wheel', handleWheel, { passive: true });
+    window.addEventListener('touchmove', armUserScroll, { passive: true });
+    window.addEventListener('pointerdown', handlePointerDown, { passive: true });
+    window.addEventListener('pointerup', handlePointerUp, { passive: true });
+    window.addEventListener('pointercancel', handlePointerUp, { passive: true });
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      clearTimeout(clearUserScrollTimer);
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('scrollend', handleScrollEnd);
+      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('touchmove', armUserScroll);
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (followPageBottomRef.current) {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
     }
   }, [messages]);
 
   const scrollToPageBottom = () => {
-    isNearPageBottomRef.current = true;
+    followPageBottomRef.current = true;
     setShowScrollToBottom(false);
-    composerRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
   };
 
   const saveAuthToken = (token: string, remember: boolean) => {
@@ -425,7 +500,7 @@ export default function ExperimentalAiPage() {
       attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
     const assistantId = messageId();
-    isNearPageBottomRef.current = true;
+    followPageBottomRef.current = true;
     setShowScrollToBottom(false);
     setMessages(previous => [
       ...previous,
@@ -462,7 +537,13 @@ export default function ExperimentalAiPage() {
         question,
         {
           onDelta: text => setMessages(previous => previous.map(message => (
-            message.id === assistantId ? { ...message, content: message.content + text } : message
+            message.id === assistantId
+              ? {
+                ...message,
+                content: message.content + text,
+                activity: appendResponseActivity(message.activity ?? [], text),
+              }
+              : message
           ))),
           onReasoning: text => setMessages(previous => previous.map(message => {
             if (message.id !== assistantId) return message;
@@ -602,7 +683,7 @@ export default function ExperimentalAiPage() {
   };
 
   return (
-    <main className="mx-auto flex min-h-[calc(100vh-8rem)] max-w-5xl flex-col px-4 py-8 sm:px-6">
+    <main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col px-4 pb-36 pt-8 sm:px-6">
       <div className="mb-6">
         <div className="mb-2 flex items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
@@ -682,17 +763,15 @@ export default function ExperimentalAiPage() {
             {message.activity && (
               <AssistantActivity
                 entries={message.activity.filter(entry => (
-                  entry.kind === 'reasoning' ? showReasoning : showTools
+                  entry.kind === 'response' || (entry.kind === 'reasoning' ? showReasoning : showTools)
                 ))}
               />
             )}
-            {message.role === 'assistant' && message.content ? (
-              <AssistantMarkdown content={message.content} />
-            ) : message.role === 'assistant' && message.status === 'pending' ? (
+            {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
               <ThinkingIndicator />
-            ) : (
+            ) : message.role === 'user' ? (
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
-            )}
+            ) : null}
             {message.attachmentNames && message.attachmentNames.length > 0 && (
               <p className="mt-2 text-xs opacity-80">
                 Attached: {message.attachmentNames.join(', ')}
@@ -768,18 +847,6 @@ export default function ExperimentalAiPage() {
         </div>
       )}
 
-      {showScrollToBottom && (
-        <button
-          type="button"
-          onClick={scrollToPageBottom}
-          aria-label="Scroll to bottom"
-          title="Scroll to bottom"
-          className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-        >
-          <FiArrowDown aria-hidden="true" className="h-4 w-4" />
-        </button>
-      )}
-
       {error && (
         <div role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
@@ -792,7 +859,22 @@ export default function ExperimentalAiPage() {
         </div>
       )}
 
-      <form ref={composerRef} onSubmit={send} className="space-y-3">
+      <form
+        ref={composerRef}
+        onSubmit={send}
+        className="fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6"
+      >
+        {showScrollToBottom && (
+          <button
+            type="button"
+            onClick={scrollToPageBottom}
+            aria-label="Scroll to bottom"
+            title="Scroll to bottom"
+            className="absolute -top-10 left-1/2 -translate-x-1/2 rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          >
+            <FiArrowDown aria-hidden="true" className="h-4 w-4" />
+          </button>
+        )}
         {selectedAttachments.length > 0 && (
           <div aria-label="Files attached to next message" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
             {selectedAttachments.map(attachment => (
@@ -856,7 +938,7 @@ export default function ExperimentalAiPage() {
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              disabled={!isClientReady || isStreaming || credentialsMissing}
+              disabled={!isClientReady || credentialsMissing}
               rows={3}
               maxLength={8000}
               placeholder="Ask about the current schedule…"

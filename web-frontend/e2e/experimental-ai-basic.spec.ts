@@ -205,8 +205,25 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await page.getByRole('button', { name: 'Send' }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  const composerBox = await page.locator('main form').boundingBox();
+  const viewport = page.viewportSize();
+  expect(composerBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(Math.abs(composerBox!.y + composerBox!.height - viewport!.height)).toBeLessThanOrEqual(2);
+  await expect(page.getByRole('contentinfo')).toHaveCount(0);
   expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?' });
   expect(captured.scheduleYaml).toContain('apiVersion:');
+
+  page.once('dialog', async dialog => {
+    expect(dialog.message()).toBe('You have unsaved edits. Leave this page without saving?');
+    await dialog.dismiss();
+  });
+  await page.getByRole('button', { name: '1. Dates' }).click();
+  await expect(page).toHaveURL(/\/experimental-ai$/);
+
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '1. Dates' }).click();
+  await expect(page).toHaveURL(/\/dates$/);
 });
 
 test('authenticates AI session requests with an explicitly remembered token', async ({ page }) => {
@@ -349,11 +366,13 @@ test('offers a shortcut when the reader scrolls away from the latest message', a
       return buttonBox ? buttonBox.x + buttonBox.width / 2 : null;
     })
     .toBe(page.viewportSize()!.width / 2);
-  await expect(composer).not.toBeInViewport();
+  await expect(composer).toBeInViewport();
+  const scrolledAwayY = await page.evaluate(() => window.scrollY);
   expect(await messages.evaluate(element => getComputedStyle(element).overflowY)).toBe('visible');
   await scrollButton.click();
   await expect(scrollButton).toBeHidden();
   await expect(composer).toBeInViewport();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(scrolledAwayY);
 });
 
 test('previews and sends an enabled image attachment', async ({ page }) => {
