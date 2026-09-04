@@ -187,7 +187,7 @@ def tool_result_message(call_id: str, result: str) -> ChatMessage:
 
 
 class ProviderError(RuntimeError):
-    """A provider or protocol failure forwarded to the chat client."""
+    """A provider or protocol failure reported to the AI service."""
 
 
 def _redact_provider_error(response_body: str, provider_api_key: str) -> str:

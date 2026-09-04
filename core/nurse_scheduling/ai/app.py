@@ -72,6 +72,8 @@ CANDIDATE_VALIDATION_ERROR = (
     "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
     "discarded. The canonical schedule was not changed."
 )
+PROVIDER_ERROR = "The AI provider failed. Please try again."
+SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
     r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
@@ -219,7 +221,7 @@ class SessionStore:
             self._sessions[session.id] = session
             return session
 
-    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str]:
+    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str]:
         """Reserve a session and return its history and schedule snapshots."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
@@ -227,7 +229,7 @@ class SessionStore:
                 raise HTTPException(status_code=409, detail="This chat session already has an active response.")
             session.active = True
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            return list(session.history), session.schedule_yaml
+            return list(session.history), session.schedule_yaml, session.revision
 
     def finish(
         self,
@@ -235,12 +237,14 @@ class SessionStore:
         user_message: str,
         assistant_message: str,
         proposal: tuple[str, str] | None = None,
-    ) -> None:
-        """Atomically save a completed turn and its optional proposal."""
+        *,
+        base_revision: str,
+    ) -> bool:
+        """Save a completed turn and return whether its proposal was still current."""
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
-                return
+                return False
             session.history.extend(
                 [
                     ChatMessage(role="user", content=user_message),
@@ -248,9 +252,11 @@ class SessionStore:
                 ]
             )
             session.history = session.history[-self._settings.max_history_messages :]
-            if proposal is not None:
+            proposal_saved = proposal is not None and session.revision == base_revision
+            if proposal_saved:
                 session.proposal_yaml, session.proposal_diff = proposal
             session.active = False
+            return proposal_saved
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
         """Replace the schedule snapshot, which drops any proposal made against the old one."""
@@ -617,14 +623,15 @@ def create_app(
             raise HTTPException(status_code=413, detail="Schedule is too large.")
         owner_token = owner or str(uuid4())
         session = store.create(owner_token, request.schedule_yaml)
-        response.set_cookie(
-            OWNER_COOKIE,
-            owner_token,
-            httponly=True,
-            secure=settings.cookie_secure,
-            samesite="strict",
-            max_age=settings.session_ttl_seconds,
-        )
+        if owner is None:
+            response.set_cookie(
+                OWNER_COOKIE,
+                owner_token,
+                httponly=True,
+                secure=settings.cookie_secure,
+                samesite="strict",
+                max_age=settings.session_ttl_seconds,
+            )
         return CreateSessionResponse(id=session.id)
 
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
@@ -635,7 +642,7 @@ def create_app(
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
         question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
-        history, schedule_yaml = store.begin(session_id, owner)
+        history, schedule_yaml, base_revision = store.begin(session_id, owner)
         messages = build_provider_messages(
             history,
             schedule_yaml,
@@ -698,17 +705,23 @@ def create_app(
                 proposal = None
                 if pending_proposal is not None:
                     proposal = (pending_proposal.text, pending_proposal.diff)
-                store.finish(session_id, history_question, "".join(assistant_parts), proposal)
+                proposal_saved = store.finish(
+                    session_id,
+                    history_question,
+                    "".join(assistant_parts),
+                    proposal,
+                    base_revision=base_revision,
+                )
                 completed = True
-                if pending_proposal is not None:
+                if proposal_saved:
                     yield _sse_event("proposal", {"diff": pending_proposal.diff})
                 yield _sse_event("done", {"message_id": str(uuid4())})
             except asyncio.CancelledError:
                 raise
-            except ProviderError as exc:
-                yield _sse_event("error", {"message": str(exc)})
-            except SandboxTurnTimeoutError as exc:
-                yield _sse_event("error", {"message": str(exc)})
+            except ProviderError:
+                yield _sse_event("error", {"message": PROVIDER_ERROR})
+            except SandboxTurnTimeoutError:
+                yield _sse_event("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
             except SandboxCandidateError as exc:
                 logger.warning("AI candidate validation failed: %s", exc)
                 yield _sse_event("error", {"message": CANDIDATE_VALIDATION_ERROR})

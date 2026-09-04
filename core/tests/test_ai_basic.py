@@ -27,6 +27,7 @@ from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from nurse_scheduling.ai.app import (
@@ -34,6 +35,8 @@ from nurse_scheduling.ai.app import (
     OWNER_COOKIE,
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
+    PROVIDER_ERROR,
+    SANDBOX_TURN_TIMEOUT_ERROR,
     SERVICE_NAME,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
@@ -42,7 +45,7 @@ from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE
+from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnTimeoutError
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
@@ -349,6 +352,16 @@ def test_health_and_streamed_schedule_question() -> None:
     assert "Alice" not in prompt[0]["content"]
     assert "schedule.yaml is 2 lines" in prompt[0]["content"]
     assert "untrusted data" in prompt[0]["content"]
+
+
+def test_existing_owner_cookie_is_not_reflected_in_create_response() -> None:
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    client.cookies.set(OWNER_COOKIE, "browser-supplied-owner")
+
+    response = client.post("/sessions", json={"schedule_yaml": "description: test"})
+
+    assert response.status_code == 201
+    assert OWNER_COOKIE not in response.headers.get("set-cookie", "")
 
 
 def test_capabilities_report_configured_attachment_limits() -> None:
@@ -713,8 +726,8 @@ def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
 
 
 def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
-    provider_error = "The AI provider returned HTTP 525. Error ID: 72dc8f31-45af-410d-9fc2-41bdf1fc718f."
-    provider = FakeProvider([["Provisional answer.", ProviderError(provider_error)], ["Recovered"]])
+    private_error = "Traceback from /srv/provider.py: secret-token"
+    provider = FakeProvider([["Provisional answer.", ProviderError(private_error)], ["Recovered"]])
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
@@ -729,12 +742,25 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
 
     assert parse_sse(failed.text) == [
         ("delta", {"text": "Provisional answer."}),
-        ("error", {"message": provider_error}),
+        ("error", {"message": PROVIDER_ERROR}),
     ]
+    assert private_error not in failed.text
     assert recovered.status_code == 200
     recovered_prompt = json.dumps(provider.calls[1])
     assert "Failed question" not in recovered_prompt
     assert "Provisional answer." not in recovered_prompt
+
+
+def test_sandbox_timeout_does_not_expose_exception_details() -> None:
+    private_error = "Traceback from /srv/sandbox.py: internal-host"
+    provider = FakeProvider([[SandboxTurnTimeoutError(private_error)]])
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
+    session_id = create_session(client)
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
+
+    assert parse_sse(response.text) == [("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})]
+    assert private_error not in response.text
 
 
 def test_request_limits_are_enforced() -> None:
@@ -1284,6 +1310,38 @@ def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
 
     assert updated.status_code == 204
     assert approved.status_code == 404
+
+
+def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    store = app.state.session_store
+    original = schedule_yaml()
+    first_proposal = original.replace("description: ''", "description: First", 1)
+    stale_proposal = original.replace("description: ''", "description: Stale", 1)
+    session = store.create("browser-owner", original)
+    _, _, original_revision = store.begin(session.id, "browser-owner")
+    assert store.finish(
+        session.id,
+        "First edit",
+        "First proposal",
+        (first_proposal, "first diff"),
+        base_revision=original_revision,
+    )
+    _, _, active_turn_revision = store.begin(session.id, "browser-owner")
+
+    store.take_proposal(session.id, "browser-owner", original_revision)
+    proposal_saved = store.finish(
+        session.id,
+        "Stale edit",
+        "Stale proposal",
+        (stale_proposal, "stale diff"),
+        base_revision=active_turn_revision,
+    )
+
+    assert not proposal_saved
+    with pytest.raises(HTTPException) as exc_info:
+        store.take_proposal(session.id, "browser-owner", active_turn_revision)
+    assert exc_info.value.status_code == 404
 
 
 def test_sessions_are_private_to_their_browser() -> None:
