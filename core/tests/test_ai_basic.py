@@ -727,6 +727,18 @@ def test_environment_configuration_requires_e2b_key_when_selected(monkeypatch: p
         AiSettings.from_env()
 
 
+def test_environment_configuration_defaults_to_a_fifteen_minute_sandbox_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
+    monkeypatch.setenv("E2B_API_KEY", "e2b-key")
+    monkeypatch.delenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", raising=False)
+
+    assert AiSettings.from_env().sandbox_turn_timeout_seconds == 900
+
+
 def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
