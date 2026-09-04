@@ -52,9 +52,9 @@
 
 import argparse
 import json
+import logging
 import math
 import os
-import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -68,6 +68,12 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
+
+from ..sentry import flush_sentry, init_sentry
+from ..version import get_app_version
+from .auth import AUTH_TOKEN_ENV_NAME
+
+DIAGNOSTIC_LOGGER = logging.getLogger("nurse_scheduling.diagnostic")
 
 DEFAULT_TARGET_URL = "https://api.nursescheduling.org"
 DEFAULT_SCENARIO_PATH = (
@@ -132,6 +138,8 @@ class DiagnosticConfig:
     job_timeout_seconds: int = 60 * 60
     poll_seconds: float = 0.5
     submit_interval_seconds: float = 0.25
+    auth_token: str | None = None
+    """Shared token sent to a target that requires authentication."""
 
     def __post_init__(self) -> None:
         """Reject unsafe or unusable diagnostic settings."""
@@ -168,6 +176,10 @@ class DiagnosticConfig:
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive")
         object.__setattr__(self, "target_url", target)
+        auth_token = (self.auth_token or "").strip()
+        if auth_token and parsed.scheme != "https":
+            raise ValueError("DIAGNOSTIC_AUTH_TOKEN requires DIAGNOSTIC_TARGET_URL to use HTTPS")
+        object.__setattr__(self, "auth_token", auth_token or None)
 
     @classmethod
     def from_env(
@@ -195,6 +207,7 @@ class DiagnosticConfig:
             job_timeout_seconds=_positive_int_env("DIAGNOSTIC_JOB_TIMEOUT_SECONDS", 60 * 60),
             poll_seconds=_positive_float_env("DIAGNOSTIC_POLL_SECONDS", 0.5),
             submit_interval_seconds=_positive_float_env("DIAGNOSTIC_SUBMIT_INTERVAL_SECONDS", 0.25),
+            auth_token=os.getenv("DIAGNOSTIC_AUTH_TOKEN") or os.getenv(AUTH_TOKEN_ENV_NAME),
         )
 
 
@@ -266,8 +279,15 @@ class PublicDiagnostic:
             timeout=self.config.request_timeout_seconds,
             follow_redirects=False,
             transport=self.transport,
-            headers={"User-Agent": "nurse-scheduling-public-diagnostic/1"},
+            headers=self._client_headers(),
         )
+
+    def _client_headers(self) -> dict[str, str]:
+        """Build the headers shared by every diagnostic request."""
+        headers = {"User-Agent": "nurse-scheduling-public-diagnostic/1"}
+        if self.config.auth_token is not None:
+            headers["Authorization"] = f"Bearer {self.config.auth_token}"
+        return headers
 
     def _add_finding(self, level: str, code: str, message: str) -> None:
         """Append one deduplicated finding."""
@@ -1320,6 +1340,24 @@ def print_report(report: dict[str, Any], report_path: Path | None = None) -> Non
         print(f"report={report_path}")
 
 
+def log_report(report: dict[str, Any]) -> None:
+    """Send the diagnostic summary and findings through structured logging."""
+    outcome = str(report["summary"]["outcome"])
+    log_summary = {
+        "pass": DIAGNOSTIC_LOGGER.info,
+        "fail": DIAGNOSTIC_LOGGER.error,
+        "inconclusive": DIAGNOSTIC_LOGGER.warning,
+    }[outcome]
+    log_summary("[diagnostic] %s", format_summary(report))
+    for finding in report["findings"]:
+        log_finding = DIAGNOSTIC_LOGGER.error if finding["level"] == "error" else DIAGNOSTIC_LOGGER.warning
+        log_finding(
+            "[diagnostic] finding code=%s message=%s",
+            finding["code"],
+            finding["message"],
+        )
+
+
 def exit_code(report: dict[str, Any]) -> int:
     """Map report outcomes to stable process exit codes."""
     return {"pass": 0, "fail": 1, "inconclusive": 2}[str(report["summary"]["outcome"])]
@@ -1334,7 +1372,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _run(argv: list[str] | None = None) -> int:
     """Run one diagnostic process."""
     args = _parse_args(argv)
     try:
@@ -1345,7 +1383,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         config.report_dir.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError) as error:
-        print(f"FAIL configuration: {error}", file=sys.stderr)
+        DIAGNOSTIC_LOGGER.error("[diagnostic] configuration failed error=%s", error)
         return 1
 
     report = PublicDiagnostic(config).run()
@@ -1353,9 +1391,20 @@ def main(argv: list[str] | None = None) -> int:
         report_path = write_report(report, config.report_dir)
     except OSError as error:
         report_path = None
-        print(f"WARNING report_write_failed: {error}", file=sys.stderr)
+        DIAGNOSTIC_LOGGER.warning("[diagnostic] report write failed error=%s", error)
     print_report(report, report_path)
+    log_report(report)
     return exit_code(report)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run diagnostics with process-specific Sentry monitoring."""
+    init_sentry(get_app_version(), app="diagnostic")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    try:
+        return _run(argv)
+    finally:
+        flush_sentry()
 
 
 if __name__ == "__main__":

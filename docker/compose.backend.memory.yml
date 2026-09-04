@@ -6,12 +6,18 @@ x-api-build: &api-build
   args:
     - APP_VERSION
 
+x-sentry-environment: &sentry-environment
+  SENTRY_DSN: "${SENTRY_BACKEND_DSN:-}"
+  SENTRY_ENVIRONMENT: "${SENTRY_ENVIRONMENT:-production}"
+  DISABLE_SENTRY: "${DISABLE_SENTRY:-}"
+
 services:
   api:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
     environment:
+      <<: *sentry-environment
       JOB_BACKEND: memory
       OPTIMIZE_SOLVERS: "${OPTIMIZE_SOLVERS:-ortools/cp-sat}"
       OPTIMIZE_DEFAULT_SOLVER: "${OPTIMIZE_DEFAULT_SOLVER:-ortools/cp-sat}"
@@ -19,6 +25,10 @@ services:
       OPTIMIZE_DEFAULT_TIMEOUT_SECONDS: "${OPTIMIZE_DEFAULT_TIMEOUT_SECONDS:-300}"
       OPTIMIZE_MAX_TIMEOUT_SECONDS: "${OPTIMIZE_MAX_TIMEOUT_SECONDS:-3600}"
       OPTIMIZE_DEFAULT_PRETTIFY: "${OPTIMIZE_DEFAULT_PRETTIFY:-true}"
+      # The production image enables authentication, so this deployment refuses to start
+      # without a token. Serving it open needs a deliberate API_AUTH_REQUIRED=false.
+      API_AUTH_REQUIRED: "${API_AUTH_REQUIRED:-true}"
+      API_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
       CLAIMED_PERFORMANCE_SCORE: "${CLAIMED_PERFORMANCE_SCORE:-}"
       CLAIMED_PERFORMANCE_APP_VERSION: "${CLAIMED_PERFORMANCE_APP_VERSION:-}"
       CLAIMED_PERFORMANCE_MEASURED_AT: "${CLAIMED_PERFORMANCE_MEASURED_AT:-}"
@@ -51,6 +61,7 @@ services:
       cloudflared:
         condition: service_started
     environment:
+      <<: *sentry-environment
       DIAGNOSTIC_TARGET_URL: ${DIAGNOSTIC_TARGET_URL:-https://api.nursescheduling.org}
       DIAGNOSTIC_INFO_SAMPLES: ${DIAGNOSTIC_INFO_SAMPLES:-100}
       DIAGNOSTIC_PARALLEL_REQUESTS: ${DIAGNOSTIC_PARALLEL_REQUESTS:-10}
@@ -60,6 +71,7 @@ services:
       DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS: ${DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS:-600}
       DIAGNOSTIC_JOB_TIMEOUT_SECONDS: ${DIAGNOSTIC_JOB_TIMEOUT_SECONDS:-3600}
       DIAGNOSTIC_REPORT_DIR: /reports
+      DIAGNOSTIC_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
     command: ["python", "-m", "nurse_scheduling.server.diagnostic"]
     volumes:
       - diagnostic-reports:/reports

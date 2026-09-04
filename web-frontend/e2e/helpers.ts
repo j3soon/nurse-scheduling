@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { expect, Page } from '@playwright/test';
+import { expect, Page, Route } from '@playwright/test';
 import ExcelJS from 'exceljs';
 
 const STORAGE_KEY = 'nurse-scheduling-data';
@@ -107,6 +107,7 @@ type MockOptimizeAndExportOptions = {
   xlsxReady?: boolean;
   body?: Buffer;
   disableEventSource?: boolean;
+  requiredAuthToken?: string;
   seedLocalBackend?: boolean;
   onSubmit?: (body: string) => void;
   defaultSolver?: string;
@@ -146,6 +147,7 @@ export async function mockOptimizeAndExport(
     xlsxReady = true,
     body,
     disableEventSource = true,
+    requiredAuthToken,
     seedLocalBackend = true,
     onSubmit,
     defaultSolver = 'ortools/cp-sat',
@@ -162,6 +164,28 @@ export async function mockOptimizeAndExport(
 ) {
   const jobId = 'e2e-job';
   const xlsxBody = body ?? (await createMockXlsxBuffer());
+  const isAuthorized = (route: Route) => (
+    requiredAuthToken === undefined
+    || route.request().headers().authorization === `Bearer ${requiredAuthToken}`
+  );
+  const corsHeaders = {
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Origin': '*',
+  };
+  const fulfillPreflight = (route: Route) => route.fulfill({
+    status: 204,
+    headers: corsHeaders,
+  });
+  const rejectUnauthorized = (route: Route) => route.fulfill({
+    status: 401,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      'WWW-Authenticate': 'Bearer',
+    },
+    body: JSON.stringify({ detail: 'Backend credentials are required.' }),
+  });
 
   if (seedLocalBackend) {
     await seedLocalOptimizeBackend(page);
@@ -193,6 +217,9 @@ export async function mockOptimizeAndExport(
         service_name: 'nurse-scheduling-api',
         api_version: '0.2.0',
         app_version: 'test',
+        auth: requiredAuthToken === undefined
+          ? { required: false, scheme: 'bearer' }
+          : { required: true, scheme: 'bearer' },
         jobs: { running: 0, queued: 0, cancelling: 0 },
         workers: { online: 1 },
       }),
@@ -200,15 +227,23 @@ export async function mockOptimizeAndExport(
   });
 
   await page.route('http://localhost:8000/optimize/options', async route => {
+    if (route.request().method() === 'OPTIONS') {
+      await fulfillPreflight(route);
+      return;
+    }
     if (route.request().method() !== 'GET') {
       await route.fallback();
+      return;
+    }
+    if (!isAuthorized(route)) {
+      await rejectUnauthorized(route);
       return;
     }
 
     await route.fulfill({
       status: 200,
       headers: {
-        'Access-Control-Allow-Origin': '*',
+        ...corsHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -225,8 +260,16 @@ export async function mockOptimizeAndExport(
   await page.route('http://localhost:8000/optimize', async route => {
     const request = route.request();
 
+    if (request.method() === 'OPTIONS') {
+      await fulfillPreflight(route);
+      return;
+    }
     if (request.method() !== 'POST') {
       await route.fallback();
+      return;
+    }
+    if (!isAuthorized(route)) {
+      await rejectUnauthorized(route);
       return;
     }
 
@@ -235,7 +278,7 @@ export async function mockOptimizeAndExport(
     if (status >= 400) {
       await route.fulfill({
         status,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ detail: errorDetail }),
       });
       return;
@@ -243,7 +286,7 @@ export async function mockOptimizeAndExport(
 
     await route.fulfill({
       status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: jobId,
         state: 'queued',
@@ -264,14 +307,24 @@ export async function mockOptimizeAndExport(
   });
 
   await page.route(`http://localhost:8000/optimize/${jobId}`, async route => {
-    if (route.request().method() === 'DELETE') {
-      await route.fulfill({ status: 204 });
+    const request = route.request();
+
+    if (request.method() === 'OPTIONS') {
+      await fulfillPreflight(route);
+      return;
+    }
+    if (!isAuthorized(route)) {
+      await rejectUnauthorized(route);
+      return;
+    }
+    if (request.method() === 'DELETE') {
+      await route.fulfill({ status: 204, headers: corsHeaders });
       return;
     }
 
     await route.fulfill({
       status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: jobId,
         state: 'completed',
@@ -297,7 +350,16 @@ export async function mockOptimizeAndExport(
   });
 
   await page.route(`http://localhost:8000/optimize/${jobId}/xlsx`, async route => {
+    if (route.request().method() === 'OPTIONS') {
+      await fulfillPreflight(route);
+      return;
+    }
+    if (!isAuthorized(route)) {
+      await rejectUnauthorized(route);
+      return;
+    }
     const headers: Record<string, string> = {
+      ...corsHeaders,
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     };
 

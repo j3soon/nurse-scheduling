@@ -23,6 +23,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..scheduler import ORTOOLS_CP_SAT_SOLVER
+from .auth import (
+    AUTH_REQUIRED_ENV_NAME,
+    AUTH_TOKEN_ENV_NAME,
+    RECOMMENDED_AUTH_TOKEN_LENGTH,
+    STREAM_TOKEN_GRACE_SECONDS,
+    normalize_auth_token,
+)
 from .solver_options import normalize_solver_option
 
 DEFAULT_MAX_RETAINED_JOBS = 128
@@ -39,6 +46,10 @@ CLAIMED_PERFORMANCE_ENV_NAMES = (
     "CLAIMED_PERFORMANCE_MEASURED_AT",
 )
 """Environment settings that form one atomic self-claimed benchmark result."""
+DEFAULT_USAGE_METRICS_RETENTION_DAYS = 30
+"""Default retention period for minimal job telemetry."""
+MIN_USAGE_METRICS_RETENTION_DAYS = 9
+"""Shortest retention that covers a complete local week before reporting."""
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -185,6 +196,16 @@ class ServerSettings:
     """Time allowed for a solver to return after its requested timeout."""
     claimed_performance: ClaimedPerformance | None = None
     """Optional self-reported benchmark score and its provenance."""
+    auth_token: str | None = None
+    """Shared token required by protected routes, `None` to serve without authentication."""
+    auth_required: bool = False
+    """Whether this deployment must authenticate, which makes a missing token a startup failure."""
+    usage_metrics_enabled: bool = False
+    """Whether Redis records minimal per-job backend telemetry."""
+    usage_metrics_key_prefix: str = "nurse_scheduling:usage:v0"
+    """Namespace and schema version prepended to telemetry keys."""
+    usage_metrics_retention_days: int = DEFAULT_USAGE_METRICS_RETENTION_DAYS
+    """Retention period for every telemetry row."""
 
     def __post_init__(self) -> None:
         """Validate cross-field and direct-construction constraints.
@@ -206,6 +227,8 @@ class ServerSettings:
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.usage_metrics_retention_days < MIN_USAGE_METRICS_RETENTION_DAYS:
+            raise ValueError(f"usage_metrics_retention_days must be at least {MIN_USAGE_METRICS_RETENTION_DAYS}")
         for name in (
             "claim_poll_seconds",
             "worker_lease_seconds",
@@ -233,6 +256,39 @@ class ServerSettings:
             raise TypeError("default_prettify must be a boolean")
         object.__setattr__(self, "solver_ids", normalized_solver_ids)
         object.__setattr__(self, "default_solver", normalized_default_solver)
+        object.__setattr__(
+            self,
+            "auth_token",
+            normalize_auth_token(self.auth_token, warn_on_short=not self.auth_required),
+        )
+        # Images built for deployment set this, so an unauthenticated public server stays a
+        # deliberate choice rather than the result of a forgotten token.
+        if self.auth_required and self.auth_token is None:
+            raise ValueError(f"{AUTH_REQUIRED_ENV_NAME} is set, so {AUTH_TOKEN_ENV_NAME} must not be empty")
+        if self.auth_required and len(self.auth_token) < RECOMMENDED_AUTH_TOKEN_LENGTH:
+            raise ValueError(
+                f"{AUTH_REQUIRED_ENV_NAME} is set, so {AUTH_TOKEN_ENV_NAME} must be at least "
+                f"{RECOMMENDED_AUTH_TOKEN_LENGTH} characters"
+            )
+
+        if self.usage_metrics_enabled and self.job_backend != "redis":
+            raise ValueError("USAGE_METRICS_ENABLED requires JOB_BACKEND=redis")
+        if self.usage_metrics_enabled and not self.usage_metrics_key_prefix.strip().rstrip(":"):
+            raise ValueError("USAGE_METRICS_KEY_PREFIX must not be empty")
+        if self.usage_metrics_enabled and self.usage_metrics_key_prefix.rstrip(":") == self.redis_key_prefix.rstrip(
+            ":"
+        ):
+            raise ValueError("USAGE_METRICS_KEY_PREFIX must differ from JOB_REDIS_KEY_PREFIX")
+
+    @property
+    def stream_token_ttl_seconds(self) -> int:
+        """Lifetime of an event-stream token.
+
+        A stream stays open for at most one full optimization plus the grace period before a
+        timed-out solver is terminated, so the token outlives every legitimate stream while
+        still expiring soon after the longest run this deployment allows.
+        """
+        return self.max_timeout_seconds + math.ceil(self.timeout_grace_seconds) + STREAM_TOKEN_GRACE_SECONDS
 
     @classmethod
     def from_env(cls) -> "ServerSettings":
@@ -266,4 +322,15 @@ class ServerSettings:
                 DEFAULT_TIMEOUT_GRACE_SECONDS,
             ),
             claimed_performance=_claimed_performance(),
+            auth_token=os.getenv(AUTH_TOKEN_ENV_NAME),
+            auth_required=_boolean(AUTH_REQUIRED_ENV_NAME, False),
+            usage_metrics_enabled=_boolean("USAGE_METRICS_ENABLED", False),
+            usage_metrics_key_prefix=os.getenv(
+                "USAGE_METRICS_KEY_PREFIX",
+                "nurse_scheduling:usage:v0",
+            ),
+            usage_metrics_retention_days=_positive_int(
+                "USAGE_METRICS_RETENTION_DAYS",
+                DEFAULT_USAGE_METRICS_RETENTION_DAYS,
+            ),
         )

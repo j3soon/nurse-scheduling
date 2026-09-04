@@ -21,7 +21,7 @@ import json
 import math
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, overload
 from uuid import uuid4
 
@@ -48,6 +48,7 @@ from ..jobs.models import (
     WorkerLease,
 )
 from ..retry import retry_with_backoff
+from ..usage_metrics import RedisUsageMetrics
 
 SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
 """Additional socket time allowed beyond one blocking event-stream read."""
@@ -84,6 +85,8 @@ class RedisJobStore:
         key_prefix: str,
         event_stream_keepalive_seconds: float = 10.0,
         max_events_per_job: int = 1_000,
+        usage_metrics_key_prefix: str | None = None,
+        usage_metrics_retention_days: int = 30,
     ):
         """Connect to Redis and initialize namespaced index keys.
 
@@ -95,6 +98,8 @@ class RedisJobStore:
         """Namespace that isolates this store's keys from other applications."""
         if not self._prefix:
             raise ValueError("JOB_REDIS_KEY_PREFIX must not be empty")
+        if usage_metrics_key_prefix is not None and usage_metrics_key_prefix.rstrip(":") == self._prefix:
+            raise ValueError("USAGE_METRICS_KEY_PREFIX must differ from JOB_REDIS_KEY_PREFIX")
         if not math.isfinite(event_stream_keepalive_seconds) or event_stream_keepalive_seconds <= 0:
             raise ValueError("event_stream_keepalive_seconds must be positive")
         if max_events_per_job <= 0:
@@ -118,6 +123,16 @@ class RedisJobStore:
         )
         """Redis client whose read timeout exceeds one blocking event-stream read."""
         self._redis.ping()
+        self._usage_metrics = (
+            RedisUsageMetrics(
+                self._redis,
+                key_prefix=usage_metrics_key_prefix,
+                retention_days=usage_metrics_retention_days,
+            )
+            if usage_metrics_key_prefix is not None
+            else None
+        )
+        """Optional durable telemetry staged with job lifecycle transactions."""
         self._store_id_key = self._key("metadata:store_id")
         """Persistent UUID identifying this Redis database and key namespace."""
         self._store_id = self._resolve_store_id()
@@ -224,6 +239,8 @@ class RedisJobStore:
                         job.id,
                         self._with_initial_queue_position(events, queue_position),
                     )
+                    if self._usage_metrics is not None:
+                        self._usage_metrics.stage_job_created(transaction, saved)
                     for position, (queued_id, _score) in enumerate(queue_order, start=1):
                         if queued_id != job.id:
                             self._stage_queue_position_event(transaction, queued_id, position, job.created_at)
@@ -276,7 +293,10 @@ class RedisJobStore:
         metadata = self._redis.hgetall(self._artifact_metadata_key(job_id))
         stored_name = _decode(metadata.get(b"name")) or name
         media_type = _decode(metadata.get(b"media_type")) or "application/octet-stream"
-        return StoredArtifact(name=stored_name, media_type=media_type, content=content)
+        artifact = StoredArtifact(name=stored_name, media_type=media_type, content=content)
+        if self._usage_metrics is not None:
+            self._usage_metrics.record_download(job.id, datetime.now(timezone.utc))
+        return artifact
 
     @staticmethod
     def _lease_is_live(
@@ -373,6 +393,8 @@ class RedisJobStore:
                     transaction.zrem(self._queue_key, job_id)
                     transaction.hset(self._worker_active_jobs_key, lease.worker_id, job_id)
                     self._stage_event_appends(transaction, job_id, [event])
+                    if self._usage_metrics is not None:
+                        self._usage_metrics.stage_job_started(transaction, claimed)
                     self._stage_queue_position_events(transaction, remaining_ids, started_at)
                     transaction.execute()
                 return claimed
@@ -559,6 +581,8 @@ class RedisJobStore:
                             mapping={"name": artifact.name, "media_type": artifact.media_type},
                         )
                     self._stage_event_appends(transaction, updated_job.id, events)
+                    if self._usage_metrics is not None:
+                        self._usage_metrics.stage_job_transition(transaction, current, updated_job)
                     if remaining_queue_ids:
                         occurred_at = events[-1].occurred_at if events else datetime.now(updated_job.created_at.tzinfo)
                         self._stage_queue_position_events(transaction, remaining_queue_ids, occurred_at)

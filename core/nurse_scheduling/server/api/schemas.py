@@ -19,6 +19,7 @@
 
 from datetime import datetime
 from typing import Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
@@ -191,8 +192,15 @@ class JobResponse(BaseModel):
     """Related API resources and controls."""
 
     @classmethod
-    def from_job(cls, job: Job) -> "JobResponse":
-        """Project a transport-independent job into its public API shape."""
+    def from_job(cls, job: Job, events_token: str | None = None) -> "JobResponse":
+        """Project a transport-independent job into its public API shape.
+
+        `events_token` authorizes the event stream through the URL, which is the only
+        credential `EventSource` can carry.
+        """
+        events_link = f"/optimize/{job.id}/events"
+        if events_token is not None:
+            events_link = f"{events_link}?token={quote(events_token, safe='')}"
         supports_finish_now = solver_supports_finish_now(job.request.solver)
         return cls(
             id=job.id,
@@ -231,7 +239,7 @@ class JobResponse(BaseModel):
             ),
             links=JobLinksResponse(
                 self=f"/optimize/{job.id}",
-                events=f"/optimize/{job.id}/events",
+                events=events_link,
                 cancellation=f"/optimize/{job.id}/cancel",
                 early_completion=f"/optimize/{job.id}/finish-now",
                 schedule=f"/optimize/{job.id}/xlsx" if job.artifact_name is not None else None,

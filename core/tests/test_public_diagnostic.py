@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -364,13 +365,21 @@ def test_main_runs_without_creating_process_lock(tmp_path, monkeypatch):
     runner.run.return_value = report
     diagnostic_class = Mock(return_value=runner)
     report_path = tmp_path / "report.json"
+    init_sentry = Mock()
+    flush_sentry = Mock()
 
+    monkeypatch.setattr(diagnostic_module, "get_app_version", Mock(return_value="v9.8.7-test"))
+    monkeypatch.setattr(diagnostic_module, "init_sentry", init_sentry)
+    monkeypatch.setattr(diagnostic_module, "flush_sentry", flush_sentry)
     monkeypatch.setattr(diagnostic_module.DiagnosticConfig, "from_env", Mock(return_value=config))
     monkeypatch.setattr(diagnostic_module, "PublicDiagnostic", diagnostic_class)
     monkeypatch.setattr(diagnostic_module, "write_report", Mock(return_value=report_path))
     monkeypatch.setattr(diagnostic_module, "print_report", Mock())
+    monkeypatch.setattr(diagnostic_module, "log_report", Mock())
 
     assert diagnostic_module.main([]) == 0
+    init_sentry.assert_called_once_with("v9.8.7-test", app="diagnostic")
+    flush_sentry.assert_called_once_with()
     assert not (tmp_path / ".diagnostic.lock").exists()
     runner.run.assert_called_once_with()
 
@@ -992,7 +1001,35 @@ def test_run_requests_cleanup_cancellation_before_identity_analysis(tmp_path):
     assert steps == ["cancel", "identity", "cleanup"]
 
 
-def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize(
+    ("outcome", "summary_level"),
+    [
+        ("pass", logging.INFO),
+        ("fail", logging.ERROR),
+        ("inconclusive", logging.WARNING),
+    ],
+)
+def test_log_report_emits_summary_and_findings(monkeypatch, caplog, outcome, summary_level):
+    report = {
+        "summary": {"outcome": outcome},
+        "findings": [
+            {"level": "error", "code": "failed_check", "message": "A check failed."},
+            {"level": "warning", "code": "uncertain_check", "message": "A check was uncertain."},
+        ],
+    }
+    monkeypatch.setattr(diagnostic_module, "format_summary", Mock(return_value="SUMMARY"))
+
+    with caplog.at_level(logging.INFO, logger=diagnostic_module.DIAGNOSTIC_LOGGER.name):
+        diagnostic_module.log_report(report)
+
+    assert [(record.levelno, record.message) for record in caplog.records] == [
+        (summary_level, "[diagnostic] SUMMARY"),
+        (logging.ERROR, "[diagnostic] finding code=failed_check message=A check failed."),
+        (logging.WARNING, "[diagnostic] finding code=uncertain_check message=A check was uncertain."),
+    ]
+
+
+def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys, caplog):
     def cleanup_handler(request: httpx.Request) -> httpx.Response:
         job_id = request.url.path.split("/")[2]
         if job_id == "transport-error":
@@ -1064,8 +1101,9 @@ def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
         "from_env",
         Mock(side_effect=ValueError("invalid configuration")),
     )
-    assert diagnostic_module.main([]) == 1
-    assert "FAIL configuration" in capsys.readouterr().err
+    with caplog.at_level(logging.INFO, logger=diagnostic_module.DIAGNOSTIC_LOGGER.name):
+        assert diagnostic_module.main([]) == 1
+    assert "[diagnostic] configuration failed error=invalid configuration" in caplog.text
 
     config = unexpected.config
     runner = Mock()
@@ -1075,6 +1113,62 @@ def test_cleanup_run_and_cli_paths_report_errors(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(diagnostic_module, "write_report", Mock(side_effect=OSError("disk full")))
     print_report = Mock()
     monkeypatch.setattr(diagnostic_module, "print_report", print_report)
-    assert diagnostic_module.main([]) == 2
-    assert "WARNING report_write_failed" in capsys.readouterr().err
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=diagnostic_module.DIAGNOSTIC_LOGGER.name):
+        assert diagnostic_module.main([]) == 2
+    assert "[diagnostic] report write failed error=disk full" in caplog.text
+    assert "[diagnostic] INCONCLUSIVE" in caplog.text
+    assert "[diagnostic] finding code=example message=Example warning." in caplog.text
     print_report.assert_called_once_with(report, None)
+
+
+def test_diagnostic_sends_the_configured_shared_token(tmp_path):
+    seen_headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json={"status": "ready"})
+
+    diagnostic = _diagnostic(tmp_path, handler, auth_token="diagnostic-shared-token")
+    diagnostic._sample_info()
+
+    assert seen_headers == ["Bearer diagnostic-shared-token"]
+
+
+def test_diagnostic_rejects_a_shared_token_for_an_http_target(tmp_path):
+    with pytest.raises(ValueError, match="DIAGNOSTIC_AUTH_TOKEN requires DIAGNOSTIC_TARGET_URL to use HTTPS"):
+        _diagnostic(
+            tmp_path,
+            target_url="http://backend.example.test",
+            auth_token="diagnostic-shared-token",
+        )
+
+
+def test_diagnostic_omits_the_header_without_a_shared_token(tmp_path):
+    seen_headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json={"status": "ready"})
+
+    diagnostic = _diagnostic(tmp_path, handler)
+    diagnostic._sample_info()
+
+    assert seen_headers == [None]
+
+
+@pytest.mark.parametrize("configured,expected", [(None, None), ("", None), ("  token  ", "token")])
+def test_diagnostic_normalizes_the_configured_shared_token(tmp_path, configured, expected):
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("apiVersion: alpha\n", encoding="utf-8")
+
+    assert _config(scenario, tmp_path, auth_token=configured).auth_token == expected
+
+
+def test_diagnostic_reads_the_shared_token_from_env(monkeypatch):
+    monkeypatch.delenv("DIAGNOSTIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("API_AUTH_TOKEN", "from-api-env")
+    assert DiagnosticConfig.from_env().auth_token == "from-api-env"
+
+    monkeypatch.setenv("DIAGNOSTIC_AUTH_TOKEN", "from-diagnostic-env")
+    assert DiagnosticConfig.from_env().auth_token == "from-diagnostic-env"

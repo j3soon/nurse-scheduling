@@ -29,6 +29,8 @@ from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
 if TYPE_CHECKING:
     from .server.jobs.models import Job
 
+DEFAULT_SENTRY_DSN = "https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088"
+
 
 def _should_enable_sentry() -> bool:
     if os.getenv("DISABLE_SENTRY"):
@@ -38,13 +40,15 @@ def _should_enable_sentry() -> bool:
 
 
 def init_sentry(app_version: str, *, app: str = "backend") -> None:
+    """Initialize Sentry for one named application process."""
     if not _should_enable_sentry():
         return
 
     import sentry_sdk
 
     sentry_sdk.init(
-        dsn="https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088",
+        dsn=os.getenv("SENTRY_DSN") or DEFAULT_SENTRY_DSN,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "development"),
         release=os.getenv("SENTRY_RELEASE", f"nurse-scheduling@{app_version}"),
         # Add data like request headers and IP for users, if applicable;
         # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
@@ -62,6 +66,16 @@ def init_sentry(app_version: str, *, app: str = "backend") -> None:
         enable_logs=True,
     )
     sentry_sdk.set_tag("app", app)
+
+
+def flush_sentry(timeout: float = 2.0) -> None:
+    """Flush pending events and logs before a short-lived process exits."""
+    if not _should_enable_sentry():
+        return
+
+    import sentry_sdk
+
+    sentry_sdk.flush(timeout=timeout)
 
 
 def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> None:
@@ -96,8 +110,9 @@ def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> 
 def capture_invalid_request(request: Request, status_code: int, detail: Any) -> None:
     if not _should_enable_sentry():
         return
-    # Missing routes and expired resources are expected and not actionable.
-    if status_code == 404:
+    # Missing routes, expired resources, and unauthenticated probes of a protected
+    # deployment are expected and not actionable.
+    if status_code in (401, 404):
         return
 
     import sentry_sdk

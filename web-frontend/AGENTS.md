@@ -38,6 +38,12 @@ Persist the saving app version with Optimize and Export backend settings. Add
 targeted migrations for known older app versions or legacy shapes, and preserve
 unrecognized versioned settings until a migration is defined.
 
+Send backend requests through the page's authorized fetch helper so the selected
+backend's token is attached. Job events use `EventSource` with the backend's
+`links.events` URL as given, which already carries a scoped stream token when the
+backend authenticates. Treat a `/info` response without an `auth` descriptor as an
+open backend so older servers keep working.
+
 Keep commit bodies focused on behavior and rationale. Do not mention routine
 test additions or regression coverage unless the test strategy itself is
 material to the change.

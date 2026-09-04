@@ -142,13 +142,14 @@ docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
 ```
 
 ```sh
-# persist Codex/Claude Code/OpenCode auth/config across containers
+# persist Codex/Claude Code/OpenCode/Pi auth/config across containers
 mkdir -p ~/docker/.codex
 mkdir -p ~/docker/.claude
 touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/Claude Code/OpenCode config
+mkdir -p ~/docker/pi/agent
+# mount project files and Codex/Claude Code/OpenCode/Pi config
 docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
@@ -156,6 +157,7 @@ docker run --rm -it --network=host \
   -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v ~/docker/pi/agent:/root/.pi/agent \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev
@@ -172,13 +174,14 @@ The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
 wheel. Use another environment for the `pulp/highs` solver.
 
 ```sh
-# persist Codex/Claude Code/OpenCode auth/config across containers
+# persist Codex/Claude Code/OpenCode/Pi auth/config across containers
 mkdir -p ~/docker/.codex
 mkdir -p ~/docker/.claude
 touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/Claude Code/OpenCode config
+mkdir -p ~/docker/pi/agent
+# mount project files and Codex/Claude Code/OpenCode/Pi config
 docker run --rm -it --gpus all --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
@@ -186,6 +189,7 @@ docker run --rm -it --gpus all --network=host \
   -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v ~/docker/pi/agent:/root/.pi/agent \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev-cuopt
@@ -204,7 +208,8 @@ mkdir -p ~/docker/.claude
 touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
-# mount project files and Codex/Claude Code/OpenCode config, and forward X11 display
+mkdir -p ~/docker/pi/agent
+# mount project files and Codex/Claude Code/OpenCode/Pi config, and forward X11 display
 docker run --rm -it --network=host \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
@@ -212,6 +217,7 @@ docker run --rm -it --network=host \
   -v ~/docker/.claude.json:/root/.claude.json \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
+  -v ~/docker/pi/agent:/root/.pi/agent \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   -e DISPLAY=$DISPLAY \
@@ -280,6 +286,40 @@ For building static site, run:
 cd web-frontend
 bun run build
 ```
+
+#### Hosting on Netlify
+
+The root [`netlify.toml`](netlify.toml) builds the static frontend into
+`web-frontend/out` and publishes the documentation under `/docs`. After linking
+the repository to a Netlify project, open **Project configuration → Environment
+variables** and configure these variables with the **Builds** scope:
+
+| Variable | Value | Sensitive |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SENTRY_DSN` | Public DSN for the frontend Sentry project. | No |
+| `SENTRY_ENVIRONMENT` | `production` for the production deploy context. Use a distinct value such as `staging` for branch deploys. | No |
+| `SENTRY_PROJECT` | Slug of the frontend Sentry project. | No |
+| `SENTRY_AUTH_TOKEN` | Sentry organization auth token allowed to create releases and upload source maps for the frontend project. | Yes |
+
+Mark `SENTRY_AUTH_TOKEN` as **Contains secret values** in Netlify. Never prefix
+it with `NEXT_PUBLIC_`, put it in `netlify.toml`, or commit it to an environment
+file. The Next.js Sentry build plugin reads it only while building, then uploads
+the release and source maps. Without it, the site still builds and browser
+events still reach Sentry through `NEXT_PUBLIC_SENTRY_DSN`, but production stack
+traces may remain minified.
+
+To create the token:
+
+1. Follow Sentry's [auth-token instructions](https://docs.sentry.io/account/auth-tokens/)
+   to create an organization token through an internal integration.
+2. Grant `org:ci` for release and source-map operations. Ensure the integration can access the
+   team that owns `SENTRY_PROJECT`.
+3. Copy the generated token into Netlify as `SENTRY_AUTH_TOKEN`, select the
+   **Builds** scope, and mark it as **Contains secret values**.
+
+Trigger a new deploy after changing any build environment variable. Configure
+different `SENTRY_ENVIRONMENT` values per Netlify deploy context when production
+and branch deploys share the same frontend Sentry project.
 
 For linting, run:
 
@@ -475,6 +515,23 @@ export OPTIMIZE_MAX_TIMEOUT_SECONDS=3600
 export OPTIMIZE_DEFAULT_PRETTIFY=true
 ```
 
+The server is unauthenticated by default, which suits local development. Set
+`API_AUTH_TOKEN` to require a shared bearer token on every application route
+except `/info` and `/ready`:
+
+```sh
+cd core
+API_AUTH_TOKEN="$(openssl rand -base64 32)" \
+uvicorn nurse_scheduling.serve:app --no-access-log
+```
+
+`GET /info` reports `auth.required` so the frontend can prompt for the token.
+The generated `/openapi.json`, `/docs`, and `/redoc` routes are disabled while
+authentication is configured.
+The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployed backend
+refuses to start without a token, and serving one without authentication
+requires `API_AUTH_REQUIRED=false`.
+
 Only advertise solvers available on that machine. The server validates the
 configured runtimes at startup.
 
@@ -575,9 +632,11 @@ cd docker
 docker compose -f compose.backend.memory.yml up -d --build
 ```
 
-The bundled Redis service uses its default RDB snapshot policy with a persistent
-volume. Enable AOF or use a managed persistence policy when the deployment
-requires a smaller data-loss window after an abrupt Redis or host failure.
+The bundled Redis service persists an AOF with `appendfsync everysec` and keeps
+an RDB fallback after six hours when at least one write has occurred. This
+limits the usual abrupt-failure exposure to approximately the latest second,
+while an RDB-only recovery can be up to six hours behind. Redis installed
+outside the bundled Compose deployment keeps its system persistence policy.
 
 ### Documentation
 

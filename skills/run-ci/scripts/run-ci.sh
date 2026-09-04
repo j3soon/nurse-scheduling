@@ -19,6 +19,7 @@ set -x
   ruff format --check nurse_scheduling tests
   ruff check nurse_scheduling tests
   pytest \
+    -q --tb=short --disable-warnings --maxfail=1 \
     --cov=nurse_scheduling \
     --ignore-glob='*pulp_cbc.py' \
     --ignore-glob='*pulp_cuopt.py' \

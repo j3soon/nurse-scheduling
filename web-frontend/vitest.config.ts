@@ -35,7 +35,7 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html', 'lcov'],
+      reporter: ['text-summary', 'html', 'lcov'],
       thresholds: {
         lines: 82,
         statements: 82,

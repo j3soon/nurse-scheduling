@@ -51,6 +51,9 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_GA_MEASUREMENT_ID: 'G-XGDWE4SWF7',
+    NEXT_PUBLIC_SENTRY_ENVIRONMENT: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT
+      || process.env.SENTRY_ENVIRONMENT
+      || 'development',
   },
 };
 
@@ -60,7 +63,7 @@ export default withSentryConfig(nextConfig, {
 
   org: "j3soon",
 
-  project: "nurse-scheduling",
+  project: process.env.SENTRY_PROJECT || "nurse-scheduling",
 
   // Only print logs for uploading source maps in CI
   silent: !process.env.CI,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Resolve Review Comments"
+  short_description: "Triage and fix current PR feedback"
+  default_prompt: "Use $resolve-review-comments to assess unresolved PR feedback, fix valid findings, and validate the changes."

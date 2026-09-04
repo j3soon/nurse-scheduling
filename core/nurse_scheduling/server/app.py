@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,7 +32,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import capture_invalid_request, init_sentry
+from .api.optimize import events_router as optimize_events_router
 from .api.optimize import router as optimize_router
+from .auth import AUTH_SCHEME, create_auth_dependency, create_stream_auth_dependency
 from .config import ServerSettings
 from .errors import (
     JobArtifactNotFoundError,
@@ -119,6 +121,8 @@ def _create_store(settings: ServerSettings, instance_id: str) -> JobStore:
         key_prefix=settings.redis_key_prefix,
         event_stream_keepalive_seconds=settings.sse_keepalive_seconds,
         max_events_per_job=settings.max_events_per_job,
+        usage_metrics_key_prefix=(settings.usage_metrics_key_prefix if settings.usage_metrics_enabled else None),
+        usage_metrics_retention_days=settings.usage_metrics_retention_days,
     )
 
 
@@ -161,6 +165,11 @@ def create_app(
         if settings.claimed_performance is not None
         else None
     )
+    # Authentication is advertised publicly so clients can prompt for credentials before
+    # calling a protected route, and so older clients keep working against open deployments.
+    require_auth = create_auth_dependency(settings.auth_token)
+    require_stream_auth = create_stream_auth_dependency(settings.auth_token)
+    auth_descriptor = {"required": settings.auth_token is not None, "scheme": AUTH_SCHEME}
     runtime_identity = {
         "service_name": SERVICE_NAME,
         "api_version": API_VERSION,
@@ -198,7 +207,7 @@ def create_app(
         """Own startup and shutdown of process-local background threads."""
         server_logger.info(
             "[server:start] title=%s api_version=%s app_version=%s deployment_id=%s "
-            "instance_id=%s backend=%s job_store_id=%s",
+            "instance_id=%s backend=%s job_store_id=%s auth=%s",
             TITLE,
             API_VERSION,
             app_version,
@@ -206,6 +215,7 @@ def create_app(
             instance_id,
             settings.job_backend,
             store.store_id,
+            AUTH_SCHEME if settings.auth_token is not None else "disabled",
         )
         if start_background:
             worker.start()
@@ -217,7 +227,15 @@ def create_app(
                 maintenance.stop()
                 worker.stop()
 
-    app = FastAPI(title=TITLE, version=API_VERSION, lifespan=lifespan)
+    generated_docs_are_public = settings.auth_token is None
+    app = FastAPI(
+        title=TITLE,
+        version=API_VERSION,
+        lifespan=lifespan,
+        openapi_url="/openapi.json" if generated_docs_are_public else None,
+        docs_url="/docs" if generated_docs_are_public else None,
+        redoc_url="/redoc" if generated_docs_are_public else None,
+    )
     app.state.settings = settings
     app.state.job_store = store
     app.state.job_controller = controller
@@ -281,9 +299,10 @@ def create_app(
         allow_credentials=True,
         expose_headers=["Content-Disposition", "Location", "Retry-After"],
     )
-    app.include_router(optimize_router)
+    app.include_router(optimize_router, dependencies=[Depends(require_auth)])
+    app.include_router(optimize_events_router, dependencies=[Depends(require_stream_auth)])
 
-    @app.get("/")
+    @app.get("/", dependencies=[Depends(require_auth)])
     async def root() -> dict[str, str]:
         """Return API identity and backend build version."""
         return {"message": TITLE, "api_version": API_VERSION, "app_version": app_version}
@@ -293,6 +312,7 @@ def create_app(
         return {
             "status": status,
             **runtime_identity,
+            "auth": auth_descriptor,
             "claimed_performance": claimed_performance,
         }
 
