@@ -45,6 +45,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   finishes. Continue the same task from that notification instead of polling
   from model turns. Keep affected checks and selected evaluation cases in the
   foreground.
+- Run AI evaluations with four concurrent case jobs. Use sequential execution
+  only when the user explicitly requests it. Eight jobs caused provider and
+  E2B contention with lower reliability, so four is the tested default.
 - Check a suspected missing dependency or tool directly before rerunning a full
   suite to diagnose its failure.
 - Use Conventional Commits, scoped by module where applicable, for example:

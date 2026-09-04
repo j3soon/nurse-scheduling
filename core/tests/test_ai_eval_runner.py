@@ -44,9 +44,23 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnMetrics
 
 from .ai_eval.grading import EvalCase, ToolUsageExpectation, load_cases
-from .ai_eval.runner import CASES, CaseRun, default_output_dir, run_all, run_case, select, summarize, write_report
+from .ai_eval.runner import (
+    CASES,
+    DEFAULT_CASE_JOBS,
+    CaseRun,
+    default_output_dir,
+    run_all,
+    run_case,
+    select,
+    summarize,
+    write_report,
+)
 
 CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
+
+
+def test_ai_eval_defaults_to_four_concurrent_cases():
+    assert DEFAULT_CASE_JOBS == 4
 
 
 def settings(**overrides: object) -> AiSettings:

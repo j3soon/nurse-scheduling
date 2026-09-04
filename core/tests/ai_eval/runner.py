@@ -60,6 +60,7 @@ FIXTURES = {
     "ward87": Path(__file__).resolve().parents[1] / "testcases" / "real",
 }
 WARD_FILE = "large-ward-with-87-people-2025-11.yaml"
+DEFAULT_CASE_JOBS = 4
 
 
 @dataclass
@@ -564,7 +565,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--category", action="append", default=[], help="run one category directory, repeatable")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
     parser.add_argument("--output-dir", type=Path, default=None, help="new directory for the report")
-    parser.add_argument("--jobs", type=int, default=1, help="number of cases to run concurrently (default: 1)")
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=DEFAULT_CASE_JOBS,
+        help=f"number of cases to run concurrently (default: {DEFAULT_CASE_JOBS})",
+    )
     arguments = parser.parse_args(argv)
     if arguments.jobs <= 0:
         parser.error("--jobs must be positive")
