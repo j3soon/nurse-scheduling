@@ -1447,6 +1447,7 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
+    expect(screen.getByText('Was this optimization result useful?')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Star the project on GitHub' })).toBeInTheDocument();
     expect(screen.getByText('schedule.xlsx')).toBeInTheDocument();
     expect(screen.getByText('42,000')).toBeInTheDocument();

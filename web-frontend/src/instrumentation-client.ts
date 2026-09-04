@@ -43,6 +43,13 @@ if (!isSentryDisabled) {
 
     // Ref: https://docs.sentry.io/platforms/javascript/enriching-events/attachments/#add-or-modify-attachments-before-sending
     beforeSend(event, hint) {
+      if (
+        event.type === "feedback" &&
+        event.contexts?.feedback?.source === "optimization-result-rating"
+      ) {
+        return event;
+      }
+
       const yaml = getLatestSchedulingYamlForSentry();
 
       if (yaml) {

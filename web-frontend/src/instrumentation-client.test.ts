@@ -99,4 +99,25 @@ describe('instrumentation-client', () => {
       },
     });
   });
+
+  it('does not attach scheduling YAML to one-click optimization ratings', async () => {
+    schedulingStateMocks.getLatestSchedulingYamlForSentry.mockReturnValue('apiVersion: test\n');
+
+    await import('./instrumentation-client');
+
+    const sentryOptions = sentryMocks.init.mock.calls[0][0];
+    const event = {
+      type: 'feedback',
+      contexts: {
+        feedback: {
+          source: 'optimization-result-rating',
+        },
+      },
+    };
+    const hint = {};
+
+    expect(sentryOptions.beforeSend(event, hint)).toBe(event);
+    expect(schedulingStateMocks.getLatestSchedulingYamlForSentry).not.toHaveBeenCalled();
+    expect(hint).toEqual({});
+  });
 });

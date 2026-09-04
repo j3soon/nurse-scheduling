@@ -30,6 +30,7 @@ import NumberInput from '@/components/NumberInput';
 import BackendTokenField from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import StarRepoNudge from '@/components/StarRepoNudge';
+import OptimizationFeedbackNudge from '@/components/OptimizationFeedbackNudge';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizeSchedulingStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
@@ -96,6 +97,14 @@ interface OptimizeJobResponse {
     early_completion: string;
     schedule: string | null;
   };
+}
+
+interface CompletedOptimizationFeedback {
+  jobId: string;
+  solver: string;
+  timeoutSeconds: number;
+  anonymized: boolean;
+  result: NonNullable<OptimizeJobResponse['result']>;
 }
 
 interface SseEventLogEntry {
@@ -735,6 +744,7 @@ export default function OptimizeAndExportPage() {
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [currentJob, setCurrentJob] = useState<OptimizeJobResponse | null>(null);
+  const [completedFeedback, setCompletedFeedback] = useState<CompletedOptimizationFeedback | null>(null);
   const [incumbentResult, setIncumbentResult] = useState<OptimizeProgressEvent | null>(null);
   const [progressPoints, setProgressPoints] = useState<OptimizationProgressPoint[]>([]);
   const [savedDownload, setSavedDownload] = useState<{ url: string; filename: string } | null>(null);
@@ -1195,6 +1205,7 @@ export default function OptimizeAndExportPage() {
       setScheduleStatus(null);
       setCurrentJobId(null);
       setCurrentJob(null);
+      setCompletedFeedback(null);
       setIncumbentResult(null);
       setProgressPoints([]);
       clearSavedDownload();
@@ -1246,6 +1257,7 @@ export default function OptimizeAndExportPage() {
     setScheduleStatus(null);
     setCurrentJobId(null);
     setCurrentJob(null);
+    setCompletedFeedback(null);
     setIncumbentResult(null);
     setProgressPoints([]);
     clearSavedDownload();
@@ -1331,6 +1343,16 @@ export default function OptimizeAndExportPage() {
       savedDownloadUrlRef.current = url;
       setSavedDownload({ url, filename });
       downloadFileFromUrl(url, filename);
+
+      if (completedJob.result) {
+        setCompletedFeedback({
+          jobId: completedJob.id,
+          solver: solverArg,
+          timeoutSeconds: timeoutArg,
+          anonymized: anonymizeScheduleData,
+          result: completedJob.result,
+        });
+      }
 
       void authorizedFetch(runEndpoint, completedJob.links.self, {
         method: 'DELETE',
@@ -2273,6 +2295,16 @@ export default function OptimizeAndExportPage() {
                   <FiCheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{successMessage}</span>
                 </div>
+                {completedFeedback && (
+                  <OptimizationFeedbackNudge
+                    key={completedFeedback.jobId}
+                    jobId={completedFeedback.jobId}
+                    solver={completedFeedback.solver}
+                    timeoutSeconds={completedFeedback.timeoutSeconds}
+                    anonymized={completedFeedback.anonymized}
+                    result={completedFeedback.result}
+                  />
+                )}
                 <StarRepoNudge />
               </div>
             )}
