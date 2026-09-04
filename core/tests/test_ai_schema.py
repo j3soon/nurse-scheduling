@@ -318,6 +318,22 @@ def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
     assert "every group membership" in core
 
 
+def test_range_shrink_guidance_covers_date_scopes_in_one_search():
+    reference = render_schedule_reference("core")
+
+    assert reference is not None
+    for field in (
+        "`dates.groups[].members`",
+        "preference `date` or `countDates`",
+        "export formatting `dates`",
+        "export extra-column `countDates`",
+    ):
+        assert field in reference
+    assert "Search once with `rg`" in reference
+    assert "Do not repeat that search by section" in reference
+    assert "loses its entire date scope, delete that entry" in reference
+
+
 @pytest.mark.parametrize("path", EXAMPLE_PATHS, ids=EXAMPLE_PATHS)
 def test_every_returned_yaml_example_is_frontend_compatible(path: str):
     topic = SCHEMA_TOPICS[path]

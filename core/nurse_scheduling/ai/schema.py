@@ -85,9 +85,14 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         rules=(
             "`endDate` must be on or after `startDate`.",
             (
-                "When shrinking the range, remove every now-out-of-range date from groups and preferences in the "
-                "same coordinated file edit. Find their current short or full date selectors with `rg` and "
-                "bounded context."
+                "When shrinking the range, remove every now-out-of-range date in one coordinated file edit. Date "
+                "selectors can occur in `dates.groups[].members`, preference `date` or `countDates`, export "
+                "formatting `dates`, and export extra-column `countDates`. Search once with `rg` for all equivalent "
+                "short, MM-DD, full-date, and range forms of the removed dates. Do not repeat that search by "
+                "section or inspect unrelated preferences. Read containing blocks only where an entry may need "
+                "deletion, then make the remaining replacements together. If an explicit preference or export "
+                "rule loses its entire date scope, delete that entry instead of leaving an empty selector or "
+                "omitting the selector, which could broaden its meaning."
             ),
         ),
         example="""dates:
