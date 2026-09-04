@@ -209,6 +209,18 @@ cleanup is logged as confirmation. Sentry log alerts can use these severities
 and the structured sandbox cleanup fields to notify administrators without an
 error event for every retry.
 
+Deployments can run the same metadata-filtered cleanup independently of the AI
+service with:
+
+```bash
+python -m nurse_scheduling.ai.sandbox.reap
+```
+
+The command requires only `E2B_API_KEY`, performs one reconciliation and
+deletion pass, and returns a nonzero status if listing fails or any deletion is
+still unconfirmed. Schedule it periodically when overdue sandboxes must be
+cleaned while the AI service is offline.
+
 ## Agent capabilities
 
 The model receives Pi's four default coding tools: `read`, `bash`, `edit`, and

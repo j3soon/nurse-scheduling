@@ -125,7 +125,7 @@ class E2BSandboxCleanupManager:
             )
         self._wake.set()
 
-    async def reconcile_once(self) -> None:
+    async def reconcile_once(self) -> bool:
         """Find owned running or paused sandboxes beyond their hard deadline."""
         try:
             paginator = self._list_sandboxes(
@@ -158,10 +158,12 @@ class E2BSandboxCleanupManager:
                             },
                         )
                         self.defer(sandbox_id)
+            return True
         except asyncio.CancelledError:
             raise
         except (SandboxException, TimeoutError):
             logger.exception("stale sandbox reconciliation failed")
+            return False
 
     async def retry_deferred_once(self) -> None:
         """Try every due deletion once and retain failures with capped backoff."""
