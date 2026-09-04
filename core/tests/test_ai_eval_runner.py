@@ -247,6 +247,7 @@ def test_eval_uses_the_sandbox_runner_and_closes_its_backend():
     assert timing["end_to_end_seconds"] >= sandbox["lifetime_seconds"]
     assert timing["sandbox"]["suspension"] == {
         "pause_count": 0,
+        "pause_cancel_count": 0,
         "resume_count": 0,
     }
 
@@ -478,6 +479,7 @@ def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
         teardown_seconds=0.2,
         lifetime_seconds=10.0,
         pause_count=2,
+        pause_cancel_count=1,
         resume_count=2,
     )
     summary = write_report(
@@ -488,7 +490,7 @@ def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
     text = summary.read_text(encoding="utf-8")
     assert "mutually exclusive lifetime components" in text
     assert "| a | 10.000 | 0.400 | 1.000 | 0.300 | 3.000 | 5.000 | 0.100 | 0.200 |" in text
-    assert "| a | 2 | 2 | 0.100 | 0.060 |" in text
+    assert "| a | 2 | 1 | 2 | 0.100 | 0.060 |" in text
 
 
 def test_a_report_never_overwrites_an_earlier_one(tmp_path: Path):

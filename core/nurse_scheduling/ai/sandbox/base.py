@@ -59,6 +59,7 @@ class SandboxLifecycleMetrics:
 
     execution_seconds: float = 0.0
     pause_count: int = 0
+    pause_cancel_count: int = 0
     pause_transition_seconds: float = 0.0
     resume_count: int = 0
     resume_wait_seconds: float = 0.0

@@ -163,8 +163,10 @@ warm waiting, suspended, resume wait, and teardown. Their sum equals the
 sandbox lifetime. Resume wait is the blocking interval after work needs the
 sandbox but before E2B has made it usable, and `max_resume_wait_seconds` exposes
 the worst individual resume. The `sandbox.suspension` object reports pause and
-resume counts. LLM inference can overlap warm waiting, pause transition, and
-suspended time by design.
+resume counts. It also reports `pause_cancel_count` for an in-progress pause
+cancelled when new sandbox work arrives. A pause cancelled before its E2B
+request starts or during final cleanup is not included. LLM inference can
+overlap warm waiting, pause transition, and suspended time by design.
 
 After each sandbox operation, the E2B backend schedules an explicit warm-memory
 pause. Immediate follow-up activity cancels a pause that has not started, so

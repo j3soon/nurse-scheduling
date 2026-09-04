@@ -125,6 +125,7 @@ class SandboxTurnMetrics:
     teardown_seconds: float = 0.0
     lifetime_seconds: float = 0.0
     pause_count: int = 0
+    pause_cancel_count: int = 0
     resume_count: int = 0
 
 
@@ -157,6 +158,7 @@ async def _measured_sandbox_turn(
         lifecycle = getattr(sandbox, "lifecycle_metrics", SandboxLifecycleMetrics())
         metrics.execution_seconds = lifecycle.execution_seconds
         metrics.pause_count = lifecycle.pause_count
+        metrics.pause_cancel_count = lifecycle.pause_cancel_count
         metrics.pause_transition_seconds = lifecycle.pause_transition_seconds
         metrics.resume_count = lifecycle.resume_count
         metrics.resume_wait_seconds = lifecycle.resume_wait_seconds
@@ -250,7 +252,7 @@ async def run_sandbox_agent(
         logger.info(
             "sandbox timing lifetime_seconds=%.3f provisioning_seconds=%.3f execution_seconds=%.3f "
             "pause_transition_seconds=%.3f warm_waiting_seconds=%.3f suspended_seconds=%.3f "
-            "resume_wait_seconds=%.3f teardown_seconds=%.3f pause_count=%s resume_count=%s",
+            "resume_wait_seconds=%.3f teardown_seconds=%.3f pause_count=%s pause_cancel_count=%s resume_count=%s",
             metrics.lifetime_seconds,
             metrics.provisioning_seconds,
             metrics.execution_seconds,
@@ -260,6 +262,7 @@ async def run_sandbox_agent(
             metrics.resume_wait_seconds,
             metrics.teardown_seconds,
             metrics.pause_count,
+            metrics.pause_cancel_count,
             metrics.resume_count,
         )
 

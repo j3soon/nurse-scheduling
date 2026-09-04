@@ -379,6 +379,7 @@ def _timing_record(
             "teardown_seconds": round(sandbox.teardown_seconds, 3) if sandbox else None,
             "suspension": {
                 "pause_count": sandbox.pause_count if sandbox else None,
+                "pause_cancel_count": sandbox.pause_cancel_count if sandbox else None,
                 "resume_count": sandbox.resume_count if sandbox else None,
             },
         },
@@ -393,7 +394,7 @@ def summarize(runs: Sequence[CaseRun]) -> str:
         (
             f"{'category':<16}{'pass':>8}{'e2e s':>9}{'LLM s':>9}{'lifetime s':>11}"
             f"{'execute s':>10}{'warm wait':>10}{'suspend s':>10}{'resume s':>10}"
-            f"{'pauses':>8}{'turns':>8}{'attempts':>10}{'retries':>9}{'tools':>8}"
+            f"{'pauses':>8}{'cancels':>9}{'turns':>8}{'attempts':>10}{'retries':>9}{'tools':>8}"
         )
     ]
     for category in sorted({run.category for run in runs}):
@@ -408,6 +409,7 @@ def summarize(runs: Sequence[CaseRun]) -> str:
             f"{_median([run.sandbox_metrics.suspended_seconds for run in group if run.sandbox_metrics]):>10.1f}"
             f"{_median([run.sandbox_metrics.resume_wait_seconds for run in group if run.sandbox_metrics]):>10.1f}"
             f"{_median([float(run.sandbox_metrics.pause_count) for run in group if run.sandbox_metrics]):>8.1f}"
+            f"{_median([float(run.sandbox_metrics.pause_cancel_count) for run in group if run.sandbox_metrics]):>9.1f}"
             f"{_median([float(run.turns) for run in group]):>8.1f}"
             f"{_median([float(run.provider_attempts or run.turns) for run in group]):>10.1f}"
             f"{_median([float(max(0, (run.provider_attempts or run.turns) - run.turns)) for run in group]):>9.1f}"
@@ -425,6 +427,7 @@ def summarize(runs: Sequence[CaseRun]) -> str:
         f"{sum(metrics.suspended_seconds for metrics in sandbox_runs):>10.1f}"
         f"{sum(metrics.resume_wait_seconds for metrics in sandbox_runs):>10.1f}"
         f"{sum(metrics.pause_count for metrics in sandbox_runs):>8}"
+        f"{sum(metrics.pause_cancel_count for metrics in sandbox_runs):>9}"
         f"{sum(run.turns for run in runs):>8}"
         f"{sum(run.provider_attempts or run.turns for run in runs):>10}"
         f"{sum(max(0, (run.provider_attempts or run.turns) - run.turns) for run in runs):>9}"
@@ -466,13 +469,13 @@ def sandbox_metrics_markdown(runs: Sequence[CaseRun]) -> str:
             "",
             "## Sandbox suspension by case",
             "",
-            "| Case | Pauses | Resumes | Total resume wait | Max resume wait |",
-            "| --- | ---: | ---: | ---: | ---: |",
+            "| Case | Pauses | Pause cancels | Resumes | Total resume wait | Max resume wait |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for run, metrics in sandbox_runs:
         lines.append(
-            f"| {run.case_id} | {metrics.pause_count} | {metrics.resume_count} "
+            f"| {run.case_id} | {metrics.pause_count} | {metrics.pause_cancel_count} | {metrics.resume_count} "
             f"| {metrics.resume_wait_seconds:.3f} | {metrics.max_resume_wait_seconds:.3f} |"
         )
     return "\n".join(lines)

@@ -418,7 +418,10 @@ def test_activity_cancels_an_in_progress_pause_before_running():
         assert e2b_backend.lifecycle_state is E2BSandboxState.PAUSING
 
         started = asyncio.get_running_loop().time()
-        await e2b_backend.run("echo ready")
+        await asyncio.gather(
+            e2b_backend.run("echo ready"),
+            e2b_backend.read_file("/workspace/schedule.yaml"),
+        )
         elapsed = asyncio.get_running_loop().time() - started
         await cancelled.wait()
         await e2b_backend.close()
@@ -428,7 +431,9 @@ def test_activity_cancels_an_in_progress_pause_before_running():
 
     assert elapsed < 0.5
     sandbox.commands.run.assert_awaited_once()
+    sandbox.files.read.assert_awaited_once()
     assert backend.lifecycle_metrics.pause_count == 0
+    assert backend.lifecycle_metrics.pause_cancel_count == 1
     assert backend.lifecycle_state is E2BSandboxState.CLOSED
 
 

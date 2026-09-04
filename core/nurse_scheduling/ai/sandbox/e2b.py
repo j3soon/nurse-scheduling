@@ -257,11 +257,13 @@ class E2BSandboxBackend:
         self._close_started = False
         self._lifecycle_lock = asyncio.Lock()
         self._pause_task: asyncio.Task[None] | None = None
+        self._activity_cancelled_pause_task: asyncio.Task[None] | None = None
         self._paused_at: float | None = None
         self._commands = 0
         self._created_at = time.monotonic()
         self._execution_seconds = 0.0
         self._pause_count = 0
+        self._pause_cancel_count = 0
         self._pause_transition_seconds = 0.0
         self._resume_count = 0
         self._resume_wait_seconds = 0.0
@@ -287,6 +289,7 @@ class E2BSandboxBackend:
         return SandboxLifecycleMetrics(
             execution_seconds=self._execution_seconds,
             pause_count=self._pause_count,
+            pause_cancel_count=self._pause_cancel_count,
             pause_transition_seconds=self._pause_transition_seconds,
             resume_count=self._resume_count,
             resume_wait_seconds=self._resume_wait_seconds,
@@ -393,7 +396,7 @@ class E2BSandboxBackend:
     @asynccontextmanager
     async def _active_operation(self) -> AsyncIterator[None]:
         """Serialize one operation with pause, resume, and close transitions."""
-        self._cancel_pending_pause()
+        self._cancel_pending_pause(for_activity=True)
         async with self._lifecycle_lock:
             self._cancel_pending_pause_locked()
             self._ensure_open()
@@ -465,6 +468,8 @@ class E2BSandboxBackend:
                     latency,
                 )
         finally:
+            if self._activity_cancelled_pause_task is current_task:
+                self._activity_cancelled_pause_task = None
             if self._pause_task is current_task:
                 self._pause_task = None
 
@@ -531,12 +536,13 @@ class E2BSandboxBackend:
             self._paused_at = None
         self._state = E2BSandboxState.CLOSED
         logger.info(
-            "sandbox destroyed sandbox_id=%s provider=e2b commands=%s pause_count=%s "
+            "sandbox destroyed sandbox_id=%s provider=e2b commands=%s pause_count=%s pause_cancel_count=%s "
             "pause_transition_seconds=%.3f resume_wait_seconds=%.3f suspended_seconds=%.3f "
             "teardown_seconds=%.3f lifetime_seconds=%.3f",
             self.sandbox_id,
             self._commands,
             self._pause_count,
+            self._pause_cancel_count,
             self._pause_transition_seconds,
             self._resume_wait_seconds,
             self._suspended_seconds,
@@ -558,7 +564,22 @@ class E2BSandboxBackend:
             backoff_seconds=self._retry_backoff_seconds,
         )
 
-    def _cancel_pending_pause(self) -> None:
+    def _cancel_pending_pause(self, *, for_activity: bool = False) -> None:
+        task = self._pause_task
+        if (
+            for_activity
+            and self._state is E2BSandboxState.PAUSING
+            and task is not None
+            and not task.done()
+            and task is not self._activity_cancelled_pause_task
+        ):
+            self._activity_cancelled_pause_task = task
+            self._pause_cancel_count += 1
+            logger.info(
+                "sandbox pause cancelled by activity sandbox_id=%s pause_cancel_count=%s",
+                self.sandbox_id,
+                self._pause_cancel_count,
+            )
         self._cancel_pending_pause_locked()
 
     def _cancel_pending_pause_locked(self) -> None:
