@@ -25,6 +25,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   practical, otherwise report or document.
 - Record durable, general user guidance in the nearest relevant `AGENTS.md`.
   Omit task-specific or temporary details.
+- Store project skills in the repository-root `skills/` directory, not in a
+  machine-local skills directory, so they remain available across machines.
 - After finishing a task, suggest improvements to `AGENTS.md`, skills, scripts,
   or other agent-facing configuration when the task exposed one. Propose only
   guidance that generalizes to recurring work. Keep session-specific findings in

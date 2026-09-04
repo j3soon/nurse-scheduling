@@ -423,12 +423,23 @@ def test_does_not_retry_an_ambiguous_command_failure():
     sandbox.commands.run.assert_awaited_once()
 
 
-def test_backend_explicitly_pauses_with_warm_memory_after_an_operation():
+def test_backend_explicitly_pauses_with_warm_memory_after_an_operation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monotonic_time = 0.0
+    monkeypatch.setattr(
+        e2b_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: monotonic_time),
+    )
+
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
+        nonlocal monotonic_time
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
         await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
+        monotonic_time = 1.0
         await e2b_backend.close()
         return sandbox, e2b_backend
 
@@ -436,7 +447,7 @@ def test_backend_explicitly_pauses_with_warm_memory_after_an_operation():
     sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=5)
     sandbox.connect.assert_not_awaited()
     assert e2b_backend.lifecycle_metrics.pause_count == 1
-    assert e2b_backend.lifecycle_metrics.suspended_seconds > 0
+    assert e2b_backend.lifecycle_metrics.suspended_seconds == 1
 
 
 def test_immediate_activity_cancels_a_pending_pause():
