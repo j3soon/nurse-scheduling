@@ -129,8 +129,9 @@ async def create_job(
     settings = _settings(request)
     content, input_name = await _read_input(file, yaml_content, settings.max_yaml_bytes)
     try:
-        # Refuse before queueing, so an expansion cannot spend a worker on its own.
-        expansion = measure_yaml_expansion(content)
+        # Refuse before queueing, so an expansion cannot spend a worker on its own. Reading
+        # untrusted data is offloaded, because this route must not block the event loop.
+        expansion = await run_in_threadpool(measure_yaml_expansion, content)
     except SchedulingDataTooComplexError as error:
         request.state.invalid_reason = "yaml_expansion_bomb"
         raise HTTPException(status_code=400, detail=str(error)) from error

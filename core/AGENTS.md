@@ -73,9 +73,10 @@ test paths when a narrower suite is known to be sufficient.
   unescalated rather than drop it or change the response.
 
 ## Input Limits
-- Bound submitted scheduling data by its alias expansion as well as its byte
-  size. `loader.expanded_node_count` measures it from the parse events without
-  building the structure, and both the API and `load_data` refuse past the limit.
+- Bound submitted scheduling data by its alias expansion and nesting depth as
+  well as its byte size. `loader.measure_yaml_expansion` measures both from the
+  parse events without building the structure, and both the API and `load_data`
+  refuse past either bound. Read untrusted data off the event loop.
 
 ## Testing
 - Normal tests live under `tests/`.

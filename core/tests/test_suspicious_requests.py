@@ -202,6 +202,18 @@ def test_ordinary_yaml_is_not_refused_as_an_expansion(captured):
     assert captured.events == []
 
 
+def test_deeply_nested_yaml_is_refused_and_reported(captured):
+    """Nesting is expensive to read, so it is refused on the same signal as an expansion."""
+    client = _client()
+    depth = 10_000
+    payload = "apiVersion: alpha\nx: " + "[" * depth + "]" * depth + "\n"
+
+    response = client.post("/optimize", data={"yaml_content": payload})
+
+    assert response.status_code == 400
+    assert _signals(captured) == [("yaml_expansion_bomb", "error")]
+
+
 def test_accepted_yaml_using_aliases_is_reported(captured):
     """Nothing this project produces uses an alias, so one marks a hand-built client."""
     client = _client()

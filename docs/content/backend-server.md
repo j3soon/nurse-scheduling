@@ -281,9 +281,11 @@ operations, `413` for oversized YAML, and `429` when job capacity is exhausted.
 The frontend and CLI serialize plain, valid YAML, so aliases and parse failures
 both indicate a client that built its request by hand. Both are reported without
 changing how the request is answered. Submitted YAML is also bounded by how far
-its aliases expand, not only by its byte size. An alias is a reference, so a small document can name hundreds of
-millions of nodes that every later traversal pays for. Data expanding past the
-limit is refused with `400` before a job is queued.
+its aliases expand and how deeply it nests, not only by its byte size. An alias
+is a reference, so a small document can name hundreds of millions of nodes that
+every later traversal pays for, and parsing costs grow faster than nesting
+depth. Data passing either bound is refused with `400` before a job is queued,
+and is read on a worker thread so a large document never blocks the server.
 
 ### Suspicious request reporting
 
@@ -294,7 +296,7 @@ contract are sent to Sentry, because a scanner cannot produce them:
 | Signal | Meaning | Level |
 | --- | --- | --- |
 | `forged_stream_token` | An event-stream token failed verification and had not merely expired, so it was constructed rather than issued. Error when it was unexpired and of the minted shape, warning otherwise. | error |
-| `yaml_expansion_bomb` | Submitted data expands through YAML aliases to more nodes than the server processes. Refused. | error |
+| `yaml_expansion_bomb` | Submitted data expands or nests past what the server reads, so it was refused. | error |
 | `yaml_aliases_used` | Accepted data used a YAML alias, which nothing this project produces does. | warning |
 | `yaml_unparseable` | Accepted data is not valid YAML, which a client that serializes its own data does not submit. | warning |
 | `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |

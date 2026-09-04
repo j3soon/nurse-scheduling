@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling.loader import (
     MAX_EXPANDED_NODES,
+    MAX_NESTING_DEPTH,
     SchedulingDataTooComplexError,
     _load_yaml,
     load_data,
@@ -176,3 +177,19 @@ def test_a_real_scenario_stays_far_below_the_limit():
 def test_the_limit_is_reported_with_the_number_it_exceeded():
     with pytest.raises(SchedulingDataTooComplexError, match="200000"):
         measure_yaml_expansion(_alias_bomb())
+
+
+def test_deep_nesting_is_refused_before_it_is_read():
+    """Parsing costs grow faster than depth, so a deep document must not be read through."""
+    depth = 100_000
+    payload = b"apiVersion: alpha\nx: " + b"[" * depth + b"]" * depth + b"\n"
+
+    with pytest.raises(SchedulingDataTooComplexError, match=str(MAX_NESTING_DEPTH)):
+        measure_yaml_expansion(payload)
+
+
+def test_real_scenarios_nest_far_below_the_depth_bound():
+    scenario = Path(__file__).parent / "testcases/real/large-ward-with-87-people-2025-11.yaml"
+
+    # Refusing at the bound would be visible here if real data came anywhere near it.
+    assert measure_yaml_expansion(scenario.read_bytes()).nodes > 0

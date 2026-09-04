@@ -38,6 +38,10 @@ yaml = YAML(typ="safe")
 
 MAX_EXPANDED_NODES = 200_000
 """Largest number of nodes a document may expand to once aliases are followed."""
+MAX_NESTING_DEPTH = 64
+"""Deepest a document may nest. Parsing costs grow faster than depth, and this project's
+own data nests five deep, so a bound well above that keeps a deep document from being
+expensive to even look at."""
 
 
 class SchedulingDataTooComplexError(ValueError):
@@ -62,7 +66,7 @@ def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -
     from the event stream keeps that cost visible without ever building the structure.
 
     Raises:
-        SchedulingDataTooComplexError: If the expansion exceeds `limit`.
+        SchedulingDataTooComplexError: If the expansion or the nesting exceeds its bound.
     """
     anchor_sizes: dict[str, int] = {}
     aliases = 0
@@ -72,6 +76,12 @@ def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -
         anchor = getattr(event, "anchor", None)
         if isinstance(event, (MappingStartEvent, SequenceStartEvent)):
             frames.append([1, anchor])
+            if len(frames) > MAX_NESTING_DEPTH:
+                # Raised while parsing, so the rest of a deep document is never read.
+                raise SchedulingDataTooComplexError(
+                    f"Scheduling data nests deeper than {MAX_NESTING_DEPTH} levels, "
+                    "which this server refuses to process"
+                )
             continue
         if isinstance(event, (MappingEndEvent, SequenceEndEvent)):
             size, collection_anchor = frames.pop()
