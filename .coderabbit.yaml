@@ -1,0 +1,5 @@
+# Keep the high-level summary in CodeRabbit's own walkthrough comment
+# instead of editing the PR description.
+reviews:
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
