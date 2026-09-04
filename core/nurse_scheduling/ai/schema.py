@@ -266,7 +266,15 @@ SCHEMA_TOPICS: dict[str, ScheduleSchemaTopic] = {
         ),
         rules=(
             "A positive `weight` encourages the requested assignment and a negative weight discourages it.",
-            "`.inf` requires the assignment and `-.inf` forbids it.",
+            (
+                "A person, date, and shift type supplied by the user map directly to `person`, `date`, and "
+                "`shiftType`. Confirm those selectors and any matching existing request in one focused search."
+            ),
+            (
+                "For ordinary language such as wants or prefers without a specified strength, omit `weight` to use "
+                "the soft default 1. Do not infer a stronger weight from unrelated requests."
+            ),
+            "Use the user's exact weight when provided. `.inf` requires the assignment and `-.inf` forbids it.",
         ),
         example="""preferences:
   - type: shift request

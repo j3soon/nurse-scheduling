@@ -287,6 +287,17 @@ def test_schema_documents_soft_affinity_default():
     assert "does not require the two people to have identical schedules" in reference
 
 
+def test_schema_documents_soft_shift_request_default():
+    reference = render_schedule_reference("preferences")
+
+    assert reference is not None
+    assert "map directly to `person`, `date`, and `shiftType`" in reference
+    assert "ordinary language such as wants or prefers" in reference
+    assert "omit `weight` to use the soft default 1" in reference
+    assert "Do not infer a stronger weight from unrelated requests" in reference
+    assert "Use the user's exact weight when provided" in reference
+
+
 def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
     core = render_schedule_reference("core")
     preferences = render_schedule_reference("preferences")
