@@ -28,6 +28,7 @@ from .base import (
     SandboxFileNotFoundError,
     SandboxLifecycleMetrics,
     managed_sandbox,
+    managed_sandbox_factory,
 )
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "SandboxFileNotFoundError",
     "SandboxLifecycleMetrics",
     "managed_sandbox",
+    "managed_sandbox_factory",
 ]

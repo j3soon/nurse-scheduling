@@ -59,6 +59,7 @@ def make_backend(
     *,
     pause_request_timeout_seconds: float = 5,
     control_request_timeout_seconds: float = 2,
+    defer_cleanup=None,
 ) -> E2BSandboxBackend:
     return E2BSandboxBackend(
         sandbox,
@@ -66,6 +67,7 @@ def make_backend(
         retry_backoff_seconds=0,
         pause_request_timeout_seconds=pause_request_timeout_seconds,
         control_request_timeout_seconds=control_request_timeout_seconds,
+        defer_cleanup=defer_cleanup,
     )
 
 
@@ -95,6 +97,9 @@ def test_factory_creates_a_secure_internet_disabled_auto_pause_sandbox():
 
     backend, captured = asyncio.run(exercise())
     assert backend.sandbox_id == "sandbox-123"
+    metadata = captured.pop("metadata")
+    assert metadata["nurse_scheduling_ai_managed"] == "true"
+    assert float(metadata["nurse_scheduling_ai_hard_deadline"]) > 0
     assert captured == {
         "template": "template-name",
         "timeout": 13,
@@ -349,6 +354,45 @@ def test_retries_idempotent_sandbox_destruction(caplog: pytest.LogCaptureFixture
     assert sandbox.kill.await_count == 2
     assert backend.lifecycle_state is E2BSandboxState.CLOSED
     assert "operation=kill" in caplog.text
+
+
+def test_defers_cleanup_when_kill_retries_are_exhausted():
+    async def exercise() -> tuple[FakeE2BSandbox, list[str]]:
+        deferred: list[str] = []
+        sandbox = FakeE2BSandbox()
+        sandbox.kill.side_effect = SandboxException("500: unavailable")
+        e2b_backend = make_backend(sandbox, defer_cleanup=deferred.append)
+
+        with pytest.raises(SandboxError, match="could not destroy"):
+            await e2b_backend.close()
+        return sandbox, deferred
+
+    sandbox, deferred = asyncio.run(exercise())
+
+    assert sandbox.kill.await_count == 3
+    assert deferred == ["sandbox-123"]
+
+
+def test_defers_cleanup_when_close_is_cancelled_during_kill():
+    async def exercise() -> list[str]:
+        deferred: list[str] = []
+        kill_started = asyncio.Event()
+        sandbox = FakeE2BSandbox()
+
+        async def kill(**_kwargs):
+            kill_started.set()
+            await asyncio.Event().wait()
+
+        sandbox.kill.side_effect = kill
+        e2b_backend = make_backend(sandbox, defer_cleanup=deferred.append)
+        close_task = asyncio.create_task(e2b_backend.close())
+        await kill_started.wait()
+        close_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await close_task
+        return deferred
+
+    assert asyncio.run(exercise()) == ["sandbox-123"]
 
 
 def test_does_not_retry_an_ambiguous_command_failure():

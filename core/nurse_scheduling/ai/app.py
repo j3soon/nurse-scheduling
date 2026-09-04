@@ -26,6 +26,8 @@ import json
 import logging
 import threading
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Literal
@@ -41,7 +43,7 @@ from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, Age
 from .config import AiSettings
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .provider import ChatContent, ChatMessage, ChatProvider, OpenAiCompatibleProvider, ProviderError
-from .sandbox import SandboxError, SandboxFactory
+from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .sandbox_agent import (
     SANDBOX_SYSTEM_PROMPT,
@@ -535,7 +537,12 @@ def create_app(
     store = SessionStore(settings)
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
 
-    app = FastAPI(title="Nurse Scheduling AI API", version=API_VERSION)
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        async with managed_sandbox_factory(sandbox_factory):
+            yield
+
+    app = FastAPI(title="Nurse Scheduling AI API", version=API_VERSION, lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,

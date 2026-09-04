@@ -32,6 +32,12 @@ from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.sandbox import managed_sandbox
 from nurse_scheduling.ai.sandbox.e2b import E2BSandboxBackend, E2BSandboxFactory, E2BSandboxState
+from nurse_scheduling.ai.sandbox.e2b_cleanup import (
+    HARD_DEADLINE_METADATA_KEY,
+    MANAGED_METADATA_KEY,
+    MANAGED_METADATA_VALUE,
+    E2BSandboxCleanupManager,
+)
 from nurse_scheduling.ai.sandbox_tools import SandboxPiTools
 
 E2B_API_KEY = os.getenv("E2B_API_KEY", "").strip()
@@ -184,6 +190,41 @@ def test_manual_pause_survives_kill_timeout_but_explicit_kill_is_terminal():
             assert await sandbox.kill()
             killed = True
 
+            with pytest.raises(SandboxNotFoundException):
+                await AsyncSandbox.connect(sandbox_id, timeout=5, api_key=E2B_API_KEY)
+        finally:
+            if not killed:
+                await sandbox.kill()
+
+    asyncio.run(exercise())
+
+
+def test_reaper_finds_and_kills_an_owned_overdue_sandbox():
+    async def exercise() -> None:
+        sandbox = await AsyncSandbox.create(
+            os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
+            timeout=60,
+            metadata={
+                MANAGED_METADATA_KEY: MANAGED_METADATA_VALUE,
+                HARD_DEADLINE_METADATA_KEY: "0",
+            },
+            allow_internet_access=False,
+            api_key=E2B_API_KEY,
+        )
+        sandbox_id = str(sandbox.sandbox_id)
+        manager = E2BSandboxCleanupManager(
+            api_key=E2B_API_KEY,
+            request_timeout_seconds=5,
+            retry_backoff_seconds=0.1,
+            reaper_interval_seconds=30,
+        )
+        killed = False
+        try:
+            await manager.reconcile_once()
+            assert manager.pending_count >= 1
+            await manager.retry_deferred_once()
+            assert manager.pending_count == 0
+            killed = True
             with pytest.raises(SandboxNotFoundException):
                 await AsyncSandbox.connect(sandbox_id, timeout=5, api_key=E2B_API_KEY)
         finally:

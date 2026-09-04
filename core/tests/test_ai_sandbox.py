@@ -28,6 +28,7 @@ from nurse_scheduling.ai.sandbox import (
     CommandResult,
     SandboxCleanupError,
     managed_sandbox,
+    managed_sandbox_factory,
 )
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 
@@ -65,6 +66,24 @@ def test_factory_creates_isolated_sandboxes_for_separate_turns():
     first, second = asyncio.run(exercise())
     assert first.sandbox_id != second.sandbox_id
     assert "/workspace/only-first" not in second.files
+
+
+def test_managed_factory_runs_optional_cleanup_supervision_hooks():
+    async def exercise() -> list[str]:
+        events: list[str] = []
+
+        class ManagedFactory(FakeSandboxFactory):
+            async def start_cleanup(self) -> None:
+                events.append("start")
+
+            async def stop_cleanup(self) -> None:
+                events.append("stop")
+
+        async with managed_sandbox_factory(ManagedFactory()):
+            events.append("body")
+        return events
+
+    assert asyncio.run(exercise()) == ["start", "body", "stop"]
 
 
 def test_backend_returns_unbounded_output_for_the_ai_tool_layer_to_limit():

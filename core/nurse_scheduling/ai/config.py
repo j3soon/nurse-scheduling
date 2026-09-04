@@ -138,6 +138,7 @@ class AiSettings:
     sandbox_retry_backoff_seconds: float = 0.5
     sandbox_pause_request_timeout_seconds: float = 5.0
     sandbox_control_request_timeout_seconds: float = 2.0
+    sandbox_reaper_interval_seconds: float = 30.0
     cookie_secure: bool = True
 
     @classmethod
@@ -200,5 +201,6 @@ class AiSettings:
             sandbox_control_request_timeout_seconds=_read_positive_float(
                 "AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", 2.0
             ),
+            sandbox_reaper_interval_seconds=_read_positive_float("AI_SANDBOX_REAPER_INTERVAL_SECONDS", 30.0),
             cookie_secure=_read_bool("AI_COOKIE_SECURE", True),
         )

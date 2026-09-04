@@ -41,7 +41,7 @@ from nurse_scheduling.ai.provider import (
     ProviderError,
     TokenUsage,
 )
-from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory
+from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
 from nurse_scheduling.ai.sandbox_agent import (
     SANDBOX_SYSTEM_PROMPT,
@@ -557,7 +557,10 @@ async def run_all(
         print(f"[{completed}/{len(cases)}] {mark} {run.case_id} {run.seconds:.0f}s", flush=True)
         return index, run
 
-    indexed_runs = await asyncio.gather(*(run_bounded(index, case) for index, case in enumerate(cases)))
+    if sandbox_factory is None:
+        raise ValueError("sandbox_factory is required for AI evaluation")
+    async with managed_sandbox_factory(sandbox_factory):
+        indexed_runs = await asyncio.gather(*(run_bounded(index, case) for index, case in enumerate(cases)))
     return [run for _, run in sorted(indexed_runs)]
 
 

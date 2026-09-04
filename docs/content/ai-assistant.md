@@ -191,6 +191,17 @@ application-level maximum agent-turn deadline and explicit kill in `finally`
 are therefore the authoritative hard deadline. A separate live check confirms
 that after this explicit kill, E2B rejects resume with `SandboxNotFoundException`.
 
+Each created sandbox carries non-secret application ownership and hard-deadline
+metadata. A completed `kill` response confirms either that the sandbox was
+killed or was already absent. If deletion cannot be confirmed within request
+cleanup, the sandbox ID enters a background queue that retries with capped
+exponential backoff. At application startup and every configured reaper
+interval, a metadata-filtered scan covers both running and paused sandboxes and
+queues overdue instances. This avoids a full-account scan and lets a restarted
+process recover cleanup work after a crash. If the application remains down,
+no in-process cleanup can run, so deployments requiring cleanup during a full
+service outage should invoke the same reconciliation from an external job.
+
 ## Agent capabilities
 
 The model receives Pi's four default coding tools: `read`, `bash`, `edit`, and
@@ -298,6 +309,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
 | `AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS` | `5` | Deadline for the cancellable background pause request. |
 | `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Deadline for each foreground auto-resume attempt and the E2B request timeout for destruction. |
+| `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. |
 | `AI_SESSION_TTL_SECONDS` | `3600` | Idle session lifetime. |

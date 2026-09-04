@@ -106,6 +106,27 @@ def create_test_app(*, settings: AiSettings, provider, sandbox_factory=None):
     )
 
 
+def test_application_lifespan_runs_sandbox_cleanup_supervision():
+    class LifecycleFactory(FakeSandboxFactory):
+        starts = 0
+        stops = 0
+
+        async def start_cleanup(self) -> None:
+            self.starts += 1
+
+        async def stop_cleanup(self) -> None:
+            self.stops += 1
+
+    factory = LifecycleFactory()
+    with TestClient(
+        create_test_app(settings=make_settings(), provider=FakeProvider(), sandbox_factory=factory)
+    ) as client:
+        assert client.get("/health").status_code == 200
+        assert factory.starts == 1
+
+    assert factory.stops == 1
+
+
 def create_session(client: TestClient, schedule_yaml: str = "description: test") -> str:
     """Create a session and return its public UUID."""
     response = client.post("/sessions", json={"schedule_yaml": schedule_yaml})
@@ -752,6 +773,7 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     monkeypatch.setenv("AI_SANDBOX_RETRY_BACKOFF_SECONDS", "0.25")
     monkeypatch.setenv("AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", "1.5")
+    monkeypatch.setenv("AI_SANDBOX_REAPER_INTERVAL_SECONDS", "45")
 
     settings = AiSettings.from_env()
 
@@ -765,6 +787,7 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     assert settings.sandbox_retry_backoff_seconds == 0.25
     assert settings.sandbox_pause_request_timeout_seconds == 4.5
     assert settings.sandbox_control_request_timeout_seconds == 1.5
+    assert settings.sandbox_reaper_interval_seconds == 45
 
 
 def test_environment_configuration_requires_a_sandbox_backend(monkeypatch: pytest.MonkeyPatch) -> None:

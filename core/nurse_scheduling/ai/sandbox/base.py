@@ -131,6 +131,20 @@ async def managed_sandbox(
                 raise SandboxCleanupError(f"Sandbox {sandbox.sandbox_id} could not be destroyed.") from exc
 
 
+@asynccontextmanager
+async def managed_sandbox_factory(factory: SandboxFactory) -> AsyncIterator[SandboxFactory]:
+    """Run optional provider cleanup supervision around a factory's lifetime."""
+    start_cleanup = getattr(factory, "start_cleanup", None)
+    stop_cleanup = getattr(factory, "stop_cleanup", None)
+    if start_cleanup is not None:
+        await start_cleanup()
+    try:
+        yield factory
+    finally:
+        if stop_cleanup is not None:
+            await stop_cleanup()
+
+
 async def _close_sandbox(sandbox: SandboxBackend, timeout_seconds: float) -> None:
     """Finish cleanup even when cancellation reaches the owning request task."""
 

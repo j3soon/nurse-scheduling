@@ -51,7 +51,11 @@ The timeout is not the hard deadline. E2B 2.46.0 testing showed that
 `on_timeout=kill` did not kill a manually paused sandbox. The application turn
 deadline always ends with an explicit kill, including failure and cancellation
 paths. The live test also verifies that an explicitly killed sandbox cannot be
-resumed.
+resumed. Created sandboxes are tagged with application ownership and a hard
+deadline. Failed request cleanup is retried in the background with capped
+exponential backoff, while startup and periodic scans reap overdue owned
+sandboxes in either running or paused state. The scan is metadata-filtered and
+does not touch unrelated E2B sandboxes.
 
 ## Test
 

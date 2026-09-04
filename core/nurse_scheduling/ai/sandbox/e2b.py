@@ -44,6 +44,7 @@ from e2b.sandbox.commands.command_handle import CommandExitException
 
 from ..config import AiSettings
 from .base import CommandResult, SandboxError, SandboxFileNotFoundError, SandboxLifecycleMetrics
+from .e2b_cleanup import E2BSandboxCleanupManager
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox.e2b")
 E2B_USER = "user"
@@ -125,6 +126,8 @@ class E2BSandboxFactory:
         retry_backoff_seconds: float = 0.5,
         pause_request_timeout_seconds: float = 5.0,
         control_request_timeout_seconds: float = 2.0,
+        reaper_interval_seconds: float = 30.0,
+        cleanup_manager: E2BSandboxCleanupManager | None = None,
         create_sandbox: CreateSandbox | None = None,
     ) -> None:
         if not api_key:
@@ -143,6 +146,8 @@ class E2BSandboxFactory:
             raise ValueError("pause_request_timeout_seconds must be positive")
         if control_request_timeout_seconds <= 0:
             raise ValueError("control_request_timeout_seconds must be positive")
+        if reaper_interval_seconds <= 0:
+            raise ValueError("reaper_interval_seconds must be positive")
         self._api_key = api_key
         self._template = template
         self._turn_timeout_seconds = turn_timeout_seconds
@@ -151,6 +156,12 @@ class E2BSandboxFactory:
         self._retry_backoff_seconds = retry_backoff_seconds
         self._pause_request_timeout_seconds = pause_request_timeout_seconds
         self._control_request_timeout_seconds = control_request_timeout_seconds
+        self._cleanup_manager = cleanup_manager or E2BSandboxCleanupManager(
+            api_key=api_key,
+            request_timeout_seconds=control_request_timeout_seconds,
+            retry_backoff_seconds=retry_backoff_seconds,
+            reaper_interval_seconds=reaper_interval_seconds,
+        )
         self._create_sandbox = create_sandbox or AsyncSandbox.create
 
     @classmethod
@@ -165,7 +176,16 @@ class E2BSandboxFactory:
             retry_backoff_seconds=settings.sandbox_retry_backoff_seconds,
             pause_request_timeout_seconds=settings.sandbox_pause_request_timeout_seconds,
             control_request_timeout_seconds=settings.sandbox_control_request_timeout_seconds,
+            reaper_interval_seconds=settings.sandbox_reaper_interval_seconds,
         )
+
+    async def start_cleanup(self) -> None:
+        """Start startup and periodic stale-sandbox reconciliation."""
+        await self._cleanup_manager.start()
+
+    async def stop_cleanup(self) -> None:
+        """Stop this process's cleanup worker."""
+        await self._cleanup_manager.stop()
 
     async def create(self) -> "E2BSandboxBackend":
         started = time.monotonic()
@@ -175,6 +195,7 @@ class E2BSandboxFactory:
                 timeout=math.ceil(self._turn_timeout_seconds),
                 secure=True,
                 allow_internet_access=False,
+                metadata=self._cleanup_manager.metadata_for_turn(self._turn_timeout_seconds),
                 lifecycle={
                     # Retain memory because filesystem-only snapshots cold-boot on resume.
                     "on_timeout": {"action": "pause", "keep_memory": True},
@@ -197,6 +218,7 @@ class E2BSandboxFactory:
             retry_backoff_seconds=self._retry_backoff_seconds,
             pause_request_timeout_seconds=self._pause_request_timeout_seconds,
             control_request_timeout_seconds=self._control_request_timeout_seconds,
+            defer_cleanup=self._cleanup_manager.defer,
         )
         logger.info(
             "sandbox created sandbox_id=%s provider=e2b latency_seconds=%.3f",
@@ -223,6 +245,7 @@ class E2BSandboxFactory:
                 )
             )
         except BaseException:
+            self._cleanup_manager.defer(str(sandbox.sandbox_id))
             logger.exception(
                 "sandbox cleanup failed after creation cancellation sandbox_id=%s",
                 sandbox.sandbox_id,
@@ -246,6 +269,7 @@ class E2BSandboxBackend:
         retry_backoff_seconds: float = 0.5,
         pause_request_timeout_seconds: float = 5.0,
         control_request_timeout_seconds: float = 2.0,
+        defer_cleanup: Callable[[str], None] | None = None,
     ) -> None:
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
@@ -263,6 +287,7 @@ class E2BSandboxBackend:
         self._retry_backoff_seconds = retry_backoff_seconds
         self._pause_request_timeout_seconds = pause_request_timeout_seconds
         self._control_request_timeout_seconds = control_request_timeout_seconds
+        self._defer_cleanup = defer_cleanup
         self._state = E2BSandboxState.RUNNING
         self._close_started = False
         self._lifecycle_lock = asyncio.Lock()
@@ -397,11 +422,16 @@ class E2BSandboxBackend:
             return
         self._close_started = True
         self._cancel_pending_pause()
-        async with self._lifecycle_lock:
-            if self._state is E2BSandboxState.CLOSED:
-                return
-            if not await self._destroy_locked():
-                raise SandboxError(f"E2B could not destroy sandbox {self.sandbox_id}.")
+        try:
+            async with self._lifecycle_lock:
+                if self._state is E2BSandboxState.CLOSED:
+                    return
+                if not await self._destroy_locked():
+                    raise SandboxError(f"E2B could not destroy sandbox {self.sandbox_id}.")
+        except BaseException:
+            if self._defer_cleanup is not None:
+                self._defer_cleanup(self.sandbox_id)
+            raise
 
     @asynccontextmanager
     async def _active_operation(self) -> AsyncIterator[None]:
