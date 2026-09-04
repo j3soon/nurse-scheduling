@@ -35,6 +35,9 @@ test paths when a narrower suite is known to be sufficient.
   immediately.
 - Worker shutdown uses normal claim expiry recovery. Do not add a separate
   persisted shutdown failure unless immediate terminal state becomes required.
+- A background loop that retries a dependency on a fixed interval must wrap its
+  failures in `RepeatedFailure`, so one outage reports once and backs off rather
+  than reporting every attempt.
 - A worker that cannot persist an execution outcome must relinquish its lease.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
