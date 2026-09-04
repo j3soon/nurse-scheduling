@@ -61,7 +61,9 @@ NON_RETRYABLE_E2B_ERRORS = (
 
 
 def _is_retryable_e2b_error(error: BaseException) -> bool:
-    return isinstance(error, SandboxException) and not isinstance(error, NON_RETRYABLE_E2B_ERRORS)
+    return isinstance(error, TimeoutError) or (
+        isinstance(error, SandboxException) and not isinstance(error, NON_RETRYABLE_E2B_ERRORS)
+    )
 
 
 async def _retry_e2b_request(
@@ -102,6 +104,7 @@ class E2BSandboxState(str, Enum):
 
     RUNNING = "running"
     PAUSING = "pausing"
+    PAUSE_UNKNOWN = "pause_unknown"
     PAUSED = "paused"
     RESUMING = "resuming"
     CLOSING = "closing"
@@ -390,6 +393,7 @@ class E2BSandboxBackend:
     @asynccontextmanager
     async def _active_operation(self) -> AsyncIterator[None]:
         """Serialize one operation with pause, resume, and close transitions."""
+        self._cancel_pending_pause()
         async with self._lifecycle_lock:
             self._cancel_pending_pause_locked()
             self._ensure_open()
@@ -424,16 +428,26 @@ class E2BSandboxBackend:
                 self._state = E2BSandboxState.PAUSING
                 started = time.monotonic()
                 try:
-                    await self._request_with_retry(
-                        "pause",
-                        lambda: self._sandbox.pause(
+                    async with asyncio.timeout(self._control_request_timeout_seconds):
+                        await self._sandbox.pause(
                             keep_memory=True,
                             request_timeout=self._control_request_timeout_seconds,
-                        ),
-                    )
+                        )
                 except asyncio.CancelledError:
                     self._state = E2BSandboxState.RUNNING
                     raise
+                except TimeoutError:
+                    self._pause_transition_seconds += time.monotonic() - started
+                    # The control plane may have accepted pause even though its
+                    # response missed our deadline. Probe auto-resume before the
+                    # next operation instead of treating the sandbox as running.
+                    self._state = E2BSandboxState.PAUSE_UNKNOWN
+                    logger.warning(
+                        "sandbox pause timed out sandbox_id=%s timeout_seconds=%.3f outcome=unknown",
+                        self.sandbox_id,
+                        self._control_request_timeout_seconds,
+                    )
+                    return
                 except Exception:
                     self._state = E2BSandboxState.RUNNING
                     logger.exception("sandbox pause failed sandbox_id=%s", self.sandbox_id)
@@ -455,18 +469,23 @@ class E2BSandboxBackend:
                 self._pause_task = None
 
     async def _resume_locked(self) -> None:
-        if self._state is not E2BSandboxState.PAUSED:
+        previous_state = self._state
+        if previous_state not in {E2BSandboxState.PAUSED, E2BSandboxState.PAUSE_UNKNOWN}:
             return
         self._state = E2BSandboxState.RESUMING
         started = time.monotonic()
         try:
             # This filesystem request exercises E2B auto-resume without an explicit connect call.
+            async def resume_probe() -> bool:
+                async with asyncio.timeout(self._control_request_timeout_seconds):
+                    return await self._sandbox.files.exists(E2B_WORKSPACE, user=E2B_USER)
+
             await self._request_with_retry(
                 "resume",
-                lambda: self._sandbox.files.exists(E2B_WORKSPACE, user=E2B_USER),
+                resume_probe,
             )
         except Exception as exc:
-            self._state = E2BSandboxState.PAUSED
+            self._state = previous_state
             raise SandboxError(f"E2B could not resume sandbox {self.sandbox_id}.") from exc
 
         now = time.monotonic()
@@ -540,8 +559,7 @@ class E2BSandboxBackend:
         )
 
     def _cancel_pending_pause(self) -> None:
-        if self._state is E2BSandboxState.RUNNING:
-            self._cancel_pending_pause_locked()
+        self._cancel_pending_pause_locked()
 
     def _cancel_pending_pause_locked(self) -> None:
         task = self._pause_task

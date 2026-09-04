@@ -175,6 +175,12 @@ fresh disk-only resume trials took 5.95 to 12.62 seconds, with an 8.01-second
 median. Commands, file operations, pause/resume transitions, and close share
 one serialized lifecycle lock.
 
+Pause is optional optimization work and has an application-enforced control
+request deadline. A failed or timed-out pause is not retried. Because a timeout
+cannot prove whether E2B accepted the request, the next operation first uses
+the bounded, replay-safe auto-resume probe. A later idle pause may still be
+attempted because the control-plane failure may have been transient.
+
 The E2B creation timeout is not the hard deadline. E2B 2.46.0 testing showed
 that an `on_timeout=kill` deadline did not kill a manually paused sandbox. The
 application-level maximum agent-turn deadline and explicit kill in `finally`
@@ -260,12 +266,13 @@ visible output or tool work. The complete sandbox-turn deadline still applies
 across provider attempts and may end a turn before every retry is available.
 
 Replay-safe E2B requests also get three total attempts with exponential
-backoff. This covers file reads and replacements, pause, automatic resume, and
-sandbox destruction. Pause and destruction use a two-second request timeout so
-the cleanup deadline leaves room for retries. Retry logs include the operation,
-sandbox ID, attempt, delay, and exception type without response contents.
-Sandbox creation and Bash execution are not replayed because a failed response
-cannot prove that the original operation did not take effect.
+backoff. This covers file reads and replacements, automatic resume, and sandbox
+destruction. Auto-resume attempts also have an application-enforced control
+request deadline. Idle pause is attempted once because it is optional and a
+failed response cannot prove whether E2B accepted it. Retry logs include the
+operation, sandbox ID, attempt, delay, and exception type without response
+contents. Sandbox creation and Bash execution are not replayed because a failed
+response cannot prove that the original operation did not take effect.
 
 ## Configuration
 
@@ -285,7 +292,7 @@ cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
 | `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
 | `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
-| `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Per-attempt timeout for pause and destruction requests. |
+| `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Application deadline for idle pause and each auto-resume attempt, and the E2B request timeout for destruction. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. |
 | `AI_SESSION_TTL_SECONDS` | `3600` | Idle session lifetime. |

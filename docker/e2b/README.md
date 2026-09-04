@@ -39,6 +39,12 @@ started. Otherwise E2B auto-resumes the same sandbox on the next operation.
 Warm-memory pause is intentional. Five fresh disk-only resume trials took 5.95
 to 12.62 seconds, with an 8.01-second median.
 
+Idle pause is a best-effort cost optimization. The application stops a pause
+request after the configured control-request deadline and does not retry it. A
+timeout has an unknown remote outcome, so the next operation performs the
+bounded auto-resume probe before doing work. A later idle pause may still be
+attempted because the control-plane failure may have been transient.
+
 The timeout is not the hard deadline. E2B 2.46.0 testing showed that
 `on_timeout=kill` did not kill a manually paused sandbox. The application turn
 deadline always ends with an explicit kill, including failure and cancellation
