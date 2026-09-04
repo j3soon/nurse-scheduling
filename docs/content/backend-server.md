@@ -308,7 +308,10 @@ own Sentry issue.
 
 Repeats of one signal from one address are counted within a fixed window, and a
 signal that reaches `SUSPICION_ESCALATE_COUNT` is reported as an error rather
-than a warning, carrying its `occurrences` count. Further repeats within that
+than a warning, carrying its `occurrences` count. A signal naming a job also
+carries `distinct_job_ids`, and escalates only when that count reaches the
+threshold, so a client retrying one job stays a warning however often it repeats
+while a caller working through identifiers does not. Further repeats within that
 window keep counting but are not reported, so one address cannot spend the
 project's event quota. Because the window is fixed rather than sliding, repeats
 spread across a boundary can stay below the threshold. Addresses are counted as a
@@ -320,7 +323,8 @@ than losing it.
 
 A stale browser tab can produce `job_id_probe` after its job is deleted or
 expires, and a mistyped token produces `rejected_bearer_token`, so both are
-reported as warnings rather than errors. Changing `API_AUTH_TOKEN` invalidates
+reported as warnings rather than errors. Neither reaches an error by repeating,
+because a stale tab names one job and a mistyped token names none. Changing `API_AUTH_TOKEN` invalidates
 every stream token already handed out, so expect `forged_stream_token` from real
 clients until the longest outstanding one expires.
 

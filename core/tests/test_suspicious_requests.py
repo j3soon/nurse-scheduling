@@ -334,11 +334,12 @@ def test_a_connection_address_is_recorded_on_every_request(captured):
 # Repetition: one request is a mistake, the same one repeated is deliberate.
 
 
-def test_repeated_probes_from_one_address_escalate_to_an_error(captured):
+def test_probing_distinct_identifiers_escalates_to_an_error(captured):
+    """Working through identifiers is enumeration, whatever each individual miss looks like."""
     client = _client(suspicion_escalate_count=3)
 
-    for _ in range(3):
-        client.get(f"/optimize/{ISSUED_JOB_ID}")
+    for index in range(3):
+        client.get(f"/optimize/job_{index:032x}")
 
     assert _signals(captured) == [
         ("job_id_probe", "warning"),
@@ -347,6 +348,19 @@ def test_repeated_probes_from_one_address_escalate_to_an_error(captured):
     ]
     contexts = [event["scope"].contexts["suspicious_request"] for event in captured.events]
     assert [context["occurrences"] for context in contexts] == [1, 2, 3]
+    assert [context["distinct_job_ids"] for context in contexts] == [1, 2, 3]
+
+
+def test_retrying_one_identifier_never_escalates(captured):
+    """A tab polling a deleted job repeats without ever working through anything."""
+    client = _client(suspicion_escalate_count=3)
+
+    for _ in range(3):
+        client.get(f"/optimize/{ISSUED_JOB_ID}")
+
+    assert {level for _, level in _signals(captured)} == {"warning"}
+    contexts = [event["scope"].contexts["suspicious_request"] for event in captured.events]
+    assert [context["distinct_job_ids"] for context in contexts] == [1, 1, 1]
 
 
 def test_probes_from_different_addresses_do_not_escalate_each_other(captured):
@@ -428,8 +442,8 @@ def test_one_address_cannot_spend_the_event_quota(captured):
     """Repeats past the escalation point keep counting but stop being reported."""
     client = _client(suspicion_escalate_count=3)
 
-    for _ in range(8):
-        client.get(f"/optimize/{ISSUED_JOB_ID}")
+    for index in range(8):
+        client.get(f"/optimize/job_{index:032x}")
 
     assert _signals(captured) == [
         ("job_id_probe", "warning"),

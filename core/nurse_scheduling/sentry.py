@@ -32,6 +32,7 @@ from .server.auth import describe_stream_token, extract_bearer_token
 
 if TYPE_CHECKING:
     from .server.jobs.models import Job
+    from .server.suspicion import SuspicionCount
 
 sentry_logger = logging.getLogger("nurse_scheduling.sentry")
 
@@ -194,15 +195,19 @@ def _describe_job_id(request: Request) -> str | None:
     return ISSUED_JOB_ID_SHAPE if JOB_ID_SHAPE.match(job_id) else "unissued_shape"
 
 
-def _record_suspicion(request: Request, signal_name: str) -> int:
-    """Count this signal's repeats from one address, or `0` when they are not counted."""
+def _record_suspicion(request: Request, signal_name: str) -> "SuspicionCount":
+    """Count this signal's repeats from one address, and the subjects they named."""
+    from .server.suspicion import SuspicionCount
+
     tracker = getattr(request.app.state, "suspicion_tracker", None)
     if tracker is None:
-        return 0
+        return SuspicionCount()
     address = _connection_address(request)
     if address is None:
-        return 0
-    return tracker.record(signal_name, address)
+        return SuspicionCount()
+    # A job route names the job it asked for, which separates one stuck client from a
+    # caller working through identifiers.
+    return tracker.record(signal_name, address, request.path_params.get("job_id"))
 
 
 def _escalate_count(request: Request) -> int:
@@ -279,13 +284,17 @@ def report_suspicious_request(
     # Imported here so processes that only report errors do not load the routes.
     from .server.api.optimize import CLIENT_ID_COOKIE_NAME
 
-    occurrences = _record_suspicion(request, signal_name)
+    counted = _record_suspicion(request, signal_name)
+    occurrences = counted.occurrences
     escalate_count = _escalate_count(request)
     if occurrences and escalate_count:
         if occurrences > escalate_count:
             # The escalated report already names the address, and its counter keeps rising.
             return
-        if occurrences == escalate_count:
+        # Escalate on how far a caller spread, not how often it repeated, so a client stuck
+        # on one job never reaches an error however many times it retries.
+        spread = counted.distinct_subjects or occurrences
+        if spread >= escalate_count and occurrences == escalate_count:
             # Repetition from one address is deliberate in a way one request is not.
             level = "error"
 
@@ -300,6 +309,7 @@ def report_suspicious_request(
             {
                 "signal": signal_name,
                 "occurrences": occurrences or None,
+                "distinct_job_ids": counted.distinct_subjects or None,
                 "job_id": _describe_job_id(request),
                 # Named without "token", which Sentry scrubs from a field name.
                 "stream_state": describe_stream_token(request.query_params.get("token")),

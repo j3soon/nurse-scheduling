@@ -22,6 +22,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -31,6 +32,8 @@ KEY_PREFIX = "nurse_scheduling:suspicion:v0"
 """Namespace and schema version prepended to every counter key."""
 MAX_TRACKED_COUNTERS = 4096
 """Counters one process retains without Redis, oldest discarded first."""
+MAX_TRACKED_SUBJECTS = 256
+"""Distinct subjects one counter retains without Redis, which is past every threshold."""
 DIGEST_LENGTH = 16
 """Characters of the salted address digest kept in a counter key."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 0.25
@@ -48,17 +51,28 @@ def address_digest(salt: str, address: str) -> str:
     return hashlib.sha256(f"{salt}:{address}".encode()).hexdigest()[:DIGEST_LENGTH]
 
 
+@dataclass(frozen=True)
+class SuspicionCount:
+    """What one address has done with one signal inside the current window."""
+
+    occurrences: int = 0
+    """Requests carrying this signal, or `0` when the total is unknown."""
+    distinct_subjects: int = 0
+    """Distinct subjects named, or `0` when the signal names none.
+
+    A signal repeated against one subject is a client stuck on it, while the same count
+    spread across many is a caller working through them. Only the second is deliberate.
+    """
+
+
 class SuspicionTracker(Protocol):
     """Counts repeats of one signal from one address within a fixed window."""
 
     escalate_count: int
     """Occurrences within a window that make a signal worth reporting as an error."""
 
-    def record(self, signal: str, address: str) -> int:
-        """Record one occurrence and return the total for its current window.
-
-        Returns `0` when the total is unknown, which never escalates a report.
-        """
+    def record(self, signal: str, address: str, subject: str | None = None) -> SuspicionCount:
+        """Record one occurrence and return what this address has done in this window."""
 
 
 class MemorySuspicionTracker:
@@ -82,17 +96,27 @@ class MemorySuspicionTracker:
         self._window_seconds = window_seconds
         self._clock = clock
         self._counters: OrderedDict[tuple[str, str, int], int] = OrderedDict()
+        self._subjects: OrderedDict[tuple[str, str, int], set[str]] = OrderedDict()
         self._lock = threading.Lock()
 
-    def record(self, signal: str, address: str) -> int:
-        """Record one occurrence and return the total for its current window."""
+    def record(self, signal: str, address: str, subject: str | None = None) -> SuspicionCount:
+        """Record one occurrence and return what this address has done in this window."""
         key = (signal, address_digest(self._salt, address), int(self._clock() // self._window_seconds))
         with self._lock:
             total = self._counters.pop(key, 0) + 1
             self._counters[key] = total
             while len(self._counters) > MAX_TRACKED_COUNTERS:
                 self._counters.popitem(last=False)
-        return total
+            distinct = 0
+            if subject is not None:
+                seen = self._subjects.pop(key, set())
+                if len(seen) < MAX_TRACKED_SUBJECTS:
+                    seen.add(address_digest(self._salt, subject))
+                self._subjects[key] = seen
+                distinct = len(seen)
+                while len(self._subjects) > MAX_TRACKED_COUNTERS:
+                    self._subjects.popitem(last=False)
+        return SuspicionCount(occurrences=total, distinct_subjects=distinct)
 
 
 class RedisSuspicionTracker:
@@ -114,23 +138,35 @@ class RedisSuspicionTracker:
         self._window_seconds = window_seconds
         self._clock = clock
 
-    def record(self, signal: str, address: str) -> int:
-        """Record one occurrence and return the total for its current window.
+    def record(self, signal: str, address: str, subject: str | None = None) -> SuspicionCount:
+        """Record one occurrence and return what this address has done in this window.
 
-        Returns `0` when Redis is unavailable. Counting is advisory, so a failure must
-        neither change the response nor lose the report it would have escalated.
+        Returns an empty count when Redis is unavailable. Counting is advisory, so a failure
+        must neither change the response nor lose the report it would have escalated.
+
+        Distinct subjects are counted approximately, which is exact at the small counts a
+        threshold compares against and only loses precision far above one.
         """
         window = int(self._clock() // self._window_seconds)
         key = f"{KEY_PREFIX}:{signal}:{address_digest(self._salt, address)}:{window}"
+        ttl_seconds = self._window_seconds * 2
         try:
             with self._redis.pipeline(transaction=False) as pipeline:
                 pipeline.incr(key)
                 # Outlive the window so a counter read late in it still sees the total.
-                pipeline.expire(key, self._window_seconds * 2)
-                total, _ = pipeline.execute()
-            return int(total)
+                pipeline.expire(key, ttl_seconds)
+                if subject is not None:
+                    # A fixed-size sketch, so a caller naming endless subjects cannot grow it.
+                    pipeline.pfadd(f"{key}:subjects", address_digest(self._salt, subject))
+                    pipeline.expire(f"{key}:subjects", ttl_seconds)
+                    pipeline.pfcount(f"{key}:subjects")
+                results = pipeline.execute()
+            return SuspicionCount(
+                occurrences=int(results[0]),
+                distinct_subjects=int(results[-1]) if subject is not None else 0,
+            )
         except Exception:  # noqa: BLE001
-            return 0
+            return SuspicionCount()
 
 
 def create_suspicion_tracker(settings: "ServerSettings", *, salt: str) -> SuspicionTracker | None:
