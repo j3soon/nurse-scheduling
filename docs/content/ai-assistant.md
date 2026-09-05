@@ -153,6 +153,11 @@ proposed schedule, timing breakdown, and each criterion with its outcome. Pass `
 choose the directory, which must not already exist, or set
 `AI_EVAL_ARTIFACT_ROOT` to move the root.
 
+Each case also records tool batches, calls per model turn, calls per batch, and
+the number of batches containing multiple calls. The summary lists batch counts
+beside sandbox pause metrics so pause behavior can be checked at model-turn
+boundaries instead of inferred from the total tool count.
+
 Timing fields use wall-clock seconds. `end_to_end_seconds` covers the agent run.
 `llm_inference_seconds` sums only time awaiting provider stream events.
 `llm_turn_seconds` records that wait separately for each logical model turn.

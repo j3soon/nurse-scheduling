@@ -21,6 +21,7 @@
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -28,6 +29,8 @@ import pytest
 from e2b.exceptions import FileNotFoundException, SandboxException, TimeoutException
 from e2b.sandbox.commands.command_handle import CommandExitException
 
+from nurse_scheduling.ai.agent import AgentToolOutcome, AgentToolUse, run_tool_agent
+from nurse_scheduling.ai.provider import ChatMessage, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, managed_sandbox
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
 from nurse_scheduling.ai.sandbox.e2b import (
@@ -481,6 +484,56 @@ def test_activity_batch_defers_pause_until_all_operations_finish():
         return sandbox, e2b_backend
 
     sandbox, e2b_backend = asyncio.run(exercise())
+    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=5)
+    assert e2b_backend.lifecycle_metrics.pause_count == 1
+
+
+def test_agent_multi_tool_batch_pauses_once_after_both_calls():
+    class TwoCallProvider:
+        def __init__(self) -> None:
+            self.turns = 0
+
+        async def stream_events(
+            self,
+            _messages: Sequence[ChatMessage],
+            _tools=None,
+        ) -> AsyncIterator[ToolCallRequest | TextDelta]:
+            self.turns += 1
+            if self.turns == 1:
+                yield ToolCallRequest(
+                    (
+                        ToolCall("call-1", "read", '{"path":"schedule.yaml"}'),
+                        ToolCall("call-2", "read", '{"path":"schedule.yaml"}'),
+                    )
+                )
+            else:
+                yield TextDelta("Done.")
+
+    async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
+        sandbox = FakeE2BSandbox()
+        e2b_backend = make_backend(sandbox)
+
+        async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
+            await e2b_backend.read_file("/workspace/schedule.yaml")
+            return AgentToolOutcome("schedule", True)
+
+        async for event in run_tool_agent(
+            TwoCallProvider(),
+            [{"role": "user", "content": "Read twice."}],
+            [],
+            execute,
+            e2b_backend.activity_batch,
+        ):
+            if isinstance(event, AgentToolUse):
+                await asyncio.sleep(0.01)
+                sandbox.pause.assert_not_awaited()
+
+        await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
+        await e2b_backend.close()
+        return sandbox, e2b_backend
+
+    sandbox, e2b_backend = asyncio.run(exercise())
+    assert sandbox.files.read.await_count == 2
     sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=5)
     assert e2b_backend.lifecycle_metrics.pause_count == 1
 

@@ -29,6 +29,7 @@ import pytest
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderAttempt,
@@ -159,6 +160,31 @@ def test_provider_retries_are_reported_separately_from_logical_turns():
         "retries": 1,
         "retried_turns": 1,
         "attempts_per_turn": [2],
+    }
+
+
+def test_multi_tool_batches_are_recorded_per_model_turn():
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (
+                    ToolCall("call_0", READ_TOOL, '{"path":"schedule.yaml"}'),
+                    ToolCall("call_1", READ_TOOL, '{"path":"schedule.yaml"}'),
+                )
+            )
+        ],
+        [TextDelta("There are 87 people.")],
+    )
+
+    run = _run("ask-people-count", provider)
+
+    assert run.tool_calls_per_turn == [2, 0]
+    assert run.as_record()["tool_batches"] == {
+        "count": 1,
+        "multi_call_batches": 1,
+        "max_calls_per_batch": 2,
+        "calls_per_batch": [2],
+        "calls_per_turn": [2, 0],
     }
 
 
@@ -422,6 +448,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "error",
         "token_usage",
         "provider_requests",
+        "tool_batches",
     }
     assert record["timing"]["end_to_end_seconds"] == pytest.approx(run.seconds, abs=0.001)
     assert record["timing"]["llm_inference_seconds"] == pytest.approx(run.llm_inference_seconds, abs=0.001)
@@ -492,6 +519,7 @@ def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
     assert "mutually exclusive lifetime components" in text
     assert "| a | 10.000 | 0.400 | 1.000 | 0.300 | 3.000 | 5.000 | 0.100 | 0.200 |" in text
     assert "| a | 2 | 1 | 2 | 0.100 | 0.060 |" in text
+    assert "| a | 0 | 0 | 0 | none |" in text
 
 
 def test_a_report_never_overwrites_an_earlier_one(tmp_path: Path):

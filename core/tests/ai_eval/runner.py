@@ -40,6 +40,7 @@ from nurse_scheduling.ai.provider import (
     ProviderAttempt,
     ProviderError,
     TokenUsage,
+    ToolCallRequest,
 )
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
@@ -86,6 +87,7 @@ class CaseRun:
     sandbox_metrics: SandboxTurnMetrics | None = None
     provider_attempts: int = 0
     provider_attempts_per_turn: list[int] = field(default_factory=list)
+    tool_calls_per_turn: list[int] = field(default_factory=list)
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
@@ -113,6 +115,7 @@ class CaseRun:
                 self.provider_attempts,
                 self.provider_attempts_per_turn,
             ),
+            "tool_batches": _tool_batch_record(self.tool_calls_per_turn),
         }
 
     def as_trajectory(self) -> dict[str, Any]:
@@ -132,6 +135,7 @@ class _CountingProvider:
         self.inference_turn_seconds: list[float] = []
         self.attempts = 0
         self.attempts_per_turn: list[int] = []
+        self.tool_calls_per_turn: list[int] = []
 
     async def stream_events(
         self,
@@ -142,6 +146,7 @@ class _CountingProvider:
         stream = self._provider.stream_events(messages, tools).__aiter__()
         turn_seconds = 0.0
         turn_attempts = 0
+        turn_tool_calls = 0
         try:
             while True:
                 started = time.perf_counter()
@@ -160,12 +165,15 @@ class _CountingProvider:
                 if isinstance(event, ProviderAttempt):
                     turn_attempts += 1
                     continue
+                if isinstance(event, ToolCallRequest):
+                    turn_tool_calls += len(event.calls)
                 yield event
         finally:
             if turn_attempts == 0:
                 turn_attempts = 1
             self.attempts += turn_attempts
             self.attempts_per_turn.append(turn_attempts)
+            self.tool_calls_per_turn.append(turn_tool_calls)
             self.inference_turn_seconds.append(turn_seconds)
             close = getattr(stream, "aclose", None)
             if close is not None:
@@ -258,6 +266,7 @@ async def run_case(
             sandbox_metrics=sandbox_metrics,
             provider_attempts=counting.attempts,
             provider_attempts_per_turn=counting.attempts_per_turn,
+            tool_calls_per_turn=counting.tool_calls_per_turn,
         )
 
     elapsed = time.perf_counter() - started
@@ -284,6 +293,7 @@ async def run_case(
         sandbox_metrics=sandbox_metrics,
         provider_attempts=counting.attempts,
         provider_attempts_per_turn=counting.attempts_per_turn,
+        tool_calls_per_turn=counting.tool_calls_per_turn,
     )
 
 
@@ -355,6 +365,18 @@ def _provider_request_record(turns: int, attempts: int, attempts_per_turn: Seque
     }
 
 
+def _tool_batch_record(tool_calls_per_turn: Sequence[int]) -> dict[str, Any]:
+    """Describe the model turns that requested one or more tools."""
+    calls_per_batch = [count for count in tool_calls_per_turn if count > 0]
+    return {
+        "count": len(calls_per_batch),
+        "multi_call_batches": sum(count > 1 for count in calls_per_batch),
+        "max_calls_per_batch": max(calls_per_batch, default=0),
+        "calls_per_batch": calls_per_batch,
+        "calls_per_turn": list(tool_calls_per_turn),
+    }
+
+
 def _timing_record(
     end_to_end_seconds: float,
     llm_inference_seconds: float,
@@ -394,7 +416,8 @@ def summarize(runs: Sequence[CaseRun]) -> str:
         (
             f"{'category':<16}{'pass':>8}{'e2e s':>9}{'LLM s':>9}{'lifetime s':>11}"
             f"{'execute s':>10}{'warm wait':>10}{'suspend s':>10}{'resume s':>10}"
-            f"{'pauses':>8}{'cancels':>9}{'turns':>8}{'attempts':>10}{'retries':>9}{'tools':>8}"
+            f"{'pauses':>8}{'cancels':>9}{'turns':>8}{'batches':>9}{'multi':>7}"
+            f"{'attempts':>10}{'retries':>9}{'tools':>8}"
         )
     ]
     for category in sorted({run.category for run in runs}):
@@ -411,6 +434,8 @@ def summarize(runs: Sequence[CaseRun]) -> str:
             f"{_median([float(run.sandbox_metrics.pause_count) for run in group if run.sandbox_metrics]):>8.1f}"
             f"{_median([float(run.sandbox_metrics.pause_cancel_count) for run in group if run.sandbox_metrics]):>9.1f}"
             f"{_median([float(run.turns) for run in group]):>8.1f}"
+            f"{_median([float(sum(count > 0 for count in run.tool_calls_per_turn)) for run in group]):>9.1f}"
+            f"{_median([float(sum(count > 1 for count in run.tool_calls_per_turn)) for run in group]):>7.1f}"
             f"{_median([float(run.provider_attempts or run.turns) for run in group]):>10.1f}"
             f"{_median([float(max(0, (run.provider_attempts or run.turns) - run.turns)) for run in group]):>9.1f}"
             f"{_median([float(len(run.tools)) for run in group]):>8.1f}"
@@ -429,6 +454,8 @@ def summarize(runs: Sequence[CaseRun]) -> str:
         f"{sum(metrics.pause_count for metrics in sandbox_runs):>8}"
         f"{sum(metrics.pause_cancel_count for metrics in sandbox_runs):>9}"
         f"{sum(run.turns for run in runs):>8}"
+        f"{sum(count > 0 for run in runs for count in run.tool_calls_per_turn):>9}"
+        f"{sum(count > 1 for run in runs for count in run.tool_calls_per_turn):>7}"
         f"{sum(run.provider_attempts or run.turns for run in runs):>10}"
         f"{sum(max(0, (run.provider_attempts or run.turns) - run.turns) for run in runs):>9}"
         f"{sum(len(run.tools) for run in runs):>8}"
@@ -477,6 +504,24 @@ def sandbox_metrics_markdown(runs: Sequence[CaseRun]) -> str:
         lines.append(
             f"| {run.case_id} | {metrics.pause_count} | {metrics.pause_cancel_count} | {metrics.resume_count} "
             f"| {metrics.resume_wait_seconds:.3f} | {metrics.max_resume_wait_seconds:.3f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Tool batches by case",
+            "",
+            "Calls per batch excludes final-answer turns that requested no tools.",
+            "",
+            "| Case | Batches | Multi-call batches | Max calls | Calls per batch |",
+            "| --- | ---: | ---: | ---: | --- |",
+        ]
+    )
+    for run in runs:
+        batch = _tool_batch_record(run.tool_calls_per_turn)
+        calls = ", ".join(str(count) for count in batch["calls_per_batch"]) or "none"
+        lines.append(
+            f"| {run.case_id} | {batch['count']} | {batch['multi_call_batches']} "
+            f"| {batch['max_calls_per_batch']} | {calls} |"
         )
     return "\n".join(lines)
 
