@@ -1,0 +1,17 @@
+{
+  "id": "pref-add-two-student-requirements",
+  "fixture": "ward87",
+  "question": "On FREEDAY dates require exactly 1 student on E~ and exactly 2 students on N~. Add two separate staffing requirements.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {"type": "shift type requirement", "shiftType": ["E~"], "requiredNumPeople": 1, "qualifiedPeople": ["Students"], "date": ["FREEDAY"]},
+        {"type": "shift type requirement", "shiftType": ["N~"], "requiredNumPeople": 2, "qualifiedPeople": ["Students"], "date": ["FREEDAY"]}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "multi-object", "staffing"]
+}
