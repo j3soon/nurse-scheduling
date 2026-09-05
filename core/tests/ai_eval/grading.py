@@ -53,6 +53,18 @@ class Assertion:
 
 
 @dataclass(frozen=True)
+class ExpectedDiff:
+    """The complete semantic change expected within one list-valued path."""
+
+    path: str
+    added: tuple[Any, ...] = ()
+    removed: tuple[Any, ...] = ()
+
+    def describe(self) -> str:
+        return f"{self.path} has the expected semantic diff"
+
+
+@dataclass(frozen=True)
 class ToolUsageExpectation:
     """Optional trajectory checks for cases designed to exercise model tools."""
 
@@ -75,6 +87,7 @@ class EvalCase:
     tags: tuple[str, ...] = ()
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
+    expected_diff: tuple[ExpectedDiff, ...] = ()
     changes: tuple[str, ...] = ()
     answer_contains: tuple[str | tuple[str, ...], ...] = ()
     tool_usage: ToolUsageExpectation | None = None
@@ -174,12 +187,13 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     if not isinstance(raw_tags, list) or not all(isinstance(tag, str) and tag for tag in raw_tags):
         raise EvalCaseError(f"{source} `tags` must be a list of strings.")
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
-    if entry["expect_proposal"] and not assertions:
+    expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
+    if entry["expect_proposal"] and not assertions and not expected_diff:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
         raise EvalCaseError(f"{source} expects a proposal but names no part it may change.")
-    if not entry["expect_proposal"] and assertions:
-        raise EvalCaseError(f"{source} expects no proposal, so its assertions can never run.")
+    if not entry["expect_proposal"] and (assertions or expected_diff):
+        raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
         id=str(entry["id"]),
         fixture=str(entry["fixture"]),
@@ -190,6 +204,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         tags=tuple(raw_tags),
         category=category,
         assertions=assertions,
+        expected_diff=expected_diff,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -247,6 +262,22 @@ def _build_assertion(raw: dict[str, Any], source: str) -> Assertion:
     return Assertion(path=str(raw["path"]), kind=kinds[0], value=raw[kinds[0]])
 
 
+def _build_expected_diff(raw: object, source: str) -> ExpectedDiff:
+    """Validate one exact semantic collection diff."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("path"), str) or not raw["path"]:
+        raise EvalCaseError(f"{source} has an expected diff without a path.")
+    unknown = set(raw) - {"path", "added", "removed"}
+    if unknown:
+        raise EvalCaseError(f"{source} expected diff has unknown fields: {', '.join(sorted(unknown))}.")
+    added = raw.get("added", [])
+    removed = raw.get("removed", [])
+    if not isinstance(added, list) or not isinstance(removed, list):
+        raise EvalCaseError(f"{source} expected diff `added` and `removed` must be lists.")
+    if not added and not removed:
+        raise EvalCaseError(f"{source} expected diff must add or remove something.")
+    return ExpectedDiff(path=raw["path"], added=tuple(added), removed=tuple(removed))
+
+
 def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None = None) -> CaseResult:
     """Apply every criterion of one case to what the run produced."""
     checks: list[CheckResult] = []
@@ -271,11 +302,39 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
     )
     if case.expect_proposal and proposed:
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
+        checks.extend(_check_expected_diff(outcome, expected) for expected in case.expected_diff)
         checks.append(_check_nothing_else_changed(outcome, case.changes))
     checks.extend(_check_answer(outcome.answer, expected, computed or {}) for expected in case.answer_contains)
     if case.tool_usage is not None:
         checks.extend(_check_tool_usage(outcome.activity, case.tool_usage))
     return CaseResult(case_id=case.id, checks=tuple(checks))
+
+
+def _check_expected_diff(outcome: RunOutcome, expected: ExpectedDiff) -> CheckResult:
+    """Compare the complete multiset delta at one list-valued schedule path."""
+    try:
+        before = resolve(outcome.initial, expected.path)
+        after = resolve(outcome.proposed, expected.path)
+    except EvalCaseError as error:
+        return CheckResult(expected.describe(), False, str(error))
+    if len(before) != 1 or not isinstance(before[0], list) or len(after) != 1 or not isinstance(after[0], list):
+        return CheckResult(expected.describe(), False, "path must resolve to one list before and after")
+    before_keys = Counter(_key(item) for item in before[0])
+    after_keys = Counter(_key(item) for item in after[0])
+    actual_added = after_keys - before_keys
+    actual_removed = before_keys - after_keys
+    wanted_added = Counter(_key(item) for item in expected.added)
+    wanted_removed = Counter(_key(item) for item in expected.removed)
+    passed = actual_added == wanted_added and actual_removed == wanted_removed
+    if passed:
+        return CheckResult(expected.describe(), True)
+    detail = f"added {_counter_values(actual_added)!r}, removed {_counter_values(actual_removed)!r}"
+    return CheckResult(expected.describe(), False, detail)
+
+
+def _counter_values(values: Counter[str]) -> list[Any]:
+    """Decode semantic keys for readable failure output."""
+    return [json.loads(value) for value in values.elements()]
 
 
 def _check_tool_usage(
@@ -529,7 +588,9 @@ def covered_paths(case: EvalCase) -> set[str]:
     Deriving coverage keeps it honest. A hand-written label drifts from the
     assertions beside it and a typo silently covers nothing.
     """
-    sources = [assertion.path for assertion in case.assertions] + list(case.changes)
+    sources = [assertion.path for assertion in case.assertions]
+    sources.extend(expected.path for expected in case.expected_diff)
+    sources.extend(case.changes)
     return {_generalize(path) for path in sources if path}
 
 

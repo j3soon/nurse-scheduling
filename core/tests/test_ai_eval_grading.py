@@ -156,6 +156,37 @@ def test_added_catches_an_extra_entry_that_a_size_would_miss(tmp_path: Path):
     assert "Bob" in result.failures()[0].detail
 
 
+def test_expected_diff_compares_the_complete_collection_delta(tmp_path: Path):
+    added = {"id": "P3", "description": "Float nurse"}
+    changed = copy.deepcopy(SCHEDULE)
+    changed["people"]["items"].append(added)
+    case = _case(
+        expected_diff=[{"path": "people.items", "added": [added]}],
+        changes=["people.items"],
+    )
+    loaded = load_cases(_write(tmp_path, case))[0]
+
+    assert grade(loaded, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+    changed["people"]["items"].append({"id": "P4", "description": ""})
+    result = grade(loaded, RunOutcome(proposed=changed, initial=SCHEDULE))
+    assert not result.passed
+    assert "P4" in result.failures()[0].detail
+
+
+def test_expected_diff_supports_replacing_a_complete_object(tmp_path: Path):
+    before = SCHEDULE["people"]["items"][0]
+    after = {**before, "description": "Lead nurse"}
+    changed = copy.deepcopy(SCHEDULE)
+    changed["people"]["items"][0] = after
+    case = _case(
+        expected_diff=[{"path": "people.items", "removed": [before], "added": [after]}],
+        changes=["people.items"],
+    )
+
+    assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
 def test_count_reads_list_length_or_match_count(tmp_path: Path):
     case = _case(**{"assert": [{"path": "people.items", "count": 2}], "changes": ["people"]})
     other = _case(**{"assert": [{"path": "people.items[?id=P1]", "count": 1}], "changes": ["people"]})
@@ -412,6 +443,9 @@ def test_every_dataset_path_and_placeholder_resolves_against_its_fixture():
         values = computed_values(schedule)
         for assertion in case.assertions:
             resolve(schedule, assertion.path)
+        for expected_diff in case.expected_diff:
+            found = resolve(schedule, expected_diff.path)
+            assert len(found) == 1 and isinstance(found[0], list), f"{case.id} diff path must select one list"
         for changed in case.changes:
             assert resolve(schedule, changed) or changed == "export", f"{case.id} may change a missing part {changed}"
         for expected in case.answer_contains:

@@ -3,18 +3,15 @@
   "fixture": "ward87",
   "question": "Change the description of shift type A to 'Administrative duty'.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "shiftTypes.items[?id=A].description",
-      "equals": "Administrative duty"
-    },
-    {
-      "path": "shiftTypes.items[].id",
-      "added": []
-    },
-    {
-      "path": "shiftTypes.items[].id",
-      "removed": []
+      "path": "shiftTypes.items",
+      "removed": [
+        {"id": "A", "description": "ADM"}
+      ],
+      "added": [
+        {"id": "A", "description": "Administrative duty"}
+      ]
     }
   ],
   "changes": [

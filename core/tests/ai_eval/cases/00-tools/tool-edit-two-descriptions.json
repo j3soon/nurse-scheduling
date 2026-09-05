@@ -3,22 +3,17 @@
   "fixture": "ward87",
   "question": "Set P1's description to 'Lead nurse' and P10's description to 'Float nurse'. Use one edit call containing both precise replacements and preserve everything else.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "people.items[?id=P1].description",
-      "equals": "Lead nurse"
-    },
-    {
-      "path": "people.items[?id=P10].description",
-      "equals": "Float nurse"
-    },
-    {
-      "path": "people.items[].id",
-      "added": []
-    },
-    {
-      "path": "people.items[].id",
-      "removed": []
+      "path": "people.items",
+      "removed": [
+        {"id": "P1", "description": "", "history": ["OFF"]},
+        {"id": "P10", "description": "", "history": ["OFF"]}
+      ],
+      "added": [
+        {"id": "P1", "description": "Lead nurse", "history": ["OFF"]},
+        {"id": "P10", "description": "Float nurse", "history": ["OFF"]}
+      ]
     }
   ],
   "changes": [

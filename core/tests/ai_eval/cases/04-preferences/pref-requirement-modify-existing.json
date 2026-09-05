@@ -3,13 +3,16 @@
   "fixture": "ward87",
   "question": "On WORKDAY dates, keep the D shift minimum at 13 people but change its preferred staffing from 14 to 15. Preserve the existing qualified people, weight, and description.",
   "expect_proposal": true,
-  "assert": [
-    {"path": "preferences[?type=shift type requirement][?shiftType=D][?date=WORKDAY]", "count": 1},
-    {"path": "preferences[?type=shift type requirement][?shiftType=D][?date=WORKDAY].requiredNumPeople", "equals": 13},
-    {"path": "preferences[?type=shift type requirement][?shiftType=D][?date=WORKDAY].preferredNumPeople", "equals": 15},
-    {"path": "preferences[?type=shift type requirement][?shiftType=D][?date=WORKDAY].qualifiedPeople", "equals": ["All Nurses w/o Students"]},
-    {"path": "preferences[?type=shift type requirement][?shiftType=D][?date=WORKDAY].weight", "equals": -1000000000000},
-    {"path": "preferences", "delta": 0}
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {"type": "shift type requirement", "description": "", "shiftType": ["D"], "requiredNumPeople": 13, "qualifiedPeople": ["All Nurses w/o Students"], "preferredNumPeople": 14, "date": ["WORKDAY"], "weight": -1000000000000}
+      ],
+      "added": [
+        {"type": "shift type requirement", "description": "", "shiftType": ["D"], "requiredNumPeople": 13, "qualifiedPeople": ["All Nurses w/o Students"], "preferredNumPeople": 15, "date": ["WORKDAY"], "weight": -1000000000000}
+      ]
+    }
   ],
   "changes": ["preferences"],
   "tags": ["difficult", "tuning", "preference-update"],
