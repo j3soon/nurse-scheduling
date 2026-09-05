@@ -321,6 +321,52 @@ def test_intermediate_trusted_validation_lets_the_model_repair_a_bad_edit():
     assert factory.created[0].closed
 
 
+def test_a_deleted_working_copy_is_reported_so_the_model_can_restore_it():
+    def edit(command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        if command == "delete":
+            del backend.files[WORKSPACE_SCHEDULE]
+        else:
+            backend.files[WORKSPACE_SCHEDULE] = (
+                schedule_yaml()
+                .replace(
+                    "  - id: P1\n    description: ''",
+                    "  - id: P1\n    description: Head",
+                    1,
+                )
+                .encode()
+            )
+        return CommandResult("", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=edit))
+    provider = ScriptedProvider(
+        _run_call("delete"),
+        _run_call("restore"),
+        [TextDelta("I restored the working copy.")],
+    )
+
+    events = _collect(provider, factory)
+
+    tools = [event for event in events if isinstance(event, AgentToolUse)]
+    assert not tools[0].ok
+    assert f"{WORKSPACE_SCHEDULE} no longer exists" in tools[0].result
+    assert tools[1].ok
+    assert any(isinstance(event, AgentProposal) for event in events)
+    assert factory.created[0].closed
+
+
+def test_a_turn_that_ends_without_the_working_copy_fails_candidate_validation():
+    def delete(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        del backend.files[WORKSPACE_SCHEDULE]
+        return CommandResult("", "", 0)
+
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=delete))
+
+    with pytest.raises(SandboxCandidateError, match="no longer exists"):
+        _collect(ScriptedProvider(_run_call("delete"), [TextDelta("Done.")]), factory)
+
+    assert factory.created[0].closed
+
+
 def test_cancelling_the_model_turn_closes_the_sandbox():
     async def exercise() -> FakeSandboxBackend:
         entered = asyncio.Event()

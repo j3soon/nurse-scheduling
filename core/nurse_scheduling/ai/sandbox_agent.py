@@ -35,6 +35,7 @@ from .sandbox import (
     SandboxBackend,
     SandboxError,
     SandboxFactory,
+    SandboxFileNotFoundError,
     SandboxLifecycleMetrics,
     managed_sandbox,
 )
@@ -286,7 +287,12 @@ async def hydrate_sandbox(sandbox: SandboxBackend, schedule_yaml: str) -> None:
 
 async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> str:
     started = time.monotonic()
-    candidate = await sandbox.read_file(WORKSPACE_SCHEDULE)
+    try:
+        candidate = await sandbox.read_file(WORKSPACE_SCHEDULE)
+    except SandboxFileNotFoundError as exc:
+        # The model owns the working copy and can delete it, which is a failed
+        # turn rather than a sandbox failure.
+        raise SandboxCandidateError(f"The sandbox working copy {WORKSPACE_SCHEDULE} no longer exists.") from exc
     logger.info(
         "sandbox candidate read sandbox_id=%s candidate_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,
@@ -311,11 +317,23 @@ class _ScheduleCandidateTracker:
         self._last_content = base_text.encode("utf-8")
 
     async def review_if_changed(self) -> tuple[AgentToolOutcome, str | None] | None:
-        content = await self._sandbox.read_file(WORKSPACE_SCHEDULE)
+        prefix = "Trusted schedule check after this command:"
+        try:
+            content = await self._sandbox.read_file(WORKSPACE_SCHEDULE)
+        except SandboxFileNotFoundError:
+            # Report the deletion to the model instead of failing the turn, so it
+            # can restore the working copy it removed.
+            return (
+                AgentToolOutcome(
+                    f"{prefix}\nThe working copy {WORKSPACE_SCHEDULE} no longer exists. "
+                    "Restore it before finishing this turn.",
+                    False,
+                ),
+                None,
+            )
         if content == self._last_content:
             return None
         self._last_content = content
-        prefix = "Trusted schedule check after this command:"
         if len(content) > self._max_bytes:
             return (
                 AgentToolOutcome(
