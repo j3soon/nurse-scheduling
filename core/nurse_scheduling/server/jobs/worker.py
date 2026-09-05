@@ -22,7 +22,7 @@ import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from ...sentry import capture_optimize_exception
+from ...sentry import capture_optimize_exception, report_outage_recovery
 from ..config import DEFAULT_TIMEOUT_GRACE_SECONDS
 from ..errors import JobNotFoundError
 from ..retry import RepeatedFailure
@@ -245,6 +245,7 @@ class JobWorker:
                 ended_failures,
                 self._worker_id,
             )
+            report_outage_recovery("worker.renew", ended_failures)
         return renewed
 
     def _recover_worker_lease(self, lease: WorkerLease) -> WorkerLease | None:
@@ -273,7 +274,9 @@ class JobWorker:
                 if not self._executing.is_set():
                     recovered_lease = self._controller.register_worker(self._worker_id)
                     if recovered_lease is not None:
-                        self._recover_failures.recovered()
+                        ended_failures = self._recover_failures.recovered()
+                        if ended_failures:
+                            report_outage_recovery("worker.recover", ended_failures)
                         server_logger.info("[server:worker] worker lease recovered worker_id=%s", self._worker_id)
                         return recovered_lease
             except Exception:
@@ -309,6 +312,7 @@ class JobWorker:
                     ended_failures,
                     self._worker_id,
                 )
+                report_outage_recovery("worker.claim", ended_failures)
             if job is None:
                 self._stop.wait(self._claim_poll_seconds)
                 continue

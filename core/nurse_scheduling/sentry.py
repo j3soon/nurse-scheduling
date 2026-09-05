@@ -148,6 +148,28 @@ def tag_client_address(request: Request) -> None:
         sentry_logger.warning("[sentry:report] could not record a connection address", exc_info=True)
 
 
+def report_outage_recovery(operation: str, failures: int) -> None:
+    """Record that a recurring operation resumed, and how many failures it had stopped for.
+
+    A failure reaches Sentry because it is logged as an error, while the recovery that ends
+    it is only a warning and would never become an event. Reporting it explicitly is what
+    makes the silence in between unambiguous, without claiming that recovering is an error.
+    """
+    if not _should_enable_sentry():
+        return
+    try:
+        import sentry_sdk
+
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("outage.operation", operation)
+            scope.set_tag("outage.failures", failures)
+            scope.set_context("outage", {"operation": operation, "failures": failures})
+            scope.fingerprint = ["outage-recovered", operation]
+            sentry_sdk.capture_message(f"Resumed after an outage: {operation}", level="info")
+    except Exception:
+        sentry_logger.warning("[sentry:report] could not report an outage recovery", exc_info=True)
+
+
 def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> None:
     if not _should_enable_sentry():
         return

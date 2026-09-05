@@ -20,6 +20,7 @@
 import logging
 import threading
 
+from ..sentry import report_outage_recovery
 from .jobs.controller import JobController
 from .retry import RepeatedFailure
 
@@ -78,3 +79,4 @@ class JobMaintenance:
                     "[server:maintenance] resumed after %d failed passes",
                     ended_failures,
                 )
+                report_outage_recovery("maintenance", ended_failures)

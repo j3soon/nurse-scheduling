@@ -2438,3 +2438,39 @@ def test_a_store_outage_reports_once_rather_than_once_per_attempt(caplog):
         r for r in caplog.records if "failed to claim job" in r.getMessage() and worker_id in r.getMessage()
     ]
     assert len(claim_failures) == 1
+
+
+def test_a_store_recovery_is_reported_so_the_silence_ends(monkeypatch):
+    """The failure reaches Sentry as an error log, but recovery is only a warning."""
+    recoveries = []
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.worker.report_outage_recovery",
+        lambda operation, failures: recoveries.append((operation, failures)),
+    )
+
+    class BrieflyUnavailableStore(MemoryJobStore):
+        """Fails a few claims the way a restarting Redis does, then serves again."""
+
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def claim_next_job(self, *args, **kwargs):
+            self.claim_attempts += 1
+            if self.claim_attempts <= 3:
+                raise ConnectionError("Error -3 connecting to redis")
+            return super().claim_next_job(*args, **kwargs)
+
+    store = BrieflyUnavailableStore()
+    app = create_app(
+        settings=_settings(claim_poll_seconds=0.005),
+        store=store,
+        runner=SuccessfulRunner(),
+        start_background=True,
+    )
+    with TestClient(app):
+        deadline = time.monotonic() + 3
+        while not recoveries and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert recoveries == [("worker.claim", 3)]
