@@ -232,6 +232,32 @@ def create_session(client: TestClient, schedule_yaml: str = "description: test")
     return response.json()["id"]
 
 
+def test_secure_ai_owner_cookie_allows_cross_site_frontends() -> None:
+    client = TestClient(
+        create_test_app(settings=make_settings(cookie_secure=True), provider=FakeProvider()),
+        base_url="https://testserver",
+    )
+
+    response = client.post("/sessions", json={"schedule_yaml": "description: test"}, headers=AI_AUTH_HEADERS)
+
+    assert response.status_code == 201
+    cookie = response.headers["set-cookie"]
+    assert "HttpOnly" in cookie
+    assert "SameSite=none" in cookie
+    assert "Secure" in cookie
+
+
+def test_insecure_local_ai_owner_cookie_stays_same_site() -> None:
+    client = TestClient(create_test_app(settings=make_settings(cookie_secure=False), provider=FakeProvider()))
+
+    response = client.post("/sessions", json={"schedule_yaml": "description: test"}, headers=AI_AUTH_HEADERS)
+
+    assert response.status_code == 201
+    cookie = response.headers["set-cookie"]
+    assert "SameSite=strict" in cookie
+    assert "Secure" not in cookie
+
+
 def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
     """Parse the small SSE subset emitted by the service."""
     events: list[tuple[str, dict[str, str]]] = []

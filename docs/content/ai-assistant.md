@@ -339,7 +339,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Deadline for each foreground auto-resume attempt and the E2B request timeout for destruction. |
 | `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
-| `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. |
+| `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `3600` | Idle session lifetime. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
 | `AI_MAX_HISTORY_MESSAGES` | `20` | Conversation messages retained per session. |
@@ -473,6 +473,8 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   checks, user approval, and canonical updates remain outside it.
 - Use `AI_COOKIE_SECURE=0` only for local HTTP. Set it to `1` when the public
   browser route uses HTTPS, even if NGINX uses internal HTTP to the container.
+  Secure deployments set the owner cookie to `SameSite=None`; the CORS origin
+  allowlist still limits which browser origins may make credentialed requests.
 - The owner cookie contains an opaque UUID, not the provider key. It is not a
   replacement for future account authentication.
 - The complete schedule is sent to the configured provider. Use an approved

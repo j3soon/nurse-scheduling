@@ -632,7 +632,9 @@ def create_app(
                 owner_token,
                 httponly=True,
                 secure=settings.cookie_secure,
-                samesite="strict",
+                # Public deployments allow approved cross-site frontends. Browsers
+                # require Secure whenever SameSite=None is used.
+                samesite="none" if settings.cookie_secure else "strict",
                 max_age=settings.session_ttl_seconds,
             )
         return CreateSessionResponse(id=session.id)
