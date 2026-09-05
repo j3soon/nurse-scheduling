@@ -44,7 +44,7 @@ from ..server.auth import AUTH_SCHEME, create_auth_dependency
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
 from .config import AiSettings, validate_ai_auth_token
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
-from .provider import ChatContent, ChatMessage, ChatProvider, OpenAiCompatibleProvider, ProviderError
+from .provider import ChatContent, ChatMessage, OpenAiCompatibleProvider, ProviderError, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .sandbox_agent import (
@@ -346,7 +346,7 @@ def _sniff_image_media_type(data: bytes) -> str | None:
     """Sniff a supported media type from file signatures without decoding."""
     if len(data) >= 24 and data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
         return "image/png"
-    if len(data) >= 4 and data.startswith(b"\xff\xd8\xff") and data.endswith(b"\xff\xd9"):
+    if len(data) >= 4 and data.startswith(b"\xff\xd8\xff") and b"\xff\xd9" in data[3:]:
         return "image/jpeg"
     if (
         len(data) >= 12
@@ -538,7 +538,7 @@ def build_provider_messages(
 def create_app(
     *,
     settings: AiSettings | None = None,
-    provider: ChatProvider | None = None,
+    provider: ToolCapableChatProvider | None = None,
     sandbox_factory: SandboxFactory | None = None,
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
@@ -624,12 +624,11 @@ def create_app(
         """Create a process-local chat session for the calling browser."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="Schedule is too large.")
-        owner_token = owner or str(uuid4())
-        session = store.create(owner_token, request.schedule_yaml)
         if owner is None:
+            owner = str(uuid4())
             response.set_cookie(
                 OWNER_COOKIE,
-                owner_token,
+                owner,
                 httponly=True,
                 secure=settings.cookie_secure,
                 # Public deployments allow approved cross-site frontends. Browsers
@@ -637,6 +636,7 @@ def create_app(
                 samesite="none" if settings.cookie_secure else "strict",
                 max_age=settings.session_ttl_seconds,
             )
+        session = store.create(owner, request.schedule_yaml)
         return CreateSessionResponse(id=session.id)
 
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])

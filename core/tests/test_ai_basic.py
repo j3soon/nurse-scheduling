@@ -461,6 +461,7 @@ def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
     ("filename", "media_type", "data"),
     [
         ("ward.jpg", "image/jpeg", JPEG_BYTES),
+        ("ward-trailing-data.jpg", "image/jpeg", JPEG_BYTES + b"trailing metadata"),
         ("ward.webp", "image/webp", WEBP_BYTES),
     ],
 )
