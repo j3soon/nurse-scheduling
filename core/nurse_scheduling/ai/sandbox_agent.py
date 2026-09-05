@@ -41,11 +41,17 @@ from .sandbox import (
     managed_sandbox,
 )
 from .sandbox_tools import SandboxPiTools
-from .schema import SCHEMA_REFERENCE_FILES, load_schedule_reference
+from .schema import (
+    SCHEMA_REFERENCE_FILES,
+    TAIWAN_HOLIDAYS_SOURCE,
+    load_schedule_reference,
+    load_taiwan_holidays_reference,
+)
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
+REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 
 SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "sandbox-system.md"
 SANDBOX_SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").rstrip("\n")
@@ -251,7 +257,7 @@ async def hydrate_sandbox(sandbox: SandboxBackend, schedule_yaml: str) -> None:
     started = time.perf_counter()
     await sandbox.write_file(WORKSPACE_SCHEDULE, schedule_yaml)
     for group, path in REFERENCE_SCHEMAS.items():
-        reference = load_schedule_reference(group)
+        reference = load_taiwan_holidays_reference() if group == "taiwan-holidays" else load_schedule_reference(group)
         if reference is None:  # pragma: no cover - constants are defined together
             raise ValueError(f"unknown schedule reference group: {group}")
         await sandbox.write_file(path, reference)

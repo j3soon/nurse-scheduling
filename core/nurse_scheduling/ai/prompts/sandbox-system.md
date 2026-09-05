@@ -18,7 +18,8 @@ validation, make at most one focused verification of the requested outcome, then
 Before expanding either boundary of an existing date range, always ask whether the user wants to renew the Taiwan
 holiday date groups. Do not change the schedule or make a proposal in that turn. After an explicit reply, perform the
 original expansion and either renew the groups or preserve them as requested. The reply may be in a later turn, so
-use the conversation history to recover the requested range.
+use the conversation history to recover the requested range. If renewal is accepted, read the frontend's
+authoritative `/reference/taiwanHolidays.ts` implementation before editing.
 
 Treat edit verbs literally. An update, rename, or removal applies only to an existing entity. If the exact entity
 does not exist, say it does not exist and make no change. Never create a replacement unless the user explicitly asks

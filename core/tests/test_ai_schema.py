@@ -28,7 +28,12 @@ from pydantic import BaseModel
 
 from nurse_scheduling import models
 from nurse_scheduling.ai.pi.bash import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES
-from nurse_scheduling.ai.schema import SCHEMA_REFERENCE_FILES, load_schedule_reference
+from nurse_scheduling.ai.schema import (
+    SCHEMA_REFERENCE_FILES,
+    TAIWAN_HOLIDAYS_SOURCE,
+    load_schedule_reference,
+    load_taiwan_holidays_reference,
+)
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 from nurse_scheduling.loader import _load_yaml
 
@@ -203,6 +208,11 @@ def test_schema_paths_are_unique():
     assert len(SCHEMA_PATHS) == len(set(SCHEMA_PATHS))
     assert set(SCHEMA_PATHS) == set(SCHEMA_TOPICS)
     assert EXAMPLE_PATHS
+
+
+def test_taiwan_holiday_reference_is_the_frontend_source():
+    assert load_taiwan_holidays_reference() == TAIWAN_HOLIDAYS_SOURCE.read_text(encoding="utf-8")
+    assert "SPECIAL_DATE_INFO" in load_taiwan_holidays_reference()
 
 
 def test_task_sized_references_cover_every_topic_once_and_fit_one_bash_result():

@@ -116,6 +116,7 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert b"Path: preferences.shift count" in backend.files[REFERENCE_SCHEMAS["preferences"]]
     assert b"Path: export.formatting.cell" in backend.files[REFERENCE_SCHEMAS["export"]]
     assert b"Path: people.items" in backend.files[REFERENCE_SCHEMAS["core"]]
+    assert b"SPECIAL_DATE_INFO" in backend.files[REFERENCE_SCHEMAS["taiwan-holidays"]]
     assert backend.commands == [("edit", None)]
     assert [tool["function"]["name"] for tool in provider.requests[0][1]] == [
         READ_TOOL,
