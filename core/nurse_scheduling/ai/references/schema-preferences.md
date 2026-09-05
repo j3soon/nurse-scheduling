@@ -115,6 +115,8 @@ Rules:
 - A positive `weight` encourages the complete sequence and a negative weight discourages it.
 - `.inf` requires the sequence and `-.inf` forbids it at each selected starting date.
 - Preserve every shift token in the requested sequence. For example, E followed by D is [E, D], not [Evening, Day].
+- Treat "X followed by Y" as the ordered pattern [X, Y]. Never reverse the sequence while paraphrasing the request.
+- Omit `description` unless the user explicitly asks for one. Do not synthesize a label from the request.
 
 Minimal frontend-compatible YAML:
 
