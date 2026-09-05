@@ -1248,6 +1248,9 @@ export default function OptimizeAndExportPage() {
     }
 
     const runEndpoint = resolvedOptimizeEndpoint;
+    const runSolver = solverArg;
+    const runTimeoutSeconds = timeoutArg;
+    const runAnonymized = anonymizeScheduleData;
     setLockedOptimizeEndpoint(runEndpoint);
     setIsOptimizing(true);
     setTimeoutError(null);
@@ -1264,7 +1267,7 @@ export default function OptimizeAndExportPage() {
     setSseEvents([]);
 
     try {
-      const anonymizationResult = anonymizeScheduleData
+      const anonymizationResult = runAnonymized
         ? anonymizeSchedulingStateWithMapping(filteredState, {
             anonymizePeopleItems: true,
             anonymizePeopleGroups: false,
@@ -1285,8 +1288,8 @@ export default function OptimizeAndExportPage() {
         formData.append('prettify', String(prettifyArg));
       }
 
-      formData.append('timeout', String(timeoutArg));
-      formData.append('solver', solverArg);
+      formData.append('timeout', String(runTimeoutSeconds));
+      formData.append('solver', runSolver);
 
       const createResponse = await authorizedFetch(runEndpoint, '/optimize', {
         method: 'POST',
@@ -1347,9 +1350,9 @@ export default function OptimizeAndExportPage() {
       if (completedJob.result) {
         setCompletedFeedback({
           jobId: completedJob.id,
-          solver: solverArg,
-          timeoutSeconds: timeoutArg,
-          anonymized: anonymizeScheduleData,
+          solver: runSolver,
+          timeoutSeconds: runTimeoutSeconds,
+          anonymized: runAnonymized,
           result: completedJob.result,
         });
       }
