@@ -5,6 +5,10 @@
 !!! warning "Experimental"
     AI answers may be incorrect. Verify them against the schedule before use.
 
+The hosted assistant is an API-key-gated beta. See
+[AI Beta Access](https://github.com/j3soon/nurse-scheduling#ai-beta-access)
+to request access.
+
 This page answers questions about the schedule currently open in the browser.
 When enabled by the AI backend, a question can include PNG, JPEG, and WebP
 images or TXT, Markdown, CSV, PDF, and XLSX documents. The assistant can propose
@@ -88,12 +92,15 @@ provider. Attached images are also sent to that provider for the current
 question, as are the extracted contents and filenames of attached documents.
 PDF extraction reads embedded text and does not perform OCR. XLSX extraction
 includes cell values, formula text, and cached formula results when available.
-It does not recalculate formulas. Attachment contents are not retained in
-backend chat history. Document filenames remain as history markers. People
-IDs, descriptions, rules, dates, images, and documents may be sensitive. Use
-only an approved provider and anonymize sensitive data first when required.
+It does not recalculate formulas.
+
+Assume all AI chats and related data are logged and may be used to improve this
+product and the AI provider's product. The AI route does not currently
+anonymize schedules, chats, or attachments. Do not submit personal,
+confidential, regulated, or otherwise sensitive information. See the
+[privacy policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md)
+for details.
 
 Chat sessions use unguessable identifiers but do not have account
-authentication yet. Sessions are stored in AI-backend memory and disappear
-when that process restarts. Model answers may be incorrect, so verify them
-against the schedule.
+authentication yet. Model answers may be incorrect, so verify them against the
+schedule.

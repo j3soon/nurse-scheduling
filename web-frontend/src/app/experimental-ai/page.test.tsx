@@ -117,6 +117,15 @@ describe('ExperimentalAiPage', () => {
       'href',
       '/docs/user-guide/experimental-ai/',
     );
+    expect(screen.getByRole('link', { name: 'Request beta access' })).toHaveAttribute(
+      'href',
+      'https://github.com/j3soon/nurse-scheduling#ai-beta-access',
+    );
+    expect(screen.getByRole('link', { name: 'Privacy details' })).toHaveAttribute(
+      'href',
+      'https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md',
+    );
+    expect(screen.getByText(/Assume all AI chats are logged/)).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 

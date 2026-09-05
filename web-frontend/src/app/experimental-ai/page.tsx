@@ -26,7 +26,7 @@ import { ChangeEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, us
 import { FiArrowDown } from 'react-icons/fi';
 import BackendTokenField from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
-import { DOCUMENTATION_URLS } from '@/constants/urls';
+import { DOCUMENTATION_URLS, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
@@ -788,6 +788,27 @@ export default function ExperimentalAiPage() {
         </div>
         <p className="text-sm text-gray-600">
           Ask questions about the schedule currently open in this browser, or ask for a change. You can attach supported images and documents when the backend enables them. Proposed changes apply only after you approve them.
+        </p>
+        <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          This beta is API-key gated by default.{' '}
+          <a
+            className="font-medium underline"
+            href={GITHUB_AI_BETA_ACCESS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Request beta access
+          </a>
+          . Assume all AI chats are logged, may be used to improve our product and the AI provider&apos;s product, and are not currently anonymized.{' '}
+          <a
+            className="font-medium underline"
+            href={GITHUB_PRIVACY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Privacy details
+          </a>
+          .
         </p>
         <p className="mt-2 text-xs font-medium text-gray-500">
           Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.

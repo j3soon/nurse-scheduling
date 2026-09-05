@@ -37,6 +37,18 @@ Two hosted optimization servers are provided as free, shared, best-effort servic
 
 The hosted application anonymizes individual people IDs and removes descriptions by default before sending a schedule for optimization. A schedule without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](PRIVACY.md) for details.
 
+## AI Beta Access
+
+During the evaluation period, the hosted AI assistant is gated by an API key by default.
+
+To request access for experimentation, email [admin@nursescheduling.org](mailto:admin@nursescheduling.org) from your institution email address. Include your institution's name and a short description of how you plan to evaluate the assistant.
+
+Before requesting or using access, review [Privacy and Data Handling](PRIVACY.md). Do not submit personal, confidential, regulated, or otherwise sensitive information.
+
+## Support
+
+For general questions, [open a GitHub issue](https://github.com/j3soon/nurse-scheduling/issues). For personal questions, email [admin@nursescheduling.org](mailto:admin@nursescheduling.org).
+
 ## How to run
 
 ### Prerequisites
