@@ -1,6 +1,6 @@
 {
   "id": "shift-type-group-description",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "Describe the Night shift type group as 'Overnight cover'.",
   "expect_proposal": true,
   "assert": [

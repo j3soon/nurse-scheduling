@@ -11,9 +11,18 @@
     {
       "path": "dates.range.endDate",
       "equals": "2026-03-14"
+    },
+    {
+      "path": "preferences[?type=at most one shift per day]",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "count": 1
     }
   ],
   "changes": [
-    "dates.range"
+    "dates.range",
+    "preferences"
   ]
 }

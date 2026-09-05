@@ -1,19 +1,19 @@
 {
   "id": "pref-description",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "Add a shift type requirement for 1 person on the N shift, described as 'Overnight cover'.",
   "expect_proposal": true,
   "assert": [
     {
-      "path": "preferences[?type=shift type requirement].description",
+      "path": "preferences[?type=shift type requirement][?description=Overnight cover].description",
       "equals": "Overnight cover"
     },
     {
-      "path": "preferences[?type=shift type requirement][?shiftType=N].requiredNumPeople",
+      "path": "preferences[?type=shift type requirement][?description=Overnight cover][?shiftType=N].requiredNumPeople",
       "equals": 1
     },
     {
-      "path": "preferences[?type=shift type requirement][?shiftType=N].shiftType",
+      "path": "preferences[?type=shift type requirement][?description=Overnight cover][?shiftType=N].shiftType",
       "equals": [
         "N"
       ]

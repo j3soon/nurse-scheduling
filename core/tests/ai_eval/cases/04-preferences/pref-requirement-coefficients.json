@@ -1,11 +1,11 @@
 {
   "id": "pref-requirement-coefficients",
-  "fixture": "new-schedule",
-  "question": "Require 4 staffing points on day shifts, where D counts as 1 point and D+ counts as 2 points.",
+  "fixture": "ward87",
+  "question": "Require 4 staffing points on the 'Day (w/o A, D~, K)' shift group, where D counts as 1 point and D+ counts as 2 points.",
   "expect_proposal": true,
   "assert": [
     {
-      "path": "preferences[?type=shift type requirement].shiftTypeCoefficients",
+      "path": "preferences[?type=shift type requirement][?shiftType=Day (w/o A, D~, K)].shiftTypeCoefficients",
       "equals": [
         [
           "D",
@@ -18,7 +18,7 @@
       ]
     },
     {
-      "path": "preferences[?type=shift type requirement].requiredNumPeople",
+      "path": "preferences[?type=shift type requirement][?shiftType=Day (w/o A, D~, K)].requiredNumPeople",
       "equals": 4
     },
     {

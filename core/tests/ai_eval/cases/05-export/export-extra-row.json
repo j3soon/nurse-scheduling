@@ -1,6 +1,6 @@
 {
   "id": "export-extra-row",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "Add an export row headed 'Day cover' counting how many people work D on each date.",
   "expect_proposal": true,
   "assert": [

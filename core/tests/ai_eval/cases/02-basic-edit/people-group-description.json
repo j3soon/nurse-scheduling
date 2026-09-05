@@ -1,11 +1,11 @@
 {
   "id": "people-group-description",
-  "fixture": "new-schedule",
-  "question": "Describe the 'Group 1' people group as 'Team A'.",
+  "fixture": "ward87",
+  "question": "Describe the 'Day People' people group as 'Team A'.",
   "expect_proposal": true,
   "assert": [
     {
-      "path": "people.groups[?id=Group 1].description",
+      "path": "people.groups[?id=Day People].description",
       "equals": "Team A"
     },
     {

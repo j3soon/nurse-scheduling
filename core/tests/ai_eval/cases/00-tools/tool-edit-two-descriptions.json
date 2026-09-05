@@ -1,15 +1,15 @@
 {
   "id": "tool-edit-two-descriptions",
-  "fixture": "new-schedule",
-  "question": "Set Person 1's description to 'Lead nurse' and Person 10's description to 'Float nurse'. Use one edit call containing both precise replacements and preserve everything else.",
+  "fixture": "ward87",
+  "question": "Set P1's description to 'Lead nurse' and P10's description to 'Float nurse'. Use one edit call containing both precise replacements and preserve everything else.",
   "expect_proposal": true,
   "assert": [
     {
-      "path": "people.items[?id=Person 1].description",
+      "path": "people.items[?id=P1].description",
       "equals": "Lead nurse"
     },
     {
-      "path": "people.items[?id=Person 10].description",
+      "path": "people.items[?id=P10].description",
       "equals": "Float nurse"
     },
     {
@@ -31,7 +31,7 @@
     "forbidden": [
       "write"
     ],
-    "max_total": 4,
+    "max_total": 5,
     "max_per_tool": {
       "edit": 1
     }

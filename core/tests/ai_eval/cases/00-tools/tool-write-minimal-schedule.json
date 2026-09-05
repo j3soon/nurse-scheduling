@@ -1,7 +1,7 @@
 {
   "id": "tool-write-minimal-schedule",
   "fixture": "new-schedule",
-  "question": "Rewrite the entire schedule as a fresh minimal schedule for the single calendar day March 1, 2026. Both startDate and endDate must be 2026-03-01. Set its description to 'Minimal March schedule'. Keep exactly one person, Alex, described as 'Only nurse', with empty history. Keep exactly one shift type, D, described as 'Day'. Remove all date groups, people groups, and shift-type groups, and keep only the required 'at most one shift per day' preference. Preserve the existing apiVersion and appVersion. Use write once for this complete-file rewrite.",
+  "question": "Rewrite the entire empty schedule as a fresh minimal schedule for the single calendar day March 1, 2026. Both startDate and endDate must be 2026-03-01. Set its description to 'Minimal March schedule'. Add exactly one person, Alex, described as 'Only nurse', with empty history. Add exactly one shift type, D, described as 'Day'. Keep all groups empty, add only the required 'at most one shift per day' preference, and preserve the existing apiVersion. Use write once for this complete-file rewrite.",
   "expect_proposal": true,
   "assert": [
     {
@@ -73,7 +73,7 @@
       "bash",
       "edit"
     ],
-    "max_total": 4,
+    "max_total": 5,
     "max_per_tool": {
       "write": 1
     }

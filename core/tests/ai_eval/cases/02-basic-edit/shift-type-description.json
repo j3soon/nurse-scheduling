@@ -1,6 +1,6 @@
 {
   "id": "shift-type-description",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "Change the description of shift type A to 'Administrative duty'.",
   "expect_proposal": true,
   "assert": [

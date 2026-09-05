@@ -1,11 +1,11 @@
 {
   "id": "pref-count-coefficients",
-  "fixture": "new-schedule",
-  "question": "Person 6 should reach 6 workload points over the roster, counting D as 1 and N as 2.",
+  "fixture": "ward87",
+  "question": "P6 should reach 6 workload points over the roster, counting D as 1 and N as 2.",
   "expect_proposal": true,
   "assert": [
     {
-      "path": "preferences[?type=shift count][?person=Person 6].countShiftTypeCoefficients",
+      "path": "preferences[?type=shift count][?person=P6].countShiftTypeCoefficients",
       "equals": [
         [
           "D",
@@ -18,13 +18,13 @@
       ]
     },
     {
-      "path": "preferences[?type=shift count][?person=Person 6].target",
+      "path": "preferences[?type=shift count][?person=P6].target",
       "equals": 6
     },
     {
-      "path": "preferences[?type=shift count][?person=Person 6].person",
+      "path": "preferences[?type=shift count][?person=P6].person",
       "equals": [
-        "Person 6"
+        "P6"
       ]
     },
     {

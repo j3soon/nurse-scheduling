@@ -1,6 +1,6 @@
 {
   "id": "shift-type-group-add",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "Create a shift type group 'Long shifts' containing N and N+.",
   "expect_proposal": true,
   "assert": [

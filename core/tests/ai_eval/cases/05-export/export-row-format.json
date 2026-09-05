@@ -1,13 +1,13 @@
 {
   "id": "export-row-format",
-  "fixture": "new-schedule",
-  "question": "In the exported workbook, highlight Person 2's row with the background colour #ffcc00.",
+  "fixture": "ward87",
+  "question": "In the exported workbook, highlight P2's row with the background colour #ffcc00.",
   "expect_proposal": true,
   "assert": [
     {
       "path": "export.formatting[?type=row].people",
       "equals": [
-        "Person 2"
+        "P2"
       ]
     },
     {

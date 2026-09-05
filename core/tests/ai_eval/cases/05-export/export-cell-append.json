@@ -1,13 +1,13 @@
 {
   "id": "export-cell-append",
-  "fixture": "new-schedule",
-  "question": "In the export, append the text * to Person 3's D shift cells and add the note 'Requested'.",
+  "fixture": "ward87",
+  "question": "In the export, append the text * to P3's D shift cells and add the note 'Requested'.",
   "expect_proposal": true,
   "assert": [
     {
       "path": "export.formatting[?type=cell].people",
       "equals": [
-        "Person 3"
+        "P3"
       ]
     },
     {

@@ -1,6 +1,6 @@
 {
   "id": "dates-group-description",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "Describe the WORKDAY date group as 'Monday to Friday'.",
   "expect_proposal": true,
   "assert": [

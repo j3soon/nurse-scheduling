@@ -1,6 +1,6 @@
 {
   "id": "pref-at-most-one-description",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "Add a description to the 'at most one shift per day' rule saying 'No double shifts'.",
   "expect_proposal": true,
   "assert": [

@@ -1,6 +1,6 @@
 {
   "id": "export-extra-column",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "Add an export column headed 'Nights' counting each person's N shifts across all dates.",
   "expect_proposal": true,
   "assert": [

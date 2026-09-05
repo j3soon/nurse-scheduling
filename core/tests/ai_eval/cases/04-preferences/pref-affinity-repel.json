@@ -1,7 +1,7 @@
 {
   "id": "pref-affinity-repel",
-  "fixture": "new-schedule",
-  "question": "Person 7 and Person 8 should not share a D shift. Use a negative weight of -10.",
+  "fixture": "ward87",
+  "question": "P7 and P8 should not share a D shift. Use a negative weight of -10.",
   "expect_proposal": true,
   "assert": [
     {
@@ -10,11 +10,11 @@
     },
     {
       "path": "preferences[?type=shift affinity].people1",
-      "contains": "Person 7"
+      "contains": "P7"
     },
     {
       "path": "preferences[?type=shift affinity].people2",
-      "contains": "Person 8"
+      "contains": "P8"
     },
     {
       "path": "preferences[?type=shift affinity].people1",

@@ -47,6 +47,11 @@ CASES_PATH = Path(__file__).parent / "ai_eval" / "cases"
 NEW_SCHEDULE_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "new-schedule.yaml"
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
+FIXTURE_SCHEDULES = {
+    "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
+    "ward87": _load_yaml(WARD_PATH.read_bytes()),
+}
+
 SCHEDULE = {
     "description": "Ward A",
     "dates": {"range": {"startDate": "2026-03-01", "endDate": "2026-03-14"}, "groups": []},
@@ -379,6 +384,17 @@ def test_the_dataset_only_uses_the_two_agreed_fixtures():
     assert len(cases) == len({case.id for case in cases})
 
 
+def test_new_schedule_fixture_matches_the_frontend_empty_state():
+    assert FIXTURE_SCHEDULES["new-schedule"] == {
+        "apiVersion": "alpha",
+        "description": "",
+        "dates": {"range": {}, "items": [], "groups": []},
+        "people": {"items": [], "groups": []},
+        "shiftTypes": {"items": [], "groups": []},
+        "preferences": [],
+    }
+
+
 def test_every_case_is_stored_as_one_readable_file():
     files = sorted(CASES_PATH.rglob("*.json"))
 
@@ -391,13 +407,8 @@ def test_every_case_is_stored_as_one_readable_file():
 
 
 def test_every_dataset_path_and_placeholder_resolves_against_its_fixture():
-    fixtures = {
-        "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
-        "ward87": _load_yaml(WARD_PATH.read_bytes()),
-    }
-
     for case in load_cases(CASES_PATH):
-        schedule = fixtures[case.fixture]
+        schedule = FIXTURE_SCHEDULES[case.fixture]
         values = computed_values(schedule)
         for assertion in case.assertions:
             resolve(schedule, assertion.path)
@@ -409,15 +420,10 @@ def test_every_dataset_path_and_placeholder_resolves_against_its_fixture():
 
 
 def test_no_edit_case_is_satisfied_by_a_proposal_that_changes_nothing():
-    fixtures = {
-        "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
-        "ward87": _load_yaml(WARD_PATH.read_bytes()),
-    }
-
     for case in load_cases(CASES_PATH):
         if not case.expect_proposal:
             continue
-        schedule = fixtures[case.fixture]
+        schedule = FIXTURE_SCHEDULES[case.fixture]
         outcome = RunOutcome(proposed=copy.deepcopy(schedule), initial=schedule)
         assert not grade(case, outcome, computed_values(schedule)).passed, f"{case.id} asserts nothing"
 
@@ -491,9 +497,7 @@ def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
     for case in load_cases(CASES_PATH):
         if not case.answer_contains:
             continue
-        values = computed_values(
-            _load_yaml(Path(WARD_PATH if case.fixture == "ward87" else NEW_SCHEDULE_PATH).read_bytes())
-        )
+        values = computed_values(FIXTURE_SCHEDULES[case.fixture])
         # A value may be offered in several wordings, so one of them counts.
         expected = [
             [option.format(**values) for option in ([value] if isinstance(value, str) else value)]
@@ -508,13 +512,8 @@ def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
 
 def test_every_membership_check_also_pins_the_collection_size():
     """A `contains` without a size passes when extra entries are added too."""
-    fixtures = {
-        "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
-        "ward87": _load_yaml(WARD_PATH.read_bytes()),
-    }
-
     for case in load_cases(CASES_PATH):
-        schedule = fixtures[case.fixture]
+        schedule = FIXTURE_SCHEDULES[case.fixture]
         sized = {a.path for a in case.assertions if a.kind in {"count", "delta", "added", "removed"}}
         for assertion in case.assertions:
             if assertion.kind != "contains" or assertion.path in sized:
@@ -544,15 +543,10 @@ def _references(schedule: dict, token: str) -> set[str]:
 
 def test_every_removal_case_asserts_the_references_it_orphans():
     """Removing an entry that other parts still name must clear those names."""
-    fixtures = {
-        "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
-        "ward87": _load_yaml(WARD_PATH.read_bytes()),
-    }
-
     for case in load_cases(CASES_PATH):
         removed = [value for assertion in case.assertions if assertion.kind == "removed" for value in assertion.value]
         for token in removed:
-            for container in _references(fixtures[case.fixture], token):
+            for container in _references(FIXTURE_SCHEDULES[case.fixture], token):
                 assert any(assertion.path.startswith(container) for assertion in case.assertions), (
                     f"{case.id} removes {token} but says nothing about {container}"
                 )

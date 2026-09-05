@@ -1,24 +1,24 @@
 {
   "id": "pref-successions",
-  "fixture": "new-schedule",
-  "question": "Person 5 should never work a night shift N followed by a day shift D the next day.",
+  "fixture": "ward87",
+  "question": "P5 should never work a student night shift N~ followed by a student day shift D~ the next day.",
   "expect_proposal": true,
   "assert": [
     {
-      "path": "preferences[?type=shift type successions][?person=Person 5].pattern",
+      "path": "preferences[?type=shift type successions][?person=P5].pattern",
       "equals": [
-        "N",
-        "D"
+        "N~",
+        "D~"
       ]
     },
     {
-      "path": "preferences[?type=shift type successions][?person=Person 5].person",
+      "path": "preferences[?type=shift type successions][?person=P5].person",
       "equals": [
-        "Person 5"
+        "P5"
       ]
     },
     {
-      "path": "preferences[?type=shift type successions]",
+      "path": "preferences[?type=shift type successions][?person=P5]",
       "count": 1
     },
     {

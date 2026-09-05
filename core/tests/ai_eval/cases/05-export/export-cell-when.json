@@ -1,6 +1,6 @@
 {
   "id": "export-cell-when",
-  "fixture": "new-schedule",
+  "fixture": "ward87",
   "question": "In the export, colour every cell #00ff00 when it satisfies a shift request preference.",
   "expect_proposal": true,
   "assert": [

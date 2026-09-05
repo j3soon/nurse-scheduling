@@ -1,11 +1,11 @@
 {
   "id": "shift-type-remove",
-  "fixture": "new-schedule",
-  "question": "We do not use the A- shift type. Remove it, including from any group.",
+  "fixture": "ward87",
+  "question": "We do not use the E~ shift type. Remove it, including from any group.",
   "expect_proposal": true,
   "assert": [
     {
-      "path": "shiftTypes.items[?id=A-]",
+      "path": "shiftTypes.items[?id=E~]",
       "absent": true
     },
     {
@@ -15,17 +15,23 @@
     {
       "path": "shiftTypes.items[].id",
       "removed": [
-        "A-"
+        "E~"
       ]
     },
     {
-      "path": "shiftTypes.groups[?id=Administrative].members",
+      "path": "shiftTypes.groups[?id=Evening].members",
       "added": []
     },
     {
-      "path": "shiftTypes.groups[?id=Administrative].members",
+      "path": "shiftTypes.groups[?id=Evening].members",
       "removed": [
-        "A-"
+        "E~"
+      ]
+    },
+    {
+      "path": "shiftTypes.groups[?id=Student Shifts].members",
+      "removed": [
+        "E~"
       ]
     },
     {
@@ -37,11 +43,11 @@
       "removed": []
     },
     {
-      "path": "shiftTypes.groups[?members=A-]",
+      "path": "shiftTypes.groups[?members=E~]",
       "absent": true
     },
     {
-      "path": "people.items[?history=A-]",
+      "path": "people.items[?history=E~]",
       "absent": true
     }
   ],

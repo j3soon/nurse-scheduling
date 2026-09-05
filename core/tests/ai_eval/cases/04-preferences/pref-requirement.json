@@ -1,20 +1,22 @@
 {
   "id": "pref-requirement",
-  "fixture": "new-schedule",
-  "question": "Every day needs exactly 2 people on the D shift.",
+  "fixture": "ward87",
+  "question": "Every day needs exactly 2 students on the D~ shift.",
   "expect_proposal": true,
   "assert": [
     {
-      "path": "preferences[?type=shift type requirement][?shiftType=D].requiredNumPeople",
+      "path": "preferences[?type=shift type requirement][?shiftType=D~][?requiredNumPeople=2].requiredNumPeople",
       "equals": 2
     },
     {
-      "path": "preferences[?type=shift type requirement]",
+      "path": "preferences[?type=shift type requirement][?shiftType=D~][?requiredNumPeople=2]",
       "count": 1
     },
     {
-      "path": "preferences[?type=shift type requirement][?shiftType=D].shiftType",
-      "count": 1
+      "path": "preferences[?type=shift type requirement][?shiftType=D~][?requiredNumPeople=2].qualifiedPeople",
+      "equals": [
+        "Students"
+      ]
     },
     {
       "path": "preferences",
