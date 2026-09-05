@@ -187,6 +187,21 @@ def test_expected_diff_supports_replacing_a_complete_object(tmp_path: Path):
     assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
 
 
+def test_expected_diff_supports_replacing_or_adding_a_value(tmp_path: Path):
+    changed = copy.deepcopy(SCHEDULE)
+    changed["description"] = "Ward B"
+    changed["export"] = {"format": "csv"}
+    case = _case(
+        expected_diff=[
+            {"path": "description", "before": "Ward A", "after": "Ward B"},
+            {"path": "export", "before": None, "after": {"format": "csv"}},
+        ],
+        changes=["description", "export"],
+    )
+
+    assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
 def test_count_reads_list_length_or_match_count(tmp_path: Path):
     case = _case(**{"assert": [{"path": "people.items", "count": 2}], "changes": ["people"]})
     other = _case(**{"assert": [{"path": "people.items[?id=P1]", "count": 1}], "changes": ["people"]})
@@ -445,7 +460,8 @@ def test_every_dataset_path_and_placeholder_resolves_against_its_fixture():
             resolve(schedule, assertion.path)
         for expected_diff in case.expected_diff:
             found = resolve(schedule, expected_diff.path)
-            assert len(found) == 1 and isinstance(found[0], list), f"{case.id} diff path must select one list"
+            if not expected_diff.compares_value:
+                assert len(found) == 1 and isinstance(found[0], list), f"{case.id} diff path must select one list"
         for changed in case.changes:
             assert resolve(schedule, changed) or changed == "export", f"{case.id} may change a missing part {changed}"
         for expected in case.answer_contains:

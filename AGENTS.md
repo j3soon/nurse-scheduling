@@ -61,6 +61,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 ## Git
 - Preserve each file's staged or unstaged state. Never stage, unstage, or commit unless explicitly asked. Stage only the requested index entries.
 - Keep commits focused on one change. A self-contained change may span modules in one commit, e.g. `core` + `web-frontend` code, or code plus its `docs` update.
+- Prefer reviewable feature slices over minimal implementation-step commits. Combine a new mechanism with its
+  representative usage and tests when they form one coherent change. Keep a separate commit only when it can be
+  understood, validated, and reverted independently.
 - Use Conventional Commits, module-scoped where applicable, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `docs: ...`.
 - Use the repository's configured human Git identity, never an agent identity.
   Read it from `git config user.name` and `git config user.email` and let Git

@@ -30,7 +30,7 @@ from typing import Any
 # Most cases grade only the produced schedule or answer. Focused capability cases
 # may also assert a small, intentional tool trajectory.
 _STEP = re.compile(r"\.?([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]|\[\?([^=\]]+)=([^\]]*)\]|(\[\])")
-_ASSERTION_KINDS = ("equals", "one_of", "contains", "count", "delta", "added", "removed", "absent", "present")
+_ASSERTION_KINDS = ("equals", "contains", "count", "delta", "added", "removed", "absent", "present")
 _TOOL_USAGE_KEYS = {"required", "forbidden", "max_total", "max_per_tool"}
 
 
@@ -54,11 +54,14 @@ class Assertion:
 
 @dataclass(frozen=True)
 class ExpectedDiff:
-    """The complete semantic change expected within one list-valued path."""
+    """The complete semantic change expected at one schedule path."""
 
     path: str
     added: tuple[Any, ...] = ()
     removed: tuple[Any, ...] = ()
+    before: Any = None
+    after: Any = None
+    compares_value: bool = False
 
     def describe(self) -> str:
         return f"{self.path} has the expected semantic diff"
@@ -266,16 +269,26 @@ def _build_expected_diff(raw: object, source: str) -> ExpectedDiff:
     """Validate one exact semantic collection diff."""
     if not isinstance(raw, dict) or not isinstance(raw.get("path"), str) or not raw["path"]:
         raise EvalCaseError(f"{source} has an expected diff without a path.")
-    unknown = set(raw) - {"path", "added", "removed"}
+    unknown = set(raw) - {"path", "added", "removed", "before", "after"}
     if unknown:
         raise EvalCaseError(f"{source} expected diff has unknown fields: {', '.join(sorted(unknown))}.")
     added = raw.get("added", [])
     removed = raw.get("removed", [])
     if not isinstance(added, list) or not isinstance(removed, list):
         raise EvalCaseError(f"{source} expected diff `added` and `removed` must be lists.")
-    if not added and not removed:
+    compares_value = "before" in raw or "after" in raw
+    if compares_value and ("before" not in raw or "after" not in raw or added or removed):
+        raise EvalCaseError(f"{source} expected diff must use either before/after or added/removed.")
+    if not compares_value and not added and not removed:
         raise EvalCaseError(f"{source} expected diff must add or remove something.")
-    return ExpectedDiff(path=raw["path"], added=tuple(added), removed=tuple(removed))
+    return ExpectedDiff(
+        path=raw["path"],
+        added=tuple(added),
+        removed=tuple(removed),
+        before=raw.get("before"),
+        after=raw.get("after"),
+        compares_value=compares_value,
+    )
 
 
 def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None = None) -> CaseResult:
@@ -311,12 +324,18 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
 
 
 def _check_expected_diff(outcome: RunOutcome, expected: ExpectedDiff) -> CheckResult:
-    """Compare the complete multiset delta at one list-valued schedule path."""
+    """Compare a complete value replacement or list multiset delta."""
     try:
         before = resolve(outcome.initial, expected.path)
         after = resolve(outcome.proposed, expected.path)
     except EvalCaseError as error:
         return CheckResult(expected.describe(), False, str(error))
+    if expected.compares_value:
+        actual_before = before[0] if len(before) == 1 else None
+        actual_after = after[0] if len(after) == 1 else None
+        passed = actual_before == expected.before and actual_after == expected.after
+        detail = "" if passed else f"changed from {actual_before!r} to {actual_after!r}"
+        return CheckResult(expected.describe(), passed, detail)
     if len(before) != 1 or not isinstance(before[0], list) or len(after) != 1 or not isinstance(after[0], list):
         return CheckResult(expected.describe(), False, "path must resolve to one list before and after")
     before_keys = Counter(_key(item) for item in before[0])
@@ -402,8 +421,6 @@ def _check_assertion(outcome: RunOutcome, assertion: Assertion) -> CheckResult:
         return CheckResult(assertion.describe(), False, "nothing matched")
     if assertion.kind == "equals":
         passed = any(_matches(value, assertion.value) for value in found)
-    elif assertion.kind == "one_of":
-        passed = any(any(_matches(value, option) for option in assertion.value) for value in found)
     else:
         passed = any(_contains(value, assertion.value) for value in found)
     return CheckResult(assertion.describe(), passed, "" if passed else f"found {found!r}")
