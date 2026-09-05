@@ -3,28 +3,10 @@
   "fixture": "ward87",
   "question": "Create a shift type group 'Long shifts' containing N and N+.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "shiftTypes.groups[?id=Long shifts].members",
-      "contains": "N"
-    },
-    {
-      "path": "shiftTypes.groups[?id=Long shifts].members",
-      "contains": "N+"
-    },
-    {
-      "path": "shiftTypes.groups[?id=Long shifts].members",
-      "count": 2
-    },
-    {
-      "path": "shiftTypes.groups[].id",
-      "added": [
-        "Long shifts"
-      ]
-    },
-    {
-      "path": "shiftTypes.groups[].id",
-      "removed": []
+      "path": "shiftTypes.groups",
+      "added": [{"id": "Long shifts", "members": ["N", "N+"], "description": ""}]
     }
   ],
   "changes": [

@@ -3,25 +3,13 @@
   "fixture": "new-schedule",
   "question": "Add two nurses called Alice and Bob.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "people.items[?id=Alice]",
-      "count": 1
-    },
-    {
-      "path": "people.items[?id=Bob]",
-      "count": 1
-    },
-    {
-      "path": "people.items[].id",
+      "path": "people.items",
       "added": [
-        "Alice",
-        "Bob"
+        {"id": "Alice", "description": "", "history": []},
+        {"id": "Bob", "description": "", "history": []}
       ]
-    },
-    {
-      "path": "people.items[].id",
-      "removed": []
     }
   ],
   "changes": [

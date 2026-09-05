@@ -3,20 +3,10 @@
   "fixture": "new-schedule",
   "question": "Add a shift type with id 'T' described as 'Training'.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "shiftTypes.items[?id=T].description",
-      "equals": "Training"
-    },
-    {
-      "path": "shiftTypes.items[].id",
-      "added": [
-        "T"
-      ]
-    },
-    {
-      "path": "shiftTypes.items[].id",
-      "removed": []
+      "path": "shiftTypes.items",
+      "added": [{"id": "T", "description": "Training"}]
     }
   ],
   "changes": [
