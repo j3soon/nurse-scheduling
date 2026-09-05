@@ -1050,7 +1050,10 @@ def test_environment_configuration_defaults_to_a_fifteen_minute_sandbox_turn(
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
     monkeypatch.delenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", raising=False)
 
-    assert AiSettings.from_env().sandbox_turn_timeout_seconds == 900
+    settings = AiSettings.from_env()
+    assert settings.sandbox_turn_timeout_seconds == 900
+    assert settings.agent_max_tool_rounds == 10
+    assert settings.agent_max_tool_calls == 20
 
 
 def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1067,6 +1070,8 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     monkeypatch.setenv("AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", "1.5")
     monkeypatch.setenv("AI_SANDBOX_REAPER_INTERVAL_SECONDS", "45")
+    monkeypatch.setenv("AI_AGENT_MAX_TOOL_ROUNDS", "7")
+    monkeypatch.setenv("AI_AGENT_MAX_TOOL_CALLS", "12")
 
     settings = AiSettings.from_env()
 
@@ -1081,6 +1086,8 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     assert settings.sandbox_pause_request_timeout_seconds == 4.5
     assert settings.sandbox_control_request_timeout_seconds == 1.5
     assert settings.sandbox_reaper_interval_seconds == 45
+    assert settings.agent_max_tool_rounds == 7
+    assert settings.agent_max_tool_calls == 12
 
 
 def test_environment_configuration_requires_a_sandbox_backend(monkeypatch: pytest.MonkeyPatch) -> None:

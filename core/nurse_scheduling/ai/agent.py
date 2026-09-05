@@ -119,12 +119,17 @@ async def run_tool_agent(
     activity_batch: ToolBatchScope | None = None,
     parallel_tool_names: frozenset[str] = frozenset(),
     observe_tool_batch: ToolBatchObserver | None = None,
+    max_tool_rounds: int | None = None,
+    max_tool_calls: int | None = None,
 ) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
     """Run the model/tool loop shared by agent capability layers."""
     conversation = list(messages)
+    tool_rounds = 0
+    tool_calls = 0
+    final_answer_only = False
     while True:
         answer, calls = [], ()
-        async for event in provider.stream_events(conversation, tools):
+        async for event in provider.stream_events(conversation, [] if final_answer_only else tools):
             if isinstance(event, TextDelta):
                 answer.append(event.text)
                 yield AgentText(event.text)
@@ -135,7 +140,26 @@ async def run_tool_agent(
         if not calls:
             break
 
+        exceeds_rounds = max_tool_rounds is not None and tool_rounds >= max_tool_rounds
+        exceeds_calls = max_tool_calls is not None and tool_calls + len(calls) > max_tool_calls
+        if final_answer_only or exceeds_rounds or exceeds_calls:
+            if final_answer_only:
+                break
+            conversation.append(assistant_tool_call_message(calls, "".join(answer)))
+            for call in calls:
+                outcome = AgentToolOutcome(
+                    "The trusted tool budget is exhausted. Finish with the verified information already available.",
+                    False,
+                )
+                yield AgentToolStart(call.name, call.arguments)
+                yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                conversation.append(tool_result_message(call.id, outcome.text))
+            final_answer_only = True
+            continue
+
         conversation.append(assistant_tool_call_message(calls, "".join(answer)))
+        tool_rounds += 1
+        tool_calls += len(calls)
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope():
             parallel = len(calls) > 1 and all(call.name in parallel_tool_names for call in calls)

@@ -24,6 +24,7 @@ REFERENCE_DIRECTORY = Path(__file__).with_name("references")
 SCHEMA_REFERENCE_FILES = {
     "core": REFERENCE_DIRECTORY / "schema-core.md",
     "preferences": REFERENCE_DIRECTORY / "schema-preferences.md",
+    "shift-request": REFERENCE_DIRECTORY / "schema-shift-request.md",
     "export": REFERENCE_DIRECTORY / "schema-export.md",
 }
 TAIWAN_HOLIDAYS_SOURCE = Path(__file__).resolve().parents[3] / "web-frontend/src/utils/taiwanHolidays.ts"

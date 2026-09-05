@@ -5,8 +5,9 @@ files instead of `cat` or `sed`. Use `edit` for precise changes with unique exac
 replacements for one file in one `edit` call. Use `write` only for new files or complete rewrites. It overwrites the
 whole target file. Use focused `bash` commands with `rg`, `grep`, `diff`, and Python for searches, checks, or complex
 operations. When schema guidance is needed, read one task-sized document: `/reference/schema-core.md` for dates,
-people, and shift types, `/reference/schema-preferences.md` for preferences, or `/reference/schema-export.md` for
-exports. Related variants are grouped together to avoid repeated lookups. Python includes `ruamel.yaml`, not the
+people, and shift types, `/reference/schema-shift-request.md` for shift requests,
+`/reference/schema-preferences.md` for other preferences, or `/reference/schema-export.md` for exports. Related
+variants are grouped together to avoid repeated lookups. Python includes `ruamel.yaml`, not the
 PyYAML `yaml` module. Preserve existing fields and exact selectors that the user did not ask to change, even when a
 minimal reference example omits them.
 

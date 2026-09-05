@@ -82,6 +82,8 @@ class SandboxAgentLimits:
     turn_timeout_seconds: float
     cleanup_timeout_seconds: float
     bash_command_timeout_seconds: float
+    max_tool_rounds: int
+    max_tool_calls: int
 
     @classmethod
     def from_settings(cls, settings: AiSettings) -> "SandboxAgentLimits":
@@ -91,6 +93,8 @@ class SandboxAgentLimits:
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,
             cleanup_timeout_seconds=settings.sandbox_cleanup_timeout_seconds,
             bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,
+            max_tool_rounds=settings.agent_max_tool_rounds,
+            max_tool_calls=settings.agent_max_tool_calls,
         )
 
 
@@ -215,6 +219,8 @@ async def run_sandbox_agent(
                     activity_batch=sandbox.activity_batch,
                     parallel_tool_names=frozenset({READ_TOOL}),
                     observe_tool_batch=observe_tool_batch,
+                    max_tool_rounds=limits.max_tool_rounds,
+                    max_tool_calls=limits.max_tool_calls,
                 ):
                     yield event
                     if isinstance(event, AgentToolUse) and pending_schedule_change is not None:

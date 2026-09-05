@@ -74,6 +74,8 @@ def _limits(**overrides) -> SandboxAgentLimits:
         "turn_timeout_seconds": 2,
         "cleanup_timeout_seconds": 1,
         "bash_command_timeout_seconds": 10,
+        "max_tool_rounds": 10,
+        "max_tool_calls": 20,
     }
     values.update(overrides)
     return SandboxAgentLimits(**values)

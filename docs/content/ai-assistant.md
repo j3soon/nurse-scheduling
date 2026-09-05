@@ -367,6 +367,8 @@ response cannot prove that the original operation did not take effect.
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
 | `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `10` | Default and maximum deadline for one shell command. |
 | `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `900` | Deadline for the complete sandbox-backed user message. |
+| `AI_AGENT_MAX_TOOL_ROUNDS` | `10` | Maximum model tool-call rounds before the agent must answer from verified results. |
+| `AI_AGENT_MAX_TOOL_CALLS` | `20` | Maximum total tool calls in one sandbox-backed user message. |
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
 | `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
 | `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |

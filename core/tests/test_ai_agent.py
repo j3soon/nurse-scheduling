@@ -73,7 +73,7 @@ def _calls(count: int = 1) -> list:
     return [ToolCallRequest(calls)]
 
 
-def _run(provider: FakeProvider, *, tool_ok: bool = True) -> list:
+def _run(provider: FakeProvider, *, tool_ok: bool = True, **limits: int) -> list:
     async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
         return AgentToolOutcome("command result", tool_ok)
 
@@ -85,6 +85,7 @@ def _run(provider: FakeProvider, *, tool_ok: bool = True) -> list:
                 QUESTION,
                 TOOLS,
                 execute,
+                **limits,
             )
         ]
 
@@ -278,6 +279,29 @@ def test_tool_calls_continue_until_the_model_finishes():
     assert len([event for event in events if isinstance(event, AgentToolUse)]) == 6
     assert len(provider.requests) == 7
     assert events[-1] == AgentText("Done.")
+
+
+def test_tool_round_budget_returns_one_final_answer_without_executing_more_calls():
+    provider = FakeProvider(_calls(), _calls(), _text("I could not finish."))
+
+    events = _run(provider, max_tool_rounds=1, max_tool_calls=10)
+
+    uses = [event for event in events if isinstance(event, AgentToolUse)]
+    assert [event.ok for event in uses] == [True, False]
+    assert "budget is exhausted" in uses[-1].result
+    assert provider.requests[-1][1] == []
+    assert events[-1] == AgentText("I could not finish.")
+
+
+def test_tool_call_budget_rejects_a_batch_that_would_partially_execute():
+    provider = FakeProvider(_calls(2), _text("Please narrow the task."))
+
+    events = _run(provider, max_tool_rounds=10, max_tool_calls=1)
+
+    uses = [event for event in events if isinstance(event, AgentToolUse)]
+    assert len(uses) == 2
+    assert all(not event.ok for event in uses)
+    assert events[-1] == AgentText("Please narrow the task.")
 
 
 def test_reasoning_is_reported_without_entering_the_answer():
