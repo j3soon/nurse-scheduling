@@ -223,6 +223,41 @@ def test_deferred_cleanup_escalates_only_the_third_consecutive_failure(caplog):
     assert failures[2].cleanup_attempt == 3
 
 
+def test_cleanup_worker_survives_a_failure_the_client_reports_outside_sandbox_errors(caplog):
+    class AuthenticationFailure(Exception):
+        """Stand in for an E2B error that does not derive from SandboxException."""
+
+    async def exercise() -> int:
+        list_calls = 0
+
+        def list_sandboxes(**_kwargs):
+            nonlocal list_calls
+            list_calls += 1
+            if list_calls == 1:
+                raise AuthenticationFailure("invalid api key")
+            return FakePaginator([])
+
+        manager = E2BSandboxCleanupManager(
+            api_key="key",
+            request_timeout_seconds=2,
+            retry_backoff_seconds=0.5,
+            reaper_interval_seconds=0.01,
+            list_sandboxes=list_sandboxes,
+        )
+        await manager.start()
+        for _ in range(200):
+            if list_calls >= 2:
+                break
+            await asyncio.sleep(0.01)
+        await manager.stop()
+        return list_calls
+
+    with caplog.at_level(logging.ERROR):
+        assert asyncio.run(exercise()) >= 2
+
+    assert "sandbox cleanup iteration failed" in caplog.text
+
+
 def test_cleanup_worker_runs_reconciliation_on_start_and_stops_cleanly():
     async def exercise() -> int:
         list_calls = 0

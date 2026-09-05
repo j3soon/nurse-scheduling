@@ -272,16 +272,26 @@ class E2BSandboxCleanupManager:
     async def _run(self) -> None:
         next_reconciliation = self._monotonic()
         while True:
-            now = self._monotonic()
-            if now >= next_reconciliation:
-                await self.reconcile_once()
-                next_reconciliation = self._monotonic() + self._reaper_interval_seconds
-            await self.retry_deferred_once()
+            try:
+                now = self._monotonic()
+                if now >= next_reconciliation:
+                    await self.reconcile_once()
+                    next_reconciliation = self._monotonic() + self._reaper_interval_seconds
+                await self.retry_deferred_once()
 
-            now = self._monotonic()
-            due_times = [cleanup.next_attempt_at for cleanup in self._pending.values()]
-            next_wake = min([next_reconciliation, *due_times])
-            delay = max(0.0, next_wake - now)
+                now = self._monotonic()
+                due_times = [cleanup.next_attempt_at for cleanup in self._pending.values()]
+                next_wake = min([next_reconciliation, *due_times])
+                delay = max(0.0, next_wake - now)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # E2B reports some failures, such as a revoked API key, outside
+                # SandboxException. Losing the worker would end cleanup for the
+                # whole process, so pace the next attempt and keep reaping.
+                logger.exception("sandbox cleanup iteration failed")
+                next_reconciliation = self._monotonic() + self._reaper_interval_seconds
+                delay = self._reaper_interval_seconds
             self._wake.clear()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=delay)
