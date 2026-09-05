@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 
@@ -627,6 +627,38 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
     expect(createObjectUrl).toHaveBeenCalledWith(image);
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:image-preview');
+  });
+
+  it('adds attachments dropped onto the message composer', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({
+      image_attachments: {
+        enabled: true,
+        accepted_media_types: ['image/png'],
+        max_files: 2,
+        max_bytes_per_file: 1000,
+      },
+      document_attachments: {
+        enabled: false,
+        accepted_extensions: [],
+        max_files: 1,
+        max_bytes_per_file: 1,
+      },
+    });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:dropped-image');
+    const image = new File(['png'], 'dropped.png', { type: 'image/png' });
+    render(<ExperimentalAiPage />);
+
+    const composer = await screen.findByRole('form', { name: 'Message composer' });
+    const dataTransfer = { files: [image], types: ['Files'], dropEffect: 'none' };
+    fireEvent.dragEnter(composer, { dataTransfer });
+    expect(screen.getByText('Drop files to attach')).toBeInTheDocument();
+
+    fireEvent.dragOver(composer, { dataTransfer });
+    expect(dataTransfer.dropEffect).toBe('copy');
+    fireEvent.drop(composer, { dataTransfer });
+
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument();
+    expect(screen.getByAltText('Preview of dropped.png')).toBeInTheDocument();
   });
 
   it('previews and sends text documents when the backend enables them', async () => {
