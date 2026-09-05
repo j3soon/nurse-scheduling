@@ -3,60 +3,6 @@
   "fixture": "new-schedule",
   "question": "Rewrite the entire empty schedule as a fresh minimal schedule for the single calendar day March 1, 2026. Both startDate and endDate must be 2026-03-01. Set its description to 'Minimal March schedule'. Add exactly one person, Alex, described as 'Only nurse', with empty history. Add exactly one shift type, D, described as 'Day'. Keep all groups empty, add only the required 'at most one shift per day' preference, and preserve the existing apiVersion. Use write once for this complete-file rewrite.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "description",
-      "equals": "Minimal March schedule"
-    },
-    {
-      "path": "dates.range.startDate",
-      "equals": "2026-03-01"
-    },
-    {
-      "path": "dates.range.endDate",
-      "equals": "2026-03-01"
-    },
-    {
-      "path": "dates.groups",
-      "count": 0
-    },
-    {
-      "path": "people.items",
-      "count": 1
-    },
-    {
-      "path": "people.items[?id=Alex].description",
-      "equals": "Only nurse"
-    },
-    {
-      "path": "people.items[?id=Alex].history",
-      "count": 0
-    },
-    {
-      "path": "people.groups",
-      "count": 0
-    },
-    {
-      "path": "shiftTypes.items",
-      "count": 1
-    },
-    {
-      "path": "shiftTypes.items[?id=D].description",
-      "equals": "Day"
-    },
-    {
-      "path": "shiftTypes.groups",
-      "count": 0
-    },
-    {
-      "path": "preferences",
-      "count": 1
-    },
-    {
-      "path": "preferences[?type=at most one shift per day]",
-      "count": 1
-    }
-  ],
   "changes": [
     "description",
     "dates",
@@ -64,7 +10,9 @@
     "shiftTypes",
     "preferences"
   ],
-  "tags": ["tuning"],
+  "tags": [
+    "tuning"
+  ],
   "tool_usage": {
     "required": [
       "write"
@@ -77,5 +25,69 @@
     "max_per_tool": {
       "write": 1
     }
-  }
+  },
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "",
+      "after": "Minimal March schedule"
+    },
+    {
+      "path": "dates",
+      "before": {
+        "range": {},
+        "items": [],
+        "groups": []
+      },
+      "after": {
+        "range": {
+          "startDate": "2026-03-01",
+          "endDate": "2026-03-01"
+        },
+        "items": [],
+        "groups": []
+      }
+    },
+    {
+      "path": "people",
+      "before": {
+        "items": [],
+        "groups": []
+      },
+      "after": {
+        "items": [
+          {
+            "id": "Alex",
+            "description": "Only nurse",
+            "history": []
+          }
+        ],
+        "groups": []
+      }
+    },
+    {
+      "path": "shiftTypes",
+      "before": {
+        "items": [],
+        "groups": []
+      },
+      "after": {
+        "items": [
+          {
+            "id": "D",
+            "description": "Day"
+          }
+        ],
+        "groups": []
+      }
+    },
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "at most one shift per day"
+        }
+      ]
+    }
+  ]
 }
