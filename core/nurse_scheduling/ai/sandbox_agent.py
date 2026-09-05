@@ -50,6 +50,8 @@ from .schema import (
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
+WORKSPACE_PENDING_PROPOSAL = "/workspace/pending-proposal.yaml"
+WORKSPACE_PENDING_DIFF = "/workspace/pending-proposal.diff"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 
@@ -166,6 +168,8 @@ async def run_sandbox_agent(
     limits: SandboxAgentLimits,
     metrics: SandboxTurnMetrics | None = None,
     observe_tool_batch: Callable[[AgentToolBatchMetrics], None] | None = None,
+    pending_proposal_yaml: str = "",
+    pending_proposal_diff: str = "",
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
@@ -178,7 +182,7 @@ async def run_sandbox_agent(
                 metrics,
                 lifecycle_started,
             ) as sandbox:
-                await hydrate_sandbox(sandbox, schedule_yaml)
+                await hydrate_sandbox(sandbox, schedule_yaml, pending_proposal_yaml, pending_proposal_diff)
 
                 sandbox_tools = SandboxPiTools(sandbox, limits.bash_command_timeout_seconds)
                 candidate_tracker = _ScheduleCandidateTracker(
@@ -252,10 +256,18 @@ async def run_sandbox_agent(
         )
 
 
-async def hydrate_sandbox(sandbox: SandboxBackend, schedule_yaml: str) -> None:
+async def hydrate_sandbox(
+    sandbox: SandboxBackend,
+    schedule_yaml: str,
+    pending_proposal_yaml: str = "",
+    pending_proposal_diff: str = "",
+) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
     await sandbox.write_file(WORKSPACE_SCHEDULE, schedule_yaml)
+    if pending_proposal_yaml:
+        await sandbox.write_file(WORKSPACE_PENDING_PROPOSAL, pending_proposal_yaml)
+        await sandbox.write_file(WORKSPACE_PENDING_DIFF, pending_proposal_diff)
     for group, path in REFERENCE_SCHEMAS.items():
         reference = load_taiwan_holidays_reference() if group == "taiwan-holidays" else load_schedule_reference(group)
         if reference is None:  # pragma: no cover - constants are defined together

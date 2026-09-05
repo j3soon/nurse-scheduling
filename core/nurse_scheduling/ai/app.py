@@ -236,7 +236,7 @@ class SessionStore:
             self._sessions[session.id] = session
             return session
 
-    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str]:
+    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str, str, str]:
         """Reserve a session and return its history and schedule snapshots."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
@@ -244,7 +244,13 @@ class SessionStore:
                 raise HTTPException(status_code=409, detail="This chat session already has an active response.")
             session.active = True
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            return list(session.history), session.schedule_yaml, session.revision
+            return (
+                list(session.history),
+                session.schedule_yaml,
+                session.revision,
+                session.proposal_yaml,
+                session.proposal_diff,
+            )
 
     def finish(
         self,
@@ -529,9 +535,15 @@ def build_provider_messages(
     documents: list[DocumentAttachment],
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
+    pending_proposal: bool = False,
 ) -> list[ChatMessage]:
     """Build a provider prompt that keeps schedule data separate from instructions."""
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
+    if pending_proposal:
+        system_content += (
+            "\nA validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
+            "files described above."
+        )
     text_content = question
     if documents:
         document_data = json.dumps(
@@ -671,7 +683,7 @@ def create_app(
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
         question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
-        history, schedule_yaml, base_revision = store.begin(session_id, owner)
+        history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
         stream_started = threading.Event()
         messages = build_provider_messages(
             history,
@@ -680,6 +692,7 @@ def create_app(
             images,
             documents,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
+            pending_proposal=bool(proposal_yaml),
         )
         history_question = question
         if images:
@@ -701,6 +714,8 @@ def create_app(
                         schedule_yaml,
                         messages,
                         SandboxAgentLimits.from_settings(settings),
+                        pending_proposal_yaml=proposal_yaml,
+                        pending_proposal_diff=proposal_diff,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):

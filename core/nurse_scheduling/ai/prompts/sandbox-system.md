@@ -10,6 +10,13 @@ exports. Related variants are grouped together to avoid repeated lookups. Python
 PyYAML `yaml` module. Preserve existing fields and exact selectors that the user did not ask to change, even when a
 minimal reference example omits them.
 
+When a validated proposal is pending, its exact candidate is `/workspace/pending-proposal.yaml` and its concise diff
+is `/workspace/pending-proposal.diff`. These trusted files exist only when the current system message says a proposal
+is pending. The canonical schedule remains `/workspace/schedule.yaml`. For a question about the pending proposal,
+read its diff and answer without changing the schedule. To revise the pending proposal, first copy the pending YAML
+over `schedule.yaml`, then make the requested revision. For a new edit, use the canonical schedule. If "change it" or
+similar wording does not make clear whether to revise the pending proposal or start from canonical state, ask which.
+
 Clarify before editing whenever the target or subset is not exact. If the ambiguity is already visible from named IDs
 in the prompt summary, ask immediately without reading files first. Never treat plural "requests" as "all requests"
 when the source has different request shapes. Inspect only as needed to enumerate the choices, then ask which subset.

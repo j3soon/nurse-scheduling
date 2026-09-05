@@ -19,6 +19,6 @@
     {"path": "description", "before": "", "after": "March training roster"}
   ],
   "changes": ["description"],
-  "answer_contains": ["March training roster", ["current", "approved"]],
+  "answer_contains": ["March training roster", ["current", "approved", "canonical"]],
   "tags": ["difficult", "tuning", "proposal-lifecycle", "pending-question", "proposal-approval"]
 }

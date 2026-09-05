@@ -47,7 +47,12 @@ from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnTimeoutError
+from nurse_scheduling.ai.sandbox_agent import (
+    WORKSPACE_PENDING_DIFF,
+    WORKSPACE_PENDING_PROPOSAL,
+    WORKSPACE_SCHEDULE,
+    SandboxTurnTimeoutError,
+)
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
@@ -1376,6 +1381,18 @@ def test_approval_is_recorded_for_the_next_fresh_turn() -> None:
     assert b"description: Head" in factory.created[1].files[WORKSPACE_SCHEDULE]
 
 
+def test_pending_proposal_is_available_to_the_next_fresh_turn() -> None:
+    client, session_id, _, provider, factory = proposal_decision_context()
+
+    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "What is pending?"})
+
+    assert follow_up.status_code == 200
+    assert "A validated proposal is pending" in provider.calls[2][0]["content"]
+    assert b"description: Head" in factory.created[1].files[WORKSPACE_PENDING_PROPOSAL]
+    assert b"people.items[0].description" in factory.created[1].files[WORKSPACE_PENDING_DIFF]
+    assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
+
+
 def test_approval_is_refused_when_the_browser_holds_another_revision() -> None:
     client, session_id, _ = proposing_client()
 
@@ -1419,7 +1436,7 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     owner = client.cookies[OWNER_COOKIE]
     broken_payload = base_schedule_payload()
     broken_payload["preferences"][1]["person"] = ["P9"]
-    _, _, base_revision = store.begin(session_id, owner)
+    _, _, base_revision, _, _ = store.begin(session_id, owner)
     assert store.finish(
         session_id,
         "Break it",
@@ -1459,7 +1476,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     first_proposal = original.replace("description: ''", "description: First", 1)
     stale_proposal = original.replace("description: ''", "description: Stale", 1)
     session = store.create("browser-owner", original)
-    _, _, original_revision = store.begin(session.id, "browser-owner")
+    _, _, original_revision, _, _ = store.begin(session.id, "browser-owner")
     assert store.finish(
         session.id,
         "First edit",
@@ -1467,7 +1484,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         (first_proposal, "first diff"),
         base_revision=original_revision,
     ).proposal_saved
-    _, _, active_turn_revision = store.begin(session.id, "browser-owner")
+    _, _, active_turn_revision, _, _ = store.begin(session.id, "browser-owner")
 
     store.adopt_proposal(session.id, "browser-owner", original_revision)
     completion = store.finish(

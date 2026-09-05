@@ -231,7 +231,15 @@ async def run_case(
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
         for turn_index, question in enumerate(case.user_turns):
-            messages = build_provider_messages(history, text, question, [], [], system_prompt=SANDBOX_SYSTEM_PROMPT)
+            messages = build_provider_messages(
+                history,
+                text,
+                question,
+                [],
+                [],
+                system_prompt=SANDBOX_SYSTEM_PROMPT,
+                pending_proposal=pending_proposal is not None,
+            )
             prompt_messages.append(messages)
             turn_answer: list[str] = []
             turn_proposal: AgentProposal | None = None
@@ -244,6 +252,8 @@ async def run_case(
                 SandboxAgentLimits.from_settings(settings),
                 sandbox_metrics,
                 tool_batch_metrics.append,
+                pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
+                pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
             )
             async for event in agent_events:
                 if isinstance(event, AgentText):

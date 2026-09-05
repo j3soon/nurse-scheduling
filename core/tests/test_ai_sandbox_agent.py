@@ -35,6 +35,8 @@ from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_SCHEMAS,
+    WORKSPACE_PENDING_DIFF,
+    WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
     SandboxAgentLimits,
@@ -87,7 +89,14 @@ def _rename_handler(_command: str, _timeout: float | None, backend: FakeSandboxB
     return CommandResult("updated\n", "", 0)
 
 
-def _collect(provider, factory, **limit_overrides) -> list:
+def _collect(
+    provider,
+    factory,
+    *,
+    pending_proposal_yaml: str = "",
+    pending_proposal_diff: str = "",
+    **limit_overrides,
+) -> list:
     async def collect() -> list:
         return [
             event
@@ -97,6 +106,8 @@ def _collect(provider, factory, **limit_overrides) -> list:
                 schedule_yaml(),
                 MESSAGES,
                 _limits(**limit_overrides),
+                pending_proposal_yaml=pending_proposal_yaml,
+                pending_proposal_diff=pending_proposal_diff,
             )
         ]
 
@@ -135,6 +146,21 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     proposal = next(event for event in events if isinstance(event, AgentProposal))
     assert "description: Head" in proposal.text
     assert "people.items[0].description" in proposal.diff
+
+
+def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
+
+    _collect(
+        ScriptedProvider([TextDelta("The pending description is Ready.")]),
+        factory,
+        pending_proposal_yaml="apiVersion: alpha\ndescription: Ready\n",
+        pending_proposal_diff='- description: "" -> "Ready"',
+    )
+
+    backend = factory.created[0]
+    assert backend.files[WORKSPACE_PENDING_PROPOSAL] == b"apiVersion: alpha\ndescription: Ready\n"
+    assert backend.files[WORKSPACE_PENDING_DIFF] == b'- description: "" -> "Ready"'
 
 
 def test_write_tool_rewrites_validates_and_proposes_the_schedule():
