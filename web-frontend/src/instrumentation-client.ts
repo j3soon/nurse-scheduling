@@ -19,6 +19,12 @@ if (!isSentryDisabled) {
       Sentry.feedbackIntegration({
         colorScheme: "light",
         enableScreenshot: true,
+        triggerLabel: "Feedback",
+        triggerAriaLabel: "Send feedback",
+        formTitle: "Send Feedback",
+        messageLabel: "Feedback",
+        messagePlaceholder: "Tell us what worked, what did not, or what could be improved.",
+        submitButtonLabel: "Send Feedback",
         isNameRequired: true,
         isEmailRequired: true,
       }),

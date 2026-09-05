@@ -23,10 +23,10 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import OptimizationFeedbackNudge from '@/components/OptimizationFeedbackNudge';
 
-const captureFeedback = vi.hoisted(() => vi.fn());
+const sendFeedback = vi.hoisted(() => vi.fn());
 
 vi.mock('@sentry/nextjs', () => ({
-  captureFeedback,
+  sendFeedback,
 }));
 
 const defaultProps = {
@@ -44,7 +44,8 @@ const defaultProps = {
 
 describe('OptimizationFeedbackNudge', () => {
   beforeEach(() => {
-    captureFeedback.mockClear();
+    sendFeedback.mockReset();
+    sendFeedback.mockResolvedValue('feedback-event-id');
   });
 
   it('associates a positive rating with the optimization result', async () => {
@@ -53,22 +54,22 @@ describe('OptimizationFeedbackNudge', () => {
 
     await user.click(screen.getByRole('button', { name: /result was useful/i }));
 
-    expect(captureFeedback).toHaveBeenCalledWith(
+    expect(sendFeedback).toHaveBeenCalledWith(
       {
         message: 'Optimization result rated useful.',
         source: 'optimization-result-rating',
-        tags: {
-          optimization_rating: 'up',
-          optimization_solver: 'ortools/cp-sat',
-          optimization_outcome: 'optimal',
-          optimization_solver_status: 'OPTIMAL',
-          optimization_anonymized: true,
-          optimization_termination_reason: 'optimality_proven',
-        },
       },
       {
         includeReplay: false,
         captureContext: {
+          tags: {
+            optimization_rating: 'up',
+            optimization_solver: 'ortools/cp-sat',
+            optimization_outcome: 'optimal',
+            optimization_solver_status: 'OPTIMAL',
+            optimization_anonymized: true,
+            optimization_termination_reason: 'optimality_proven',
+          },
           contexts: {
             optimization_result: {
               job_id: 'job_feedback_test',
@@ -90,14 +91,35 @@ describe('OptimizationFeedbackNudge', () => {
 
     await user.click(screen.getByRole('button', { name: /result was not useful/i }));
 
-    expect(captureFeedback).toHaveBeenCalledWith(
+    expect(sendFeedback).toHaveBeenCalledWith(
       expect.objectContaining({
         message: 'Optimization result rated not useful.',
         source: 'optimization-result-rating',
-        tags: expect.objectContaining({ optimization_rating: 'down' }),
       }),
-      expect.objectContaining({ includeReplay: false }),
+      expect.objectContaining({
+        includeReplay: false,
+        captureContext: expect.objectContaining({
+          tags: expect.objectContaining({ optimization_rating: 'down' }),
+        }),
+      }),
     );
     expect(screen.getByText(/Feedback button in the lower-right corner/i)).toBeInTheDocument();
+  });
+
+  it('shows an error and allows retry when Sentry cannot deliver the rating', async () => {
+    const user = userEvent.setup();
+    sendFeedback.mockRejectedValueOnce(new Error('blocked'));
+    render(<OptimizationFeedbackNudge {...defaultProps} />);
+
+    await user.click(screen.getByRole('button', { name: /result was useful/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/may be blocked by a browser extension/i);
+    expect(screen.queryByText('Thanks for your feedback.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /result was useful/i })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: /result was useful/i }));
+
+    expect(sendFeedback).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText('Thanks for your feedback.')).toBeInTheDocument();
   });
 });
