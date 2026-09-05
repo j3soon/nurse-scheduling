@@ -133,8 +133,16 @@ The launcher reads them from `docker/.env`, so the shortest form is:
 
 ```sh
 ./scripts/run_ai_eval.sh
+./scripts/run_ai_eval.sh --full
 ./scripts/run_ai_eval.sh --category 01-reading
 ```
+
+The default run selects cases tagged `difficult` or `tuning`, keeping prompt
+tuning focused as the corpus grows. Pass `--full` to run every case. Explicit
+`--case`, `--category`, or `--tag` selectors bypass the default tag filter.
+Cases may use `user_turns` for a real multi-turn conversation and
+`intermediate_answer_contains` to verify that earlier turns ask a required
+question without producing a proposal.
 
 The launcher checks provider authentication before provisioning any E2B
 sandbox. Providers without a `/models` endpoint produce an inconclusive result

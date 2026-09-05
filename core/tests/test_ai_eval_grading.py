@@ -347,6 +347,22 @@ def test_an_ungradable_case_is_rejected(tmp_path: Path, entry: dict, message: st
         load_cases(_write(tmp_path, entry))
 
 
+def test_loads_multi_turn_cases_and_tags(tmp_path: Path):
+    entry = _case(
+        user_turns=["Expand the range.", "Yes."],
+        intermediate_answer_contains=[["Taiwan", ["holiday", "holidays"]]],
+        tags=["difficult", "tuning"],
+        **{"assert": [{"path": "dates.range.endDate", "equals": "2026-03-14"}]},
+        changes=["dates.range"],
+    )
+
+    case = load_cases(_write(tmp_path, entry))[0]
+
+    assert case.user_turns == ("Expand the range.", "Yes.")
+    assert case.intermediate_answer_contains == (("Taiwan", ("holiday", "holidays")),)
+    assert case.tags == ("difficult", "tuning")
+
+
 def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     entry = _case(**{"assert": [{"path": "description", "equals": "x"}], "changes": ["description"]})

@@ -80,8 +80,10 @@ class ScriptedProvider:
 
     def __init__(self, *turns) -> None:
         self._turns = list(turns)
+        self.messages: list[Sequence[ChatMessage]] = []
 
     async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator:
+        self.messages.append(messages)
         turn = self._turns.pop(0) if self._turns else [TextDelta("Done.")]
         if isinstance(turn, Exception):
             raise turn
@@ -388,9 +390,42 @@ def test_missing_provider_usage_is_recorded_explicitly():
 def test_cases_are_selected_by_id_and_by_category():
     cases = load_cases(CASES)
 
-    assert len(select(cases, [], [])) == len(cases)
+    assert {case.id for case in select(cases, [], [])} == {
+        "dates-range-expand-taiwan-no",
+        "dates-range-expand-taiwan-yes",
+        "dates-range-shrink",
+        "reject-unknown-person",
+        "tool-write-minimal-schedule",
+    }
+    assert len(select(cases, [], [], full=True)) == len(cases)
     assert [case.id for case in select(cases, ["people-add"], [])] == ["people-add"]
     assert {case.category for case in select(cases, [], ["06-refusal"])} == {"06-refusal"}
+    assert {case.id for case in select(cases, [], [], ["taiwan-holidays"])} == {
+        "dates-range-expand-taiwan-no",
+        "dates-range-expand-taiwan-yes",
+    }
+
+
+def test_a_multi_user_turn_case_preserves_the_conversation_history():
+    case = EvalCase(
+        id="conversation",
+        fixture="new-schedule",
+        question="Expand the range.",
+        expect_proposal=False,
+        user_turns=("Expand the range.", "No."),
+        intermediate_answer_contains=(("Taiwan",),),
+    )
+    provider = ScriptedProvider([TextDelta("Renew Taiwan holidays?")], [TextDelta("Okay, unchanged.")])
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory()))
+
+    assert run.passed
+    assert len(provider.messages) == 2
+    assert provider.messages[1][-3:] == [
+        {"role": "user", "content": "Expand the range."},
+        {"role": "assistant", "content": "Renew Taiwan holidays?"},
+        {"role": "user", "content": "No."},
+    ]
 
 
 def test_an_unknown_case_id_stops_the_run():
@@ -547,9 +582,9 @@ def test_a_run_records_everything_it_did():
     assert trajectory["question"].startswith("Give this schedule the description")
     assert trajectory["prompt"][0]["role"] == "system"
     kinds = [event["kind"] for event in trajectory["events"]]
-    assert kinds == ["reasoning", "tool_start", "tool", "text", "proposal"]
-    assert trajectory["events"][1]["arguments"] == edit
-    tool_event = trajectory["events"][2]
+    assert kinds == ["user", "reasoning", "tool_start", "tool", "text", "proposal"]
+    assert trajectory["events"][2]["arguments"] == edit
+    tool_event = trajectory["events"][3]
     assert tool_event["ok"]
     assert "passed trusted server-side validation" in tool_event["result"]
     assert "March ward roster" in trajectory["proposal"]["schedule_yaml"]

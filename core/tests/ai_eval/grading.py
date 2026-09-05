@@ -70,12 +70,20 @@ class EvalCase:
     fixture: str
     question: str
     expect_proposal: bool
+    user_turns: tuple[str, ...] = ()
+    intermediate_answer_contains: tuple[tuple[str | tuple[str, ...], ...], ...] = ()
+    tags: tuple[str, ...] = ()
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
     changes: tuple[str, ...] = ()
     answer_contains: tuple[str | tuple[str, ...], ...] = ()
     tool_usage: ToolUsageExpectation | None = None
     note: str = ""
+
+    def __post_init__(self) -> None:
+        """Keep direct test construction compatible with single-turn cases."""
+        if not self.user_turns:
+            object.__setattr__(self, "user_turns", (self.question,))
 
 
 @dataclass(frozen=True)
@@ -110,6 +118,8 @@ class RunOutcome:
     proposed: Any = None
     initial: Any = None
     activity: list[dict[str, Any]] = field(default_factory=list)
+    intermediate_answers: list[str] = field(default_factory=list)
+    intermediate_proposals: list[bool] = field(default_factory=list)
 
 
 def load_cases(path: Path) -> list[EvalCase]:
@@ -140,9 +150,29 @@ def load_cases(path: Path) -> list[EvalCase]:
 
 def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     """Convert one dataset entry into a case, or explain why it cannot be graded."""
-    for required in ("id", "fixture", "question", "expect_proposal"):
+    for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")
+    raw_turns = entry.get("user_turns")
+    if raw_turns is None:
+        if "question" not in entry:
+            raise EvalCaseError(f"{source} is missing `question` or `user_turns`.")
+        raw_turns = [entry["question"]]
+    if (
+        not isinstance(raw_turns, list)
+        or not raw_turns
+        or not all(isinstance(turn, str) and turn for turn in raw_turns)
+    ):
+        raise EvalCaseError(f"{source} `user_turns` must be a non-empty list of strings.")
+    raw_intermediate = entry.get("intermediate_answer_contains", [])
+    if not isinstance(raw_intermediate, list) or len(raw_intermediate) > len(raw_turns) - 1:
+        raise EvalCaseError(f"{source} has invalid `intermediate_answer_contains`.")
+    intermediate = tuple(
+        tuple(tuple(value) if isinstance(value, list) else value for value in expected) for expected in raw_intermediate
+    )
+    raw_tags = entry.get("tags", [])
+    if not isinstance(raw_tags, list) or not all(isinstance(tag, str) and tag for tag in raw_tags):
+        raise EvalCaseError(f"{source} `tags` must be a list of strings.")
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     if entry["expect_proposal"] and not assertions:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
@@ -153,8 +183,11 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     return EvalCase(
         id=str(entry["id"]),
         fixture=str(entry["fixture"]),
-        question=str(entry["question"]),
+        question=str(raw_turns[0]),
         expect_proposal=bool(entry["expect_proposal"]),
+        user_turns=tuple(raw_turns),
+        intermediate_answer_contains=intermediate,
+        tags=tuple(raw_tags),
         category=category,
         assertions=assertions,
         changes=tuple(entry.get("changes", ())),
@@ -217,6 +250,17 @@ def _build_assertion(raw: dict[str, Any], source: str) -> Assertion:
 def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None = None) -> CaseResult:
     """Apply every criterion of one case to what the run produced."""
     checks: list[CheckResult] = []
+    for index, proposed in enumerate(outcome.intermediate_proposals, start=1):
+        checks.append(
+            CheckResult(
+                description=f"turn {index} proposal not expected",
+                passed=not proposed,
+                detail="a proposal was made" if proposed else "",
+            )
+        )
+    for index, expected_values in enumerate(case.intermediate_answer_contains):
+        answer = outcome.intermediate_answers[index] if index < len(outcome.intermediate_answers) else ""
+        checks.extend(_check_answer(answer, expected, computed or {}) for expected in expected_values)
     proposed = outcome.proposed is not None
     checks.append(
         CheckResult(

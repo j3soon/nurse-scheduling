@@ -72,6 +72,19 @@ Fields:
 
 Rules:
 - `endDate` must be on or after `startDate`.
+- Expanding means moving `startDate` earlier or `endDate` later. Before any expansion, ask whether to renew the Taiwan
+  holiday groups and wait for an explicit answer. Do not edit the schedule in the question turn.
+- A date ID is `D` for a single-month range, `MM-DD` for a multi-month range within one year, and `YYYY-MM-DD` for a
+  range crossing years. If a range change selects a different format, migrate every concrete date reference in date
+  groups, preference `date` and `countDates` fields, and export date selectors to the new format.
+- If Taiwan holiday renewal is declined, preserve every existing date group and migrate only concrete member IDs as
+  required by the range's new ID format. Do not add newly covered dates to WORKDAY or FREEDAY.
+- If Taiwan holiday renewal is accepted for a range within 2023-01-01 through 2026-12-31, replace WORKDAY and FREEDAY
+  with all dates in the new range. Saturdays and Sundays are FREEDAY and other dates are WORKDAY, except for Taiwan
+  calendar exceptions. In November and December 2025, 2025-12-25 is the only exception and is FREEDAY. Use the
+  descriptions `Taiwan workdays imported from the current holiday calendar` and
+  `Taiwan freedays imported from the current holiday calendar`. Preserve other date groups while migrating their
+  concrete members.
 - When shrinking the range, remove every now-out-of-range date in one coordinated file edit. Date selectors can occur in `dates.groups[].members`, preference `date` or `countDates`, export formatting `dates`, and export extra-column `countDates`. Search once with `rg` for all equivalent short, MM-DD, full-date, and range forms of the removed dates. Do not repeat that search by section or inspect unrelated preferences. Read containing blocks only where an entry may need deletion, then make the remaining replacements together. If an explicit preference or export rule loses its entire date scope, delete that entry instead of leaving an empty selector or omitting the selector, which could broaden its meaning.
 
 Minimal frontend-compatible YAML:

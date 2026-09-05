@@ -3,6 +3,7 @@
   "fixture": "ward87",
   "question": "Set the description of P999 to 'Bank staff'.",
   "expect_proposal": false,
+  "tags": ["tuning"],
   "note": "P999 does not exist, so no proposal should be produced and the reply should say why. The wordings are listed in both contracted and full forms, since a correct refusal may use either.",
   "answer_contains": [
     [

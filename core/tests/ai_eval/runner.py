@@ -69,6 +69,7 @@ FIXTURES = {
 }
 WARD_FILE = "large-ward-with-87-people-2025-11.yaml"
 DEFAULT_CASE_JOBS = 4
+DEFAULT_CASE_TAGS = {"difficult", "tuning"}
 
 
 @dataclass
@@ -202,10 +203,12 @@ async def run_case(
 ) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
-    messages = build_provider_messages([], text, case.question, [], [], system_prompt=SANDBOX_SYSTEM_PROMPT)
     counting = _CountingProvider(provider)
 
-    answer: list[str] = []
+    history: list[ChatMessage] = []
+    prompt_messages: list[list[ChatMessage]] = []
+    answers: list[str] = []
+    intermediate_proposals: list[bool] = []
     tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
@@ -216,44 +219,59 @@ async def run_case(
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
-        agent_events = run_sandbox_agent(
-            counting,
-            sandbox_factory,
-            text,
-            messages,
-            SandboxAgentLimits.from_settings(settings),
-            sandbox_metrics,
-            tool_batch_metrics.append,
-        )
-        async for event in agent_events:
-            if isinstance(event, AgentText):
-                answer.append(event.text)
-                _record_text(events, "text", event.text)
-            elif isinstance(event, AgentReasoning):
-                reasoning += len(event.text)
-                _record_text(events, "reasoning", event.text)
-            elif isinstance(event, AgentToolStart):
-                events.append(
-                    {
-                        "kind": "tool_start",
-                        "name": event.name,
-                        "arguments": event.arguments,
-                    }
-                )
-            elif isinstance(event, AgentToolUse):
-                tools.append(event.name if event.ok else f"{event.name}(failed)")
-                events.append(
-                    {
-                        "kind": "tool",
-                        "name": event.name,
-                        "ok": event.ok,
-                        "arguments": event.arguments,
-                        "result": event.result,
-                    }
-                )
-            elif isinstance(event, AgentProposal):
-                proposal_event = event
-                events.append({"kind": "proposal", "diff": event.diff})
+        for turn_index, question in enumerate(case.user_turns):
+            messages = build_provider_messages(history, text, question, [], [], system_prompt=SANDBOX_SYSTEM_PROMPT)
+            prompt_messages.append(messages)
+            turn_answer: list[str] = []
+            turn_proposal: AgentProposal | None = None
+            events.append({"kind": "user", "turn": turn_index + 1, "text": question})
+            agent_events = run_sandbox_agent(
+                counting,
+                sandbox_factory,
+                text,
+                messages,
+                SandboxAgentLimits.from_settings(settings),
+                sandbox_metrics,
+                tool_batch_metrics.append,
+            )
+            async for event in agent_events:
+                if isinstance(event, AgentText):
+                    turn_answer.append(event.text)
+                    _record_text(events, "text", event.text)
+                elif isinstance(event, AgentReasoning):
+                    reasoning += len(event.text)
+                    _record_text(events, "reasoning", event.text)
+                elif isinstance(event, AgentToolStart):
+                    events.append(
+                        {
+                            "kind": "tool_start",
+                            "name": event.name,
+                            "arguments": event.arguments,
+                        }
+                    )
+                elif isinstance(event, AgentToolUse):
+                    tools.append(event.name if event.ok else f"{event.name}(failed)")
+                    events.append(
+                        {
+                            "kind": "tool",
+                            "name": event.name,
+                            "ok": event.ok,
+                            "arguments": event.arguments,
+                            "result": event.result,
+                        }
+                    )
+                elif isinstance(event, AgentProposal):
+                    turn_proposal = event
+                    events.append({"kind": "proposal", "diff": event.diff})
+            answer_text = "".join(turn_answer)
+            answers.append(answer_text)
+            if turn_index < len(case.user_turns) - 1:
+                intermediate_proposals.append(turn_proposal is not None)
+            else:
+                proposal_event = turn_proposal
+            history.extend(
+                [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
+            )
     except (ProviderError, SandboxError) as error:
         failure = "the provider failed" if isinstance(error, ProviderError) else "the sandbox failed"
         return CaseRun(
@@ -264,11 +282,11 @@ async def run_case(
             counting.turns,
             tools,
             [failure],
-            "".join(answer),
+            answers[-1] if answers else "",
             False,
             reasoning,
             str(error),
-            _trajectory(case, messages, events, None),
+            _trajectory(case, prompt_messages, events, None),
             token_usage=counting.token_usage,
             token_usage_turns=counting.token_usage_turns,
             llm_inference_seconds=counting.inference_seconds,
@@ -283,7 +301,14 @@ async def run_case(
     elapsed = time.perf_counter() - started
     initial = _load_yaml(text.encode("utf-8"))
     proposed = _load_yaml(proposal_event.text.encode("utf-8")) if proposal_event else None
-    outcome = RunOutcome(answer="".join(answer), proposed=proposed, initial=initial, activity=events)
+    outcome = RunOutcome(
+        answer=answers[-1] if answers else "",
+        proposed=proposed,
+        initial=initial,
+        activity=events,
+        intermediate_answers=answers[:-1],
+        intermediate_proposals=intermediate_proposals,
+    )
     result = grade(case, outcome, computed_values(initial))
     return CaseRun(
         case_id=case.id,
@@ -296,7 +321,7 @@ async def run_case(
         answer=outcome.answer,
         proposed=proposed is not None,
         reasoning_chars=reasoning,
-        trajectory=_trajectory(case, messages, events, proposal_event, result),
+        trajectory=_trajectory(case, prompt_messages, events, proposal_event, result),
         token_usage=counting.token_usage,
         token_usage_turns=counting.token_usage_turns,
         llm_inference_seconds=counting.inference_seconds,
@@ -319,7 +344,7 @@ def _record_text(events: list[dict[str, Any]], kind: str, text: str) -> None:
 
 def _trajectory(
     case: EvalCase,
-    messages: Sequence[ChatMessage],
+    messages: Sequence[Sequence[ChatMessage]],
     events: list[dict[str, Any]],
     proposal: Any,
     result: Any = None,
@@ -328,8 +353,11 @@ def _trajectory(
     return {
         "fixture": case.fixture,
         "question": case.question,
+        "user_turns": list(case.user_turns),
+        "tags": list(case.tags),
         "note": case.note,
-        "prompt": [dict(message) for message in messages],
+        "prompt": [dict(message) for message in messages[0]] if messages else [],
+        "prompts": [[dict(message) for message in turn] for turn in messages],
         "reasoning": "".join(event["text"] for event in events if event["kind"] == "reasoning"),
         "events": events,
         "checks": [
@@ -585,12 +613,29 @@ def _median(values: list[float]) -> float:
     return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
 
 
-def select(cases: Sequence[EvalCase], ids: Sequence[str], categories: Sequence[str]) -> list[EvalCase]:
+def select(
+    cases: Sequence[EvalCase],
+    ids: Sequence[str],
+    categories: Sequence[str],
+    tags: Sequence[str] = (),
+    *,
+    full: bool = False,
+) -> list[EvalCase]:
     """Choose the cases to run, keeping dataset order."""
+    explicit = bool(ids or categories or tags)
     chosen = [
         case
         for case in cases
-        if (not ids and not categories) or case.id in ids or any(case.category.endswith(name) for name in categories)
+        if full
+        or (
+            (
+                case.id in ids
+                or any(case.category.endswith(name) for name in categories)
+                or bool(set(case.tags) & set(tags))
+            )
+            if explicit
+            else bool(set(case.tags) & DEFAULT_CASE_TAGS)
+        )
     ]
     missing = sorted(set(ids) - {case.id for case in chosen})
     if missing:
@@ -633,6 +678,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the experimental AI evaluation cases.")
     parser.add_argument("--case", action="append", default=[], help="run one case id, repeatable")
     parser.add_argument("--category", action="append", default=[], help="run one category directory, repeatable")
+    parser.add_argument("--tag", action="append", default=[], help="run cases with one tag, repeatable")
+    parser.add_argument("--full", action="store_true", help="run the full suite instead of the default tuning set")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
     parser.add_argument("--output-dir", type=Path, default=None, help="new directory for the report")
     parser.add_argument(
@@ -645,7 +692,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.jobs <= 0:
         parser.error("--jobs must be positive")
 
-    cases = select(load_cases(arguments.cases_dir), arguments.case, arguments.category)
+    cases = select(
+        load_cases(arguments.cases_dir), arguments.case, arguments.category, arguments.tag, full=arguments.full
+    )
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
     started = time.perf_counter()

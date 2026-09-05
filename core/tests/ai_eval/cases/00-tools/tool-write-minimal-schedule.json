@@ -64,6 +64,7 @@
     "shiftTypes",
     "preferences"
   ],
+  "tags": ["tuning"],
   "tool_usage": {
     "required": [
       "write"

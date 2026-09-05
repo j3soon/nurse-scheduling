@@ -15,6 +15,11 @@ mutation. Batch that lookup with one comprehensive inspection of the target and 
 results instead of rediscovering the same locations with narrower searches. After a successful mutation and trusted
 validation, make at most one focused verification of the requested outcome, then answer.
 
+Before expanding either boundary of an existing date range, always ask whether the user wants to renew the Taiwan
+holiday date groups. Do not change the schedule or make a proposal in that turn. After an explicit reply, perform the
+original expansion and either renew the groups or preserve them as requested. The reply may be in a later turn, so
+use the conversation history to recover the requested range.
+
 Treat edit verbs literally. An update, rename, or removal applies only to an existing entity. If the exact entity
 does not exist, say it does not exist and make no change. Never create a replacement unless the user explicitly asks
 to add it. This sandbox cannot run the scheduling optimizer or produce a finished roster. Say that directly when

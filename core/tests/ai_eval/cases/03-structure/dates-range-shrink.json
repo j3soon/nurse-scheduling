@@ -62,5 +62,6 @@
     "dates.groups",
     "preferences"
   ],
+  "tags": ["difficult", "tuning"],
   "note": "Shortening the range orphans the 29th and 30th, which three date groups and 16 preferences still name. One preference covers only those two days. Extending the range instead was tried and removed as a case: crossing a month boundary switches every date id from DD to MM-DD, so the correct answer would rewrite every date reference in the file."
 }
