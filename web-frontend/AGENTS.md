@@ -58,6 +58,9 @@ To test specific source files from the repository root, run:
 ```
 
 ## TypeScript And React Style
+- Mark a file written entirely by an AI coding agent immediately after the license
+  block, using `// This test is mostly AI generated.` in a test and
+  `// This code is mostly AI generated.` in any other new file.
 - Use `PascalCase` for component files and components.
 - Prefix hooks with `use`.
 - Follow the existing Next.js App Router and shared-code patterns under `src/`.

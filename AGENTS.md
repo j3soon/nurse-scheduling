@@ -32,6 +32,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 ## Style
 - Keep comments and docs minimal, concise, yet informative.
 - Do not use em-dash or semicolon to connect sentences.
+- Mark every new file written entirely by an AI coding agent, tests included, with the
+  module's marker comment immediately after the license block. Adding to a file a person
+  wrote does not earn one.
 
 ## Cross-Module Requirements
 - When renaming or deleting frontend people, dates, or shift types, sync all references, including preferences and export layout entries.
