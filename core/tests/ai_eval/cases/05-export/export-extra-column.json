@@ -3,26 +3,24 @@
   "fixture": "ward87",
   "question": "Add an export column headed 'Nights' counting each person's N shifts across all dates.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "export.extraColumns[?header=Nights].countShiftTypes",
-      "equals": [
-        "N"
-      ]
-    },
-    {
-      "path": "export.extraColumns[?header=Nights].countDates",
-      "equals": [
-        "ALL"
-      ]
-    },
-    {
-      "path": "export.extraColumns[?header=Nights].type",
-      "equals": "count"
-    },
-    {
-      "path": "export.extraColumns",
-      "count": 1
+      "path": "export",
+      "before": null,
+      "after": {
+        "extraColumns": [
+          {
+            "type": "count",
+            "header": "Nights",
+            "countShiftTypes": [
+              "N"
+            ],
+            "countDates": [
+              "ALL"
+            ]
+          }
+        ]
+      }
     }
   ],
   "changes": [

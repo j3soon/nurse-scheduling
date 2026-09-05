@@ -3,10 +3,11 @@
   "fixture": "new-schedule",
   "question": "Give this schedule the description 'March ward roster'.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
       "path": "description",
-      "equals": "March ward roster"
+      "before": "",
+      "after": "March ward roster"
     }
   ],
   "changes": [

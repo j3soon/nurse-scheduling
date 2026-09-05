@@ -3,30 +3,30 @@
   "fixture": "ward87",
   "question": "In the export, append the text * to P3's D shift cells and add the note 'Requested'.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "export.formatting[?type=cell].people",
-      "equals": [
-        "P3"
-      ]
-    },
-    {
-      "path": "export.formatting[?type=cell].shiftTypes",
-      "equals": [
-        "D"
-      ]
-    },
-    {
-      "path": "export.formatting[?type=cell].appendText",
-      "equals": "*"
-    },
-    {
-      "path": "export.formatting[?type=cell].note.text",
-      "equals": "Requested"
-    },
-    {
-      "path": "export.formatting",
-      "count": 1
+      "path": "export",
+      "before": null,
+      "after": {
+        "formatting": [
+          {
+            "type": "cell",
+            "people": [
+              "P3"
+            ],
+            "dates": [
+              "ALL"
+            ],
+            "shiftTypes": [
+              "D"
+            ],
+            "appendText": "*",
+            "note": {
+              "text": "Requested"
+            }
+          }
+        ]
+      }
     }
   ],
   "changes": [

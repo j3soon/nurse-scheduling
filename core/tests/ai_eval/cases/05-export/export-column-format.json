@@ -3,20 +3,21 @@
   "fixture": "ward87",
   "question": "In the export, colour the column for the 1st with the font colour #ff0000.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "export.formatting[?type=column].dates",
-      "equals": [
-        "01"
-      ]
-    },
-    {
-      "path": "export.formatting[?type=column].fontColor",
-      "equals": "#ff0000"
-    },
-    {
-      "path": "export.formatting",
-      "count": 1
+      "path": "export",
+      "before": null,
+      "after": {
+        "formatting": [
+          {
+            "type": "column",
+            "dates": [
+              "01"
+            ],
+            "fontColor": "#ff0000"
+          }
+        ]
+      }
     }
   ],
   "changes": [

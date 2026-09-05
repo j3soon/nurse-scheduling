@@ -3,20 +3,21 @@
   "fixture": "ward87",
   "question": "In the exported workbook, highlight P2's row with the background colour #ffcc00.",
   "expect_proposal": true,
-  "assert": [
+  "expected_diff": [
     {
-      "path": "export.formatting[?type=row].people",
-      "equals": [
-        "P2"
-      ]
-    },
-    {
-      "path": "export.formatting[?type=row].backgroundColor",
-      "equals": "#ffcc00"
-    },
-    {
-      "path": "export.formatting",
-      "count": 1
+      "path": "export",
+      "before": null,
+      "after": {
+        "formatting": [
+          {
+            "type": "row",
+            "people": [
+              "P2"
+            ],
+            "backgroundColor": "#ffcc00"
+          }
+        ]
+      }
     }
   ],
   "changes": [

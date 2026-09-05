@@ -605,10 +605,16 @@ def covered_paths(case: EvalCase) -> set[str]:
     Deriving coverage keeps it honest. A hand-written label drifts from the
     assertions beside it and a typo silently covers nothing.
     """
-    sources = [assertion.path for assertion in case.assertions]
-    sources.extend(expected.path for expected in case.expected_diff)
-    sources.extend(case.changes)
-    return {_generalize(path) for path in sources if path}
+    sources = [assertion.path for assertion in case.assertions] + list(case.changes)
+    covered = {_generalize(path) for path in sources if path}
+    for expected in case.expected_diff:
+        covered.add(_generalize(expected.path))
+        if expected.compares_value:
+            covered.update(_value_paths(expected.path, expected.after))
+        else:
+            for value in (*expected.added, *expected.removed):
+                covered.update(_value_paths(f"{expected.path}[]", value))
+    return covered
 
 
 def covered_preference_types(case: EvalCase) -> set[str]:
@@ -618,7 +624,25 @@ def covered_preference_types(case: EvalCase) -> set[str]:
         if not assertion.path.startswith("preferences"):
             continue
         types.update(match.group(1) for match in re.finditer(r"\[\?type=([^\]]+)\]", assertion.path))
+    for expected in case.expected_diff:
+        if expected.path != "preferences":
+            continue
+        for value in (*expected.added, *expected.removed):
+            if isinstance(value, dict) and isinstance(value.get("type"), str):
+                types.add(value["type"])
     return types
+
+
+def _value_paths(path: str, value: Any) -> set[str]:
+    """Describe every nested shape named by an exact expected value."""
+    paths = {_generalize(path)}
+    if isinstance(value, dict):
+        for key, child in value.items():
+            paths.update(_value_paths(f"{path}.{key}", child))
+    elif isinstance(value, list):
+        for child in value:
+            paths.update(_value_paths(f"{path}[]", child))
+    return paths
 
 
 def _generalize(path: str) -> str:
