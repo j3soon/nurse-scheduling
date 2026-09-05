@@ -143,13 +143,13 @@ async def _measured_sandbox_turn(
     try:
         async with managed_sandbox(factory, cleanup_timeout_seconds=cleanup_timeout_seconds) as created:
             sandbox = created
-            metrics.provisioning_seconds = time.monotonic() - lifecycle_started
+            metrics.provisioning_seconds = time.perf_counter() - lifecycle_started
             try:
                 yield sandbox
             finally:
-                cleanup_started = time.monotonic()
+                cleanup_started = time.perf_counter()
     finally:
-        now = time.monotonic()
+        now = time.perf_counter()
         metrics.lifetime_seconds = now - lifecycle_started
         if sandbox is None:
             metrics.provisioning_seconds = metrics.lifetime_seconds
@@ -188,7 +188,7 @@ async def run_sandbox_agent(
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
-    lifecycle_started = time.monotonic()
+    lifecycle_started = time.perf_counter()
     try:
         async with asyncio.timeout(limits.turn_timeout_seconds):
             async with _measured_sandbox_turn(
@@ -270,7 +270,7 @@ async def run_sandbox_agent(
 
 async def hydrate_sandbox(sandbox: SandboxBackend, schedule_yaml: str) -> None:
     """Copy trusted application state and searchable references into one turn."""
-    started = time.monotonic()
+    started = time.perf_counter()
     await sandbox.write_file(WORKSPACE_SCHEDULE, schedule_yaml)
     for group, path in REFERENCE_SCHEMAS.items():
         reference = render_schedule_reference(group)
@@ -281,12 +281,12 @@ async def hydrate_sandbox(sandbox: SandboxBackend, schedule_yaml: str) -> None:
         "sandbox hydrated sandbox_id=%s schedule_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,
         len(schedule_yaml.encode("utf-8")),
-        time.monotonic() - started,
+        time.perf_counter() - started,
     )
 
 
 async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> str:
-    started = time.monotonic()
+    started = time.perf_counter()
     try:
         candidate = await sandbox.read_file(WORKSPACE_SCHEDULE)
     except SandboxFileNotFoundError as exc:
@@ -297,7 +297,7 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
         "sandbox candidate read sandbox_id=%s candidate_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,
         len(candidate),
-        time.monotonic() - started,
+        time.perf_counter() - started,
     )
     if len(candidate) > max_schedule_bytes:
         raise SandboxCandidateError(f"The sandbox candidate exceeds the {max_schedule_bytes}-byte schedule limit.")

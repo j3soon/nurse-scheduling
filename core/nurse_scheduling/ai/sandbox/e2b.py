@@ -188,7 +188,7 @@ class E2BSandboxFactory:
         await self._cleanup_manager.stop()
 
     async def create(self) -> "E2BSandboxBackend":
-        started = time.monotonic()
+        started = time.perf_counter()
         creation = asyncio.create_task(
             self._create_sandbox(
                 template=self._template,
@@ -224,7 +224,7 @@ class E2BSandboxFactory:
         logger.info(
             "sandbox created sandbox_id=%s provider=e2b latency_seconds=%.3f",
             backend.sandbox_id,
-            time.monotonic() - started,
+            time.perf_counter() - started,
         )
         return backend
 
@@ -298,7 +298,7 @@ class E2BSandboxBackend:
         self._activity_cancelled_pause_task: asyncio.Task[None] | None = None
         self._paused_at: float | None = None
         self._commands = 0
-        self._created_at = time.monotonic()
+        self._created_at = time.perf_counter()
         self._execution_seconds = 0.0
         self._pause_count = 0
         self._pause_cancel_count = 0
@@ -323,7 +323,7 @@ class E2BSandboxBackend:
         """Snapshot provider lifecycle costs without expanding SandboxBackend."""
         suspended_seconds = self._suspended_seconds
         if self._paused_at is not None:
-            suspended_seconds += time.monotonic() - self._paused_at
+            suspended_seconds += time.perf_counter() - self._paused_at
         return SandboxLifecycleMetrics(
             execution_seconds=self._execution_seconds,
             pause_count=self._pause_count,
@@ -338,7 +338,7 @@ class E2BSandboxBackend:
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         async with self._active_operation():
-            started = time.monotonic()
+            started = time.perf_counter()
             try:
                 await self._request_with_retry(
                     "write_file",
@@ -347,11 +347,11 @@ class E2BSandboxBackend:
             except Exception as exc:
                 raise SandboxError(f"E2B could not write sandbox file: {path}") from exc
             finally:
-                self._execution_seconds += time.monotonic() - started
+                self._execution_seconds += time.perf_counter() - started
 
     async def read_file(self, path: str) -> bytes:
         async with self._active_operation():
-            started = time.monotonic()
+            started = time.perf_counter()
             try:
                 content = await self._request_with_retry(
                     "read_file",
@@ -362,7 +362,7 @@ class E2BSandboxBackend:
             except Exception as exc:
                 raise SandboxError(f"E2B could not read sandbox file: {path}") from exc
             finally:
-                self._execution_seconds += time.monotonic() - started
+                self._execution_seconds += time.perf_counter() - started
         return bytes(content)
 
     async def run(self, command: str, *, timeout_seconds: float | None = None) -> CommandResult:
@@ -372,7 +372,7 @@ class E2BSandboxBackend:
 
         async with self._active_operation():
             self._commands += 1
-            started = time.monotonic()
+            started = time.perf_counter()
             try:
                 result = await self._sandbox.commands.run(
                     command,
@@ -383,7 +383,7 @@ class E2BSandboxBackend:
             except CommandExitException as exc:
                 result = exc
             except TimeoutException:
-                duration = time.monotonic() - started
+                duration = time.perf_counter() - started
                 self._execution_seconds += duration
                 destroyed = await self._destroy_locked()
                 logger.warning(
@@ -401,10 +401,10 @@ class E2BSandboxBackend:
                     timed_out=True,
                 )
             except Exception as exc:
-                self._execution_seconds += time.monotonic() - started
+                self._execution_seconds += time.perf_counter() - started
                 raise SandboxError("E2B could not run the sandbox command.") from exc
 
-            duration = time.monotonic() - started
+            duration = time.perf_counter() - started
             self._execution_seconds += duration
             logger.info(
                 "sandbox command finished sandbox_id=%s command_number=%s exit_code=%s duration_seconds=%.3f",
@@ -474,7 +474,7 @@ class E2BSandboxBackend:
                 ):
                     return
                 self._state = E2BSandboxState.PAUSING
-                started = time.monotonic()
+                started = time.perf_counter()
                 try:
                     async with asyncio.timeout(self._pause_request_timeout_seconds):
                         await self._sandbox.pause(
@@ -485,7 +485,7 @@ class E2BSandboxBackend:
                     self._state = E2BSandboxState.RUNNING
                     raise
                 except TimeoutError:
-                    self._pause_transition_seconds += time.monotonic() - started
+                    self._pause_transition_seconds += time.perf_counter() - started
                     # The control plane may have accepted pause even though its
                     # response missed our deadline. Probe auto-resume before the
                     # next operation instead of treating the sandbox as running.
@@ -500,7 +500,7 @@ class E2BSandboxBackend:
                     self._state = E2BSandboxState.RUNNING
                     logger.exception("sandbox pause failed sandbox_id=%s", self.sandbox_id)
                     return
-                now = time.monotonic()
+                now = time.perf_counter()
                 latency = now - started
                 self._pause_count += 1
                 self._pause_transition_seconds += latency
@@ -523,7 +523,7 @@ class E2BSandboxBackend:
         if previous_state not in {E2BSandboxState.PAUSED, E2BSandboxState.PAUSE_UNKNOWN}:
             return
         self._state = E2BSandboxState.RESUMING
-        started = time.monotonic()
+        started = time.perf_counter()
         try:
             # This filesystem request exercises E2B auto-resume without an explicit connect call.
             async def resume_probe() -> bool:
@@ -538,7 +538,7 @@ class E2BSandboxBackend:
             self._state = previous_state
             raise SandboxError(f"E2B could not resume sandbox {self.sandbox_id}.") from exc
 
-        now = time.monotonic()
+        now = time.perf_counter()
         latency = now - started
         self._resume_count += 1
         self._resume_wait_seconds += latency
@@ -560,7 +560,7 @@ class E2BSandboxBackend:
         self._cancel_pending_pause_locked()
         previous_state = self._state
         self._state = E2BSandboxState.CLOSING
-        started = time.monotonic()
+        started = time.perf_counter()
         try:
             await self._request_with_retry(
                 "kill",
@@ -573,7 +573,7 @@ class E2BSandboxBackend:
             logger.exception("sandbox cleanup failed sandbox_id=%s", self.sandbox_id)
             return False
 
-        now = time.monotonic()
+        now = time.perf_counter()
         teardown_seconds = now - started
         self._teardown_seconds += teardown_seconds
         if self._paused_at is not None:

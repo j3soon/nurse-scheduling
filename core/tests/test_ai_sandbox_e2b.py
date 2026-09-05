@@ -426,20 +426,20 @@ def test_does_not_retry_an_ambiguous_command_failure():
 def test_backend_explicitly_pauses_with_warm_memory_after_an_operation(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monotonic_time = 0.0
+    performance_time = 0.0
     monkeypatch.setattr(
         e2b_module,
         "time",
-        SimpleNamespace(monotonic=lambda: monotonic_time),
+        SimpleNamespace(perf_counter=lambda: performance_time),
     )
 
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
-        nonlocal monotonic_time
+        nonlocal performance_time
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
         await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
-        monotonic_time = 1.0
+        performance_time = 1.0
         await e2b_backend.close()
         return sandbox, e2b_backend
 
