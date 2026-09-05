@@ -245,6 +245,9 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is None:
                 return False
+            if session.revision != base_revision:
+                session.active = False
+                return False
             session.history.extend(
                 [
                     ChatMessage(role="user", content=user_message),
@@ -252,7 +255,7 @@ class SessionStore:
                 ]
             )
             session.history = session.history[-self._settings.max_history_messages :]
-            proposal_saved = proposal is not None and session.revision == base_revision
+            proposal_saved = proposal is not None
             if proposal_saved:
                 session.proposal_yaml, session.proposal_diff = proposal
             session.active = False

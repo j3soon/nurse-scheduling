@@ -1339,6 +1339,10 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     )
 
     assert not proposal_saved
+    assert session.history == [
+        ChatMessage(role="user", content="First edit"),
+        ChatMessage(role="assistant", content="First proposal"),
+    ]
     with pytest.raises(HTTPException) as exc_info:
         store.take_proposal(session.id, "browser-owner", active_turn_revision)
     assert exc_info.value.status_code == 404
