@@ -21,6 +21,7 @@
 
 import inspect
 from copy import deepcopy
+from dataclasses import dataclass
 
 import pytest
 from pydantic import BaseModel
@@ -28,16 +29,57 @@ from pydantic import BaseModel
 from nurse_scheduling import models
 from nurse_scheduling.ai.pi.bash import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES
 from nurse_scheduling.ai.schema import (
-    SCHEMA_PATHS,
-    SCHEMA_REFERENCE_GROUPS,
-    SCHEMA_TOPICS,
-    render_schedule_reference,
+    SCHEMA_REFERENCE_FILES,
+    TAIWAN_HOLIDAYS_SOURCE,
+    load_schedule_reference,
+    load_taiwan_holidays_reference,
 )
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 from nurse_scheduling.loader import _load_yaml
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
+
+@dataclass(frozen=True)
+class ReferenceTopic:
+    fields: tuple[str, ...]
+    rules: tuple[str, ...]
+    example: str | None
+
+
+def _list_below(section: str, heading: str) -> tuple[str, ...]:
+    marker = f"{heading}:\n"
+    if marker not in section:
+        return ()
+    value = section.split(marker, 1)[1].split("\n\n", 1)[0]
+    return tuple(line.removeprefix("- ") for line in value.splitlines())
+
+
+def _parse_topics(reference: str) -> dict[str, ReferenceTopic]:
+    topics = {}
+    for section in reference.split("\n\n---\n\n"):
+        if not section.startswith("Path: "):
+            continue
+        path = section.splitlines()[0].removeprefix("Path: ")
+        example = None
+        marker = "Minimal frontend-compatible YAML:\n\n"
+        if marker in section:
+            example = section.split(marker, 1)[1].split(
+                "\n\nThis example is validated and authoritative for this shape.", 1
+            )[0]
+        topics[path] = ReferenceTopic(_list_below(section, "Fields"), _list_below(section, "Rules"), example)
+    return topics
+
+
+SCHEMA_REFERENCES = {
+    group: reference for group in SCHEMA_REFERENCE_FILES if (reference := load_schedule_reference(group)) is not None
+}
+assert SCHEMA_REFERENCES.keys() == SCHEMA_REFERENCE_FILES.keys()
+SCHEMA_TOPICS = {
+    path: topic for reference in SCHEMA_REFERENCES.values() for path, topic in _parse_topics(reference).items()
+}
+SCHEMA_PATHS = tuple(SCHEMA_TOPICS)
+SCHEMA_REFERENCE_GROUPS = {group: tuple(_parse_topics(reference)) for group, reference in SCHEMA_REFERENCES.items()}
 EXAMPLE_PATHS = tuple(path for path, topic in SCHEMA_TOPICS.items() if topic.example is not None)
 MODEL_TOPIC_COVERAGE = {
     models.NurseSchedulingData: ("schedule",),
@@ -168,13 +210,18 @@ def test_schema_paths_are_unique():
     assert EXAMPLE_PATHS
 
 
+def test_taiwan_holiday_reference_is_the_frontend_source():
+    assert load_taiwan_holidays_reference() == TAIWAN_HOLIDAYS_SOURCE.read_text(encoding="utf-8")
+    assert "SPECIAL_DATE_INFO" in load_taiwan_holidays_reference()
+
+
 def test_task_sized_references_cover_every_topic_once_and_fit_one_bash_result():
     grouped_paths = [path for paths in SCHEMA_REFERENCE_GROUPS.values() for path in paths]
 
     assert sorted(grouped_paths) == sorted(SCHEMA_PATHS)
     assert len(grouped_paths) == len(set(grouped_paths))
     for group, paths in SCHEMA_REFERENCE_GROUPS.items():
-        reference = render_schedule_reference(group)
+        reference = load_schedule_reference(group)
         assert reference is not None
         assert len(reference.encode("utf-8")) <= DEFAULT_MAX_BYTES
         assert len(reference.splitlines()) <= DEFAULT_MAX_LINES
@@ -183,7 +230,7 @@ def test_task_sized_references_cover_every_topic_once_and_fit_one_bash_result():
 
 
 def test_export_reference_includes_common_fields_and_nested_condition_shape():
-    reference = render_schedule_reference("export")
+    reference = load_schedule_reference("export")
 
     assert reference is not None
     for field in ("backgroundColor", "bottomBorderColor", "rightBorderColor", "fontColor"):
@@ -259,7 +306,7 @@ def test_frontend_singleton_and_scalar_restrictions_are_documented():
 
 def test_schema_separates_the_two_counting_preferences():
     """Staffing per shift and shifts per person read alike until the schema says otherwise."""
-    reference = render_schedule_reference("preferences")
+    reference = load_schedule_reference("preferences")
 
     assert reference is not None
     assert "counts how many people a shift type needs on a date" in reference
@@ -275,7 +322,7 @@ def test_schema_separates_the_two_counting_preferences():
 
 
 def test_schema_documents_soft_affinity_default():
-    reference = render_schedule_reference("preferences")
+    reference = load_schedule_reference("preferences")
 
     assert reference is not None
     assert "omit `weight` to use the soft default 1" in reference
@@ -285,7 +332,7 @@ def test_schema_documents_soft_affinity_default():
 
 
 def test_schema_documents_soft_shift_request_default():
-    reference = render_schedule_reference("preferences")
+    reference = load_schedule_reference("preferences")
 
     assert reference is not None
     assert "map directly to `person`, `date`, and `shiftType`" in reference
@@ -296,9 +343,9 @@ def test_schema_documents_soft_shift_request_default():
 
 
 def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
-    core = render_schedule_reference("core")
-    preferences = render_schedule_reference("preferences")
-    export = render_schedule_reference("export")
+    core = load_schedule_reference("core")
+    preferences = load_schedule_reference("preferences")
+    export = load_schedule_reference("export")
 
     assert core is not None
     assert preferences is not None
@@ -316,7 +363,7 @@ def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
 
 
 def test_range_shrink_guidance_covers_date_scopes_in_one_search():
-    reference = render_schedule_reference("core")
+    reference = load_schedule_reference("core")
 
     assert reference is not None
     for field in (

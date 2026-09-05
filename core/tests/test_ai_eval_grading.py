@@ -262,6 +262,14 @@ def test_answer_values_come_from_the_fixture(tmp_path: Path):
     assert not failing.passed
 
 
+def test_unknown_person_refusal_accepts_contracted_does_not_exist():
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "reject-unknown-person")
+
+    result = grade(case, RunOutcome(answer="P999 doesn't exist, so I made no change."))
+
+    assert result.passed
+
+
 def test_optional_tool_usage_grades_required_forbidden_and_bounded_calls(tmp_path: Path):
     case = _case(
         expect_proposal=False,
@@ -337,6 +345,22 @@ def test_invalid_tool_usage_is_rejected(tmp_path: Path, tool_usage: object, mess
 def test_an_ungradable_case_is_rejected(tmp_path: Path, entry: dict, message: str):
     with pytest.raises(EvalCaseError, match=message):
         load_cases(_write(tmp_path, entry))
+
+
+def test_loads_multi_turn_cases_and_tags(tmp_path: Path):
+    entry = _case(
+        user_turns=["Expand the range.", "Yes."],
+        intermediate_answer_contains=[["Taiwan", ["holiday", "holidays"]]],
+        tags=["difficult", "tuning"],
+        **{"assert": [{"path": "dates.range.endDate", "equals": "2026-03-14"}]},
+        changes=["dates.range"],
+    )
+
+    case = load_cases(_write(tmp_path, entry))[0]
+
+    assert case.user_turns == ("Expand the range.", "Yes.")
+    assert case.intermediate_answer_contains == (("Taiwan", ("holiday", "holidays")),)
+    assert case.tags == ("difficult", "tuning")
 
 
 def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path):

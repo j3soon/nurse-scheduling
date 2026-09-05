@@ -294,8 +294,14 @@ class E2BSandboxBackend:
         self._state = E2BSandboxState.RUNNING
         self._close_started = False
         self._lifecycle_lock = asyncio.Lock()
+        self._operation_condition = asyncio.Condition(self._lifecycle_lock)
+        self._active_operations = 0
+        self._mutation_active = False
+        self._waiting_mutations = 0
+        self._execution_started_at: float | None = None
         self._pause_task: asyncio.Task[None] | None = None
         self._activity_cancelled_pause_task: asyncio.Task[None] | None = None
+        self._activity_batch_depth = 0
         self._paused_at: float | None = None
         self._commands = 0
         self._created_at = time.perf_counter()
@@ -321,11 +327,14 @@ class E2BSandboxBackend:
     @property
     def lifecycle_metrics(self) -> SandboxLifecycleMetrics:
         """Snapshot provider lifecycle costs without expanding SandboxBackend."""
+        execution_seconds = self._execution_seconds
+        if self._execution_started_at is not None:
+            execution_seconds += time.perf_counter() - self._execution_started_at
         suspended_seconds = self._suspended_seconds
         if self._paused_at is not None:
             suspended_seconds += time.perf_counter() - self._paused_at
         return SandboxLifecycleMetrics(
-            execution_seconds=self._execution_seconds,
+            execution_seconds=execution_seconds,
             pause_count=self._pause_count,
             pause_cancel_count=self._pause_cancel_count,
             pause_transition_seconds=self._pause_transition_seconds,
@@ -336,9 +345,29 @@ class E2BSandboxBackend:
             teardown_seconds=self._teardown_seconds,
         )
 
+    @asynccontextmanager
+    async def activity_batch(self) -> AsyncIterator[None]:
+        """Keep the sandbox warm until a related batch of operations finishes."""
+        self._cancel_pending_pause(for_activity=True)
+        async with self._lifecycle_lock:
+            self._cancel_pending_pause_locked()
+            self._ensure_open()
+            await self._resume_locked()
+            self._activity_batch_depth += 1
+        try:
+            yield
+        finally:
+            async with self._lifecycle_lock:
+                self._activity_batch_depth -= 1
+                if (
+                    self._activity_batch_depth == 0
+                    and self._active_operations == 0
+                    and self._state not in {E2BSandboxState.CLOSING, E2BSandboxState.CLOSED}
+                ):
+                    self._schedule_pause_locked()
+
     async def write_file(self, path: str, content: str | bytes) -> None:
         async with self._active_operation():
-            started = time.perf_counter()
             try:
                 await self._request_with_retry(
                     "write_file",
@@ -346,12 +375,9 @@ class E2BSandboxBackend:
                 )
             except Exception as exc:
                 raise SandboxError(f"E2B could not write sandbox file: {path}") from exc
-            finally:
-                self._execution_seconds += time.perf_counter() - started
 
     async def read_file(self, path: str) -> bytes:
-        async with self._active_operation():
-            started = time.perf_counter()
+        async with self._active_operation(read_only=True):
             try:
                 content = await self._request_with_retry(
                     "read_file",
@@ -361,8 +387,6 @@ class E2BSandboxBackend:
                 raise SandboxFileNotFoundError(f"Sandbox file not found: {path}") from exc
             except Exception as exc:
                 raise SandboxError(f"E2B could not read sandbox file: {path}") from exc
-            finally:
-                self._execution_seconds += time.perf_counter() - started
         return bytes(content)
 
     async def run(self, command: str, *, timeout_seconds: float | None = None) -> CommandResult:
@@ -384,8 +408,8 @@ class E2BSandboxBackend:
                 result = exc
             except TimeoutException:
                 duration = time.perf_counter() - started
-                self._execution_seconds += duration
-                destroyed = await self._destroy_locked()
+                async with self._lifecycle_lock:
+                    destroyed = await self._destroy_locked()
                 logger.warning(
                     "sandbox command timed out sandbox_id=%s command_number=%s duration_seconds=%.3f destroyed=%s",
                     self.sandbox_id,
@@ -401,11 +425,9 @@ class E2BSandboxBackend:
                     timed_out=True,
                 )
             except Exception as exc:
-                self._execution_seconds += time.perf_counter() - started
                 raise SandboxError("E2B could not run the sandbox command.") from exc
 
             duration = time.perf_counter() - started
-            self._execution_seconds += duration
             logger.info(
                 "sandbox command finished sandbox_id=%s command_number=%s exit_code=%s duration_seconds=%.3f",
                 self.sandbox_id,
@@ -426,7 +448,9 @@ class E2BSandboxBackend:
         self._close_started = True
         self._cancel_pending_pause()
         try:
-            async with self._lifecycle_lock:
+            async with self._operation_condition:
+                self._operation_condition.notify_all()
+                await self._operation_condition.wait_for(lambda: self._active_operations == 0)
                 if self._state is E2BSandboxState.CLOSED:
                     return
                 if not await self._destroy_locked():
@@ -439,21 +463,58 @@ class E2BSandboxBackend:
             raise
 
     @asynccontextmanager
-    async def _active_operation(self) -> AsyncIterator[None]:
-        """Serialize one operation with pause, resume, and close transitions."""
+    async def _active_operation(self, *, read_only: bool = False) -> AsyncIterator[None]:
+        """Coordinate one operation with exclusive mutations and lifecycle transitions."""
         self._cancel_pending_pause(for_activity=True)
-        async with self._lifecycle_lock:
+        async with self._operation_condition:
+            if read_only:
+                await self._operation_condition.wait_for(
+                    lambda: self._close_started or (not self._mutation_active and self._waiting_mutations == 0)
+                )
+            else:
+                self._waiting_mutations += 1
+                try:
+                    await self._operation_condition.wait_for(
+                        lambda: self._close_started or (self._active_operations == 0 and not self._mutation_active)
+                    )
+                finally:
+                    self._waiting_mutations -= 1
+                    self._operation_condition.notify_all()
             self._cancel_pending_pause_locked()
             self._ensure_open()
             await self._resume_locked()
-            try:
-                yield
-            finally:
-                if self._state not in {E2BSandboxState.CLOSING, E2BSandboxState.CLOSED}:
+            if not read_only:
+                self._mutation_active = True
+            if self._active_operations == 0:
+                self._execution_started_at = time.perf_counter()
+            self._active_operations += 1
+        try:
+            yield
+        finally:
+            async with self._operation_condition:
+                self._active_operations -= 1
+                if not read_only:
+                    self._mutation_active = False
+                if self._active_operations == 0:
+                    if self._execution_started_at is not None:
+                        self._execution_seconds += time.perf_counter() - self._execution_started_at
+                        self._execution_started_at = None
+                    self._operation_condition.notify_all()
+                if (
+                    self._active_operations == 0
+                    and self._waiting_mutations == 0
+                    and self._activity_batch_depth == 0
+                    and self._state not in {E2BSandboxState.CLOSING, E2BSandboxState.CLOSED}
+                ):
                     self._schedule_pause_locked()
 
     def _schedule_pause_locked(self) -> None:
-        if self._close_started or self._state is not E2BSandboxState.RUNNING:
+        if (
+            self._close_started
+            or self._active_operations > 0
+            or self._waiting_mutations > 0
+            or self._state is not E2BSandboxState.RUNNING
+        ):
             return
         self._cancel_pending_pause_locked()
         self._pause_task = asyncio.create_task(self._pause_when_idle())
@@ -469,6 +530,7 @@ class E2BSandboxBackend:
             async with self._lifecycle_lock:
                 if (
                     self._close_started
+                    or self._active_operations > 0
                     or self._state is not E2BSandboxState.RUNNING
                     or self._pause_task is not current_task
                 ):

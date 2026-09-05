@@ -29,6 +29,7 @@ import pytest
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderAttempt,
@@ -79,8 +80,10 @@ class ScriptedProvider:
 
     def __init__(self, *turns) -> None:
         self._turns = list(turns)
+        self.messages: list[Sequence[ChatMessage]] = []
 
     async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator:
+        self.messages.append(messages)
         turn = self._turns.pop(0) if self._turns else [TextDelta("Done.")]
         if isinstance(turn, Exception):
             raise turn
@@ -159,6 +162,34 @@ def test_provider_retries_are_reported_separately_from_logical_turns():
         "retries": 1,
         "retried_turns": 1,
         "attempts_per_turn": [2],
+    }
+
+
+def test_multi_tool_batches_are_recorded_per_model_turn():
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (
+                    ToolCall("call_0", READ_TOOL, '{"path":"schedule.yaml"}'),
+                    ToolCall("call_1", READ_TOOL, '{"path":"schedule.yaml"}'),
+                )
+            )
+        ],
+        [TextDelta("There are 87 people.")],
+    )
+
+    run = _run("ask-people-count", provider)
+
+    assert run.tool_calls_per_turn == [2, 0]
+    assert run.as_record()["tool_batches"] == {
+        "count": 1,
+        "multi_call_batches": 1,
+        "max_calls_per_batch": 2,
+        "calls_per_batch": [2],
+        "calls_per_turn": [2, 0],
+        "parallel_batches": 1,
+        "parallel_per_batch": [True],
+        "execution_seconds_per_batch": [pytest.approx(run.tool_batch_metrics[0].execution_seconds, abs=0.001)],
     }
 
 
@@ -359,9 +390,45 @@ def test_missing_provider_usage_is_recorded_explicitly():
 def test_cases_are_selected_by_id_and_by_category():
     cases = load_cases(CASES)
 
-    assert len(select(cases, [], [])) == len(cases)
+    assert {case.id for case in select(cases, [], [])} == {
+        "dates-range-expand-taiwan-no",
+        "dates-range-expand-taiwan-yes",
+        "dates-range-shrink",
+        "people-add-group-request",
+        "reject-shift-type-rename-collision",
+        "reject-unknown-person",
+        "shift-type-rename-cascade",
+        "tool-write-minimal-schedule",
+    }
+    assert len(select(cases, [], [], full=True)) == len(cases)
     assert [case.id for case in select(cases, ["people-add"], [])] == ["people-add"]
     assert {case.category for case in select(cases, [], ["06-refusal"])} == {"06-refusal"}
+    assert {case.id for case in select(cases, [], [], ["taiwan-holidays"])} == {
+        "dates-range-expand-taiwan-no",
+        "dates-range-expand-taiwan-yes",
+    }
+
+
+def test_a_multi_user_turn_case_preserves_the_conversation_history():
+    case = EvalCase(
+        id="conversation",
+        fixture="new-schedule",
+        question="Expand the range.",
+        expect_proposal=False,
+        user_turns=("Expand the range.", "No."),
+        intermediate_answer_contains=(("Taiwan",),),
+    )
+    provider = ScriptedProvider([TextDelta("Renew Taiwan holidays?")], [TextDelta("Okay, unchanged.")])
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory()))
+
+    assert run.passed
+    assert len(provider.messages) == 2
+    assert provider.messages[1][-3:] == [
+        {"role": "user", "content": "Expand the range."},
+        {"role": "assistant", "content": "Renew Taiwan holidays?"},
+        {"role": "user", "content": "No."},
+    ]
 
 
 def test_an_unknown_case_id_stops_the_run():
@@ -422,6 +489,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "error",
         "token_usage",
         "provider_requests",
+        "tool_batches",
     }
     assert record["timing"]["end_to_end_seconds"] == pytest.approx(run.seconds, abs=0.001)
     assert record["timing"]["llm_inference_seconds"] == pytest.approx(run.llm_inference_seconds, abs=0.001)
@@ -492,6 +560,7 @@ def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
     assert "mutually exclusive lifetime components" in text
     assert "| a | 10.000 | 0.400 | 1.000 | 0.300 | 3.000 | 5.000 | 0.100 | 0.200 |" in text
     assert "| a | 2 | 1 | 2 | 0.100 | 0.060 |" in text
+    assert "| a | 0 | 0 | 0 | none | 0 | none |" in text
 
 
 def test_a_report_never_overwrites_an_earlier_one(tmp_path: Path):
@@ -516,9 +585,9 @@ def test_a_run_records_everything_it_did():
     assert trajectory["question"].startswith("Give this schedule the description")
     assert trajectory["prompt"][0]["role"] == "system"
     kinds = [event["kind"] for event in trajectory["events"]]
-    assert kinds == ["reasoning", "tool_start", "tool", "text", "proposal"]
-    assert trajectory["events"][1]["arguments"] == edit
-    tool_event = trajectory["events"][2]
+    assert kinds == ["user", "reasoning", "tool_start", "tool", "text", "proposal"]
+    assert trajectory["events"][2]["arguments"] == edit
+    tool_event = trajectory["events"][3]
     assert tool_event["ok"]
     assert "passed trusted server-side validation" in tool_event["result"]
     assert "March ward roster" in trajectory["proposal"]["schedule_yaml"]

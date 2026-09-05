@@ -185,7 +185,6 @@ services:
       - diagnostic-reports:/reports
 
   usage-reporter:
-    profiles: ["reporting"]
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped

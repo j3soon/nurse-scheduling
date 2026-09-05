@@ -30,7 +30,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
+from nurse_scheduling.ai.agent import (
+    AgentProposal,
+    AgentReasoning,
+    AgentText,
+    AgentToolBatchMetrics,
+    AgentToolStart,
+    AgentToolUse,
+)
 from nurse_scheduling.ai.app import build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import (
@@ -40,6 +47,7 @@ from nurse_scheduling.ai.provider import (
     ProviderAttempt,
     ProviderError,
     TokenUsage,
+    ToolCallRequest,
 )
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
@@ -61,6 +69,7 @@ FIXTURES = {
 }
 WARD_FILE = "large-ward-with-87-people-2025-11.yaml"
 DEFAULT_CASE_JOBS = 4
+DEFAULT_CASE_TAGS = {"difficult", "tuning"}
 
 
 @dataclass
@@ -86,6 +95,8 @@ class CaseRun:
     sandbox_metrics: SandboxTurnMetrics | None = None
     provider_attempts: int = 0
     provider_attempts_per_turn: list[int] = field(default_factory=list)
+    tool_calls_per_turn: list[int] = field(default_factory=list)
+    tool_batch_metrics: list[AgentToolBatchMetrics] = field(default_factory=list)
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
@@ -113,6 +124,7 @@ class CaseRun:
                 self.provider_attempts,
                 self.provider_attempts_per_turn,
             ),
+            "tool_batches": _tool_batch_record(self.tool_calls_per_turn, self.tool_batch_metrics),
         }
 
     def as_trajectory(self) -> dict[str, Any]:
@@ -132,6 +144,7 @@ class _CountingProvider:
         self.inference_turn_seconds: list[float] = []
         self.attempts = 0
         self.attempts_per_turn: list[int] = []
+        self.tool_calls_per_turn: list[int] = []
 
     async def stream_events(
         self,
@@ -142,6 +155,7 @@ class _CountingProvider:
         stream = self._provider.stream_events(messages, tools).__aiter__()
         turn_seconds = 0.0
         turn_attempts = 0
+        turn_tool_calls = 0
         try:
             while True:
                 started = time.perf_counter()
@@ -160,12 +174,15 @@ class _CountingProvider:
                 if isinstance(event, ProviderAttempt):
                     turn_attempts += 1
                     continue
+                if isinstance(event, ToolCallRequest):
+                    turn_tool_calls += len(event.calls)
                 yield event
         finally:
             if turn_attempts == 0:
                 turn_attempts = 1
             self.attempts += turn_attempts
             self.attempts_per_turn.append(turn_attempts)
+            self.tool_calls_per_turn.append(turn_tool_calls)
             self.inference_turn_seconds.append(turn_seconds)
             close = getattr(stream, "aclose", None)
             if close is not None:
@@ -186,56 +203,75 @@ async def run_case(
 ) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
-    messages = build_provider_messages([], text, case.question, [], [], system_prompt=SANDBOX_SYSTEM_PROMPT)
     counting = _CountingProvider(provider)
 
-    answer: list[str] = []
+    history: list[ChatMessage] = []
+    prompt_messages: list[list[ChatMessage]] = []
+    answers: list[str] = []
+    intermediate_proposals: list[bool] = []
     tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
     sandbox_metrics = SandboxTurnMetrics()
+    tool_batch_metrics: list[AgentToolBatchMetrics] = []
     reasoning = 0
     started = time.perf_counter()
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
-        agent_events = run_sandbox_agent(
-            counting,
-            sandbox_factory,
-            text,
-            messages,
-            SandboxAgentLimits.from_settings(settings),
-            sandbox_metrics,
-        )
-        async for event in agent_events:
-            if isinstance(event, AgentText):
-                answer.append(event.text)
-                _record_text(events, "text", event.text)
-            elif isinstance(event, AgentReasoning):
-                reasoning += len(event.text)
-                _record_text(events, "reasoning", event.text)
-            elif isinstance(event, AgentToolStart):
-                events.append(
-                    {
-                        "kind": "tool_start",
-                        "name": event.name,
-                        "arguments": event.arguments,
-                    }
-                )
-            elif isinstance(event, AgentToolUse):
-                tools.append(event.name if event.ok else f"{event.name}(failed)")
-                events.append(
-                    {
-                        "kind": "tool",
-                        "name": event.name,
-                        "ok": event.ok,
-                        "arguments": event.arguments,
-                        "result": event.result,
-                    }
-                )
-            elif isinstance(event, AgentProposal):
-                proposal_event = event
-                events.append({"kind": "proposal", "diff": event.diff})
+        for turn_index, question in enumerate(case.user_turns):
+            messages = build_provider_messages(history, text, question, [], [], system_prompt=SANDBOX_SYSTEM_PROMPT)
+            prompt_messages.append(messages)
+            turn_answer: list[str] = []
+            turn_proposal: AgentProposal | None = None
+            events.append({"kind": "user", "turn": turn_index + 1, "text": question})
+            agent_events = run_sandbox_agent(
+                counting,
+                sandbox_factory,
+                text,
+                messages,
+                SandboxAgentLimits.from_settings(settings),
+                sandbox_metrics,
+                tool_batch_metrics.append,
+            )
+            async for event in agent_events:
+                if isinstance(event, AgentText):
+                    turn_answer.append(event.text)
+                    _record_text(events, "text", event.text)
+                elif isinstance(event, AgentReasoning):
+                    reasoning += len(event.text)
+                    _record_text(events, "reasoning", event.text)
+                elif isinstance(event, AgentToolStart):
+                    events.append(
+                        {
+                            "kind": "tool_start",
+                            "name": event.name,
+                            "arguments": event.arguments,
+                        }
+                    )
+                elif isinstance(event, AgentToolUse):
+                    tools.append(event.name if event.ok else f"{event.name}(failed)")
+                    events.append(
+                        {
+                            "kind": "tool",
+                            "name": event.name,
+                            "ok": event.ok,
+                            "arguments": event.arguments,
+                            "result": event.result,
+                        }
+                    )
+                elif isinstance(event, AgentProposal):
+                    turn_proposal = event
+                    events.append({"kind": "proposal", "diff": event.diff})
+            answer_text = "".join(turn_answer)
+            answers.append(answer_text)
+            if turn_index < len(case.user_turns) - 1:
+                intermediate_proposals.append(turn_proposal is not None)
+            else:
+                proposal_event = turn_proposal
+            history.extend(
+                [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
+            )
     except (ProviderError, SandboxError) as error:
         failure = "the provider failed" if isinstance(error, ProviderError) else "the sandbox failed"
         return CaseRun(
@@ -246,11 +282,11 @@ async def run_case(
             counting.turns,
             tools,
             [failure],
-            "".join(answer),
+            answers[-1] if answers else "",
             False,
             reasoning,
             str(error),
-            _trajectory(case, messages, events, None),
+            _trajectory(case, prompt_messages, events, None),
             token_usage=counting.token_usage,
             token_usage_turns=counting.token_usage_turns,
             llm_inference_seconds=counting.inference_seconds,
@@ -258,12 +294,21 @@ async def run_case(
             sandbox_metrics=sandbox_metrics,
             provider_attempts=counting.attempts,
             provider_attempts_per_turn=counting.attempts_per_turn,
+            tool_calls_per_turn=counting.tool_calls_per_turn,
+            tool_batch_metrics=tool_batch_metrics,
         )
 
     elapsed = time.perf_counter() - started
     initial = _load_yaml(text.encode("utf-8"))
     proposed = _load_yaml(proposal_event.text.encode("utf-8")) if proposal_event else None
-    outcome = RunOutcome(answer="".join(answer), proposed=proposed, initial=initial, activity=events)
+    outcome = RunOutcome(
+        answer=answers[-1] if answers else "",
+        proposed=proposed,
+        initial=initial,
+        activity=events,
+        intermediate_answers=answers[:-1],
+        intermediate_proposals=intermediate_proposals,
+    )
     result = grade(case, outcome, computed_values(initial))
     return CaseRun(
         case_id=case.id,
@@ -276,7 +321,7 @@ async def run_case(
         answer=outcome.answer,
         proposed=proposed is not None,
         reasoning_chars=reasoning,
-        trajectory=_trajectory(case, messages, events, proposal_event, result),
+        trajectory=_trajectory(case, prompt_messages, events, proposal_event, result),
         token_usage=counting.token_usage,
         token_usage_turns=counting.token_usage_turns,
         llm_inference_seconds=counting.inference_seconds,
@@ -284,6 +329,8 @@ async def run_case(
         sandbox_metrics=sandbox_metrics,
         provider_attempts=counting.attempts,
         provider_attempts_per_turn=counting.attempts_per_turn,
+        tool_calls_per_turn=counting.tool_calls_per_turn,
+        tool_batch_metrics=tool_batch_metrics,
     )
 
 
@@ -297,7 +344,7 @@ def _record_text(events: list[dict[str, Any]], kind: str, text: str) -> None:
 
 def _trajectory(
     case: EvalCase,
-    messages: Sequence[ChatMessage],
+    messages: Sequence[Sequence[ChatMessage]],
     events: list[dict[str, Any]],
     proposal: Any,
     result: Any = None,
@@ -306,8 +353,11 @@ def _trajectory(
     return {
         "fixture": case.fixture,
         "question": case.question,
+        "user_turns": list(case.user_turns),
+        "tags": list(case.tags),
         "note": case.note,
-        "prompt": [dict(message) for message in messages],
+        "prompt": [dict(message) for message in messages[0]] if messages else [],
+        "prompts": [[dict(message) for message in turn] for turn in messages],
         "reasoning": "".join(event["text"] for event in events if event["kind"] == "reasoning"),
         "events": events,
         "checks": [
@@ -355,6 +405,24 @@ def _provider_request_record(turns: int, attempts: int, attempts_per_turn: Seque
     }
 
 
+def _tool_batch_record(
+    tool_calls_per_turn: Sequence[int],
+    metrics: Sequence[AgentToolBatchMetrics] = (),
+) -> dict[str, Any]:
+    """Describe the model turns that requested one or more tools."""
+    calls_per_batch = [count for count in tool_calls_per_turn if count > 0]
+    return {
+        "count": len(calls_per_batch),
+        "multi_call_batches": sum(count > 1 for count in calls_per_batch),
+        "max_calls_per_batch": max(calls_per_batch, default=0),
+        "calls_per_batch": calls_per_batch,
+        "calls_per_turn": list(tool_calls_per_turn),
+        "parallel_batches": sum(metric.parallel for metric in metrics),
+        "parallel_per_batch": [metric.parallel for metric in metrics],
+        "execution_seconds_per_batch": [round(metric.execution_seconds, 3) for metric in metrics],
+    }
+
+
 def _timing_record(
     end_to_end_seconds: float,
     llm_inference_seconds: float,
@@ -394,7 +462,8 @@ def summarize(runs: Sequence[CaseRun]) -> str:
         (
             f"{'category':<16}{'pass':>8}{'e2e s':>9}{'LLM s':>9}{'lifetime s':>11}"
             f"{'execute s':>10}{'warm wait':>10}{'suspend s':>10}{'resume s':>10}"
-            f"{'pauses':>8}{'cancels':>9}{'turns':>8}{'attempts':>10}{'retries':>9}{'tools':>8}"
+            f"{'pauses':>8}{'cancels':>9}{'turns':>8}{'batches':>9}{'multi':>7}"
+            f"{'attempts':>10}{'retries':>9}{'tools':>8}"
         )
     ]
     for category in sorted({run.category for run in runs}):
@@ -411,6 +480,8 @@ def summarize(runs: Sequence[CaseRun]) -> str:
             f"{_median([float(run.sandbox_metrics.pause_count) for run in group if run.sandbox_metrics]):>8.1f}"
             f"{_median([float(run.sandbox_metrics.pause_cancel_count) for run in group if run.sandbox_metrics]):>9.1f}"
             f"{_median([float(run.turns) for run in group]):>8.1f}"
+            f"{_median([float(sum(count > 0 for count in run.tool_calls_per_turn)) for run in group]):>9.1f}"
+            f"{_median([float(sum(count > 1 for count in run.tool_calls_per_turn)) for run in group]):>7.1f}"
             f"{_median([float(run.provider_attempts or run.turns) for run in group]):>10.1f}"
             f"{_median([float(max(0, (run.provider_attempts or run.turns) - run.turns)) for run in group]):>9.1f}"
             f"{_median([float(len(run.tools)) for run in group]):>8.1f}"
@@ -429,6 +500,8 @@ def summarize(runs: Sequence[CaseRun]) -> str:
         f"{sum(metrics.pause_count for metrics in sandbox_runs):>8}"
         f"{sum(metrics.pause_cancel_count for metrics in sandbox_runs):>9}"
         f"{sum(run.turns for run in runs):>8}"
+        f"{sum(count > 0 for run in runs for count in run.tool_calls_per_turn):>9}"
+        f"{sum(count > 1 for run in runs for count in run.tool_calls_per_turn):>7}"
         f"{sum(run.provider_attempts or run.turns for run in runs):>10}"
         f"{sum(max(0, (run.provider_attempts or run.turns) - run.turns) for run in runs):>9}"
         f"{sum(len(run.tools) for run in runs):>8}"
@@ -478,6 +551,25 @@ def sandbox_metrics_markdown(runs: Sequence[CaseRun]) -> str:
             f"| {run.case_id} | {metrics.pause_count} | {metrics.pause_cancel_count} | {metrics.resume_count} "
             f"| {metrics.resume_wait_seconds:.3f} | {metrics.max_resume_wait_seconds:.3f} |"
         )
+    lines.extend(
+        [
+            "",
+            "## Tool batches by case",
+            "",
+            "Calls per batch excludes final-answer turns that requested no tools.",
+            "",
+            "| Case | Batches | Multi-call batches | Max calls | Calls per batch | Parallel batches | Execution seconds per batch |",
+            "| --- | ---: | ---: | ---: | --- | ---: | --- |",
+        ]
+    )
+    for run in runs:
+        batch = _tool_batch_record(run.tool_calls_per_turn, run.tool_batch_metrics)
+        calls = ", ".join(str(count) for count in batch["calls_per_batch"]) or "none"
+        durations = ", ".join(f"{seconds:.3f}" for seconds in batch["execution_seconds_per_batch"]) or "none"
+        lines.append(
+            f"| {run.case_id} | {batch['count']} | {batch['multi_call_batches']} "
+            f"| {batch['max_calls_per_batch']} | {calls} | {batch['parallel_batches']} | {durations} |"
+        )
     return "\n".join(lines)
 
 
@@ -521,12 +613,29 @@ def _median(values: list[float]) -> float:
     return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
 
 
-def select(cases: Sequence[EvalCase], ids: Sequence[str], categories: Sequence[str]) -> list[EvalCase]:
+def select(
+    cases: Sequence[EvalCase],
+    ids: Sequence[str],
+    categories: Sequence[str],
+    tags: Sequence[str] = (),
+    *,
+    full: bool = False,
+) -> list[EvalCase]:
     """Choose the cases to run, keeping dataset order."""
+    explicit = bool(ids or categories or tags)
     chosen = [
         case
         for case in cases
-        if (not ids and not categories) or case.id in ids or any(case.category.endswith(name) for name in categories)
+        if full
+        or (
+            (
+                case.id in ids
+                or any(case.category.endswith(name) for name in categories)
+                or bool(set(case.tags) & set(tags))
+            )
+            if explicit
+            else bool(set(case.tags) & DEFAULT_CASE_TAGS)
+        )
     ]
     missing = sorted(set(ids) - {case.id for case in chosen})
     if missing:
@@ -569,6 +678,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the experimental AI evaluation cases.")
     parser.add_argument("--case", action="append", default=[], help="run one case id, repeatable")
     parser.add_argument("--category", action="append", default=[], help="run one category directory, repeatable")
+    parser.add_argument("--tag", action="append", default=[], help="run cases with one tag, repeatable")
+    parser.add_argument("--full", action="store_true", help="run the full suite instead of the default tuning set")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
     parser.add_argument("--output-dir", type=Path, default=None, help="new directory for the report")
     parser.add_argument(
@@ -581,7 +692,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.jobs <= 0:
         parser.error("--jobs must be positive")
 
-    cases = select(load_cases(arguments.cases_dir), arguments.case, arguments.category)
+    cases = select(
+        load_cases(arguments.cases_dir), arguments.case, arguments.category, arguments.tag, full=arguments.full
+    )
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
     started = time.perf_counter()

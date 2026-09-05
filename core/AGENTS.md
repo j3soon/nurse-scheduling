@@ -71,6 +71,9 @@ test paths when a narrower suite is known to be sufficient.
   structural diff at review, since those catch a dropped entry that still
   parses. Emit an intermediate working-copy preview only after that trusted
   validation.
+- Run a provider batch concurrently only when every call is read-only. Preserve
+  call order in the returned results, keep mixed or mutating batches sequential,
+  and make sandbox close wait for active reads before teardown.
 - Keep model-facing tool contracts and output behavior in pinned Pi ports under
   `ai/pi`. Keep E2B execution and service timeout policy in the thin sandbox
   adapter so upstream behavior remains identifiable and testable.

@@ -92,6 +92,12 @@ asked. Sandbox backends return raw command output to the AI layer. The AI
 and stores the full output in the temporary sandbox when truncation occurs.
 This policy stays outside the provider-neutral sandbox interface.
 
+When one model response requests multiple reads, the reads run concurrently
+and their results are returned in the model's original call order. Batches that
+contain `bash`, `edit`, or `write` remain sequential so filesystem mutations
+have deterministic ordering. E2B stays active for either kind of batch and
+pauses again before the next provider reasoning turn.
+
 When a Bash command changes the schedule, the backend reads the working copy
 and validates it outside the sandbox before emitting `schedule_change`. The
 event contains that validated working copy. The browser compares it with the
@@ -127,8 +133,20 @@ The launcher reads them from `docker/.env`, so the shortest form is:
 
 ```sh
 ./scripts/run_ai_eval.sh
+./scripts/run_ai_eval.sh --full
 ./scripts/run_ai_eval.sh --category 01-reading
 ```
+
+The default run selects cases tagged `difficult` or `tuning`, keeping prompt
+tuning focused as the corpus grows. Pass `--full` to run every case. Explicit
+`--case`, `--category`, or `--tag` selectors bypass the default tag filter.
+Cases may use `user_turns` for a real multi-turn conversation and
+`intermediate_answer_contains` to verify that earlier turns ask a required
+question without producing a proposal.
+
+The launcher checks provider authentication before provisioning any E2B
+sandbox. Providers without a `/models` endpoint produce an inconclusive result
+and continue.
 
 To run it without the launcher, load the settings first:
 
@@ -152,6 +170,23 @@ its reasoning, every tool call with its arguments and result, the answer, the
 proposed schedule, timing breakdown, and each criterion with its outcome. Pass `--output-dir` to
 choose the directory, which must not already exist, or set
 `AI_EVAL_ARTIFACT_ROOT` to move the root.
+
+Each case also records tool batches, calls per model turn, calls per batch,
+parallel execution, execution time per batch, and the number of batches
+containing multiple calls. The summary lists batch counts beside sandbox pause
+metrics so pause behavior can be checked at model-turn boundaries instead of
+inferred from the total tool count.
+
+To measure E2B read concurrency without provider or model variance, run:
+
+```sh
+./scripts/run_ai_read_benchmark.sh
+```
+
+The benchmark alternates repeated sequential and concurrent read batches in one
+warm sandbox. It reports median and p95 latency plus the median speedup under
+`artifacts/ai-read-benchmarks/`. Use `--runs`, `--calls`, and `--bytes` to change
+the sample count, calls per batch, and file size.
 
 Timing fields use wall-clock seconds. `end_to_end_seconds` covers the agent run.
 `llm_inference_seconds` sums only time awaiting provider stream events.

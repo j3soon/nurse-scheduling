@@ -22,7 +22,7 @@
 'use client';
 
 import Image from 'next/image';
-import { ChangeEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FiArrowDown } from 'react-icons/fi';
 import BackendTokenField from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
@@ -245,6 +245,7 @@ export default function ExperimentalAiPage() {
   const [imageCapability, setImageCapability] = useState(DISABLED_IMAGE_CAPABILITY);
   const [documentCapability, setDocumentCapability] = useState(DISABLED_DOCUMENT_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
   const [showTools, setShowTools] = useState(true);
@@ -261,6 +262,7 @@ export default function ExperimentalAiPage() {
   const followPageBottomRef = useRef(true);
   const hasMessagesRef = useRef(false);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  const composerDragDepthRef = useRef(0);
   hasMessagesRef.current = messages.length > 0;
   useTabSwitchWarning(messages.length > 0);
 
@@ -500,9 +502,7 @@ export default function ExperimentalAiPage() {
     setError(requestError instanceof Error ? requestError.message : fallback);
   };
 
-  const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = '';
+  const addAttachments = (files: File[]) => {
     if (files.length === 0) return;
 
     const candidates = files.map(file => {
@@ -562,6 +562,12 @@ export default function ExperimentalAiPage() {
         ...(attachment.kind === 'image' ? { previewUrl: URL.createObjectURL(attachment.file) } : {}),
       })),
     ]);
+  };
+
+  const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    addAttachments(files);
   };
 
   const removeAttachment = (id: string) => {
@@ -749,6 +755,30 @@ export default function ExperimentalAiPage() {
     (!imageCapability.enabled || selectedImageCount >= imageCapability.max_files)
     && (!documentCapability.enabled || selectedDocumentCount >= documentCapability.max_files)
   );
+  const isFileDrag = (event: DragEvent<HTMLElement>) => event.dataTransfer.types.includes('Files');
+  const enterAttachmentDropZone = (event: DragEvent<HTMLFormElement>) => {
+    if (attachmentPickerDisabled || !isFileDrag(event)) return;
+    event.preventDefault();
+    composerDragDepthRef.current += 1;
+    setIsDraggingFiles(true);
+  };
+  const dragOverAttachmentDropZone = (event: DragEvent<HTMLFormElement>) => {
+    if (attachmentPickerDisabled || !isFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+  const leaveAttachmentDropZone = (event: DragEvent<HTMLFormElement>) => {
+    if (!isFileDrag(event)) return;
+    composerDragDepthRef.current = Math.max(0, composerDragDepthRef.current - 1);
+    if (composerDragDepthRef.current === 0) setIsDraggingFiles(false);
+  };
+  const dropAttachments = (event: DragEvent<HTMLFormElement>) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    composerDragDepthRef.current = 0;
+    setIsDraggingFiles(false);
+    if (!attachmentPickerDisabled) addAttachments(Array.from(event.dataTransfer.files));
+  };
   const serverLocked = sessionIdRef.current !== null || messages.length > 0;
 
   const applyProposal = async () => {
@@ -1064,8 +1094,20 @@ export default function ExperimentalAiPage() {
       <form
         ref={composerRef}
         onSubmit={send}
-        className="fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6"
+        onDragEnter={enterAttachmentDropZone}
+        onDragOver={dragOverAttachmentDropZone}
+        onDragLeave={leaveAttachmentDropZone}
+        onDrop={dropAttachments}
+        aria-label="Message composer"
+        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
+          isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
+        }`}
       >
+        {isDraggingFiles && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/90 text-sm font-semibold text-blue-800">
+            Drop files to attach
+          </div>
+        )}
         {showScrollToBottom && (
           <button
             type="button"

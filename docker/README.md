@@ -280,7 +280,7 @@ before its reporting deadline.
 Set `USAGE_METRICS_ENABLED=false` in the Docker environment file to disable
 collection for a self-hosted deployment.
 
-The `reporting` profile runs one weekly service that stores delivery status in
+The default deployment runs one weekly service that stores delivery status in
 Redis and writes reports to its container log by default. On startup it catches
 up on completed, unsent weeks still covered by telemetry retention. It then
 sleeps until the next reporting deadline.
@@ -306,7 +306,7 @@ settings are missing.
 Then start the normal deployment with the reporter:
 
 ```sh
-docker compose -f compose.backend.yml --profile reporting up -d --build
+docker compose -f compose.backend.yml up -d --build
 ```
 
 The reporter delivers the completed week on Sunday at or shortly after 00:00 in
@@ -327,7 +327,7 @@ multiline templates stop the reporter during startup.
 Trigger completed unsent reports immediately, without waiting for Sunday:
 
 ```sh
-docker compose -f compose.backend.yml --profile reporting run --rm \
+docker compose -f compose.backend.yml run --rm \
   usage-reporter python -m nurse_scheduling.server.usage_report --once
 ```
 
@@ -337,7 +337,7 @@ To send the newest retained week immediately, including the current partial
 week or one already checkpointed as sent, add `--force`:
 
 ```sh
-docker compose -f compose.backend.yml --profile reporting run --rm \
+docker compose -f compose.backend.yml run --rm \
   usage-reporter python -m nurse_scheduling.server.usage_report --once --force
 ```
 
@@ -355,7 +355,7 @@ the report as delivered, so use an isolated Redis namespace if it must still be
 emailed later:
 
 ```sh
-docker compose -f compose.backend.yml --profile reporting run --rm usage-reporter \
+docker compose -f compose.backend.yml run --rm usage-reporter \
   python -m nurse_scheduling.server.usage_report --once
 ```
 

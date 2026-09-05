@@ -27,6 +27,7 @@ RUN useradd -m -u 1000 user \
     && chown user:user /reports /app/nurse-scheduling
 
 COPY --chown=user:user --from=source /app/nurse-scheduling/core/ /app/nurse-scheduling/core/
+COPY --chown=user:user --from=source /app/nurse-scheduling/web-frontend/src/utils/taiwanHolidays.ts /app/nurse-scheduling/web-frontend/src/utils/taiwanHolidays.ts
 COPY --chown=user:user --from=source /app/nurse-scheduling/.app-version /app/nurse-scheduling/.app-version
 
 WORKDIR /app/nurse-scheduling/core

@@ -21,6 +21,9 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+
+import pytest
 
 from nurse_scheduling.ai.agent import (
     AgentReasoning,
@@ -31,6 +34,7 @@ from nurse_scheduling.ai.agent import (
     run_tool_agent,
 )
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ReasoningDelta, TextDelta, ToolCall, ToolCallRequest
 
 QUESTION: list[ChatMessage] = [{"role": "user", "content": "Who works on the first day?"}]
@@ -128,6 +132,142 @@ def test_parallel_tool_calls_each_receive_a_result():
     assert [event.name for event in events if isinstance(event, AgentToolUse)] == [BASH_TOOL, BASH_TOOL]
     results = [message for message in provider.requests[1][0] if message.get("role") == "tool"]
     assert [message["tool_call_id"] for message in results] == ["call_0", "call_1"]
+
+
+def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
+    calls = (
+        ToolCall("call_0", BASH_TOOL, '{"command":"first"}'),
+        ToolCall("call_1", BASH_TOOL, '{"command":"second"}'),
+    )
+    provider = FakeProvider([ToolCallRequest(calls)], _text("Done."))
+    active = 0
+    max_active = 0
+    both_started = asyncio.Event()
+
+    async def execute(_name: str, arguments: str) -> AgentToolOutcome:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        if active == 2:
+            both_started.set()
+        await both_started.wait()
+        active -= 1
+        return AgentToolOutcome(arguments, True)
+
+    async def collect() -> list:
+        return [
+            event
+            async for event in run_tool_agent(
+                provider,
+                QUESTION,
+                TOOLS,
+                execute,
+                parallel_tool_names=frozenset({BASH_TOOL}),
+            )
+        ]
+
+    events = asyncio.run(collect())
+    uses = [event for event in events if isinstance(event, AgentToolUse)]
+
+    assert max_active == 2
+    assert [event.result for event in uses] == ['{"command":"first"}', '{"command":"second"}']
+    assert all(isinstance(event, AgentToolStart) for event in events[:2])
+
+
+def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
+    calls = (
+        ToolCall("call_0", BASH_TOOL, '{"command":"fail"}'),
+        ToolCall("call_1", BASH_TOOL, '{"command":"wait"}'),
+    )
+    provider = FakeProvider([ToolCallRequest(calls)])
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+
+    async def execute(_name: str, arguments: str) -> AgentToolOutcome:
+        if "fail" in arguments:
+            await sibling_started.wait()
+            raise ValueError("tool failed")
+        sibling_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            sibling_cancelled.set()
+            raise
+
+    async def collect() -> None:
+        async for _event in run_tool_agent(
+            provider,
+            QUESTION,
+            TOOLS,
+            execute,
+            parallel_tool_names=frozenset({BASH_TOOL}),
+        ):
+            pass
+
+    with pytest.raises(ValueError, match="tool failed"):
+        asyncio.run(collect())
+    assert sibling_cancelled.is_set()
+
+
+def test_mixed_tool_batch_remains_sequential():
+    calls = (
+        ToolCall("call_0", READ_TOOL, '{"path":"schedule.yaml"}'),
+        ToolCall("call_1", BASH_TOOL, '{"command":"rg people"}'),
+    )
+    provider = FakeProvider([ToolCallRequest(calls)], _text("Done."))
+    active = 0
+    max_active = 0
+
+    async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return AgentToolOutcome("result", True)
+
+    async def collect() -> None:
+        async for _event in run_tool_agent(
+            provider,
+            QUESTION,
+            TOOLS,
+            execute,
+            parallel_tool_names=frozenset({READ_TOOL}),
+        ):
+            pass
+
+    asyncio.run(collect())
+
+    assert max_active == 1
+
+
+def test_one_activity_batch_contains_all_calls_from_a_model_response():
+    provider = FakeProvider(_calls(2), _text("Done."))
+    activity: list[str] = []
+    executed = 0
+
+    @asynccontextmanager
+    async def activity_batch():
+        activity.append("enter")
+        try:
+            yield
+        finally:
+            activity.append("exit")
+
+    async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
+        nonlocal executed
+        assert activity == ["enter"]
+        executed += 1
+        return AgentToolOutcome("command result", True)
+
+    async def collect() -> None:
+        async for _event in run_tool_agent(provider, QUESTION, TOOLS, execute, activity_batch):
+            pass
+
+    asyncio.run(collect())
+
+    assert activity == ["enter", "exit"]
+    assert executed == 2
 
 
 def test_tool_calls_continue_until_the_model_finishes():

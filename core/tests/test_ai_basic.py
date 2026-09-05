@@ -1545,6 +1545,8 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "read one task-sized document" in normalized_prompt
     assert "`/reference/schema-core.md`" in normalized_prompt
     assert "`/reference/schema-preferences.md`" in normalized_prompt
+    assert "read the relevant reference before the first mutation" in normalized_prompt
+    assert "at most one focused verification" in normalized_prompt
     assert "`/reference/schema-export.md`" in normalized_prompt
     assert "not the PyYAML `yaml` module" in normalized_prompt
     assert "Preserve existing fields" in normalized_prompt
