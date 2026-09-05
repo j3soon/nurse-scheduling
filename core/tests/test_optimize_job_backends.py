@@ -25,7 +25,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock, call
+from unittest.mock import Mock
 
 import fakeredis
 import pytest
@@ -203,20 +203,22 @@ def test_redis_store_uses_default_connect_timeout_and_bounds_stream_reads(monkey
         event_stream_keepalive_seconds=2.5,
     )
 
-    assert from_url.call_args_list == [
-        call(
-            "redis://redis.example/0",
-            decode_responses=False,
-            socket_connect_timeout=redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
-            socket_timeout=redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
-        ),
-        call(
-            "redis://redis.example/0",
-            decode_responses=False,
-            socket_connect_timeout=redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
-            socket_timeout=7.5,
-        ),
-    ]
+    operation_call, stream_call = from_url.call_args_list
+    assert operation_call.args == ("redis://redis.example/0",)
+    assert stream_call.args == ("redis://redis.example/0",)
+    assert {key: value for key, value in operation_call.kwargs.items() if key != "retry"} == {
+        "decode_responses": False,
+        "socket_connect_timeout": redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
+        "socket_timeout": redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
+    }
+    assert {key: value for key, value in stream_call.kwargs.items() if key != "retry"} == {
+        "decode_responses": False,
+        "socket_connect_timeout": redis_store.REDIS_OPERATION_TIMEOUT_SECONDS,
+        "socket_timeout": 7.5,
+    }
+    # The stream client reads a blocking-read timeout as its keepalive tick.
+    assert redis.exceptions.TimeoutError in operation_call.kwargs["retry"]._supported_errors
+    assert redis.exceptions.TimeoutError not in stream_call.kwargs["retry"]._supported_errors
     operation_client.ping.assert_called_once_with()
 
     operation_client.reset_mock()
@@ -485,6 +487,45 @@ def test_event_stream_replays_from_invalid_cursor(store_factory, after_id):
 
     assert event is not None
     assert event.type == "job.state_changed"
+
+
+def test_redis_store_retries_dropped_connections(fake_redis_store_factory):
+    # `from_url` leaves connections with zero retries, so the store must supply
+    # its own policy or a single blip fails the operation.
+    store = fake_redis_store_factory()
+
+    ordinary = store._redis.connection_pool.make_connection().retry
+    stream = store._stream_redis.connection_pool.make_connection().retry
+
+    assert ordinary._retries > 0
+    assert stream._retries > 0
+    assert redis.exceptions.ConnectionError in ordinary._supported_errors
+    assert redis.exceptions.ConnectionError in stream._supported_errors
+    # A blocking read timeout is how `stream_events` paces its keepalives, so
+    # retrying it there would stall the stream for another full timeout.
+    assert redis.exceptions.TimeoutError in ordinary._supported_errors
+    assert redis.exceptions.TimeoutError not in stream._supported_errors
+
+
+def test_redis_store_recovers_from_a_dropped_connection(fake_redis_store_factory, monkeypatch):
+    store = fake_redis_store_factory()
+    controller = _controller(store)
+    created = _create(controller)
+
+    connection_class = store._redis.connection_pool.connection_class
+    original_send_command = connection_class.send_command
+    failures = {"count": 0}
+
+    def flaky_send_command(self, *args, **kwargs):
+        if failures["count"] == 0:
+            failures["count"] += 1
+            raise redis.exceptions.ConnectionError("connection reset by peer")
+        return original_send_command(self, *args, **kwargs)
+
+    monkeypatch.setattr(connection_class, "send_command", flaky_send_command)
+
+    assert store.get(created.id).id == created.id
+    assert failures["count"] == 1
 
 
 def test_redis_store_uses_artifact_metadata_defaults(fake_redis_store_factory):

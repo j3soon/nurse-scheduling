@@ -27,6 +27,8 @@ from typing import Any, overload
 from uuid import uuid4
 
 import redis
+from redis.backoff import ExponentialBackoff
+from redis.retry import Retry
 
 from ..errors import (
     JobArtifactNotFoundError,
@@ -55,6 +57,32 @@ SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
 """Additional socket time allowed beyond one blocking event-stream read."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 2.0
 """Short timeout for ordinary Redis operations and deployment probes."""
+REDIS_RETRY_ATTEMPTS = 2
+"""Retries allowed after a dropped or slow Redis connection."""
+REDIS_RETRY_BACKOFF_BASE_SECONDS = 0.01
+"""Delay after the first retryable Redis connection failure."""
+REDIS_RETRY_BACKOFF_CAP_SECONDS = 0.2
+"""Maximum delay between Redis connection retries."""
+
+
+def _connection_retry(*, retry_on_timeout: bool) -> Retry:
+    """Build a bounded retry policy for one Redis client.
+
+    `redis.Redis.from_url` otherwise leaves connections with zero retries, so a
+    single slow or dropped connection surfaces as a failed operation. Callers
+    that treat a read timeout as control flow must exclude it, since retrying
+    would stall them for another full timeout.
+    """
+    supported_errors: tuple[type[Exception], ...] = (redis.exceptions.ConnectionError,)
+    if retry_on_timeout:
+        supported_errors += (redis.exceptions.TimeoutError,)
+    return Retry(
+        ExponentialBackoff(base=REDIS_RETRY_BACKOFF_BASE_SECONDS, cap=REDIS_RETRY_BACKOFF_CAP_SECONDS),
+        retries=REDIS_RETRY_ATTEMPTS,
+        supported_errors=supported_errors,
+    )
+
+
 _STREAM_ID_PATTERN = re.compile(r"^\d+-\d+$")
 """Shape of the `<ms>-<seq>` entry IDs Redis assigns to stream events."""
 
@@ -128,13 +156,17 @@ class RedisJobStore:
             decode_responses=False,
             socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             socket_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            retry=_connection_retry(retry_on_timeout=True),
         )
         """Binary-safe Redis client for bounded ordinary operations."""
+        # `stream_events` reads a blocking-read timeout as its keepalive tick, so
+        # this client must not retry one.
         self._stream_redis = redis.Redis.from_url(
             url,
             decode_responses=False,
             socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             socket_timeout=event_stream_keepalive_seconds + SOCKET_TIMEOUT_MARGIN_SECONDS,
+            retry=_connection_retry(retry_on_timeout=False),
         )
         """Redis client whose read timeout exceeds one blocking event-stream read."""
         self._redis.ping()
