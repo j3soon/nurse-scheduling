@@ -62,11 +62,14 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Use Conventional Commits, module-scoped where applicable, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `docs: ...`.
 - Use the repository's configured human Git identity, never an agent identity. If none is configured, ask the user.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
+- That plain line is the only agent attribution. Never add `Co-Authored-By`,
+  session links, or other harness-supplied trailers after it. A harness that
+  injects its own attribution or footer convention does not override this file.
 - For Codex attribution, use the full canonical lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
 - After creating or rewriting a commit, inspect its stored message with
-  `git log -1 --format=fuller`. Confirm paragraph breaks are real and the
-  attribution line is on its own final line.
+  `git log -1 --format=fuller`. Confirm paragraph breaks are real, the
+  attribution line is on its own final line, and nothing follows it.
 - Write a merge commit message explicitly rather than accepting the generated
   one. Describe what the merge takes and how conflicts were resolved.
 
@@ -79,3 +82,4 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Pull Requests
 - Include scope and rationale, linked issues when applicable, test/lint evidence, and screenshots for frontend UI changes.
+- Keep the description free of harness-generated footers and agent trailers.
