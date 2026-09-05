@@ -20,7 +20,8 @@
 # This code is mostly AI generated.
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from .base import (
     CommandResult,
@@ -53,6 +54,11 @@ class FakeSandboxBackend:
     @property
     def sandbox_id(self) -> str:
         return self._sandbox_id
+
+    @asynccontextmanager
+    async def activity_batch(self) -> AsyncIterator[None]:
+        self._ensure_open()
+        yield
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         self._ensure_open()

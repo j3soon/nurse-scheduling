@@ -21,6 +21,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 
 from nurse_scheduling.ai.agent import (
     AgentReasoning,
@@ -128,6 +129,35 @@ def test_parallel_tool_calls_each_receive_a_result():
     assert [event.name for event in events if isinstance(event, AgentToolUse)] == [BASH_TOOL, BASH_TOOL]
     results = [message for message in provider.requests[1][0] if message.get("role") == "tool"]
     assert [message["tool_call_id"] for message in results] == ["call_0", "call_1"]
+
+
+def test_one_activity_batch_contains_all_calls_from_a_model_response():
+    provider = FakeProvider(_calls(2), _text("Done."))
+    activity: list[str] = []
+    executed = 0
+
+    @asynccontextmanager
+    async def activity_batch():
+        activity.append("enter")
+        try:
+            yield
+        finally:
+            activity.append("exit")
+
+    async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
+        nonlocal executed
+        assert activity == ["enter"]
+        executed += 1
+        return AgentToolOutcome("command result", True)
+
+    async def collect() -> None:
+        async for _event in run_tool_agent(provider, QUESTION, TOOLS, execute, activity_batch):
+            pass
+
+    asyncio.run(collect())
+
+    assert activity == ["enter", "exit"]
+    assert executed == 2
 
 
 def test_tool_calls_continue_until_the_model_finishes():

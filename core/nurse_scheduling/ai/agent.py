@@ -21,6 +21,7 @@
 
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -79,6 +80,12 @@ class AgentProposal:
 
 AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentProposal
 ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]
+ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
+
+
+@asynccontextmanager
+async def _unbatched_activity() -> AsyncIterator[None]:
+    yield
 
 
 @dataclass(frozen=True)
@@ -94,6 +101,7 @@ async def run_tool_agent(
     messages: Sequence[ChatMessage],
     tools: Sequence[dict[str, Any]],
     execute: ToolExecutor,
+    activity_batch: ToolBatchScope | None = None,
 ) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
     """Run the model/tool loop shared by agent capability layers."""
     conversation = list(messages)
@@ -111,14 +119,16 @@ async def run_tool_agent(
             break
 
         conversation.append(assistant_tool_call_message(calls, "".join(answer)))
-        for call in calls:
-            yield AgentToolStart(call.name, call.arguments)
-            outcome = await execute(call.name, call.arguments)
-            logger.info(
-                "agent tool call name=%s ok=%s result_chars=%s",
-                call.name,
-                outcome.ok,
-                len(outcome.text),
-            )
-            yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
-            conversation.append(tool_result_message(call.id, outcome.text))
+        batch_scope = activity_batch or _unbatched_activity
+        async with batch_scope():
+            for call in calls:
+                yield AgentToolStart(call.name, call.arguments)
+                outcome = await execute(call.name, call.arguments)
+                logger.info(
+                    "agent tool call name=%s ok=%s result_chars=%s",
+                    call.name,
+                    outcome.ok,
+                    len(outcome.text),
+                )
+                yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                conversation.append(tool_result_message(call.id, outcome.text))

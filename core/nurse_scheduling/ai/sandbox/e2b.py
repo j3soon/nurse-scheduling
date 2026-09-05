@@ -296,6 +296,7 @@ class E2BSandboxBackend:
         self._lifecycle_lock = asyncio.Lock()
         self._pause_task: asyncio.Task[None] | None = None
         self._activity_cancelled_pause_task: asyncio.Task[None] | None = None
+        self._activity_batch_depth = 0
         self._paused_at: float | None = None
         self._commands = 0
         self._created_at = time.perf_counter()
@@ -335,6 +336,26 @@ class E2BSandboxBackend:
             suspended_seconds=suspended_seconds,
             teardown_seconds=self._teardown_seconds,
         )
+
+    @asynccontextmanager
+    async def activity_batch(self) -> AsyncIterator[None]:
+        """Keep the sandbox warm until a related batch of operations finishes."""
+        self._cancel_pending_pause(for_activity=True)
+        async with self._lifecycle_lock:
+            self._cancel_pending_pause_locked()
+            self._ensure_open()
+            await self._resume_locked()
+            self._activity_batch_depth += 1
+        try:
+            yield
+        finally:
+            async with self._lifecycle_lock:
+                self._activity_batch_depth -= 1
+                if (
+                    self._activity_batch_depth == 0
+                    and self._state not in {E2BSandboxState.CLOSING, E2BSandboxState.CLOSED}
+                ):
+                    self._schedule_pause_locked()
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         async with self._active_operation():
@@ -449,7 +470,10 @@ class E2BSandboxBackend:
             try:
                 yield
             finally:
-                if self._state not in {E2BSandboxState.CLOSING, E2BSandboxState.CLOSED}:
+                if (
+                    self._activity_batch_depth == 0
+                    and self._state not in {E2BSandboxState.CLOSING, E2BSandboxState.CLOSED}
+                ):
                     self._schedule_pause_locked()
 
     def _schedule_pause_locked(self) -> None:

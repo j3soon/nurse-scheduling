@@ -23,7 +23,7 @@ import asyncio
 import logging
 import sys
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -74,6 +74,10 @@ class SandboxBackend(Protocol):
     @property
     def sandbox_id(self) -> str:
         """Return an opaque provider identifier safe for lifecycle logging."""
+        ...
+
+    def activity_batch(self) -> AbstractAsyncContextManager[None]:
+        """Keep the sandbox active across one related batch of operations."""
         ...
 
     async def write_file(self, path: str, content: str | bytes) -> None:

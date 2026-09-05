@@ -465,6 +465,26 @@ def test_immediate_activity_cancels_a_pending_pause():
     assert e2b_backend.lifecycle_metrics.pause_count == 1
 
 
+def test_activity_batch_defers_pause_until_all_operations_finish():
+    async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
+        sandbox = FakeE2BSandbox()
+        e2b_backend = make_backend(sandbox)
+        async with e2b_backend.activity_batch():
+            await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+            await asyncio.sleep(0)
+            await e2b_backend.read_file("/workspace/schedule.yaml")
+            await asyncio.sleep(0)
+            assert e2b_backend.lifecycle_state is E2BSandboxState.RUNNING
+            sandbox.pause.assert_not_awaited()
+        await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
+        await e2b_backend.close()
+        return sandbox, e2b_backend
+
+    sandbox, e2b_backend = asyncio.run(exercise())
+    sandbox.pause.assert_awaited_once_with(keep_memory=True, request_timeout=5)
+    assert e2b_backend.lifecycle_metrics.pause_count == 1
+
+
 def test_activity_cancels_an_in_progress_pause_before_running():
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend, float]:
         entered = asyncio.Event()
