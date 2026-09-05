@@ -92,6 +92,12 @@ asked. Sandbox backends return raw command output to the AI layer. The AI
 and stores the full output in the temporary sandbox when truncation occurs.
 This policy stays outside the provider-neutral sandbox interface.
 
+When one model response requests multiple reads, the reads run concurrently
+and their results are returned in the model's original call order. Batches that
+contain `bash`, `edit`, or `write` remain sequential so filesystem mutations
+have deterministic ordering. E2B stays active for either kind of batch and
+pauses again before the next provider reasoning turn.
+
 When a Bash command changes the schedule, the backend reads the working copy
 and validates it outside the sandbox before emitting `schedule_change`. The
 event contains that validated working copy. The browser compares it with the

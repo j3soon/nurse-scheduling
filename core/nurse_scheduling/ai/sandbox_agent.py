@@ -227,7 +227,8 @@ async def run_sandbox_agent(
                     messages,
                     sandbox_tools.definitions,
                     execute_command,
-                    sandbox.activity_batch,
+                    activity_batch=sandbox.activity_batch,
+                    parallel_tool_names=frozenset({READ_TOOL}),
                 ):
                     yield event
                     if isinstance(event, AgentToolUse) and pending_schedule_change is not None:

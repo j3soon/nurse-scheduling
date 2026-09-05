@@ -19,6 +19,7 @@
 
 # This code is mostly AI generated.
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -29,6 +30,7 @@ from .provider import (
     ChatMessage,
     ReasoningDelta,
     TextDelta,
+    ToolCall,
     ToolCallRequest,
     ToolCapableChatProvider,
     assistant_tool_call_message,
@@ -102,6 +104,7 @@ async def run_tool_agent(
     tools: Sequence[dict[str, Any]],
     execute: ToolExecutor,
     activity_batch: ToolBatchScope | None = None,
+    parallel_tool_names: frozenset[str] = frozenset(),
 ) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
     """Run the model/tool loop shared by agent capability layers."""
     conversation = list(messages)
@@ -121,14 +124,43 @@ async def run_tool_agent(
         conversation.append(assistant_tool_call_message(calls, "".join(answer)))
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope():
-            for call in calls:
-                yield AgentToolStart(call.name, call.arguments)
-                outcome = await execute(call.name, call.arguments)
-                logger.info(
-                    "agent tool call name=%s ok=%s result_chars=%s",
-                    call.name,
-                    outcome.ok,
-                    len(outcome.text),
-                )
-                yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
-                conversation.append(tool_result_message(call.id, outcome.text))
+            parallel = len(calls) > 1 and all(call.name in parallel_tool_names for call in calls)
+            if parallel:
+                for call in calls:
+                    yield AgentToolStart(call.name, call.arguments)
+                outcomes = await _execute_parallel_tool_calls(calls, execute)
+                completed = zip(calls, outcomes, strict=True)
+                for call, outcome in completed:
+                    _log_tool_outcome(call.name, outcome)
+                    yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                    conversation.append(tool_result_message(call.id, outcome.text))
+            else:
+                for call in calls:
+                    yield AgentToolStart(call.name, call.arguments)
+                    outcome = await execute(call.name, call.arguments)
+                    _log_tool_outcome(call.name, outcome)
+                    yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                    conversation.append(tool_result_message(call.id, outcome.text))
+
+
+async def _execute_parallel_tool_calls(
+    calls: Sequence[ToolCall],
+    execute: ToolExecutor,
+) -> list[AgentToolOutcome]:
+    tasks = [asyncio.create_task(execute(call.name, call.arguments)) for call in calls]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+def _log_tool_outcome(name: str, outcome: AgentToolOutcome) -> None:
+    logger.info(
+        "agent tool call name=%s ok=%s result_chars=%s",
+        name,
+        outcome.ok,
+        len(outcome.text),
+    )

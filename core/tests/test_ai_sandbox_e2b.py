@@ -538,6 +538,92 @@ def test_agent_multi_tool_batch_pauses_once_after_both_calls():
     assert e2b_backend.lifecycle_metrics.pause_count == 1
 
 
+def test_read_operations_can_overlap():
+    async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend, int]:
+        sandbox = FakeE2BSandbox()
+        active = 0
+        max_active = 0
+        both_started = asyncio.Event()
+
+        async def read(*_args, **_kwargs):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            if active == 2:
+                both_started.set()
+            await both_started.wait()
+            active -= 1
+            return bytearray(b"schedule")
+
+        sandbox.files.read.side_effect = read
+        e2b_backend = make_backend(sandbox)
+        contents = await asyncio.gather(
+            e2b_backend.read_file("/workspace/one"),
+            e2b_backend.read_file("/workspace/two"),
+        )
+        await e2b_backend.close()
+        assert contents == [b"schedule", b"schedule"]
+        return sandbox, e2b_backend, max_active
+
+    sandbox, backend, max_active = asyncio.run(exercise())
+    assert sandbox.files.read.await_count == 2
+    assert max_active == 2
+    assert backend.lifecycle_metrics.execution_seconds >= 0
+
+
+def test_mutation_waits_for_active_reads():
+    async def exercise() -> FakeE2BSandbox:
+        sandbox = FakeE2BSandbox()
+        read_started = asyncio.Event()
+        release_read = asyncio.Event()
+
+        async def read(*_args, **_kwargs):
+            read_started.set()
+            await release_read.wait()
+            return bytearray(b"schedule")
+
+        sandbox.files.read.side_effect = read
+        e2b_backend = make_backend(sandbox)
+        read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule.yaml"))
+        await read_started.wait()
+        write_task = asyncio.create_task(e2b_backend.write_file("/workspace/schedule.yaml", b"changed"))
+        await asyncio.sleep(0.01)
+        sandbox.files.write.assert_not_awaited()
+        release_read.set()
+        await asyncio.gather(read_task, write_task)
+        await e2b_backend.close()
+        return sandbox
+
+    sandbox = asyncio.run(exercise())
+    sandbox.files.write.assert_awaited_once()
+
+
+def test_close_waits_for_active_reads_before_destroying():
+    async def exercise() -> FakeE2BSandbox:
+        sandbox = FakeE2BSandbox()
+        read_started = asyncio.Event()
+        release_read = asyncio.Event()
+
+        async def read(*_args, **_kwargs):
+            read_started.set()
+            await release_read.wait()
+            return bytearray(b"schedule")
+
+        sandbox.files.read.side_effect = read
+        e2b_backend = make_backend(sandbox)
+        read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule.yaml"))
+        await read_started.wait()
+        close_task = asyncio.create_task(e2b_backend.close())
+        await asyncio.sleep(0.01)
+        sandbox.kill.assert_not_awaited()
+        release_read.set()
+        await asyncio.gather(read_task, close_task)
+        return sandbox
+
+    sandbox = asyncio.run(exercise())
+    sandbox.kill.assert_awaited_once()
+
+
 def test_activity_cancels_an_in_progress_pause_before_running():
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend, float]:
         entered = asyncio.Event()
