@@ -769,7 +769,9 @@ describe('ExperimentalAiPage', () => {
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
     expect(mockStreamMessage).toHaveBeenCalledTimes(2);
     expect(mockStreamMessage.mock.calls[1][1]).toBe('Can you help?');
-    expect(screen.getAllByText('Can you help?')).toHaveLength(2);
+    expect(screen.getAllByText('Can you help?')).toHaveLength(1);
+    expect(screen.queryByText('Provisional response.')).not.toBeInTheDocument();
+    expect(screen.queryByText('This turn failed and was not saved to AI history.')).not.toBeInTheDocument();
   });
 
   it('requires files to be reattached before retrying an attachment request', async () => {

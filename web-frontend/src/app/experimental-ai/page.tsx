@@ -719,7 +719,15 @@ export default function ExperimentalAiPage() {
     await sendRequest(question, selectedAttachments, true);
   };
 
-  const retryMessage = (question: string) => {
+  const retryMessage = (failedId: string, question: string) => {
+    if (!question || isStreaming || (authRequired && authToken === null)) return;
+    // The retried turn replaces the failed pair, so the question is not repeated.
+    setMessages(previous => {
+      const failedIndex = previous.findIndex(message => message.id === failedId);
+      if (failedIndex < 0) return previous;
+      const start = previous[failedIndex - 1]?.role === 'user' ? failedIndex - 1 : failedIndex;
+      return [...previous.slice(0, start), ...previous.slice(failedIndex + 1)];
+    });
     void sendRequest(question, [], false);
   };
 
@@ -984,7 +992,7 @@ export default function ExperimentalAiPage() {
                 ) : (
                   <button
                     type="button"
-                    onClick={() => retryMessage(message.retry?.question ?? '')}
+                    onClick={() => retryMessage(message.id, message.retry?.question ?? '')}
                     disabled={isStreaming}
                     className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
