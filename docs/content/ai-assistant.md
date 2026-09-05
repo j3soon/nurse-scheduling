@@ -136,6 +136,10 @@ The launcher reads them from `docker/.env`, so the shortest form is:
 ./scripts/run_ai_eval.sh --category 01-reading
 ```
 
+The launcher checks provider authentication before provisioning any E2B
+sandbox. Providers without a `/models` endpoint produce an inconclusive result
+and continue.
+
 To run it without the launcher, load the settings first:
 
 ```sh

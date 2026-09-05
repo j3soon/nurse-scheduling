@@ -29,4 +29,5 @@ for required in AI_PROVIDER_BASE_URL AI_PROVIDER_API_KEY; do
 done
 
 cd "${CORE_DIR}"
+python -m tests.ai_eval.provider_preflight
 exec python -m tests.ai_eval.runner "$@"
