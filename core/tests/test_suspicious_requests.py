@@ -20,16 +20,21 @@
 # This test is mostly AI generated.
 
 import sys
+import time
 import types
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from nurse_scheduling.sentry import CLIENT_ADDRESS_TAG
+from nurse_scheduling.server.api.optimize import CLIENT_ID_COOKIE_NAME
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.auth import create_stream_token, describe_stream_token
 from nurse_scheduling.server.config import ServerSettings
+from nurse_scheduling.server.jobs.models import OptimizationOutcome, OptimizationResult, StoredArtifact
+from nurse_scheduling.server.jobs.runner import RunOutput
 from nurse_scheduling.server.stores.memory import MemoryJobStore
 
 AUTH_TOKEN = "test-token-of-sufficient-length"
@@ -527,3 +532,95 @@ def test_spreading_slowly_past_the_cap_still_reports_the_escalation(captured):
         client.get(f"/optimize/job_{index:032x}")
 
     assert ("job_id_probe", "error") in _signals(captured)
+
+
+# A job identifier is the only thing guarding a job, so who reaches one is worth knowing.
+
+
+class _CompletingRunner:
+    """Finishes every job immediately so its artifact can be downloaded."""
+
+    def run(self, job, input_bytes, *, event_callback, should_stop):
+        return RunOutput(
+            result=OptimizationResult(
+                outcome=OptimizationOutcome.OPTIMAL,
+                score=0,
+                solver_status="OPTIMAL",
+                termination_reason="solver_finished",
+            ),
+            artifact=StoredArtifact("schedule.xlsx", "application/test", b"schedule"),
+        )
+
+
+def _completed_job(**overrides) -> tuple[TestClient, str]:
+    """Return a client holding its own cookie and the identifier of a job it completed."""
+    settings = ServerSettings(
+        claim_poll_seconds=0.005, maintenance_interval_seconds=60, sse_keepalive_seconds=0.01, **overrides
+    )
+    app = create_app(settings=settings, store=MemoryJobStore(), runner=_CompletingRunner(), start_background=True)
+    client = TestClient(app, client=("203.0.113.7", 40000))
+    client.__enter__()
+    job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
+    for _ in range(400):
+        if client.get(f"/optimize/{job_id}").json()["terminal"]:
+            break
+        time.sleep(0.01)
+    return client, job_id
+
+
+def test_downloading_another_browsers_job_is_reported(captured):
+    client, job_id = _completed_job()
+    try:
+        captured.events.clear()
+
+        client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
+
+        response = client.get(f"/optimize/{job_id}/xlsx")
+
+        assert response.status_code == 200
+        assert _signals(captured) == [("foreign_job_access", "warning")]
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_downloading_your_own_job_is_not_reported(captured):
+    client, job_id = _completed_job()
+    try:
+        captured.events.clear()
+
+        response = client.get(f"/optimize/{job_id}/xlsx")
+
+        assert response.status_code == 200
+        assert captured.events == []
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_an_api_client_without_a_cookie_is_not_reported(captured):
+    """A script that discards its cookie is an ordinary caller, not someone else's browser."""
+    client, job_id = _completed_job()
+    try:
+        captured.events.clear()
+        client.cookies.clear()
+
+        response = client.get(f"/optimize/{job_id}/xlsx")
+
+        assert response.status_code == 200
+        assert captured.events == []
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_deleting_another_browsers_job_is_reported(captured):
+    client, job_id = _completed_job()
+    try:
+        captured.events.clear()
+
+        client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
+
+        response = client.delete(f"/optimize/{job_id}")
+
+        assert response.status_code == 204
+        assert _signals(captured) == [("foreign_job_access", "warning")]
+    finally:
+        client.__exit__(None, None, None)

@@ -115,6 +115,18 @@ def _client_id(request: Request, response: Response) -> str:
     return client_id
 
 
+def _report_foreign_job_access(request: Request, job) -> None:
+    """Report a browser reaching a job that a different browser created.
+
+    A job identifier is the only thing guarding a job, so anyone holding one can read the
+    schedule it produced or destroy it. An absent cookie is an ordinary API client, while a
+    different one is a browser with its own identity reaching someone else's work.
+    """
+    client_id = request.cookies.get(CLIENT_ID_COOKIE_NAME)
+    if client_id is not None and client_id != job.request.client_id:
+        report_suspicious_request(request, "foreign_job_access", "warning")
+
+
 @router.post("/optimize", status_code=202, response_model=JobResponse)
 async def create_job(
     request: Request,
@@ -256,6 +268,7 @@ def download_xlsx(request: Request, job_id: str):
     """Download the XLSX artifact produced by a completed job."""
     job = _controller(request).get_job(job_id)
     artifact = _controller(request).get_artifact(job_id, job.artifact_name or "schedule.xlsx")
+    _report_foreign_job_access(request, job)
     headers = {"Content-Disposition": f'attachment; filename="{artifact.name}"'}
     return StreamingResponse(BytesIO(artifact.content), media_type=artifact.media_type, headers=headers)
 
@@ -263,5 +276,7 @@ def download_xlsx(request: Request, job_id: str):
 @router.delete("/optimize/{job_id}", status_code=204)
 def delete_job(request: Request, job_id: str):
     """Delete a terminal job and all associated retained data."""
+    job = _controller(request).get_job(job_id)
     _controller(request).delete_job(job_id)
+    _report_foreign_job_access(request, job)
     return Response(status_code=204)

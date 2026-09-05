@@ -260,7 +260,8 @@ The server persists and replays `job.state_changed`, `job.phase_changed`,
 Disconnecting from the stream does not stop the job.
 
 Job submission sets a seven-day, HTTP-only client correlation cookie for
-diagnostics. It does not control access to a job or its lifetime. Browser CORS
+diagnostics. It does not control access to a job or its lifetime, though a
+browser reaching a job that a different browser created is reported. Browser CORS
 access is limited to local origins and `nursescheduling.org` subdomains.
 
 Lifecycle and storage errors use a stable JSON envelope:
@@ -301,6 +302,7 @@ contract are sent to Sentry, because a scanner cannot produce them:
 | `yaml_expansion_bomb` | Submitted data expands or nests past what the server reads, so it was refused. | error |
 | `yaml_aliases_used` | Accepted data used a YAML alias, which nothing this project produces does. | warning |
 | `yaml_unparseable` | Accepted data is not valid YAML, which a client that serializes its own data does not submit. | warning |
+| `foreign_job_access` | A browser downloaded or deleted a job that a different browser created. A caller sending no cookie is not reported. | warning |
 | `job_capacity_exceeded` | One address met a full job queue, which repeats only when that address filled it. | warning |
 | `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |
 | `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
