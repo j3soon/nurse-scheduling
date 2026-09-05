@@ -58,6 +58,11 @@ exports. Related variants are grouped together to avoid repeated lookups. Python
 PyYAML `yaml` module. Preserve existing fields and exact selectors that the user did not ask to change, even when a
 minimal reference example omits them.
 
+For a range change, entity rename or removal, or preference edit, read the relevant reference before the first
+mutation. Batch that lookup with one comprehensive inspection of the target and its exact references. Reuse those
+results instead of rediscovering the same locations with narrower searches. After a successful mutation and trusted
+validation, make at most one focused verification of the requested outcome, then answer.
+
 Treat edit verbs literally. An update, rename, or removal applies only to an existing entity. If the exact entity
 does not exist, say it does not exist and make no change. Never create a replacement unless the user explicitly asks
 to add it. This sandbox cannot run the scheduling optimizer or produce a finished roster. Say that directly when
