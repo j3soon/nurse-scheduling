@@ -144,13 +144,13 @@ class _CountingProvider:
         turn_attempts = 0
         try:
             while True:
-                started = time.monotonic()
+                started = time.perf_counter()
                 try:
                     event = await anext(stream)
                 except StopAsyncIteration:
                     break
                 finally:
-                    elapsed = time.monotonic() - started
+                    elapsed = time.perf_counter() - started
                     self.inference_seconds += elapsed
                     turn_seconds += elapsed
                 if isinstance(event, TokenUsage):
@@ -195,7 +195,7 @@ async def run_case(
     proposal_event: AgentProposal | None = None
     sandbox_metrics = SandboxTurnMetrics()
     reasoning = 0
-    started = time.monotonic()
+    started = time.perf_counter()
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
@@ -242,7 +242,7 @@ async def run_case(
             case.id,
             case.category,
             False,
-            time.monotonic() - started,
+            time.perf_counter() - started,
             counting.turns,
             tools,
             [failure],
@@ -260,7 +260,7 @@ async def run_case(
             provider_attempts_per_turn=counting.attempts_per_turn,
         )
 
-    elapsed = time.monotonic() - started
+    elapsed = time.perf_counter() - started
     initial = _load_yaml(text.encode("utf-8"))
     proposed = _load_yaml(proposal_event.text.encode("utf-8")) if proposal_event else None
     outcome = RunOutcome(answer="".join(answer), proposed=proposed, initial=initial, activity=events)
@@ -584,7 +584,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     cases = select(load_cases(arguments.cases_dir), arguments.case, arguments.category)
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
-    started = time.monotonic()
+    started = time.perf_counter()
     runs = asyncio.run(
         run_all(
             cases,
@@ -594,7 +594,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sandbox_factory,
         )
     )
-    wall_seconds = time.monotonic() - started
+    wall_seconds = time.perf_counter() - started
 
     summary = write_report(
         runs,
