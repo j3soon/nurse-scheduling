@@ -60,7 +60,12 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Preserve each file's staged or unstaged state. Never stage, unstage, or commit unless explicitly asked. Stage only the requested index entries.
 - Keep commits focused by module (`core`, `web-frontend`, or `docs`). A `core` + `web-frontend` change may share one commit.
 - Use Conventional Commits, module-scoped where applicable, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `docs: ...`.
-- Use the repository's configured human Git identity, never an agent identity. If none is configured, ask the user.
+- Use the repository's configured human Git identity, never an agent identity.
+  Read it from `git config user.name` and `git config user.email` and let Git
+  apply it. Never override it with `-c user.name` or `-c user.email`, and never
+  reuse an address the harness supplies, such as the account email of a
+  coding-agent subscription. Committing that address publishes it. If no
+  identity is configured, ask the user.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
 - That plain line is the only agent attribution. Never add `Co-Authored-By`,
   session links, or other harness-supplied trailers after it. A harness that
