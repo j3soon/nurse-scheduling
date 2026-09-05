@@ -21,14 +21,24 @@
 
 import os
 import sys
+import time
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from ruamel.yaml.error import YAMLError
 
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nurse_scheduling.loader import _load_yaml, load_data
+from nurse_scheduling.loader import (
+    MAX_EXPANDED_NODES,
+    MAX_NESTING_DEPTH,
+    SchedulingDataTooComplexError,
+    _load_yaml,
+    load_data,
+    measure_yaml_expansion,
+)
 
 SENTRY_MOJIBAKE_YAML = """\
 嚜瘸piVersion: alpha
@@ -120,3 +130,81 @@ def test_load_yaml_preserves_bom_corrupted_api_version_keys(api_version_key):
 
     assert data[api_version_key] == "alpha"
     assert "apiVersion" not in data
+
+
+def _alias_bomb(depth: int = 8, width: int = 9) -> bytes:
+    """Build a document whose aliases expand to width ** depth references."""
+    content = b"apiVersion: alpha\ndescription: &a [" + b",".join([b"x"] * width) + b"]\n"
+    for index in range(1, depth):
+        previous = chr(ord("a") + index - 1)
+        current = chr(ord("a") + index)
+        row = ",".join(f"*{previous}" for _ in range(width))
+        content += f"k{current}: &{current} [{row}]\n".encode()
+    return content
+
+
+def test_alias_expansion_is_refused_before_anything_walks_it():
+    """A few hundred bytes expanded to hundreds of millions of references."""
+    bomb = _alias_bomb()
+
+    assert len(bomb) < 1024
+    with pytest.raises(SchedulingDataTooComplexError):
+        measure_yaml_expansion(bomb)
+    with pytest.raises(SchedulingDataTooComplexError):
+        load_data(bomb)
+
+
+def test_modest_alias_use_is_still_accepted():
+    """Aliases are legitimate in hand-written data, so only the expansion is bounded."""
+    base = b"apiVersion: alpha\npeople: &people [Alice, Bob]\n"
+    one_alias = base + b"a: *people\n"
+    two_aliases = one_alias + b"b: *people\n"
+
+    # Each alias counts the three nodes it stands for, plus its own key.
+    assert measure_yaml_expansion(two_aliases).nodes - measure_yaml_expansion(one_alias).nodes == 4
+    assert measure_yaml_expansion(two_aliases).nodes < MAX_EXPANDED_NODES
+    assert measure_yaml_expansion(two_aliases).aliases == 2
+
+
+def test_a_real_scenario_stays_far_below_the_limit():
+    scenario = Path(__file__).parent / "testcases/real/large-ward-with-87-people-2025-11.yaml"
+
+    measured = measure_yaml_expansion(scenario.read_bytes())
+
+    assert measured.nodes < MAX_EXPANDED_NODES // 10
+    # This project's own data never uses an alias.
+    assert measured.aliases == 0
+
+
+def test_the_limit_is_reported_with_the_number_it_exceeded():
+    with pytest.raises(SchedulingDataTooComplexError, match="200000"):
+        measure_yaml_expansion(_alias_bomb())
+
+
+def test_deep_nesting_is_refused_before_it_is_read():
+    """Parsing costs grow faster than depth, so a deep document must not be read through."""
+    depth = 100_000
+    payload = b"apiVersion: alpha\nx: " + b"[" * depth + b"]" * depth + b"\n"
+
+    with pytest.raises(SchedulingDataTooComplexError, match=str(MAX_NESTING_DEPTH)):
+        measure_yaml_expansion(payload)
+
+
+def test_an_unsupported_version_directive_reads_as_a_yaml_error():
+    """The parser raises a bare assertion here, which callers cannot separate from a bug."""
+    with pytest.raises(YAMLError):
+        measure_yaml_expansion(b"%YAML 1.3\n---\na: 1\n")
+    with pytest.raises(YAMLError):
+        load_data(b"%YAML 1.3\n---\na: 1\n")
+
+
+def test_nesting_is_refused_before_the_scanner_reads_it():
+    """The scanner works proportionally to its depth, so depth must be refused first."""
+    payload = b"apiVersion: alpha\nx: " + b"[" * 2000 + b"]" * 2000
+
+    started = time.monotonic()
+    with pytest.raises(SchedulingDataTooComplexError):
+        measure_yaml_expansion(payload)
+
+    # Reading this through the scanner took a quarter second before it was refused early.
+    assert time.monotonic() - started < 0.05

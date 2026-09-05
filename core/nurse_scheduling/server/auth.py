@@ -20,6 +20,7 @@
 import hashlib
 import hmac
 import logging
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -101,19 +102,49 @@ def create_stream_token(
     return f"{expires_at}.{_stream_signature(secret, job_id, expires_at)}"
 
 
+STREAM_TOKEN_SHAPE = re.compile(r"^([0-9]{1,20})\.([0-9a-f]{64})$")
+"""Exact shape `create_stream_token` mints, which is the only shape accepted."""
+
+
+def parse_stream_token(token: str | None) -> tuple[int, str] | None:
+    """Return a token's expiry and signature, or `None` when it is not one this server mints.
+
+    Verification and reporting both parse through here so they cannot disagree about what a
+    token is. Accepting only the minted shape also keeps one token from having many accepted
+    spellings, which `int` alone would allow through signs, separators, and surrounding space.
+    """
+    match = STREAM_TOKEN_SHAPE.match(token or "")
+    if match is None:
+        return None
+    return int(match.group(1)), match.group(2)
+
+
 def verify_stream_token(secret: str, job_id: str, token: str | None, *, now: datetime | None = None) -> bool:
     """Return whether a token authorizes this job's event stream and has not expired."""
-    expires_text, separator, signature = (token or "").partition(".")
-    if not separator:
+    parsed = parse_stream_token(token)
+    if parsed is None:
         return False
-    try:
-        expires_at = int(expires_text)
-    except ValueError:
-        return False
+    expires_at, signature = parsed
     current_time = int((now or datetime.now(timezone.utc)).timestamp())
     if current_time > expires_at:
         return False
     return hmac.compare_digest(signature, _stream_signature(secret, job_id, expires_at))
+
+
+def describe_stream_token(token: str | None, *, now: datetime | None = None) -> str:
+    """Describe a rejected token's shape and freshness without verifying its signature.
+
+    Reporting separates a stale link from a constructed one. Only the deployment secret can
+    produce a valid signature, so a well-formed unexpired token that authentication rejected
+    was forged rather than merely outdated.
+    """
+    if not token:
+        return "absent"
+    parsed = parse_stream_token(token)
+    if parsed is None:
+        return "malformed"
+    current_time = int((now or datetime.now(timezone.utc)).timestamp())
+    return "expired" if current_time > parsed[0] else "live"
 
 
 def create_auth_dependency(expected_token: str | None) -> Callable[[Request], None]:

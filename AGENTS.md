@@ -26,11 +26,15 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Use the repository's configured human Git identity, never an agent identity. If none is configured, ask the user.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
 - For Codex attribution, use the full canonical lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
+- Keep commit bodies short, at most two brief paragraphs covering why the change was needed and what it does. Document mechanism, investigation notes, and third-party behavior in Markdown instead.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
 
 ## Style
 - Keep comments and docs minimal, concise, yet informative.
 - Do not use em-dash or semicolon to connect sentences.
+- Mark every new file written entirely by an AI coding agent, tests included, with the
+  module's marker comment immediately after the license block. Adding to a file a person
+  wrote does not earn one.
 
 ## Cross-Module Requirements
 - When renaming or deleting frontend people, dates, or shift types, sync all references, including preferences and export layout entries.

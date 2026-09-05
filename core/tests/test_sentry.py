@@ -28,7 +28,13 @@ import pytest
 from ruamel.yaml import YAML
 
 from nurse_scheduling.loader import _load_yaml
-from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, flush_sentry, init_sentry
+from nurse_scheduling.sentry import (
+    _redact_stream_token,
+    capture_invalid_request,
+    capture_optimize_exception,
+    flush_sentry,
+    init_sentry,
+)
 from nurse_scheduling.server.jobs.models import Job, JobRequest, JobState
 
 SCHEDULE_YAML = b"""\
@@ -211,6 +217,9 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
             "profile_session_sample_rate": 1.0,
             "profile_lifecycle": "trace",
             "enable_logs": True,
+            # A stream token is a live credential and Sentry does not scrub a query string.
+            "before_send": _redact_stream_token,
+            "before_send_transaction": _redact_stream_token,
         }
     ]
     assert tags == [("app", "backend")]
@@ -267,6 +276,20 @@ def test_compose_python_services_share_sentry_environment(compose_file, service_
         assert {name: environment.get(name) for name in expected} == expected
 
 
+def _request(path: str, *, route: str | None = None, method: str = "GET") -> types.SimpleNamespace:
+    """Build a stub carrying every request attribute the reporting path reads."""
+    return types.SimpleNamespace(
+        scope={"route": types.SimpleNamespace(path=route) if route is not None else None},
+        url=types.SimpleNamespace(path=path),
+        method=method,
+        headers={},
+        query_params={},
+        cookies={},
+        path_params={},
+        state=types.SimpleNamespace(),
+    )
+
+
 def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypatch):
     scopes = []
     messages = []
@@ -292,11 +315,7 @@ def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypat
         new_scope=FakeScope,
         capture_message=lambda message, level: messages.append((message, level)),
     )
-    request = types.SimpleNamespace(
-        scope={"route": types.SimpleNamespace(path="/optimize/{job_id}")},
-        url=types.SimpleNamespace(path="/optimize/abc"),
-        method="GET",
-    )
+    request = _request("/optimize/abc", route="/optimize/{job_id}")
     detail = [{"loc": ("path", "job_id"), "msg": "missing"}]
     monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
@@ -327,13 +346,9 @@ def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypat
     assert scope.fingerprint == ["invalid-request", "422", "/optimize/{job_id}"]
 
 
-@pytest.mark.parametrize("route", [None, types.SimpleNamespace(path="/optimize/{job_id}")])
+@pytest.mark.parametrize("route", [None, "/optimize/{job_id}"])
 def test_capture_invalid_request_ignores_not_found(monkeypatch, route):
-    request = types.SimpleNamespace(
-        scope={"route": route},
-        url=types.SimpleNamespace(path="/optimize/missing"),
-        method="GET",
-    )
+    request = _request("/optimize/missing", route=route)
     fake_sentry_sdk = types.SimpleNamespace(
         new_scope=lambda: pytest.fail("404 response reached Sentry"),
     )
@@ -345,11 +360,7 @@ def test_capture_invalid_request_ignores_not_found(monkeypatch, route):
 
 def test_capture_invalid_request_ignores_unauthorized():
     """Unauthenticated probes of a protected public deployment are expected traffic."""
-    request = types.SimpleNamespace(
-        scope={"route": None},
-        url=types.SimpleNamespace(path="/optimize/options"),
-        method="GET",
-    )
+    request = _request("/optimize/options")
     fake_sentry_sdk = types.SimpleNamespace(
         new_scope=lambda: pytest.fail("401 response reached Sentry"),
     )

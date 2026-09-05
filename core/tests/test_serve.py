@@ -2403,3 +2403,38 @@ def test_a_token_alone_still_enables_authentication():
     with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
         assert client.get("/optimize/options").status_code == 401
         assert client.get("/optimize/options", headers=_auth_header()).status_code == 200
+
+
+def test_a_store_outage_reports_once_rather_than_once_per_attempt(caplog):
+    """One outage produced 108 identical reports before background loops backed off."""
+
+    class UnavailableStore(MemoryJobStore):
+        """Fails every claim the way an unreachable Redis does."""
+
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def claim_next_job(self, *args, **kwargs):
+            self.claim_attempts += 1
+            raise TimeoutError("Timeout reading from socket")
+
+    store = UnavailableStore()
+    app = create_app(
+        settings=_settings(claim_poll_seconds=0.005),
+        store=store,
+        runner=SuccessfulRunner(),
+        start_background=True,
+    )
+    with caplog.at_level(logging.ERROR, logger="nurse_scheduling.server"), TestClient(app):
+        deadline = time.monotonic() + 2
+        while store.claim_attempts < 5 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert store.claim_attempts >= 5
+    # Other tests run their own workers, so count only this application's.
+    worker_id = app.state.instance_id
+    claim_failures = [
+        r for r in caplog.records if "failed to claim job" in r.getMessage() and worker_id in r.getMessage()
+    ]
+    assert len(claim_failures) == 1

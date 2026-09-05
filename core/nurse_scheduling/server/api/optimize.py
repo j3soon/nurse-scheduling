@@ -24,8 +24,11 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
+from ruamel.yaml.error import YAMLError
 from starlette.concurrency import run_in_threadpool
 
+from ...loader import SchedulingDataTooComplexError, measure_yaml_expansion
+from ...sentry import report_suspicious_request
 from ..auth import create_stream_token
 from ..config import ServerSettings
 from ..jobs.controller import JobController
@@ -134,6 +137,8 @@ async def create_job(
         raise HTTPException(status_code=400, detail=f"Solver must be one of: {choices}")
     timeout_seconds = timeout if timeout is not None else settings.default_timeout_seconds
     if timeout_seconds < settings.min_timeout_seconds or timeout_seconds > settings.max_timeout_seconds:
+        # Clients discover this range from GET /optimize/options, so exceeding it is reported.
+        request.state.invalid_reason = "timeout_out_of_range"
         raise HTTPException(
             status_code=400,
             detail=(
@@ -141,6 +146,16 @@ async def create_job(
                 f"{settings.min_timeout_seconds} and {settings.max_timeout_seconds} seconds"
             ),
         )
+    try:
+        # Read only once the free checks above have passed, so a request that was going to be
+        # rejected never pays for it, and off the event loop because the data is untrusted.
+        expansion = await run_in_threadpool(measure_yaml_expansion, content)
+    except SchedulingDataTooComplexError as error:
+        request.state.invalid_reason = "yaml_expansion_bomb"
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except YAMLError:
+        # The optimization reports the parse error usefully, so the request is still accepted.
+        expansion = None
     # Unlike the synchronous endpoints below, create_job must remain async for
     # upload reading. Offload its synchronous controller/store write so it cannot
     # block the ASGI event loop.
@@ -153,6 +168,12 @@ async def create_job(
         timeout_seconds=timeout_seconds,
         input_bytes=content,
     )
+    # This project's own data is plain and always parses, so neither shape comes from it.
+    # The job is queued by now, so reporting must not be able to fail the response for it.
+    if expansion is None:
+        report_suspicious_request(request, "yaml_unparseable", "warning")
+    elif expansion.aliases:
+        report_suspicious_request(request, "yaml_aliases_used", "warning")
     response.headers["Location"] = f"/optimize/{job.id}"
     response.headers["Retry-After"] = "1"
     return JobResponse.from_job(job, _events_token(request, job.id))

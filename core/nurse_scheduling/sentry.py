@@ -17,7 +17,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import ipaddress
+import logging
 import os
+import re
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -25,9 +28,13 @@ from fastapi import Request
 from fastapi.encoders import jsonable_encoder
 
 from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
+from .server.auth import describe_stream_token, extract_bearer_token
 
 if TYPE_CHECKING:
     from .server.jobs.models import Job
+    from .server.suspicion import SuspicionCount
+
+sentry_logger = logging.getLogger("nurse_scheduling.sentry")
 
 DEFAULT_SENTRY_DSN = "https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088"
 
@@ -64,8 +71,27 @@ def init_sentry(app_version: str, *, app: str = "backend") -> None:
         profile_lifecycle="trace",
         # Enable logs to be sent to Sentry
         enable_logs=True,
+        before_send=_redact_stream_token,
+        before_send_transaction=_redact_stream_token,
     )
     sentry_sdk.set_tag("app", app)
+
+
+STREAM_TOKEN_QUERY = re.compile(r"(?i)(^|&)token=[^&]*")
+"""Query parameter carrying a job's stream credential."""
+
+
+def _redact_stream_token(event: dict, _hint: dict) -> dict:
+    """Remove a stream credential from a reported query string.
+
+    Sentry scrubs sensitive headers, cookies, and body fields, but not a query string, and a
+    rejected request can still carry a valid token. Stream tokens are kept out of logs by
+    design, so one must not reach a report either.
+    """
+    request = event.get("request")
+    if isinstance(request, dict) and isinstance(request.get("query_string"), str):
+        request["query_string"] = STREAM_TOKEN_QUERY.sub(r"\1token=[Filtered]", request["query_string"])
+    return event
 
 
 def flush_sentry(timeout: float = 2.0) -> None:
@@ -76,6 +102,50 @@ def flush_sentry(timeout: float = 2.0) -> None:
     import sentry_sdk
 
     sentry_sdk.flush(timeout=timeout)
+
+
+def _connection_address(request: Request) -> str | None:
+    """Return the address a request connected from, or `None` when it is not one.
+
+    A peer is not always an address. A Unix socket has none, and a proxy chain can resolve
+    to a name, so reporting the value unchecked would attribute events to something Sentry
+    rejects as an address.
+    """
+    client = request.client
+    if client is None:
+        return None
+    try:
+        ipaddress.ip_address(client.host)
+    except ValueError:
+        return None
+    return client.host
+
+
+CLIENT_ADDRESS_TAG = "client.address"
+"""Tag naming the address a request connected from."""
+
+
+def tag_client_address(request: Request) -> None:
+    """Record the address a request connected from, alongside Sentry's own attribution.
+
+    Sentry infers a request's address from the leftmost `X-Forwarded-For` entry, which the
+    caller supplies. Uvicorn resolves the address from the proxy chain it trusts instead.
+    Recording that separately leaves Sentry's attribution untouched and makes a caller
+    claiming a different address visible as a disagreement between the two.
+    """
+    if not _should_enable_sentry():
+        return
+    try:
+        address = _connection_address(request)
+        if address is None:
+            return
+
+        import sentry_sdk
+
+        sentry_sdk.set_tag(CLIENT_ADDRESS_TAG, address)
+    except Exception:
+        # This runs for every request, so a reporting failure must never fail one.
+        sentry_logger.warning("[sentry:report] could not record a connection address", exc_info=True)
 
 
 def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> None:
@@ -107,34 +177,212 @@ def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> 
         sentry_sdk.capture_exception(error)
 
 
-def capture_invalid_request(request: Request, status_code: int, detail: Any) -> None:
+JOB_ID_SHAPE = re.compile(r"^job_[0-9a-f]{32}$")
+"""Shape of an issued job identifier, used to describe a request for a missing one."""
+ISSUED_JOB_ID_SHAPE = "issued_shape"
+"""Description of a job identifier that this server could have issued."""
+STREAM_ROUTE_SUFFIX = "/events"
+"""Route suffix of the only endpoint accepting a stream token."""
+SUBJECT_SIGNALS = frozenset({"job_id_probe"})
+"""Signals whose every request names a job, so spread is what makes them deliberate."""
+INVALID_REASON_LEVELS = {"yaml_expansion_bomb": "error"}
+"""Levels for a signal a route names directly, defaulting to a warning."""
+
+
+def _describe_job_id(request: Request) -> str | None:
+    """Describe a requested job identifier's shape without repeating the identifier."""
+    job_id = request.path_params.get("job_id")
+    if job_id is None:
+        return None
+    return ISSUED_JOB_ID_SHAPE if JOB_ID_SHAPE.match(job_id) else "unissued_shape"
+
+
+def _record_suspicion(request: Request, signal_name: str) -> "SuspicionCount":
+    """Count this signal's repeats from one address, and the subjects they named."""
+    from .server.suspicion import SuspicionCount
+
+    tracker = getattr(request.app.state, "suspicion_tracker", None)
+    if tracker is None:
+        return SuspicionCount()
+    address = _connection_address(request)
+    if address is None:
+        return SuspicionCount()
+    # Only a signal whose every request names a job counts subjects. Taking the subject from
+    # whichever requests happened to carry one would let a caller mix in a job route to hold
+    # an unrelated signal's spread down.
+    subject = request.path_params.get("job_id") if signal_name in SUBJECT_SIGNALS else None
+    return tracker.record(signal_name, address, subject)
+
+
+def _escalate_count(request: Request) -> int:
+    """Return the repeat count that escalates a signal, or `0` when none escalates it."""
+    tracker = getattr(request.app.state, "suspicion_tracker", None)
+    return getattr(tracker, "escalate_count", 0) or 0
+
+
+def classify_suspicious_request(
+    request: Request,
+    status_code: int,
+    error_code: str | None,
+) -> tuple[str, str] | None:
+    """Return a suspicious request's signal name and Sentry level, or `None` when it is noise.
+
+    Internet background traffic probes paths that do not exist and endpoints it cannot
+    authenticate against. The signals below instead require knowledge of this API's contract,
+    so they are worth reporting even though they arrive as ordinary client errors.
+    """
+    if status_code == 401:
+        # Carrying a stream token at all takes knowing this route mints one. A token that
+        # neither verifies nor merely aged out was constructed, whatever shape it took, so
+        # reporting only the minted shape would let a forgery hide behind any other spelling.
+        # An expired one is a stale link, and one shaped as expired cannot authorize anything.
+        stream_state = describe_stream_token(request.query_params.get("token"))
+        if request.url.path.endswith(STREAM_ROUTE_SUFFIX) and stream_state not in ("absent", "expired"):
+            return "forged_stream_token", "error" if stream_state == "live" else "warning"
+        if extract_bearer_token(request.headers.get("Authorization")) is not None:
+            return "rejected_bearer_token", "warning"
+        return None
+    if status_code == 404:
+        # A missing route is noise, and so is a wordlist path that merely landed on the job
+        # route. Only an identifier of the issued shape shows knowledge of what a job ID is.
+        if error_code == "job_not_found" and _describe_job_id(request) == ISSUED_JOB_ID_SHAPE:
+            return "job_id_probe", "warning"
+        return None
+    invalid_reason = getattr(request.state, "invalid_reason", None)
+    if invalid_reason is not None:
+        return invalid_reason, INVALID_REASON_LEVELS.get(invalid_reason, "warning")
+    return None
+
+
+def capture_invalid_request(
+    request: Request,
+    status_code: int,
+    detail: Any,
+    error_code: str | None = None,
+) -> None:
     if not _should_enable_sentry():
         return
-    # Missing routes, expired resources, and unauthenticated probes of a protected
-    # deployment are expected and not actionable.
-    if status_code in (401, 404):
-        return
+    try:
+        _capture_invalid_request(request, status_code, detail, error_code)
+    except Exception:
+        # Reporting is never worth failing a request over, and a failure here would also
+        # turn a client error into a server error only for the requests worth reporting.
+        sentry_logger.warning("[sentry:report] could not report an invalid request", exc_info=True)
 
+
+def report_suspicious_request(
+    request: Request,
+    signal_name: str,
+    level: str,
+    *,
+    invalid_request: dict | None = None,
+) -> None:
+    """Send one report for a request that showed knowledge of the API contract.
+
+    Repeats from one address escalate the level and then stop being reported, so a caller
+    cannot spend the project's event quota. An accepted request can be reported too, because
+    what makes one worth keeping is the request itself rather than how it was answered.
+    """
+    if not _should_enable_sentry():
+        return
+    try:
+        _report_suspicious_request(request, signal_name, level, invalid_request=invalid_request)
+    except Exception:
+        # Reporting is never worth failing a request over, and this runs for requests that
+        # were already accepted, whose work is done by the time it is reached.
+        sentry_logger.warning("[sentry:report] could not report a suspicious request", exc_info=True)
+
+
+def _report_suspicious_request(
+    request: Request,
+    signal_name: str,
+    level: str,
+    *,
+    invalid_request: dict | None = None,
+) -> None:
+    """Build and send one suspicious-request report."""
     import sentry_sdk
+
+    # Imported here so processes that only report errors do not load the routes.
+    from .server.api.optimize import CLIENT_ID_COOKIE_NAME
+
+    counted = _record_suspicion(request, signal_name)
+    occurrences = counted.occurrences
+    escalate_count = _escalate_count(request)
+    if occurrences and escalate_count:
+        # Escalate on how far a caller spread, not how often it repeated, so a client stuck
+        # on one job never reaches an error however many times it retries.
+        spread = counted.distinct_subjects if signal_name in SUBJECT_SIGNALS else occurrences
+        if spread >= escalate_count:
+            # Repetition from one address is deliberate in a way one request is not.
+            level = "error"
+        # One address cannot spend the project's event quota. The request that first reaches
+        # the threshold is still reported, so spreading slowly cannot buy silence.
+        if occurrences > escalate_count and spread != escalate_count:
+            return
 
     route = request.scope.get("route")
     route_path = getattr(route, "path", request.url.path)
-    serialized_detail = jsonable_encoder(detail)
+    with sentry_sdk.new_scope() as scope:
+        scope.set_tag("request.suspicious", signal_name)
+        scope.set_tag("http.method", request.method)
+        scope.set_tag("http.route", route_path)
+        scope.set_context(
+            "suspicious_request",
+            {
+                "signal": signal_name,
+                "occurrences": occurrences or None,
+                "distinct_job_ids": counted.distinct_subjects or None,
+                "job_id": _describe_job_id(request),
+                # Named without "token", which Sentry scrubs from a field name.
+                "stream_state": describe_stream_token(request.query_params.get("token")),
+                "bearer_presented": extract_bearer_token(request.headers.get("Authorization")) is not None,
+                "client_id": request.cookies.get(CLIENT_ID_COOKIE_NAME),
+                "user_agent": request.headers.get("User-Agent"),
+                "origin": request.headers.get("Origin"),
+            },
+        )
+        if invalid_request is not None:
+            scope.set_tag("request.invalid", True)
+            scope.set_tag("http.status_code", invalid_request["status_code"])
+            scope.set_context("invalid_request", invalid_request)
+        scope.fingerprint = ["suspicious-request", signal_name]
+        sentry_sdk.capture_message(f"Suspicious API request: {signal_name}", level=level)
+
+
+def _capture_invalid_request(
+    request: Request,
+    status_code: int,
+    detail: Any,
+    error_code: str | None = None,
+) -> None:
+    """Build and send one report for a client error worth keeping."""
+    signal = classify_suspicious_request(request, status_code, error_code)
+    # Missing routes, expired resources, and unauthenticated probes of a protected
+    # deployment are expected and not actionable.
+    if signal is None and status_code in (401, 404):
+        return
+
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", request.url.path)
+    invalid_request = {
+        "path": request.url.path,
+        "route": route_path,
+        "method": request.method,
+        "status_code": status_code,
+        "detail": jsonable_encoder(detail),
+    }
+    if signal is not None:
+        _report_suspicious_request(request, signal[0], signal[1], invalid_request=invalid_request)
+        return
+
+    import sentry_sdk
 
     with sentry_sdk.new_scope() as scope:
         scope.set_tag("request.invalid", True)
         scope.set_tag("http.status_code", status_code)
         scope.set_tag("http.method", request.method)
         scope.set_tag("http.route", route_path)
-        scope.set_context(
-            "invalid_request",
-            {
-                "path": request.url.path,
-                "route": route_path,
-                "method": request.method,
-                "status_code": status_code,
-                "detail": serialized_detail,
-            },
-        )
+        scope.set_context("invalid_request", invalid_request)
         scope.fingerprint = ["invalid-request", str(status_code), route_path]
         sentry_sdk.capture_message("Invalid API request", level="warning")
