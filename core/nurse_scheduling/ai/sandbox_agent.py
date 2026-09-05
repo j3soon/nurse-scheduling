@@ -22,11 +22,11 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from .agent import AgentEvent, AgentProposal, AgentToolOutcome, AgentToolUse, run_tool_agent
+from .agent import AgentEvent, AgentProposal, AgentToolBatchMetrics, AgentToolOutcome, AgentToolUse, run_tool_agent
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
 from .pi.read import READ_TOOL
@@ -185,6 +185,7 @@ async def run_sandbox_agent(
     messages: Sequence[ChatMessage],
     limits: SandboxAgentLimits,
     metrics: SandboxTurnMetrics | None = None,
+    observe_tool_batch: Callable[[AgentToolBatchMetrics], None] | None = None,
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
@@ -229,6 +230,7 @@ async def run_sandbox_agent(
                     execute_command,
                     activity_batch=sandbox.activity_batch,
                     parallel_tool_names=frozenset({READ_TOOL}),
+                    observe_tool_batch=observe_tool_batch,
                 ):
                     yield event
                     if isinstance(event, AgentToolUse) and pending_schedule_change is not None:

@@ -21,6 +21,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -98,6 +99,18 @@ class AgentToolOutcome:
     ok: bool
 
 
+@dataclass(frozen=True)
+class AgentToolBatchMetrics:
+    """Execution timing for one model-issued tool batch."""
+
+    call_count: int
+    parallel: bool
+    execution_seconds: float
+
+
+ToolBatchObserver = Callable[[AgentToolBatchMetrics], None]
+
+
 async def run_tool_agent(
     provider: ToolCapableChatProvider,
     messages: Sequence[ChatMessage],
@@ -105,6 +118,7 @@ async def run_tool_agent(
     execute: ToolExecutor,
     activity_batch: ToolBatchScope | None = None,
     parallel_tool_names: frozenset[str] = frozenset(),
+    observe_tool_batch: ToolBatchObserver | None = None,
 ) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
     """Run the model/tool loop shared by agent capability layers."""
     conversation = list(messages)
@@ -128,19 +142,26 @@ async def run_tool_agent(
             if parallel:
                 for call in calls:
                     yield AgentToolStart(call.name, call.arguments)
+                started = time.perf_counter()
                 outcomes = await _execute_parallel_tool_calls(calls, execute)
+                execution_seconds = time.perf_counter() - started
                 completed = zip(calls, outcomes, strict=True)
                 for call, outcome in completed:
                     _log_tool_outcome(call.name, outcome)
                     yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
                     conversation.append(tool_result_message(call.id, outcome.text))
             else:
+                execution_seconds = 0.0
                 for call in calls:
                     yield AgentToolStart(call.name, call.arguments)
+                    started = time.perf_counter()
                     outcome = await execute(call.name, call.arguments)
+                    execution_seconds += time.perf_counter() - started
                     _log_tool_outcome(call.name, outcome)
                     yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
                     conversation.append(tool_result_message(call.id, outcome.text))
+            if observe_tool_batch is not None:
+                observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
 
 
 async def _execute_parallel_tool_calls(

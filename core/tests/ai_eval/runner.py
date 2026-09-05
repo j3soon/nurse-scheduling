@@ -30,7 +30,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nurse_scheduling.ai.agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
+from nurse_scheduling.ai.agent import (
+    AgentProposal,
+    AgentReasoning,
+    AgentText,
+    AgentToolBatchMetrics,
+    AgentToolStart,
+    AgentToolUse,
+)
 from nurse_scheduling.ai.app import build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import (
@@ -88,6 +95,7 @@ class CaseRun:
     provider_attempts: int = 0
     provider_attempts_per_turn: list[int] = field(default_factory=list)
     tool_calls_per_turn: list[int] = field(default_factory=list)
+    tool_batch_metrics: list[AgentToolBatchMetrics] = field(default_factory=list)
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
@@ -115,7 +123,7 @@ class CaseRun:
                 self.provider_attempts,
                 self.provider_attempts_per_turn,
             ),
-            "tool_batches": _tool_batch_record(self.tool_calls_per_turn),
+            "tool_batches": _tool_batch_record(self.tool_calls_per_turn, self.tool_batch_metrics),
         }
 
     def as_trajectory(self) -> dict[str, Any]:
@@ -202,6 +210,7 @@ async def run_case(
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
     sandbox_metrics = SandboxTurnMetrics()
+    tool_batch_metrics: list[AgentToolBatchMetrics] = []
     reasoning = 0
     started = time.perf_counter()
     try:
@@ -214,6 +223,7 @@ async def run_case(
             messages,
             SandboxAgentLimits.from_settings(settings),
             sandbox_metrics,
+            tool_batch_metrics.append,
         )
         async for event in agent_events:
             if isinstance(event, AgentText):
@@ -267,6 +277,7 @@ async def run_case(
             provider_attempts=counting.attempts,
             provider_attempts_per_turn=counting.attempts_per_turn,
             tool_calls_per_turn=counting.tool_calls_per_turn,
+            tool_batch_metrics=tool_batch_metrics,
         )
 
     elapsed = time.perf_counter() - started
@@ -294,6 +305,7 @@ async def run_case(
         provider_attempts=counting.attempts,
         provider_attempts_per_turn=counting.attempts_per_turn,
         tool_calls_per_turn=counting.tool_calls_per_turn,
+        tool_batch_metrics=tool_batch_metrics,
     )
 
 
@@ -365,7 +377,10 @@ def _provider_request_record(turns: int, attempts: int, attempts_per_turn: Seque
     }
 
 
-def _tool_batch_record(tool_calls_per_turn: Sequence[int]) -> dict[str, Any]:
+def _tool_batch_record(
+    tool_calls_per_turn: Sequence[int],
+    metrics: Sequence[AgentToolBatchMetrics] = (),
+) -> dict[str, Any]:
     """Describe the model turns that requested one or more tools."""
     calls_per_batch = [count for count in tool_calls_per_turn if count > 0]
     return {
@@ -374,6 +389,9 @@ def _tool_batch_record(tool_calls_per_turn: Sequence[int]) -> dict[str, Any]:
         "max_calls_per_batch": max(calls_per_batch, default=0),
         "calls_per_batch": calls_per_batch,
         "calls_per_turn": list(tool_calls_per_turn),
+        "parallel_batches": sum(metric.parallel for metric in metrics),
+        "parallel_per_batch": [metric.parallel for metric in metrics],
+        "execution_seconds_per_batch": [round(metric.execution_seconds, 3) for metric in metrics],
     }
 
 
@@ -512,16 +530,17 @@ def sandbox_metrics_markdown(runs: Sequence[CaseRun]) -> str:
             "",
             "Calls per batch excludes final-answer turns that requested no tools.",
             "",
-            "| Case | Batches | Multi-call batches | Max calls | Calls per batch |",
-            "| --- | ---: | ---: | ---: | --- |",
+            "| Case | Batches | Multi-call batches | Max calls | Calls per batch | Parallel batches | Execution seconds per batch |",
+            "| --- | ---: | ---: | ---: | --- | ---: | --- |",
         ]
     )
     for run in runs:
-        batch = _tool_batch_record(run.tool_calls_per_turn)
+        batch = _tool_batch_record(run.tool_calls_per_turn, run.tool_batch_metrics)
         calls = ", ".join(str(count) for count in batch["calls_per_batch"]) or "none"
+        durations = ", ".join(f"{seconds:.3f}" for seconds in batch["execution_seconds_per_batch"]) or "none"
         lines.append(
             f"| {run.case_id} | {batch['count']} | {batch['multi_call_batches']} "
-            f"| {batch['max_calls_per_batch']} | {calls} |"
+            f"| {batch['max_calls_per_batch']} | {calls} | {batch['parallel_batches']} | {durations} |"
         )
     return "\n".join(lines)
 

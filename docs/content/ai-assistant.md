@@ -159,10 +159,22 @@ proposed schedule, timing breakdown, and each criterion with its outcome. Pass `
 choose the directory, which must not already exist, or set
 `AI_EVAL_ARTIFACT_ROOT` to move the root.
 
-Each case also records tool batches, calls per model turn, calls per batch, and
-the number of batches containing multiple calls. The summary lists batch counts
-beside sandbox pause metrics so pause behavior can be checked at model-turn
-boundaries instead of inferred from the total tool count.
+Each case also records tool batches, calls per model turn, calls per batch,
+parallel execution, execution time per batch, and the number of batches
+containing multiple calls. The summary lists batch counts beside sandbox pause
+metrics so pause behavior can be checked at model-turn boundaries instead of
+inferred from the total tool count.
+
+To measure E2B read concurrency without provider or model variance, run:
+
+```sh
+./scripts/run_ai_read_benchmark.sh
+```
+
+The benchmark alternates repeated sequential and concurrent read batches in one
+warm sandbox. It reports median and p95 latency plus the median speedup under
+`artifacts/ai-read-benchmarks/`. Use `--runs`, `--calls`, and `--bytes` to change
+the sample count, calls per batch, and file size.
 
 Timing fields use wall-clock seconds. `end_to_end_seconds` covers the agent run.
 `llm_inference_seconds` sums only time awaiting provider stream events.

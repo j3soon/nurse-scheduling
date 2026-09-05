@@ -185,6 +185,9 @@ def test_multi_tool_batches_are_recorded_per_model_turn():
         "max_calls_per_batch": 2,
         "calls_per_batch": [2],
         "calls_per_turn": [2, 0],
+        "parallel_batches": 1,
+        "parallel_per_batch": [True],
+        "execution_seconds_per_batch": [pytest.approx(run.tool_batch_metrics[0].execution_seconds, abs=0.001)],
     }
 
 
@@ -519,7 +522,7 @@ def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
     assert "mutually exclusive lifetime components" in text
     assert "| a | 10.000 | 0.400 | 1.000 | 0.300 | 3.000 | 5.000 | 0.100 | 0.200 |" in text
     assert "| a | 2 | 1 | 2 | 0.100 | 0.060 |" in text
-    assert "| a | 0 | 0 | 0 | none |" in text
+    assert "| a | 0 | 0 | 0 | none | 0 | none |" in text
 
 
 def test_a_report_never_overwrites_an_earlier_one(tmp_path: Path):
