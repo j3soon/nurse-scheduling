@@ -301,6 +301,7 @@ contract are sent to Sentry, because a scanner cannot produce them:
 | `yaml_expansion_bomb` | Submitted data expands or nests past what the server reads, so it was refused. | error |
 | `yaml_aliases_used` | Accepted data used a YAML alias, which nothing this project produces does. | warning |
 | `yaml_unparseable` | Accepted data is not valid YAML, which a client that serializes its own data does not submit. | warning |
+| `job_capacity_exceeded` | One address met a full job queue, which repeats only when that address filled it. | warning |
 | `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |
 | `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
 | `timeout_out_of_range` | An optimization timeout fell outside the range advertised by `GET /optimize/options`. | warning |

@@ -264,6 +264,10 @@ def classify_suspicious_request(
         if extract_bearer_token(request.headers.get("Authorization")) is not None:
             return "rejected_bearer_token", "warning"
         return None
+    if status_code == 429 and error_code == "job_capacity_exceeded":
+        # Many addresses meeting a full queue is a busy service. One address filling it is
+        # not, and only counting per address separates them.
+        return "job_capacity_exceeded", "warning"
     if status_code == 404:
         # A missing route is noise, and so is a wordlist path that merely landed on the job
         # route. Only an identifier of the issued shape shows knowledge of what a job ID is.
