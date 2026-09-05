@@ -394,7 +394,10 @@ def test_cases_are_selected_by_id_and_by_category():
         "dates-range-expand-taiwan-no",
         "dates-range-expand-taiwan-yes",
         "dates-range-shrink",
+        "people-add-group-request",
+        "reject-shift-type-rename-collision",
         "reject-unknown-person",
+        "shift-type-rename-cascade",
         "tool-write-minimal-schedule",
     }
     assert len(select(cases, [], [], full=True)) == len(cases)

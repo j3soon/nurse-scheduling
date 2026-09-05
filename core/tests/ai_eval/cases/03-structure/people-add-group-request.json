@@ -1,0 +1,22 @@
+{
+  "id": "people-add-group-request",
+  "fixture": "ward87",
+  "question": "Add a nurse called Alice with empty history, put Alice in the Night People group, and record that Alice wants to work N on the 7th.",
+  "expect_proposal": true,
+  "assert": [
+    {"path": "people.items", "delta": 1},
+    {"path": "people.items[?id=Alice]", "count": 1},
+    {"path": "people.items[?id=Alice].description", "equals": ""},
+    {"path": "people.items[?id=Alice].history", "equals": []},
+    {"path": "people.groups[?id=Night People].members", "contains": "Alice"},
+    {"path": "people.groups[?id=Night People].members", "count": 28},
+    {"path": "preferences[?type=shift request][?person=Alice][?shiftType=N][?date=07]", "count": 1},
+    {"path": "preferences[?type=shift request][?person=Alice][?shiftType=N][?date=07].person", "count": 1},
+    {"path": "preferences[?type=shift request][?person=Alice][?shiftType=N][?date=07].shiftType", "count": 1},
+    {"path": "preferences[?type=shift request][?person=Alice][?shiftType=N][?date=07].date", "count": 1},
+    {"path": "preferences", "delta": 1}
+  ],
+  "changes": ["people", "preferences"],
+  "tags": ["difficult", "tuning", "compound-edit", "cross-module"],
+  "note": "All three coordinated changes must be present in one valid proposal. Ordinary wants language uses the shift-request default weight."
+}

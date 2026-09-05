@@ -18,6 +18,11 @@ Selector fidelity:
 - Keep concrete IDs distinct from group IDs. For example, shift type `D` is not group `Day`.
 - Keep date selectors in the requested form. For example, `01`, `2025-11-01`, and a date-group ID are distinct.
 - Quote a YAML string containing `: `, `#`, or another syntax-significant character.
+- Before renaming an item or group, confirm the new ID does not collide with any item or group ID in that section.
+  If it does, explain the collision and make no proposal.
+- A rename updates the declared ID and every exact reference to it. People IDs may occur in people groups,
+  preferences, and export rules. Shift-type IDs may occur in shift-type groups, people history, preferences, and
+  export rules. Group IDs may occur in preferences and export rules. Do not replace substrings inside other IDs.
 
 ---
 
