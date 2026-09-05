@@ -51,6 +51,11 @@ def load_data(content: bytes) -> NurseSchedulingData:
 
     Returns:
         NurseSchedulingData: The validated scheduling data
+
+    Raises:
+        pydantic.ValidationError: If the document is not a mapping or fails schema validation.
     """
     data = _load_yaml(content)
-    return NurseSchedulingData(**data)
+    # Validate rather than unpack, so an empty or scalar document reports a
+    # schema error instead of a TypeError from `**`.
+    return NurseSchedulingData.model_validate(data)

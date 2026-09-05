@@ -120,3 +120,17 @@ def test_load_yaml_preserves_bom_corrupted_api_version_keys(api_version_key):
 
     assert data[api_version_key] == "alpha"
     assert "apiVersion" not in data
+
+
+@pytest.mark.parametrize(
+    ("content", "description"),
+    [
+        (b"", "empty document"),
+        (b"# only a comment\n", "comment-only document"),
+        (b"$0\n", "scalar document"),
+        (b"- id: Person 1\n", "sequence document"),
+    ],
+)
+def test_load_data_rejects_non_mapping_documents(content, description):
+    with pytest.raises(ValidationError, match="valid dictionary"):
+        load_data(content)
