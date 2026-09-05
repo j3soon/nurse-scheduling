@@ -12,5 +12,6 @@
   ],
   "changes": [
     "people.groups"
-  ]
+  ],
+  "tags": ["difficult", "tuning", "clarification-control", "exact-target"]
 }

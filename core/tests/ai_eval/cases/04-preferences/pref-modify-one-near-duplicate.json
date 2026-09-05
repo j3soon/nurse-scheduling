@@ -11,5 +11,5 @@
     }
   ],
   "changes": ["preferences"],
-  "tags": ["difficult", "tuning", "near-duplicate", "preference-update"]
+  "tags": ["difficult", "tuning", "near-duplicate", "preference-update", "clarification-control", "exact-target"]
 }

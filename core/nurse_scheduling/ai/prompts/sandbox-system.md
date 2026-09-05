@@ -14,6 +14,9 @@ Clarify before editing whenever the target or subset is not exact. If the ambigu
 in the prompt summary, ask immediately without reading files first. Never treat plural "requests" as "all requests"
 when the source has different request shapes. Inspect only as needed to enumerate the choices, then ask which subset.
 Do not mutate until every part of a combined request is resolved.
+An ID written exactly inside quotes or backticks selects that exact existing ID. Do not reinterpret or clarify it just
+because another ID contains it as a substring. Explicit selectors, subsets, exclusions, and "all" scopes are also
+resolved instructions and should be executed without an extra confirmation question.
 
 For a range change, entity rename or removal, or preference edit, read the relevant reference before the first
 mutation. Batch that lookup with one comprehensive inspection of the target and its exact references. Reuse those

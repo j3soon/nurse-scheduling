@@ -30,7 +30,9 @@
     "difficult",
     "tuning",
     "preference-copy",
-    "reading"
+    "reading",
+    "clarification-control",
+    "exact-target"
   ],
   "note": "P85 has one N request, one K request, and one OFF request. The assistant must inspect and copy only the requested subset with its original date and weight."
 }
