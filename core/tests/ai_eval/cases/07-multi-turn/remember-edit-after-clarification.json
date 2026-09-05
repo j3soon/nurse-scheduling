@@ -1,0 +1,25 @@
+{
+  "id": "remember-edit-after-clarification",
+  "fixture": "ward87",
+  "user_turns": [
+    "Change P84's OFF request weight to -100.",
+    "The request on the 1st. Leave the other P84 OFF request alone."
+  ],
+  "intermediate_answer_contains": [
+    [["date", "which request"], ["1st", "5th", "dates"]]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": 11000000000}
+      ],
+      "added": [
+        {"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": -100}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "advanced-multi-turn", "intent-retention", "near-duplicate"]
+}

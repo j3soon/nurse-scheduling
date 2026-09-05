@@ -1,0 +1,24 @@
+{
+  "id": "answer-about-earlier-proposal",
+  "fixture": "new-schedule",
+  "user_turns": [
+    "Set the schedule description to March training roster.",
+    "What description will the proposed schedule have? Answer without proposing another change."
+  ],
+  "intermediate_answer_contains": [
+    ["March training roster"]
+  ],
+  "expect_proposal": true,
+  "proposal_turn": 1,
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "",
+      "after": "March training roster"
+    }
+  ],
+  "changes": ["description"],
+  "answer_contains": ["March training roster"],
+  "tags": ["difficult", "tuning", "advanced-multi-turn", "proposal-follow-up"],
+  "note": "The first turn must propose the edit. The second must answer from conversational context without emitting a second proposal."
+}

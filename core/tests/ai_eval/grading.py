@@ -86,6 +86,7 @@ class EvalCase:
     fixture: str
     question: str
     expect_proposal: bool
+    proposal_turn: int | None = None
     user_turns: tuple[str, ...] = ()
     intermediate_answer_contains: tuple[tuple[str | tuple[str, ...], ...], ...] = ()
     tags: tuple[str, ...] = ()
@@ -101,6 +102,8 @@ class EvalCase:
         """Keep direct test construction compatible with single-turn cases."""
         if not self.user_turns:
             object.__setattr__(self, "user_turns", (self.question,))
+        if self.expect_proposal and self.proposal_turn is None:
+            object.__setattr__(self, "proposal_turn", len(self.user_turns))
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,7 @@ class RunOutcome:
     activity: list[dict[str, Any]] = field(default_factory=list)
     intermediate_answers: list[str] = field(default_factory=list)
     intermediate_proposals: list[bool] = field(default_factory=list)
+    proposal_turns: list[bool] = field(default_factory=list)
 
 
 def load_cases(path: Path) -> list[EvalCase]:
@@ -192,6 +196,17 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         raise EvalCaseError(f"{source} `tags` must be a list of strings.")
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
+    proposal_turn = entry.get("proposal_turn")
+    if proposal_turn is None and entry["expect_proposal"]:
+        proposal_turn = len(raw_turns)
+    if proposal_turn is not None and (
+        isinstance(proposal_turn, bool)
+        or not isinstance(proposal_turn, int)
+        or not 1 <= proposal_turn <= len(raw_turns)
+    ):
+        raise EvalCaseError(f"{source} `proposal_turn` must identify one user turn.")
+    if bool(entry["expect_proposal"]) != (proposal_turn is not None):
+        raise EvalCaseError(f"{source} `proposal_turn` must agree with `expect_proposal`.")
     if entry["expect_proposal"] and not assertions and not expected_diff:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
@@ -203,6 +218,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         fixture=str(entry["fixture"]),
         question=str(raw_turns[0]),
         expect_proposal=bool(entry["expect_proposal"]),
+        proposal_turn=proposal_turn,
         user_turns=tuple(raw_turns),
         intermediate_answer_contains=intermediate,
         tags=tuple(raw_tags),
@@ -295,12 +311,16 @@ def _build_expected_diff(raw: object, source: str) -> ExpectedDiff:
 def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None = None) -> CaseResult:
     """Apply every criterion of one case to what the run produced."""
     checks: list[CheckResult] = []
-    for index, proposed in enumerate(outcome.intermediate_proposals, start=1):
+    proposal_turns = outcome.proposal_turns
+    if not proposal_turns and outcome.intermediate_proposals:
+        proposal_turns = [*outcome.intermediate_proposals, outcome.proposed is not None]
+    for index, proposed in enumerate(proposal_turns, start=1):
+        expected = index == case.proposal_turn
         checks.append(
             CheckResult(
-                description=f"turn {index} proposal not expected",
-                passed=not proposed,
-                detail="a proposal was made" if proposed else "",
+                description=f"turn {index} proposal {'expected' if expected else 'not expected'}",
+                passed=proposed == expected,
+                detail="" if proposed == expected else f"a proposal was {'not ' if not proposed else ''}made",
             )
         )
     for index, expected_values in enumerate(case.intermediate_answer_contains):

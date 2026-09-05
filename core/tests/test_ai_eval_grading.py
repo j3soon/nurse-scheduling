@@ -446,6 +446,39 @@ def test_loads_multi_turn_cases_and_tags(tmp_path: Path):
     assert case.tags == ("difficult", "tuning")
 
 
+def test_a_multi_turn_case_can_designate_an_earlier_proposal(tmp_path: Path):
+    entry = _case(
+        user_turns=["Change it.", "What changed?"],
+        proposal_turn=1,
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+    )
+    case = load_cases(_write(tmp_path, entry))[0]
+    proposed = copy.deepcopy(SCHEDULE)
+    proposed["description"] = "changed"
+
+    result = grade(
+        case,
+        RunOutcome(proposed=proposed, initial=SCHEDULE, proposal_turns=[True, False]),
+    )
+
+    assert case.proposal_turn == 1
+    assert result.passed
+
+
+@pytest.mark.parametrize("proposal_turn", [0, 3, True, "1"])
+def test_invalid_proposal_turn_is_rejected(tmp_path: Path, proposal_turn: object):
+    entry = _case(
+        user_turns=["Change it.", "Okay."],
+        proposal_turn=proposal_turn,
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+    )
+
+    with pytest.raises(EvalCaseError, match="must identify one user turn"):
+        load_cases(_write(tmp_path, entry))
+
+
 def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     entry = _case(**{"assert": [{"path": "description", "equals": "x"}], "changes": ["description"]})
@@ -562,6 +595,7 @@ def test_every_case_sits_in_a_category_directory():
         "04-preferences",
         "05-export",
         "06-refusal",
+        "07-multi-turn",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category in {"00-summary", "01-reading", "06-refusal"}

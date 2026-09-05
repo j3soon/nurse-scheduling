@@ -1,0 +1,22 @@
+{
+  "id": "revise-pending-copy-scope",
+  "fixture": "ward87",
+  "user_turns": [
+    "Copy P85's requests to P86.",
+    "N only. Do not copy K or OFF."
+  ],
+  "intermediate_answer_contains": [
+    [["which", "all"], ["N", "K", "OFF"]]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {"type": "shift request", "person": ["P86"], "date": ["04"], "shiftType": ["N"], "weight": 11000000000}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "advanced-multi-turn", "scope-narrowing", "preference-copy"]
+}

@@ -1,7 +1,9 @@
 # AI evaluation case format
 
 Store one JSON object per case under `cases/<category>/<id>.json`. Every case names a fixture, one question or a
-`user_turns` sequence, and whether the final turn should propose a schedule change.
+`user_turns` sequence, and whether one turn should propose a schedule change. Proposal cases default to the final
+turn. Set the one-based `proposal_turn` when a later turn should discuss an earlier proposal without reproposing it.
+Every other turn is explicitly graded as producing no proposal.
 
 Use `expected_diff` for a deterministic mutation to a list-valued path. Each entry gives the complete semantic
 multiset delta, so an unlisted addition or removal at that path fails:

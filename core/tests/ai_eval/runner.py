@@ -209,6 +209,7 @@ async def run_case(
     prompt_messages: list[list[ChatMessage]] = []
     answers: list[str] = []
     intermediate_proposals: list[bool] = []
+    proposal_turns: list[bool] = []
     tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
@@ -265,9 +266,10 @@ async def run_case(
                     events.append({"kind": "proposal", "diff": event.diff})
             answer_text = "".join(turn_answer)
             answers.append(answer_text)
+            proposal_turns.append(turn_proposal is not None)
             if turn_index < len(case.user_turns) - 1:
                 intermediate_proposals.append(turn_proposal is not None)
-            else:
+            if turn_index + 1 == case.proposal_turn:
                 proposal_event = turn_proposal
             history.extend(
                 [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
@@ -308,6 +310,7 @@ async def run_case(
         activity=events,
         intermediate_answers=answers[:-1],
         intermediate_proposals=intermediate_proposals,
+        proposal_turns=proposal_turns,
     )
     result = grade(case, outcome, computed_values(initial))
     return CaseRun(
