@@ -68,6 +68,11 @@ PROPOSAL_REJECTED_HISTORY = (
     "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
     "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
 )
+PROPOSAL_INVALID_HISTORY = (
+    "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
+    "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
+    "the current canonical schedule."
+)
 CANDIDATE_VALIDATION_ERROR = (
     "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
     "discarded. The canonical schedule was not changed."
@@ -272,43 +277,52 @@ class SessionStore:
             session.proposal_yaml = ""
             session.proposal_diff = ""
 
-    def take_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
-        """Approve the pending proposal and adopt it, returning it with the schedule it replaced."""
+    def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
+        """Return the pending proposal and the schedule it would replace, without adopting it."""
         with self._lock:
-            session = self._get_owned(session_id, owner_token)
-            if not session.proposal_yaml:
-                raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
-            if session.revision != base_sha256:
-                session.proposal_yaml = ""
-                session.proposal_diff = ""
-                raise HTTPException(
-                    status_code=409,
-                    detail="The schedule changed after this proposal was created, so it was discarded.",
-                )
+            session = self._require_approvable(session_id, owner_token, base_sha256)
+            return session.proposal_yaml, session.schedule_yaml
+
+    def adopt_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> str:
+        """Adopt a revalidated proposal as the session schedule and record the approval."""
+        with self._lock:
+            session = self._require_approvable(session_id, owner_token, base_sha256)
             approved = session.proposal_yaml
-            replaced = session.schedule_yaml
             session.proposal_yaml = ""
             session.proposal_diff = ""
             session.schedule_yaml = approved
             session.revision = schedule_revision(approved)
-            return approved, replaced
+            self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
+            return approved
 
-    def record_proposal_approval(self, session_id: str) -> None:
-        """Record a successfully revalidated approval for later agent turns."""
-        with self._lock:
-            session = self._sessions.get(session_id)
-            if session is not None:
-                self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
+    def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> ChatSession:
+        """Resolve a session whose pending proposal may still be approved by its browser."""
+        session = self._get_owned(session_id, owner_token)
+        if not session.proposal_yaml:
+            raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
+        if session.revision != base_sha256:
+            session.proposal_yaml = ""
+            session.proposal_diff = ""
+            raise HTTPException(
+                status_code=409,
+                detail="The schedule changed after this proposal was created, so it was discarded.",
+            )
+        return session
 
-    def discard_proposal(self, session_id: str, owner_token: str | None) -> None:
-        """Drop a pending proposal and record the user's decision once."""
+    def discard_proposal(
+        self,
+        session_id: str,
+        owner_token: str | None,
+        history_event: str = PROPOSAL_REJECTED_HISTORY,
+    ) -> None:
+        """Drop a pending proposal and record why it was dropped once."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
             had_proposal = bool(session.proposal_yaml)
             session.proposal_yaml = ""
             session.proposal_diff = ""
             if had_proposal:
-                self._append_history_event(session, PROPOSAL_REJECTED_HISTORY)
+                self._append_history_event(session, history_event)
 
     def abort(self, session_id: str) -> None:
         """Release a session without recording an incomplete response."""
@@ -773,7 +787,9 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
-        approved, replaced = store.take_proposal(session_id, owner, request.base_sha256)
+        # Revalidate before adopting, so a refused proposal never becomes the
+        # session schedule that later turns are hydrated from.
+        approved, replaced = store.peek_proposal(session_id, owner, request.base_sha256)
         validation = validate_frontend_schedule_yaml(approved, settings.max_schedule_bytes)
         if not validation.valid:
             # A user can approve while their schedule is still incomplete, so only
@@ -781,9 +797,9 @@ def create_app(
             replaced_validation = validate_frontend_schedule_yaml(replaced, settings.max_schedule_bytes)
             if new_schedule_issues(replaced_validation, validation):
                 logger.error("Approved proposal failed revalidation session_id=%s", session_id)
+                store.discard_proposal(session_id, owner, PROPOSAL_INVALID_HISTORY)
                 raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
-        store.record_proposal_approval(session_id)
-        return ProposalResponse(schedule_yaml=approved)
+        return ProposalResponse(schedule_yaml=store.adopt_proposal(session_id, owner, request.base_sha256))
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",

@@ -34,6 +34,7 @@ from nurse_scheduling.ai.app import (
     CANDIDATE_VALIDATION_ERROR,
     OWNER_COOKIE,
     PROPOSAL_APPROVED_HISTORY,
+    PROPOSAL_INVALID_HISTORY,
     PROPOSAL_REJECTED_HISTORY,
     PROVIDER_ERROR,
     SANDBOX_TURN_TIMEOUT_ERROR,
@@ -1327,6 +1328,43 @@ def test_rejection_drops_the_proposal() -> None:
     assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
 
 
+def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule() -> None:
+    provider = FakeProvider([["Acknowledged."]])
+    factory = FakeSandboxFactory()
+    app = create_test_app(
+        settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT),
+        provider=provider,
+        sandbox_factory=factory,
+    )
+    client = AuthenticatedTestClient(app)
+    store = app.state.session_store
+    schedule = schedule_yaml()
+    session_id = create_session(client, schedule)
+    revision = hashlib.sha256(schedule.encode("utf-8")).hexdigest()
+    owner = client.cookies[OWNER_COOKIE]
+    broken_payload = base_schedule_payload()
+    broken_payload["preferences"][1]["person"] = ["P9"]
+    _, _, base_revision = store.begin(session_id, owner)
+    assert store.finish(
+        session_id,
+        "Break it",
+        "Broken proposal",
+        (schedule_yaml(broken_payload), "broken diff"),
+        base_revision=base_revision,
+    )
+
+    approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+    retried = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
+    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
+
+    assert approved.status_code == 409
+    assert "no longer valid" in approved.json()["detail"]
+    assert retried.status_code == 404
+    assert follow_up.status_code == 200
+    assert factory.created[0].files[WORKSPACE_SCHEDULE] == schedule.encode()
+    assert {"role": "user", "content": PROPOSAL_INVALID_HISTORY} in provider.calls[0]
+
+
 def test_a_newer_schedule_replaces_the_snapshot_and_the_proposal() -> None:
     client, session_id, revision = proposing_client()
     payload = base_schedule_payload()
@@ -1356,7 +1394,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     )
     _, _, active_turn_revision = store.begin(session.id, "browser-owner")
 
-    store.take_proposal(session.id, "browser-owner", original_revision)
+    store.adopt_proposal(session.id, "browser-owner", original_revision)
     proposal_saved = store.finish(
         session.id,
         "Stale edit",
@@ -1369,9 +1407,10 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     assert session.history == [
         ChatMessage(role="user", content="First edit"),
         ChatMessage(role="assistant", content="First proposal"),
+        ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY),
     ]
     with pytest.raises(HTTPException) as exc_info:
-        store.take_proposal(session.id, "browser-owner", active_turn_revision)
+        store.adopt_proposal(session.id, "browser-owner", active_turn_revision)
     assert exc_info.value.status_code == 404
 
 
