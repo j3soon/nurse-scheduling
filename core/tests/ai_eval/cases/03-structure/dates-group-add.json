@@ -1,0 +1,33 @@
+{
+  "id": "dates-group-add",
+  "fixture": "ward87",
+  "question": "Create a date group called 'Month end' containing the 29th and the 30th.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "dates.groups[?id=Month end].members",
+      "contains": "29"
+    },
+    {
+      "path": "dates.groups[?id=Month end].members",
+      "contains": "30"
+    },
+    {
+      "path": "dates.groups[?id=Month end].members",
+      "count": 2
+    },
+    {
+      "path": "dates.groups[].id",
+      "added": [
+        "Month end"
+      ]
+    },
+    {
+      "path": "dates.groups[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "dates.groups"
+  ]
+}

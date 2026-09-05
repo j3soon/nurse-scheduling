@@ -1,0 +1,31 @@
+{
+  "id": "export-extra-column",
+  "fixture": "new-schedule",
+  "question": "Add an export column headed 'Nights' counting each person's N shifts across all dates.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "export.extraColumns[?header=Nights].countShiftTypes",
+      "equals": [
+        "N"
+      ]
+    },
+    {
+      "path": "export.extraColumns[?header=Nights].countDates",
+      "equals": [
+        "ALL"
+      ]
+    },
+    {
+      "path": "export.extraColumns[?header=Nights].type",
+      "equals": "count"
+    },
+    {
+      "path": "export.extraColumns",
+      "count": 1
+    }
+  ],
+  "changes": [
+    "export"
+  ]
+}

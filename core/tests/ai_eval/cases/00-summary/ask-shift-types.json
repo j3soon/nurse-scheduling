@@ -1,0 +1,12 @@
+{
+  "id": "ask-shift-types",
+  "fixture": "ward87",
+  "question": "How many different shift types are defined?",
+  "expect_proposal": false,
+  "answer_contains": [
+    [
+      "{shift_type_count}",
+      "eleven"
+    ]
+  ]
+}

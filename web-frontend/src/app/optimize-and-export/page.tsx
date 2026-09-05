@@ -282,7 +282,12 @@ function loadStoredServerOptions(): { servers: OptimizeServerEntry[]; selectedSe
           normalizeEndpoint(server.endpoint) !== LOCAL_BACKEND_API_URL
         ))
       : parsed.servers;
-    const servers = dedupeServerEntries(storedServers);
+    const migratedServers = dedupeServerEntries(storedServers);
+    // A legacy store holding only the dropped localhost entry migrates to nothing,
+    // which would leave the backend list empty.
+    const servers = isLegacyStore && migratedServers.length === 0
+      ? createDefaultServerEntries()
+      : migratedServers;
     const parsedSelection = typeof parsed.selectedServerEndpoint === 'string'
       ? parsed.selectedServerEndpoint
       : 'auto';

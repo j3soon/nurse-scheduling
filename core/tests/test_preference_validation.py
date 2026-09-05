@@ -19,23 +19,21 @@
 
 # This test is mostly AI generated.
 
-import datetime
 import logging
 import os
 import sys
-from types import SimpleNamespace
 
 import pytest
 
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nurse_scheduling import preference_types, scheduler
-from nurse_scheduling.models import ShiftAffinityPreference, ShiftTypeSuccessionsPreference
+from nurse_scheduling import models, scheduler
 
 
-def test_shift_type_requirements_rejects_inf_weight_with_preferred_num_people():
-    yaml_content = b"""
+@pytest.mark.parametrize("weight", [".inf", "-.inf"])
+def test_shift_type_requirements_rejects_inf_weight_with_preferred_num_people(weight):
+    yaml_content = f"""
 apiVersion: alpha
 dates:
   range:
@@ -53,8 +51,8 @@ preferences:
     shiftType: D
     requiredNumPeople: 0
     preferredNumPeople: 1
-    weight: .inf
-"""
+    weight: {weight}
+""".encode()
     with pytest.raises(ValueError, match="Infinity weights are not allowed"):
         scheduler.schedule(yaml_content)
 
@@ -329,6 +327,10 @@ preferences:
     with pytest.raises(ValueError, match="must be covered by countShiftTypes"):
         scheduler.schedule(coefficient_not_selected_yaml)
 
+    unknown_coefficient_yaml = coefficient_not_selected_yaml.replace(b"[A, 2]", b"[UNKNOWN, 2]")
+    with pytest.raises(ValueError, match="Unknown shift type ID: UNKNOWN"):
+        scheduler.schedule(unknown_coefficient_yaml)
+
     for invalid_coefficient in (0, -1):
         invalid_coefficient_yaml = coefficient_not_selected_yaml.replace(
             b"- [A, 2]", f"- [D, {invalid_coefficient}]".encode()
@@ -525,34 +527,33 @@ preferences:
 
 
 def test_shift_type_requirements_rejects_empty_shift_types():
-    dummy_ctx = SimpleNamespace(
-        n_days=1,
-        map_did_d={},
-        dates=SimpleNamespace(range=None),
-        map_sid_s={},
-    )
-    pref = SimpleNamespace(date=None, shiftType="D", qualifiedPeople=None, preferredNumPeople=None, requiredNumPeople=1)
+    yaml_content = b"""
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2025-01-01
+    endDate: 2025-01-01
+people:
+  items:
+    - id: n1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: []
+    requiredNumPeople: 1
+"""
 
-    original_parse_sids = preference_types.utils.parse_sids
-    try:
-        preference_types.utils.parse_sids = lambda *_args, **_kwargs: []
-        with pytest.raises(ValueError, match="Non-empty shift types are required"):
-            preference_types.shift_type_requirements(dummy_ctx, pref, 0)
-    finally:
-        preference_types.utils.parse_sids = original_parse_sids
+    with pytest.raises(ValueError, match="Non-empty shift types are required"):
+        scheduler.schedule(yaml_content)
 
 
 def test_shift_type_requirements_parse_all_scalar_and_list_forms():
-    map_sid_s = {
-        "D": [0],
-        "E": [1],
-        "N": [2],
-        "ALL": [0, 1, 2],
-    }
-
-    assert preference_types._parse_shift_type_requirement_groups("ALL", map_sid_s) == [[0, 1, 2]]
-    assert preference_types._parse_shift_type_requirement_groups(["ALL"], map_sid_s) == [[0, 1, 2]]
-    assert preference_types._parse_shift_type_requirement_groups([["ALL"]], map_sid_s) == [[0, 1, 2]]
+    assert _compiled_requirement_groups("ALL") == ((0, 1, 2),)
+    assert _compiled_requirement_groups(["ALL"]) == ((0, 1, 2),)
+    assert _compiled_requirement_groups([["ALL"]]) == ((0, 1, 2),)
 
 
 @pytest.mark.parametrize(
@@ -568,14 +569,32 @@ def test_shift_type_requirements_parse_all_scalar_and_list_forms():
     ],
 )
 def test_shift_type_requirements_parse_grouped_and_top_level_shift_types(shift_type, expected):
-    map_sid_s = {
-        "D": [0],
-        "E": [1],
-        "N": [2],
-        "Weekend": [0, 2],
-    }
+    assert _compiled_requirement_groups(shift_type) == tuple(tuple(group) for group in expected)
 
-    assert preference_types._parse_shift_type_requirement_groups(shift_type, map_sid_s) == expected
+
+def _compiled_requirement_groups(shift_type):
+    data = models.NurseSchedulingData.model_validate(
+        {
+            "apiVersion": "alpha",
+            "dates": {"range": {"startDate": "2025-01-01", "endDate": "2025-01-01"}},
+            "people": {"items": [{"id": "n1"}]},
+            "shiftTypes": {
+                "items": [{"id": "D"}, {"id": "E"}, {"id": "N"}],
+                "groups": [{"id": "Weekend", "members": ["D", "N"]}],
+            },
+            "preferences": [
+                {"type": "at most one shift per day"},
+                {
+                    "type": "shift type requirement",
+                    "shiftType": shift_type,
+                    "requiredNumPeople": 0,
+                },
+            ],
+        }
+    )
+    compiled = data.compiled_schedule.preferences[1]
+    assert isinstance(compiled, models.CompiledShiftTypeRequirements)
+    return compiled.shift_type_groups
 
 
 def test_shift_type_requirements_allows_duplicate_expanded_coverage(caplog):
@@ -734,6 +753,10 @@ preferences:
     ):
         scheduler.schedule(yaml_content)
 
+    unknown_coefficient_yaml = yaml_content.replace(b"[E, 2]", b"[UNKNOWN, 2]")
+    with pytest.raises(ValueError, match="Unknown shift type ID: UNKNOWN"):
+        scheduler.schedule(unknown_coefficient_yaml)
+
 
 def test_shift_type_requirements_rejects_invalid_coefficient():
     yaml_content = b"""
@@ -848,55 +871,3 @@ preferences:
         match="Shift type requirement coefficients are only supported when shiftType normalizes to one requirement group",
     ):
         scheduler.schedule(yaml_content)
-
-
-def test_shift_type_successions_and_affinity_reject_non_list_inputs():
-    dummy_ctx = SimpleNamespace(map_pid_p={"n1": [0]}, map_did_d={}, dates=SimpleNamespace(range=None))
-
-    pref_successions = ShiftTypeSuccessionsPreference.model_validate(
-        {
-            "type": "shift type successions",
-            "person": "n1",
-            "pattern": ["D"],
-            "weight": 1,
-        }
-    )
-    pref_successions.pattern = "D"
-    with pytest.raises(ValueError, match="Pattern must be a list"):
-        preference_types.shift_type_successions(dummy_ctx, pref_successions, 0)
-
-    pref_affinity = ShiftAffinityPreference.model_validate(
-        {
-            "type": "shift affinity",
-            "date": "2025-01-01",
-            "people1": ["n1"],
-            "people2": ["n1"],
-            "shiftTypes": ["D"],
-            "weight": 1,
-        }
-    )
-
-    date_range = SimpleNamespace(
-        startDate=datetime.date(2025, 1, 1),
-        endDate=datetime.date(2025, 1, 1),
-    )
-    dummy_affinity_ctx = SimpleNamespace(
-        map_pid_p={"n1": [0]},
-        map_sid_s={"D": [0]},
-        map_did_d={"2025-01-01": [0]},
-        dates=SimpleNamespace(range=date_range),
-    )
-
-    pref_affinity.people1 = "n1"
-    with pytest.raises(ValueError, match="People1 must be a list"):
-        preference_types.shift_affinity(dummy_affinity_ctx, pref_affinity, 0)
-
-    pref_affinity.people1 = ["n1"]
-    pref_affinity.people2 = "n1"
-    with pytest.raises(ValueError, match="People2 must be a list"):
-        preference_types.shift_affinity(dummy_affinity_ctx, pref_affinity, 0)
-
-    pref_affinity.people2 = ["n1"]
-    pref_affinity.shiftTypes = "D"
-    with pytest.raises(ValueError, match="Shift types must be a list"):
-        preference_types.shift_affinity(dummy_affinity_ctx, pref_affinity, 0)

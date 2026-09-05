@@ -1,0 +1,31 @@
+{
+  "id": "shift-type-group-description",
+  "fixture": "new-schedule",
+  "question": "Describe the Night shift type group as 'Overnight cover'.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "shiftTypes.groups[?id=Night].description",
+      "equals": "Overnight cover"
+    },
+    {
+      "path": "shiftTypes.groups[].id",
+      "added": []
+    },
+    {
+      "path": "shiftTypes.groups[].id",
+      "removed": []
+    },
+    {
+      "path": "shiftTypes.groups[?id=Night].members",
+      "added": []
+    },
+    {
+      "path": "shiftTypes.groups[?id=Night].members",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "shiftTypes.groups"
+  ]
+}

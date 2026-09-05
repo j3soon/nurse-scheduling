@@ -1,0 +1,43 @@
+{
+  "id": "pref-affinity-attract",
+  "fixture": "ward87",
+  "question": "P64 and P65 should be scheduled together on N shifts throughout the month.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift affinity].people1",
+      "contains": "P64"
+    },
+    {
+      "path": "preferences[?type=shift affinity].people2",
+      "contains": "P65"
+    },
+    {
+      "path": "preferences[?type=shift affinity].shiftTypes",
+      "contains": "N"
+    },
+    {
+      "path": "preferences[?type=shift affinity]",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift affinity].people1",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift affinity].people2",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift affinity].shiftTypes",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "delta": 1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

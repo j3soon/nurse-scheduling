@@ -2,7 +2,9 @@ ortools==9.15.6755
 pandas
 ruamel.yaml
 pydantic
-openpyxl # For XLSX output support
+openpyxl # For XLSX input and output support
+defusedxml # For parsing untrusted XLSX XML safely
+pypdf # For extracting text from PDF attachments
 jinja2 # For prettifying output
 # For more solvers support
 pulp==3.3.2
@@ -19,5 +21,6 @@ fastapi[standard]
 httpx
 python-multipart
 redis
+e2b==2.46.0 # For isolated AI sandbox execution and template builds
 # For error tracking
 sentry-sdk

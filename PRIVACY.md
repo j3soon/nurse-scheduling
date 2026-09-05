@@ -31,6 +31,12 @@ Clicking **Optimize** sends the current scheduling YAML to the backend shown in 
 - The backend sets a pseudonymous client UUID cookie for up to 7 days.
 - Docker Redis deployments retain minimal per-job telemetry for weekly reports, including job and pseudonymous client IDs, solver, lifecycle timestamps and state, queue and runtime durations, outcome, failure code, solver status, termination reason, configured timeout, and download count. Telemetry excludes scheduling inputs, filenames, IP addresses, and email addresses. Reporting does not remove telemetry. Rows expire 30 days after the end of their event week by default. Operators may send this telemetry through a configured reporting provider such as Mailgun.
 
+## Experimental AI
+
+The hosted beta AI service is separate from the main optimization backend and requires beta API-key access. Ordinary optimization never uses this route, so users outside the beta will not trigger its data handling.
+
+Assume all AI chats, schedules, attachments, responses, and request metadata are logged and not anonymized. This data may be used to improve our product and the AI provider's product. Do not submit personal, confidential, regulated, or otherwise sensitive information.
+
 ## Opting Out While Using Hosted Services
 
 Ad blockers and privacy-focused browser extensions may block Google Analytics and Sentry, depending on their configuration. They do not prevent scheduling data from being sent to the configured backend when you click **Optimize**.

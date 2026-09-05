@@ -1,0 +1,23 @@
+{
+  "id": "dates-group-description",
+  "fixture": "new-schedule",
+  "question": "Describe the WORKDAY date group as 'Monday to Friday'.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "dates.groups[?id=WORKDAY].description",
+      "equals": "Monday to Friday"
+    },
+    {
+      "path": "dates.groups[].id",
+      "added": []
+    },
+    {
+      "path": "dates.groups[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "dates.groups"
+  ]
+}

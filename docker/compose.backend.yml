@@ -87,11 +87,76 @@ services:
       timeout: 3s
       retries: 30
 
+  ai:
+    image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
+    build: *api-build
+    restart: unless-stopped
+    environment:
+      <<: *sentry-environment
+      # Compose-hosted AI requires authentication unless the env file explicitly opts out.
+      AI_AUTH_REQUIRED: "${AI_AUTH_REQUIRED:-true}"
+      AI_AUTH_TOKEN: "${AI_AUTH_TOKEN:-}"
+      AI_PROVIDER_BASE_URL: "${AI_PROVIDER_BASE_URL:-}"
+      AI_PROVIDER_API_KEY: "${AI_PROVIDER_API_KEY:-}"
+      AI_PROVIDER_MODEL: "${AI_PROVIDER_MODEL:-local-model}"
+      AI_PROVIDER_TIMEOUT_SECONDS: "${AI_PROVIDER_TIMEOUT_SECONDS:-120}"
+      AI_PROVIDER_MAX_ATTEMPTS: "${AI_PROVIDER_MAX_ATTEMPTS:-3}"
+      AI_PROVIDER_RETRY_BACKOFF_SECONDS: "${AI_PROVIDER_RETRY_BACKOFF_SECONDS:-1}"
+      AI_SANDBOX_BACKEND: "${AI_SANDBOX_BACKEND:-e2b}"
+      E2B_API_KEY: "${E2B_API_KEY:-}"
+      E2B_TEMPLATE: "${E2B_TEMPLATE:-nurse-scheduling-ai-sandbox}"
+      AI_SANDBOX_COMMAND_TIMEOUT_SECONDS: "${AI_SANDBOX_COMMAND_TIMEOUT_SECONDS:-10}"
+      AI_SANDBOX_TURN_TIMEOUT_SECONDS: "${AI_SANDBOX_TURN_TIMEOUT_SECONDS:-900}"
+      AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS: "${AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS:-10}"
+      AI_SANDBOX_MAX_ATTEMPTS: "${AI_SANDBOX_MAX_ATTEMPTS:-3}"
+      AI_SANDBOX_RETRY_BACKOFF_SECONDS: "${AI_SANDBOX_RETRY_BACKOFF_SECONDS:-0.5}"
+      AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS: "${AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS:-5}"
+      AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS: "${AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS:-2}"
+      AI_SANDBOX_REAPER_INTERVAL_SECONDS: "${AI_SANDBOX_REAPER_INTERVAL_SECONDS:-30}"
+      AI_COOKIE_SECURE: "${AI_COOKIE_SECURE:-1}"
+      AI_ATTACHMENT_MODE: "${AI_ATTACHMENT_MODE:-images}"
+      AI_MAX_IMAGE_FILES: "${AI_MAX_IMAGE_FILES:-4}"
+      AI_MAX_IMAGE_BYTES: "${AI_MAX_IMAGE_BYTES:-5000000}"
+      AI_DOCUMENT_ATTACHMENT_MODE: "${AI_DOCUMENT_ATTACHMENT_MODE:-text}"
+      AI_MAX_DOCUMENT_FILES: "${AI_MAX_DOCUMENT_FILES:-4}"
+      AI_MAX_DOCUMENT_BYTES: "${AI_MAX_DOCUMENT_BYTES:-5000000}"
+      AI_MAX_DOCUMENT_TEXT_CHARS: "${AI_MAX_DOCUMENT_TEXT_CHARS:-50000}"
+      AI_MAX_PDF_PAGES: "${AI_MAX_PDF_PAGES:-100}"
+      AI_MAX_XLSX_SHEETS: "${AI_MAX_XLSX_SHEETS:-20}"
+      AI_MAX_XLSX_CELLS: "${AI_MAX_XLSX_CELLS:-100000}"
+      AI_MAX_XLSX_UNCOMPRESSED_BYTES: "${AI_MAX_XLSX_UNCOMPRESSED_BYTES:-50000000}"
+    command: ["uvicorn", "nurse_scheduling.ai_serve:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--no-access-log"]
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      ai:
+        condition: service_started
+    expose:
+      - "8080"
+    volumes:
+      - ./nginx.backend.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     depends_on:
-      api:
+      nginx:
         condition: service_healthy
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
 

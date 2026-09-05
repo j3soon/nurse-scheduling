@@ -1,0 +1,96 @@
+apiVersion: alpha
+description: ''
+dates:
+  range: {}
+  items: []
+  groups:
+    - id: WORKDAY
+      members: []
+      description: Workdays
+    - id: FREEDAY
+      members: []
+      description: Freedays
+people:
+  items:
+    - id: Person 1
+      description: ''
+      history: []
+    - id: Person 2
+      description: ''
+      history: []
+    - id: Person 3
+      description: ''
+      history: []
+    - id: Person 4
+      description: ''
+      history: []
+    - id: Person 5
+      description: ''
+      history: []
+    - id: Person 6
+      description: ''
+      history: []
+    - id: Person 7
+      description: ''
+      history: []
+    - id: Person 8
+      description: ''
+      history: []
+    - id: Person 9
+      description: ''
+      history: []
+    - id: Person 10
+      description: ''
+      history: []
+  groups:
+    - id: Group 1
+      members: [Person 1, Person 2]
+      description: ''
+    - id: Group 2
+      members: [Person 2, Person 3, Person 4]
+      description: ''
+    - id: Group 3
+      members: [Person 3, Person 4, Person 5, Person 6]
+      description: ''
+    - id: Group 4
+      members: [Person 4, Person 5, Person 6, Person 7, Person 8]
+      description: ''
+    - id: Group 5
+      members: [Person 5, Person 6, Person 7, Person 8, Person 9, Person 10]
+      description: ''
+shiftTypes:
+  items:
+    - id: D
+      description: Day (All Levels)
+    - id: D+
+      description: Day (Senior Only)
+    - id: E
+      description: Evening (All Levels)
+    - id: E+
+      description: Evening (Senior Only)
+    - id: N
+      description: Night (All Levels)
+    - id: N+
+      description: Night (Senior Only)
+    - id: A
+      description: Admin (All Levels)
+    - id: A+
+      description: Admin (Senior Only)
+    - id: A-
+      description: Admin (Assistant Only)
+  groups:
+    - id: Day
+      members: [D, D+]
+      description: All day shift types
+    - id: Evening
+      members: [E, E+]
+      description: All evening shift types
+    - id: Night
+      members: [N, N+]
+      description: All night shift types
+    - id: Administrative
+      members: [A, A+, A-]
+      description: All administrative shift types
+preferences:
+  - type: at most one shift per day
+appVersion: unknown

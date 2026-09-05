@@ -1,4 +1,4 @@
-"""Runtime context object used while building and exporting schedules."""
+"""Mutable runtime state shared while building and exporting schedules."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -17,63 +17,54 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import ConfigDict, Field
-
-from .models import (
-    NurseSchedulingData,
-)
+from .models import CompiledSchedule, NurseSchedulingData
 from .report import Report
 from .solver_interface import SolverInterface
 
 
-class Context(NurseSchedulingData):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+@dataclass
+class Context:
+    """Validated scenario data and mutable state for one solver run."""
+
+    scenario: NurseSchedulingData
+    compiled_schedule: CompiledSchedule = field(init=False)
 
     # Computed fields
-    n_days: int = None
-    n_shift_types: int = None
-    n_people: int = None
-
-    # Mapping fields
-    map_sid_s: dict[str | int, list[int]] = Field(
-        default_factory=dict
-    )  # Maps shift type ID to list of shift type indices
-    map_pid_p: dict[str | int, list[int]] = Field(
-        default_factory=dict
-    )  # Maps person/group ID to list of person indices
-    map_did_d: dict[str, list[int]] = Field(default_factory=dict)  # Maps date/group ID to list of date indices
+    n_days: int = field(init=False)
+    n_shift_types: int = field(init=False)
+    n_people: int = field(init=False)
 
     # Fields used by the solver (abstracted)
     solver: SolverInterface | None = None
-    model_vars: dict[str, Any] = Field(default_factory=dict)
-    shifts: dict[tuple[int, int, int], Any] = Field(default_factory=dict)
-    """A set of indicator variables (shifts[(d, s, p)]) that are 1 if
-    and only if a person (p) is assigned to a shift type (s) on day (d)."""
-    offs: dict[tuple[int, int], Any] = Field(default_factory=dict)
-    """A set of indicator variables (offs[(d, p)]) that are 1 if and
-    only if a person (p) is off on day (d)."""
+    model_vars: dict[str, Any] = field(default_factory=dict)
+    # `shifts[(d, s, p)]` is 1 exactly when person p works shift type s
+    # on day d.
+    shifts: dict[tuple[int, int, int], Any] = field(default_factory=dict)
+    # `offs[(d, p)]` is 1 exactly when person p is off on day d.
+    offs: dict[tuple[int, int], Any] = field(default_factory=dict)
 
     # Results and reporting
-    reports: list[Report] = Field(default_factory=list)
+    reports: list[Report] = field(default_factory=list)
     solver_status: str | None = None
 
-    # Lookup maps
-    map_ds_p: dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, shift_type) to set of people
-    map_dp_s: dict[tuple[int, int], set[int]] = Field(default_factory=dict)  # Maps (day, person) to set of shift types
-    map_d_sp: dict[int, set[tuple[int, int]]] = Field(
-        default_factory=dict
-    )  # Maps day to set of (shift_type, person) pairs
-    map_s_dp: dict[int, set[tuple[int, int]]] = Field(
-        default_factory=dict
-    )  # Maps shift_type to set of (day, person) pairs
-    map_p_ds: dict[int, set[tuple[int, int]]] = Field(
-        default_factory=dict
-    )  # Maps person to set of (day, shift_type) pairs
-    shift_type_requirement_coverage: dict[tuple[int, int], int] = Field(
-        default_factory=dict
-    )  # Maps (day, shift_type) to the preference index that defines it
+    # Maps (day, shift_type) to the preference index that defines it.
+    shift_type_requirement_coverage: dict[tuple[int, int], int] = field(default_factory=dict)
 
     # Optimization objective (expression type varies by solver)
     objective: Any = 0
+
+    def __post_init__(self) -> None:
+        self.compiled_schedule = self.scenario.compiled_schedule
+        self.n_days = len(self.compiled_schedule.dates)
+        self.n_shift_types = len(self.scenario.shiftTypes.items)
+        self.n_people = len(self.scenario.people.items)
+
+    @classmethod
+    def from_validated(cls, data: NurseSchedulingData) -> "Context":
+        """Create runtime state without validating or resolving input twice."""
+        # Keep generated dates in the compiled snapshot instead of mutating
+        # the validated source model to populate its optional date items.
+        return cls(scenario=data)

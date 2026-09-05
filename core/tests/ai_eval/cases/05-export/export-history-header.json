@@ -1,0 +1,19 @@
+{
+  "id": "export-history-header",
+  "fixture": "new-schedule",
+  "question": "Give the history header in the export a background colour of #eeeeee.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "export.formatting[?type=history header].backgroundColor",
+      "equals": "#eeeeee"
+    },
+    {
+      "path": "export.formatting",
+      "count": 1
+    }
+  ],
+  "changes": [
+    "export"
+  ]
+}

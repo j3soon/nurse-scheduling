@@ -1,0 +1,23 @@
+{
+  "id": "pref-remove",
+  "fixture": "ward87",
+  "question": "Remove the shift count rule that applies to the Night People group.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift count][?person=Night People]",
+      "absent": true
+    },
+    {
+      "path": "preferences[?type=shift count]",
+      "count": 2
+    },
+    {
+      "path": "preferences",
+      "delta": -1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

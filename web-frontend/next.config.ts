@@ -1,6 +1,7 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { execSync } from "child_process";
+import { networkInterfaces } from "os";
 import { resolve } from "path";
 import { fileURLToPath } from "url";
 
@@ -29,9 +30,24 @@ function getGitVersion(cwd: string = REPO_ROOT): string {
 const appVersion = process.env.APP_VERSION_OVERRIDE?.trim() || getGitVersion();
 const sentryRelease = process.env.SENTRY_RELEASE || `nurse-scheduling@${appVersion}`;
 
+function getAllowedDevOrigins(): string[] {
+  const interfaceAddresses = Object.values(networkInterfaces()).flatMap(addresses => (
+    addresses
+      ?.filter(address => address.family === "IPv4" && !address.internal)
+      .map(address => address.address) ?? []
+  ));
+  return [...new Set(["127.0.0.1", "0.0.0.0", ...interfaceAddresses])];
+}
+
+const developmentConfig: NextConfig = process.env.NODE_ENV === "development" ? {
+  // Ref: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+  allowedDevOrigins: getAllowedDevOrigins(),
+} : {};
+
 const nextConfig: NextConfig = {
   /* config options here */
-  output: 'export',
+  ...developmentConfig,
+  output: "export",
   env: {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_GA_MEASUREMENT_ID: 'G-XGDWE4SWF7',

@@ -1,0 +1,27 @@
+{
+  "id": "pref-requirement",
+  "fixture": "new-schedule",
+  "question": "Every day needs exactly 2 people on the D shift.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift type requirement][?shiftType=D].requiredNumPeople",
+      "equals": 2
+    },
+    {
+      "path": "preferences[?type=shift type requirement]",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift type requirement][?shiftType=D].shiftType",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "delta": 1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

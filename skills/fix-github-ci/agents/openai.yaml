@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix GitHub CI"
+  short_description: "Diagnose and repair GitHub Actions failures"
+  default_prompt: "Use $fix-github-ci to diagnose and fix this GitHub Actions runner failure."

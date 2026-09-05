@@ -37,6 +37,18 @@ Two hosted optimization servers are provided as free, shared, best-effort servic
 
 The hosted application anonymizes individual people IDs and removes descriptions by default before sending a schedule for optimization. A schedule without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](PRIVACY.md) for details.
 
+## AI Beta Access
+
+During the evaluation period, the hosted AI assistant is gated by an API key by default.
+
+To request access for experimentation, email [admin@nursescheduling.org](mailto:admin@nursescheduling.org) from your institution email address. Include your institution's name and a short description of how you plan to evaluate the assistant.
+
+Before requesting or using access, review [Privacy and Data Handling](PRIVACY.md). Do not submit personal, confidential, regulated, or otherwise sensitive information.
+
+## Support
+
+For general questions, [open a GitHub issue](https://github.com/j3soon/nurse-scheduling/issues). For personal questions, email [admin@nursescheduling.org](mailto:admin@nursescheduling.org).
+
 ## How to run
 
 ### Prerequisites
@@ -330,6 +342,36 @@ bun run lint -- --fix
 
 > `bun` can be replaced directly with `npm` for the basic Next.js workflow, but the documented project scripts assume Bun.
 
+### Experimental AI Chat
+
+The experimental chat answers questions about the schedule currently open in
+the frontend. Image and UTF-8 TXT, Markdown, and CSV attachments are enabled by
+default. Disable them independently with `AI_ATTACHMENT_MODE=none` and
+`AI_DOCUMENT_ATTACHMENT_MODE=none`. The chat runs as a separate backend
+process and sends the schedule and enabled inputs to an OpenAI-compatible
+provider.
+
+Create a local configuration file. The real `docker/.env` file is ignored by Git:
+
+```sh
+cp docker/.env.example docker/.env
+# Review and update the AI values. Set AI_AUTH_REQUIRED=false and leave
+# AI_AUTH_TOKEN empty only when intentionally serving locally without auth.
+```
+
+Start the AI backend and frontend in separate terminals:
+
+```sh
+./scripts/start_ai_backend.sh
+./scripts/start_frontend.sh --hostname 0.0.0.0
+```
+
+Open `http://localhost:3000/experimental-ai`, select **Change**, then select
+**Use localhost**. The local AI backend listens on `http://localhost:8001`.
+The page otherwise uses `https://api.nursescheduling.org/ai` by default. See the
+[AI assistant backend guide](https://nursescheduling.org/docs/ai-assistant/)
+for container commands, configuration, security notes, and focused tests.
+
 ### Core
 
 The main solver paths are:
@@ -621,7 +663,7 @@ uv venv --python 3.12 docs/.venv
 source docs/.venv/bin/activate
 # install dependencies
 uv pip install -r docs/requirements.txt
-# preview documentation
+# preview documentation on the port used by local page-help links
 zensical serve
 ```
 

@@ -24,6 +24,7 @@ export const GITHUB_REPO_URL = 'https://github.com/j3soon/nurse-scheduling';
 export const GITHUB_TAGS_URL = 'https://github.com/j3soon/nurse-scheduling/tags';
 export const GITHUB_LICENSE_URL = 'https://github.com/j3soon/nurse-scheduling/blob/dev/LICENSE';
 export const GITHUB_PRIVACY_URL = 'https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md';
+export const GITHUB_AI_BETA_ACCESS_URL = 'https://github.com/j3soon/nurse-scheduling#ai-beta-access';
 export const GITHUB_CODE_FREQUENCY_URL = 'https://github.com/j3soon/nurse-scheduling/graphs/code-frequency';
 export const GITHUB_ACKNOWLEDGMENTS_URL = 'https://github.com/j3soon/nurse-scheduling#acknowledgments';
 export const GITHUB_AUTHOR_URL = 'https://github.com/j3soon';
@@ -37,7 +38,7 @@ export const WEBSITE_URL = 'https://nursescheduling.org';
 
 // Netlify publishes Zensical at /docs. Local development serves it separately.
 const DEFAULT_DOCUMENTATION_BASE_URL = process.env.NODE_ENV === 'development'
-  ? 'http://127.0.0.1:8001/docs'
+  ? 'http://127.0.0.1:8003/docs'
   : '/docs';
 const DOCUMENTATION_BASE_URL = (
   process.env.NEXT_PUBLIC_DOCS_BASE_URL || DEFAULT_DOCUMENTATION_BASE_URL
@@ -56,6 +57,7 @@ export const DOCUMENTATION_URLS = {
   exportLayout: `${DOCUMENTATION_BASE_URL}/user-guide/export-layout/`,
   saveAndLoad: `${DOCUMENTATION_BASE_URL}/user-guide/save-and-load/`,
   optimizeAndExport: `${DOCUMENTATION_BASE_URL}/user-guide/optimize-and-export/`,
+  experimentalAi: `${DOCUMENTATION_BASE_URL}/user-guide/experimental-ai/`,
 } as const;
 
 // Build URLs for environment switching (static entries)

@@ -1,0 +1,53 @@
+{
+  "id": "people-rename",
+  "fixture": "new-schedule",
+  "question": "Rename Person 1 to Alice everywhere, including group membership.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.items[?id=Alice]",
+      "count": 1
+    },
+    {
+      "path": "people.items[?id=Person 1]",
+      "absent": true
+    },
+    {
+      "path": "people.groups[?id=Group 1].members",
+      "contains": "Alice"
+    },
+    {
+      "path": "people.items[].id",
+      "added": [
+        "Alice"
+      ]
+    },
+    {
+      "path": "people.items[].id",
+      "removed": [
+        "Person 1"
+      ]
+    },
+    {
+      "path": "people.groups[?id=Group 1].members",
+      "added": [
+        "Alice"
+      ]
+    },
+    {
+      "path": "people.groups[?id=Group 1].members",
+      "removed": [
+        "Person 1"
+      ]
+    },
+    {
+      "path": "people.groups[?members=Person 1]",
+      "absent": true
+    }
+  ],
+  "note": "The rename must cascade into group members, which is the frontend rule.",
+  "changes": [
+    "people.items",
+    "people.groups"
+  ]
+}

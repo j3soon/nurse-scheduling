@@ -1,0 +1,19 @@
+{
+  "id": "dates-range-set",
+  "fixture": "new-schedule",
+  "question": "The roster should cover 2026-03-01 through 2026-03-14.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "dates.range.startDate",
+      "equals": "2026-03-01"
+    },
+    {
+      "path": "dates.range.endDate",
+      "equals": "2026-03-14"
+    }
+  ],
+  "changes": [
+    "dates.range"
+  ]
+}

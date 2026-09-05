@@ -1,0 +1,48 @@
+{
+  "id": "export-cell-when",
+  "fixture": "new-schedule",
+  "question": "In the export, colour every cell #00ff00 when it satisfies a shift request preference.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "export.formatting[?type=cell].when.preference.types",
+      "equals": [
+        "shift request"
+      ]
+    },
+    {
+      "path": "export.formatting[?type=cell].when.preference.satisfied",
+      "equals": true
+    },
+    {
+      "path": "export.formatting[?type=cell].backgroundColor",
+      "equals": "#00ff00"
+    },
+    {
+      "path": "export.formatting[?type=cell].people",
+      "equals": [
+        "ALL"
+      ]
+    },
+    {
+      "path": "export.formatting[?type=cell].dates",
+      "equals": [
+        "ALL"
+      ]
+    },
+    {
+      "path": "export.formatting[?type=cell].shiftTypes",
+      "equals": [
+        "ALL"
+      ]
+    },
+    {
+      "path": "export.formatting",
+      "count": 1
+    }
+  ],
+  "changes": [
+    "export"
+  ],
+  "note": "The frontend writes ALL for every person, date, and shift type, rather than listing them."
+}

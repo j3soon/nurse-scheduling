@@ -1,0 +1,40 @@
+{
+  "id": "people-remove-with-preferences",
+  "fixture": "ward87",
+  "question": "P1 has left the ward. Remove them from the schedule entirely.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.items[].id",
+      "removed": [
+        "P1"
+      ]
+    },
+    {
+      "path": "people.items[].id",
+      "added": []
+    },
+    {
+      "path": "people.groups[?members=P1]",
+      "absent": true
+    },
+    {
+      "path": "preferences[?person=P1]",
+      "absent": true
+    },
+    {
+      "path": "preferences",
+      "delta": -6
+    },
+    {
+      "path": "preferences[?type=at most one shift per day]",
+      "count": 1
+    }
+  ],
+  "changes": [
+    "people.items",
+    "people.groups",
+    "preferences"
+  ],
+  "note": "P1 belongs to four people groups and is named by six shift requests, each of which carries exactly one person, so every one of them has to go. This is the common shape, since 80 of the 87 people are named by a preference. The companion case people-remove uses P86, one of the seven who are not, and so exercises the group cascade alone."
+}

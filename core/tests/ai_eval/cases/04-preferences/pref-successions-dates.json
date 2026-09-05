@@ -1,0 +1,35 @@
+{
+  "id": "pref-successions-dates",
+  "fixture": "ward87",
+  "question": "Apply a succession rule for P62 covering the WORKDAY dates only: no E followed by D.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift type successions][?person=P62].pattern",
+      "equals": [
+        "E",
+        "D"
+      ]
+    },
+    {
+      "path": "preferences[?type=shift type successions][?person=P62].date",
+      "equals": [
+        "WORKDAY"
+      ]
+    },
+    {
+      "path": "preferences[?type=shift type successions][?person=P62].person",
+      "equals": [
+        "P62"
+      ]
+    },
+    {
+      "path": "preferences",
+      "delta": 1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "note": "The pattern is ordered, and the rule covers the WORKDAY group alone."
+}

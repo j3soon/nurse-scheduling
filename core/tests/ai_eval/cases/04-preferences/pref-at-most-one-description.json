@@ -1,0 +1,23 @@
+{
+  "id": "pref-at-most-one-description",
+  "fixture": "new-schedule",
+  "question": "Add a description to the 'at most one shift per day' rule saying 'No double shifts'.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=at most one shift per day].description",
+      "equals": "No double shifts"
+    },
+    {
+      "path": "preferences[?type=at most one shift per day]",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "delta": 0
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

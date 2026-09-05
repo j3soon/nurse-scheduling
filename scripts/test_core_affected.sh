@@ -33,6 +33,9 @@ else
       tests/test_*.py)
         test_paths+=("$relative")
         ;;
+      nurse_scheduling/ai/*.py | nurse_scheduling/ai_serve.py)
+        test_paths+=("tests/test_ai_basic.py")
+        ;;
       nurse_scheduling/*.py)
         run_full_suite=true
         ;;

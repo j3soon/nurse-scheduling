@@ -110,6 +110,7 @@ describe('Navigation', () => {
     expect(mockPrefetch).toHaveBeenCalledWith('/dates');
     expect(mockPrefetch).toHaveBeenCalledWith('/shift-types');
     expect(mockPrefetch).toHaveBeenCalledWith('/optimize-and-export');
+    expect(mockPrefetch).toHaveBeenCalledWith('/experimental-ai');
     expect(mockPrefetch).not.toHaveBeenCalledWith('/people');
   });
 
@@ -212,7 +213,7 @@ describe('Navigation', () => {
       behavior: 'smooth',
     });
 
-    mockUsePathname.mockReturnValue('/optimize-and-export');
+    mockUsePathname.mockReturnValue('/experimental-ai');
     rerender(
       <UnsavedEditingStateProvider>
         <SchedulingDataProvider>

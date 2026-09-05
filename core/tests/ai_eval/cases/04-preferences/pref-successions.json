@@ -1,0 +1,33 @@
+{
+  "id": "pref-successions",
+  "fixture": "new-schedule",
+  "question": "Person 5 should never work a night shift N followed by a day shift D the next day.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift type successions][?person=Person 5].pattern",
+      "equals": [
+        "N",
+        "D"
+      ]
+    },
+    {
+      "path": "preferences[?type=shift type successions][?person=Person 5].person",
+      "equals": [
+        "Person 5"
+      ]
+    },
+    {
+      "path": "preferences[?type=shift type successions]",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "delta": 1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "note": "The pattern is ordered, so N then D is a different rule from D then N."
+}

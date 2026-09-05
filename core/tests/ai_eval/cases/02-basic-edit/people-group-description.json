@@ -1,0 +1,23 @@
+{
+  "id": "people-group-description",
+  "fixture": "new-schedule",
+  "question": "Describe the 'Group 1' people group as 'Team A'.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.groups[?id=Group 1].description",
+      "equals": "Team A"
+    },
+    {
+      "path": "people.groups[].id",
+      "added": []
+    },
+    {
+      "path": "people.groups[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "people.groups"
+  ]
+}

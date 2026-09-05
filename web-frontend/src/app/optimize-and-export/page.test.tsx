@@ -24,6 +24,7 @@ import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import {
+  BACKEND_API_CANDIDATES,
   buildAuthHeaders,
   createBackendApiCandidates,
   isOptimizationOptionsResponse,
@@ -1029,6 +1030,25 @@ describe('OptimizeAndExportPage error handling', () => {
       appVersion: 'frontend-test',
       servers: [{ endpoint: PRODUCTION_API_URL }],
       selectedServerEndpoint: 'auto',
+    });
+  });
+
+  it('restores the default backends when legacy settings held only localhost', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => respondWithHealthyBackend(url));
+    window.localStorage.setItem('nurse-scheduling-optimize-server-options', JSON.stringify({
+      servers: [{ endpoint: LOCAL_API_URL }],
+      selectedServerEndpoint: LOCAL_API_URL,
+    }));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle(BACKEND_API_CANDIDATES[0])).resolves.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem('nurse-scheduling-optimize-server-options') ?? '{}')).toEqual({
+      appVersion: 'frontend-test',
+      servers: BACKEND_API_CANDIDATES.map(endpoint => ({ endpoint })),
+      // The restored defaults still contain localhost here, so the stored selection resolves.
+      selectedServerEndpoint: LOCAL_API_URL,
     });
   });
 

@@ -1,0 +1,26 @@
+{
+  "id": "reject-unknown-person",
+  "fixture": "ward87",
+  "question": "Set the description of P999 to 'Bank staff'.",
+  "expect_proposal": false,
+  "note": "P999 does not exist, so no proposal should be produced and the reply should say why. The wordings are listed in both contracted and full forms, since a correct refusal may use either.",
+  "answer_contains": [
+    [
+      "P999"
+    ],
+    [
+      "not exist",
+      "no such",
+      "not found",
+      "not be found",
+      "no person",
+      "is not in",
+      "isn't in",
+      "can't find",
+      "cannot find",
+      "couldn't find",
+      "could not find",
+      "unable to find"
+    ]
+  ]
+}

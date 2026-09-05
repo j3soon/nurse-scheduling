@@ -29,7 +29,7 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Test with pytest and collect coverage
         working-directory: core
-        run: pytest --cov=nurse_scheduling --log-cli-level=INFO tests --ignore=tests/test_schedule_pulp_cuopt.py
+        run: pytest --cov=nurse_scheduling tests --ignore=tests/test_schedule_pulp_cuopt.py
       - name: Upload coverage to Codecov
         if: github.event_name != 'pull_request'
         uses: codecov/codecov-action@v4

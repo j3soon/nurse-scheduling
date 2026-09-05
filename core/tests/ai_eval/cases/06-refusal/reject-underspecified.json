@@ -1,0 +1,16 @@
+{
+  "id": "reject-underspecified",
+  "fixture": "ward87",
+  "question": "Add a shift request.",
+  "expect_proposal": false,
+  "note": "No person, date, or shift type was given, so the reply should ask for them.",
+  "answer_contains": [
+    [
+      "which",
+      "who",
+      "specify",
+      "need",
+      "provide"
+    ]
+  ]
+}

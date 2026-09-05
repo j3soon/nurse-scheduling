@@ -21,10 +21,42 @@ from io import BytesIO
 from typing import Any
 
 from ruamel.yaml import YAML
+from ruamel.yaml.events import (
+    AliasEvent,
+    MappingEndEvent,
+    MappingStartEvent,
+    ScalarEvent,
+    SequenceEndEvent,
+    SequenceStartEvent,
+)
 
 from .models import NurseSchedulingData
 
-yaml = YAML(typ="safe")
+MAX_YAML_DEPTH = 64
+MAX_YAML_NODES = 200_000
+
+
+def _validate_yaml_complexity(content: bytes) -> None:
+    """Reject YAML structures that can expand into excessive work."""
+    depth = 0
+    nodes = 0
+    stream = BytesIO(content)
+
+    for event in YAML(typ="safe").parse(stream):
+        if isinstance(event, AliasEvent):
+            raise ValueError("YAML aliases are not allowed")  # noqa: TRY004
+        if isinstance(event, (MappingStartEvent, SequenceStartEvent)):
+            depth += 1
+            nodes += 1
+            if depth > MAX_YAML_DEPTH:
+                raise ValueError(f"YAML nesting exceeds the limit of {MAX_YAML_DEPTH}")
+        elif isinstance(event, (MappingEndEvent, SequenceEndEvent)):
+            depth -= 1
+        elif isinstance(event, ScalarEvent):
+            nodes += 1
+
+        if nodes > MAX_YAML_NODES:
+            raise ValueError(f"YAML node count exceeds the limit of {MAX_YAML_NODES}")
 
 
 def _load_yaml(content: bytes) -> dict[str, Any]:
@@ -36,11 +68,15 @@ def _load_yaml(content: bytes) -> dict[str, Any]:
     Returns:
         dict[str, Any]: The loaded YAML data
     """
+    _validate_yaml_complexity(content)
     stream = BytesIO(content)
     # Use ruamel.yaml instead of PyYAML to support YAML 1.2
     # This avoids the auto-conversion of special strings such as
     # `Off` into boolean value `False`.
-    return yaml.load(stream)
+    data = YAML(typ="safe").load(stream)
+    if not isinstance(data, dict):
+        raise TypeError("Scheduling YAML must contain a top-level mapping")
+    return data
 
 
 def load_data(content: bytes) -> NurseSchedulingData:
@@ -53,4 +89,4 @@ def load_data(content: bytes) -> NurseSchedulingData:
         NurseSchedulingData: The validated scheduling data
     """
     data = _load_yaml(content)
-    return NurseSchedulingData(**data)
+    return NurseSchedulingData.model_validate(data)

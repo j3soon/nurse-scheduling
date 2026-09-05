@@ -51,6 +51,24 @@ material to the change.
 Page-title help icons link to the matching Zensical page under `/docs`. Keep
 the mapping in `src/constants/urls.ts` synchronized with `../zensical.toml`.
 
+Protect transient in-memory user work with `useTabSwitchWarning` when changing
+tabs would discard it. Add a `beforeunload` guard when reload or close also
+destroys that state.
+
+Experimental AI controls must follow backend `/capabilities` responses. The
+backend remains authoritative for feature enablement and input limits.
+Treat an absent AI auth descriptor as a legacy open backend. When auth is
+required, send the AI token through the shared authorized-header helper on
+every session request, including the fetch-based event stream. Store it only
+when the user explicitly opts in to unencrypted device storage.
+The AI page defaults to the hosted `/ai` path on the production API and calls
+the selected backend directly. Production NGINX must strip the `/ai`
+prefix and disable response buffering. Keep credentials scoped to their
+endpoint and lock the endpoint after a conversation creates a session. A
+self-hosted build may set another default with `NEXT_PUBLIC_AI_API_URL`. When a
+capability-gated control is missing, inspect the capabilities request from the
+exact browser origin. A loopback-only browser check can miss CORS failures.
+
 To test specific source files from the repository root, run:
 
 ```sh

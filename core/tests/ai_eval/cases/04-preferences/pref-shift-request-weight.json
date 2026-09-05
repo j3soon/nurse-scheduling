@@ -1,0 +1,35 @@
+{
+  "id": "pref-shift-request-weight",
+  "fixture": "ward87",
+  "question": "P61 must not work the D shift on the 9th. Make it a hard rule with weight -1000.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift request][?person=P61][?shiftType=D][?date=09].weight",
+      "equals": -1000
+    },
+    {
+      "path": "preferences[?type=shift request]",
+      "count": 156
+    },
+    {
+      "path": "preferences[?type=shift request][?person=P61][?shiftType=D][?date=09].person",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift request][?person=P61][?shiftType=D][?date=09].shiftType",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift request][?person=P61][?shiftType=D][?date=09].date",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "delta": 1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

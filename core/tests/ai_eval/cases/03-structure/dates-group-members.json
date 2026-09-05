@@ -1,0 +1,33 @@
+{
+  "id": "dates-group-members",
+  "fixture": "ward87",
+  "question": "Add the 3rd to the FREEDAY date group.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "dates.groups[?id=FREEDAY].members",
+      "contains": "03"
+    },
+    {
+      "path": "dates.groups[?id=FREEDAY].members",
+      "added": [
+        "03"
+      ]
+    },
+    {
+      "path": "dates.groups[?id=FREEDAY].members",
+      "removed": []
+    },
+    {
+      "path": "dates.groups[].id",
+      "added": []
+    },
+    {
+      "path": "dates.groups[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "dates.groups"
+  ]
+}

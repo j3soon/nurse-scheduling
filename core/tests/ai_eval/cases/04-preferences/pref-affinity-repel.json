@@ -1,0 +1,39 @@
+{
+  "id": "pref-affinity-repel",
+  "fixture": "new-schedule",
+  "question": "Person 7 and Person 8 should not share a D shift. Use a negative weight of -10.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "preferences[?type=shift affinity].weight",
+      "equals": -10
+    },
+    {
+      "path": "preferences[?type=shift affinity].people1",
+      "contains": "Person 7"
+    },
+    {
+      "path": "preferences[?type=shift affinity].people2",
+      "contains": "Person 8"
+    },
+    {
+      "path": "preferences[?type=shift affinity].people1",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift affinity].people2",
+      "count": 1
+    },
+    {
+      "path": "preferences[?type=shift affinity].shiftTypes",
+      "count": 1
+    },
+    {
+      "path": "preferences",
+      "delta": 1
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

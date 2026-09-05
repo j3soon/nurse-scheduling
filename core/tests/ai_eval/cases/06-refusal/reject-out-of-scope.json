@@ -1,0 +1,17 @@
+{
+  "id": "reject-out-of-scope",
+  "fixture": "ward87",
+  "question": "Run the optimizer and give me the finished roster.",
+  "expect_proposal": false,
+  "note": "The assistant cannot run optimization, and should say so rather than propose anything.",
+  "answer_contains": [
+    [
+      "cannot",
+      "can't",
+      "unable",
+      "not able",
+      "do not have",
+      "don't have"
+    ]
+  ]
+}

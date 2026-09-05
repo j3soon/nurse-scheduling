@@ -1,0 +1,27 @@
+{
+  "id": "people-history",
+  "fixture": "ward87",
+  "question": "P7's history is wrong. They worked a night shift N, not a day shift D. Correct it.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.items[?id=P7].history",
+      "contains": "N"
+    },
+    {
+      "path": "people.items[?id=P7].history",
+      "count": 1
+    },
+    {
+      "path": "people.items[].id",
+      "added": []
+    },
+    {
+      "path": "people.items[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "people.items"
+  ]
+}

@@ -25,7 +25,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Border, PatternFill
 from openpyxl.styles.borders import Side
 
-from . import constants, models, utils
+from . import constants, models
 from .context import Context
 
 
@@ -47,8 +47,9 @@ def _build_custom_export_style_info(
     n_leading_cols: int,
     n_history_cols: int,
 ):
-    """Build cell-level style overrides from ctx.export.formatting."""
-    if not ctx.export or not ctx.export.formatting:
+    """Build cell-level style overrides from the scenario export rules."""
+    export_config = ctx.scenario.export
+    if not export_config or not export_config.formatting:
         return {}
 
     style_map = {}
@@ -75,32 +76,11 @@ def _build_custom_export_style_info(
         if font_color:
             style_map[key]["fontColor"] = font_color
 
-    for rule in ctx.export.formatting:
-        _validate_export_formatting_rule_usage(rule)
-
-        target_people = set()
-        target_dates = set()
-        target_shift_types = set()
-
-        if rule.type in ("row", "people header", "history", "cell"):
-            for target in rule.people:
-                if target not in ctx.map_pid_p:
-                    raise ValueError(
-                        f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
-                    )
-                target_people.update(ctx.map_pid_p[target])
-
-        if rule.type in ("column", "date header", "cell"):
-            for target in rule.dates:
-                target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
-
-        if rule.type == "cell":
-            for target in rule.shiftTypes:
-                if target not in ctx.map_sid_s:
-                    raise ValueError(
-                        f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
-                    )
-                target_shift_types.update(ctx.map_sid_s[target])
+    compiled_rules = ctx.compiled_schedule.export.formatting
+    for rule, compiled_rule in zip(export_config.formatting, compiled_rules, strict=True):
+        target_people = set(compiled_rule.people)
+        target_dates = set(compiled_rule.dates)
+        target_shift_types = set(compiled_rule.shift_types)
 
         if rule.type == "row":
             for p in target_people:
@@ -128,7 +108,7 @@ def _build_custom_export_style_info(
                 )
 
         elif rule.type == "column":
-            score_row_idx = n_leading_rows + len(ctx.people.items)
+            score_row_idx = n_leading_rows + ctx.n_people
             status_row_idx = score_row_idx + 1
             for d in target_dates:
                 col_idx = n_leading_cols + n_history_cols + d
@@ -193,10 +173,8 @@ def _build_custom_export_style_info(
                 }
                 for d in target_dates:
                     for p in target_people:
-                        if (d, p) not in ctx.map_dp_s:
-                            continue
                         assigned_shift_types = [
-                            s for s in ctx.map_dp_s[(d, p)] if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                            s for s in range(ctx.n_shift_types) if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
                         ]
                         if ctx.solver.get_value(ctx.offs[(d, p)]) == 1:
                             assigned_shift_types.append(constants.OFF_sid)
@@ -229,32 +207,6 @@ def _build_custom_export_style_info(
     return style_map
 
 
-def _parse_extra_column_coefficients(ctx: Context, rule, count_shift_types: list[int]) -> dict[int, int]:
-    coefficients = dict.fromkeys(count_shift_types, 1)
-    coefficient_entries = rule.countShiftTypeCoefficients or []
-    selected_sids = set(count_shift_types)
-    coefficient_sids = set()
-
-    for shift_type_id, coefficient in coefficient_entries:
-        if coefficient < 1:
-            raise ValueError(f"Export extra column coefficient for '{shift_type_id}' must be at least 1.")
-
-        expanded_sids = utils.parse_sids(shift_type_id, ctx.map_sid_s)
-        if not set(expanded_sids).issubset(selected_sids):
-            raise ValueError(
-                f"Export extra column coefficient for '{shift_type_id}' must be covered by countShiftTypes."
-            )
-        duplicate_sids = coefficient_sids.intersection(expanded_sids)
-        if duplicate_sids:
-            raise ValueError(f"Duplicate export extra column coefficient for '{shift_type_id}'.")
-        coefficient_sids.update(expanded_sids)
-
-        for s in expanded_sids:
-            coefficients[s] = coefficient
-
-    return coefficients
-
-
 def _count_extra_column_for_person(ctx: Context, p: int, count_dates, count_shift_types, coefficients) -> int:
     count = 0
     for d in count_dates:
@@ -282,43 +234,6 @@ def _count_extra_row_for_date(ctx: Context, d: int, count_people, count_shift_ty
     return count
 
 
-def _validate_export_formatting_rule_usage(rule):
-    if rule.type != "cell" and getattr(rule, "when", None):
-        raise ValueError("export formatting 'when' is only supported for rules with type 'cell'")
-    if rule.type != "cell" and (getattr(rule, "appendText", None) or getattr(rule, "note", None)):
-        raise ValueError("export formatting annotations are only supported for rules with type 'cell'")
-
-
-def _get_shift_request_shape(ctx: Context, person_target, date_target) -> str:
-    person_id = person_target
-    person_item_ids = {person.id for person in ctx.people.items}
-    people_group_ids = {group.id for group in ctx.people.groups}
-    date_item_ids = {str(date) for date in ctx.dates.items}
-    date_group_ids = {group.id for group in ctx.dates.groups}
-    date_keyword_ids = set(constants.MAP_DATE_KEYWORD_TO_FILTER) | set(constants.MAP_WEEKDAY_TO_STR)
-    date_id = str(date_target)
-
-    if person_id in person_item_ids:
-        person_shape = "person-item"
-    elif person_id in people_group_ids:
-        person_shape = "people-group"
-    else:
-        return "unknown"
-
-    if date_id in date_item_ids:
-        date_shape = "date-item"
-    elif date_id in date_group_ids or date_id in date_keyword_ids:
-        date_shape = "date-group"
-    else:
-        try:
-            parsed_dates = utils.parse_dates(date_id, ctx.map_did_d, ctx.dates.range)
-        except ValueError:
-            return "unknown"
-        date_shape = "date-item" if len(parsed_dates) == 1 else "date-group"
-
-    return f"{person_shape}-to-{date_shape}"
-
-
 def _render_export_template(template: str, *, pref, requested_shift_type: str, total_abs_weight: float) -> str:
     return (
         template.replace("{shiftType}", requested_shift_type)
@@ -328,42 +243,22 @@ def _render_export_template(template: str, *, pref, requested_shift_type: str, t
     )
 
 
-def _format_requested_shift_type(shift_type_targets) -> str:
-    return ", ".join(str(target) for target in shift_type_targets)
-
-
 def _build_cell_annotation_rules(ctx: Context):
-    if not ctx.export or not ctx.export.formatting:
+    export_config = ctx.scenario.export
+    if not export_config or not export_config.formatting:
         return []
 
     annotation_rules = []
-    for rule in ctx.export.formatting:
-        _validate_export_formatting_rule_usage(rule)
-
+    compiled_rules = ctx.compiled_schedule.export.formatting
+    for rule, compiled_rule in zip(export_config.formatting, compiled_rules, strict=True):
         if rule.type != "cell" or not rule.when or (not rule.appendText and not rule.note):
             continue
-
-        target_people = set()
-        target_dates = set()
-        target_shift_types = set()
-        for target in rule.people:
-            if target not in ctx.map_pid_p:
-                raise ValueError(
-                    f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
-                )
-            target_people.update(ctx.map_pid_p[target])
-        for target in rule.dates:
-            target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
-        for target in rule.shiftTypes:
-            if target not in ctx.map_sid_s:
-                raise ValueError(f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'")
-            target_shift_types.update(ctx.map_sid_s[target])
         annotation_rules.append(
             {
                 "rule": rule,
-                "people": target_people,
-                "dates": target_dates,
-                "shift_types": target_shift_types,
+                "people": set(compiled_rule.people),
+                "dates": set(compiled_rule.dates),
+                "shift_types": set(compiled_rule.shift_types),
             }
         )
 
@@ -372,19 +267,12 @@ def _build_cell_annotation_rules(ctx: Context):
 
 def _export_preference_condition_matches(ctx: Context, condition, pref, *, request_shape: str, satisfied: bool):
     pref_condition = condition.preference
-    unsupported_types = set(pref_condition.types) - {models.SHIFT_REQUEST}
-    if unsupported_types:
-        raise ValueError(f"Unsupported export formatting preference condition type(s): {sorted(unsupported_types)}")
     if pref.type not in pref_condition.types:
         return False
     if pref_condition.satisfied is not None and pref_condition.satisfied != satisfied:
         return False
     if pref_condition.weightRange is not None:
-        if len(pref_condition.weightRange) != 2:
-            raise ValueError("export formatting preference weightRange must contain exactly two values")
         min_weight, max_weight = pref_condition.weightRange
-        if min_weight > max_weight:
-            raise ValueError("export formatting preference weightRange minimum must be less than or equal to maximum")
         if pref.weight < min_weight or pref.weight > max_weight:
             return False
     return (
@@ -394,35 +282,7 @@ def _export_preference_condition_matches(ctx: Context, condition, pref, *, reque
     )
 
 
-def _iter_expanded_shift_request_targets(ctx: Context, pref):
-    """Expand compact frontend shift request date targets for export matching.
-
-    Frontend edits compact real date items together, while date groups remain
-    separate preferences so overlapping groups can stack. Older saved YAML can
-    still contain mixed targets in ``pref.date``. Each entry is treated as a
-    distinct matrix target: either an individual date column or a date-group
-    column. Shape matching must use that original target, plus the person and
-    shift-type target shapes, before expanding to concrete schedule dates for
-    the exported sheet.
-    """
-    person_targets = utils.ensure_list(pref.person)
-    date_targets = utils.ensure_list(pref.date)
-    shift_type_targets = utils.ensure_list(pref.shiftType)
-    if len(person_targets) != 1 or len(shift_type_targets) != 1:
-        for date_target in date_targets:
-            yield date_target, utils.parse_dates(date_target, ctx.map_did_d, ctx.dates.range), "unknown"
-        return
-
-    person_target = person_targets[0]
-    for date_target in date_targets:
-        yield (
-            date_target,
-            utils.parse_dates(date_target, ctx.map_did_d, ctx.dates.range),
-            _get_shift_request_shape(ctx, person_target, date_target),
-        )
-
-
-def _is_shift_request_satisfied(ctx: Context, pref, *, d: int, p: int, shift_types: list[int]) -> bool:
+def _is_shift_request_satisfied(ctx: Context, pref, *, d: int, p: int, shift_types: tuple[int, ...]) -> bool:
     """Return whether a cell-level shift request is satisfied by the solved schedule."""
     requested_state_is_assigned = any(
         ctx.solver.get_value(ctx.offs[(d, p)] if s == constants.OFF_sid else ctx.shifts[(d, s, p)]) == 1
@@ -439,35 +299,46 @@ def _iter_matching_cell_preferences(
     target_shift_types: set[int],
     condition,
 ):
-    for pref in ctx.preferences:
-        if pref.type != models.SHIFT_REQUEST:
+    for pref, compiled_pref in zip(ctx.scenario.preferences, ctx.compiled_schedule.preferences, strict=True):
+        if not isinstance(compiled_pref, models.CompiledShiftRequest):
             continue
         if pref.weight == 0:
             continue
 
-        shift_type_targets = utils.ensure_list(pref.shiftType)
-        ss = utils.parse_sids(shift_type_targets, ctx.map_sid_s)
-        ps = utils.parse_pids(pref.person, ctx.map_pid_p)
-        if not any(s in target_shift_types for s in ss):
+        if not any(s in target_shift_types for s in compiled_pref.shift_types):
             continue
 
-        requested_shift_type = _format_requested_shift_type(shift_type_targets)
-
-        for _date_target, ds, request_shape in _iter_expanded_shift_request_targets(ctx, pref):
-            for d in ds:
+        for date_target in compiled_pref.date_targets:
+            for d in date_target.dates:
                 if d not in target_dates:
                     continue
-                for p in ps:
+                for p in compiled_pref.people:
                     if p not in target_people:
                         continue
-                    satisfied = _is_shift_request_satisfied(ctx, pref, d=d, p=p, shift_types=ss)
+                    satisfied = _is_shift_request_satisfied(
+                        ctx,
+                        pref,
+                        d=d,
+                        p=p,
+                        shift_types=compiled_pref.shift_types,
+                    )
                     if _export_preference_condition_matches(
-                        ctx, condition, pref, request_shape=request_shape, satisfied=satisfied
+                        ctx,
+                        condition,
+                        pref,
+                        request_shape=date_target.request_shape,
+                        satisfied=satisfied,
                     ):
-                        yield d, p, pref, requested_shift_type
+                        yield d, p, pref, compiled_pref.requested_shift_type
 
 
 def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
+    scenario = ctx.scenario
+    dates = ctx.compiled_schedule.dates
+    people = scenario.people.items
+    shift_types = scenario.shiftTypes.items
+    export_config = scenario.export
+
     # Initialize dataframe with size including leading rows and columns
     n_leading_rows, n_leading_cols = 2, 1
     n_trailing_rows, n_trailing_cols = 2, 0
@@ -478,19 +349,19 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     n_history_cols = 0
     # Add history columns after the name column (only if prettify is enabled)
     if prettify:
-        max_history_length = max((len(person.history) for person in ctx.people.items if person.history), default=0)
+        max_history_length = max((len(person.history) for person in people if person.history), default=0)
         n_history_cols = max_history_length
 
-    extra_column_rules = ctx.export.extraColumns if prettify and ctx.export else []
-    extra_row_rules = ctx.export.extraRows if prettify and ctx.export else []
+    extra_column_rules = export_config.extraColumns if prettify and export_config else []
+    extra_row_rules = export_config.extraRows if prettify and export_config else []
     # Add extra columns and rows for prettify mode
     extra_cols = (1 + len(extra_column_rules)) if extra_column_rules else 0  # Empty separator + configured columns
     extra_rows = (1 + len(extra_row_rules)) if extra_row_rules else 0  # Empty separator + configured rows
 
     df = pd.DataFrame(
         "",
-        index=range(n_leading_rows + len(ctx.people.items) + n_trailing_rows + extra_rows),
-        columns=range(n_leading_cols + n_history_cols + len(ctx.dates.items) + n_trailing_cols + extra_cols),
+        index=range(n_leading_rows + len(people) + n_trailing_rows + extra_rows),
+        columns=range(n_leading_cols + n_history_cols + len(dates) + n_trailing_cols + extra_cols),
         # We could cast every write to str, but object dtype is much simpler for mixed cells.
         dtype=object,
     )
@@ -506,11 +377,11 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Fill day numbers and weekdays
     # - row 0 contains day number
     # - row 1 contains weekday
-    for d, date in enumerate(ctx.dates.items):
+    for d, date in enumerate(dates):
         col_idx = n_leading_cols + n_history_cols + d
-        if ctx.dates.items[0].year != ctx.dates.items[-1].year:
+        if dates[0].year != dates[-1].year:
             df.iloc[0, col_idx] = f"{date.year}/{date.month}/{date.day}"
-        elif ctx.dates.items[0].month != ctx.dates.items[-1].month:
+        elif dates[0].month != dates[-1].month:
             df.iloc[0, col_idx] = f"{date.month}/{date.day}"
         else:
             df.iloc[0, col_idx] = date.day
@@ -519,7 +390,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Fill person descriptions and history
     # - column 0 contains person description
     # - columns 1 to n_history_cols contain history data (padded with empty strings, only if prettify)
-    for p, person in enumerate(ctx.people.items):
+    for p, person in enumerate(people):
         df.iloc[n_leading_rows + p, 0] = person.id
 
         # Fill history columns with proper padding (only if prettify is enabled)
@@ -578,30 +449,31 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Set cell values based on solver results
     solver = ctx.solver
 
-    for d, p in ctx.map_dp_s:
-        col_idx = n_leading_cols + n_history_cols + d
-        assert df.iloc[n_leading_rows + p, col_idx] == ""
-        cell_value = ""
-        for s in ctx.map_dp_s[(d, p)]:
-            if solver.get_value(ctx.shifts[(d, s, p)]) == 1:
-                if cell_value != "":
-                    cell_value += ", "
-                cell_value += ctx.shiftTypes.items[s].id
-        if prettify and (d, p) in cell_annotations:
-            for append_text in cell_annotations[(d, p)]["append_text"]:
-                cell_value += append_text
-            if cell_annotations[(d, p)]["notes"]:
-                excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
-                excel_col = n_leading_cols + n_history_cols + d + 1  # +1 for 1-based Excel indexing
-                cell_comment_info[(excel_row, excel_col)] = cell_annotations[(d, p)]["notes"]
-        df.iloc[n_leading_rows + p, col_idx] = cell_value
+    for d in range(ctx.n_days):
+        for p in range(ctx.n_people):
+            col_idx = n_leading_cols + n_history_cols + d
+            assert df.iloc[n_leading_rows + p, col_idx] == ""
+            cell_value = ""
+            for s in range(ctx.n_shift_types):
+                if solver.get_value(ctx.shifts[(d, s, p)]) == 1:
+                    if cell_value != "":
+                        cell_value += ", "
+                    cell_value += shift_types[s].id
+            if prettify and (d, p) in cell_annotations:
+                for append_text in cell_annotations[(d, p)]["append_text"]:
+                    cell_value += append_text
+                if cell_annotations[(d, p)]["notes"]:
+                    excel_row = n_leading_rows + p + 1  # +1 for 1-based Excel indexing
+                    excel_col = n_leading_cols + n_history_cols + d + 1  # +1 for 1-based Excel indexing
+                    cell_comment_info[(excel_row, excel_col)] = cell_annotations[(d, p)]["notes"]
+            df.iloc[n_leading_rows + p, col_idx] = cell_value
 
     # Fill objective value
-    df.iloc[n_leading_rows + len(ctx.people.items), 0] = "Score"
-    df.iloc[n_leading_rows + len(ctx.people.items), n_leading_cols + n_history_cols] = solver.get_objective_value()
+    df.iloc[n_leading_rows + len(people), 0] = "Score"
+    df.iloc[n_leading_rows + len(people), n_leading_cols + n_history_cols] = solver.get_objective_value()
     # Fill solver status
-    df.iloc[n_leading_rows + len(ctx.people.items) + 1, 0] = "Status"
-    df.iloc[n_leading_rows + len(ctx.people.items) + 1, n_leading_cols + n_history_cols] = ctx.solver_status
+    df.iloc[n_leading_rows + len(people) + 1, 0] = "Status"
+    df.iloc[n_leading_rows + len(people) + 1, n_leading_cols + n_history_cols] = ctx.solver_status
 
     # Sanity check with offs variables
     if not prettify:
@@ -613,34 +485,32 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 assert df.iloc[n_leading_rows + p, col_idx] != ""
 
     if prettify:
-        extra_col_start = n_leading_cols + n_history_cols + len(ctx.dates.items) + 1
-        for rule_idx, rule in enumerate(extra_column_rules):
+        extra_col_start = n_leading_cols + n_history_cols + len(dates) + 1
+        compiled_extra_columns = ctx.compiled_schedule.export.extra_columns
+        for rule_idx, (rule, compiled_rule) in enumerate(zip(extra_column_rules, compiled_extra_columns, strict=True)):
             col_idx = extra_col_start + rule_idx
-            count_dates = utils.parse_dates(rule.countDates, ctx.map_did_d, ctx.dates.range)
-            count_shift_types = utils.parse_sids(rule.countShiftTypes, ctx.map_sid_s)
-            coefficients = _parse_extra_column_coefficients(ctx, rule, count_shift_types)
+            coefficients = dict(compiled_rule.coefficients)
             df.iloc[1, col_idx] = rule.header
-            for p in range(len(ctx.people.items)):
+            for p in range(len(people)):
                 df.iloc[n_leading_rows + p, col_idx] = _count_extra_column_for_person(
                     ctx,
                     p,
-                    count_dates,
-                    count_shift_types,
+                    compiled_rule.dates,
+                    compiled_rule.shift_types,
                     coefficients,
                 )
 
-        extra_row_start = n_leading_rows + len(ctx.people.items) + n_trailing_rows + 1
-        for rule_idx, rule in enumerate(extra_row_rules):
+        extra_row_start = n_leading_rows + len(people) + n_trailing_rows + 1
+        compiled_extra_rows = ctx.compiled_schedule.export.extra_rows
+        for rule_idx, (rule, compiled_rule) in enumerate(zip(extra_row_rules, compiled_extra_rows, strict=True)):
             row_idx = extra_row_start + rule_idx
-            count_people = utils.parse_pids(rule.countPeople, ctx.map_pid_p)
-            count_shift_types = utils.parse_sids(rule.countShiftTypes, ctx.map_sid_s)
             df.iloc[row_idx, 0] = rule.header
-            for d in range(len(ctx.dates.items)):
+            for d in range(len(dates)):
                 df.iloc[row_idx, n_leading_cols + n_history_cols + d] = _count_extra_row_for_date(
                     ctx,
                     d,
-                    count_people,
-                    count_shift_types,
+                    compiled_rule.people,
+                    compiled_rule.shift_types,
                 )
 
     # Apply default styling and borders if prettify is enabled
@@ -658,14 +528,14 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             # Add borders to separate regions
             # Horizontal borders
             header_row_end = n_leading_rows - 1  # End of header region
-            people_row_end = header_row_end + len(ctx.people.items)  # End of people region
+            people_row_end = header_row_end + len(people)  # End of people region
             summary_row_end = people_row_end + n_trailing_rows  # End of summary region
             extra_rows_end = summary_row_end + len(extra_row_rules) + 1
 
             # Vertical borders
             name_col_end = n_leading_cols - 1  # End of name column
             history_col_end = name_col_end + n_history_cols  # End of history columns
-            date_col_end = history_col_end + len(ctx.dates.items)  # End of date columns
+            date_col_end = history_col_end + len(dates)  # End of date columns
             extra_columns_end = date_col_end + len(extra_column_rules) + 1
 
             # Apply borders to all cells, then add specific border styles

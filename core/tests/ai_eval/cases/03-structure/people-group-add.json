@@ -1,0 +1,33 @@
+{
+  "id": "people-group-add",
+  "fixture": "new-schedule",
+  "question": "Create a people group 'Seniors' with Person 2 and Person 3 in it.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.groups[?id=Seniors].members",
+      "contains": "Person 2"
+    },
+    {
+      "path": "people.groups[?id=Seniors].members",
+      "contains": "Person 3"
+    },
+    {
+      "path": "people.groups[?id=Seniors].members",
+      "count": 2
+    },
+    {
+      "path": "people.groups[].id",
+      "added": [
+        "Seniors"
+      ]
+    },
+    {
+      "path": "people.groups[].id",
+      "removed": []
+    }
+  ],
+  "changes": [
+    "people.groups"
+  ]
+}

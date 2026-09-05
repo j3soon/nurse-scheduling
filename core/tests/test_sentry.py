@@ -216,6 +216,20 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
     assert tags == [("app", "backend")]
 
 
+def test_init_sentry_accepts_service_tag(monkeypatch):
+    tags = []
+    fake_sentry_sdk = types.SimpleNamespace(
+        init=lambda **_kwargs: None,
+        set_tag=lambda name, value: tags.append((name, value)),
+    )
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+    init_sentry("v1.2.3", app="ai-backend")
+
+    assert tags == [("app", "ai-backend")]
+
+
 def test_init_sentry_keeps_shared_development_defaults(monkeypatch):
     init_calls = []
     fake_sentry_sdk = types.SimpleNamespace(
@@ -249,8 +263,8 @@ def test_flush_sentry_waits_for_pending_logs(monkeypatch):
 @pytest.mark.parametrize(
     ("compose_file", "service_names"),
     [
-        ("compose.backend.yml", ("api", "diagnostic", "usage-reporter")),
-        ("compose.backend.memory.yml", ("api", "diagnostic")),
+        ("compose.backend.yml", ("api", "ai", "diagnostic", "usage-reporter")),
+        ("compose.backend.memory.yml", ("api", "ai", "diagnostic")),
     ],
 )
 def test_compose_python_services_share_sentry_environment(compose_file, service_names):

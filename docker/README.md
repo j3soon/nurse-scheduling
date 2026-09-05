@@ -8,7 +8,8 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 
 - Create a [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/setup/).
 - Add a public hostname for `api.nursescheduling.org`.
-- Point the hostname service to `http://api:8000`.
+- Point the hostname service to `http://nginx:8080`. NGINX sends
+  `/ai/*` to the AI service and all other paths to the optimization API.
 - Copy `.env.example` to `.env`.
 - Set `CLOUDFLARE_TUNNEL_TOKEN` in `.env` to the token from the dashboard.
 - Set `API_AUTH_TOKEN` in `.env`. The deployment image requires it.
@@ -67,6 +68,18 @@ development stays unauthenticated and needs no frontend changes.
 The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which both compose files
 set from `API_AUTH_TOKEN`.
 
+The AI service in both backend Compose files applies the same secure default
+with `AI_AUTH_REQUIRED=true`. Set `AI_AUTH_TOKEN` before starting Compose. To
+deliberately serve without AI authentication, set
+`AI_AUTH_REQUIRED=false` in `docker/.env` and leave `AI_AUTH_TOKEN` empty. Native
+runs leave required mode disabled, although setting a token still enables bearer
+authentication.
+
+NGINX removes the `/ai` prefix before forwarding requests to this
+service and disables response buffering for its streaming endpoints. Keep the
+Cloudflare Tunnel hostname pointed at `http://nginx:8080`, not directly at
+either application container.
+
 ## Sentry
 
 The Docker deployment configures only the Python backend. Keep all backend
@@ -113,6 +126,14 @@ docker compose -f compose.backend.yml up -d --build
 The API derives one deployment ID from its container and server-launch
 identity and shares it across all Uvicorn workers. The one-shot public
 diagnostic is opt-in and does not start with the normal deployment command.
+The normal Compose startup also starts one experimental AI worker. Configure
+the AI block in `.env` before running:
+
+```sh
+docker compose -f compose.backend.yml up -d --build
+```
+
+The same behavior applies to `compose.backend.memory.yml`.
 
 For staging, create a separate ignored environment file and use a staging-only
 Cloudflare Tunnel token:
