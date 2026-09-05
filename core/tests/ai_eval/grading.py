@@ -79,6 +79,15 @@ class ToolUsageExpectation:
 
 
 @dataclass(frozen=True)
+class TurnAction:
+    """A trusted frontend action applied after one assistant turn."""
+
+    after_turn: int
+    action: str
+    schedule_patch: tuple[tuple[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
 class EvalCase:
     """One question with verifiable criteria for the schedule it should produce."""
 
@@ -87,6 +96,8 @@ class EvalCase:
     question: str
     expect_proposal: bool
     proposal_turn: int | None = None
+    proposal_turns: tuple[int, ...] = ()
+    turn_actions: tuple[TurnAction, ...] = ()
     user_turns: tuple[str, ...] = ()
     intermediate_answer_contains: tuple[tuple[str | tuple[str, ...], ...], ...] = ()
     tags: tuple[str, ...] = ()
@@ -104,6 +115,8 @@ class EvalCase:
             object.__setattr__(self, "user_turns", (self.question,))
         if self.expect_proposal and self.proposal_turn is None:
             object.__setattr__(self, "proposal_turn", len(self.user_turns))
+        if not self.proposal_turns and self.proposal_turn is not None:
+            object.__setattr__(self, "proposal_turns", (self.proposal_turn,))
 
 
 @dataclass(frozen=True)
@@ -196,17 +209,8 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         raise EvalCaseError(f"{source} `tags` must be a list of strings.")
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
-    proposal_turn = entry.get("proposal_turn")
-    if proposal_turn is None and entry["expect_proposal"]:
-        proposal_turn = len(raw_turns)
-    if proposal_turn is not None and (
-        isinstance(proposal_turn, bool)
-        or not isinstance(proposal_turn, int)
-        or not 1 <= proposal_turn <= len(raw_turns)
-    ):
-        raise EvalCaseError(f"{source} `proposal_turn` must identify one user turn.")
-    if bool(entry["expect_proposal"]) != (proposal_turn is not None):
-        raise EvalCaseError(f"{source} `proposal_turn` must agree with `expect_proposal`.")
+    proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
+    turn_actions = _turn_actions(entry.get("turn_actions", []), len(raw_turns), source)
     if entry["expect_proposal"] and not assertions and not expected_diff:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
@@ -219,6 +223,8 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         question=str(raw_turns[0]),
         expect_proposal=bool(entry["expect_proposal"]),
         proposal_turn=proposal_turn,
+        proposal_turns=proposal_turns,
+        turn_actions=turn_actions,
         user_turns=tuple(raw_turns),
         intermediate_answer_contains=intermediate,
         tags=tuple(raw_tags),
@@ -260,6 +266,51 @@ def _build_tool_usage(raw: object, source: str) -> ToolUsageExpectation | None:
     ):
         raise EvalCaseError(f"{source} `tool_usage.max_per_tool` must map tool names to non-negative integers.")
     return ToolUsageExpectation(required, forbidden, max_total, tuple(sorted(raw_per_tool.items())))
+
+
+def _proposal_turns(entry: dict[str, Any], turn_count: int, source: str) -> tuple[int | None, tuple[int, ...]]:
+    raw_single = entry.get("proposal_turn")
+    raw_multiple = entry.get("proposal_turns")
+    if raw_single is not None and raw_multiple is not None:
+        raise EvalCaseError(f"{source} must use either `proposal_turn` or `proposal_turns`.")
+    raw = raw_multiple if raw_multiple is not None else ([raw_single] if raw_single is not None else [])
+    if not raw and entry["expect_proposal"]:
+        raw = [turn_count]
+    if not isinstance(raw, list) or any(
+        isinstance(turn, bool) or not isinstance(turn, int) or not 1 <= turn <= turn_count for turn in raw
+    ):
+        raise EvalCaseError(f"{source} proposal turns must identify user turns.")
+    turns = tuple(raw)
+    if len(turns) != len(set(turns)) or tuple(sorted(turns)) != turns:
+        raise EvalCaseError(f"{source} proposal turns must be unique and ordered.")
+    if bool(entry["expect_proposal"]) != bool(turns):
+        raise EvalCaseError(f"{source} proposal turns must agree with `expect_proposal`.")
+    return (turns[-1] if turns else None), turns
+
+
+def _turn_actions(raw: object, turn_count: int, source: str) -> tuple[TurnAction, ...]:
+    if not isinstance(raw, list):
+        raise EvalCaseError(f"{source} `turn_actions` must be a list.")
+    actions: list[TurnAction] = []
+    for item in raw:
+        if not isinstance(item, dict) or set(item) - {"after_turn", "action", "schedule_patch"}:
+            raise EvalCaseError(f"{source} has an invalid turn action.")
+        after_turn = item.get("after_turn")
+        action = item.get("action")
+        patch = item.get("schedule_patch", {})
+        if (
+            isinstance(after_turn, bool)
+            or not isinstance(after_turn, int)
+            or not 1 <= after_turn < turn_count
+            or action not in {"approve", "reject", "update"}
+            or not isinstance(patch, dict)
+            or (action == "update") != bool(patch)
+        ):
+            raise EvalCaseError(f"{source} has an invalid turn action.")
+        actions.append(TurnAction(after_turn, action, tuple(patch.items())))
+    if len({action.after_turn for action in actions}) != len(actions):
+        raise EvalCaseError(f"{source} repeats a turn action.")
+    return tuple(actions)
 
 
 def _tool_names(raw: object, source: str, field_name: str) -> tuple[str, ...]:
@@ -315,7 +366,7 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
     if not proposal_turns and outcome.intermediate_proposals:
         proposal_turns = [*outcome.intermediate_proposals, outcome.proposed is not None]
     for index, proposed in enumerate(proposal_turns, start=1):
-        expected = index == case.proposal_turn
+        expected = index in case.proposal_turns
         checks.append(
             CheckResult(
                 description=f"turn {index} proposal {'expected' if expected else 'not expected'}",

@@ -27,8 +27,11 @@ import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 from typing import Any
+
+from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.agent import (
     AgentProposal,
@@ -38,7 +41,7 @@ from nurse_scheduling.ai.agent import (
     AgentToolStart,
     AgentToolUse,
 )
-from nurse_scheduling.ai.app import build_provider_messages
+from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY, build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import (
     ChatMessage,
@@ -203,6 +206,7 @@ async def run_case(
 ) -> CaseRun:
     """Answer one case the way the service would, then grade what it produced."""
     text = fixture_text(case.fixture)
+    initial_text = text
     counting = _CountingProvider(provider)
 
     history: list[ChatMessage] = []
@@ -213,6 +217,8 @@ async def run_case(
     tools: list[str] = []
     events: list[dict[str, Any]] = []
     proposal_event: AgentProposal | None = None
+    pending_proposal: AgentProposal | None = None
+    turn_actions = {action.after_turn: action for action in case.turn_actions}
     sandbox_metrics = SandboxTurnMetrics()
     tool_batch_metrics: list[AgentToolBatchMetrics] = []
     reasoning = 0
@@ -267,6 +273,8 @@ async def run_case(
             answer_text = "".join(turn_answer)
             answers.append(answer_text)
             proposal_turns.append(turn_proposal is not None)
+            if turn_proposal is not None:
+                pending_proposal = turn_proposal
             if turn_index < len(case.user_turns) - 1:
                 intermediate_proposals.append(turn_proposal is not None)
             if turn_index + 1 == case.proposal_turn:
@@ -274,6 +282,9 @@ async def run_case(
             history.extend(
                 [ChatMessage(role="user", content=question), ChatMessage(role="assistant", content=answer_text)]
             )
+            action = turn_actions.get(turn_index + 1)
+            if action is not None:
+                text, pending_proposal = _apply_turn_action(action, text, pending_proposal, history, events)
     except (ProviderError, SandboxError) as error:
         failure = "the provider failed" if isinstance(error, ProviderError) else "the sandbox failed"
         return CaseRun(
@@ -301,7 +312,7 @@ async def run_case(
         )
 
     elapsed = time.perf_counter() - started
-    initial = _load_yaml(text.encode("utf-8"))
+    initial = _load_yaml(initial_text.encode("utf-8"))
     proposed = _load_yaml(proposal_event.text.encode("utf-8")) if proposal_event else None
     outcome = RunOutcome(
         answer=answers[-1] if answers else "",
@@ -345,6 +356,34 @@ def _record_text(events: list[dict[str, Any]], kind: str, text: str) -> None:
     events.append({"kind": kind, "text": text})
 
 
+def _apply_turn_action(
+    action: Any,
+    text: str,
+    pending: AgentProposal | None,
+    history: list[ChatMessage],
+    events: list[dict[str, Any]],
+) -> tuple[str, AgentProposal | None]:
+    """Apply one trusted proposal lifecycle action between user turns."""
+    if action.action in {"approve", "reject"} and pending is None:
+        events.append(
+            {"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": False}
+        )
+        return text, None
+    if action.action == "approve":
+        text = pending.text
+        history.append(ChatMessage(role="user", content=PROPOSAL_APPROVED_HISTORY))
+    elif action.action == "reject":
+        history.append(ChatMessage(role="user", content=PROPOSAL_REJECTED_HISTORY))
+    else:
+        schedule = _load_yaml(text.encode("utf-8"))
+        schedule.update(dict(action.schedule_patch))
+        stream = StringIO()
+        YAML().dump(schedule, stream)
+        text = stream.getvalue()
+    events.append({"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": True})
+    return text, None
+
+
 def _trajectory(
     case: EvalCase,
     messages: Sequence[Sequence[ChatMessage]],
@@ -357,6 +396,15 @@ def _trajectory(
         "fixture": case.fixture,
         "question": case.question,
         "user_turns": list(case.user_turns),
+        "proposal_turns": list(case.proposal_turns),
+        "turn_actions": [
+            {
+                "after_turn": action.after_turn,
+                "action": action.action,
+                "schedule_patch": dict(action.schedule_patch),
+            }
+            for action in case.turn_actions
+        ],
         "tags": list(case.tags),
         "note": case.note,
         "prompt": [dict(message) for message in messages[0]] if messages else [],

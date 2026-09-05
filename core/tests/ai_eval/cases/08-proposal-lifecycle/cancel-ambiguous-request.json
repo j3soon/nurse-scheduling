@@ -1,0 +1,16 @@
+{
+  "id": "cancel-ambiguous-request",
+  "fixture": "ward87",
+  "user_turns": [
+    "Add P87 to the day people group.",
+    "Cancel that request. Do not change anything."
+  ],
+  "intermediate_answer_contains": [
+    ["Day People", ["w/o A", "without A"]]
+  ],
+  "expect_proposal": false,
+  "answer_contains": [
+    ["cancel", "no change", "unchanged", "won't change", "will not change"]
+  ],
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "cancellation", "clarification"]
+}

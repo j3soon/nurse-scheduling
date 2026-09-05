@@ -1,0 +1,24 @@
+{
+  "id": "question-then-approve-pending",
+  "fixture": "new-schedule",
+  "user_turns": [
+    "Set the schedule description to March training roster.",
+    "Before I approve it, what description does your pending proposal use? Do not make another proposal.",
+    "Is March training roster now the current schedule description?"
+  ],
+  "intermediate_answer_contains": [
+    ["March training roster"],
+    ["March training roster"]
+  ],
+  "expect_proposal": true,
+  "proposal_turn": 1,
+  "turn_actions": [
+    {"after_turn": 2, "action": "approve"}
+  ],
+  "expected_diff": [
+    {"path": "description", "before": "", "after": "March training roster"}
+  ],
+  "changes": ["description"],
+  "answer_contains": ["March training roster", ["current", "approved"]],
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "pending-question", "proposal-approval"]
+}

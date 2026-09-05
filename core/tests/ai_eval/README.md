@@ -5,6 +5,10 @@ Store one JSON object per case under `cases/<category>/<id>.json`. Every case na
 turn. Set the one-based `proposal_turn` when a later turn should discuss an earlier proposal without reproposing it.
 Every other turn is explicitly graded as producing no proposal.
 
+Use ordered `proposal_turns` when revisions should produce more than one proposal. The last listed proposal is graded
+by `expected_diff`. Use `turn_actions` to apply a trusted frontend `approve`, `reject`, or external `update` after a
+turn. An update supplies a shallow top-level `schedule_patch` and invalidates any pending proposal.
+
 Use `expected_diff` for a deterministic mutation to a list-valued path. Each entry gives the complete semantic
 multiset delta, so an unlisted addition or removal at that path fails:
 

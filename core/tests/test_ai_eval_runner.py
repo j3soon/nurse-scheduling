@@ -44,7 +44,7 @@ from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnMetrics
 
-from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, load_cases
+from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
@@ -393,12 +393,16 @@ def test_cases_are_selected_by_id_and_by_category():
     assert {case.id for case in select(cases, [], [])} == {
         "answer-about-earlier-proposal",
         "apply-two-follow-up-edits",
+        "approve-then-follow-up-edit",
+        "cancel-ambiguous-request",
         "clarify-night-request-scope",
         "clarify-similar-people-groups",
+        "confirm-one-cancel-other",
         "dates-range-expand-taiwan-detailed-yes",
         "dates-range-expand-taiwan-no",
         "dates-range-expand-taiwan-yes",
         "dates-range-shrink",
+        "external-update-invalidates-pending",
         "ask-people-group-union",
         "ask-positive-k-exceptions",
         "people-add-group-request",
@@ -410,10 +414,14 @@ def test_cases_are_selected_by_id_and_by_category():
         "pref-modify-group-shift-count",
         "pref-modify-one-near-duplicate",
         "pref-requirement-modify-existing",
+        "pronoun-selects-second-request",
+        "question-then-approve-pending",
         "reject-contradicting-follow-up",
         "reject-conflicting-shift-request",
         "reject-shift-type-rename-collision",
         "reject-unknown-person",
+        "reject-then-narrower-edit",
+        "revise-unapproved-proposal-twice",
         "shift-type-remove-cascade",
         "shift-type-rename-cascade",
         "tool-write-minimal-schedule",
@@ -478,6 +486,36 @@ def test_a_multi_user_turn_case_can_grade_an_earlier_proposal():
     run = asyncio.run(run_case(provider, settings(), case, _factory(edit)))
 
     assert run.passed
+
+
+def test_approval_adopts_the_proposal_and_adds_trusted_history():
+    case = EvalCase(
+        id="approval",
+        fixture="new-schedule",
+        question="Set the description.",
+        expect_proposal=True,
+        proposal_turn=1,
+        user_turns=("Set the description.", "Is it current?"),
+        turn_actions=(TurnAction(1, "approve"),),
+        expected_diff=(ExpectedDiff(path="description", before="", after="Ready", compares_value=True),),
+        changes=("description",),
+        answer_contains=("current",),
+    )
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"edit description"}'),))],
+        [TextDelta("I propose Ready.")],
+        [TextDelta("It is current.")],
+    )
+
+    def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        current = backend.files[WORKSPACE_SCHEDULE].decode()
+        backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Ready", 1).encode()
+        return CommandResult("updated\n", "", 0)
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory(edit)))
+
+    assert run.passed
+    assert any("approved the previous schedule proposal" in message["content"] for message in provider.messages[2])
 
 
 def test_an_unknown_case_id_stops_the_run():

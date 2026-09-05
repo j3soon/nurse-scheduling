@@ -1,0 +1,27 @@
+{
+  "id": "external-update-invalidates-pending",
+  "fixture": "new-schedule",
+  "user_turns": [
+    "Set the schedule description to Assistant draft.",
+    "The page changed the description to External draft while that proposal was pending. Add person P1 as Head nurse and preserve the current description."
+  ],
+  "intermediate_answer_contains": [
+    ["Assistant draft"]
+  ],
+  "expect_proposal": true,
+  "proposal_turns": [1, 2],
+  "turn_actions": [
+    {"after_turn": 1, "action": "update", "schedule_patch": {"description": "External draft"}}
+  ],
+  "expected_diff": [
+    {"path": "description", "before": "", "after": "External draft"},
+    {
+      "path": "people.items",
+      "added": [
+        {"id": "P1", "description": "Head nurse", "history": []}
+      ]
+    }
+  ],
+  "changes": ["description", "people.items"],
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "external-update", "stale-proposal"]
+}

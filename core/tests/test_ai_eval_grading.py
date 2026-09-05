@@ -466,6 +466,35 @@ def test_a_multi_turn_case_can_designate_an_earlier_proposal(tmp_path: Path):
     assert result.passed
 
 
+def test_loads_multiple_proposal_turns_and_lifecycle_actions(tmp_path: Path):
+    entry = _case(
+        user_turns=["Change it.", "Revise it.", "Done?"],
+        proposal_turns=[1, 2],
+        turn_actions=[{"after_turn": 2, "action": "approve"}],
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+    )
+
+    case = load_cases(_write(tmp_path, entry))[0]
+
+    assert case.proposal_turns == (1, 2)
+    assert case.proposal_turn == 2
+    assert case.turn_actions[0].action == "approve"
+
+
+def test_loads_external_schedule_update_action(tmp_path: Path):
+    entry = _case(
+        user_turns=["Change it.", "Continue."],
+        turn_actions=[{"after_turn": 1, "action": "update", "schedule_patch": {"description": "External"}}],
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+    )
+
+    case = load_cases(_write(tmp_path, entry))[0]
+
+    assert case.turn_actions[0].schedule_patch == (("description", "External"),)
+
+
 @pytest.mark.parametrize("proposal_turn", [0, 3, True, "1"])
 def test_invalid_proposal_turn_is_rejected(tmp_path: Path, proposal_turn: object):
     entry = _case(
@@ -475,7 +504,30 @@ def test_invalid_proposal_turn_is_rejected(tmp_path: Path, proposal_turn: object
         changes=["description"],
     )
 
-    with pytest.raises(EvalCaseError, match="must identify one user turn"):
+    with pytest.raises(EvalCaseError, match="must identify user turns"):
+        load_cases(_write(tmp_path, entry))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"proposal_turn": 1, "proposal_turns": [1]},
+        {"proposal_turns": [2, 1]},
+        {"proposal_turns": [1, 1]},
+        {"turn_actions": "approve"},
+        {"turn_actions": [{"after_turn": 2, "action": "approve"}]},
+        {"turn_actions": [{"after_turn": 1, "action": "update"}]},
+    ],
+)
+def test_invalid_lifecycle_configuration_is_rejected(tmp_path: Path, overrides: dict):
+    entry = _case(
+        user_turns=["Change it.", "Continue."],
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+        **overrides,
+    )
+
+    with pytest.raises(EvalCaseError):
         load_cases(_write(tmp_path, entry))
 
 
@@ -596,6 +648,7 @@ def test_every_case_sits_in_a_category_directory():
         "05-export",
         "06-refusal",
         "07-multi-turn",
+        "08-proposal-lifecycle",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category in {"00-summary", "01-reading", "06-refusal"}
