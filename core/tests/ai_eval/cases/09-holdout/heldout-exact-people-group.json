@@ -1,0 +1,28 @@
+{
+  "id": "heldout-exact-people-group",
+  "fixture": "small-clinic",
+  "question": "Add Omar to the people group `Day Team`.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "people.groups",
+      "removed": [
+        {
+          "id": "Day Team",
+          "description": "Primary daytime team",
+          "members": ["Ana", "林護師"]
+        }
+      ],
+      "added": [
+        {
+          "id": "Day Team",
+          "description": "Primary daytime team",
+          "members": ["Ana", "林護師", "Omar"]
+        }
+      ]
+    }
+  ],
+  "changes": ["people.groups"],
+  "tags": ["holdout", "exact-target", "generalization"],
+  "note": "An exact quoted group ID is resolved even though another group has that ID as a prefix."
+}

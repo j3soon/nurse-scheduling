@@ -45,10 +45,14 @@ from .ai_eval.grading import (
 
 CASES_PATH = Path(__file__).parent / "ai_eval" / "cases"
 NEW_SCHEDULE_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "new-schedule.yaml"
+SMALL_CLINIC_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "small-clinic.yaml"
+CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-year-unit.yaml"
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 
 FIXTURE_SCHEDULES = {
+    "cross-year-unit": _load_yaml(CROSS_YEAR_UNIT_PATH.read_bytes()),
     "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
+    "small-clinic": _load_yaml(SMALL_CLINIC_PATH.read_bytes()),
     "ward87": _load_yaml(WARD_PATH.read_bytes()),
 }
 
@@ -540,10 +544,10 @@ def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path)
         load_cases(tmp_path)
 
 
-def test_the_dataset_only_uses_the_two_agreed_fixtures():
+def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 
-    assert {case.fixture for case in cases} == {"new-schedule", "ward87"}
+    assert {case.fixture for case in cases} == {"cross-year-unit", "new-schedule", "small-clinic", "ward87"}
     assert len(cases) == len({case.id for case in cases})
 
 
@@ -649,6 +653,7 @@ def test_every_case_sits_in_a_category_directory():
         "06-refusal",
         "07-multi-turn",
         "08-proposal-lifecycle",
+        "09-holdout",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category in {"00-summary", "01-reading", "06-refusal"}
@@ -659,7 +664,9 @@ def test_every_case_sits_in_a_category_directory():
 def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
     """A summary-answerable question measures copying, not reading."""
     summaries = {
+        "cross-year-unit": describe_schedule(CROSS_YEAR_UNIT_PATH.read_text(encoding="utf-8")),
         "new-schedule": describe_schedule(NEW_SCHEDULE_PATH.read_text(encoding="utf-8")),
+        "small-clinic": describe_schedule(SMALL_CLINIC_PATH.read_text(encoding="utf-8")),
         "ward87": describe_schedule(WARD_PATH.read_text(encoding="utf-8")),
     }
 

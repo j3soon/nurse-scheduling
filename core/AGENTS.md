@@ -62,6 +62,13 @@ test paths when a narrower suite is known to be sufficient.
   evaluation run, not from one trajectory. A repeated recoverable failure costs
   more than the case that exposed it, and a bounded tool should clamp an
   over-large request rather than refuse it.
+- Treat one provider pass as a smoke check. Before claiming a tuning improvement,
+  repeat affected cases at least three times with four total jobs and compare
+  pass rate, infrastructure failures, turns, and tokens with a recorded baseline.
+- Pair ambiguous-language cases with exact-target controls so clarification
+  guidance does not teach the agent to ask when the user already supplied a
+  unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
+  tune prompts directly against one held-out trajectory.
 - Expose only Pi's default `read`, `bash`, `edit`, and `write` model tools over
   the disposable sandbox. Use `read` for bounded inspection, `edit` for unique
   exact-text replacements, and `write` only for a complete file rewrite. Put

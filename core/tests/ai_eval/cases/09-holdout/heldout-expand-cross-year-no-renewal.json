@@ -1,0 +1,28 @@
+{
+  "id": "heldout-expand-cross-year-no-renewal",
+  "fixture": "cross-year-unit",
+  "user_turns": [
+    "Extend this schedule through January 11, 2026.",
+    "No holiday renewal. Keep every existing date group and request exactly as it is; only extend the end date."
+  ],
+  "intermediate_answer_contains": [
+    ["Taiwan", ["holiday", "holidays"], ["renew", "update", "import"]]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "dates.range",
+      "before": {
+        "startDate": "2025-12-29",
+        "endDate": "2026-01-04"
+      },
+      "after": {
+        "startDate": "2025-12-29",
+        "endDate": "2026-01-11"
+      }
+    }
+  ],
+  "changes": ["dates.range"],
+  "tags": ["holdout", "date-expansion", "taiwan-holidays", "multi-turn", "generalization"],
+  "note": "Every expansion must ask about Taiwan holidays. Declining on an already cross-year schedule changes only the range."
+}

@@ -69,7 +69,9 @@ from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CASES = Path(__file__).resolve().parent / "cases"
 FIXTURES = {
+    "cross-year-unit": Path(__file__).resolve().parent / "fixtures" / "cross-year-unit.yaml",
     "new-schedule": Path(__file__).resolve().parent / "fixtures" / "new-schedule.yaml",
+    "small-clinic": Path(__file__).resolve().parent / "fixtures" / "small-clinic.yaml",
     "ward87": Path(__file__).resolve().parents[1] / "testcases" / "real",
 }
 WARD_FILE = "large-ward-with-87-people-2025-11.yaml"
@@ -197,7 +199,7 @@ class _CountingProvider:
 
 
 def fixture_text(fixture: str) -> str:
-    """Read one of the two starting schedules a case may use."""
+    """Read a named starting schedule used by evaluation cases."""
     path = FIXTURES[fixture]
     return (path / WARD_FILE if path.is_dir() else path).read_text(encoding="utf-8")
 

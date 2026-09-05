@@ -438,6 +438,7 @@ def test_cases_are_selected_by_id_and_by_category():
         "dates-range-expand-taiwan-detailed-yes",
         "dates-range-expand-taiwan-no",
         "dates-range-expand-taiwan-yes",
+        "heldout-expand-cross-year-no-renewal",
     }
 
 

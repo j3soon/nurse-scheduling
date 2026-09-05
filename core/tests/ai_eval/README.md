@@ -43,3 +43,7 @@ Use `--repeat 3` for reliability checks on a tuning subset. Repetitions share th
 show per-case pass rates plus median and p95 cost. Use `--baseline-report <report-dir>` to compare reliability, model
 turns, and tokens with an earlier run. Reports record the model, Git revision, dirty diff hash, prompt, references,
 and fixture hashes so comparisons do not silently mix configurations.
+
+Cases tagged `holdout` use schedules that differ from the primary tuning fixtures. Run them to check generalization,
+but do not rewrite prompts to match one held-out trajectory. Promote a recurring failure pattern into a separate
+tuning case before changing agent guidance.
