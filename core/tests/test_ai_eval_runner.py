@@ -535,8 +535,25 @@ def test_run_all_bounds_parallelism_and_preserves_case_order(jobs: int, expected
 
 
 def test_run_all_rejects_non_positive_jobs():
-    with pytest.raises(ValueError, match="jobs must be positive"):
+    with pytest.raises(ValueError, match="jobs and repetitions must be positive"):
         asyncio.run(run_all([], settings(), ScriptedProvider(), 0, _factory()))
+
+
+def test_run_all_repeats_cases_with_one_global_concurrency_limit():
+    cases = load_cases(CASES)[:2]
+    provider = ConcurrentProvider()
+
+    runs = asyncio.run(run_all(cases, settings(), provider, 2, _factory(), repetitions=3))
+
+    assert provider.max_active == 2
+    assert [(run.case_id, run.repetition) for run in runs] == [
+        (cases[0].id, 1),
+        (cases[0].id, 2),
+        (cases[0].id, 3),
+        (cases[1].id, 1),
+        (cases[1].id, 2),
+        (cases[1].id, 3),
+    ]
 
 
 def test_the_summary_reports_each_category_and_every_failure():
@@ -563,6 +580,7 @@ def test_the_report_records_enough_to_explain_a_run():
 
     assert set(record) == {
         "case_id",
+        "repetition",
         "category",
         "passed",
         "seconds",
@@ -621,6 +639,38 @@ def test_a_report_records_case_concurrency_and_wall_time(tmp_path: Path):
     text = summary.read_text(encoding="utf-8")
     assert "Case concurrency: 4" in text
     assert "Wall time: 1.2 seconds" in text
+
+
+def test_repeated_report_records_stability_and_distinct_trajectories(tmp_path: Path):
+    runs = [
+        CaseRun("a", "00-summary", True, 2.0, 2, [], repetition=1),
+        CaseRun("a", "00-summary", False, 4.0, 4, [], error="provider failed", repetition=2),
+    ]
+
+    summary = write_report(runs, tmp_path / "run")
+
+    text = summary.read_text(encoding="utf-8")
+    assert "| a | 1/2 | 1 | 3.0 | 4.0 |" in text
+    assert (tmp_path / "run/cases/a--run-1.json").exists()
+    assert (tmp_path / "run/cases/a--run-2.json").exists()
+
+
+def test_report_compares_reliability_and_cost_with_a_baseline(tmp_path: Path):
+    baseline = tmp_path / "baseline"
+    write_report([CaseRun("a", "00-summary", False, 4.0, 4, [])], baseline)
+    current = CaseRun("a", "00-summary", True, 2.0, 2, [])
+
+    summary = write_report([current], tmp_path / "current", baseline_report=baseline)
+
+    assert "| a | 0% | 100% | +100% | -2.0 |" in summary.read_text(encoding="utf-8")
+
+
+def test_report_writes_reproducibility_metadata(tmp_path: Path):
+    metadata = {"git_revision": "abc", "prompt_sha256": "123"}
+
+    write_report([CaseRun("a", "00-summary", True, 2.0, 1, [])], tmp_path / "run", metadata=metadata)
+
+    assert json.loads((tmp_path / "run/metadata.json").read_text(encoding="utf-8")) == metadata
 
 
 def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):

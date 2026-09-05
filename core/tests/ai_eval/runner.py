@@ -21,8 +21,10 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
+import subprocess
 import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
@@ -100,11 +102,13 @@ class CaseRun:
     provider_attempts_per_turn: list[int] = field(default_factory=list)
     tool_calls_per_turn: list[int] = field(default_factory=list)
     tool_batch_metrics: list[AgentToolBatchMetrics] = field(default_factory=list)
+    repetition: int = 1
 
     def as_record(self) -> dict[str, Any]:
         """Render one result as a line of the report."""
         return {
             "case_id": self.case_id,
+            "repetition": self.repetition,
             "category": self.category,
             "passed": self.passed,
             "seconds": round(self.seconds, 1),
@@ -566,6 +570,31 @@ def summarize(runs: Sequence[CaseRun]) -> str:
     return "\n".join(lines)
 
 
+def stability_markdown(runs: Sequence[CaseRun]) -> str:
+    """Show repeated reliability and tail cost for each selected case."""
+    if not runs or max(run.repetition for run in runs) == 1:
+        return ""
+    lines = [
+        "## Stability by case",
+        "",
+        "Infrastructure failures are shown separately but remain failed attempts.",
+        "",
+        "| Case | Pass rate | Infrastructure | Median turns | p95 turns | Median tokens | p95 tokens |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for case_id in sorted({run.case_id for run in runs}):
+        group = [run for run in runs if run.case_id == case_id]
+        turns = [float(run.turns) for run in group]
+        tokens = [float(run.token_usage.total_tokens) for run in group if run.token_usage is not None]
+        infrastructure = sum(bool(run.error) for run in group)
+        lines.append(
+            f"| {case_id} | {sum(run.passed for run in group)}/{len(group)} | {infrastructure} "
+            f"| {_median(turns):.1f} | {_percentile(turns, 0.95):.1f} "
+            f"| {_median(tokens):.0f} | {_percentile(tokens, 0.95):.0f} |"
+        )
+    return "\n".join(lines)
+
+
 def sandbox_metrics_markdown(runs: Sequence[CaseRun]) -> str:
     """Render every sandbox timing field for each case in the Markdown report."""
     sandbox_runs = [(run, run.sandbox_metrics) for run in runs if run.sandbox_metrics is not None]
@@ -632,7 +661,13 @@ def default_output_dir() -> Path:
 
 
 def write_report(
-    runs: Sequence[CaseRun], output_dir: Path, *, jobs: int = 1, wall_seconds: float | None = None
+    runs: Sequence[CaseRun],
+    output_dir: Path,
+    *,
+    jobs: int = 1,
+    wall_seconds: float | None = None,
+    metadata: dict[str, Any] | None = None,
+    baseline_report: Path | None = None,
 ) -> Path:
     """Write one run's results and summary, and report where the summary landed."""
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -642,15 +677,28 @@ def write_report(
     # One file per case, so a failure can be read back in full.
     cases_dir = output_dir / "cases"
     cases_dir.mkdir()
+    repeated = max((run.repetition for run in runs), default=1) > 1
     for run in runs:
-        (cases_dir / f"{run.case_id}.json").write_text(
+        suffix = f"--run-{run.repetition}" if repeated else ""
+        (cases_dir / f"{run.case_id}{suffix}.json").write_text(
             json.dumps(run.as_trajectory(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    if metadata is not None:
+        (output_dir / "metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
     summary = output_dir / "summary.md"
     timing = f"\nWall time: {wall_seconds:.1f} seconds\n" if wall_seconds is not None else ""
+    stability = stability_markdown(runs)
+    comparison = comparison_markdown(_load_report_records(baseline_report), runs) if baseline_report else ""
+    stability_section = f"{stability}\n\n" if stability else ""
+    comparison_section = f"{comparison}\n\n" if comparison else ""
     summary.write_text(
         f"# AI evaluation\n\nCase concurrency: {jobs}{timing}\n"
-        f"## Aggregate\n\n```\n{summarize(runs)}\n```\n\n{sandbox_metrics_markdown(runs)}\n",
+        f"## Aggregate\n\n```\n{summarize(runs)}\n```\n"
+        f"{stability_section}"
+        f"{comparison_section}"
+        f"{sandbox_metrics_markdown(runs)}\n",
         encoding="utf-8",
     )
     return summary
@@ -662,6 +710,49 @@ def _median(values: list[float]) -> float:
     if not ordered:
         return 0.0
     return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _percentile(values: list[float], fraction: float) -> float:
+    """Return a nearest-rank percentile, or zero for no observations."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[max(0, min(len(ordered) - 1, int(len(ordered) * fraction + 0.999999) - 1))]
+
+
+def _load_report_records(path: Path) -> list[dict[str, Any]]:
+    results = path / "results.jsonl" if path.is_dir() else path
+    return [json.loads(line) for line in results.read_text(encoding="utf-8").splitlines()]
+
+
+def comparison_markdown(baseline: Sequence[dict[str, Any]], current: Sequence[CaseRun]) -> str:
+    """Compare reliability and cost with a prior JSONL report."""
+    lines = [
+        "## Baseline comparison",
+        "",
+        "| Case | Baseline pass | Current pass | Pass delta | Turn delta | Token delta |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    current_ids = {run.case_id for run in current}
+    baseline_ids = {str(record["case_id"]) for record in baseline}
+    for case_id in sorted(current_ids & baseline_ids):
+        before = [record for record in baseline if record["case_id"] == case_id]
+        after = [run for run in current if run.case_id == case_id]
+        before_rate = sum(bool(record["passed"]) for record in before) / len(before)
+        after_rate = sum(run.passed for run in after) / len(after)
+        before_turns = _median([float(record["turns"]) for record in before])
+        after_turns = _median([float(run.turns) for run in after])
+        before_tokens = _median(
+            [float(record["token_usage"]["total_tokens"]) for record in before if record["token_usage"]["total_tokens"]]
+        )
+        after_tokens = _median(
+            [float(run.token_usage.total_tokens) for run in after if run.token_usage is not None]
+        )
+        lines.append(
+            f"| {case_id} | {before_rate:.0%} | {after_rate:.0%} | {after_rate - before_rate:+.0%} "
+            f"| {after_turns - before_turns:+.1f} | {after_tokens - before_tokens:+.0f} |"
+        )
+    return "\n".join(lines)
 
 
 def select(
@@ -700,27 +791,34 @@ async def run_all(
     provider: Any,
     jobs: int = 1,
     sandbox_factory: SandboxFactory | None = None,
+    repetitions: int = 1,
 ) -> list[CaseRun]:
     """Run selected cases with bounded parallelism and preserve dataset order."""
-    if jobs <= 0:
-        raise ValueError("jobs must be positive")
+    if jobs <= 0 or repetitions <= 0:
+        raise ValueError("jobs and repetitions must be positive")
 
     concurrency_limit = asyncio.Semaphore(jobs)
     completed = 0
 
-    async def run_bounded(index: int, case: EvalCase) -> tuple[int, CaseRun]:
+    scheduled = [(case, repetition) for case in cases for repetition in range(1, repetitions + 1)]
+
+    async def run_bounded(index: int, case: EvalCase, repetition: int) -> tuple[int, CaseRun]:
         nonlocal completed
         async with concurrency_limit:
             run = await run_case(provider, settings, case, sandbox_factory)
+            run.repetition = repetition
         completed += 1
         mark = "pass" if run.passed else "FAIL"
-        print(f"[{completed}/{len(cases)}] {mark} {run.case_id} {run.seconds:.0f}s", flush=True)
+        label = f"{run.case_id}#{repetition}" if repetitions > 1 else run.case_id
+        print(f"[{completed}/{len(scheduled)}] {mark} {label} {run.seconds:.0f}s", flush=True)
         return index, run
 
     if sandbox_factory is None:
         raise ValueError("sandbox_factory is required for AI evaluation")
     async with managed_sandbox_factory(sandbox_factory):
-        indexed_runs = await asyncio.gather(*(run_bounded(index, case) for index, case in enumerate(cases)))
+        indexed_runs = await asyncio.gather(
+            *(run_bounded(index, case, repetition) for index, (case, repetition) in enumerate(scheduled))
+        )
     return [run for _, run in sorted(indexed_runs)]
 
 
@@ -731,6 +829,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--category", action="append", default=[], help="run one category directory, repeatable")
     parser.add_argument("--tag", action="append", default=[], help="run cases with one tag, repeatable")
     parser.add_argument("--full", action="store_true", help="run the full suite instead of the default tuning set")
+    parser.add_argument("--repeat", type=int, default=1, help="run every selected case this many times")
+    parser.add_argument("--baseline-report", type=Path, help="compare with a prior report directory or results.jsonl")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
     parser.add_argument("--output-dir", type=Path, default=None, help="new directory for the report")
     parser.add_argument(
@@ -740,8 +840,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"number of cases to run concurrently (default: {DEFAULT_CASE_JOBS})",
     )
     arguments = parser.parse_args(argv)
-    if arguments.jobs <= 0:
-        parser.error("--jobs must be positive")
+    if arguments.jobs <= 0 or arguments.repeat <= 0:
+        parser.error("--jobs and --repeat must be positive")
 
     cases = select(
         load_cases(arguments.cases_dir), arguments.case, arguments.category, arguments.tag, full=arguments.full
@@ -756,6 +856,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             OpenAiCompatibleProvider(settings, include_usage=True, include_attempts=True),
             arguments.jobs,
             sandbox_factory,
+            arguments.repeat,
         )
     )
     wall_seconds = time.perf_counter() - started
@@ -765,6 +866,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         (arguments.output_dir or default_output_dir()).resolve(),
         jobs=arguments.jobs,
         wall_seconds=wall_seconds,
+        metadata=_evaluation_metadata(settings, cases, arguments.repeat),
+        baseline_report=arguments.baseline_report,
     )
     print()
     print(summarize(runs))
@@ -772,6 +875,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     print()
     print(f"Evaluation report: {summary}")
     return 0 if all(run.passed for run in runs) else 1
+
+
+def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repetitions: int) -> dict[str, Any]:
+    """Record enough immutable context to reproduce or compare a run."""
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=REPOSITORY_ROOT, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    diff = subprocess.run(
+        ["git", "diff", "--binary", "HEAD"], cwd=REPOSITORY_ROOT, check=True, capture_output=True
+    ).stdout
+    references = sorted((REPOSITORY_ROOT / "core/nurse_scheduling/ai/references").glob("*.md"))
+    return {
+        "git_revision": revision,
+        "dirty_diff_sha256": hashlib.sha256(diff).hexdigest() if diff else None,
+        "provider_model": settings.provider_model,
+        "repetitions": repetitions,
+        "case_ids": [case.id for case in cases],
+        "prompt_sha256": hashlib.sha256(SANDBOX_SYSTEM_PROMPT.encode()).hexdigest(),
+        "references_sha256": {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in references
+        },
+        "fixtures_sha256": {
+            fixture: hashlib.sha256(fixture_text(fixture).encode()).hexdigest()
+            for fixture in sorted({case.fixture for case in cases})
+        },
+    }
 
 
 if __name__ == "__main__":

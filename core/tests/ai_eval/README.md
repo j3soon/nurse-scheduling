@@ -38,3 +38,8 @@ history entries while preserving similarly named IDs. Use `answer_contains` for 
 
 Every proposal case must also declare `changes`. It guards all schedule paths outside the listed scope. Diff checks
 guard every addition and removal inside their selected collection.
+
+Use `--repeat 3` for reliability checks on a tuning subset. Repetitions share the global `--jobs` limit and reports
+show per-case pass rates plus median and p95 cost. Use `--baseline-report <report-dir>` to compare reliability, model
+turns, and tokens with an earlier run. Reports record the model, Git revision, dirty diff hash, prompt, references,
+and fixture hashes so comparisons do not silently mix configurations.
