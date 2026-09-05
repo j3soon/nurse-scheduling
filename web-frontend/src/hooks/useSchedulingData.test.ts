@@ -1071,6 +1071,77 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('defaults omitted descriptions and person history when loading backend-shaped YAML', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2025-01-01', endDate: '2025-01-06' },
+          groups: [{ id: 'Weekend', members: ['04', '05'] }],
+        },
+        people: {
+          items: [{ id: 'n1' }, { id: 'n2' }],
+          groups: [{ id: 'Team A', members: ['n1'] }],
+        },
+        shiftTypes: {
+          items: [{ id: 'D' }],
+          groups: [{ id: 'Day', members: ['D'] }],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items).toEqual([
+        { id: 'n1', description: '', history: [] },
+        { id: 'n2', description: '', history: [] },
+      ]);
+      expect(result.current.peopleData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Team A', members: ['n1'], description: '' }]),
+      );
+      expect(result.current.shiftTypeData.items).toEqual(
+        expect.arrayContaining([{ id: 'D', description: '' }]),
+      );
+      expect(result.current.shiftTypeData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Day', members: ['D'], description: '' }]),
+      );
+      expect(result.current.dateData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Weekend', members: ['04', '05'], description: '' }]),
+      );
+    });
+  });
+
+  it('defaults omitted descriptions and person history when hydrating older stored state', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          apiVersion: 'alpha',
+          description: '',
+          dates: { range: {}, items: [], groups: [] },
+          people: { items: [{ id: 'n1' }], groups: [{ id: 'Team A', members: ['n1'] }] },
+          shiftTypes: { items: [{ id: 'D' }], groups: [] },
+          preferences: [],
+        },
+        history: [],
+        currentHistoryIndex: 0,
+      }),
+    );
+
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items).toEqual([{ id: 'n1', description: '', history: [] }]);
+      expect(result.current.peopleData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Team A', members: ['n1'], description: '' }]),
+      );
+      expect(result.current.shiftTypeData.items).toEqual(
+        expect.arrayContaining([{ id: 'D', description: '' }]),
+      );
+    });
+  });
+
   it('sorts SHIFT_REQUEST preferences and date arrays in updatePreferencesByType', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
