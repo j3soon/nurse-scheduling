@@ -6,7 +6,7 @@
     "The request on the 1st. Leave the other P84 OFF request alone."
   ],
   "intermediate_answer_contains": [
-    [["date", "which request"], ["1st", "5th", "dates"]]
+    [["date", "which request", "which one"], ["1st", "01", "5th", "05", "dates"]]
   ],
   "expect_proposal": true,
   "expected_diff": [

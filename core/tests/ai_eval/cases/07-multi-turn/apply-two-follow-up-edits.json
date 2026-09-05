@@ -3,12 +3,12 @@
   "fixture": "ward87",
   "user_turns": [
     "I need to change one of P84's OFF requests and copy one of P85's requests to P86.",
-    "Set P84's OFF request on the 1st to -100. For P85, copy the night request only.",
-    "By night I mean shift type N only, not the Night group."
+    "For P84, it will be the OFF request on the 1st, with weight -100. I have not decided which P85 request to copy yet, so wait and do not make either change now.",
+    "For P85, copy only the N request to P86. Do not copy K or OFF."
   ],
   "intermediate_answer_contains": [
     [["which", "specify"], ["P84", "P85"]],
-    [["N", "N shift"], "Night"]
+    ["P85", ["which", "decide", "specify", "pending"]]
   ],
   "expect_proposal": true,
   "expected_diff": [

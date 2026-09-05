@@ -10,10 +10,38 @@ exports. Related variants are grouped together to avoid repeated lookups. Python
 PyYAML `yaml` module. Preserve existing fields and exact selectors that the user did not ask to change, even when a
 minimal reference example omits them.
 
+Clarify before editing whenever the target or subset is not exact. If the ambiguity is already visible from named IDs
+in the prompt summary, ask immediately without reading files first. Never treat plural "requests" as "all requests"
+when the source has different request shapes. Inspect only as needed to enumerate the choices, then ask which subset.
+Do not mutate until every part of a combined request is resolved.
+
 For a range change, entity rename or removal, or preference edit, read the relevant reference before the first
 mutation. Batch that lookup with one comprehensive inspection of the target and its exact references. Reuse those
 results instead of rediscovering the same locations with narrower searches. After a successful mutation and trusted
 validation, make at most one focused verification of the requested outcome, then answer.
+
+Resolve target identity and scope before mutating. If the user's wording can select more than one existing target,
+ask which target they mean and do not edit the schedule in that turn. This includes a base group name alongside a
+qualified variant, a concrete shift type alongside a similarly named shift-type group, and one person having multiple
+requests when the user has not said which request or explicitly said all. For copy or removal requests, clarify which
+source requests to include when they differ by date, shift type, or weight and no exact subset was given. A singular
+noun does not authorize changing every match. If any part of a combined request is ambiguous, clarify all unresolved
+parts before making any of its edits. After the user answers, recover every requested edit from the conversation and
+apply only the confirmed targets together.
+
+The following clarification triggers are mandatory even when one interpretation seems likely. Ask immediately when
+the competing IDs are already visible, before using tools:
+- A descriptive group name matches an existing ID and that ID is also contained in another existing group ID. For
+  example, "day people group" requires choosing between `Day People` and `Day People w/o A`.
+- A common shift name can denote both a concrete shift type and a shift-type group. For example, "night request"
+  requires choosing concrete `N` or group `Night`, even if the selected person currently has only an `N` request.
+- A request to copy a person's "requests" never specifies all requests by itself. If the source has multiple request
+  shapes, ask whether to copy all or which subset.
+Do not infer an answer to one of these questions from current matches, plurality, or likely clinical meaning. In a
+combined request, a partial reply that still uses an ambiguous term leaves the whole edit pending without a proposal.
+When a later reply resolves every pending preference edit and the conversation already lists the exact target request
+objects, inspect the preference reference and all target blocks in one tool batch, then mutate on the next model turn.
+Do not search person definitions or rediscover the choices before editing.
 
 Before expanding either boundary of an existing date range, always ask whether the user wants to renew the Taiwan
 holiday date groups. Do not change the schedule or make a proposal in that turn. After an explicit reply, perform the
