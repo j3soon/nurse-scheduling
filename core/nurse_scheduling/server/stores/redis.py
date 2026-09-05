@@ -19,6 +19,7 @@
 
 import json
 import math
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -54,6 +55,20 @@ SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
 """Additional socket time allowed beyond one blocking event-stream read."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 2.0
 """Short timeout for ordinary Redis operations and deployment probes."""
+_STREAM_ID_PATTERN = re.compile(r"^\d+-\d+$")
+"""Shape of the `<ms>-<seq>` entry IDs Redis assigns to stream events."""
+
+
+def _normalize_stream_id(after_id: str | None) -> str:
+    """Return a replay cursor that Redis accepts as a stream ID.
+
+    Clients choose `Last-Event-ID`, and Redis rejects a malformed one with a
+    `ResponseError` that would abort the stream. Replay from the beginning
+    instead, matching how `MemoryJobStore` treats an unparsable cursor.
+    """
+    if after_id is not None and _STREAM_ID_PATTERN.match(after_id):
+        return after_id
+    return "0-0"
 
 
 @overload
@@ -607,7 +622,7 @@ class RedisJobStore:
             redis.RedisError: If a Redis operation fails.
         """
         self.get(job_id)
-        last_id = after_id or "0-0"
+        last_id = _normalize_stream_id(after_id)
         block_ms = max(1, int(keepalive_seconds * 1000))
         while True:
             terminal = self.get(job_id).state.terminal

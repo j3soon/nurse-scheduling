@@ -473,12 +473,15 @@ def test_live_event_stream_emits_keepalive_after_catching_up(store):
     assert next(resumed) is None
 
 
-def test_memory_event_stream_replays_from_invalid_cursor():
-    store = MemoryJobStore()
+@pytest.mark.parametrize("after_id", ["invalid", "", "0-0-0", "abc-1", "$", "-1--1"])
+def test_event_stream_replays_from_invalid_cursor(store_factory, after_id):
+    # `Last-Event-ID` is client-controlled, so every backend must fall back to a
+    # full replay rather than failing the stream.
+    store = store_factory()
     controller = _controller(store)
     created = _create(controller)
 
-    event = next(store.stream_events(created.id, after_id="invalid", keepalive_seconds=0.01))
+    event = next(store.stream_events(created.id, after_id=after_id, keepalive_seconds=0.01))
 
     assert event is not None
     assert event.type == "job.state_changed"
