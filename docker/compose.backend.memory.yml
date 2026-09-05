@@ -91,11 +91,29 @@ services:
       timeout: 3s
       retries: 30
 
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      ai:
+        condition: service_started
+    expose:
+      - "8080"
+    volumes:
+      - ./nginx.backend.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     depends_on:
-      api:
+      nginx:
         condition: service_healthy
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
 

@@ -61,12 +61,13 @@ Treat an absent AI auth descriptor as a legacy open backend. When auth is
 required, send the AI token through the shared authorized-header helper on
 every session request, including the fetch-based event stream. Store it only
 when the user explicitly opts in to unencrypted device storage.
-Local development calls the AI backend directly because Next.js development
-rewrites buffer SSE. Production uses the same-origin `/ai` reverse-proxy route
-with response buffering disabled. When a capability-gated control is missing,
-inspect the capabilities request from the exact browser origin and validate a
-non-loopback host for container development. Loopback-only browser checks do
-not catch blocked Next.js development origins or CORS failures.
+The AI page defaults to the hosted `/ai` path on the production API and calls
+the selected backend directly. Production NGINX must strip the `/ai`
+prefix and disable response buffering. Keep credentials scoped to their
+endpoint and lock the endpoint after a conversation creates a session. A
+self-hosted build may set another default with `NEXT_PUBLIC_AI_API_URL`. When a
+capability-gated control is missing, inspect the capabilities request from the
+exact browser origin. A loopback-only browser check can miss CORS failures.
 
 To test specific source files from the repository root, run:
 

@@ -87,13 +87,28 @@ export class AiHttpError extends Error {
   }
 }
 
+export const PRODUCTION_AI_API_URL = 'https://api.nursescheduling.org/ai';
+export const LOCAL_AI_API_URL = 'http://localhost:8001';
+
 export function getAiBaseUrl(): string {
   const configuredUrl = process.env.NEXT_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');
   if (configuredUrl) return configuredUrl;
-  if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
-    return `${window.location.protocol}//${window.location.hostname}:8001`;
+  return PRODUCTION_AI_API_URL;
+}
+
+export function normalizeAiEndpoint(endpoint: string): string {
+  const trimmed = endpoint.trim();
+  if (!trimmed) return '';
+  const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)
+    ? trimmed
+    : `${/^(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(trimmed) ? 'http' : 'https'}://${trimmed.replace(/^\/+/, '')}`;
+  try {
+    const url = new URL(withScheme);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return '';
   }
-  return '/ai';
 }
 
 async function responseError(response: Response): Promise<Error> {
@@ -114,8 +129,8 @@ function authorizedHeaders(
   return { ...headers, ...buildAuthHeaders(token) };
 }
 
-export async function getCapabilities(signal?: AbortSignal): Promise<AiCapabilities> {
-  const response = await fetch(`${getAiBaseUrl()}/capabilities`, {
+export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBaseUrl()): Promise<AiCapabilities> {
+  const response = await fetch(`${endpoint}/capabilities`, {
     credentials: 'include',
     signal,
   });
@@ -146,8 +161,12 @@ export async function getCapabilities(signal?: AbortSignal): Promise<AiCapabilit
   return { ...body, auth } as AiCapabilities;
 }
 
-export async function createSession(scheduleYaml: string, authToken: string | null): Promise<string> {
-  const response = await fetch(`${getAiBaseUrl()}/sessions`, {
+export async function createSession(
+  scheduleYaml: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<string> {
+  const response = await fetch(`${endpoint}/sessions`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
@@ -215,6 +234,7 @@ export async function streamMessage(
   signal: AbortSignal,
   authToken: string | null,
   attachments: MessageAttachments = {},
+  endpoint = getAiBaseUrl(),
 ): Promise<void> {
   const images = attachments.images ?? [];
   const documents = attachments.documents ?? [];
@@ -231,7 +251,7 @@ export async function streamMessage(
     body = JSON.stringify({ message });
   }
 
-  const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/messages`, {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, headers),
@@ -273,8 +293,9 @@ export async function updateSessionSchedule(
   sessionId: string,
   scheduleYaml: string,
   authToken: string | null,
+  endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/schedule`, {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/schedule`, {
     method: 'PUT',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
@@ -287,8 +308,9 @@ export async function approveProposal(
   sessionId: string,
   scheduleYaml: string,
   authToken: string | null,
+  endpoint = getAiBaseUrl(),
 ): Promise<string> {
-  const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/proposal/approve`, {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/approve`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
@@ -303,8 +325,12 @@ export async function approveProposal(
   return body.schedule_yaml;
 }
 
-export async function rejectProposal(sessionId: string, authToken: string | null): Promise<void> {
-  const response = await fetch(`${getAiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}/proposal/reject`, {
+export async function rejectProposal(
+  sessionId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/proposal/reject`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken),

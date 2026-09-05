@@ -354,8 +354,9 @@ Start the AI backend and frontend in separate terminals:
 ./scripts/start_frontend.sh --hostname 0.0.0.0
 ```
 
-Open `http://localhost:3000/experimental-ai`. The local AI backend listens on
-`http://localhost:8001` by default. See the
+Open `http://localhost:3000/experimental-ai`, select **Change**, then select
+**Use localhost**. The local AI backend listens on `http://localhost:8001`.
+The page otherwise uses `https://api.nursescheduling.org/ai` by default. See the
 [AI assistant backend guide](https://nursescheduling.org/docs/ai-assistant/)
 for container commands, configuration, security notes, and focused tests.
 

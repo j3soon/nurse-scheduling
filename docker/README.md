@@ -8,7 +8,8 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 
 - Create a [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/setup/).
 - Add a public hostname for `api.nursescheduling.org`.
-- Point the hostname service to `http://api:8000`.
+- Point the hostname service to `http://nginx:8080`. NGINX sends
+  `/ai/*` to the AI service and all other paths to the optimization API.
 - Copy `.env.example` to `.env`.
 - Set `CLOUDFLARE_TUNNEL_TOKEN` in `.env` to the token from the dashboard.
 - Set `API_AUTH_TOKEN` in `.env`. The deployment image requires it.
@@ -73,6 +74,11 @@ deliberately serve without AI authentication, set
 `AI_AUTH_REQUIRED=false` in `docker/.env` and leave `AI_AUTH_TOKEN` empty. Native
 runs leave required mode disabled, although setting a token still enables bearer
 authentication.
+
+NGINX removes the `/ai` prefix before forwarding requests to this
+service and disables response buffering for its streaming endpoints. Keep the
+Cloudflare Tunnel hostname pointed at `http://nginx:8080`, not directly at
+either application container.
 
 ## Sentry
 

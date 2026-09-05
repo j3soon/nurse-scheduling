@@ -35,11 +35,11 @@ another path. Port `8001` avoids the normal backend on `8000`. Use another port
 for a local documentation server when both services run at the same time. The
 documented local Zensical port is `8003`.
 
-During local development, the frontend calls port `8001` on the browser's
-current hostname. This avoids buffering SSE through a Next.js development
-rewrite. Set `NEXT_PUBLIC_AI_API_URL` before starting the frontend when the
-browser must use another AI backend URL. Production uses the same-origin `/ai`
-route through NGINX.
+The frontend uses `https://api.nursescheduling.org/ai` by default. Its server
+control can select `http://localhost:8001` or a custom URL, and locks that
+selection after a conversation starts. Set `NEXT_PUBLIC_AI_API_URL` before
+building the frontend to provide a different deployment default. Remembered
+credentials are stored unencrypted per endpoint only when the user opts in.
 
 ## Architecture
 
@@ -400,9 +400,11 @@ Use `compose.backend.memory.yml` in the same command when running the
 process-local optimization backend. The AI service itself remains process-local
 in both variants and listens on port `8001` inside the Compose network.
 
-## Production proxy
+## Production path proxy
 
-Disable response buffering on the streaming AI route. See the
+The backend Compose deployment routes Cloudflare Tunnel traffic through NGINX.
+It sends `/ai/*` to the AI service and all other paths to the optimization API.
+Disable response buffering on the streaming route. See the
 [NGINX proxy buffering directive](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering).
 
 ```nginx
@@ -413,6 +415,10 @@ location /ai/ {
     proxy_cache off;
 }
 ```
+
+The Cloudflare public hostname must target `http://nginx:8080`. The trailing
+slash on `proxy_pass` removes the public `/ai` prefix before the request reaches
+FastAPI.
 
 ## HTTP API
 
@@ -515,15 +521,15 @@ the direct and browser-facing responses:
 
 ```sh
 curl http://127.0.0.1:8001/capabilities
-curl http://localhost:8001/capabilities
+curl https://api.nursescheduling.org/ai/capabilities
 ```
 
-Use the hostname that is open in the browser for the second command. If local
-capability discovery fails, check that port `8001` is reachable and accepts the
-frontend origin. In production, check `/ai/capabilities` through NGINX instead.
-When developing in a container, also test the container address used by the
-browser. A loopback-only test can miss a blocked Next.js development origin,
-CORS failure, or incomplete hydration.
+Use the endpoint shown by the frontend's AI server control for the
+browser-facing check. If local capability discovery fails, check that port
+`8001` is reachable and accepts the frontend origin. For production, check
+`/ai/capabilities` through NGINX. When developing in a container, also
+test the container address used by the browser. A loopback-only test can miss a
+CORS failure or incomplete hydration.
 
 ## Validate
 

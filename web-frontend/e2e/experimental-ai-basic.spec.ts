@@ -254,7 +254,7 @@ test('authenticates AI session requests with an explicitly remembered token', as
     `Bearer ${authToken}`,
   ]);
   expect(await page.evaluate(() => localStorage.getItem('nurse-scheduling-ai-auth'))).toBe(
-    JSON.stringify({ endpoint: '/ai', token: authToken }),
+    JSON.stringify({ tokens: { '/ai': authToken } }),
   );
 });
 

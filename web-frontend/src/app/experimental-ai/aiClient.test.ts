@@ -47,8 +47,8 @@ describe('AI client', () => {
     vi.unstubAllGlobals();
   });
 
-  it('bypasses the buffering Next.js proxy during local development', () => {
-    expect(getAiBaseUrl()).toBe('http://localhost:8001');
+  it('uses the hosted AI backend by default', () => {
+    expect(getAiBaseUrl()).toBe('https://api.nursescheduling.org/ai');
   });
 
   it('creates a browser-owned session', async () => {
@@ -59,7 +59,7 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(createSession('description: test', 'ai-client-token')).resolves.toBe('session-id');
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8001/sessions', {
+    expect(fetchMock).toHaveBeenCalledWith('https://api.nursescheduling.org/ai/sessions', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ai-client-token' },
@@ -156,7 +156,7 @@ describe('AI client', () => {
     expect(deltas).toEqual(['Hello', ' world']);
     expect(onDone).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:8001/sessions/session%2Fid/messages',
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages',
       expect.objectContaining({
         body: JSON.stringify({ message: 'Who works?' }),
         credentials: 'include',
@@ -308,7 +308,7 @@ describe('AI client', () => {
     await expect(approveProposal('session-id', 'description: test', 'proposal-token')).resolves.toBe(
       'description: approved\n',
     );
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8001/sessions/session-id/proposal/approve', {
+    expect(fetchMock).toHaveBeenCalledWith('https://api.nursescheduling.org/ai/sessions/session-id/proposal/approve', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer proposal-token' },
@@ -334,11 +334,11 @@ describe('AI client', () => {
     await rejectProposal('session-id', 'session-token');
     await updateSessionSchedule('session-id', 'description: newer', 'session-token');
 
-    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8001/sessions/session-id/proposal/reject');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/proposal/reject');
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       headers: { Authorization: 'Bearer session-token' },
     });
-    expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:8001/sessions/session-id/schedule');
+    expect(fetchMock.mock.calls[1][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/schedule');
     expect(fetchMock.mock.calls[1][1]).toMatchObject({
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer session-token' },

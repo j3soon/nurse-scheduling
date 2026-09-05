@@ -137,6 +137,7 @@ const test = base.extend<DevServerFixtures>({
         env: {
           ...process.env,
           DISABLE_SENTRY: '1',
+          NEXT_PUBLIC_AI_API_URL: `http://${host}:8001`,
           NEXT_PUBLIC_DISABLE_SENTRY: '1',
           NEXT_TELEMETRY_DISABLED: '1',
         },

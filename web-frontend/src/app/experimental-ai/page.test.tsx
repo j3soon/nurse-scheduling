@@ -34,9 +34,16 @@ const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
 
 vi.mock('./aiClient', () => ({
+  LOCAL_AI_API_URL: 'http://localhost:8001',
+  PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
+  normalizeAiEndpoint: (endpoint: string) => {
+    const trimmed = endpoint.trim().replace(/\/+$/, '');
+    if (!trimmed) return '';
+    return /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  },
   streamMessage: mockStreamMessage,
   approveProposal: mockApproveProposal,
   rejectProposal: mockRejectProposal,
@@ -114,7 +121,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
-    expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null);
+    expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',
       'Who works Monday?',
@@ -122,8 +129,47 @@ describe('ExperimentalAiPage', () => {
       expect.any(AbortSignal),
       null,
       { images: [], documents: [] },
+      '/ai',
     );
     expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(true);
+  });
+
+  it('selects localhost and locks that server after the conversation starts', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.click(screen.getByRole('button', { name: 'Change' }));
+    await user.click(screen.getByRole('button', { name: 'Use localhost' }));
+
+    expect(screen.getByText('http://localhost:8001')).toBeInTheDocument();
+    expect(window.localStorage.getItem('nurse-scheduling-ai-server')).toBe('http://localhost:8001');
+    await waitFor(() => expect(mockGetCapabilities).toHaveBeenLastCalledWith(
+      expect.any(AbortSignal),
+      'http://localhost:8001',
+    ));
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(mockCreateSession).toHaveBeenCalledWith(
+      'description: current schedule\n',
+      null,
+      'http://localhost:8001',
+    );
+    expect(screen.getByRole('button', { name: 'Change' })).toBeDisabled();
+    expect(screen.getByText('This server is locked for the current conversation.')).toBeInTheDocument();
+  });
+
+  it('normalizes a custom AI server URL', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.click(screen.getByRole('button', { name: 'Change' }));
+    await user.type(screen.getByRole('textbox', { name: 'Custom AI server URL' }), 'ai.example.com/');
+    await user.click(screen.getByRole('button', { name: 'Use custom' }));
+
+    expect(screen.getByText('https://ai.example.com')).toBeInTheDocument();
+    expect(window.localStorage.getItem('nurse-scheduling-ai-server')).toBe('https://ai.example.com');
   });
 
   it('ignores non-user scroll events while following streamed text', async () => {
@@ -430,6 +476,7 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(mockCreateSession).toHaveBeenCalledWith(
       'description: current schedule\n',
       'ai-session-token',
+      '/ai',
     ));
     expect(mockStreamMessage.mock.calls[0][4]).toBe('ai-session-token');
   });
@@ -460,8 +507,7 @@ describe('ExperimentalAiPage', () => {
 
     expect(screen.getByText('Token saved on this device')).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem('nurse-scheduling-ai-auth') ?? '{}')).toEqual({
-      endpoint: '/ai',
-      token: 'remembered-ai-token',
+      tokens: { '/ai': 'remembered-ai-token' },
     });
   });
 
@@ -495,6 +541,7 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(mockCreateSession).toHaveBeenCalledWith(
       'description: current schedule\n',
       'remembered-ai-token',
+      '/ai',
     ));
   });
 
@@ -564,6 +611,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(AbortSignal),
       null,
       { images: [image], documents: [] },
+      '/ai',
     );
     expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
     expect(createObjectUrl).toHaveBeenCalledWith(image);
@@ -605,6 +653,7 @@ describe('ExperimentalAiPage', () => {
         images: [],
         documents: [expect.objectContaining({ name: 'staff.csv', type: 'text/csv' })],
       },
+      '/ai',
     );
     expect(screen.getByText('Attached: staff.csv')).toBeInTheDocument();
   });
@@ -650,6 +699,7 @@ describe('ExperimentalAiPage', () => {
           }),
         ],
       },
+      '/ai',
     );
   });
 
@@ -659,7 +709,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Could not load AI capabilities. Check that the AI backend is reachable from this browser, then reload the page.',
+      'Could not load AI capabilities from /ai. Check that the AI backend is reachable from this browser.',
     );
     expect(screen.queryByLabelText('Attach files')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
@@ -807,7 +857,7 @@ describe('ExperimentalAiPage', () => {
       await user.click(await screen.findByRole('button', { name: 'Approve' }));
 
       await waitFor(() => expect(mockLoadFromYaml).toHaveBeenCalledTimes(1));
-      expect(mockApproveProposal).toHaveBeenCalledWith('session-id', 'description: current schedule\n', null);
+      expect(mockApproveProposal).toHaveBeenCalledWith('session-id', 'description: current schedule\n', null, '/ai');
       expect(mockLoadFromYaml).toHaveBeenCalledWith({ description: 'proposed schedule' });
       expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
       expect(screen.getByText('The proposed schedule was applied. Undo reverts it in one step.')).toBeInTheDocument();
@@ -832,7 +882,7 @@ describe('ExperimentalAiPage', () => {
 
       await user.click(await screen.findByRole('button', { name: 'Reject' }));
 
-      await waitFor(() => expect(mockRejectProposal).toHaveBeenCalledWith('session-id', null));
+      await waitFor(() => expect(mockRejectProposal).toHaveBeenCalledWith('session-id', null, '/ai'));
       expect(screen.queryByRole('region', { name: 'Proposed schedule change' })).not.toBeInTheDocument();
       expect(mockLoadFromYaml).not.toHaveBeenCalled();
     });
@@ -849,6 +899,7 @@ describe('ExperimentalAiPage', () => {
         'session-id',
         'description: edited elsewhere\n',
         null,
+        '/ai',
       ));
       expect(mockCreateSession).toHaveBeenCalledTimes(1);
     });

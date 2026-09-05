@@ -34,11 +34,14 @@ import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import {
   AiCapabilities,
+  LOCAL_AI_API_URL,
+  PRODUCTION_AI_API_URL,
   ToolActivity,
   approveProposal,
   createSession,
   getAiBaseUrl,
   getCapabilities,
+  normalizeAiEndpoint,
   rejectProposal,
   streamMessage,
   updateSessionSchedule,
@@ -59,6 +62,7 @@ interface ChatMessage {
 
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
 const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
+const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
 
 interface AiPreferences {
   showReasoning: boolean;
@@ -68,6 +72,36 @@ interface AiPreferences {
 interface StoredAiAuth {
   endpoint?: unknown;
   token?: unknown;
+  tokens?: unknown;
+}
+
+type AiServerStatus = 'checking' | 'online' | 'offline' | 'unauthorized';
+
+function readStoredAuthTokens(): Record<string, string> {
+  try {
+    const stored = window.localStorage.getItem(AI_AUTH_STORAGE_KEY);
+    if (stored === null) return {};
+    const parsed = JSON.parse(stored) as StoredAiAuth;
+    const tokens = typeof parsed.tokens === 'object' && parsed.tokens !== null
+      ? Object.fromEntries(Object.entries(parsed.tokens).filter((entry): entry is [string, string] => (
+          typeof entry[1] === 'string' && entry[1].trim().length > 0
+        )))
+      : {};
+    if (typeof parsed.endpoint === 'string' && typeof parsed.token === 'string' && parsed.token.trim()) {
+      tokens[parsed.endpoint] = parsed.token.trim();
+    }
+    return tokens;
+  } catch {
+    return {};
+  }
+}
+
+function persistAuthTokens(tokens: Record<string, string>): void {
+  if (Object.keys(tokens).length === 0) {
+    window.localStorage.removeItem(AI_AUTH_STORAGE_KEY);
+  } else {
+    window.localStorage.setItem(AI_AUTH_STORAGE_KEY, JSON.stringify({ tokens }));
+  }
 }
 
 interface SelectedAttachment {
@@ -195,6 +229,11 @@ export default function ExperimentalAiPage() {
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isClientReady, setIsClientReady] = useState(false);
+  const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
+  const [serverStatus, setServerStatus] = useState<AiServerStatus>('checking');
+  const [isEditingServer, setIsEditingServer] = useState(false);
+  const [customEndpoint, setCustomEndpoint] = useState('');
+  const [serverError, setServerError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [rememberAuthToken, setRememberAuthToken] = useState(false);
@@ -213,6 +252,8 @@ export default function ExperimentalAiPage() {
   const [isApplyingProposal, setIsApplyingProposal] = useState(false);
   const syncedScheduleRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const sessionEndpointRef = useRef<string | null>(null);
+  const authTokensRef = useRef<Record<string, string>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
   const sandboxScheduleRef = useRef<string | null>(null);
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
@@ -234,17 +275,21 @@ export default function ExperimentalAiPage() {
     } catch {
       // Unreadable storage keeps the defaults rather than blocking the page.
     }
+    let endpoint = getAiBaseUrl();
     try {
-      const stored = window.localStorage.getItem(AI_AUTH_STORAGE_KEY);
-      if (stored === null) return;
-      const auth = JSON.parse(stored) as StoredAiAuth;
-      if (auth.endpoint === getAiBaseUrl() && typeof auth.token === 'string' && auth.token.trim()) {
-        setAuthToken(auth.token.trim());
-        setRememberAuthToken(true);
-      }
+      const storedEndpoint = window.localStorage.getItem(AI_SERVER_STORAGE_KEY);
+      const normalizedEndpoint = storedEndpoint === '/ai' ? storedEndpoint : normalizeAiEndpoint(storedEndpoint ?? '');
+      if (normalizedEndpoint) endpoint = normalizedEndpoint;
     } catch {
-      // Unreadable authentication storage keeps the service locked.
+      // Unreadable storage keeps the configured default.
     }
+    const storedTokens = readStoredAuthTokens();
+    const storedToken = storedTokens[endpoint] ?? null;
+    authTokensRef.current = storedTokens;
+    setAiEndpoint(endpoint);
+    setAuthToken(storedToken);
+    setRememberAuthToken(storedToken !== null);
+    setIsClientReady(true);
   }, []);
 
   const rememberPreferences = (preferences: AiPreferences) => {
@@ -258,28 +303,35 @@ export default function ExperimentalAiPage() {
   };
 
   useEffect(() => {
+    if (!isClientReady) return;
     const capabilitiesController = new AbortController();
-    setIsClientReady(true);
-    getCapabilities(capabilitiesController.signal)
+    setServerStatus('checking');
+    setCapabilitiesError(null);
+    getCapabilities(capabilitiesController.signal, aiEndpoint)
       .then(capabilities => {
+        setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
         setImageCapability(capabilities.image_attachments);
         setDocumentCapability(capabilities.document_attachments);
       })
-      .catch(() => {
+      .catch((capabilityError: unknown) => {
         if (!capabilitiesController.signal.aborted) {
+          const unauthorized = isAuthenticationError(capabilityError);
+          setServerStatus(unauthorized ? 'unauthorized' : 'offline');
+          if (unauthorized) setAuthRequired(true);
           setCapabilitiesError(
-            'Could not load AI capabilities. Check that the AI backend is reachable from this browser, then reload the page.',
+            `Could not load AI capabilities from ${aiEndpoint}. Check that the AI backend is reachable from this browser.`,
           );
         }
       });
-    return () => {
-      capabilitiesController.abort();
+    return () => capabilitiesController.abort();
+  }, [aiEndpoint, isClientReady]);
+
+  useEffect(() => () => {
       abortControllerRef.current?.abort();
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
-    };
   }, []);
 
   useEffect(() => {
@@ -379,11 +431,16 @@ export default function ExperimentalAiPage() {
     setIsEditingAuthToken(false);
     setAuthRejected(false);
     setError(null);
+    authTokensRef.current[aiEndpoint] = token;
     try {
       if (remember) {
-        window.localStorage.setItem(AI_AUTH_STORAGE_KEY, JSON.stringify({ endpoint: getAiBaseUrl(), token }));
+        const storedTokens = readStoredAuthTokens();
+        storedTokens[aiEndpoint] = token;
+        persistAuthTokens(storedTokens);
       } else {
-        window.localStorage.removeItem(AI_AUTH_STORAGE_KEY);
+        const storedTokens = readStoredAuthTokens();
+        delete storedTokens[aiEndpoint];
+        persistAuthTokens(storedTokens);
       }
     } catch {
       // A browser that refuses storage still applies the token for this visit.
@@ -396,10 +453,38 @@ export default function ExperimentalAiPage() {
     setIsEditingAuthToken(false);
     setAuthRejected(false);
     setError(null);
+    delete authTokensRef.current[aiEndpoint];
     try {
-      window.localStorage.removeItem(AI_AUTH_STORAGE_KEY);
+      const storedTokens = readStoredAuthTokens();
+      delete storedTokens[aiEndpoint];
+      persistAuthTokens(storedTokens);
     } catch {
       // The in-memory token is still forgotten when storage is unavailable.
+    }
+  };
+
+  const selectAiEndpoint = (requestedEndpoint: string) => {
+    if (sessionIdRef.current !== null || messages.length > 0 || isStreaming) return;
+    const endpoint = requestedEndpoint === '/ai' ? requestedEndpoint : normalizeAiEndpoint(requestedEndpoint);
+    if (!endpoint) {
+      setServerError('Enter a valid HTTP or HTTPS AI server URL.');
+      return;
+    }
+    const token = authTokensRef.current[endpoint] ?? null;
+    setAiEndpoint(endpoint);
+    setAuthToken(token);
+    setRememberAuthToken(readStoredAuthTokens()[endpoint] !== undefined);
+    setAuthRequired(false);
+    setAuthRejected(false);
+    setImageCapability(DISABLED_IMAGE_CAPABILITY);
+    setDocumentCapability(DISABLED_DOCUMENT_CAPABILITY);
+    setServerError(null);
+    setCapabilitiesError(null);
+    setIsEditingServer(false);
+    try {
+      window.localStorage.setItem(AI_SERVER_STORAGE_KEY, endpoint);
+    } catch {
+      // A browser that refuses storage still applies the server for this visit.
     }
   };
 
@@ -524,12 +609,14 @@ export default function ExperimentalAiPage() {
 
     try {
       let sessionId = sessionIdRef.current;
+      const sessionEndpoint = sessionEndpointRef.current ?? aiEndpoint;
       if (sessionId === null) {
-        sessionId = await createSession(scheduleYaml, authToken);
+        sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint);
         sessionIdRef.current = sessionId;
+        sessionEndpointRef.current = sessionEndpoint;
       } else if (syncedScheduleRef.current !== scheduleYaml) {
         // The schedule can change elsewhere in the app between questions.
-        await updateSessionSchedule(sessionId, scheduleYaml, authToken);
+        await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
       }
       syncedScheduleRef.current = scheduleYaml;
       await streamMessage(
@@ -597,6 +684,7 @@ export default function ExperimentalAiPage() {
             .filter(attachment => attachment.kind === 'document')
             .map(attachment => attachment.file),
         },
+        sessionEndpoint,
       );
       setMessages(previous => previous.map(message => (
         message.id === assistantId ? { ...message, status: undefined } : message
@@ -648,6 +736,7 @@ export default function ExperimentalAiPage() {
     (!imageCapability.enabled || selectedImageCount >= imageCapability.max_files)
     && (!documentCapability.enabled || selectedDocumentCount >= documentCapability.max_files)
   );
+  const serverLocked = sessionIdRef.current !== null || messages.length > 0;
 
   const applyProposal = async () => {
     const sessionId = sessionIdRef.current;
@@ -655,7 +744,12 @@ export default function ExperimentalAiPage() {
     setIsApplyingProposal(true);
     setError(null);
     try {
-      const approvedYaml = await approveProposal(sessionId, scheduleYaml, authToken);
+      const approvedYaml = await approveProposal(
+        sessionId,
+        scheduleYaml,
+        authToken,
+        sessionEndpointRef.current ?? aiEndpoint,
+      );
       // One import call is one history entry, so undo reverts the whole proposal.
       loadFromYaml(yaml.load(approvedYaml));
       syncedScheduleRef.current = approvedYaml;
@@ -674,7 +768,7 @@ export default function ExperimentalAiPage() {
     setProposalNotice(null);
     if (sessionId === null) return;
     try {
-      await rejectProposal(sessionId, authToken);
+      await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
     } catch (rejectError) {
       if (isAuthenticationError(rejectError)) {
         reportRequestError(rejectError, 'The proposal could not be rejected.');
@@ -698,6 +792,80 @@ export default function ExperimentalAiPage() {
         <p className="mt-2 text-xs font-medium text-gray-500">
           Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
         </p>
+        <div className="mt-3 max-w-2xl rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${
+              serverStatus === 'online'
+                ? 'bg-green-500'
+                : serverStatus === 'checking'
+                  ? 'animate-pulse bg-gray-400'
+                  : serverStatus === 'unauthorized'
+                    ? 'bg-amber-500'
+                    : 'bg-red-500'
+            }`} aria-hidden="true" />
+            <span className="font-medium text-gray-700">AI server:</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-gray-600" title={aiEndpoint}>
+              {aiEndpoint}
+            </span>
+            <span className="text-xs capitalize text-gray-500">{serverStatus}</span>
+            <button
+              type="button"
+              onClick={() => setIsEditingServer(previous => !previous)}
+              disabled={isStreaming || serverLocked}
+              title={serverLocked ? 'The AI server is locked for this conversation.' : undefined}
+              className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              {isEditingServer ? 'Close' : 'Change'}
+            </button>
+          </div>
+          {serverLocked && (
+            <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation.</p>
+          )}
+          {isEditingServer && !serverLocked && (
+            <form
+              className="mt-3 space-y-2 border-t border-gray-100 pt-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                selectAiEndpoint(customEndpoint);
+              }}
+            >
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => selectAiEndpoint(PRODUCTION_AI_API_URL)}
+                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Use hosted
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectAiEndpoint(LOCAL_AI_API_URL)}
+                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Use localhost
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customEndpoint}
+                  onChange={event => setCustomEndpoint(event.target.value)}
+                  aria-label="Custom AI server URL"
+                  placeholder="https://ai.example.com"
+                  spellCheck={false}
+                  className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+                <button
+                  type="submit"
+                  className="rounded border border-blue-600 bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700"
+                >
+                  Use custom
+                </button>
+              </div>
+              {serverError && <p className="text-xs text-red-700">{serverError}</p>}
+            </form>
+          )}
+        </div>
         <div className="mt-2 flex flex-wrap gap-4 text-xs text-gray-500">
           <label className="flex items-center gap-1.5">
             <input

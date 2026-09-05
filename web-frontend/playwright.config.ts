@@ -48,6 +48,7 @@ export default defineConfig({
       E2E_COVERAGE: process.env.E2E_COVERAGE ?? '0',
       NEXT_PUBLIC_DISABLE_SENTRY: '1',
       NEXT_PUBLIC_DISABLE_HOSTED_OPTIMIZE_API: '1',
+      NEXT_PUBLIC_AI_API_URL: '/ai',
     },
     url: e2eBaseURL,
     reuseExistingServer: !process.env.CI && process.env.E2E_COVERAGE !== '1',
