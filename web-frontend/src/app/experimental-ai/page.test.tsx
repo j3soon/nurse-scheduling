@@ -32,8 +32,10 @@ const mockRejectProposal = vi.hoisted(() => vi.fn());
 const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
+const MockAiStaleTurnError = vi.hoisted(() => class AiStaleTurnError extends Error {});
 
 vi.mock('./aiClient', () => ({
+  AiStaleTurnError: MockAiStaleTurnError,
   LOCAL_AI_API_URL: 'http://localhost:8001',
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
@@ -772,6 +774,32 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getAllByText('Can you help?')).toHaveLength(1);
     expect(screen.queryByText('Provisional response.')).not.toBeInTheDocument();
     expect(screen.queryByText('This turn failed and was not saved to AI history.')).not.toBeInTheDocument();
+  });
+
+  it('removes provisional output when the backend discards a stale turn', async () => {
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: {
+        onDelta: (text: string) => void;
+        onScheduleChange?: (scheduleYaml: string) => void;
+      },
+    ) => {
+      callbacks.onScheduleChange?.('description: obsolete proposal');
+      callbacks.onDelta('Obsolete response.');
+      throw new MockAiStaleTurnError('The schedule changed.');
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Change it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('This turn failed and was not saved to AI history.')).toBeInTheDocument();
+    expect(screen.getByText('The schedule changed.')).toBeInTheDocument();
+    expect(screen.queryByText('Obsolete response.')).not.toBeInTheDocument();
+    expect(screen.queryByText('schedule edit')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('requires files to be reattached before retrying an attachment request', async () => {

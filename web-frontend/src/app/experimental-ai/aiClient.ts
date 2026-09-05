@@ -87,6 +87,13 @@ export class AiHttpError extends Error {
   }
 }
 
+export class AiStaleTurnError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AiStaleTurnError';
+  }
+}
+
 export const PRODUCTION_AI_API_URL = 'https://api.nursescheduling.org/ai';
 export const LOCAL_AI_API_URL = 'http://localhost:8001';
 
@@ -222,6 +229,10 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     callbacks.onProposal?.(payload.diff);
   } else if (eventType === 'done') {
     callbacks.onDone?.();
+  } else if (eventType === 'stale') {
+    throw new AiStaleTurnError(
+      typeof payload.message === 'string' ? payload.message : 'The AI response became stale.',
+    );
   } else if (eventType === 'error') {
     throw new Error(typeof payload.message === 'string' ? payload.message : 'The AI response failed.');
   }

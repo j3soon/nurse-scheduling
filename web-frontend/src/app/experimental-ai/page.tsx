@@ -34,6 +34,7 @@ import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import {
   AiCapabilities,
+  AiStaleTurnError,
   LOCAL_AI_API_URL,
   PRODUCTION_AI_API_URL,
   ToolActivity,
@@ -690,12 +691,16 @@ export default function ExperimentalAiPage() {
         message.id === assistantId ? { ...message, status: undefined } : message
       )));
     } catch (streamError) {
+      const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
       setMessages(previous => previous.map(message => (
         message.id === assistantId
           ? {
             ...message,
+            content: staleTurnMessage ?? message.content,
             status: 'failed',
-            activity: interruptRunningTools(message.activity ?? []),
+            activity: staleTurnMessage === null
+              ? interruptRunningTools(message.activity ?? [])
+              : [{ kind: 'response' as const, text: staleTurnMessage }],
             retry: {
               question,
               requiresAttachments: attachmentsForMessage.length > 0,
@@ -703,7 +708,7 @@ export default function ExperimentalAiPage() {
           }
           : message
       )));
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && staleTurnMessage === null) {
         reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {

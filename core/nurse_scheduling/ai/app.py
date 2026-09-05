@@ -37,6 +37,7 @@ from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
+from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 
 from ..sentry import init_sentry
@@ -79,6 +80,7 @@ CANDIDATE_VALIDATION_ERROR = (
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
+STALE_TURN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
     r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
@@ -202,6 +204,14 @@ class ChatSession:
     proposal_diff: str = ""
 
 
+@dataclass(frozen=True)
+class TurnCompletion:
+    """Whether a completed turn and its optional proposal were retained."""
+
+    turn_saved: bool
+    proposal_saved: bool
+
+
 class SessionStore:
     """Bounded in-memory session storage for the first experimental slice."""
 
@@ -244,15 +254,15 @@ class SessionStore:
         proposal: tuple[str, str] | None = None,
         *,
         base_revision: str,
-    ) -> bool:
-        """Save a completed turn and return whether its proposal was still current."""
+    ) -> TurnCompletion:
+        """Save a completed turn when its schedule revision is still current."""
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
-                return False
+                return TurnCompletion(turn_saved=False, proposal_saved=False)
             if session.revision != base_revision:
                 session.active = False
-                return False
+                return TurnCompletion(turn_saved=False, proposal_saved=False)
             session.history.extend(
                 [
                     ChatMessage(role="user", content=user_message),
@@ -264,7 +274,7 @@ class SessionStore:
             if proposal_saved:
                 session.proposal_yaml, session.proposal_diff = proposal
             session.active = False
-            return proposal_saved
+            return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
         """Replace the schedule snapshot, which drops any proposal made against the old one."""
@@ -662,6 +672,7 @@ def create_app(
         """Stream one answer and retain only text after successful completion."""
         question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
         history, schedule_yaml, base_revision = store.begin(session_id, owner)
+        stream_started = threading.Event()
         messages = build_provider_messages(
             history,
             schedule_yaml,
@@ -678,6 +689,7 @@ def create_app(
             history_question = f"{history_question}\n[Documents were attached: {filenames}.]"
 
         async def generate_events():
+            stream_started.set()
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
             completed = False
@@ -724,7 +736,7 @@ def create_app(
                 proposal = None
                 if pending_proposal is not None:
                     proposal = (pending_proposal.text, pending_proposal.diff)
-                proposal_saved = store.finish(
+                completion = store.finish(
                     session_id,
                     history_question,
                     "".join(assistant_parts),
@@ -732,7 +744,10 @@ def create_app(
                     base_revision=base_revision,
                 )
                 completed = True
-                if proposal_saved:
+                if not completion.turn_saved:
+                    yield _sse_event("stale", {"message": STALE_TURN_ERROR})
+                    return
+                if completion.proposal_saved:
                     yield _sse_event("proposal", {"diff": pending_proposal.diff})
                 yield _sse_event("done", {"message_id": str(uuid4())})
             except asyncio.CancelledError:
@@ -754,10 +769,15 @@ def create_app(
                 if not completed:
                     store.abort(session_id)
 
+        def abort_unstarted_stream() -> None:
+            if not stream_started.is_set():
+                store.abort(session_id)
+
         return StreamingResponse(
             generate_events(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            background=BackgroundTask(abort_unstarted_stream),
         )
 
     @app.put(

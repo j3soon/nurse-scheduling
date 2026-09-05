@@ -20,6 +20,7 @@
 // This test is mostly AI generated.
 
 import {
+  AiStaleTurnError,
   approveProposal,
   createSession,
   getAiBaseUrl,
@@ -208,6 +209,21 @@ describe('AI client', () => {
       new AbortController().signal,
       null,
     )).rejects.toThrow(providerError);
+  });
+
+  it('reports when streamed output was discarded as stale', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'event: delta\ndata: {"text":"Obsolete"}\n\n',
+      'event: stale\ndata: {"message":"The schedule changed."}\n\n',
+    ])));
+
+    await expect(streamMessage(
+      'session-id',
+      'Question',
+      { onDelta: vi.fn() },
+      new AbortController().signal,
+      null,
+    )).rejects.toEqual(new AiStaleTurnError('The schedule changed.'));
   });
 
   it('sends images as multipart form data', async () => {

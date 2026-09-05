@@ -39,6 +39,7 @@ from nurse_scheduling.ai.app import (
     PROVIDER_ERROR,
     SANDBOX_TURN_TIMEOUT_ERROR,
     SERVICE_NAME,
+    STALE_TURN_ERROR,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
@@ -350,6 +351,52 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
     assert backend.close_calls == 1
     assert not session_active
     assert history == []
+
+
+def test_disconnect_before_stream_iteration_releases_the_session() -> None:
+    async def exercise() -> bool:
+        app = create_test_app(settings=make_settings(), provider=FakeProvider())
+        session = app.state.session_store.create("browser-owner", schedule_yaml())
+        request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        await request_events.put(
+            {
+                "type": "http.request",
+                "body": json.dumps({"message": "Do not start"}).encode(),
+                "more_body": False,
+            }
+        )
+        await request_events.put({"type": "http.disconnect"})
+
+        async def receive() -> dict[str, object]:
+            return await request_events.get()
+
+        async def send(_message: dict[str, object]) -> None:
+            pass
+
+        path = f"/sessions/{session.id}/messages"
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"authorization", f"Bearer {AI_AUTH_TOKEN}".encode()),
+                (b"content-type", b"application/json"),
+                (b"cookie", f"{OWNER_COOKIE}=browser-owner".encode()),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        }
+
+        await app(scope, receive, send)
+        return session.active
+
+    assert not asyncio.run(exercise())
 
 
 def test_health_and_streamed_schedule_question() -> None:
@@ -777,6 +824,34 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     recovered_prompt = json.dumps(provider.calls[1])
     assert "Failed question" not in recovered_prompt
     assert "Provisional answer." not in recovered_prompt
+
+
+def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming() -> None:
+    class ScheduleUpdatingProvider(FakeProvider):
+        update_schedule = lambda self: None
+
+        async def stream_events(self, messages, tools=None):
+            async for event in super().stream_events(messages, tools):
+                yield event
+            self.update_schedule()
+
+    provider = ScheduleUpdatingProvider([["Obsolete answer."]])
+    app = create_test_app(settings=make_settings(), provider=provider)
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    owner = client.cookies[OWNER_COOKIE]
+    provider.update_schedule = lambda: app.state.session_store.update_schedule(
+        session_id,
+        owner,
+        "description: updated concurrently",
+    )
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
+
+    assert parse_sse(response.text) == [
+        ("delta", {"text": "Obsolete answer."}),
+        ("stale", {"message": STALE_TURN_ERROR}),
+    ]
 
 
 def test_sandbox_timeout_does_not_expose_exception_details() -> None:
@@ -1351,7 +1426,7 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
         "Broken proposal",
         (schedule_yaml(broken_payload), "broken diff"),
         base_revision=base_revision,
-    )
+    ).proposal_saved
 
     approved = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
     retried = client.post(f"/sessions/{session_id}/proposal/approve", json={"base_sha256": revision})
@@ -1391,11 +1466,11 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         "First proposal",
         (first_proposal, "first diff"),
         base_revision=original_revision,
-    )
+    ).proposal_saved
     _, _, active_turn_revision = store.begin(session.id, "browser-owner")
 
     store.adopt_proposal(session.id, "browser-owner", original_revision)
-    proposal_saved = store.finish(
+    completion = store.finish(
         session.id,
         "Stale edit",
         "Stale proposal",
@@ -1403,7 +1478,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         base_revision=active_turn_revision,
     )
 
-    assert not proposal_saved
+    assert not completion.turn_saved
     assert session.history == [
         ChatMessage(role="user", content="First edit"),
         ChatMessage(role="assistant", content="First proposal"),
