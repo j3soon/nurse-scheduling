@@ -28,6 +28,7 @@ from typing import Any, NamedTuple
 from . import exporter, preference_types
 from .constants import ALL, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR, OFF, OFF_sid
 from .context import Context
+from .errors import InputValidationError
 from .loader import load_data
 from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
 from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
@@ -162,7 +163,7 @@ def schedule(
     _emit_phase_progress(progress_callback, "parsing_data", "Parsing schedule data", progress_started_at)
     logger.info("Extracting scenario data...")
     if scenario.apiVersion != "alpha":
-        raise NotImplementedError(f"Unsupported API version: {scenario.apiVersion}")
+        raise InputValidationError(f"Unsupported API version: {scenario.apiVersion}")
     ctx = Context(**dict(scenario))
     del scenario
     ctx.n_days = (ctx.dates.range.endDate - ctx.dates.range.startDate).days + 1
@@ -194,7 +195,7 @@ def schedule(
 
     # Map date string (YYYY-MM-DD) to date index
     if ctx.country is not None and ctx.country != "TW":
-        raise ValueError(f"Country {ctx.country} is not supported yet")
+        raise InputValidationError(f"Country {ctx.country} is not supported yet")
     for d in range(ctx.n_days):
         date_obj = ctx.dates.items[d]
         ctx.map_did_d[str(date_obj)] = [d]

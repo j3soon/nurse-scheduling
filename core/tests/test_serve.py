@@ -242,6 +242,22 @@ def _client(runner=None, *, start_background=True, settings=None) -> TestClient:
     return TestClient(app)
 
 
+_INVALID_INPUT_SCENARIO = """\
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2026-05-14
+    endDate: 2026-05-14
+people:
+  items:
+    - id: Person 1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+"""
+
+
 def _create(client: TestClient, headers=None, **data):
     return client.post(
         "/optimize",
@@ -1195,6 +1211,63 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
     )
 
     assert result == expected_failure
+
+
+@pytest.mark.parametrize(
+    ("description", "yaml_content"),
+    [
+        ("malformed yaml", "not: ["),
+        ("non-mapping document", "$0"),
+        ("unsupported api version", "apiVersion: beta\n"),
+        ("schema violation", "apiVersion: alpha\npeople: 3\n"),
+        (
+            "unknown person reference",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift request\n    person: nobody\n    date: 05-14\n    shiftType: D\n",
+        ),
+        (
+            "malformed date reference",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift request\n    person: Person 1\n    date: Freeday_\n    shiftType: D\n",
+        ),
+        (
+            "invalid export formatting reference",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: at most one shift per day\n"
+            + "export:\n  formatting:\n    - type: row\n      people: [nobody]\n      backgroundColor: '#ff0000'\n",
+        ),
+        (
+            "empty count shift types",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift count\n    person: Person 1\n    countDates: [05-14]\n"
+            + "    countShiftTypes: []\n    expression: '|x - T|'\n    target: 1\n    weight: -1\n",
+        ),
+    ],
+)
+def test_optimization_runner_reports_invalid_input(description, yaml_content):
+    job = Job(
+        id="job_invalid_input",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout_seconds=60,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    result = OptimizationRunner().run(
+        job,
+        yaml_content.encode("utf-8"),
+        event_callback=lambda *_args: None,
+        should_stop=None,
+    )
+
+    assert isinstance(result, JobFailure), description
+    assert result.code == "invalid_input", description
+    assert result.message, description
 
 
 def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):

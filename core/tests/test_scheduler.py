@@ -30,6 +30,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import scheduler
+from nurse_scheduling.errors import InputValidationError
 from nurse_scheduling.solver_interface import SchedulePhaseProgress, SolverProgress, SolverStatus
 
 TEST_DIR = Path(__file__).parent / "testcases" / "basics"
@@ -43,7 +44,7 @@ def _load_valid_yaml_bytes() -> bytes:
 def test_scheduler_rejects_unsupported_api_version():
     content = _load_valid_yaml_bytes().replace(b"apiVersion: alpha", b"apiVersion: beta")
 
-    with pytest.raises(NotImplementedError, match="Unsupported API version"):
+    with pytest.raises(InputValidationError, match="Unsupported API version"):
         scheduler.schedule(content)
 
 
