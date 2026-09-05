@@ -3,31 +3,22 @@
   "fixture": "ward87",
   "question": "Create a people group 'Seniors' with P2 and P3 in it.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "people.groups[?id=Seniors].members",
-      "contains": "P2"
-    },
-    {
-      "path": "people.groups[?id=Seniors].members",
-      "contains": "P3"
-    },
-    {
-      "path": "people.groups[?id=Seniors].members",
-      "count": 2
-    },
-    {
-      "path": "people.groups[].id",
-      "added": [
-        "Seniors"
-      ]
-    },
-    {
-      "path": "people.groups[].id",
-      "removed": []
-    }
-  ],
   "changes": [
     "people.groups"
+  ],
+  "expected_diff": [
+    {
+      "path": "people.groups",
+      "added": [
+        {
+          "id": "Seniors",
+          "members": [
+            "P2",
+            "P3"
+          ],
+          "description": ""
+        }
+      ]
+    }
   ]
 }
