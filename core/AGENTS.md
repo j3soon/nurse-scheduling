@@ -50,6 +50,9 @@ test paths when a narrower suite is known to be sufficient.
   target the frontend subset alone. Validate through
   `ai/validation.py`, and do not expose the canonical backend flavor, which
   accepts shapes the editor cannot represent.
+- Frontend validation checks normalized frontend state, not raw import
+  compatibility. Do not broaden it merely because an import path can convert
+  or repair additional input shapes.
 - Keep schedule facts out of the prompt summary in `describe_schedule` and put
   them in a tool result instead. The evaluation asserts that a reading case
   cannot be answered from the summary alone, so listing item IDs or line numbers

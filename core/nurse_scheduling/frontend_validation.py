@@ -1,4 +1,4 @@
-"""Pydantic validation for the web frontend scheduling subset."""
+"""Validate normalized web frontend state rather than raw import compatibility."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
