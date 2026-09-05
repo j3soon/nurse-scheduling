@@ -22,9 +22,20 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect } from 'react';
+import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
-const TABS = [
+interface NavTab {
+  name: string;
+  path: string;
+  exportLayout?: boolean;
+}
+
+const CUSTOM_EXPORT_LAYOUT_TOOLTIP =
+  'Custom export layout is saved, so the default layout no longer auto-updates as shift types or date groups change. '
+  + 'Use Clear All and Regenerate on the Export Layout page to restore auto-updates.';
+
+const TABS: NavTab[] = [
   { name: '0. Home', path: '/' },
   { name: '1. Dates', path: '/dates' },
   { name: '2. People', path: '/people' },
@@ -34,7 +45,7 @@ const TABS = [
   { name: '6. Shift Type Successions', path: '/shift-type-successions' },
   { name: '7. Shift Counts', path: '/shift-counts' },
   { name: '8. Shift Affinities', path: '/shift-affinities' },
-  { name: '9. Export Layout', path: '/export-layout' },
+  { name: '9. Export Layout', path: '/export-layout', exportLayout: true },
   { name: '10. Save and Load', path: '/save-and-load' },
   { name: '11. Optimize and Export', path: '/optimize-and-export' },
 ];
@@ -44,6 +55,8 @@ export default function Navigation() {
   const pathname = usePathname();
   const currentTabIndex = TABS.findIndex(tab => tab.path === pathname);
   const { hasTabSwitchWarningActive } = useUnsavedEditingState();
+  const { exportData } = useSchedulingData();
+  const hasCustomExportLayout = exportData !== undefined;
 
   const navigateToTab = useCallback((index: number) => {
     if (index < 0 || index >= TABS.length || index === currentTabIndex) {
@@ -141,19 +154,30 @@ export default function Navigation() {
       <nav className="bg-white shadow-sm">
         <div className="overflow-x-auto">
           <div className="flex justify-start px-4 sm:px-6 lg:px-8">
-            {TABS.map((tab, index) => (
-              <button
-                key={tab.path}
-                onClick={() => navigateToTab(index)}
-                className={`py-4 px-3 border-b-2 font-medium text-sm whitespace-nowrap ${
-                  pathname === tab.path
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                {tab.name}
-              </button>
-            ))}
+            {TABS.map((tab, index) => {
+              const showCustomExportIndicator = Boolean(tab.exportLayout && hasCustomExportLayout);
+              return (
+                <button
+                  key={tab.path}
+                  onClick={() => navigateToTab(index)}
+                  title={showCustomExportIndicator ? CUSTOM_EXPORT_LAYOUT_TOOLTIP : undefined}
+                  className={`py-4 px-3 border-b-2 font-medium text-sm whitespace-nowrap ${
+                    pathname === tab.path
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  {showCustomExportIndicator && (
+                    <span
+                      aria-hidden="true"
+                      data-testid="custom-export-layout-indicator"
+                      className="mr-1.5 inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
+                    />
+                  )}
+                  {tab.name}
+                </button>
+              );
+            })}
           </div>
         </div>
       </nav>

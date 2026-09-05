@@ -29,6 +29,8 @@ import OptimizationProgressChart, { OptimizationProgressPoint } from '@/componen
 import NumberInput from '@/components/NumberInput';
 import BackendTokenField from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
+import StarRepoNudge from '@/components/StarRepoNudge';
+import OptimizationFeedbackNudge from '@/components/OptimizationFeedbackNudge';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { anonymizeSchedulingStateWithMapping } from '@/utils/anonymizeSchedulingState';
 import { restorePeopleIdsInXlsx } from '@/utils/restorePeopleIdsInXlsx';
@@ -95,6 +97,14 @@ interface OptimizeJobResponse {
     early_completion: string;
     schedule: string | null;
   };
+}
+
+interface CompletedOptimizationFeedback {
+  jobId: string;
+  solver: string;
+  timeoutSeconds: number;
+  anonymized: boolean;
+  result: NonNullable<OptimizeJobResponse['result']>;
 }
 
 interface SseEventLogEntry {
@@ -734,6 +744,7 @@ export default function OptimizeAndExportPage() {
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [currentJob, setCurrentJob] = useState<OptimizeJobResponse | null>(null);
+  const [completedFeedback, setCompletedFeedback] = useState<CompletedOptimizationFeedback | null>(null);
   const [incumbentResult, setIncumbentResult] = useState<OptimizeProgressEvent | null>(null);
   const [progressPoints, setProgressPoints] = useState<OptimizationProgressPoint[]>([]);
   const [savedDownload, setSavedDownload] = useState<{ url: string; filename: string } | null>(null);
@@ -1194,6 +1205,7 @@ export default function OptimizeAndExportPage() {
       setScheduleStatus(null);
       setCurrentJobId(null);
       setCurrentJob(null);
+      setCompletedFeedback(null);
       setIncumbentResult(null);
       setProgressPoints([]);
       clearSavedDownload();
@@ -1236,6 +1248,9 @@ export default function OptimizeAndExportPage() {
     }
 
     const runEndpoint = resolvedOptimizeEndpoint;
+    const runSolver = solverArg;
+    const runTimeoutSeconds = timeoutArg;
+    const runAnonymized = anonymizeScheduleData;
     setLockedOptimizeEndpoint(runEndpoint);
     setIsOptimizing(true);
     setTimeoutError(null);
@@ -1245,13 +1260,14 @@ export default function OptimizeAndExportPage() {
     setScheduleStatus(null);
     setCurrentJobId(null);
     setCurrentJob(null);
+    setCompletedFeedback(null);
     setIncumbentResult(null);
     setProgressPoints([]);
     clearSavedDownload();
     setSseEvents([]);
 
     try {
-      const anonymizationResult = anonymizeScheduleData
+      const anonymizationResult = runAnonymized
         ? anonymizeSchedulingStateWithMapping(filteredState, {
             anonymizePeopleItems: true,
             anonymizePeopleGroups: false,
@@ -1272,8 +1288,8 @@ export default function OptimizeAndExportPage() {
         formData.append('prettify', String(prettifyArg));
       }
 
-      formData.append('timeout', String(timeoutArg));
-      formData.append('solver', solverArg);
+      formData.append('timeout', String(runTimeoutSeconds));
+      formData.append('solver', runSolver);
 
       const createResponse = await authorizedFetch(runEndpoint, '/optimize', {
         method: 'POST',
@@ -1330,6 +1346,16 @@ export default function OptimizeAndExportPage() {
       savedDownloadUrlRef.current = url;
       setSavedDownload({ url, filename });
       downloadFileFromUrl(url, filename);
+
+      if (completedJob.result) {
+        setCompletedFeedback({
+          jobId: completedJob.id,
+          solver: runSolver,
+          timeoutSeconds: runTimeoutSeconds,
+          anonymized: runAnonymized,
+          result: completedJob.result,
+        });
+      }
 
       void authorizedFetch(runEndpoint, completedJob.links.self, {
         method: 'DELETE',
@@ -2267,11 +2293,22 @@ export default function OptimizeAndExportPage() {
             )}
 
             {successMessage && (
-              <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-                <div className="flex gap-2">
+              <div className="space-y-2">
+                <div className="flex gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
                   <FiCheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{successMessage}</span>
                 </div>
+                {completedFeedback && (
+                  <OptimizationFeedbackNudge
+                    key={completedFeedback.jobId}
+                    jobId={completedFeedback.jobId}
+                    solver={completedFeedback.solver}
+                    timeoutSeconds={completedFeedback.timeoutSeconds}
+                    anonymized={completedFeedback.anonymized}
+                    result={completedFeedback.result}
+                  />
+                )}
+                <StarRepoNudge />
               </div>
             )}
 

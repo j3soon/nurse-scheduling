@@ -21,7 +21,7 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Git
 - Preserve each file's staged or unstaged state. Never stage, unstage, or commit unless explicitly asked. Stage only the requested index entries.
-- Keep commits focused by module (`core`, `web-frontend`, or `docs`). A `core` + `web-frontend` change may share one commit.
+- Keep commits focused on one change. A self-contained change may span modules in one commit, e.g. `core` + `web-frontend` code, or code plus its `docs` update.
 - Use Conventional Commits, module-scoped where applicable, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `docs: ...`.
 - Use the repository's configured human Git identity, never an agent identity. If none is configured, ask the user.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.

@@ -16,6 +16,7 @@ The hosted frontend uses Google Analytics and Sentry for analytics, diagnostics,
 
 - Sentry Session Replay samples video-like page interactions. Its current defaults mask text and input values and block media before transmission, but replay events and technical metadata are still sent.
 - Feedback screenshots are optional and user-initiated. They are not automatically fully anonymized; users can redact sensitive areas with Sentry's **Hide** tool before submission.
+- One-click optimization ratings send Sentry the rating, job ID, solver, timeout, outcome, score, solver status, termination reason, and whether schedule anonymization was enabled. They do not include the scheduling YAML or a session replay.
 - On frontend or backend errors, the current scheduling YAML may be attached to Sentry. Individual people IDs are anonymized and descriptions are removed where possible, but other sensitive information may remain. If backend anonymization fails, the original YAML may be attached.
 
 Data received by Google Analytics and Sentry is subject to their policies and retention settings.

@@ -55,13 +55,19 @@ describe('instrumentation-client', () => {
     }));
   });
 
-  it('forces the Sentry feedback widget to use the light color scheme', async () => {
+  it('presents the Sentry widget as general feedback', async () => {
     await import('./instrumentation-client');
 
     expect(sentryMocks.feedbackIntegration).toHaveBeenCalledWith(
       expect.objectContaining({
         colorScheme: 'light',
         enableScreenshot: true,
+        triggerLabel: 'Feedback',
+        triggerAriaLabel: 'Send feedback',
+        formTitle: 'Send Feedback',
+        messageLabel: 'Feedback',
+        messagePlaceholder: 'Tell us what worked, what did not, or what could be improved.',
+        submitButtonLabel: 'Send Feedback',
         isEmailRequired: true,
         isNameRequired: true,
       }),
@@ -98,5 +104,26 @@ describe('instrumentation-client', () => {
         },
       },
     });
+  });
+
+  it('does not attach scheduling YAML to one-click optimization ratings', async () => {
+    schedulingStateMocks.getLatestSchedulingYamlForSentry.mockReturnValue('apiVersion: test\n');
+
+    await import('./instrumentation-client');
+
+    const sentryOptions = sentryMocks.init.mock.calls[0][0];
+    const event = {
+      type: 'feedback',
+      contexts: {
+        feedback: {
+          source: 'optimization-result-rating',
+        },
+      },
+    };
+    const hint = {};
+
+    expect(sentryOptions.beforeSend(event, hint)).toBe(event);
+    expect(schedulingStateMocks.getLatestSchedulingYamlForSentry).not.toHaveBeenCalled();
+    expect(hint).toEqual({});
   });
 });
