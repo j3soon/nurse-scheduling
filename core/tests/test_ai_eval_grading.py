@@ -199,6 +199,26 @@ def test_expected_diff_uses_json_strings_for_yaml_infinity(tmp_path: Path):
     assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
 
 
+def test_expected_diff_normalizes_unordered_members_and_optional_defaults(tmp_path: Path):
+    changed = copy.deepcopy(SCHEDULE)
+    changed["people"]["items"].append({"id": "P3"})
+    changed["people"]["groups"][0]["members"] = ["P2", "P1"]
+    expected_group = {"id": "Day People", "members": ["P1", "P2"]}
+    case = _case(
+        expected_diff=[
+            {"path": "people.items", "added": [{"id": "P3", "description": "", "history": []}]},
+            {
+                "path": "people.groups",
+                "removed": [SCHEDULE["people"]["groups"][0]],
+                "added": [expected_group],
+            },
+        ],
+        changes=["people.items", "people.groups"],
+    )
+
+    assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
 def test_expected_diff_supports_replacing_or_adding_a_value(tmp_path: Path):
     changed = copy.deepcopy(SCHEDULE)
     changed["description"] = "Ward B"

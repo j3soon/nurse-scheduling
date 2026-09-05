@@ -334,7 +334,7 @@ def _check_expected_diff(outcome: RunOutcome, expected: ExpectedDiff) -> CheckRe
     if expected.compares_value:
         actual_before = before[0] if len(before) == 1 else None
         actual_after = after[0] if len(after) == 1 else None
-        passed = actual_before == expected.before and actual_after == expected.after
+        passed = _key(actual_before) == _key(expected.before) and _key(actual_after) == _key(expected.after)
         detail = "" if passed else f"changed from {actual_before!r} to {actual_after!r}"
         return CheckResult(expected.describe(), passed, detail)
     if len(before) != 1 or not isinstance(before[0], list) or len(after) != 1 or not isinstance(after[0], list):
@@ -461,18 +461,32 @@ def _key(value: Any) -> str:
     return json.dumps(_json_value(value), sort_keys=True, default=str)
 
 
-def _json_value(value: Any) -> Any:
+def _json_value(value: Any, field_name: str = "") -> Any:
     """Represent YAML infinities with valid JSON strings in testcase expectations."""
     if isinstance(value, float) and math.isinf(value):
         return ".inf" if value > 0 else "-.inf"
     if isinstance(value, dict):
+        default_weight = {
+            "shift request": 1,
+            "shift type successions": 1,
+            "shift type requirement": -1,
+            "shift count": -1,
+            "shift affinity": 1,
+        }.get(value.get("type"))
         return {
-            key: _json_value(child)
+            key: _json_value(child, key)
             for key, child in value.items()
-            if not (key == "description" and child == "")
+            if not (
+                (key == "description" and child == "")
+                or (key == "history" and child == [])
+                or (key == "weight" and child == default_weight)
+            )
         }
     if isinstance(value, list):
-        return [_json_value(child) for child in value]
+        normalized = [_json_value(child) for child in value]
+        if field_name != "pattern":
+            normalized.sort(key=lambda child: json.dumps(child, sort_keys=True, default=str))
+        return normalized
     return value
 
 
