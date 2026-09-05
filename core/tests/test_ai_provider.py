@@ -389,6 +389,14 @@ def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.Monke
     assert events == [TextDelta("Answer"), TokenUsage(120, 30, 150, 80, 12)]
 
 
+def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body({"choices": []}, _delta_chunk({"content": "Answer"}))
+
+    events = _events(_streaming_provider(monkeypatch, body))
+
+    assert events == [TextDelta("Answer")]
+
+
 def test_does_not_request_token_usage_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[httpx.Request] = []
 

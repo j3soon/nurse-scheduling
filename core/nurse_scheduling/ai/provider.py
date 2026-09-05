@@ -330,7 +330,9 @@ class OpenAiCompatibleProvider:
                     usage = event.get("usage")
                     if usage is not None:
                         yield _parse_token_usage(usage)
-                    if not choices and usage is not None:
+                    # A usage-only or filter-only chunk carries no choice, and some
+                    # providers omit usage from it.
+                    if not choices:
                         continue
                     delta = choices[0]["delta"]
                     content = delta.get("content")
