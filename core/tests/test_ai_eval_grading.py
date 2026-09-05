@@ -262,6 +262,14 @@ def test_answer_values_come_from_the_fixture(tmp_path: Path):
     assert not failing.passed
 
 
+def test_unknown_person_refusal_accepts_contracted_does_not_exist():
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "reject-unknown-person")
+
+    result = grade(case, RunOutcome(answer="P999 doesn't exist, so I made no change."))
+
+    assert result.passed
+
+
 def test_optional_tool_usage_grades_required_forbidden_and_bounded_calls(tmp_path: Path):
     case = _case(
         expect_proposal=False,
