@@ -1,0 +1,19 @@
+{
+  "id": "shift-type-remove-cascade",
+  "fixture": "ward87",
+  "question": "Remove the N shift type entirely and clean up every exact reference to it. Do not change N+, N~, or the Night group itself.",
+  "expect_proposal": true,
+  "assert": [
+    {"path": "shiftTypes.items[].id", "removed": ["N"]},
+    {"path": "shiftTypes.groups[?id=Night].members", "equals": ["N+", "N~"]},
+    {"path": "people.items[?history=N]", "absent": true},
+    {"path": "preferences[?shiftType=N]", "absent": true},
+    {"path": "preferences", "delta": -5},
+    {"path": "shiftTypes.items[?id=N+]", "present": true},
+    {"path": "shiftTypes.items[?id=N~]", "present": true},
+    {"path": "shiftTypes.groups[?id=Night]", "count": 1}
+  ],
+  "changes": ["shiftTypes", "people.items", "preferences"],
+  "tags": ["difficult", "tuning", "deletion", "cross-module"],
+  "note": "N appears in repeated history entries, the Night group, one staffing requirement, and four shift requests. Similar item IDs and the group ID must survive."
+}

@@ -262,6 +262,9 @@ Fields:
 
 Rules:
 - Shift-type IDs must be unique and cannot case-insensitively equal the reserved selectors ALL or OFF.
+- To remove a shift type entirely, remove its item, every group membership, every occurrence in people history, and
+  every exact preference or export reference in one coordinated edit. Remove a preference or export rule if deleting
+  the shift type leaves its required shift-type selector empty. Do not alter IDs that merely contain the deleted ID.
 
 Minimal frontend-compatible YAML:
 
