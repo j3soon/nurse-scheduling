@@ -32,7 +32,7 @@ from .errors import InputValidationError
 from .loader import load_data
 from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
 from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
-from .utils import parse_dates
+from .utils import parse_dates, parse_pids, parse_sids
 
 logger = logging.getLogger(__name__)
 
@@ -171,9 +171,11 @@ def schedule(
     ctx.n_people = len(ctx.people.items)
     ctx.dates.items = [ctx.dates.range.startDate + timedelta(days=d) for d in range(ctx.n_days)]
 
-    # Map shift type ID to shift type index
+    # Map shift type ID to shift type index. Keys are strings, since YAML parses
+    # an unquoted numeric ID as `int` and a quoted one as `str`, and a definition
+    # and a reference to it need not agree on quoting.
     for s in range(ctx.n_shift_types):
-        ctx.map_sid_s[ctx.shiftTypes.items[s].id] = [s]
+        ctx.map_sid_s[str(ctx.shiftTypes.items[s].id)] = [s]
     # Add shift type ALL and OFF keywords
     ctx.map_sid_s[ALL] = list(range(ctx.n_shift_types))
     ctx.map_sid_s[OFF] = [OFF_sid]
@@ -181,17 +183,17 @@ def schedule(
     for g in range(len(ctx.shiftTypes.groups)):
         group = ctx.shiftTypes.groups[g]
         # Flatten and deduplicate shift type indices for the group
-        ctx.map_sid_s[group.id] = sorted(set().union(*[ctx.map_sid_s[sid] for sid in group.members]))
+        ctx.map_sid_s[str(group.id)] = parse_sids(group.members, ctx.map_sid_s)
     # Map person ID to person index
     for p in range(ctx.n_people):
-        ctx.map_pid_p[ctx.people.items[p].id] = [p]
+        ctx.map_pid_p[str(ctx.people.items[p].id)] = [p]
     # Add people ALL keyword
     ctx.map_pid_p[ALL] = list(range(ctx.n_people))
     # Map people group ID to list of person indices
     for g in range(len(ctx.people.groups)):
         group = ctx.people.groups[g]
         # Flatten and deduplicate person indices for the group
-        ctx.map_pid_p[group.id] = sorted(set().union(*[ctx.map_pid_p[pid] for pid in group.members]))
+        ctx.map_pid_p[str(group.id)] = parse_pids(group.members, ctx.map_pid_p)
 
     # Map date string (YYYY-MM-DD) to date index
     if ctx.country is not None and ctx.country != "TW":

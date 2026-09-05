@@ -85,11 +85,11 @@ def _build_custom_export_style_info(
 
         if rule.type in ("row", "people header", "history", "cell"):
             for target in rule.people:
-                if target not in ctx.map_pid_p:
+                if str(target) not in ctx.map_pid_p:
                     raise InputValidationError(
                         f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
                     )
-                target_people.update(ctx.map_pid_p[target])
+                target_people.update(ctx.map_pid_p[str(target)])
 
         if rule.type in ("column", "date header", "cell"):
             for target in rule.dates:
@@ -97,11 +97,11 @@ def _build_custom_export_style_info(
 
         if rule.type == "cell":
             for target in rule.shiftTypes:
-                if target not in ctx.map_sid_s:
+                if str(target) not in ctx.map_sid_s:
                     raise InputValidationError(
                         f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
                     )
-                target_shift_types.update(ctx.map_sid_s[target])
+                target_shift_types.update(ctx.map_sid_s[str(target)])
 
         if rule.type == "row":
             for p in target_people:
@@ -291,9 +291,9 @@ def _validate_export_formatting_rule_usage(rule):
 
 
 def _get_shift_request_shape(ctx: Context, person_target, date_target) -> str:
-    person_id = person_target
-    person_item_ids = {person.id for person in ctx.people.items}
-    people_group_ids = {group.id for group in ctx.people.groups}
+    person_id = str(person_target)
+    person_item_ids = {str(person.id) for person in ctx.people.items}
+    people_group_ids = {str(group.id) for group in ctx.people.groups}
     date_item_ids = {str(date) for date in ctx.dates.items}
     date_group_ids = {group.id for group in ctx.dates.groups}
     date_keyword_ids = set(constants.MAP_DATE_KEYWORD_TO_FILTER) | set(constants.MAP_WEEKDAY_TO_STR)
@@ -348,19 +348,19 @@ def _build_cell_annotation_rules(ctx: Context):
         target_dates = set()
         target_shift_types = set()
         for target in rule.people:
-            if target not in ctx.map_pid_p:
+            if str(target) not in ctx.map_pid_p:
                 raise InputValidationError(
                     f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
                 )
-            target_people.update(ctx.map_pid_p[target])
+            target_people.update(ctx.map_pid_p[str(target)])
         for target in rule.dates:
             target_dates.update(utils.parse_dates(target, ctx.map_did_d, ctx.dates.range))
         for target in rule.shiftTypes:
-            if target not in ctx.map_sid_s:
+            if str(target) not in ctx.map_sid_s:
                 raise InputValidationError(
                     f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
                 )
-            target_shift_types.update(ctx.map_sid_s[target])
+            target_shift_types.update(ctx.map_sid_s[str(target)])
         annotation_rules.append(
             {
                 "rule": rule,
@@ -593,7 +593,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
             if solver.get_value(ctx.shifts[(d, s, p)]) == 1:
                 if cell_value != "":
                     cell_value += ", "
-                cell_value += ctx.shiftTypes.items[s].id
+                cell_value += str(ctx.shiftTypes.items[s].id)
         if prettify and (d, p) in cell_annotations:
             for append_text in cell_annotations[(d, p)]["append_text"]:
                 cell_value += append_text

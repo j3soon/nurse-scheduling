@@ -98,9 +98,10 @@ def parse_sids(sids, map_sid_s):
     sids = ensure_list(sids)
     result = []
     for sid in sids:
-        if sid not in map_sid_s:
+        # Look up by string, matching how the ID maps are keyed.
+        if str(sid) not in map_sid_s:
             raise InputValidationError(f"Unknown shift type ID: {sid}")
-        result.extend(map_sid_s[sid])
+        result.extend(map_sid_s[str(sid)])
     return sorted(set(result))
 
 
@@ -108,9 +109,9 @@ def parse_pids(pids, map_pid_p):
     pids = ensure_list(pids)
     result = []
     for pid in pids:
-        if pid not in map_pid_p:
+        if str(pid) not in map_pid_p:
             raise InputValidationError(f"Unknown person ID: {pid}")
-        result.extend(map_pid_p[pid])
+        result.extend(map_pid_p[str(pid)])
     return sorted(set(result))
 
 

@@ -764,3 +764,78 @@ def test_scheduler_returns_none_tuple_for_non_solution_status(monkeypatch, statu
     assert score is None
     assert status_name == status.value
     assert cell_export_info is None
+
+
+@pytest.mark.parametrize(
+    ("description", "person_id", "person_ref"),
+    [
+        # `Person.id` and a preference's `person` both accept `int | str`, so a
+        # definition and a reference to it need not agree on YAML quoting.
+        ("numeric definition, quoted reference", "0", "'0'"),
+        ("quoted definition, numeric reference", "'0'", "0"),
+        ("numeric definition and reference", "0", "0"),
+        ("quoted definition and reference", "'0'", "'0'"),
+    ],
+)
+def test_scheduler_matches_person_ids_regardless_of_yaml_quoting(description, person_id, person_ref):
+    content = textwrap.dedent(f"""\
+        apiVersion: alpha
+        dates:
+          range:
+            startDate: 2023-08-18
+            endDate: 2023-08-18
+        people:
+          items:
+            - id: {person_id}
+          groups:
+            - id: Team
+              members: [{person_ref}]
+        shiftTypes:
+          items:
+            - id: D
+        preferences:
+          - type: at most one shift per day
+          - type: shift type requirement
+            shiftType: D
+            requiredNumPeople: 1
+            qualifiedPeople: {person_ref}
+          - type: shift request
+            person: {person_ref}
+            date: 18
+            shiftType: D
+            weight: 1
+    """).encode("utf-8")
+
+    result = scheduler.schedule(content)
+
+    assert result.solver_status == "OPTIMAL", description
+
+
+def test_scheduler_matches_numeric_shift_type_ids_referenced_as_strings():
+    # `ShiftType.id` accepts `int | str` while preferences reference shift types
+    # as strings only, so a numeric definition is always referenced quoted.
+    content = textwrap.dedent("""\
+        apiVersion: alpha
+        dates:
+          range:
+            startDate: 2023-08-18
+            endDate: 2023-08-18
+        people:
+          items:
+            - id: Person 1
+        shiftTypes:
+          items:
+            - id: 1
+          groups:
+            - id: Day
+              members: ['1']
+        preferences:
+          - type: at most one shift per day
+          - type: shift type requirement
+            shiftType: '1'
+            requiredNumPeople: 1
+    """).encode("utf-8")
+
+    result = scheduler.schedule(content)
+
+    assert result.solver_status == "OPTIMAL"
