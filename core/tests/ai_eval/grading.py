@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import json
+import math
 import re
 from collections import Counter
 from collections.abc import Sequence
@@ -457,7 +458,22 @@ def _collection(found: list[Any]) -> list[Any]:
 
 def _key(value: Any) -> str:
     """Give any resolved value a comparable identity, including a mapping."""
-    return json.dumps(value, sort_keys=True, default=str)
+    return json.dumps(_json_value(value), sort_keys=True, default=str)
+
+
+def _json_value(value: Any) -> Any:
+    """Represent YAML infinities with valid JSON strings in testcase expectations."""
+    if isinstance(value, float) and math.isinf(value):
+        return ".inf" if value > 0 else "-.inf"
+    if isinstance(value, dict):
+        return {
+            key: _json_value(child)
+            for key, child in value.items()
+            if not (key == "description" and child == "")
+        }
+    if isinstance(value, list):
+        return [_json_value(child) for child in value]
+    return value
 
 
 def _check_nothing_else_changed(outcome: RunOutcome, changes: tuple[str, ...]) -> CheckResult:

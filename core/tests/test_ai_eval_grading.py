@@ -187,6 +187,18 @@ def test_expected_diff_supports_replacing_a_complete_object(tmp_path: Path):
     assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
 
 
+def test_expected_diff_uses_json_strings_for_yaml_infinity(tmp_path: Path):
+    changed = copy.deepcopy(SCHEDULE)
+    added = {"type": "shift count", "weight": float("-inf")}
+    changed["preferences"].append(added)
+    case = _case(
+        expected_diff=[{"path": "preferences", "added": [{"type": "shift count", "weight": "-.inf"}]}],
+        changes=["preferences"],
+    )
+
+    assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
 def test_expected_diff_supports_replacing_or_adding_a_value(tmp_path: Path):
     changed = copy.deepcopy(SCHEDULE)
     changed["description"] = "Ward B"

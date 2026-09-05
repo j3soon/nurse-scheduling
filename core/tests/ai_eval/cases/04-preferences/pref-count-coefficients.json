@@ -3,33 +3,37 @@
   "fixture": "ward87",
   "question": "P6 should reach 6 workload points over the roster, counting D as 1 and N as 2.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "preferences[?type=shift count][?person=P6].countShiftTypeCoefficients",
-      "equals": [
-        [
-          "D",
-          1
-        ],
-        [
-          "N",
-          2
-        ]
-      ]
-    },
-    {
-      "path": "preferences[?type=shift count][?person=P6].target",
-      "equals": 6
-    },
-    {
-      "path": "preferences[?type=shift count][?person=P6].person",
-      "equals": [
-        "P6"
-      ]
-    },
+  "expected_diff": [
     {
       "path": "preferences",
-      "delta": 1
+      "added": [
+        {
+          "type": "shift count",
+          "person": [
+            "P6"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "D",
+            "N"
+          ],
+          "countShiftTypeCoefficients": [
+            [
+              "D",
+              1
+            ],
+            [
+              "N",
+              2
+            ]
+          ],
+          "expression": "x = T",
+          "target": 6,
+          "weight": "-.inf"
+        }
+      ]
     }
   ],
   "changes": [

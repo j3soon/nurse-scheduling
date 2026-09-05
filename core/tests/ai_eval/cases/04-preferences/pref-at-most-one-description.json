@@ -3,18 +3,20 @@
   "fixture": "ward87",
   "question": "Add a description to the 'at most one shift per day' rule saying 'No double shifts'.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "preferences[?type=at most one shift per day].description",
-      "equals": "No double shifts"
-    },
-    {
-      "path": "preferences[?type=at most one shift per day]",
-      "count": 1
-    },
+  "expected_diff": [
     {
       "path": "preferences",
-      "delta": 0
+      "removed": [
+        {
+          "type": "at most one shift per day"
+        }
+      ],
+      "added": [
+        {
+          "type": "at most one shift per day",
+          "description": "No double shifts"
+        }
+      ]
     }
   ],
   "changes": [

@@ -3,34 +3,27 @@
   "fixture": "ward87",
   "question": "P7 and P8 should not share a D shift. Use a negative weight of -10.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "preferences[?type=shift affinity].weight",
-      "equals": -10
-    },
-    {
-      "path": "preferences[?type=shift affinity].people1",
-      "contains": "P7"
-    },
-    {
-      "path": "preferences[?type=shift affinity].people2",
-      "contains": "P8"
-    },
-    {
-      "path": "preferences[?type=shift affinity].people1",
-      "count": 1
-    },
-    {
-      "path": "preferences[?type=shift affinity].people2",
-      "count": 1
-    },
-    {
-      "path": "preferences[?type=shift affinity].shiftTypes",
-      "count": 1
-    },
+  "expected_diff": [
     {
       "path": "preferences",
-      "delta": 1
+      "added": [
+        {
+          "type": "shift affinity",
+          "date": [
+            "ALL"
+          ],
+          "people1": [
+            "P7"
+          ],
+          "people2": [
+            "P8"
+          ],
+          "shiftTypes": [
+            "D"
+          ],
+          "weight": -10
+        }
+      ]
     }
   ],
   "changes": [

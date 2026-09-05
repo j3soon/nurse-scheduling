@@ -3,30 +3,26 @@
   "fixture": "ward87",
   "question": "P63 should work exactly 4 N shifts across the whole month.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "preferences[?type=shift count][?person=P63].countShiftTypes",
-      "contains": "N"
-    },
-    {
-      "path": "preferences[?type=shift count][?person=P63].target",
-      "equals": 4
-    },
-    {
-      "path": "preferences[?type=shift count]",
-      "count": 4
-    },
-    {
-      "path": "preferences[?type=shift count][?person=P63].person",
-      "count": 1
-    },
-    {
-      "path": "preferences[?type=shift count][?person=P63].countShiftTypes",
-      "count": 1
-    },
+  "expected_diff": [
     {
       "path": "preferences",
-      "delta": 1
+      "added": [
+        {
+          "type": "shift count",
+          "person": [
+            "P63"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "N"
+          ],
+          "expression": "x = T",
+          "target": 4,
+          "weight": "-.inf"
+        }
+      ]
     }
   ],
   "changes": [

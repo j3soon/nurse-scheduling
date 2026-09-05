@@ -3,24 +3,26 @@
   "fixture": "ward87",
   "question": "Every day needs exactly 2 students on the D~ shift.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "preferences[?type=shift type requirement][?shiftType=D~][?requiredNumPeople=2].requiredNumPeople",
-      "equals": 2
-    },
-    {
-      "path": "preferences[?type=shift type requirement][?shiftType=D~][?requiredNumPeople=2]",
-      "count": 1
-    },
-    {
-      "path": "preferences[?type=shift type requirement][?shiftType=D~][?requiredNumPeople=2].qualifiedPeople",
-      "equals": [
-        "Students"
-      ]
-    },
+  "expected_diff": [
     {
       "path": "preferences",
-      "delta": 1
+      "added": [
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "D~"
+          ],
+          "requiredNumPeople": 2,
+          "qualifiedPeople": [
+            "Students"
+          ],
+          "date": [
+            "ALL"
+          ],
+          "weight": -1
+        }
+      ]
     }
   ],
   "changes": [

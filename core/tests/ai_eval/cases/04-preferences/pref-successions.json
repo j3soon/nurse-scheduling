@@ -3,27 +3,25 @@
   "fixture": "ward87",
   "question": "P5 should never work a student night shift N~ followed by a student day shift D~ the next day.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "preferences[?type=shift type successions][?person=P5].pattern",
-      "equals": [
-        "N~",
-        "D~"
-      ]
-    },
-    {
-      "path": "preferences[?type=shift type successions][?person=P5].person",
-      "equals": [
-        "P5"
-      ]
-    },
-    {
-      "path": "preferences[?type=shift type successions][?person=P5]",
-      "count": 1
-    },
+  "expected_diff": [
     {
       "path": "preferences",
-      "delta": 1
+      "added": [
+        {
+          "type": "shift type successions",
+          "person": [
+            "P5"
+          ],
+          "pattern": [
+            "N~",
+            "D~"
+          ],
+          "date": [
+            "ALL"
+          ],
+          "weight": "-.inf"
+        }
+      ]
     }
   ],
   "changes": [

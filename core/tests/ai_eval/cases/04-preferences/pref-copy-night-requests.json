@@ -3,14 +3,34 @@
   "fixture": "ward87",
   "question": "Give P86 the same N-shift requests as P85. Do not copy P85's K or OFF requests.",
   "expect_proposal": true,
-  "assert": [
-    {"path": "preferences[?type=shift request][?person=P86][?shiftType=N][?date=04]", "count": 1},
-    {"path": "preferences[?type=shift request][?person=P86][?shiftType=N][?date=04].weight", "equals": 11000000000},
-    {"path": "preferences[?type=shift request][?person=P86][?shiftType=K]", "absent": true},
-    {"path": "preferences[?type=shift request][?person=P86][?shiftType=OFF]", "absent": true},
-    {"path": "preferences", "delta": 1}
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "P86"
+          ],
+          "date": [
+            "04"
+          ],
+          "shiftType": [
+            "N"
+          ],
+          "weight": 11000000000
+        }
+      ]
+    }
   ],
-  "changes": ["preferences"],
-  "tags": ["difficult", "tuning", "preference-copy", "reading"],
+  "changes": [
+    "preferences"
+  ],
+  "tags": [
+    "difficult",
+    "tuning",
+    "preference-copy",
+    "reading"
+  ],
   "note": "P85 has one N request, one K request, and one OFF request. The assistant must inspect and copy only the requested subset with its original date and weight."
 }

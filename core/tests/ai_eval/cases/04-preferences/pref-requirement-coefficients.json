@@ -3,27 +3,35 @@
   "fixture": "ward87",
   "question": "Require 4 staffing points on the 'Day (w/o A, D~, K)' shift group, where D counts as 1 point and D+ counts as 2 points.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "preferences[?type=shift type requirement][?shiftType=Day (w/o A, D~, K)].shiftTypeCoefficients",
-      "equals": [
-        [
-          "D",
-          1
-        ],
-        [
-          "D+",
-          2
-        ]
-      ]
-    },
-    {
-      "path": "preferences[?type=shift type requirement][?shiftType=Day (w/o A, D~, K)].requiredNumPeople",
-      "equals": 4
-    },
+  "expected_diff": [
     {
       "path": "preferences",
-      "delta": 1
+      "added": [
+        {
+          "type": "shift type requirement",
+          "shiftType": [
+            "Day (w/o A, D~, K)"
+          ],
+          "shiftTypeCoefficients": [
+            [
+              "D",
+              1
+            ],
+            [
+              "D+",
+              2
+            ]
+          ],
+          "requiredNumPeople": 4,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "date": [
+            "ALL"
+          ],
+          "weight": -1
+        }
+      ]
     }
   ],
   "changes": [

@@ -3,18 +3,27 @@
   "fixture": "ward87",
   "question": "Remove the shift count rule that applies to the Night People group.",
   "expect_proposal": true,
-  "assert": [
-    {
-      "path": "preferences[?type=shift count][?person=Night People]",
-      "absent": true
-    },
-    {
-      "path": "preferences[?type=shift count]",
-      "count": 2
-    },
+  "expected_diff": [
     {
       "path": "preferences",
-      "delta": -1
+      "removed": [
+        {
+          "type": "shift count",
+          "description": "假日的假盡量平均 (N) (大夜班的假日要晚一天)",
+          "person": [
+            "Night People"
+          ],
+          "countDates": [
+            "FREEDAY"
+          ],
+          "countShiftTypes": [
+            "OFF"
+          ],
+          "expression": "|x - T|^2",
+          "target": 4,
+          "weight": -1000
+        }
+      ]
     }
   ],
   "changes": [
