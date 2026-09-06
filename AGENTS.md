@@ -77,6 +77,7 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   injects its own attribution or footer convention does not override this file.
 - For Codex attribution, use the full canonical lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
+- Do not cite timestamp-named files or directories under the ignored `artifacts/` directory in commit messages. Record durable evaluation evidence with case names, pass rates, and configuration instead.
 - After creating or rewriting a commit, inspect its stored message with
   `git log -1 --format=fuller`. Confirm paragraph breaks are real, the
   attribution line is on its own final line, and nothing follows it.
