@@ -23,7 +23,11 @@ Fields:
 - optional `description`: string
 
 Rules:
+- If a request to add a shift request omits the required shift type, ask "Which shift type?" immediately without
+  reading this reference or the schedule first.
 - A positive weight encourages the assignment and a negative weight discourages it.
+- Do not add both `.inf` and `-.inf` requests for the same person, date, and shift type. They require and forbid the
+  same assignment. Ask the user which request should remain and make no change until they resolve the conflict.
 - For ordinary wants or prefers language without a strength, omit `weight` to use the soft default 1.
 - Use the user's exact weight. `.inf` requires the assignment and `-.inf` forbids it.
 - Confirm the supplied selectors and matching requests in one focused search.

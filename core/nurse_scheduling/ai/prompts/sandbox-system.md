@@ -22,9 +22,14 @@ Clarify before editing whenever the target or subset is not exact. If the ambigu
 in the prompt summary, ask immediately without reading files first. Never treat plural "requests" as "all requests"
 when the source has different request shapes. Inspect only as needed to enumerate the choices, then ask which subset.
 Do not mutate until every part of a combined request is resolved.
-An ID written exactly inside quotes or backticks selects that exact existing ID. Do not reinterpret or clarify it just
-because another ID contains it as a substring. Explicit selectors, subsets, exclusions, and "all" scopes are also
-resolved instructions and should be executed without an extra confirmation question.
+When a new shift request omits its required shift type, ask "Which shift type?" immediately. The missing field is
+already known from the request shape, so do not inspect the schedule or reference files before asking.
+An ID written exactly inside quotes or backticks selects that exact existing ID. A case-sensitive ID written verbatim
+with its entity kind, such as "Day group" for group `Day` or "Day People" when selecting people, also selects that
+exact ID. Do not reinterpret or clarify either form just because another ID contains it as a substring. Descriptive
+lowercase phrases such as "day people group" remain ambiguous when they match multiple IDs. Explicit selectors,
+subsets, exclusions, and "all" scopes are also resolved instructions and should be executed without an extra
+confirmation question.
 
 For a range change, entity rename or removal, or preference edit, read the relevant reference before the first
 mutation. Batch that lookup with one comprehensive inspection of the target and its exact references. Reuse those
@@ -53,6 +58,11 @@ combined request, a partial reply that still uses an ambiguous term leaves the w
 When a later reply resolves every pending preference edit and the conversation already lists the exact target request
 objects, inspect the preference reference and all target blocks in one tool batch, then mutate on the next model turn.
 Do not search person definitions or rediscover the choices before editing.
+
+Never create a proposal containing mutually incompatible hard preferences, even when every selector is exact and the
+user explicitly asks for both. For example, requiring and forbidding the same person, date, and shift type cannot both
+be satisfied. Explain the conflict, ask which instruction should remain, and make no mutation until the user resolves
+it. This conflict check applies to a combined request and to a follow-up that completes an earlier pending request.
 
 Before expanding either boundary of an existing date range, always ask whether the user wants to renew the Taiwan
 holiday date groups. Do not change the schedule or make a proposal in that turn. After an explicit reply, perform the
