@@ -450,6 +450,16 @@ def test_loads_multi_turn_cases_and_tags(tmp_path: Path):
     assert case.tags == ("difficult", "tuning")
 
 
+def test_loads_nested_dataset_and_category_path(tmp_path: Path):
+    case_path = tmp_path / "basics" / "03-structure" / "case.json"
+    case_path.parent.mkdir(parents=True)
+    case_path.write_text(json.dumps(_case(expect_proposal=False)), encoding="utf-8")
+
+    case = load_cases(tmp_path)[0]
+
+    assert case.category == "basics/03-structure"
+
+
 def test_a_multi_turn_case_can_designate_an_earlier_proposal(tmp_path: Path):
     entry = _case(
         user_turns=["Change it.", "What changed?"],
@@ -643,22 +653,28 @@ def test_every_case_sits_in_a_category_directory():
     cases = load_cases(CASES_PATH)
 
     assert {case.category for case in cases} == {
-        "00-tools",
-        "00-summary",
-        "01-reading",
-        "02-basic-edit",
-        "03-structure",
-        "04-preferences",
-        "05-export",
-        "06-refusal",
-        "07-multi-turn",
-        "08-proposal-lifecycle",
-        "09-holdout",
+        "basics/00-tools",
+        "basics/00-summary",
+        "basics/01-reading",
+        "basics/02-basic-edit",
+        "basics/03-structure",
+        "basics/04-preferences",
+        "basics/05-export",
+        "basics/06-refusal",
+        "basics/07-multi-turn",
+        "basics/08-proposal-lifecycle",
+        "basics/09-holdout",
     }
     assert all(
-        not case.expect_proposal for case in cases if case.category in {"00-summary", "01-reading", "06-refusal"}
+        not case.expect_proposal
+        for case in cases
+        if case.category.endswith(("00-summary", "01-reading", "06-refusal"))
     )
-    assert all(case.expect_proposal for case in cases if case.category.startswith(("02", "03", "04", "05")))
+    assert all(
+        case.expect_proposal
+        for case in cases
+        if case.category.removeprefix("basics/").startswith(("02", "03", "04", "05"))
+    )
 
 
 def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
@@ -680,7 +696,7 @@ def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
             for value in case.answer_contains
         ]
         in_summary = [options for options in expected if any(o in summaries[case.fixture] for o in options)]
-        if case.category == "00-summary":
+        if case.category.endswith("00-summary"):
             assert len(in_summary) == len(expected), f"{case.id} is not answerable from the summary"
         else:
             assert len(in_summary) < len(expected), f"{case.id} is answerable from the summary alone"

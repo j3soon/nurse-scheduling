@@ -136,7 +136,7 @@ def test_a_correct_answer_passes_and_records_its_cost():
     run = _run("ask-people-count", ScriptedProvider([TextDelta("There are 87 people.")]))
 
     assert run.passed
-    assert run.category == "00-summary"
+    assert run.category == "basics/00-summary"
     assert run.turns == 1
     assert run.tools == []
     assert not run.proposed
@@ -433,7 +433,8 @@ def test_cases_are_selected_by_id_and_by_category():
     }
     assert len(select(cases, [], [], full=True)) == len(cases)
     assert [case.id for case in select(cases, ["people-add"], [])] == ["people-add"]
-    assert {case.category for case in select(cases, [], ["06-refusal"])} == {"06-refusal"}
+    assert {case.category for case in select(cases, [], ["06-refusal"])} == {"basics/06-refusal"}
+    assert {case.category for case in select(cases, [], ["basics/06-refusal"])} == {"basics/06-refusal"}
     assert {case.id for case in select(cases, [], [], ["taiwan-holidays"])} == {
         "dates-range-expand-taiwan-detailed-yes",
         "dates-range-expand-taiwan-no",

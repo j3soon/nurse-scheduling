@@ -172,7 +172,8 @@ def load_cases(path: Path) -> list[EvalCase]:
             entry = json.loads(file.read_text(encoding="utf-8"))
         except json.JSONDecodeError as error:
             raise EvalCaseError(f"{file.name} is not valid JSON. {error}") from error
-        case = _build_case(entry, file.name, file.parent.name if path.is_dir() else "")
+        category = file.parent.relative_to(path).as_posix() if path.is_dir() else ""
+        case = _build_case(entry, file.name, category)
         if path.is_dir() and case.id != file.stem:
             raise EvalCaseError(f"{file.name} holds case id {case.id}.")
         if case.id in seen:

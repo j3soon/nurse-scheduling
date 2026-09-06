@@ -1,6 +1,8 @@
 # AI evaluation case format
 
-Store one JSON object per case under `cases/<category>/<id>.json`. Every case names a fixture, one question or a
+Store one JSON object per case under `cases/<dataset>/<category>/<id>.json`. Existing synthetic coverage lives under
+`cases/basics/`, mirroring the normal YAML testcase layout under `tests/testcases/basics/`. Reserve sibling dataset
+directories such as `cases/real/` for cases derived from real user scenarios. Every case names a fixture, one question or a
 `user_turns` sequence, and whether one turn should propose a schedule change. Proposal cases default to the final
 turn. Set the one-based `proposal_turn` when a later turn should discuss an earlier proposal without reproposing it.
 Every other turn is explicitly graded as producing no proposal.
@@ -47,3 +49,7 @@ and fixture hashes so comparisons do not silently mix configurations.
 Cases tagged `holdout` use schedules that differ from the primary tuning fixtures. Run them to check generalization,
 but do not rewrite prompts to match one held-out trajectory. Promote a recurring failure pattern into a separate
 tuning case before changing agent guidance.
+
+The runner reports the full relative category, for example `basics/03-structure`. `--category` accepts that full name
+or its trailing category name, so existing commands such as `--category 03-structure` remain valid. Use tags for
+cross-cutting evaluation properties such as `holdout`, `tuning`, or `clarification`, not for dataset provenance.
