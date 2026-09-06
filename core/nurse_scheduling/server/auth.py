@@ -19,14 +19,20 @@
 
 import hashlib
 import hmac
+import json
 import logging
+import re
+import secrets
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
 
 AUTH_TOKEN_ENV_NAME = "API_AUTH_TOKEN"
 """Environment setting holding the shared token."""
+AUTH_TOKENS_ENV_NAME = "API_AUTH_TOKENS"
+"""Environment setting holding a JSON object of administrative IDs to tokens."""
 AUTH_REQUIRED_ENV_NAME = "API_AUTH_REQUIRED"
 """Environment setting requiring authentication, baked into images built for deployment."""
 AUTH_SCHEME = "bearer"
@@ -40,6 +46,140 @@ INVALID_CREDENTIALS_MESSAGE = "Backend credentials are invalid."
 _AUTHENTICATE_HEADERS = {"WWW-Authenticate": "Bearer"}
 
 auth_logger = logging.getLogger("nurse_scheduling.server.auth")
+LEGACY_AUTH_CREDENTIAL_ID = "legacy"
+"""Internal identifier assigned to the backward-compatible single token."""
+_CREDENTIAL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_STREAM_SELECTOR_MESSAGE = b"nurse-scheduling-stream-credential-selector"
+
+
+@dataclass(frozen=True)
+class AuthCredential:
+    """One static bearer token and its administrative identifier."""
+
+    id: str
+    token: str
+
+
+class AuthTokenRegistry:
+    """Immutable static credentials indexed by a token fingerprint."""
+
+    def __init__(self, credentials: tuple[AuthCredential, ...]) -> None:
+        self._lookup_secret = secrets.token_bytes(32)
+        self._credentials_by_id = {credential.id: credential for credential in credentials}
+        self._credentials_by_fingerprint = {
+            self._fingerprint(credential.token): credential for credential in credentials
+        }
+        self._credentials_by_stream_selector = {
+            self._stream_selector(credential.token): credential for credential in credentials
+        }
+
+    def _fingerprint(self, token: str) -> bytes:
+        """Return the fixed-length lookup key for a bearer token."""
+        return hmac.new(self._lookup_secret, token.encode("utf-8"), hashlib.sha256).digest()
+
+    @property
+    def enabled(self) -> bool:
+        """Return whether at least one credential is configured."""
+        return bool(self._credentials_by_id)
+
+    def authenticate(self, token: str) -> AuthCredential | None:
+        """Resolve a bearer token without iterating over the credential set."""
+        credential = self._credentials_by_fingerprint.get(self._fingerprint(token))
+        if credential is None:
+            return None
+        if not hmac.compare_digest(token.encode("utf-8"), credential.token.encode("utf-8")):
+            return None
+        return credential
+
+    def get(self, credential_id: str) -> AuthCredential | None:
+        """Return the credential with an administrative identifier."""
+        return self._credentials_by_id.get(credential_id)
+
+    @staticmethod
+    def _stream_selector(token: str) -> str:
+        """Derive a stable opaque stream selector without exposing the administrative ID."""
+        return hmac.new(token.encode("utf-8"), _STREAM_SELECTOR_MESSAGE, hashlib.sha256).hexdigest()
+
+    def stream_selector(self, credential: AuthCredential) -> str:
+        """Return the opaque selector embedded in this credential's stream tokens."""
+        return self._stream_selector(credential.token)
+
+    def get_by_stream_selector(self, selector: str) -> AuthCredential | None:
+        """Resolve an opaque stream selector without scanning credentials."""
+        return self._credentials_by_stream_selector.get(selector)
+
+
+def parse_auth_credentials(value: str | None, *, name: str = AUTH_TOKENS_ENV_NAME) -> tuple[AuthCredential, ...]:
+    """Parse a JSON object of administrative IDs to tokens."""
+    if value is None or not value.strip():
+        return ()
+    raw_value = value.strip()
+    if not raw_value.startswith("{"):
+        raise ValueError(f"{name} must be a JSON object of ID-to-token strings")
+    try:
+        pairs = json.loads(raw_value, object_pairs_hook=lambda items: items)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{name} must be a valid JSON object of ID-to-token strings") from error
+    credentials: list[AuthCredential] = []
+    for credential_id, token in pairs:
+        if not isinstance(token, str):
+            raise ValueError(f"{name} values must be strings")  # noqa: TRY004
+        credentials.append(AuthCredential(id=credential_id, token=token))
+    return tuple(credentials)
+
+
+def normalize_auth_credentials(
+    legacy_token: str | None,
+    credentials: tuple[AuthCredential, ...],
+    *,
+    legacy_name: str = AUTH_TOKEN_ENV_NAME,
+    credentials_name: str = AUTH_TOKENS_ENV_NAME,
+    required_name: str = AUTH_REQUIRED_ENV_NAME,
+    required: bool,
+) -> tuple[str | None, tuple[AuthCredential, ...]]:
+    """Validate legacy and identified bearer credentials as one configuration."""
+    normalized_legacy = normalize_auth_token(legacy_token, name=legacy_name, warn_on_short=not required)
+    normalized_credentials: list[AuthCredential] = []
+    ids: set[str] = set()
+    tokens: set[str] = set()
+    for credential in credentials:
+        credential_id = credential.id.strip()
+        if not _CREDENTIAL_ID_PATTERN.fullmatch(credential_id):
+            raise ValueError(f"{credentials_name} IDs must use only letters, numbers, underscores, and hyphens")
+        if credential_id == LEGACY_AUTH_CREDENTIAL_ID:
+            raise ValueError(f"{credentials_name} ID {LEGACY_AUTH_CREDENTIAL_ID!r} is reserved")
+        token = normalize_auth_token(credential.token, name=credentials_name, warn_on_short=not required)
+        if token is None:
+            raise ValueError(f"{credentials_name} tokens must not be empty")
+        if credential_id in ids:
+            raise ValueError(f"{credentials_name} contains duplicate ID {credential_id!r}")
+        if token in tokens or token == normalized_legacy:
+            raise ValueError(f"{credentials_name} contains a duplicate token")
+        if required and len(token) < RECOMMENDED_AUTH_TOKEN_LENGTH:
+            raise ValueError(
+                f"{credentials_name} tokens must be at least {RECOMMENDED_AUTH_TOKEN_LENGTH} characters when "
+                f"{required_name} is set"
+            )
+        ids.add(credential_id)
+        tokens.add(token)
+        normalized_credentials.append(AuthCredential(id=credential_id, token=token))
+    if required and normalized_legacy is not None and len(normalized_legacy) < RECOMMENDED_AUTH_TOKEN_LENGTH:
+        raise ValueError(
+            f"{legacy_name} must be at least {RECOMMENDED_AUTH_TOKEN_LENGTH} characters when {required_name} is set"
+        )
+    if required and normalized_legacy is None and not normalized_credentials:
+        raise ValueError(f"{required_name} is set, so {legacy_name} or {credentials_name} must not be empty")
+    return normalized_legacy, tuple(normalized_credentials)
+
+
+def create_auth_registry(
+    legacy_token: str | None, credentials: tuple[AuthCredential, ...]
+) -> AuthTokenRegistry:
+    """Build the runtime registry, assigning the legacy token its reserved ID."""
+    combined = credentials
+    if legacy_token is not None:
+        combined = (AuthCredential(id=LEGACY_AUTH_CREDENTIAL_ID, token=legacy_token), *combined)
+    return AuthTokenRegistry(combined)
 
 
 def normalize_auth_token(
@@ -93,6 +233,7 @@ def create_stream_token(
     job_id: str,
     *,
     ttl_seconds: int,
+    credential_selector: str | None = None,
     now: datetime | None = None,
 ) -> str:
     """Mint a short-lived token authorizing only one job's event stream.
@@ -103,7 +244,10 @@ def create_stream_token(
     """
     issued_at = now or datetime.now(timezone.utc)
     expires_at = int(issued_at.timestamp()) + ttl_seconds
-    return f"{expires_at}.{_stream_signature(secret, job_id, expires_at)}"
+    signature = _stream_signature(secret, job_id, expires_at)
+    if credential_selector is None:
+        return f"{expires_at}.{signature}"
+    return f"{credential_selector}.{expires_at}.{signature}"
 
 
 def verify_stream_token(secret: str, job_id: str, token: str | None, *, now: datetime | None = None) -> bool:
@@ -121,7 +265,7 @@ def verify_stream_token(secret: str, job_id: str, token: str | None, *, now: dat
     return hmac.compare_digest(signature, _stream_signature(secret, job_id, expires_at))
 
 
-def create_auth_dependency(expected_token: str | None) -> Callable[[Request], None]:
+def create_auth_dependency(registry: AuthTokenRegistry) -> Callable[[Request], None]:
     """Build a route dependency enforcing the configured shared token.
 
     The returned dependency accepts every request when no token is configured, which keeps
@@ -134,7 +278,8 @@ def create_auth_dependency(expected_token: str | None) -> Callable[[Request], No
         Raises:
             HTTPException: With status 401 when credentials are missing or invalid.
         """
-        if expected_token is None:
+        if not registry.enabled:
+            request.state.auth_credential_id = None
             return
         provided_token = extract_bearer_token(request.headers.get("Authorization"))
         if provided_token is None:
@@ -143,18 +288,19 @@ def create_auth_dependency(expected_token: str | None) -> Callable[[Request], No
                 detail=MISSING_CREDENTIALS_MESSAGE,
                 headers=_AUTHENTICATE_HEADERS,
             )
-        # Compare in constant time so responses do not leak the expected token.
-        if not hmac.compare_digest(provided_token.encode("utf-8"), expected_token.encode("utf-8")):
+        credential = registry.authenticate(provided_token)
+        if credential is None:
             raise HTTPException(
                 status_code=401,
                 detail=INVALID_CREDENTIALS_MESSAGE,
                 headers=_AUTHENTICATE_HEADERS,
             )
+        request.state.auth_credential_id = credential.id
 
     return require_auth
 
 
-def create_stream_auth_dependency(expected_token: str | None) -> Callable[[Request], None]:
+def create_stream_auth_dependency(registry: AuthTokenRegistry) -> Callable[[Request], None]:
     """Build a route dependency accepting the shared token or a job's stream token."""
 
     def require_stream_auth(request: Request) -> None:
@@ -163,16 +309,30 @@ def create_stream_auth_dependency(expected_token: str | None) -> Callable[[Reque
         Raises:
             HTTPException: With status 401 when credentials are missing or invalid.
         """
-        if expected_token is None:
+        if not registry.enabled:
+            request.state.auth_credential_id = None
             return
         provided_token = extract_bearer_token(request.headers.get("Authorization"))
-        if provided_token is not None and hmac.compare_digest(
-            provided_token.encode("utf-8"), expected_token.encode("utf-8")
-        ):
+        credential = registry.authenticate(provided_token) if provided_token is not None else None
+        if credential is not None:
+            request.state.auth_credential_id = credential.id
             return
         job_id = request.path_params.get("job_id", "")
-        if job_id and verify_stream_token(expected_token, job_id, request.query_params.get("token")):
-            return
+        token = request.query_params.get("token")
+        credential_selector, separator, legacy_or_expiry = (token or "").partition(".")
+        if separator:
+            identified_credential = registry.get_by_stream_selector(credential_selector)
+            if identified_credential is not None and verify_stream_token(
+                identified_credential.token,
+                job_id,
+                f"{legacy_or_expiry}",
+            ):
+                request.state.auth_credential_id = identified_credential.id
+                return
+            legacy_credential = registry.get(LEGACY_AUTH_CREDENTIAL_ID)
+            if legacy_credential is not None and verify_stream_token(legacy_credential.token, job_id, token):
+                request.state.auth_credential_id = legacy_credential.id
+                return
         raise HTTPException(
             status_code=401,
             detail=INVALID_CREDENTIALS_MESSAGE if provided_token else MISSING_CREDENTIALS_MESSAGE,

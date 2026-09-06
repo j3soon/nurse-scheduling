@@ -41,9 +41,9 @@ from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 
 from ..sentry import init_sentry
-from ..server.auth import AUTH_SCHEME, create_auth_dependency
+from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
-from .config import AiSettings, validate_ai_auth_token
+from .config import AiSettings, validate_ai_auth_credentials
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .provider import ChatContent, ChatMessage, OpenAiCompatibleProvider, ProviderError, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
@@ -580,23 +580,26 @@ def create_app(
     """Construct the independently deployable AI application."""
     init_sentry(API_VERSION, app="ai-backend")
     settings = settings or AiSettings.from_env()
-    settings = replace(
-        settings,
-        auth_token=validate_ai_auth_token(settings.auth_token, required=settings.auth_required),
+    auth_token, auth_tokens = validate_ai_auth_credentials(
+        settings.auth_token,
+        settings.auth_tokens,
+        required=settings.auth_required,
     )
+    settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
     provider = provider or OpenAiCompatibleProvider(settings)
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
-    require_auth = create_auth_dependency(settings.auth_token)
+    auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
+    require_auth = create_auth_dependency(auth_registry)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         async with managed_sandbox_factory(sandbox_factory):
             yield
 
-    generated_docs_are_public = settings.auth_token is None
+    generated_docs_are_public = not auth_registry.enabled
     app = FastAPI(
         title="Nurse Scheduling AI API",
         version=API_VERSION,
@@ -613,6 +616,7 @@ def create_app(
         allow_headers=["Authorization", "Content-Type"],
     )
     app.state.settings = settings
+    app.state.auth_registry = auth_registry
     app.state.session_store = store
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
@@ -643,7 +647,7 @@ def create_app(
                 max_files=settings.max_document_files,
                 max_bytes_per_file=settings.max_document_bytes,
             ),
-            auth={"required": settings.auth_token is not None, "scheme": AUTH_SCHEME},
+            auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
         )
 
     @app.post(
@@ -654,6 +658,7 @@ def create_app(
     )
     async def create_session(
         request: CreateSessionRequest,
+        http_request: Request,
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ):
@@ -673,6 +678,11 @@ def create_app(
                 max_age=settings.session_ttl_seconds,
             )
         session = store.create(owner, request.schedule_yaml)
+        logger.info(
+            "Created AI session session_id=%s auth_credential_id=%s",
+            session.id,
+            http_request.state.auth_credential_id,
+        )
         return CreateSessionResponse(id=session.id)
 
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])

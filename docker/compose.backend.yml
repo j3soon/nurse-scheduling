@@ -59,6 +59,7 @@ services:
       # without a token. Serving it open needs a deliberate API_AUTH_REQUIRED=false.
       API_AUTH_REQUIRED: "${API_AUTH_REQUIRED:-true}"
       API_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
+      API_AUTH_TOKENS: "${API_AUTH_TOKENS:-}"
       CLAIMED_PERFORMANCE_SCORE: "${CLAIMED_PERFORMANCE_SCORE:-}"
       CLAIMED_PERFORMANCE_APP_VERSION: "${CLAIMED_PERFORMANCE_APP_VERSION:-}"
       CLAIMED_PERFORMANCE_MEASURED_AT: "${CLAIMED_PERFORMANCE_MEASURED_AT:-}"
@@ -96,6 +97,7 @@ services:
       # Compose-hosted AI requires authentication unless the env file explicitly opts out.
       AI_AUTH_REQUIRED: "${AI_AUTH_REQUIRED:-true}"
       AI_AUTH_TOKEN: "${AI_AUTH_TOKEN:-}"
+      AI_AUTH_TOKENS: "${AI_AUTH_TOKENS:-}"
       AI_PROVIDER_BASE_URL: "${AI_PROVIDER_BASE_URL:-}"
       AI_PROVIDER_API_KEY: "${AI_PROVIDER_API_KEY:-}"
       AI_PROVIDER_MODEL: "${AI_PROVIDER_MODEL:-local-model}"
@@ -181,7 +183,7 @@ services:
       DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS: ${DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS:-600}
       DIAGNOSTIC_JOB_TIMEOUT_SECONDS: ${DIAGNOSTIC_JOB_TIMEOUT_SECONDS:-3600}
       DIAGNOSTIC_REPORT_DIR: /reports
-      DIAGNOSTIC_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
+      DIAGNOSTIC_AUTH_TOKEN: "${DIAGNOSTIC_AUTH_TOKEN:-${API_AUTH_TOKEN:-}}"
     command: ["python", "-m", "nurse_scheduling.server.diagnostic"]
     volumes:
       - diagnostic-reports:/reports

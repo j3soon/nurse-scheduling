@@ -103,6 +103,7 @@ class JobController:
         prettify: bool | None,
         timeout_seconds: int,
         input_bytes: bytes,
+        auth_credential_id: str | None = None,
     ) -> Job:
         """Create and enqueue a job with its submitted input.
 
@@ -141,13 +142,15 @@ class JobController:
             failure_message="Unable to allocate a unique job identifier",
         )
         server_logger.info(
-            "[server:job] queued job_id=%s solver=%s timeout=%s input_name=%s queue_position=%s client_id=%s",
+            "[server:job] queued job_id=%s solver=%s timeout=%s input_name=%s queue_position=%s client_id=%s "
+            "auth_credential_id=%s",
             created.id,
             created.request.solver,
             created.request.timeout_seconds,
             created.request.input_name,
             created.queue_position,
             created.request.client_id,
+            auth_credential_id,
         )
         return created
 

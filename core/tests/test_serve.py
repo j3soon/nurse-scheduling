@@ -38,7 +38,7 @@ from fastapi.testclient import TestClient
 
 from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
-from nurse_scheduling.server.auth import create_stream_token, extract_bearer_token, verify_stream_token
+from nurse_scheduling.server.auth import AuthCredential, create_stream_token, extract_bearer_token, verify_stream_token
 from nurse_scheduling.server.config import (
     DEFAULT_JOB_RETENTION_SECONDS,
     DEFAULT_MAX_EVENTS_PER_JOB,
@@ -2084,6 +2084,10 @@ def test_file_input_uses_configured_limit_above_multipart_text_default():
 
 
 AUTH_TOKEN = "integration-shared-token"
+AUTH_TOKENS = (
+    AuthCredential(id="institution-a", token="institution-a-auth-token"),
+    AuthCredential(id="person_b", token="person-b-auth-token"),
+)
 
 
 def _auth_header(token: str = AUTH_TOKEN) -> dict[str, str]:
@@ -2147,6 +2151,18 @@ def test_protected_routes_accept_the_configured_shared_token():
         assert client.get(f"/optimize/{job_id}", headers=_auth_header()).status_code == 200
 
 
+def test_protected_routes_accept_each_identified_token_and_retain_its_id(caplog):
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        for credential in AUTH_TOKENS:
+            assert client.get("/optimize/options", headers=_auth_header(credential.token)).status_code == 200
+            assert client.app.state.auth_registry.authenticate(credential.token).id == credential.id
+
+        _create(client, headers=_auth_header(AUTH_TOKENS[0].token))
+        assert client.get("/optimize/options", headers=_auth_header("revoked-auth-token")).status_code == 401
+
+    assert "auth_credential_id=institution-a" in caplog.text
+
+
 MISSING_JOB_ID = "job_does_not_exist"
 
 
@@ -2182,6 +2198,29 @@ def test_event_stream_accepts_either_the_shared_token_or_a_stream_token():
 
         assert _stream_status(client, MISSING_JOB_ID, f"?token={stream_token}") == 404
         assert _stream_status(client, MISSING_JOB_ID, headers=_auth_header()) == 404
+
+
+def test_identified_token_mints_a_directly_resolvable_stream_token_without_exposing_its_id():
+    credential = AUTH_TOKENS[0]
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        job = _create(client, headers=_auth_header(credential.token)).json()
+        token = job["links"]["events"].split("token=", 1)[1]
+
+        assert credential.id not in token
+        assert len(token.split(".", 1)[0]) == 64
+
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        assert _stream_status(client, job["id"], f"?token={token}") == 404
+
+
+def test_removing_an_identified_key_revokes_its_stream_tokens():
+    credential = AUTH_TOKENS[0]
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        job = _create(client, headers=_auth_header(credential.token)).json()
+        token = job["links"]["events"].split("token=", 1)[1]
+
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS[1:])) as client:
+        assert _stream_status(client, job["id"], f"?token={token}") == 401
 
 
 def test_event_stream_rejects_missing_or_unusable_stream_tokens():
@@ -2350,8 +2389,41 @@ def test_server_settings_load_the_shared_token_from_env(monkeypatch):
     assert ServerSettings.from_env().auth_token is None
 
 
+def test_server_settings_load_identified_tokens_from_env(monkeypatch):
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv(
+        "API_AUTH_TOKENS",
+        '{"institution-a":"institution-a-auth-token","person_b":"person-b-auth-token"}',
+    )
+
+    settings = ServerSettings.from_env()
+
+    assert settings.auth_tokens == AUTH_TOKENS
+
+
+@pytest.mark.parametrize(
+    "configured,error",
+    [
+        ("not-json", "must be a JSON object"),
+        ('["not", "an", "object"]', "must be a JSON object"),
+        ('{"institution-a": 123}', "values must be strings"),
+        ('{"legacy":"long-enough-auth-token"}', "ID 'legacy' is reserved"),
+        ('{"bad.id":"long-enough-auth-token"}', "IDs must use only"),
+        ('{"same":"first-long-enough-token","same":"second-long-enough-token"}', "duplicate ID"),
+        ('{"first":"duplicate-long-enough-token","second":"duplicate-long-enough-token"}', "duplicate token"),
+    ],
+)
+def test_server_settings_reject_invalid_identified_tokens(monkeypatch, configured, error):
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("API_AUTH_TOKENS", configured)
+
+    with pytest.raises(ValueError, match=error):
+        ServerSettings.from_env()
+
+
 def test_authentication_stays_off_by_default_for_local_runs(monkeypatch):
     monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("API_AUTH_TOKENS", raising=False)
     monkeypatch.delenv("API_AUTH_REQUIRED", raising=False)
     settings = ServerSettings.from_env()
 
@@ -2363,11 +2435,11 @@ def test_enabled_authentication_requires_a_token(monkeypatch):
     monkeypatch.setenv("API_AUTH_REQUIRED", "true")
     monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
 
-    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty"):
+    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN or API_AUTH_TOKENS"):
         ServerSettings.from_env()
 
     monkeypatch.setenv("API_AUTH_TOKEN", "   ")
-    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty"):
+    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN or API_AUTH_TOKENS"):
         ServerSettings.from_env()
 
 
@@ -2386,6 +2458,18 @@ def test_enabled_authentication_accepts_a_configured_token(monkeypatch):
 
     assert settings.auth_required is True
     assert settings.auth_token == AUTH_TOKEN
+
+
+def test_enabled_authentication_accepts_identified_tokens_without_the_legacy_token(monkeypatch):
+    monkeypatch.setenv("API_AUTH_REQUIRED", "true")
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("API_AUTH_TOKENS", '{"institution-a":"institution-a-auth-token"}')
+
+    settings = ServerSettings.from_env()
+
+    assert settings.auth_required is True
+    assert settings.auth_token is None
+    assert settings.auth_tokens == AUTH_TOKENS[:1]
 
 
 def test_authentication_can_be_turned_off_deliberately(monkeypatch):

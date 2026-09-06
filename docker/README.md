@@ -12,7 +12,8 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
   `/ai/*` to the AI service and all other paths to the optimization API.
 - Copy `.env.example` to `.env`.
 - Set `CLOUDFLARE_TUNNEL_TOKEN` in `.env` to the token from the dashboard.
-- Set `API_AUTH_TOKEN` in `.env`. The deployment image requires it.
+- Set `API_AUTH_TOKEN` or `API_AUTH_TOKENS` in `.env`. The deployment image
+  requires at least one key.
 - Enable [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/).
 - (Optional) Add a WAF/rate limit rule for `POST /optimize`.
 - Keep ports `80` and `443` closed on the VM unless another service needs them.
@@ -23,17 +24,32 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 
 Compose deployments are internet-facing, so they authenticate by default.
 `Dockerfile.api` and `Dockerfile.api.staging` set `API_AUTH_REQUIRED=true` in the
-image, which makes an empty `API_AUTH_TOKEN` a startup failure:
+image, which makes an empty credential set a startup failure:
 
 ```text
-API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty
+API_AUTH_REQUIRED is set, so API_AUTH_TOKEN or API_AUTH_TOKENS must not be empty
 ```
 
-Generate a token and put it in the environment file:
+Generate keys and put either the legacy single key or identified keys in the
+environment file:
 
 ```sh
 openssl rand -base64 32
 ```
+
+```dotenv
+# Backward-compatible single key
+API_AUTH_TOKEN=generated-key
+
+# Or multiple static keys
+API_AUTH_TOKENS='{"institution-a":"generated-key","person-b":"another-generated-key"}'
+```
+
+IDs may contain letters, numbers, underscores, and hyphens. `legacy` is
+reserved for `API_AUTH_TOKEN`. IDs are used only in server logs and are not
+returned to clients. Clients still send only the key. Both settings may be used during
+migration, but IDs and keys must be unique. Remove a pair and restart the
+service to revoke it.
 
 Serving a Compose deployment with no authentication is possible but has to be
 chosen, by setting `API_AUTH_REQUIRED=false` in `.env`. That overrides the value
@@ -42,12 +58,12 @@ baked into the image.
 Running the server outside these images leaves `API_AUTH_REQUIRED` unset, so
 local development stays unauthenticated with no extra configuration.
 
-Use at least 16 characters. When `API_AUTH_REQUIRED=true`, the backend rejects a
-shorter token. When it is `false`, a shorter token is accepted with a warning for
-local testing. Requests present the token as a bearer credential:
+Use at least 16 characters per key. When `API_AUTH_REQUIRED=true`, the backend
+rejects shorter keys. When it is `false`, a shorter key is accepted with a
+warning for local testing. Requests present only the key as a bearer credential:
 
 ```sh
-curl -H "Authorization: Bearer ${API_AUTH_TOKEN}" https://api.nursescheduling.org/optimize/options
+curl -H "Authorization: Bearer ${AUTH_KEY}" https://api.nursescheduling.org/optimize/options
 ```
 
 `GET /info` and `GET /ready` stay public so clients and deployment probes can
@@ -55,25 +71,27 @@ discover the deployment without credentials. `/info` reports
 `"auth": {"required": true, "scheme": "bearer"}`, which the frontend uses to
 prompt for a token before calling a protected route. Every other application
 route, including `/` and all of `/optimize`, answers `401` with a
-`WWW-Authenticate: Bearer` header when the token is missing or wrong. Tokens
-are compared in constant time, and `401` responses are not reported to Sentry
-because unauthenticated probes of a public URL are expected.
+`WWW-Authenticate: Bearer` header when the key is missing or wrong. Keys are
+resolved through a process-local keyed fingerprint map, then compared in
+constant time. A request does not scan every configured key. `401` responses
+are not reported to Sentry because unauthenticated probes are expected.
 
 When authentication is configured, the generated `/openapi.json`, `/docs`, and
 `/redoc` routes are disabled and return `404`.
 
-Running the backend outside Compose leaves `API_AUTH_TOKEN` unset, so local
+Running the backend outside Compose leaves both key settings unset, so local
 development stays unauthenticated and needs no frontend changes.
 
-The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which both compose files
-set from `API_AUTH_TOKEN`.
+The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which defaults to
+`API_AUTH_TOKEN`. When using only `API_AUTH_TOKENS`, set
+`DIAGNOSTIC_AUTH_TOKEN` to one of its keys.
 
 The AI service in both backend Compose files applies the same secure default
-with `AI_AUTH_REQUIRED=true`. Set `AI_AUTH_TOKEN` before starting Compose. To
-deliberately serve without AI authentication, set
-`AI_AUTH_REQUIRED=false` in `docker/.env` and leave `AI_AUTH_TOKEN` empty. Native
-runs leave required mode disabled, although setting a token still enables bearer
-authentication.
+with `AI_AUTH_REQUIRED=true`. Set `AI_AUTH_TOKEN` or `AI_AUTH_TOKENS` before
+starting Compose. The latter uses a JSON object mapping IDs to keys. To
+deliberately serve without AI authentication, set `AI_AUTH_REQUIRED=false` in
+`docker/.env` and leave both settings empty. Native runs leave required mode
+disabled, although setting either one still enables bearer authentication.
 
 NGINX removes the `/ai` prefix before forwarding requests to this
 service and disables response buffering for its streaming endpoints. Keep the
@@ -140,7 +158,7 @@ Cloudflare Tunnel token:
 
 ```sh
 cp .env.staging.example .env.staging
-# Set CLOUDFLARE_TUNNEL_TOKEN, API_AUTH_TOKEN, and DIAGNOSTIC_TARGET_URL in .env.staging.
+# Set the tunnel token, backend auth keys, and diagnostic target in .env.staging.
 APP_VERSION="$(git -C .. describe --tags --always --dirty)" \
   docker compose --env-file .env.staging -f compose.backend.yml up -d --build
 ```

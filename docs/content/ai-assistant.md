@@ -22,8 +22,9 @@ cp docker/.env.example docker/.env
 
 Review the AI assistant block in `docker/.env`. Set the provider URL, API key,
 model, and other settings for your environment. For an authenticated service,
-also set the AI token. To serve locally without auth, explicitly set
-`AI_AUTH_REQUIRED=false` and leave `AI_AUTH_TOKEN` empty. Then start the service:
+also set one or more AI keys. To serve locally without auth, explicitly set
+`AI_AUTH_REQUIRED=false` and leave `AI_AUTH_TOKEN` and `AI_AUTH_TOKENS` empty.
+Then start the service:
 
 ```sh
 ./scripts/start_ai_backend.sh
@@ -355,7 +356,8 @@ response cannot prove that the original operation did not take effect.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `AI_AUTH_TOKEN` | Unset | Shared bearer token. Setting it protects every AI session route. Use at least 16 ASCII characters. |
-| `AI_AUTH_REQUIRED` | `false` (`true` in Docker) | Fail startup unless a token of at least 16 ASCII characters is configured. |
+| `AI_AUTH_TOKENS` | Unset | JSON object mapping administrative IDs to bearer keys. |
+| `AI_AUTH_REQUIRED` | `false` (`true` in Docker) | Fail startup unless at least one key of 16 or more ASCII characters is configured. |
 | `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
 | `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
@@ -394,6 +396,13 @@ response cannot prove that the original operation did not take effect.
 | `AI_MAX_XLSX_SHEETS` | `20` | Maximum worksheets per XLSX workbook. |
 | `AI_MAX_XLSX_CELLS` | `100000` | Maximum rectangular cell span across an XLSX workbook. |
 | `AI_MAX_XLSX_UNCOMPRESSED_BYTES` | `50000000` | Maximum total expanded XLSX archive bytes. |
+
+`AI_AUTH_TOKENS` uses a JSON object such as
+`'{"institution-a":"first-key","person-b":"second-key"}'`. IDs may contain
+letters, numbers, underscores, and hyphens. They appear in administrative
+session logs, while clients send only the key and never receive the ID. Remove a
+pair and restart the service to revoke it. The legacy and identified settings
+may coexist during migration.
 
 ## Run in the development container
 
@@ -473,14 +482,15 @@ backend instance until shared AI storage is added.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
 probes work and the frontend can discover authentication and attachment limits.
-Capabilities reports whether bearer auth is active. When `AI_AUTH_TOKEN` is
-set, every session route requires `Authorization: Bearer <AI_AUTH_TOKEN>` and
+Capabilities reports whether bearer auth is active. When either AI key setting
+is set, every session route requires `Authorization: Bearer <key>` and
 returns `401` when the credential is missing or wrong. Native runs may leave the
-token unset to serve locally without auth. Docker Compose sets
-`AI_AUTH_REQUIRED=true` on the service, so its env file must explicitly set `AI_AUTH_REQUIRED=false` and
-leave `AI_AUTH_TOKEN` empty to serve without authentication. Required mode
-refuses to start with a missing, blank, shorter than 16 character, or non-ASCII
-token.
+key settings unset to serve locally without auth. Docker Compose sets
+`AI_AUTH_REQUIRED=true` on the service, so its env file must explicitly set
+`AI_AUTH_REQUIRED=false` and leave both key settings empty to serve without
+authentication. Required mode refuses to start with a missing, blank, shorter
+than 16 character, or non-ASCII key. `AI_AUTH_TOKEN` remains supported for
+backward compatibility.
 
 For example, create a session directly with:
 
@@ -497,8 +507,8 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   contains only empty secret fields and documented defaults.
 - The browser keeps the AI token in memory unless the user explicitly chooses
   to store it unencrypted on that device. A stored token is scoped to the AI
-  endpoint that requested it. The AI token is independent from the optimizer's
-  `API_AUTH_TOKEN`, although an operator may configure equal values.
+  endpoint that requested it. AI keys are independent from optimizer keys,
+  although an operator may configure equal values.
 - E2B Cloud is currently the only sandbox backend. The agent depends on the
   project `SandboxBackend` contract so a future self-hosted E2B or remote gVisor
   backend does not require changing model logic.

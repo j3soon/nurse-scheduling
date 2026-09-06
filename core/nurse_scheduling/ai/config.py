@@ -23,30 +23,31 @@ import os
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from ..server.auth import RECOMMENDED_AUTH_TOKEN_LENGTH, normalize_auth_token
+from ..server.auth import AuthCredential, normalize_auth_credentials, parse_auth_credentials
 
 AttachmentMode = Literal["none", "images"]
 DocumentAttachmentMode = Literal["none", "text"]
 SandboxBackendName = Literal["none", "e2b"]
 AI_AUTH_TOKEN_ENV_NAME = "AI_AUTH_TOKEN"
+AI_AUTH_TOKENS_ENV_NAME = "AI_AUTH_TOKENS"
 AI_AUTH_REQUIRED_ENV_NAME = "AI_AUTH_REQUIRED"
 
 
-def validate_ai_auth_token(value: str | None, *, required: bool) -> str | None:
-    """Normalize an optional token and enforce deployment requirements."""
-    auth_token = normalize_auth_token(
-        value,
-        name=AI_AUTH_TOKEN_ENV_NAME,
-        warn_on_short=not required,
+def validate_ai_auth_credentials(
+    token: str | None,
+    tokens: tuple[AuthCredential, ...],
+    *,
+    required: bool,
+) -> tuple[str | None, tuple[AuthCredential, ...]]:
+    """Normalize AI bearer credentials and enforce deployment requirements."""
+    return normalize_auth_credentials(
+        token,
+        tokens,
+        legacy_name=AI_AUTH_TOKEN_ENV_NAME,
+        credentials_name=AI_AUTH_TOKENS_ENV_NAME,
+        required_name=AI_AUTH_REQUIRED_ENV_NAME,
+        required=required,
     )
-    if required and auth_token is None:
-        raise ValueError(f"{AI_AUTH_REQUIRED_ENV_NAME} is set, so {AI_AUTH_TOKEN_ENV_NAME} must not be empty")
-    if required and auth_token is not None and len(auth_token) < RECOMMENDED_AUTH_TOKEN_LENGTH:
-        raise ValueError(
-            f"{AI_AUTH_TOKEN_ENV_NAME} must be at least {RECOMMENDED_AUTH_TOKEN_LENGTH} characters "
-            f"when {AI_AUTH_REQUIRED_ENV_NAME} is set"
-        )
-    return auth_token
 
 
 def _read_positive_int(name: str, default: int) -> int:
@@ -130,6 +131,7 @@ class AiSettings:
     provider_api_key: str
     provider_model: str
     auth_token: str | None = None
+    auth_tokens: tuple[AuthCredential, ...] = ()
     auth_required: bool = False
     provider_timeout_seconds: float = 120.0
     provider_max_attempts: int = 3
@@ -170,6 +172,10 @@ class AiSettings:
     def from_env(cls) -> "AiSettings":
         """Load settings without embedding provider credentials in the repository."""
         auth_token = os.getenv(AI_AUTH_TOKEN_ENV_NAME)
+        auth_tokens = parse_auth_credentials(
+            os.getenv(AI_AUTH_TOKENS_ENV_NAME),
+            name=AI_AUTH_TOKENS_ENV_NAME,
+        )
         provider_api_key = os.getenv("AI_PROVIDER_API_KEY", "").strip()
         if not provider_api_key:
             raise ValueError("AI_PROVIDER_API_KEY is required")
@@ -196,6 +202,7 @@ class AiSettings:
             provider_api_key=provider_api_key,
             provider_model=provider_model,
             auth_token=auth_token,
+            auth_tokens=auth_tokens,
             auth_required=_read_bool(AI_AUTH_REQUIRED_ENV_NAME, False),
             provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 120.0),
             provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),

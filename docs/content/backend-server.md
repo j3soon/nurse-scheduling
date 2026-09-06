@@ -173,10 +173,10 @@ checkpointing it outside the child process.
 
 ### Authentication
 
-A deployment that sets `API_AUTH_TOKEN` requires a bearer token on every
-application route except `/info` and `/ready`. Those two stay public so clients
-and deployment probes can discover the server without credentials. `/info`
-reports the requirement:
+A deployment that sets `API_AUTH_TOKEN` or `API_AUTH_TOKENS` requires a bearer
+key on every application route except `/info` and `/ready`. Those two stay
+public so clients and deployment probes can discover the server without
+credentials. `/info` reports the requirement:
 
 ```json
 { "auth": { "required": true, "scheme": "bearer" } }
@@ -202,28 +202,39 @@ one in `links.events`, so a client opens the stream with the link as given:
 { "links": { "events": "/optimize/<job_id>/events?token=<stream_token>" } }
 ```
 
-The stream token is an HMAC of the job ID and an expiry signed with
-`API_AUTH_TOKEN`. It authorizes only that job's stream and is rejected on every
-other route, which keeps the deployment's shared token out of URLs, proxy logs,
-and referrer headers. Its lifetime is `OPTIMIZE_MAX_TIMEOUT_SECONDS` plus
+The stream token is an HMAC of the job ID and an expiry signed with the matched
+bearer key. It authorizes only that job's stream and is rejected on every
+other route, which keeps the deployment key out of URLs, proxy logs, and
+referrer headers. Its lifetime is `OPTIMIZE_MAX_TIMEOUT_SECONDS` plus
 `OPTIMIZE_TIMEOUT_GRACE_SECONDS` plus a few seconds of slack, so it outlives the
 longest run the deployment allows and expires shortly after. An expired stream
 token makes the frontend fall back to polling the job.
 
-A missing or incorrect token returns `401` with a `WWW-Authenticate: Bearer`
-header. Tokens are compared in constant time. The token is shared by every
-client of the deployment, so rotate it by changing `API_AUTH_TOKEN` and
-restarting the server.
+A missing or incorrect key returns `401` with a `WWW-Authenticate: Bearer`
+header. Configure multiple static keys with a JSON object mapping IDs to keys:
+
+```dotenv
+API_AUTH_TOKENS='{"institution-a":"first-key","person-b":"second-key"}'
+```
+
+IDs may contain letters, numbers, underscores, and hyphens. The `legacy` ID is
+reserved for `API_AUTH_TOKEN`. IDs are recorded for administration, while
+clients send only the key and never receive the ID. Stream links use an opaque
+key-derived selector. Requests use a keyed fingerprint map for direct lookup
+followed by a constant-time comparison. Remove a pair and restart the server to
+revoke its bearer and stream tokens. `API_AUTH_TOKEN` remains
+supported and may be used alongside identified keys during migration.
 
 When authentication is configured, the generated `/openapi.json`, `/docs`, and
 `/redoc` routes are disabled and return `404`.
 
 `API_AUTH_REQUIRED` makes authentication mandatory rather than optional. The
 images built for deployment set it, so a container started without
-`API_AUTH_TOKEN` fails with
-`API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty` instead of
+either key setting fails with
+`API_AUTH_REQUIRED is set, so API_AUTH_TOKEN or API_AUTH_TOKENS must not be empty`
+instead of
 serving openly. A server run outside those images leaves it unset, so setting
-`API_AUTH_TOKEN` alone is still enough to turn authentication on for local use.
+either key setting is enough to turn authentication on for local use.
 
 Prepare the input as YAML. The repository includes a
 [minimal scheduling example](https://github.com/j3soon/nurse-scheduling/blob/dev/core/tests/testcases/basics/01_1nurse_1shift_1day.yaml).
@@ -334,7 +345,8 @@ All server settings are read once when the application is constructed.
 | `CLAIMED_PERFORMANCE_APP_VERSION` | unset | Record the app version used by the claimed-performance benchmark. |
 | `CLAIMED_PERFORMANCE_MEASURED_AT` | unset | Record the benchmark report time as an ISO 8601 date and time with a timezone. |
 | `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
-| `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty `API_AUTH_TOKEN` a startup failure. Set in the deployment images. |
+| `API_AUTH_TOKENS` | unset | Require one of the bearer keys in this JSON object mapping administrative IDs to keys. |
+| `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty legacy and identified key set a startup failure. Set in the deployment images. |
 | `DISABLE_SENTRY` | unset | Disable error reporting for all Python services when set to a non-empty value. |
 | `SENTRY_DSN` | shared development project | Select the Python services' shared Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |
 | `SENTRY_ENVIRONMENT` | `development` | Set the Sentry environment for all Python services. The `app` tag separates backend, usage reporter, and diagnostic events. |
@@ -344,14 +356,14 @@ Numeric values must be positive. `JOB_MAX_RETAINED` must be at least
 `JOB_MAX_PENDING`. The default solver must be advertised, and the timeout
 default must remain within the configured minimum and maximum.
 
-`API_AUTH_TOKEN` is optional and unset by default, so a locally run server
-needs no credentials. Setting it turns on authentication for that deployment.
-Use at least 16 characters. When `API_AUTH_REQUIRED=true`, the backend rejects a
-shorter token. When it is `false`, a shorter token is accepted with a warning for
-local testing.
+Both key settings are optional and unset by default, so a locally run server
+needs no credentials. Setting either one turns on authentication for that
+deployment. Use at least 16 characters per key. When
+`API_AUTH_REQUIRED=true`, the backend rejects a shorter key. When it is
+`false`, a shorter key is accepted with a warning for local testing.
 
 The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployment that
-publishes the backend refuses to start without a token. Serving one without
+publishes the backend refuses to start without a key. Serving one without
 authentication requires `API_AUTH_REQUIRED=false`. See
 [Authentication](#authentication).
 

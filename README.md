@@ -356,7 +356,7 @@ Create a local configuration file. The real `docker/.env` file is ignored by Git
 ```sh
 cp docker/.env.example docker/.env
 # Review and update the AI values. Set AI_AUTH_REQUIRED=false and leave
-# AI_AUTH_TOKEN empty only when intentionally serving locally without auth.
+# AI_AUTH_TOKEN and AI_AUTH_TOKENS empty only for intentional local no-auth use.
 ```
 
 Start the AI backend and frontend in separate terminals:
@@ -530,8 +530,9 @@ export OPTIMIZE_DEFAULT_PRETTIFY=true
 ```
 
 The server is unauthenticated by default, which suits local development. Set
-`API_AUTH_TOKEN` to require a shared bearer token on every application route
-except `/info` and `/ready`:
+the legacy `API_AUTH_TOKEN` or a JSON object such as
+`API_AUTH_TOKENS='{"institution-a":"key"}'` to require a bearer key on every
+application route except `/info` and `/ready`:
 
 ```sh
 cd core
@@ -539,11 +540,11 @@ API_AUTH_TOKEN="$(openssl rand -base64 32)" \
 uvicorn nurse_scheduling.serve:app --no-access-log
 ```
 
-`GET /info` reports `auth.required` so the frontend can prompt for the token.
+`GET /info` reports `auth.required` so the frontend can prompt for a key.
 The generated `/openapi.json`, `/docs`, and `/redoc` routes are disabled while
 authentication is configured.
 The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployed backend
-refuses to start without a token, and serving one without authentication
+refuses to start without a configured key. Serving one without authentication
 requires `API_AUTH_REQUIRED=false`.
 
 Only advertise solvers available on that machine. The server validates the

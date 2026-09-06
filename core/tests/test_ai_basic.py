@@ -23,6 +23,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
 
@@ -53,6 +54,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     WORKSPACE_SCHEDULE,
     SandboxTurnTimeoutError,
 )
+from nurse_scheduling.server.auth import AuthCredential
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
@@ -63,6 +65,10 @@ JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
 WEBP_BYTES = b"RIFF\x04\x00\x00\x00WEBP"
 AI_AUTH_TOKEN = "ai-shared-test-token"
 AI_AUTH_HEADERS = {"Authorization": f"Bearer {AI_AUTH_TOKEN}"}
+AI_AUTH_TOKENS = (
+    AuthCredential(id="institution-a", token="institution-a-ai-token"),
+    AuthCredential(id="person_b", token="person-b-ai-token"),
+)
 
 
 class AuthenticatedTestClient(TestClient):
@@ -899,6 +905,7 @@ def test_environment_configuration_allows_local_ai_without_auth(monkeypatch: pyt
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
     monkeypatch.delenv("AI_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("AI_AUTH_TOKENS", raising=False)
 
     settings = AiSettings.from_env()
     client = TestClient(create_test_app(settings=settings, provider=FakeProvider()))
@@ -909,15 +916,62 @@ def test_environment_configuration_allows_local_ai_without_auth(monkeypatch: pyt
     assert client.get("/docs").status_code == 200
 
 
-@pytest.mark.parametrize("token", ["short", "   "])
-def test_required_ai_auth_rejects_an_unsafe_token(token: str) -> None:
-    with pytest.raises(ValueError, match="AI_AUTH_TOKEN must"):
+@pytest.mark.parametrize(
+    "token,error",
+    [("short", "AI_AUTH_TOKEN must"), ("   ", "AI_AUTH_TOKEN or AI_AUTH_TOKENS")],
+)
+def test_required_ai_auth_rejects_an_unsafe_token(token: str, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
         create_test_app(settings=make_settings(auth_token=token, auth_required=True), provider=FakeProvider())
 
 
 def test_required_ai_auth_rejects_a_missing_token() -> None:
-    with pytest.raises(ValueError, match="AI_AUTH_REQUIRED is set, so AI_AUTH_TOKEN must not be empty"):
+    with pytest.raises(ValueError, match="AI_AUTH_REQUIRED is set, so AI_AUTH_TOKEN or AI_AUTH_TOKENS"):
         create_test_app(settings=make_settings(auth_token=None, auth_required=True), provider=FakeProvider())
+
+
+def test_ai_routes_accept_each_identified_token_without_a_legacy_token(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai")
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(auth_token=None, auth_tokens=AI_AUTH_TOKENS, auth_required=True),
+            provider=FakeProvider(),
+        )
+    )
+
+    for credential in AI_AUTH_TOKENS:
+        response = client.post(
+            "/sessions",
+            json={"schedule_yaml": "description: test"},
+            headers={"Authorization": f"Bearer {credential.token}"},
+        )
+        assert response.status_code == 201
+        assert client.app.state.auth_registry.authenticate(credential.token).id == credential.id
+
+    assert (
+        client.post(
+            "/sessions",
+            json={"schedule_yaml": "description: test"},
+            headers={"Authorization": "Bearer revoked-ai-token"},
+        ).status_code
+        == 401
+    )
+    assert "auth_credential_id=institution-a" in caplog.text
+    assert "auth_credential_id=person_b" in caplog.text
+
+
+def test_environment_configuration_loads_identified_ai_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv(
+        "AI_AUTH_TOKENS",
+        '{"institution-a":"institution-a-ai-token","person_b":"person-b-ai-token"}',
+    )
+
+    settings = AiSettings.from_env()
+
+    assert settings.auth_tokens == AI_AUTH_TOKENS
 
 
 def test_optional_short_ai_auth_token_still_enables_authentication(caplog: pytest.LogCaptureFixture) -> None:
