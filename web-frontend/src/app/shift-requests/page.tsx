@@ -1106,7 +1106,7 @@ export default function ShiftRequestsPage() {
         // actual history entries to the right. The offset is that padding width,
         // so subtracting it from the rendered column index recovers the
         // underlying person.history array position for the clear operation.
-        const offset = dragHistoryColumnsCountRef.current - person.history!.length;
+        const offset = dragHistoryColumnsCountRef.current - (person.history ?? []).length;
         if (identifier as number >= offset) {
           const position = (identifier as number) - offset;
           const existingMaxPosition = pendingHistoryClearDragRef.current.get(personId);
@@ -1204,7 +1204,7 @@ export default function ShiftRequestsPage() {
         return;
       }
 
-      const currentHistory = person.history!;
+      const currentHistory = person.history ?? [];
       const offset = historyColumnsCount - currentHistory.length;
 
       // If no shift types are selected (Clear mode), clear the history position.
@@ -1271,7 +1271,7 @@ export default function ShiftRequestsPage() {
       return;
     }
 
-    const currentHistory = person.history!;
+    const currentHistory = person.history ?? [];
     const offset = historyColumnsCount - currentHistory.length;
 
     // If targeting a position before the actual history (empty history cells on the left)
@@ -1779,8 +1779,9 @@ export default function ShiftRequestsPage() {
                           );
                         }
 
-                        const historyValue = getHistoryValue(person!.history!, index);
-                        const offset = historyColumnsCount - person!.history!.length;
+                        const history = person!.history ?? [];
+                        const historyValue = getHistoryValue(history, index);
+                        const offset = historyColumnsCount - history.length;
 
                         // Only show one extra clickable cell, others are empty non-clickable
                         const isClickable = index >= offset - 1;
@@ -1944,7 +1945,7 @@ export default function ShiftRequestsPage() {
               <p className="text-sm text-blue-600 mt-1">Auto-computed from the history matrix above</p>
             </div>
 
-            {peopleData.items.every(person => person.history!.length === 0) ? (
+            {peopleData.items.every(person => (person.history ?? []).length === 0) ? (
               <div className="px-6 py-8 text-center text-blue-500">
                 No history entries defined yet. Click on any history cell in the matrix above to add entries.
               </div>
@@ -1968,7 +1969,7 @@ export default function ShiftRequestsPage() {
                           <div className="flex flex-wrap gap-x-6 gap-y-3">
                             {person.history.map((shiftTypeId, index) => {
                               const shiftType = getAllShiftTypes().find(st => st.id === shiftTypeId);
-                              const historyPosition = person.history!.length - index;
+                              const historyPosition = (person.history ?? []).length - index;
 
                               return (
                                 <div key={index} className="text-sm text-blue-600">
@@ -1984,7 +1985,7 @@ export default function ShiftRequestsPage() {
                         </div>
                         <div className="flex justify-end space-x-2 ml-4">
                           <button
-                            onClick={() => openHistoryEditor(person.id, historyColumnsCount - person.history!.length)}
+                            onClick={() => openHistoryEditor(person.id, historyColumnsCount - (person.history ?? []).length)}
                             className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
                           >
                             <FiEdit2 className="h-4 w-4" />
@@ -2056,7 +2057,7 @@ export default function ShiftRequestsPage() {
                     console.error(`Person ${historyEditState.personId} not found. ${ERROR_SHOULD_NOT_HAPPEN}`);
                     return '';
                   }
-                  return getHistoryValue(person.history!, historyEditState.historyIndex);
+                  return getHistoryValue(person.history ?? [], historyEditState.historyIndex);
                 })()}
                 onChange={(e) => handleSaveHistory(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
