@@ -20,7 +20,7 @@
 'use client';
 
 import { useState } from 'react';
-import { FiLock, FiUnlock } from 'react-icons/fi';
+import { FiEye, FiEyeOff, FiLock, FiUnlock } from 'react-icons/fi';
 
 interface BackendTokenFieldProps {
   endpoint: string;
@@ -55,6 +55,7 @@ function BackendTokenEditor({
 }: BackendTokenEditorProps) {
   const [tokenDraft, setTokenDraft] = useState(initialToken);
   const [remember, setRemember] = useState(rememberToken);
+  const [showToken, setShowToken] = useState(false);
   const trimmedToken = tokenDraft.trim();
 
   const submitToken = () => {
@@ -65,26 +66,38 @@ function BackendTokenEditor({
 
   return (
     <div className="mt-1 space-y-2">
-      <input
-        type="password"
-        value={tokenDraft}
-        autoComplete="off"
-        autoFocus
-        spellCheck={false}
-        placeholder="Backend token"
-        aria-label={`Token for ${endpoint}`}
-        onChange={(event) => setTokenDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            submitToken();
-          } else if (event.key === 'Escape') {
-            event.preventDefault();
-            onCancel();
-          }
-        }}
-        className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-      />
+      <div className="flex items-center gap-2">
+        <input
+          type={showToken ? 'text' : 'password'}
+          value={tokenDraft}
+          autoComplete="off"
+          autoFocus
+          spellCheck={false}
+          placeholder="Backend token"
+          aria-label={`Token for ${endpoint}`}
+          onChange={(event) => setTokenDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              submitToken();
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+          className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+        />
+        <button
+          type="button"
+          onClick={() => setShowToken((visible) => !visible)}
+          aria-label={`${showToken ? 'Hide' : 'Show'} token for ${endpoint}`}
+          aria-pressed={showToken}
+          title={showToken ? 'Hide token' : 'Show token'}
+          className="rounded border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+        >
+          {showToken ? <FiEyeOff className="h-3.5 w-3.5" /> : <FiEye className="h-3.5 w-3.5" />}
+        </button>
+      </div>
       <label className="flex items-center gap-2 text-xs text-gray-600">
         <input
           type="checkbox"

@@ -73,6 +73,23 @@ describe('BackendTokenField', () => {
     expect(screen.getByRole('button', { name: `Save token for ${ENDPOINT}` })).toBeDisabled();
   });
 
+  it('shows and hides the entered token on request', async () => {
+    const user = userEvent.setup();
+    renderField({ token: 'secret', rememberToken: true, isEditing: true });
+
+    const input = screen.getByLabelText(`Token for ${ENDPOINT}`);
+    const showButton = screen.getByRole('button', { name: `Show token for ${ENDPOINT}` });
+    expect(input).toHaveAttribute('type', 'password');
+    expect(showButton).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(showButton);
+    expect(input).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: `Hide token for ${ENDPOINT}` })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: `Hide token for ${ENDPOINT}` }));
+    expect(input).toHaveAttribute('type', 'password');
+  });
+
   it('does not save a blank token', async () => {
     const user = userEvent.setup();
     const { props } = renderField({ isEditing: true });
