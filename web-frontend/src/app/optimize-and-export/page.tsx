@@ -27,7 +27,7 @@ import { DataTable } from '@/components/DataTable';
 import { InlineEdit } from '@/components/InlineEdit';
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import NumberInput from '@/components/NumberInput';
-import BackendTokenField from '@/components/BackendTokenField';
+import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import StarRepoNudge from '@/components/StarRepoNudge';
 import OptimizationFeedbackNudge from '@/components/OptimizationFeedbackNudge';
@@ -44,6 +44,7 @@ import {
   LOCAL_BACKEND_API_URL,
   normalizeEndpoint,
   parseAuthRequirement,
+  PRODUCTION_BACKEND_API_URL,
   selectPreferredServer,
   SUPPORTED_BACKEND_API_VERSION,
   type OptimizationOptionsResponse,
@@ -195,8 +196,8 @@ function createServerEntry(
   const storedToken = typeof server.token === 'string' ? server.token.trim() : '';
   return {
     endpoint: server.endpoint,
-    token: storedToken || null,
-    rememberToken: storedToken.length > 0,
+    token: isValidBackendToken(storedToken) ? storedToken : null,
+    rememberToken: isValidBackendToken(storedToken),
     authRequired: false,
     status,
     health: null,
@@ -2200,6 +2201,12 @@ export default function OptimizeAndExportPage() {
                   Privacy Policy
                 </a>.
               </p>
+              {resolvedOptimizeEndpoint
+                && normalizeEndpoint(resolvedOptimizeEndpoint) !== PRODUCTION_BACKEND_API_URL && (
+                <p className="mt-1 text-xs text-amber-700">
+                  This server is not managed by us and may have a different privacy policy.
+                </p>
+              )}
             </div>
           </div>
         </section>

@@ -153,6 +153,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Use localhost' }));
 
     expect(screen.getByText('http://localhost:8001')).toBeInTheDocument();
+    expect(screen.getByText(/not managed by us and may have a different privacy policy/i)).toBeInTheDocument();
     expect(window.localStorage.getItem('nurse-scheduling-ai-server')).toBe('http://localhost:8001');
     await waitFor(() => expect(mockGetCapabilities).toHaveBeenLastCalledWith(
       expect.any(AbortSignal),

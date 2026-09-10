@@ -101,6 +101,29 @@ describe('BackendTokenField', () => {
     expect(props.onSave).not.toHaveBeenCalled();
   });
 
+  it('explains why an all-space token cannot be saved', async () => {
+    const user = userEvent.setup();
+    renderField({ isEditing: true });
+
+    await user.type(screen.getByLabelText(`Token for ${ENDPOINT}`), '   ');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Token cannot contain only spaces.');
+    expect(screen.getByRole('button', { name: `Save token for ${ENDPOINT}` })).toBeDisabled();
+  });
+
+  it('warns about Unicode and does not save the malformed token', async () => {
+    const user = userEvent.setup();
+    const { props } = renderField({ isEditing: true });
+
+    const input = screen.getByLabelText(`Token for ${ENDPOINT}`);
+    await user.type(input, 'token‐with‐unicode');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Use visible ASCII characters only.');
+    expect(screen.getByRole('button', { name: `Save token for ${ENDPOINT}` })).toBeDisabled();
+    await user.type(input, '{Enter}');
+    expect(props.onSave).not.toHaveBeenCalled();
+  });
+
   it('saves a trimmed token with the chosen remember setting', async () => {
     const user = userEvent.setup();
     const { props } = renderField({ isEditing: true });

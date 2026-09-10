@@ -24,7 +24,7 @@
 import Image from 'next/image';
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FiArrowDown } from 'react-icons/fi';
-import BackendTokenField from '@/components/BackendTokenField';
+import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
@@ -85,10 +85,14 @@ function readStoredAuthTokens(): Record<string, string> {
     const parsed = JSON.parse(stored) as StoredAiAuth;
     const tokens = typeof parsed.tokens === 'object' && parsed.tokens !== null
       ? Object.fromEntries(Object.entries(parsed.tokens).filter((entry): entry is [string, string] => (
-          typeof entry[1] === 'string' && entry[1].trim().length > 0
+          typeof entry[1] === 'string' && isValidBackendToken(entry[1].trim())
         )))
       : {};
-    if (typeof parsed.endpoint === 'string' && typeof parsed.token === 'string' && parsed.token.trim()) {
+    if (
+      typeof parsed.endpoint === 'string'
+      && typeof parsed.token === 'string'
+      && isValidBackendToken(parsed.token.trim())
+    ) {
       tokens[parsed.endpoint] = parsed.token.trim();
     }
     return tokens;
@@ -884,6 +888,11 @@ export default function ExperimentalAiPage() {
           </div>
           {serverLocked && (
             <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation.</p>
+          )}
+          {aiEndpoint !== PRODUCTION_AI_API_URL && aiEndpoint !== '/ai' && (
+            <p className="mt-1 text-xs text-amber-700">
+              This server is not managed by us and may have a different privacy policy.
+            </p>
           )}
           {isEditingServer && !serverLocked && (
             <form
