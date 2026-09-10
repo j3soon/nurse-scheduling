@@ -45,6 +45,7 @@ from nurse_scheduling.ai.app import (
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
@@ -318,7 +319,7 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
 
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
 def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str) -> None:
-    async def exercise() -> tuple[FakeSandboxBackend, bool, bool, list[ChatMessage]]:
+    async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[ChatMessage]]:
         operation_started = asyncio.Event()
         operation_cancelled = asyncio.Event()
 
@@ -386,14 +387,18 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         await request_events.put({"type": "http.disconnect"})
         await asyncio.wait_for(request_task, timeout=1)
 
-        backend = factory.created[0]
+        backend = factory.created[0] if factory.created else None
         return backend, operation_cancelled.is_set(), session.active, list(session.history)
 
     backend, operation_cancelled, session_active, history = asyncio.run(exercise())
 
     assert operation_cancelled
-    assert backend.closed
-    assert backend.close_calls == 1
+    if wait_stage == "provider":
+        assert backend is None
+    else:
+        assert backend is not None
+        assert backend.closed
+        assert backend.close_calls == 1
     assert not session_active
     assert history == []
 
@@ -1254,6 +1259,7 @@ def proposal_decision_context() -> tuple[
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Renamed P1.")],
+        [ToolCallRequest((ToolCall("call_1", READ_TOOL, json.dumps({"path": "schedule.yaml"})),))],
         [TextDelta("Decision acknowledged.")],
     )
     factory = rename_factory()
@@ -1406,7 +1412,7 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     recovered_prompt = json.dumps(provider.calls[2])
     assert "Invalid edit" not in recovered_prompt
     assert "Provisional invalid answer." not in recovered_prompt
-    assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule.encode()
+    assert len(factory.created) == 1
 
 
 def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> None:
@@ -1548,7 +1554,7 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     assert "no longer valid" in approved.json()["detail"]
     assert retried.status_code == 404
     assert follow_up.status_code == 200
-    assert factory.created[0].files[WORKSPACE_SCHEDULE] == schedule.encode()
+    assert factory.created == []
     assert {"role": "user", "content": PROPOSAL_INVALID_HISTORY} in provider.calls[0]
 
 

@@ -23,7 +23,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,47 +121,136 @@ async def _measured_sandbox_turn(
     factory: SandboxFactory,
     cleanup_timeout_seconds: float,
     metrics: SandboxTurnMetrics,
-    lifecycle_started: float,
+    schedule_yaml: str,
+    pending_proposal_yaml: str,
+    pending_proposal_diff: str,
 ) -> AsyncIterator[SandboxBackend]:
-    """Measure the complete create-to-destroy lifecycle around one backend."""
-    sandbox: SandboxBackend | None = None
-    cleanup_started: float | None = None
+    """Create, hydrate, and measure a sandbox only when its first tool batch begins."""
+    stack = AsyncExitStack()
+    sandbox = _LazySandboxTurn(
+        factory,
+        cleanup_timeout_seconds,
+        metrics,
+        stack,
+        schedule_yaml,
+        pending_proposal_yaml,
+        pending_proposal_diff,
+    )
     try:
-        async with managed_sandbox(factory, cleanup_timeout_seconds=cleanup_timeout_seconds) as created:
-            sandbox = created
-            metrics.provisioning_seconds = time.perf_counter() - lifecycle_started
+        async with stack:
             try:
                 yield sandbox
             finally:
-                cleanup_started = time.perf_counter()
+                sandbox.mark_cleanup_started()
     finally:
-        now = time.perf_counter()
-        metrics.lifetime_seconds = now - lifecycle_started
-        if sandbox is None:
-            metrics.provisioning_seconds = metrics.lifetime_seconds
-        if cleanup_started is not None:
-            metrics.teardown_seconds = now - cleanup_started
+        sandbox.finish_metrics()
 
-        lifecycle = getattr(sandbox, "lifecycle_metrics", SandboxLifecycleMetrics())
-        metrics.execution_seconds = lifecycle.execution_seconds
-        metrics.pause_count = lifecycle.pause_count
-        metrics.pause_cancel_count = lifecycle.pause_cancel_count
-        metrics.pause_transition_seconds = lifecycle.pause_transition_seconds
-        metrics.resume_count = lifecycle.resume_count
-        metrics.resume_wait_seconds = lifecycle.resume_wait_seconds
-        metrics.max_resume_wait_seconds = lifecycle.max_resume_wait_seconds
-        metrics.suspended_seconds = lifecycle.suspended_seconds
-        if lifecycle.teardown_seconds > 0:
-            metrics.teardown_seconds = lifecycle.teardown_seconds
-        accounted_seconds = (
-            metrics.provisioning_seconds
-            + metrics.execution_seconds
-            + metrics.pause_transition_seconds
-            + metrics.suspended_seconds
-            + metrics.resume_wait_seconds
-            + metrics.teardown_seconds
+
+class _LazySandboxTurn:
+    """Sandbox protocol adapter that defers allocation until tool execution."""
+
+    def __init__(
+        self,
+        factory: SandboxFactory,
+        cleanup_timeout_seconds: float,
+        metrics: SandboxTurnMetrics,
+        stack: AsyncExitStack,
+        schedule_yaml: str,
+        pending_proposal_yaml: str,
+        pending_proposal_diff: str,
+    ) -> None:
+        self._factory = factory
+        self._cleanup_timeout_seconds = cleanup_timeout_seconds
+        self._metrics = metrics
+        self._stack = stack
+        self._schedule_yaml = schedule_yaml
+        self._pending_proposal_yaml = pending_proposal_yaml
+        self._pending_proposal_diff = pending_proposal_diff
+        self._sandbox: SandboxBackend | None = None
+        self._lifecycle_started: float | None = None
+        self._cleanup_started: float | None = None
+
+    @property
+    def started(self) -> bool:
+        return self._sandbox is not None
+
+    @property
+    def sandbox_id(self) -> str:
+        return self._require_sandbox().sandbox_id
+
+    async def _start(self) -> SandboxBackend:
+        if self._sandbox is not None:
+            return self._sandbox
+        self._lifecycle_started = time.perf_counter()
+        try:
+            self._sandbox = await self._stack.enter_async_context(
+                managed_sandbox(self._factory, cleanup_timeout_seconds=self._cleanup_timeout_seconds)
+            )
+        finally:
+            self._metrics.provisioning_seconds = time.perf_counter() - self._lifecycle_started
+        await hydrate_sandbox(
+            self._sandbox,
+            self._schedule_yaml,
+            self._pending_proposal_yaml,
+            self._pending_proposal_diff,
         )
-        metrics.warm_waiting_seconds = max(0.0, metrics.lifetime_seconds - accounted_seconds)
+        return self._sandbox
+
+    def _require_sandbox(self) -> SandboxBackend:
+        if self._sandbox is None:  # pragma: no cover - callers start before synchronous access
+            raise RuntimeError("sandbox has not started")
+        return self._sandbox
+
+    @asynccontextmanager
+    async def activity_batch(self) -> AsyncIterator[None]:
+        sandbox = await self._start()
+        async with sandbox.activity_batch():
+            yield
+
+    async def write_file(self, path: str, content: str | bytes) -> None:
+        await (await self._start()).write_file(path, content)
+
+    async def read_file(self, path: str) -> bytes:
+        return await (await self._start()).read_file(path)
+
+    async def run(self, command: str, *, timeout_seconds: float | None = None):
+        return await (await self._start()).run(command, timeout_seconds=timeout_seconds)
+
+    async def close(self) -> None:
+        """Let the owning exit stack close the underlying sandbox."""
+
+    def mark_cleanup_started(self) -> None:
+        if self.started:
+            self._cleanup_started = time.perf_counter()
+
+    def finish_metrics(self) -> None:
+        if self._lifecycle_started is None:
+            return
+        now = time.perf_counter()
+        self._metrics.lifetime_seconds = now - self._lifecycle_started
+        if self._cleanup_started is not None:
+            self._metrics.teardown_seconds = now - self._cleanup_started
+
+        lifecycle = getattr(self._sandbox, "lifecycle_metrics", SandboxLifecycleMetrics())
+        self._metrics.execution_seconds = lifecycle.execution_seconds
+        self._metrics.pause_count = lifecycle.pause_count
+        self._metrics.pause_cancel_count = lifecycle.pause_cancel_count
+        self._metrics.pause_transition_seconds = lifecycle.pause_transition_seconds
+        self._metrics.resume_count = lifecycle.resume_count
+        self._metrics.resume_wait_seconds = lifecycle.resume_wait_seconds
+        self._metrics.max_resume_wait_seconds = lifecycle.max_resume_wait_seconds
+        self._metrics.suspended_seconds = lifecycle.suspended_seconds
+        if lifecycle.teardown_seconds > 0:
+            self._metrics.teardown_seconds = lifecycle.teardown_seconds
+        accounted_seconds = (
+            self._metrics.provisioning_seconds
+            + self._metrics.execution_seconds
+            + self._metrics.pause_transition_seconds
+            + self._metrics.suspended_seconds
+            + self._metrics.resume_wait_seconds
+            + self._metrics.teardown_seconds
+        )
+        self._metrics.warm_waiting_seconds = max(0.0, self._metrics.lifetime_seconds - accounted_seconds)
 
 
 async def run_sandbox_agent(
@@ -177,17 +266,16 @@ async def run_sandbox_agent(
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
-    lifecycle_started = time.perf_counter()
     try:
         async with asyncio.timeout(limits.turn_timeout_seconds):
             async with _measured_sandbox_turn(
                 factory,
                 limits.cleanup_timeout_seconds,
                 metrics,
-                lifecycle_started,
+                schedule_yaml,
+                pending_proposal_yaml,
+                pending_proposal_diff,
             ) as sandbox:
-                await hydrate_sandbox(sandbox, schedule_yaml, pending_proposal_yaml, pending_proposal_diff)
-
                 sandbox_tools = SandboxPiTools(sandbox, limits.bash_command_timeout_seconds)
                 candidate_tracker = _ScheduleCandidateTracker(
                     sandbox,
@@ -227,6 +315,8 @@ async def run_sandbox_agent(
                         yield AgentScheduleChange(pending_schedule_change)
                         pending_schedule_change = None
 
+                if not sandbox.started:
+                    return
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
                 review = review_schedule_candidate(schedule_yaml, candidate, limits.max_schedule_bytes)
                 logger.info(

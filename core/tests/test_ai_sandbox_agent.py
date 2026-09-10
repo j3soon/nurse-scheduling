@@ -154,7 +154,14 @@ def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
 
     _collect(
-        ScriptedProvider([TextDelta("The pending description is Ready.")]),
+        ScriptedProvider(
+            [
+                ToolCallRequest(
+                    (ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_PENDING_PROPOSAL})),)
+                )
+            ],
+            [TextDelta("The pending description is Ready.")],
+        ),
         factory,
         pending_proposal_yaml="apiVersion: alpha\ndescription: Ready\n",
         pending_proposal_diff='- description: "" -> "Ready"',
@@ -250,12 +257,21 @@ def test_read_tool_does_not_trigger_a_redundant_schedule_change_scan():
     assert backend.read_paths.count(WORKSPACE_SCHEDULE) == 2
 
 
-def test_separate_agent_turns_get_fresh_isolated_sandboxes():
+def test_text_only_turns_do_not_start_sandboxes():
     factory = FakeSandboxFactory()
     provider = ScriptedProvider([TextDelta("No change.")])
 
     _collect(provider, factory)
     _collect(provider, factory)
+
+    assert factory.created == []
+
+
+def test_separate_tool_turns_get_fresh_isolated_sandboxes():
+    factory = FakeSandboxFactory()
+
+    _collect(ScriptedProvider(_run_call(), [TextDelta("No change.")]), factory)
+    _collect(ScriptedProvider(_run_call(), [TextDelta("No change.")]), factory)
 
     assert len(factory.created) == 2
     assert factory.created[0].sandbox_id != factory.created[1].sandbox_id
@@ -272,7 +288,7 @@ def test_separate_agent_turns_get_fresh_isolated_sandboxes():
     ],
     ids=["model", "command"],
 )
-def test_model_or_command_failure_closes_the_sandbox(failure: BaseException):
+def test_failure_before_tools_skips_sandbox_and_command_failure_closes_it(failure: BaseException):
     if isinstance(failure, ProviderError):
         provider = ScriptedProvider(failure)
         factory = FakeSandboxFactory()
@@ -287,7 +303,10 @@ def test_model_or_command_failure_closes_the_sandbox(failure: BaseException):
     with pytest.raises(type(failure)):
         _collect(provider, factory)
 
-    assert factory.created[0].closed
+    if isinstance(failure, ProviderError):
+        assert factory.created == []
+    else:
+        assert factory.created[0].closed
 
 
 def test_candidate_read_failure_closes_the_sandbox():
@@ -298,7 +317,7 @@ def test_candidate_read_failure_closes_the_sandbox():
     factory = FakeSandboxFactory(ReadFailureBackend)
 
     with pytest.raises(SandboxError, match="cannot read"):
-        _collect(ScriptedProvider([TextDelta("Done.")]), factory)
+        _collect(ScriptedProvider(_run_call(), [TextDelta("Done.")]), factory)
 
     assert factory.created[0].closed
 
@@ -396,8 +415,8 @@ def test_a_turn_that_ends_without_the_working_copy_fails_candidate_validation():
     assert factory.created[0].closed
 
 
-def test_cancelling_the_model_turn_closes_the_sandbox():
-    async def exercise() -> FakeSandboxBackend:
+def test_cancelling_before_a_tool_call_does_not_start_a_sandbox():
+    async def exercise() -> FakeSandboxFactory:
         entered = asyncio.Event()
 
         class WaitingProvider:
@@ -423,12 +442,12 @@ def test_cancelling_the_model_turn_closes_the_sandbox():
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        return factory.created[0]
+        return factory
 
-    assert asyncio.run(exercise()).closed
+    assert asyncio.run(exercise()).created == []
 
 
-def test_whole_turn_timeout_closes_the_sandbox():
+def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
     class WaitingProvider:
         async def stream_events(self, _messages, tools=None):
             await asyncio.Event().wait()
@@ -439,4 +458,4 @@ def test_whole_turn_timeout_closes_the_sandbox():
     with pytest.raises(SandboxTurnTimeoutError, match="0.01-second limit"):
         _collect(WaitingProvider(), factory, turn_timeout_seconds=0.01)
 
-    assert factory.created[0].closed
+    assert factory.created == []
