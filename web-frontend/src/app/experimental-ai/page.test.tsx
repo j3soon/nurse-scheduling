@@ -132,6 +132,9 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
+    const responseTime = document.querySelector('time');
+    expect(responseTime).toHaveAttribute('dateTime');
+    expect(responseTime).toHaveTextContent(/· (?:<1s|\d+(?:\.\d)?s|\d+m \d+s)$/);
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',

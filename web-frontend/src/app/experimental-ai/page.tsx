@@ -55,6 +55,8 @@ interface ChatMessage {
   attachmentNames?: string[];
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed';
+  responseStartedAt?: number;
+  responseCompletedAt?: number;
   retry?: {
     question: string;
     requiresAttachments: boolean;
@@ -147,6 +149,25 @@ function messageId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random()}`;
+}
+
+function formatResponseDuration(startedAt: number, completedAt: number): string {
+  const seconds = Math.max(0, completedAt - startedAt) / 1000;
+  if (seconds < 1) return '<1s';
+  if (seconds < 10) return `${seconds.toFixed(1)}s`;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+function formatResponseTime(timestamp: number): string {
+  const completed = new Date(timestamp);
+  const now = new Date();
+  const sameDate = completed.getFullYear() === now.getFullYear()
+    && completed.getMonth() === now.getMonth()
+    && completed.getDate() === now.getDate();
+  return completed.toLocaleString([], sameDate
+    ? { hour: 'numeric', minute: '2-digit' }
+    : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 function isAuthenticationError(error: unknown): boolean {
@@ -596,12 +617,13 @@ export default function ExperimentalAiPage() {
       attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
     const assistantId = messageId();
+    const responseStartedAt = Date.now();
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
     setMessages(previous => [
       ...previous,
       userMessage,
-      { id: assistantId, role: 'assistant', content: '', status: 'pending' },
+      { id: assistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
     ]);
     if (clearComposer) {
       setDraft('');
@@ -698,7 +720,9 @@ export default function ExperimentalAiPage() {
         sessionEndpoint,
       );
       setMessages(previous => previous.map(message => (
-        message.id === assistantId ? { ...message, status: undefined } : message
+        message.id === assistantId
+          ? { ...message, status: undefined, responseCompletedAt: Date.now() }
+          : message
       )));
     } catch (streamError) {
       const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
@@ -708,6 +732,7 @@ export default function ExperimentalAiPage() {
             ...message,
             content: staleTurnMessage ?? message.content,
             status: 'failed',
+            responseCompletedAt: Date.now(),
             activity: staleTurnMessage === null
               ? interruptRunningTools(message.activity ?? [])
               : [{ kind: 'response' as const, text: staleTurnMessage }],
@@ -1017,6 +1042,17 @@ export default function ExperimentalAiPage() {
               <p className="mt-2 text-xs opacity-80">
                 Attached: {message.attachmentNames.join(', ')}
               </p>
+            )}
+            {message.role === 'assistant'
+              && message.responseStartedAt !== undefined
+              && message.responseCompletedAt !== undefined && (
+              <time
+                dateTime={new Date(message.responseCompletedAt).toISOString()}
+                className="mt-2 block text-[0.6875rem] text-gray-400"
+              >
+                {formatResponseTime(message.responseCompletedAt)} ·{' '}
+                {formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}
+              </time>
             )}
             {message.role === 'assistant' && message.status === 'failed' && message.retry && (
               <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
