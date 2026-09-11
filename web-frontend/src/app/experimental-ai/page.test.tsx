@@ -187,6 +187,52 @@ describe('ExperimentalAiPage', () => {
     expect(window.localStorage.getItem('nurse-scheduling-ai-server')).toBe('https://ai.example.com');
   });
 
+  it('adds browser speech recognition results to the message draft', async () => {
+    const recognition: {
+      onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+      onend: (() => void) | null;
+      onerror: (() => void) | null;
+      continuous: boolean;
+      interimResults: boolean;
+      start: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+    } = {
+      continuous: false,
+      interimResults: false,
+      onresult: null,
+      onend: null,
+      onerror: null,
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    function MockSpeechRecognition() {
+      return recognition;
+    }
+    Object.defineProperty(window, 'SpeechRecognition', {
+      configurable: true,
+      value: MockSpeechRecognition,
+    });
+    const user = userEvent.setup();
+
+    try {
+      render(<ExperimentalAiPage />);
+      const draft = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+      await user.type(draft, 'Please');
+      await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
+
+      expect(recognition.start).toHaveBeenCalledOnce();
+      act(() => recognition.onresult?.({ results: [[{ transcript: 'add a night shift' }]] }));
+
+      expect(draft).toHaveValue('Please add a night shift');
+      await user.click(screen.getByRole('button', { name: 'Stop dictation' }));
+      expect(recognition.stop).toHaveBeenCalledOnce();
+      act(() => recognition.onend?.());
+      expect(screen.getByRole('button', { name: 'Start dictation' })).toHaveAttribute('aria-pressed', 'false');
+    } finally {
+      delete window.SpeechRecognition;
+    }
+  });
+
   it('ignores non-user scroll events while following streamed text', async () => {
     const user = userEvent.setup();
     let sendDelta: ((text: string) => void) | undefined;

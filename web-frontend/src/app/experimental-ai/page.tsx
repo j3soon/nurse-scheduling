@@ -23,7 +23,7 @@
 
 import Image from 'next/image';
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FiArrowDown } from 'react-icons/fi';
+import { FiArrowDown, FiMic } from 'react-icons/fi';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL } from '@/constants/urls';
@@ -79,6 +79,37 @@ interface StoredAiAuth {
 }
 
 type AiServerStatus = 'checking' | 'online' | 'offline' | 'unauthorized';
+
+interface BrowserSpeechRecognitionResult {
+  readonly length: number;
+  readonly [index: number]: { transcript: string };
+}
+
+interface BrowserSpeechRecognitionEvent {
+  readonly results: {
+    readonly length: number;
+    readonly [index: number]: BrowserSpeechRecognitionResult;
+  };
+}
+
+interface BrowserSpeechRecognition {
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  }
+}
 
 function readStoredAuthTokens(): Record<string, string> {
   try {
@@ -271,6 +302,8 @@ export default function ExperimentalAiPage() {
   const [documentCapability, setDocumentCapability] = useState(DISABLED_DOCUMENT_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
   const [showTools, setShowTools] = useState(true);
@@ -288,6 +321,7 @@ export default function ExperimentalAiPage() {
   const hasMessagesRef = useRef(false);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const composerDragDepthRef = useRef(0);
+  const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   hasMessagesRef.current = messages.length > 0;
   useTabSwitchWarning(messages.length > 0);
 
@@ -318,6 +352,7 @@ export default function ExperimentalAiPage() {
     setAuthToken(storedToken);
     setRememberAuthToken(storedToken !== null);
     setIsClientReady(true);
+    setSpeechSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
   }, []);
 
   const rememberPreferences = (preferences: AiPreferences) => {
@@ -357,6 +392,7 @@ export default function ExperimentalAiPage() {
 
   useEffect(() => () => {
       abortControllerRef.current?.abort();
+      speechRecognitionRef.current?.stop();
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
@@ -777,6 +813,43 @@ export default function ExperimentalAiPage() {
   };
 
   const stop = () => abortControllerRef.current?.abort();
+  const toggleDictation = () => {
+    if (isListening) {
+      speechRecognitionRef.current?.stop();
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    const originalDraft = draft.trimEnd();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = event => {
+      const transcript = Array.from({ length: event.results.length }, (_, index) => (
+        event.results[index][0]?.transcript ?? ''
+      )).join('').trim();
+      setDraft(`${originalDraft}${originalDraft && transcript ? ' ' : ''}${transcript}`);
+    };
+    recognition.onend = () => {
+      if (speechRecognitionRef.current === recognition) speechRecognitionRef.current = null;
+      setIsListening(false);
+    };
+    recognition.onerror = () => {
+      setError('Speech recognition stopped before it could transcribe audio.');
+      setIsListening(false);
+    };
+    speechRecognitionRef.current = recognition;
+    setError(null);
+    setIsListening(true);
+    try {
+      recognition.start();
+    } catch {
+      speechRecognitionRef.current = null;
+      setIsListening(false);
+      setError('Speech recognition could not start in this browser.');
+    }
+  };
   const selectedImageCount = selectedAttachments.filter(attachment => attachment.kind === 'image').length;
   const selectedDocumentCount = selectedAttachments.length - selectedImageCount;
   const credentialsMissing = authRequired && authToken === null;
@@ -1216,7 +1289,7 @@ export default function ExperimentalAiPage() {
               Attach files
             </label>
           )}
-          <label className="order-1 flex-1 sm:order-2">
+          <label className="relative order-1 flex-1 sm:order-2">
             <span className="sr-only">Ask about the current schedule</span>
             <textarea
               value={draft}
@@ -1231,8 +1304,21 @@ export default function ExperimentalAiPage() {
               rows={3}
               maxLength={8000}
               placeholder="Ask about the current schedule…"
-              className="w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100"
+              className="w-full resize-none rounded-xl border border-gray-300 bg-white py-3 pl-4 pr-12 text-gray-900 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100"
             />
+            <button
+              type="button"
+              onClick={toggleDictation}
+              disabled={!isClientReady || credentialsMissing || !speechSupported}
+              aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
+              aria-pressed={isListening}
+              title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
+              className={`absolute bottom-2.5 right-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
+                isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+              }`}
+            >
+              <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
+            </button>
           </label>
           {isStreaming ? (
             <button
