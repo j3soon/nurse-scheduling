@@ -29,6 +29,7 @@ const mockStreamMessage = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
 const mockApproveProposal = vi.hoisted(() => vi.fn());
 const mockRejectProposal = vi.hoisted(() => vi.fn());
+const mockQueueMessage = vi.hoisted(() => vi.fn());
 const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
@@ -46,6 +47,7 @@ vi.mock('./aiClient', () => ({
     if (!trimmed) return '';
     return /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   },
+  queueMessage: mockQueueMessage,
   streamMessage: mockStreamMessage,
   approveProposal: mockApproveProposal,
   rejectProposal: mockRejectProposal,
@@ -104,6 +106,7 @@ describe('ExperimentalAiPage', () => {
     mockGenerateYaml.mockClear();
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
     mockRejectProposal.mockReset().mockResolvedValue(undefined);
+    mockQueueMessage.mockReset().mockResolvedValue(undefined);
     mockUpdateSessionSchedule.mockReset().mockResolvedValue(undefined);
     mockLoadFromYaml.mockReset();
     mockUseTabSwitchWarning.mockReset();
@@ -231,6 +234,48 @@ describe('ExperimentalAiPage', () => {
     } finally {
       delete window.SpeechRecognition;
     }
+  });
+
+  it('queues a message to steer the active turn without stopping it', async () => {
+    const user = userEvent.setup();
+    let callbacks: { onSteering?: (messageId: string, message: string) => void } | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      streamCallbacks: { onSteering?: (messageId: string, message: string) => void },
+    ) => {
+      callbacks = streamCallbacks;
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    render(<ExperimentalAiPage />);
+    const draft = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    await user.type(draft, 'Inspect P1.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(callbacks).toBeDefined());
+    const activeSignal = mockStreamMessage.mock.calls[0][3] as AbortSignal;
+    await user.type(draft, 'Focus on P2 instead.');
+    await user.click(screen.getByRole('button', { name: 'Queue message' }));
+
+    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+    expect(activeSignal.aborted).toBe(false);
+    expect(mockQueueMessage).toHaveBeenCalledWith(
+      'session-id',
+      expect.any(String),
+      'Focus on P2 instead.',
+      null,
+      '/ai',
+    );
+    const queuedId = mockQueueMessage.mock.calls[0][1] as string;
+    act(() => callbacks?.onSteering?.(queuedId, 'Focus on P2 instead.'));
+
+    expect(screen.queryByText('Messages to be submitted after next tool call')).not.toBeInTheDocument();
+    expect(screen.getByText('Focus on P2 instead.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    await act(async () => finishStream?.());
   });
 
   it('ignores non-user scroll events while following streamed text', async () => {
@@ -478,7 +523,7 @@ describe('ExperimentalAiPage', () => {
     expect(activity.querySelectorAll('hr')).toHaveLength(5);
   });
 
-  it('allows drafting the next question while a response is streaming', async () => {
+  it('queues a drafted question while a response is streaming', async () => {
     const user = userEvent.setup();
     let finishStream: (() => void) | undefined;
     mockStreamMessage.mockImplementationOnce(async () => {
@@ -497,11 +542,20 @@ describe('ExperimentalAiPage', () => {
     await user.type(composer, 'Next question.');
     await user.keyboard('{Enter}');
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
-    expect(composer).toHaveValue('Next question.');
+    expect(composer).toHaveValue('');
+    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+    expect(mockQueueMessage).toHaveBeenCalledWith(
+      'session-id',
+      expect.any(String),
+      'Next question.',
+      null,
+      '/ai',
+    );
 
     finishStream?.();
     await screen.findByRole('button', { name: 'Send' });
-    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
   it('requires the advertised AI token and uses a session-only credential', async () => {

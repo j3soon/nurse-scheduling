@@ -182,6 +182,7 @@ def test_ai_authentication_discovery_and_healthchecks_stay_public() -> None:
     [
         ("post", "/sessions", {"schedule_yaml": "description: test"}),
         ("post", "/sessions/missing/messages", {"message": "Hello"}),
+        ("post", "/sessions/missing/messages/queue", {"message_id": "queued-1", "message": "Hello"}),
         ("put", "/sessions/missing/schedule", {"schedule_yaml": "description: changed"}),
         ("post", "/sessions/missing/proposal/approve", {"base_sha256": "0" * 64}),
         ("post", "/sessions/missing/proposal/reject", None),
@@ -245,6 +246,23 @@ def create_session(client: TestClient, schedule_yaml: str = "description: test")
     response = client.post("/sessions", json={"schedule_yaml": schedule_yaml})
     assert response.status_code == 201
     return response.json()["id"]
+
+
+def test_active_session_accepts_a_queued_steering_message() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    owner = client.cookies[OWNER_COOKIE]
+    app.state.session_store.begin(session_id, owner)
+
+    response = client.post(
+        f"/sessions/{session_id}/messages/queue",
+        json={"message_id": "queued-1", "message": "Focus on P2 instead."},
+    )
+
+    assert response.status_code == 202
+    assert app.state.session_store.take_steering(session_id, False) == [("queued-1", "Focus on P2 instead.")]
+    app.state.session_store.abort(session_id)
 
 
 def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixture) -> None:
@@ -1630,6 +1648,49 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     with pytest.raises(HTTPException) as exc_info:
         store.adopt_proposal(session.id, "browser-owner", active_turn_revision)
     assert exc_info.value.status_code == 404
+
+
+def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", schedule_yaml())
+    _, _, revision, _, _ = store.begin(session.id, "browser-owner")
+
+    store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
+    store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
+
+    assert store.take_steering(session.id, False) == [("queued-1", "Focus on P2 instead.")]
+    assert store.finish(
+        session.id,
+        "Inspect P1.",
+        "P2 is the better target.",
+        base_revision=revision,
+        turn_messages=[
+            ChatMessage(role="user", content="Inspect P1."),
+            ChatMessage(role="assistant", content="P1 needs review."),
+            ChatMessage(role="user", content="Focus on P2 instead."),
+            ChatMessage(role="assistant", content="P2 is the better target."),
+        ],
+    ).turn_saved
+    assert session.history == [
+        ChatMessage(role="user", content="Inspect P1."),
+        ChatMessage(role="assistant", content="P1 needs review."),
+        ChatMessage(role="user", content="Focus on P2 instead."),
+        ChatMessage(role="assistant", content="P2 is the better target."),
+    ]
+
+
+def test_session_store_rejects_steering_after_the_final_boundary() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", schedule_yaml())
+    store.begin(session.id, "browser-owner")
+
+    assert store.take_steering(session.id, True) == []
+    with pytest.raises(HTTPException) as exc_info:
+        store.queue_steering(session.id, "browser-owner", "too-late", "One more thing.")
+
+    assert exc_info.value.status_code == 409
 
 
 def test_sessions_are_private_to_their_browser() -> None:

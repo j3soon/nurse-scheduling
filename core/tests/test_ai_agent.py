@@ -27,6 +27,7 @@ import pytest
 
 from nurse_scheduling.ai.agent import (
     AgentReasoning,
+    AgentSteering,
     AgentText,
     AgentToolOutcome,
     AgentToolStart,
@@ -115,6 +116,39 @@ def test_a_tool_call_is_executed_and_returned_to_the_provider():
         "tool_call_id": "call_0",
         "content": "command result",
     }
+
+
+def test_queued_steering_is_injected_after_the_next_tool_batch():
+    provider = FakeProvider(_calls(), _text("Steered answer."))
+    queued = [("message-2", "Focus on P2 instead.")]
+    close_checks: list[bool] = []
+
+    async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
+        return AgentToolOutcome("command result", True)
+
+    def take_steering(close_if_empty: bool) -> list[tuple[str, str]]:
+        close_checks.append(close_if_empty)
+        messages = list(queued)
+        queued.clear()
+        return messages
+
+    async def collect() -> list:
+        return [
+            event
+            async for event in run_tool_agent(
+                provider,
+                QUESTION,
+                TOOLS,
+                execute,
+                take_steering=take_steering,
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert AgentSteering("message-2", "Focus on P2 instead.") in events
+    assert provider.requests[1][0][-1] == {"role": "user", "content": "Focus on P2 instead."}
+    assert close_checks == [False, True]
 
 
 def test_text_sent_alongside_a_tool_call_is_kept_in_the_conversation():

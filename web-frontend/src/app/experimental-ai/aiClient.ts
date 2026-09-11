@@ -39,6 +39,7 @@ export interface StreamCallbacks {
   onReasoning?: (text: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
+  onSteering?: (messageId: string, message: string) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
   onProposal?: (diff: string) => void;
   onDone?: () => void;
@@ -78,6 +79,7 @@ interface SsePayload {
   result?: unknown;
   ok?: unknown;
   schedule_yaml?: unknown;
+  message_id?: unknown;
 }
 
 export class AiHttpError extends Error {
@@ -220,6 +222,12 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       result: typeof payload.result === 'string' ? payload.result : '',
       ok: payload.ok !== false,
     });
+  } else if (
+    eventType === 'steering'
+    && typeof payload.message_id === 'string'
+    && typeof payload.message === 'string'
+  ) {
+    callbacks.onSteering?.(payload.message_id, payload.message);
   } else if (eventType === 'schedule_change') {
     if (typeof payload.schedule_yaml !== 'string') {
       throw new Error('The AI backend returned an invalid schedule change.');
@@ -291,6 +299,22 @@ export async function streamMessage(
   }
 
   if (buffer.trim()) consumeEvent(buffer, callbacks);
+}
+
+export async function queueMessage(
+  sessionId: string,
+  messageId: string,
+  message: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages/queue`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ message_id: messageId, message }),
+  });
+  if (!response.ok) throw await responseError(response);
 }
 
 export async function scheduleRevision(scheduleYaml: string): Promise<string> {

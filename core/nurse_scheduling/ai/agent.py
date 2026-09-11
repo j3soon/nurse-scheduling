@@ -75,6 +75,14 @@ class AgentToolUse:
 
 
 @dataclass(frozen=True)
+class AgentSteering:
+    """One queued user message injected at a model turn boundary."""
+
+    message_id: str
+    text: str
+
+
+@dataclass(frozen=True)
 class AgentProposal:
     """The schedule the run ended with, waiting for the user to approve it."""
 
@@ -82,9 +90,10 @@ class AgentProposal:
     diff: str
 
 
-AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentProposal | TokenUsage
+AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentSteering | AgentProposal | TokenUsage
 ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]
 ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
+SteeringSource = Callable[[bool], Sequence[tuple[str, str]]]
 
 
 @asynccontextmanager
@@ -120,6 +129,7 @@ async def run_tool_agent(
     activity_batch: ToolBatchScope | None = None,
     parallel_tool_names: frozenset[str] = frozenset(),
     observe_tool_batch: ToolBatchObserver | None = None,
+    take_steering: SteeringSource | None = None,
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
 ) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
@@ -141,7 +151,14 @@ async def run_tool_agent(
             elif isinstance(event, ToolCallRequest):
                 calls = event.calls
         if not calls:
-            break
+            steering = tuple(take_steering(True)) if take_steering is not None else ()
+            if not steering:
+                break
+            conversation.append(ChatMessage(role="assistant", content="".join(answer)))
+            for message_id, text in steering:
+                conversation.append(ChatMessage(role="user", content=text))
+                yield AgentSteering(message_id, text)
+            continue
 
         exceeds_rounds = max_tool_rounds is not None and tool_rounds >= max_tool_rounds
         exceeds_calls = max_tool_calls is not None and tool_calls + len(calls) > max_tool_calls
@@ -189,6 +206,10 @@ async def run_tool_agent(
                     conversation.append(tool_result_message(call.id, outcome.text))
             if observe_tool_batch is not None:
                 observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
+        if take_steering is not None:
+            for message_id, text in take_steering(False):
+                conversation.append(ChatMessage(role="user", content=text))
+                yield AgentSteering(message_id, text)
 
 
 async def _execute_parallel_tool_calls(

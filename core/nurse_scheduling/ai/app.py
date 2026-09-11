@@ -27,7 +27,7 @@ import logging
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
@@ -43,7 +43,7 @@ from starlette.datastructures import UploadFile
 
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
-from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
+from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .config import AiSettings, validate_ai_auth_credentials
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .history import ChatHistory, stop_maintenance
@@ -159,6 +159,12 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=100_000)
 
 
+class QueueChatRequest(ChatRequest):
+    """One user message queued while the assistant is working."""
+
+    message_id: str = Field(min_length=1, max_length=100)
+
+
 class HealthResponse(BaseModel):
     """Stable service identity returned by health endpoints."""
 
@@ -226,6 +232,9 @@ class ChatSession:
     revision: str
     history: list[ChatMessage] = field(default_factory=list)
     active: bool = False
+    accepting_steering: bool = False
+    steering_queue: list[tuple[str, str]] = field(default_factory=list)
+    steering_ids: set[str] = field(default_factory=set)
     proposal_yaml: str = ""
     proposal_diff: str = ""
 
@@ -269,6 +278,9 @@ class SessionStore:
             if session.active:
                 raise HTTPException(status_code=409, detail="This chat session already has an active response.")
             session.active = True
+            session.accepting_steering = True
+            session.steering_queue.clear()
+            session.steering_ids.clear()
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return (
                 list(session.history),
@@ -286,6 +298,7 @@ class SessionStore:
         proposal: tuple[str, str] | None = None,
         *,
         base_revision: str,
+        turn_messages: Sequence[ChatMessage] = (),
     ) -> TurnCompletion:
         """Save a completed turn when its schedule revision is still current."""
         with self._lock:
@@ -294,19 +307,58 @@ class SessionStore:
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
             if session.revision != base_revision:
                 session.active = False
+                session.accepting_steering = False
+                session.steering_queue.clear()
+                session.steering_ids.clear()
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
             session.history.extend(
-                [
+                turn_messages
+                or (
                     ChatMessage(role="user", content=user_message),
                     ChatMessage(role="assistant", content=assistant_message),
-                ]
+                )
             )
             session.history = session.history[-self._settings.max_history_messages :]
             proposal_saved = proposal is not None
             if proposal_saved:
                 session.proposal_yaml, session.proposal_diff = proposal
             session.active = False
+            session.accepting_steering = False
+            session.steering_queue.clear()
+            session.steering_ids.clear()
             return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
+
+    def queue_steering(
+        self,
+        session_id: str,
+        owner_token: str | None,
+        message_id: str,
+        message: str,
+    ) -> None:
+        """Queue a message for the next model boundary of an active response."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            if not session.active or not session.accepting_steering:
+                raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
+            if message_id in session.steering_ids:
+                return
+            if len(session.steering_queue) >= self._settings.max_history_messages:
+                raise HTTPException(status_code=429, detail="Too many messages are already queued.")
+            session.steering_queue.append((message_id, message))
+            session.steering_ids.add(message_id)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+
+    def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]:
+        """Drain queued messages and close the final race when a response is done."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None or not session.active:
+                return []
+            queued = list(session.steering_queue)
+            session.steering_queue.clear()
+            if close_if_empty and not queued:
+                session.accepting_steering = False
+            return queued
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
         """Replace the schedule snapshot, which drops any proposal made against the old one."""
@@ -372,6 +424,9 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is not None:
                 session.active = False
+                session.accepting_steering = False
+                session.steering_queue.clear()
+                session.steering_ids.clear()
 
     def _append_history_event(self, session: ChatSession, content: str) -> None:
         """Append one trusted application event within the caller's lock."""
@@ -723,6 +778,29 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
+    @app.post(
+        "/sessions/{session_id}/messages/queue",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth)],
+    )
+    async def queue_message(
+        session_id: str,
+        request: QueueChatRequest,
+        http_request: Request,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Queue a follow-up for the next boundary in an active agent turn."""
+        message = _validate_question(request.message, settings)
+        store.queue_steering(session_id, owner, request.message_id, message)
+        request_logger.info(
+            "AI steering queued session_id=%s message_chars=%s message=%s auth_credential_id=%s",
+            session_id,
+            len(message),
+            json.dumps(_question_log_preview(message), ensure_ascii=False),
+            http_request.state.auth_credential_id,
+        )
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
         session_id: str,
@@ -783,6 +861,8 @@ def create_app(
             outcome = "cancelled"
             error_code = None
             usage = None
+            turn_messages = [ChatMessage(role="user", content=history_question)]
+            assistant_segment: list[str] = []
             try:
                 async with concurrency_limit:
                     agent_events = run_sandbox_agent(
@@ -791,12 +871,14 @@ def create_app(
                         schedule_yaml,
                         messages,
                         SandboxAgentLimits.from_settings(settings),
+                        take_steering=lambda close_if_empty: store.take_steering(session_id, close_if_empty),
                         pending_proposal_yaml=proposal_yaml,
                         pending_proposal_diff=proposal_diff,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):
                             assistant_parts.append(event.text)
+                            assistant_segment.append(event.text)
                             yield _sse_event("delta", {"text": event.text})
                         elif isinstance(event, AgentReasoning):
                             yield _sse_event("reasoning", {"text": event.text})
@@ -820,6 +902,18 @@ def create_app(
                                     "ok": event.ok,
                                 },
                             )
+                        elif isinstance(event, AgentSteering):
+                            if assistant_segment:
+                                turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
+                            turn_messages.append(ChatMessage(role="user", content=event.text))
+                            assistant_segment.clear()
+                            yield _sse_event(
+                                "steering",
+                                {
+                                    "message_id": event.message_id,
+                                    "message": event.text,
+                                },
+                            )
                         elif isinstance(event, AgentScheduleChange):
                             yield _sse_event(
                                 "schedule_change",
@@ -830,12 +924,14 @@ def create_app(
                 proposal = None
                 if pending_proposal is not None:
                     proposal = (pending_proposal.text, pending_proposal.diff)
+                turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
                 completion = store.finish(
                     session_id,
                     history_question,
                     "".join(assistant_parts),
                     proposal,
                     base_revision=base_revision,
+                    turn_messages=turn_messages,
                 )
                 completed = True
                 outcome = "completed" if completion.turn_saved else "stale"

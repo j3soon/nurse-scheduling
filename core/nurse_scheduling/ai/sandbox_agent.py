@@ -261,6 +261,7 @@ async def run_sandbox_agent(
     limits: SandboxAgentLimits,
     metrics: SandboxTurnMetrics | None = None,
     observe_tool_batch: Callable[[AgentToolBatchMetrics], None] | None = None,
+    take_steering: Callable[[bool], Sequence[tuple[str, str]]] | None = None,
     pending_proposal_yaml: str = "",
     pending_proposal_diff: str = "",
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
@@ -307,6 +308,7 @@ async def run_sandbox_agent(
                     activity_batch=sandbox.activity_batch,
                     parallel_tool_names=frozenset({READ_TOOL}),
                     observe_tool_batch=observe_tool_batch,
+                    take_steering=take_steering,
                     max_tool_rounds=limits.max_tool_rounds,
                     max_tool_calls=limits.max_tool_calls,
                 ):

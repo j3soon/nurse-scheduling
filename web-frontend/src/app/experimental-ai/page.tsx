@@ -43,6 +43,7 @@ import {
   getAiBaseUrl,
   getCapabilities,
   normalizeAiEndpoint,
+  queueMessage,
   rejectProposal,
   streamMessage,
   updateSessionSchedule,
@@ -147,6 +148,11 @@ interface SelectedAttachment {
   file: File;
   kind: 'image' | 'document';
   previewUrl?: string;
+}
+
+interface QueuedChatMessage {
+  id: string;
+  content: string;
 }
 
 const DISABLED_IMAGE_CAPABILITY: AiCapabilities['image_attachments'] = {
@@ -302,6 +308,7 @@ export default function ExperimentalAiPage() {
   const [documentCapability, setDocumentCapability] = useState(DISABLED_DOCUMENT_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -322,6 +329,7 @@ export default function ExperimentalAiPage() {
   const composerRef = useRef<HTMLFormElement | null>(null);
   const composerDragDepthRef = useRef(0);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   hasMessagesRef.current = messages.length > 0;
   useTabSwitchWarning(messages.length > 0);
 
@@ -652,14 +660,16 @@ export default function ExperimentalAiPage() {
       content: question,
       attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
-    const assistantId = messageId();
+    let activeAssistantId = messageId();
+    let activeQuestion = question;
+    let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
     const responseStartedAt = Date.now();
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
     setMessages(previous => [
       ...previous,
       userMessage,
-      { id: assistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
+      { id: activeAssistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
     ]);
     if (clearComposer) {
       setDraft('');
@@ -693,7 +703,7 @@ export default function ExperimentalAiPage() {
         question,
         {
           onDelta: text => setMessages(previous => previous.map(message => (
-            message.id === assistantId
+            message.id === activeAssistantId
               ? {
                 ...message,
                 content: message.content + text,
@@ -702,7 +712,7 @@ export default function ExperimentalAiPage() {
               : message
           ))),
           onReasoning: text => setMessages(previous => previous.map(message => {
-            if (message.id !== assistantId) return message;
+            if (message.id !== activeAssistantId) return message;
             const activity = message.activity ?? [];
             const last = activity[activity.length - 1];
             // Consecutive reasoning belongs to one entry, so the order of work stays readable.
@@ -712,7 +722,7 @@ export default function ExperimentalAiPage() {
             return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
           })),
           onToolStart: activity => setMessages(previous => previous.map(message => (
-            message.id === assistantId
+            message.id === activeAssistantId
               ? {
                 ...message,
                 activity: [
@@ -723,14 +733,39 @@ export default function ExperimentalAiPage() {
               : message
           ))),
           onTool: activity => setMessages(previous => previous.map(message => {
-            if (message.id !== assistantId) return message;
+            if (message.id !== activeAssistantId) return message;
             return { ...message, activity: finishToolActivity(message.activity ?? [], activity) };
           })),
+          onSteering: (queuedId, queuedMessage) => {
+            queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
+            setQueuedMessages(queuedMessagesRef.current);
+            const completedAssistantId = activeAssistantId;
+            const nextAssistantId = messageId();
+            const steeringStartedAt = Date.now();
+            setMessages(previous => [
+              ...previous.map(message => (
+                message.id === completedAssistantId
+                  ? { ...message, status: undefined, responseCompletedAt: steeringStartedAt }
+                  : message
+              )),
+              { id: queuedId, role: 'user', content: queuedMessage },
+              {
+                id: nextAssistantId,
+                role: 'assistant',
+                content: '',
+                status: 'pending',
+                responseStartedAt: steeringStartedAt,
+              },
+            ]);
+            activeAssistantId = nextAssistantId;
+            activeQuestion = queuedMessage;
+            activeQuestionRequiresAttachments = false;
+          },
           onScheduleChange: candidate => {
             const before = sandboxScheduleRef.current ?? scheduleYaml;
             sandboxScheduleRef.current = candidate;
             setMessages(previous => previous.map(message => (
-              message.id === assistantId
+              message.id === activeAssistantId
                 ? {
                   ...message,
                   activity: [
@@ -756,14 +791,14 @@ export default function ExperimentalAiPage() {
         sessionEndpoint,
       );
       setMessages(previous => previous.map(message => (
-        message.id === assistantId
+        message.id === activeAssistantId
           ? { ...message, status: undefined, responseCompletedAt: Date.now() }
           : message
       )));
     } catch (streamError) {
       const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
       setMessages(previous => previous.map(message => (
-        message.id === assistantId
+        message.id === activeAssistantId
           ? {
             ...message,
             content: staleTurnMessage ?? message.content,
@@ -773,8 +808,8 @@ export default function ExperimentalAiPage() {
               ? interruptRunningTools(message.activity ?? [])
               : [{ kind: 'response' as const, text: staleTurnMessage }],
             retry: {
-              question,
-              requiresAttachments: attachmentsForMessage.length > 0,
+              question: activeQuestion,
+              requiresAttachments: activeQuestionRequiresAttachments,
             },
           }
           : message
@@ -785,13 +820,44 @@ export default function ExperimentalAiPage() {
     } finally {
       abortControllerRef.current = null;
       setIsStreaming(false);
+      const nextMessage = queuedMessagesRef.current[0];
+      if (nextMessage) {
+        queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
+        setQueuedMessages(queuedMessagesRef.current);
+        window.setTimeout(() => void sendRequest(nextMessage.content, [], false), 0);
+      }
     }
   };
 
   const send = async (event: FormEvent) => {
     event.preventDefault();
     const question = draft.trim();
-    if (!question || isStreaming || (authRequired && authToken === null)) return;
+    if (!question || (authRequired && authToken === null)) return;
+    if (isStreaming) {
+      const queuedMessage = { id: messageId(), content: question };
+      queuedMessagesRef.current = [...queuedMessagesRef.current, queuedMessage];
+      setQueuedMessages(queuedMessagesRef.current);
+      setDraft('');
+      const sessionId = sessionIdRef.current;
+      if (sessionId !== null) {
+        try {
+          await queueMessage(
+            sessionId,
+            queuedMessage.id,
+            queuedMessage.content,
+            authToken,
+            sessionEndpointRef.current ?? aiEndpoint,
+          );
+        } catch (queueError) {
+          const responseFinishing = typeof queueError === 'object'
+            && queueError !== null
+            && 'status' in queueError
+            && queueError.status === 409;
+          if (!responseFinishing) reportRequestError(queueError, 'The queued AI message could not be submitted yet.');
+        }
+      }
+      return;
+    }
     await sendRequest(question, selectedAttachments, true);
   };
 
@@ -1237,6 +1303,16 @@ export default function ExperimentalAiPage() {
             <FiArrowDown aria-hidden="true" className="h-4 w-4" />
           </button>
         )}
+        {queuedMessages.length > 0 && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            <p className="font-medium">Messages to be submitted after next tool call</p>
+            <div className="mt-1 space-y-1">
+              {queuedMessages.map(message => (
+                <p key={message.id} className="truncate">{message.content}</p>
+              ))}
+            </div>
+          </div>
+        )}
         {selectedAttachments.length > 0 && (
           <div aria-label="Files attached to next message" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
             {selectedAttachments.map(attachment => (
@@ -1321,13 +1397,23 @@ export default function ExperimentalAiPage() {
             </button>
           </label>
           {isStreaming ? (
-            <button
-              type="button"
-              onClick={stop}
-              className="order-3 rounded-xl bg-gray-800 px-5 py-3 font-medium text-white hover:bg-gray-900"
-            >
-              Stop
-            </button>
+            <div className="order-3 flex gap-2">
+              <button
+                type="submit"
+                disabled={!draft.trim()}
+                aria-label="Queue message"
+                className="rounded-xl bg-blue-600 px-4 py-3 font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                Queue
+              </button>
+              <button
+                type="button"
+                onClick={stop}
+                className="rounded-xl bg-gray-800 px-4 py-3 font-medium text-white hover:bg-gray-900"
+              >
+                Stop
+              </button>
+            </div>
           ) : (
             <button
               type="submit"
