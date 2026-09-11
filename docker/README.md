@@ -313,8 +313,9 @@ The Redis deployment collects minimal per-job telemetry. Collection is
 enabled by Compose and disabled by default for direct development launches.
 It records job and pseudonymous client IDs, solver, lifecycle timestamps and
 state, queue and runtime durations, outcome, failure code, solver status,
-termination reason, configured timeout, and download count. It does not record
-scheduling input, filenames, IP addresses, or email addresses.
+termination reason, configured timeout, download count, people count, shift type
+count, and schedule date range. It does not retain uploaded YAML or record people
+and shift identifiers, descriptions, filenames, IP addresses, or email addresses.
 
 Buckets run from Sunday at 00:00 through the next Sunday at 00:00 in the host
 machine timezone. Each event belongs to the week when it occurs, so a job

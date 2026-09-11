@@ -28,7 +28,9 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import redis
+from ruamel.yaml.error import YAMLError
 
+from ..loader import _load_yaml
 from .config import MIN_USAGE_METRICS_RETENTION_DAYS
 from .jobs.models import Job, JobState
 
@@ -79,6 +81,34 @@ def week_bounds(week_id: str, report_timezone: tzinfo | None = None) -> tuple[da
     return starts_at, ends_at
 
 
+def _schedule_basics(input_bytes: bytes) -> dict[str, str | int | float]:
+    """Extract bounded aggregate schedule fields without retaining YAML content."""
+    try:
+        schedule = _load_yaml(input_bytes)
+    except (YAMLError, TypeError, ValueError):
+        return {}
+
+    mapping: dict[str, str | int | float] = {}
+    for section_name, field_name in (("people", "people_count"), ("shiftTypes", "shift_type_count")):
+        section = schedule.get(section_name)
+        items = section.get("items") if isinstance(section, dict) else None
+        if isinstance(items, list):
+            mapping[field_name] = len(items)
+
+    dates = schedule.get("dates")
+    date_range = dates.get("range") if isinstance(dates, dict) else None
+    if isinstance(date_range, dict):
+        try:
+            start = date.fromisoformat(str(date_range["startDate"]))
+            end = date.fromisoformat(str(date_range["endDate"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+        else:
+            mapping["date_range_start"] = start.isoformat()
+            mapping["date_range_end"] = end.isoformat()
+    return mapping
+
+
 @dataclass(frozen=True)
 class JobTelemetry:
     """Minimal lifecycle information retained independently of job payloads."""
@@ -97,6 +127,10 @@ class JobTelemetry:
     failure_code: str | None
     solver_status: str | None
     termination_reason: str | None
+    people_count: int | None
+    shift_type_count: int | None
+    date_range_start: str | None
+    date_range_end: str | None
     timeout_seconds: int
     download_count: int
 
@@ -132,9 +166,9 @@ class RedisUsageMetrics:
         self._retention_days = retention_days
         self._timezone = report_timezone or machine_timezone()
 
-    def stage_job_created(self, transaction: Any, job: Job) -> None:
+    def stage_job_created(self, transaction: Any, job: Job, input_bytes: bytes | None = None) -> None:
         """Store a queued telemetry row with the job creation transaction."""
-        self._stage_snapshot(transaction, job, job.created_at)
+        self._stage_snapshot(transaction, job, job.created_at, input_bytes=input_bytes)
 
     def stage_job_started(self, transaction: Any, job: Job) -> None:
         """Update a telemetry row with start and queue-wait information."""
@@ -415,11 +449,18 @@ class RedisUsageMetrics:
             except redis.WatchError:
                 continue
 
-    def _stage_snapshot(self, transaction: Any, job: Job, occurred_at: datetime) -> None:
+    def _stage_snapshot(
+        self,
+        transaction: Any,
+        job: Job,
+        occurred_at: datetime,
+        *,
+        input_bytes: bytes | None = None,
+    ) -> None:
         """Write the latest minimal snapshot and associate it with its event week."""
         week_id = week_id_for(occurred_at, self._timezone)
         self._stage_week_reference(transaction, week_id, job.id, occurred_at)
-        transaction.hset(self._entry_key(job.id), mapping=self._entry_mapping(job))
+        transaction.hset(self._entry_key(job.id), mapping=self._entry_mapping(job, input_bytes))
         transaction.expireat(self._entry_key(job.id), self._week_expires_at(week_id))
 
     def _stage_week_reference(
@@ -435,7 +476,7 @@ class RedisUsageMetrics:
         transaction.expireat(week_jobs_key, self._week_expires_at(week_id))
 
     @staticmethod
-    def _entry_mapping(job: Job) -> dict[str, str | int | float]:
+    def _entry_mapping(job: Job, input_bytes: bytes | None = None) -> dict[str, str | int | float]:
         """Serialize the reportable fields available in one job snapshot."""
         mapping: dict[str, str | int | float] = {
             "job_id": job.id,
@@ -445,6 +486,8 @@ class RedisUsageMetrics:
             "created_at": job.created_at.isoformat(),
             "timeout_seconds": job.request.timeout_seconds,
         }
+        if input_bytes is not None:
+            mapping.update(_schedule_basics(input_bytes))
         if job.started_at is not None:
             mapping["started_at"] = job.started_at.isoformat()
             mapping["queue_wait_seconds"] = max(0.0, (job.started_at - job.created_at).total_seconds())
@@ -473,6 +516,9 @@ class RedisUsageMetrics:
         def optional_float(name: str) -> float | None:
             return float(values[name]) if name in values else None
 
+        def optional_int(name: str) -> int | None:
+            return int(values[name]) if name in values else None
+
         return JobTelemetry(
             job_id=values["job_id"],
             client_id=values["client_id"],
@@ -488,6 +534,10 @@ class RedisUsageMetrics:
             failure_code=values.get("failure_code"),
             solver_status=values.get("solver_status"),
             termination_reason=values.get("termination_reason"),
+            people_count=optional_int("people_count"),
+            shift_type_count=optional_int("shift_type_count"),
+            date_range_start=values.get("date_range_start"),
+            date_range_end=values.get("date_range_end"),
             timeout_seconds=int(values["timeout_seconds"]),
             download_count=int(values.get("download_count", 0)),
         )

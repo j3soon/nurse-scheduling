@@ -334,6 +334,10 @@ def render_report(report: WeeklyUsageReport, subject: str = DEFAULT_USAGE_REPORT
             "failure_code",
             "solver_status",
             "termination_reason",
+            "people_count",
+            "shift_type_count",
+            "date_range_start",
+            "date_range_end",
             "timeout_seconds",
             "download_count",
         ]
@@ -355,11 +359,18 @@ def render_report(report: WeeklyUsageReport, subject: str = DEFAULT_USAGE_REPORT
                 entry.failure_code or "",
                 entry.solver_status or "",
                 entry.termination_reason or "",
+                entry.people_count if entry.people_count is not None else "",
+                entry.shift_type_count if entry.shift_type_count is not None else "",
+                entry.date_range_start or "",
+                entry.date_range_end or "",
                 entry.timeout_seconds,
                 entry.download_count,
             ]
         )
-    output.write("\nTelemetry excludes scheduling inputs, filenames, email addresses, and IP addresses.\n")
+    output.write(
+        "\nSchedule telemetry includes only counts and the date range. It excludes uploaded YAML, people and shift "
+        "identifiers, descriptions, filenames, email addresses, and IP addresses.\n"
+    )
     return output.getvalue()
 
 

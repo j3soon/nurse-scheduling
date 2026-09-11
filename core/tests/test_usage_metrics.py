@@ -55,6 +55,22 @@ def redis_client():
     return fakeredis.FakeRedis(decode_responses=False)
 
 
+PRIVATE_SCHEDULE = b"""\
+dates:
+  range:
+    startDate: 2026-01-05
+    endDate: 2026-01-11
+people:
+  items:
+    - id: Private Person A
+    - id: Private Person B
+shiftTypes:
+  items:
+    - id: Private Shift D
+    - id: Private Shift N
+"""
+
+
 def _job(created_at: datetime, *, job_id: str = "job_metrics", client_id: str = "private-client-id") -> Job:
     return Job(
         id=job_id,
@@ -130,7 +146,7 @@ def test_redis_job_store_records_complete_lifecycle_atomically(monkeypatch):
         solver="ortools/cp-sat",
         prettify=True,
         timeout_seconds=60,
-        input_bytes=b"private scheduling input",
+        input_bytes=PRIVATE_SCHEDULE,
     )
     now += timedelta(seconds=10)
     lease = controller.register_worker("worker")
@@ -164,13 +180,38 @@ def test_redis_job_store_records_complete_lifecycle_atomically(monkeypatch):
     assert entry.outcome == "optimal"
     assert entry.solver_status == "OPTIMAL"
     assert entry.termination_reason == "optimality_proven"
+    assert entry.people_count == 2
+    assert entry.shift_type_count == 2
+    assert entry.date_range_start == "2026-01-05"
+    assert entry.date_range_end == "2026-01-11"
     assert entry.download_count == 1
     assert store._redis.get(store._job_key(created.id)) is None
     assert store._redis.get(store._input_key(created.id)) is None
     assert store._redis.get(store._artifact_key(created.id)) is None
     assert store._redis.exists("test:usage:job:job_metrics")
-    assert b"input_name" not in store._redis.hgetall("test:usage:job:job_metrics")
+    telemetry = store._redis.hgetall("test:usage:job:job_metrics")
+    assert b"input_name" not in telemetry
+    assert all(b"Private Person" not in value and b"Private Shift" not in value for value in telemetry.values())
     assert not list(store._redis.scan_iter("test:usage:*private-filename*"))
+
+
+def test_malformed_schedule_omits_basics_without_dropping_job_telemetry(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted, b"not: [valid"))
+
+    entry = metrics.load_week("2026-08-23").entries[0]
+
+    assert entry.state == JobState.QUEUED
+    assert entry.people_count is None
+    assert entry.shift_type_count is None
+    assert entry.date_range_start is None
+    assert entry.date_range_end is None
 
 
 def test_terminal_events_are_bucketed_when_they_occur(redis_client):
@@ -296,7 +337,13 @@ def test_render_report_adds_local_summary_before_csv(monkeypatch, redis_client):
     submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     report = metrics.load_week("2026-08-23")
-    base = report.entries[0]
+    base = replace(
+        report.entries[0],
+        people_count=4,
+        shift_type_count=3,
+        date_range_start="2026-01-05",
+        date_range_end="2026-01-11",
+    )
     report = replace(
         report,
         starts_at=datetime(2026, 8, 22, 16, tzinfo=timezone.utc),
@@ -332,6 +379,9 @@ def test_render_report_adds_local_summary_before_csv(monkeypatch, redis_client):
         "\n"
         "job_id,client_id,solver,state,"
     )
+    assert "people_count,shift_type_count,date_range_start,date_range_end" in rendered
+    assert ",4,3,2026-01-05,2026-01-11,60,0\n" in rendered
+    assert "Schedule telemetry includes only counts and the date range" in rendered
 
 
 def test_reporter_retries_transport_within_one_weekly_run(redis_client):
