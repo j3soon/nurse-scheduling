@@ -40,11 +40,11 @@ import {
   BACKEND_API_CANDIDATES,
   buildAuthHeaders,
   EXPECTED_BACKEND_SERVICE_NAME,
+  isOfficialBackendEndpoint,
   isOptimizationOptionsResponse,
   LOCAL_BACKEND_API_URL,
   normalizeEndpoint,
   parseAuthRequirement,
-  PRODUCTION_BACKEND_API_URL,
   selectPreferredServer,
   SUPPORTED_BACKEND_API_VERSION,
   type OptimizationOptionsResponse,
@@ -2202,9 +2202,9 @@ export default function OptimizeAndExportPage() {
                 </a>.
               </p>
               {resolvedOptimizeEndpoint
-                && normalizeEndpoint(resolvedOptimizeEndpoint) !== PRODUCTION_BACKEND_API_URL && (
+                && !isOfficialBackendEndpoint(resolvedOptimizeEndpoint) && (
                 <p className="mt-1 text-xs text-amber-700">
-                  This server is not managed by us and may have a different privacy policy.
+                  This server is unofficially hosted. Privacy and data retention practices may vary.
                 </p>
               )}
             </div>

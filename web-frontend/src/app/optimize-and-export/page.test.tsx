@@ -27,6 +27,7 @@ import {
   BACKEND_API_CANDIDATES,
   buildAuthHeaders,
   createBackendApiCandidates,
+  isOfficialBackendEndpoint,
   isOptimizationOptionsResponse,
   normalizeEndpoint,
   parseAuthRequirement,
@@ -249,6 +250,12 @@ describe('backend authentication discovery', () => {
 });
 
 describe('backend endpoint normalization', () => {
+  it('recognizes both hosted production endpoints as official', () => {
+    expect(isOfficialBackendEndpoint('https://api.nursescheduling.org')).toBe(true);
+    expect(isOfficialBackendEndpoint('https://api-secondary.nursescheduling.org/')).toBe(true);
+    expect(isOfficialBackendEndpoint('https://backend.example.test')).toBe(false);
+  });
+
   it.each([
     ['api.nursescheduling.org', 'https://api.nursescheduling.org'],
     ['api.nursescheduling.org/', 'https://api.nursescheduling.org'],
@@ -1134,6 +1141,7 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByTitle('https://stored-backend.example.test')).resolves.toBeInTheDocument();
+    expect(screen.getByText(/unofficially hosted.*privacy and data retention practices may vary/i)).toBeInTheDocument();
     const customResetButton = screen.getByRole('button', {
       name: /reset server settings to defaults.*custom server settings active/i,
     });

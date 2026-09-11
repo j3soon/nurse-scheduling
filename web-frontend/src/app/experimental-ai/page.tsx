@@ -916,7 +916,7 @@ export default function ExperimentalAiPage() {
           )}
           {aiEndpoint !== PRODUCTION_AI_API_URL && aiEndpoint !== '/ai' && (
             <p className="mt-1 text-xs text-amber-700">
-              This server is not managed by us and may have a different privacy policy.
+              This server is unofficially hosted. Privacy and data retention practices may vary.
             </p>
           )}
           {isEditingServer && !serverLocked && (
