@@ -73,7 +73,8 @@ new sandbox. Only conversation history, the canonical schedule revision, and a
 pending validated proposal remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
-backend history. **Retry** resends the original text in a fresh sandbox. For a
+model conversation history. Optional PostgreSQL logging retains failed turns
+for operators. **Retry** resends the original text in a fresh sandbox. For a
 request with attachments, **Prepare retry** restores the text and requires the
 files to be attached again before sending.
 
@@ -361,6 +362,8 @@ response cannot prove that the original operation did not take effect.
 | `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
 | `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
+| `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for durable chat logging. Compose sets its internal URL directly. |
+| `AI_HISTORY_RETENTION_DAYS` | `30` | Positive number of days to retain chat text and metadata. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `120` | Provider request timeout. |
 | `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
 | `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
@@ -445,6 +448,50 @@ docker compose -f compose.backend.yml up -d --build
 Use `compose.backend.memory.yml` in the same command when running the
 process-local optimization backend. The AI service itself remains process-local
 in both variants and listens on port `8001` inside the Compose network.
+
+### Durable chat logging
+
+Both Compose variants include PostgreSQL with the `postgres-ai-data` volume and
+no published database port. As with Redis, the private service connection is
+fixed in Compose and needs no setting in `docker/.env`. Native runs enable
+logging only when `AI_HISTORY_POSTGRES_URL` is set.
+
+Startup applies numbered SQL migrations transactionally. Chat sessions are
+recorded on their first message. Each turn stores the user text, assistant text
+(including partial answers), model, timestamps, attachment counts, available
+token usage, and a completed, failed, cancelled, or stale status. Writes reuse a
+server-generated turn UUID, also returned as `message_id`, to avoid duplicate
+rows. Sending another HTTP request creates another turn.
+
+The database stores the administrative credential ID when authentication is
+enabled, never the owner cookie or bearer key. Raw attachments, extracted
+document text, schedule snapshots, tool arguments/results, and reasoning are
+excluded. User and assistant text can still contain staff information. Database
+access is for operators only. No history-reading API or browser viewer is added.
+Use a separate read-only database role for reporting. Existing stdout question
+previews have their own deployment log retention.
+
+Startup fails if configured storage is unavailable. A failed initial write
+returns HTTP 503 before contacting the provider. A failed final write emits an
+operator error log and reports `history_saved: false` in a successful `done`
+event without discarding the live conversation. A process crash or final-write
+failure can leave a row in `running` with no final answer. These rows indicate
+incomplete logging, not a confirmed active request. There is no durable retry
+queue or recovery of partial output after a process crash.
+
+Retention runs on startup and hourly, deleting turns older than
+`AI_HISTORY_RETENTION_DAYS` and expired empty session records. Configure backups
+and their retention separately. Active sessions, schedules, and proposals remain
+in memory, so stored history does not enable resuming a chat after restart.
+
+Run PostgreSQL integration checks against a test database whose role can create
+schemas. Each test creates and removes its own temporary schema:
+
+```sh
+cd core
+AI_HISTORY_TEST_POSTGRES_URL=postgresql:///ai_history_test \
+  .venv/bin/pytest -q tests/test_ai_history.py
+```
 
 ## Production path proxy
 

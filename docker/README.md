@@ -93,6 +93,12 @@ deliberately serve without AI authentication, set `AI_AUTH_REQUIRED=false` in
 `docker/.env` and leave both settings empty. Native runs leave required mode
 disabled, although setting either one still enables bearer authentication.
 
+Both Compose variants enable AI chat logging through a fixed private PostgreSQL
+service connection. The database uses the persistent `postgres-ai-data` volume
+and is not published on a host port. See
+[durable chat logging](../docs/content/ai-assistant.md#durable-chat-logging) for
+retention and failure behavior.
+
 NGINX removes the `/ai` prefix before forwarding requests to this
 service and disables response buffering for its streaming endpoints. Keep the
 Cloudflare Tunnel hostname pointed at `http://nginx:8080`, not directly at

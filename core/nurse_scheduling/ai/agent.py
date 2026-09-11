@@ -31,6 +31,7 @@ from .provider import (
     ChatMessage,
     ReasoningDelta,
     TextDelta,
+    TokenUsage,
     ToolCall,
     ToolCallRequest,
     ToolCapableChatProvider,
@@ -81,7 +82,7 @@ class AgentProposal:
     diff: str
 
 
-AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentProposal
+AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentProposal | TokenUsage
 ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]
 ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
 
@@ -135,6 +136,8 @@ async def run_tool_agent(
                 yield AgentText(event.text)
             elif isinstance(event, ReasoningDelta):
                 yield AgentReasoning(event.text)
+            elif isinstance(event, TokenUsage):
+                yield event
             elif isinstance(event, ToolCallRequest):
                 calls = event.calls
         if not calls:

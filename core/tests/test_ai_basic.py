@@ -44,6 +44,7 @@ from nurse_scheduling.ai.app import (
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
@@ -256,8 +257,7 @@ def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixtur
     assert response.status_code == 200
     output = caplog.text
     assert (
-        f"AI request started session_id={session_id} question_chars=5 images=0 documents=0 question=\"Hello\""
-        in output
+        f'AI request started session_id={session_id} question_chars=5 images=0 documents=0 question="Hello"' in output
     )
 
 
@@ -265,7 +265,9 @@ def test_message_request_log_flattens_and_truncates_long_questions(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.requests")
-    client = AuthenticatedTestClient(create_test_app(settings=make_settings(max_message_chars=500), provider=FakeProvider()))
+    client = AuthenticatedTestClient(
+        create_test_app(settings=make_settings(max_message_chars=500), provider=FakeProvider())
+    )
     session_id = create_session(client)
     question = f"First line\n{'x' * 250}"
 
@@ -276,7 +278,7 @@ def test_message_request_log_flattens_and_truncates_long_questions(
     assert "question_chars=261" in output
     assert 'question="First line ' in output
     assert "\\n" not in output
-    assert f"{'x' * 186}...\"" in output
+    assert f'{"x" * 186}..."' in output
     assert "x" * 187 not in output
 
 
@@ -318,7 +320,11 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
 
 
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
-def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str) -> None:
+def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str, monkeypatch) -> None:
+    saved = []
+    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+
     async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[ChatMessage]]:
         operation_started = asyncio.Event()
         operation_cancelled = asyncio.Event()
@@ -343,7 +349,11 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
             return CommandResult("", "", 0)
 
         factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=command_handler))
-        app = create_test_app(settings=make_settings(), provider=WaitingProvider(), sandbox_factory=factory)
+        app = create_test_app(
+            settings=make_settings(history_postgres_url="test"),
+            provider=WaitingProvider(),
+            sandbox_factory=factory,
+        )
         session = app.state.session_store.create("browser-owner", schedule_yaml())
         request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         await request_events.put(
@@ -401,11 +411,17 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         assert backend.close_calls == 1
     assert not session_active
     assert history == []
+    assert len(saved) == 1
+    assert saved[0][2] == "cancelled"
 
 
-def test_disconnect_before_stream_iteration_releases_the_session() -> None:
+def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) -> None:
+    saved = []
+    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+
     async def exercise() -> bool:
-        app = create_test_app(settings=make_settings(), provider=FakeProvider())
+        app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
         session = app.state.session_store.create("browser-owner", schedule_yaml())
         request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         await request_events.put(
@@ -421,7 +437,8 @@ def test_disconnect_before_stream_iteration_releases_the_session() -> None:
             return await request_events.get()
 
         async def send(_message: dict[str, object]) -> None:
-            pass
+            # Let the queued disconnect cancel response startup before iteration.
+            await asyncio.sleep(0)
 
         path = f"/sessions/{session.id}/messages"
         scope = {
@@ -447,6 +464,8 @@ def test_disconnect_before_stream_iteration_releases_the_session() -> None:
         return session.active
 
     assert not asyncio.run(exercise())
+    assert len(saved) == 1
+    assert saved[0][2] == "cancelled"
 
 
 def test_health_and_streamed_schedule_question() -> None:
@@ -876,7 +895,11 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     assert "Provisional answer." not in recovered_prompt
 
 
-def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming() -> None:
+def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monkeypatch) -> None:
+    saved = []
+    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+
     class ScheduleUpdatingProvider(FakeProvider):
         update_schedule = lambda self: None
 
@@ -886,7 +909,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming() -> 
             self.update_schedule()
 
     provider = ScheduleUpdatingProvider([["Obsolete answer."]])
-    app = create_test_app(settings=make_settings(), provider=provider)
+    app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=provider)
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
     owner = client.cookies[OWNER_COOKIE]
@@ -902,6 +925,8 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming() -> 
         ("delta", {"text": "Obsolete answer."}),
         ("stale", {"message": STALE_TURN_ERROR}),
     ]
+    assert len(saved) == 1
+    assert saved[0][1:3] == ("Obsolete answer.", "stale")
 
 
 def test_sandbox_timeout_does_not_expose_exception_details() -> None:

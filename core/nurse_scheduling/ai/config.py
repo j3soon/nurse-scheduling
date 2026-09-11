@@ -137,6 +137,8 @@ class AiSettings:
     provider_max_attempts: int = 3
     provider_retry_backoff_seconds: float = 1.0
     session_ttl_seconds: int = 3600
+    history_postgres_url: str = ""
+    history_retention_days: int = 30
     max_sessions: int = 1000
     max_history_messages: int = 20
     max_message_chars: int = 8000
@@ -208,6 +210,8 @@ class AiSettings:
             provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
             provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),
             session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 3600),
+            history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
+            history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
             max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 20),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),

@@ -46,7 +46,15 @@ from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_regis
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
 from .config import AiSettings, validate_ai_auth_credentials
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
-from .provider import ChatContent, ChatMessage, OpenAiCompatibleProvider, ProviderError, ToolCapableChatProvider
+from .history import ChatHistory, stop_maintenance
+from .provider import (
+    ChatContent,
+    ChatMessage,
+    OpenAiCompatibleProvider,
+    ProviderError,
+    TokenUsage,
+    ToolCapableChatProvider,
+)
 from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .sandbox_agent import (
@@ -604,7 +612,12 @@ def create_app(
         required=settings.auth_required,
     )
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
-    provider = provider or OpenAiCompatibleProvider(settings)
+    provider = provider or OpenAiCompatibleProvider(settings, include_usage=bool(settings.history_postgres_url))
+    history_log = (
+        ChatHistory(settings.history_postgres_url, settings.history_retention_days)
+        if settings.history_postgres_url
+        else None
+    )
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
@@ -614,8 +627,15 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        async with managed_sandbox_factory(sandbox_factory):
-            yield
+        if history_log is not None and not await history_log.write("initialize"):
+            raise RuntimeError("AI history database initialization failed")
+        maintenance = asyncio.create_task(history_log.maintain()) if history_log is not None else None
+        try:
+            async with managed_sandbox_factory(sandbox_factory):
+                yield
+        finally:
+            if maintenance is not None:
+                await stop_maintenance(maintenance)
 
     generated_docs_are_public = not auth_registry.enabled
     app = FastAPI(
@@ -712,6 +732,24 @@ def create_app(
         """Stream one answer and retain only text after successful completion."""
         question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
         history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
+        turn_id = str(uuid4())
+        if history_log is not None:
+            try:
+                logged = await history_log.write(
+                    "start_turn",
+                    turn_id,
+                    session_id,
+                    request.state.auth_credential_id,
+                    question,
+                    settings.provider_model,
+                    len(images),
+                    len(documents),
+                )
+                if not logged:
+                    raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
+            except BaseException:
+                store.abort(session_id)
+                raise
         request_logger.info(
             "AI request started session_id=%s question_chars=%s images=%s documents=%s question=%s",
             session_id,
@@ -742,6 +780,9 @@ def create_app(
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
             completed = False
+            outcome = "cancelled"
+            error_code = None
+            usage = None
             try:
                 async with concurrency_limit:
                     agent_events = run_sandbox_agent(
@@ -759,6 +800,8 @@ def create_app(
                             yield _sse_event("delta", {"text": event.text})
                         elif isinstance(event, AgentReasoning):
                             yield _sse_event("reasoning", {"text": event.text})
+                        elif isinstance(event, TokenUsage):
+                            usage = event if usage is None else usage + event
                         elif isinstance(event, AgentToolStart):
                             yield _sse_event(
                                 "tool_start",
@@ -795,34 +838,64 @@ def create_app(
                     base_revision=base_revision,
                 )
                 completed = True
+                outcome = "completed" if completion.turn_saved else "stale"
+                history_saved = None
+                if history_log is not None:
+                    history_saved = await history_log.write(
+                        "finish_turn",
+                        turn_id,
+                        "".join(assistant_parts),
+                        outcome,
+                        None,
+                        usage,
+                    )
                 if not completion.turn_saved:
                     yield _sse_event("stale", {"message": STALE_TURN_ERROR})
                     return
                 if completion.proposal_saved:
                     yield _sse_event("proposal", {"diff": pending_proposal.diff})
-                yield _sse_event("done", {"message_id": str(uuid4())})
+                done = {"message_id": turn_id}
+                if history_saved is not None:
+                    done["history_saved"] = history_saved
+                yield _sse_event("done", done)
             except asyncio.CancelledError:
                 raise
             except ProviderError:
+                outcome, error_code = "failed", "provider_error"
                 yield _sse_event("error", {"message": PROVIDER_ERROR})
             except SandboxTurnTimeoutError:
+                outcome, error_code = "failed", "sandbox_timeout"
                 yield _sse_event("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
             except SandboxCandidateError as exc:
+                outcome, error_code = "failed", "candidate_validation"
                 logger.warning("AI candidate validation failed: %s", exc)
                 yield _sse_event("error", {"message": CANDIDATE_VALIDATION_ERROR})
             except SandboxError:
+                outcome, error_code = "failed", "sandbox_error"
                 logger.exception("AI sandbox turn failed")
                 yield _sse_event("error", {"message": "The temporary AI sandbox failed. Please try again."})
             except Exception:
+                outcome, error_code = "failed", "internal_error"
                 logger.exception("Unexpected AI stream failure")
                 yield _sse_event("error", {"message": "The AI response failed unexpectedly."})
             finally:
                 if not completed:
                     store.abort(session_id)
+                    if history_log is not None:
+                        await history_log.write(
+                            "finish_turn",
+                            turn_id,
+                            "".join(assistant_parts),
+                            outcome,
+                            error_code,
+                            usage,
+                        )
 
-        def abort_unstarted_stream() -> None:
+        async def abort_unstarted_stream() -> None:
             if not stream_started.is_set():
                 store.abort(session_id)
+                if history_log is not None:
+                    await history_log.write("finish_turn", turn_id, "", "cancelled", None, None)
 
         return StreamingResponse(
             generate_events(),

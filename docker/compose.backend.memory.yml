@@ -12,6 +12,21 @@ x-sentry-environment: &sentry-environment
   DISABLE_SENTRY: "${DISABLE_SENTRY:-}"
 
 services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_history
+      POSTGRES_USER: ai_history
+      POSTGRES_PASSWORD: ai_history
+    volumes:
+      - postgres-ai-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_history -d ai_history"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
   api:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
@@ -49,6 +64,9 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       <<: *sentry-environment
       # Compose-hosted AI requires authentication unless the env file explicitly opts out.
@@ -58,6 +76,8 @@ services:
       AI_PROVIDER_BASE_URL: "${AI_PROVIDER_BASE_URL:-}"
       AI_PROVIDER_API_KEY: "${AI_PROVIDER_API_KEY:-}"
       AI_PROVIDER_MODEL: "${AI_PROVIDER_MODEL:-local-model}"
+      AI_HISTORY_POSTGRES_URL: postgresql://ai_history:ai_history@postgres:5432/ai_history
+      AI_HISTORY_RETENTION_DAYS: "${AI_HISTORY_RETENTION_DAYS:-30}"
       AI_PROVIDER_TIMEOUT_SECONDS: "${AI_PROVIDER_TIMEOUT_SECONDS:-120}"
       AI_PROVIDER_MAX_ATTEMPTS: "${AI_PROVIDER_MAX_ATTEMPTS:-3}"
       AI_PROVIDER_RETRY_BACKOFF_SECONDS: "${AI_PROVIDER_RETRY_BACKOFF_SECONDS:-1}"
@@ -146,4 +166,5 @@ services:
       - diagnostic-reports:/reports
 
 volumes:
+  postgres-ai-data:
   diagnostic-reports:
