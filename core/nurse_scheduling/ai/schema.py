@@ -27,6 +27,7 @@ SCHEMA_REFERENCE_FILES = {
     "shift-request": REFERENCE_DIRECTORY / "schema-shift-request.md",
     "export": REFERENCE_DIRECTORY / "schema-export.md",
 }
+USER_GUIDE_DIRECTORY = Path(__file__).resolve().parents[3] / "docs/content/user-guide"
 TAIWAN_HOLIDAYS_SOURCE = Path(__file__).resolve().parents[3] / "web-frontend/src/utils/taiwanHolidays.ts"
 
 
@@ -47,3 +48,15 @@ def load_taiwan_holidays_reference() -> str:
     if len(reference) > MAX_SCHEMA_REFERENCE_CHARS:
         raise ValueError(f"Taiwan holiday reference exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
     return reference
+
+
+def load_user_guide_references() -> dict[str, str]:
+    """Load the canonical user-facing Markdown pages for in-app guidance."""
+    references: dict[str, str] = {}
+    for path in sorted(USER_GUIDE_DIRECTORY.rglob("*.md")):
+        relative_path = path.relative_to(USER_GUIDE_DIRECTORY).as_posix()
+        reference = path.read_text(encoding="utf-8")
+        if len(reference) > MAX_SCHEMA_REFERENCE_CHARS:
+            raise ValueError(f"{relative_path} user guide exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
+        references[relative_path] = reference
+    return references

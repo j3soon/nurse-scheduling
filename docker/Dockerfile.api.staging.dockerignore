@@ -1,6 +1,10 @@
 **
 !core/
 !core/**
+!docs/
+!docs/content/
+!docs/content/user-guide/
+!docs/content/user-guide/**
 !web-frontend/
 !web-frontend/src/
 !web-frontend/src/utils/

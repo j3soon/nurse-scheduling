@@ -85,6 +85,18 @@ Assistant answers render Markdown, including headings, lists, links, code, and
 tables. Use the copy icon at the top-right of a code block to copy its contents.
 Raw HTML is ignored. Remote images written in an answer are not loaded.
 
+## Ask how to use the app
+
+The assistant runs inside the existing Nurse Scheduling app and can explain
+which page and visible control to use for a task. For example, ask how to add a
+person, upload schedule YAML, configure a rule, or start optimization. It can
+guide you through those controls, but it cannot navigate, click, upload, or run
+optimization for you.
+
+Files attached with **Attach files** belong to the next chat message. To replace
+the schedule currently open in the app, use **Upload** on **Save and Load**
+instead.
+
 The browser uploads one YAML snapshot when it creates the chat session. Later
 questions in that session use the same backend-owned snapshot. Reload the page
 to begin a new chat from the latest schedule.

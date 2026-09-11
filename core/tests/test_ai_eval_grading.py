@@ -686,6 +686,7 @@ def test_every_case_sits_in_a_category_directory():
         "basics/07-multi-turn",
         "basics/08-proposal-lifecycle",
         "basics/09-holdout",
+        "basics/10-app-ui",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))

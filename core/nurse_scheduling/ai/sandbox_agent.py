@@ -46,6 +46,7 @@ from .schema import (
     TAIWAN_HOLIDAYS_SOURCE,
     load_schedule_reference,
     load_taiwan_holidays_reference,
+    load_user_guide_references,
 )
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
@@ -54,6 +55,7 @@ WORKSPACE_PENDING_PROPOSAL = "/workspace/pending-proposal.yaml"
 WORKSPACE_PENDING_DIFF = "/workspace/pending-proposal.diff"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
+REFERENCE_USER_GUIDE = "/reference/user-guide"
 
 SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "sandbox-system.md"
 SANDBOX_SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").rstrip("\n")
@@ -371,6 +373,8 @@ async def hydrate_sandbox(
         if reference is None:  # pragma: no cover - constants are defined together
             raise ValueError(f"unknown schedule reference group: {group}")
         await sandbox.write_file(path, reference)
+    for relative_path, reference in load_user_guide_references().items():
+        await sandbox.write_file(f"{REFERENCE_USER_GUIDE}/{relative_path}", reference)
     logger.info(
         "sandbox hydrated sandbox_id=%s schedule_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,

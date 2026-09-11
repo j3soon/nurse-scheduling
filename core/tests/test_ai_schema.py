@@ -31,8 +31,10 @@ from nurse_scheduling.ai.pi.bash import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES
 from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
+    USER_GUIDE_DIRECTORY,
     load_schedule_reference,
     load_taiwan_holidays_reference,
+    load_user_guide_references,
 )
 from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
 from nurse_scheduling.loader import _load_yaml
@@ -213,6 +215,18 @@ def test_schema_paths_are_unique():
 def test_taiwan_holiday_reference_is_the_frontend_source():
     assert load_taiwan_holidays_reference() == TAIWAN_HOLIDAYS_SOURCE.read_text(encoding="utf-8")
     assert "SPECIAL_DATE_INFO" in load_taiwan_holidays_reference()
+
+
+def test_user_guide_references_are_the_canonical_user_facing_markdown():
+    references = load_user_guide_references()
+
+    assert set(references) == {
+        path.relative_to(USER_GUIDE_DIRECTORY).as_posix() for path in USER_GUIDE_DIRECTORY.rglob("*.md")
+    }
+    assert references["experimental-ai.md"] == (USER_GUIDE_DIRECTORY / "experimental-ai.md").read_text(
+        encoding="utf-8"
+    )
+    assert "developer-guide" not in references
 
 
 def test_task_sized_references_cover_every_topic_once_and_fit_one_bash_result():

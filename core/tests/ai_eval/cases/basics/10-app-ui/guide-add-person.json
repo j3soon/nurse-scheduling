@@ -1,0 +1,13 @@
+{
+  "id": "guide-add-person",
+  "fixture": "small-clinic",
+  "question": "I want to add a nurse myself instead of asking you to edit the schedule. Where do I go in the app?",
+  "expect_proposal": false,
+  "tags": ["tuning", "app-ui", "navigation"],
+  "answer_contains": [
+    "People",
+    "Add Person",
+    ["ID", "identifier"]
+  ],
+  "note": "The assistant should recognize that it is embedded in a larger app and guide the user to the People page."
+}

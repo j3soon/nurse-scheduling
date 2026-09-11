@@ -35,6 +35,7 @@ from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_SCHEMAS,
+    REFERENCE_USER_GUIDE,
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
@@ -126,6 +127,8 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert backend.closed
     assert WORKSPACE_SCHEDULE in backend.files
     assert set(REFERENCE_SCHEMAS.values()) <= backend.files.keys()
+    assert b"# Experimental AI Chat" in backend.files[f"{REFERENCE_USER_GUIDE}/experimental-ai.md"]
+    assert b"# People" in backend.files[f"{REFERENCE_USER_GUIDE}/people.md"]
     assert b"Path: preferences.shift count" in backend.files[REFERENCE_SCHEMAS["preferences"]]
     assert b"Path: export.formatting.cell" in backend.files[REFERENCE_SCHEMAS["export"]]
     assert b"Path: people.items" in backend.files[REFERENCE_SCHEMAS["core"]]
