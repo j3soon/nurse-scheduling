@@ -373,6 +373,38 @@ together. A complete compute benchmark writes them to
 `GET /info` as `claimed_performance`. The frontend displays it as
 `Claimed performance` when that backend is selected.
 
+## Inspect Redis with RedisInsight
+
+The Redis-backed Compose deployment includes an optional RedisInsight service.
+It listens only on the backend host's loopback interface and does not retain its
+own settings. Start it from `docker/`:
+
+```sh
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports redisinsight
+```
+
+For a remote backend, forward the loopback port over SSH:
+
+```sh
+ssh -L 5540:127.0.0.1:5540 user@backend-host
+```
+
+Open `http://127.0.0.1:5540` and select the preconfigured
+**Nurse Scheduling Redis** database. Job-store keys start with
+`nurse_scheduling:jobs:v0:`. Usage-reporting keys start with
+`nurse_scheduling:usage:v0:`. Use those prefixes in the key browser to narrow
+the results.
+
+RedisInsight connects with the same unrestricted access as the backend. Its
+browser and CLI can change or delete production data, so use them only for
+inspection. Press Ctrl+C when finished. Compose removes the temporary
+RedisInsight container while the Redis service and its `redis-data` volume
+remain intact.
+
+For staging, pass `--env-file .env.staging` to the command. The
+`compose.backend.memory.yml` variant has no Redis service and therefore no
+RedisInsight inspector.
+
 ## Tests
 
 Run the primary server tests from `core/`:

@@ -210,6 +210,16 @@ with:
 - `USAGE_METRICS_ENABLED=true`
 - `USAGE_METRICS_RETENTION_DAYS=30` by default
 
+To inspect this Redis database through a temporary, loopback-only UI, run:
+
+```sh
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports redisinsight
+```
+
+Open `http://127.0.0.1:5540`. See
+[inspect Redis with RedisInsight](../docs/content/backend-server.md#inspect-redis-with-redisinsight)
+for remote access, key prefixes, and data-safety guidance.
+
 The backend publishes its accepted run options at `GET /optimize/options`.
 The frontend uses this response for solver choices, timeout limits,
 running-job controls, and the prettify default. Configure the response with:

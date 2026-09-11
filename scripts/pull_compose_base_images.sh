@@ -7,6 +7,7 @@ set -euo pipefail
 images=(
   "python:3.12-slim"
   "redis:8.8"
+  "redis/redisinsight:3.8.0"
   "postgres:18-alpine"
   "dpage/pgadmin4:9.17"
   "nginx:1.29-alpine"

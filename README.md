@@ -613,32 +613,6 @@ HGETALL nurse_scheduling:jobs:v0:job:<job-id>:artifact_metadata
 Use `SCAN` instead of `KEYS *` on a busy database. Job artifacts are binary and
 are better inspected through the API download endpoint.
 
-For a graphical browser, run
-[Redis Insight](https://redis.io/docs/latest/operate/redisinsight/install/install-on-docker/)
-on the Compose network:
-
-```sh
-docker run --rm \
-  --name redisinsight \
-  --network nurse-scheduling-backend_default \
-  -p 127.0.0.1:5540:5540 \
-  -v redisinsight:/data \
-  redis/redisinsight:latest
-```
-
-Open `http://localhost:5540` and add a database with `redis://default@redis:6379`. Filter the Browser view with
-`nurse_scheduling:jobs:v0:*`.
-
-When Redis Insight runs on a remote VM, forward its locally bound port before
-opening it in a local browser:
-
-```sh
-ssh -L 5540:127.0.0.1:5540 user@your-server
-```
-
-Keep Redis and Redis Insight off public interfaces. Redis Insight can modify or
-delete stored data.
-
 To run one backend worker with process-local memory and no Redis service, use
 the pre-Redis deployment configuration:
 

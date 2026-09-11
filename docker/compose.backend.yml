@@ -70,6 +70,22 @@ services:
       timeout: 3s
       retries: 30
 
+  redisinsight:
+    profiles: ["inspection"]
+    image: redis/redisinsight:3.8.0
+    restart: "no"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_ALIAS: Nurse Scheduling Redis
+      RI_REDIS_DB: "0"
+      RI_DATABASE_MANAGEMENT: "false"
+    ports:
+      - "127.0.0.1:5540:5540"
+
   api:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
