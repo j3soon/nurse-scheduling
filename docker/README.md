@@ -99,6 +99,13 @@ and is not published on a host port. See
 [durable chat logging](../docs/content/ai-assistant.md#durable-chat-logging) for
 retention and failure behavior.
 
+The deployment separates container traffic by purpose. Cloudflared shares only
+the `tunnel` network with NGINX. NGINX reaches the optimization and AI services
+through their separate `api` and `ai` networks. The optimization services join
+the `redis` network, while the AI service joins the `postgres` network. A
+service name resolves only on networks shared by both containers. The optional
+inspection UIs join only the network for the datastore they inspect.
+
 For local inspection, start the loopback-only pgAdmin UI and open
 `http://127.0.0.1:5050`:
 

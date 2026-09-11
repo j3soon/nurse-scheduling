@@ -15,6 +15,8 @@ services:
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
+    networks:
+      - postgres
     environment:
       POSTGRES_DB: ai_history
       POSTGRES_USER: ai_history
@@ -31,6 +33,8 @@ services:
     profiles: ["inspection"]
     image: dpage/pgadmin4:9.17
     restart: "no"
+    networks:
+      - postgres
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,6 +52,8 @@ services:
   redis:
     image: redis:8.8
     restart: unless-stopped
+    networks:
+      - redis
     # Allow a final RDB save to finish instead of inheriting Compose's
     # ten-second grace period before SIGKILL.
     stop_grace_period: 1m
@@ -74,6 +80,8 @@ services:
     profiles: ["inspection"]
     image: redis/redisinsight:3.8.0
     restart: "no"
+    networks:
+      - redis
     depends_on:
       redis:
         condition: service_healthy
@@ -90,6 +98,9 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
+    networks:
+      - api
+      - redis
     depends_on:
       redis:
         condition: service_healthy
@@ -141,6 +152,9 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
+    networks:
+      - ai
+      - postgres
     depends_on:
       postgres:
         condition: service_healthy
@@ -195,6 +209,10 @@ services:
   nginx:
     image: nginx:1.29-alpine
     restart: unless-stopped
+    networks:
+      - tunnel
+      - api
+      - ai
     depends_on:
       api:
         condition: service_healthy
@@ -213,6 +231,8 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
+    networks:
+      - tunnel
     depends_on:
       nginx:
         condition: service_healthy
@@ -223,6 +243,8 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: "no"
+    networks:
+      - tunnel
     depends_on:
       cloudflared:
         condition: service_started
@@ -246,6 +268,8 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
+    networks:
+      - redis
     depends_on:
       redis:
         condition: service_healthy
@@ -267,6 +291,13 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
+
+networks:
+  tunnel:
+  api:
+  ai:
+  redis:
+  postgres:
 
 volumes:
   postgres-ai-data:
