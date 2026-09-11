@@ -26,7 +26,7 @@ export const GITHUB_LICENSE_URL = 'https://github.com/j3soon/nurse-scheduling/bl
 export const GITHUB_PRIVACY_URL = 'https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md';
 export const GITHUB_AI_BETA_ACCESS_URL = 'https://github.com/j3soon/nurse-scheduling#ai-beta-access';
 export const GITHUB_CODE_FREQUENCY_URL = 'https://github.com/j3soon/nurse-scheduling/graphs/code-frequency';
-export const GITHUB_ACKNOWLEDGMENTS_URL = 'https://github.com/j3soon/nurse-scheduling#acknowledgments';
+export const GITHUB_CONTRIBUTORS_URL = 'https://github.com/j3soon/nurse-scheduling/blob/dev/CONTRIBUTORS.md';
 export const GITHUB_AUTHOR_URL = 'https://github.com/j3soon';
 // GitHub Tags API URL for fetching latest tag
 export const GITHUB_TAGS_API_URL = 'https://api.github.com/repos/j3soon/nurse-scheduling/tags';

@@ -23,9 +23,9 @@ import { usePathname } from 'next/navigation';
 import AppVersionText from '@/components/AppVersionText';
 import {
   AGPL_LICENSE_URL,
-  GITHUB_ACKNOWLEDGMENTS_URL,
   GITHUB_AUTHOR_URL,
   GITHUB_CODE_FREQUENCY_URL,
+  GITHUB_CONTRIBUTORS_URL,
   GITHUB_LICENSE_URL,
   GITHUB_PRIVACY_URL,
   GITHUB_REPO_URL,
@@ -43,7 +43,7 @@ export default function Footer() {
         <a href={GITHUB_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Copyright ©</a>{' '}
         <a href={GITHUB_CODE_FREQUENCY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">2023-{new Date().getFullYear()}</a>{' '}
         <a href={GITHUB_AUTHOR_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Johnson Sun</a> &{' '}
-        <a href={GITHUB_ACKNOWLEDGMENTS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.{' '}
+        <a href={GITHUB_CONTRIBUTORS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.{' '}
         <a href={GITHUB_PRIVACY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Privacy Policy</a>.
       </div>
       <div>
