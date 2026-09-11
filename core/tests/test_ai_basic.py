@@ -245,6 +245,40 @@ def create_session(client: TestClient, schedule_yaml: str = "description: test")
     return response.json()["id"]
 
 
+def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.requests")
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    session_id = create_session(client)
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"})
+
+    assert response.status_code == 200
+    output = caplog.text
+    assert (
+        f"AI request started session_id={session_id} question_chars=5 images=0 documents=0 question=\"Hello\""
+        in output
+    )
+
+
+def test_message_request_log_flattens_and_truncates_long_questions(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.requests")
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(max_message_chars=500), provider=FakeProvider()))
+    session_id = create_session(client)
+    question = f"First line\n{'x' * 250}"
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": question})
+
+    assert response.status_code == 200
+    output = caplog.text
+    assert "question_chars=261" in output
+    assert 'question="First line ' in output
+    assert "\\n" not in output
+    assert f"{'x' * 186}...\"" in output
+    assert "x" * 187 not in output
+
+
 def test_secure_ai_owner_cookie_allows_cross_site_frontends() -> None:
     client = TestClient(
         create_test_app(settings=make_settings(cookie_secure=True), provider=FakeProvider()),

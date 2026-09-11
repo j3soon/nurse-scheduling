@@ -24,6 +24,7 @@ import base64
 import hashlib
 import json
 import logging
+import sys
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -95,6 +96,23 @@ SUPPORTED_DOCUMENT_MEDIA_TYPES = {
     ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",),
 }
 logger = logging.getLogger("nurse_scheduling.ai")
+request_logger = logging.getLogger("nurse_scheduling.ai.requests")
+request_logger.setLevel(logging.INFO)
+request_logger.propagate = False
+if not request_logger.handlers:
+    request_handler = logging.StreamHandler(sys.stdout)
+    request_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    request_logger.addHandler(request_handler)
+
+QUESTION_LOG_PREVIEW_CHARS = 200
+
+
+def _question_log_preview(question: str) -> str:
+    """Return a compact, single-line question preview for request logs."""
+    preview = " ".join(question.split())
+    if len(preview) > QUESTION_LOG_PREVIEW_CHARS:
+        return f"{preview[: QUESTION_LOG_PREVIEW_CHARS - 3]}..."
+    return preview
 
 
 class ProposalResponse(BaseModel):
@@ -694,6 +712,14 @@ def create_app(
         """Stream one answer and retain only text after successful completion."""
         question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
         history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
+        request_logger.info(
+            "AI request started session_id=%s question_chars=%s images=%s documents=%s question=%s",
+            session_id,
+            len(question),
+            len(images),
+            len(documents),
+            json.dumps(_question_log_preview(question), ensure_ascii=False),
+        )
         stream_started = threading.Event()
         messages = build_provider_messages(
             history,
