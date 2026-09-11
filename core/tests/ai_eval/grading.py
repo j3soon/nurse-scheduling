@@ -200,7 +200,23 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     ):
         raise EvalCaseError(f"{source} `user_turns` must be a non-empty list of strings.")
     raw_intermediate = entry.get("intermediate_answer_contains", [])
-    if not isinstance(raw_intermediate, list) or len(raw_intermediate) > len(raw_turns) - 1:
+    if (
+        not isinstance(raw_intermediate, list)
+        or len(raw_intermediate) > len(raw_turns) - 1
+        or not all(
+            isinstance(expected, list)
+            and all(
+                (isinstance(value, str) and bool(value))
+                or (
+                    isinstance(value, list)
+                    and bool(value)
+                    and all(isinstance(option, str) and option for option in value)
+                )
+                for value in expected
+            )
+            for expected in raw_intermediate
+        )
+    ):
         raise EvalCaseError(f"{source} has invalid `intermediate_answer_contains`.")
     intermediate = tuple(
         tuple(tuple(value) if isinstance(value, list) else value for value in expected) for expected in raw_intermediate

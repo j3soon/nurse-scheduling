@@ -194,7 +194,7 @@ Fields:
 - required `person`: flat list of person or people-group IDs
 - required `countDates`: flat list of date or date-group IDs. Use ALL for the entire schedule range
 - required `countShiftTypes`: flat list of shift-type or group IDs, ALL, or OFF
-- required scalar `expression`: one of x = T, x >= T, x <= T, x > T, x < T, |x - T|^2
+- required scalar `expression`: one of `x = T`, `x >= T`, `x <= T`, `x > T`, `x < T`, or `|x - T|^2`. For the quadratic form, write `expression: '|x - T|^2'` so YAML does not treat the leading pipe as a block scalar.
 - required scalar `target`: integer
 - optional `countShiftTypeCoefficients`: [shift-type or group ID, positive integer] pairs, for example [[D, 1], [N, 2]]
 - optional `weight`: integer or infinity, default -1

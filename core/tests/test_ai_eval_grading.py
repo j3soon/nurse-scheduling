@@ -450,6 +450,28 @@ def test_loads_multi_turn_cases_and_tags(tmp_path: Path):
     assert case.tags == ("difficult", "tuning")
 
 
+@pytest.mark.parametrize(
+    "intermediate_answer_contains",
+    [
+        ["Taiwan"],
+        [[1]],
+        [[""]],
+        [[[]]],
+        [[["holiday", 1]]],
+    ],
+)
+def test_rejects_invalid_intermediate_answer_expectations(tmp_path: Path, intermediate_answer_contains: object):
+    entry = _case(
+        user_turns=["Expand the range.", "Yes."],
+        intermediate_answer_contains=intermediate_answer_contains,
+        **{"assert": [{"path": "dates.range.endDate", "equals": "2026-03-14"}]},
+        changes=["dates.range"],
+    )
+
+    with pytest.raises(EvalCaseError, match="invalid `intermediate_answer_contains`"):
+        load_cases(_write(tmp_path, entry))
+
+
 def test_loads_nested_dataset_and_category_path(tmp_path: Path):
     case_path = tmp_path / "basics" / "03-structure" / "case.json"
     case_path.parent.mkdir(parents=True)
@@ -666,9 +688,7 @@ def test_every_case_sits_in_a_category_directory():
         "basics/09-holdout",
     }
     assert all(
-        not case.expect_proposal
-        for case in cases
-        if case.category.endswith(("00-summary", "01-reading", "06-refusal"))
+        not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))
     )
     assert all(
         case.expect_proposal

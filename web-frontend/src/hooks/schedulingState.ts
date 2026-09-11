@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { Item, Group, DateRange, Preference, ExportConfig } from '@/types/scheduling';
+import { Item, Group, DateRange, Preference, AT_MOST_ONE_SHIFT_PER_DAY, ExportConfig } from '@/types/scheduling';
 import { API_VERSION } from '@/utils/keywords';
 
 export interface SchedulingState {
@@ -41,6 +41,6 @@ export function createDefaultState(): SchedulingState {
     },
     people: { items: [], groups: [] },
     shiftTypes: { items: [], groups: [] },
-    preferences: [],
+    preferences: [{ type: AT_MOST_ONE_SHIFT_PER_DAY }],
   };
 }
