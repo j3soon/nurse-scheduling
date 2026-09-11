@@ -99,6 +99,16 @@ and is not published on a host port. See
 [durable chat logging](../docs/content/ai-assistant.md#durable-chat-logging) for
 retention and failure behavior.
 
+For local inspection, start the loopback-only pgAdmin UI and open
+`http://127.0.0.1:5050`:
+
+```sh
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
+```
+
+See [inspect chat history with pgAdmin](../docs/content/ai-assistant.md#inspect-chat-history-with-pgadmin)
+for login, remote SSH forwarding, connection, and query instructions.
+
 NGINX removes the `/ai` prefix before forwarding requests to this
 service and disables response buffering for its streaming endpoints. Keep the
 Cloudflare Tunnel hostname pointed at `http://nginx:8080`, not directly at

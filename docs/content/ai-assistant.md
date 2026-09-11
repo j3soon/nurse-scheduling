@@ -484,6 +484,50 @@ Retention runs on startup and hourly, deleting turns older than
 and their retention separately. Active sessions, schedules, and proposals remain
 in memory, so stored history does not enable resuming a chat after restart.
 
+### Inspect chat history with pgAdmin
+
+The optional pgAdmin service listens only on the backend host's loopback
+interface. Start it from `docker/` with the same Compose file and environment
+file used by that deployment:
+
+```sh
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
+```
+
+For a remote backend, forward the loopback port over SSH:
+
+```sh
+ssh -L 5050:127.0.0.1:5050 user@backend-host
+```
+
+Open `http://127.0.0.1:5050` and sign in with
+`admin@nursescheduling.local` / `pgadmin`. Expand **Nurse Scheduling**, then
+connect to **AI chat history** with database password `ai_history`. The server
+definition is preloaded on every run.
+
+Use **Tools > Query Tool** to inspect the newest turns:
+
+```sql
+SELECT
+    turns.started_at,
+    sessions.auth_credential_id,
+    turns.status,
+    turns.user_message,
+    turns.assistant_message,
+    turns.error_code,
+    turns.usage
+FROM chat_turns AS turns
+JOIN chat_sessions AS sessions ON sessions.id = turns.session_id
+ORDER BY turns.started_at DESC
+LIMIT 100;
+```
+
+Press Ctrl+C when finished. Compose removes the temporary pgAdmin container;
+the PostgreSQL service and its `postgres-ai-data` volume remain intact.
+
+Use `compose.backend.memory.yml` in these commands for the process-local backend
+variant. For staging, also pass its `--env-file .env.staging` option.
+
 Run PostgreSQL integration checks against a test database whose role can create
 schemas. Each test creates and removes its own temporary schema:
 

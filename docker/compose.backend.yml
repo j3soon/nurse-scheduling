@@ -27,6 +27,24 @@ services:
       timeout: 3s
       retries: 30
 
+  pgadmin:
+    profiles: ["inspection"]
+    image: dpage/pgadmin4:9.17
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@nursescheduling.org
+      PGADMIN_DEFAULT_PASSWORD: pgadmin
+      PGADMIN_DISABLE_POSTFIX: "1"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
+    ports:
+      - "127.0.0.1:5050:80"
+    volumes:
+      - ./pgadmin-servers.json:/pgadmin4/servers.json:ro
+
   redis:
     image: redis:8.8
     restart: unless-stopped
