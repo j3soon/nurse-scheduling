@@ -23,7 +23,7 @@
 
 import Image from 'next/image';
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FiArrowDown, FiMic } from 'react-icons/fi';
+import { FiArrowDown, FiArrowUp, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import {
@@ -1393,106 +1393,119 @@ export default function ExperimentalAiPage() {
             ))}
           </div>
         )}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          {(imageCapability.enabled || documentCapability.enabled) && (
-            <label className={`order-2 rounded-xl border px-3 py-3 text-center text-sm font-medium sm:order-1 ${
-              attachmentPickerDisabled
-                ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400'
-                : 'cursor-pointer border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-            }`}>
-              <input
-                type="file"
-                accept={[
-                  ...(imageCapability.enabled ? imageCapability.accepted_media_types : []),
-                  ...(documentCapability.enabled ? documentCapability.accepted_extensions : []),
-                ].join(',')}
-                multiple
-                disabled={attachmentPickerDisabled}
-                onChange={selectAttachments}
-                className="sr-only"
-              />
-              Attach files
-            </label>
-          )}
-          <label className="relative order-1 flex-1 sm:order-2">
-            <span className="sr-only">Ask about the current schedule</span>
-            <textarea
-              value={draft}
-              onChange={event => setDraft(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              disabled={!isClientReady || credentialsMissing}
-              rows={3}
-              maxLength={8000}
-              placeholder="Ask about the current schedule…"
-              className="w-full resize-none rounded-xl border border-gray-300 bg-white py-3 pl-4 pr-12 text-gray-900 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100"
-            />
-            {isClientReady && firefoxVersion !== null && !speechSupported ? (
-              <a
-                href={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
-                  ? FIREFOX_SPEECH_RECOGNITION_STATUS_URL
-                  : FIREFOX_NIGHTLY_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
-                  ? 'Enable experimental dictation in Firefox'
-                  : 'Firefox dictation compatibility'}
-                className="group absolute bottom-2.5 right-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg text-amber-600 transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-              >
-                <FiMic aria-hidden="true" className="h-4 w-4" />
-                <span className="pointer-events-none absolute bottom-10 right-0 z-10 hidden w-72 rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg group-hover:block group-focus-visible:block">
-                  {firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
-                    ? 'Firefox dictation is experimental. In about:config, enable media.webspeech.recognition.enable, then reload this page.'
-                    : 'Dictation is unavailable in this Firefox version. Try Firefox Nightly or another supported browser.'}
-                </span>
-              </a>
-            ) : (
-              <button
-                type="button"
-                onClick={toggleDictation}
-                disabled={!isClientReady || credentialsMissing || !speechSupported}
-                aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
-                aria-pressed={isListening}
-                title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
-                className={`absolute bottom-2.5 right-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
-                  isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-                }`}
-              >
-                <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
-              </button>
-            )}
-          </label>
-          {isStreaming ? (
-            <div className="order-3 flex gap-2">
-              <button
-                type="submit"
-                disabled={!draft.trim()}
-                aria-label="Queue message"
-                className="rounded-xl bg-blue-600 px-4 py-3 font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-              >
-                Queue
-              </button>
-              <button
-                type="button"
-                onClick={stop}
-                className="rounded-xl bg-gray-800 px-4 py-3 font-medium text-white hover:bg-gray-900"
-              >
-                Stop
-              </button>
+        <div className="rounded-2xl border border-gray-300 bg-white shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">
+          <textarea
+            value={draft}
+            onChange={event => setDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            disabled={!isClientReady || credentialsMissing}
+            rows={3}
+            maxLength={8000}
+            aria-label="Ask about the current schedule"
+            placeholder="Ask about the current schedule…"
+            className="block w-full resize-none rounded-t-2xl bg-transparent px-4 pb-2 pt-3 text-gray-900 outline-none disabled:bg-gray-100"
+          />
+          <div className="flex items-center justify-between gap-2 px-2 pb-2">
+            <div className="flex min-h-9 items-center">
+              {(imageCapability.enabled || documentCapability.enabled) && (
+                <label
+                  title="Attach files"
+                  className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
+                    attachmentPickerDisabled
+                      ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400'
+                      : 'cursor-pointer border-gray-300 bg-white text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <input
+                    type="file"
+                    accept={[
+                      ...(imageCapability.enabled ? imageCapability.accepted_media_types : []),
+                      ...(documentCapability.enabled ? documentCapability.accepted_extensions : []),
+                    ].join(',')}
+                    multiple
+                    disabled={attachmentPickerDisabled}
+                    onChange={selectAttachments}
+                    aria-label="Attach files"
+                    className="sr-only"
+                  />
+                  <FiPlus aria-hidden="true" className="h-5 w-5" />
+                </label>
+              )}
             </div>
-          ) : (
-            <button
-              type="submit"
-              disabled={!isClientReady || credentialsMissing || !draft.trim()}
-              className="order-3 rounded-xl bg-blue-600 px-5 py-3 font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-            >
-              Send
-            </button>
-          )}
+            <div className="flex items-center gap-1.5">
+              {isClientReady && firefoxVersion !== null && !speechSupported ? (
+                <a
+                  href={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                    ? FIREFOX_SPEECH_RECOGNITION_STATUS_URL
+                    : FIREFOX_NIGHTLY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                    ? 'Enable experimental dictation in Firefox'
+                    : 'Firefox dictation compatibility'}
+                  className="group relative inline-flex h-9 w-9 items-center justify-center rounded-full text-amber-600 transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                >
+                  <FiMic aria-hidden="true" className="h-4 w-4" />
+                  <span className="pointer-events-none absolute bottom-10 right-0 z-10 hidden w-72 rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg group-hover:block group-focus-visible:block">
+                    {firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                      ? 'Firefox dictation is experimental. In about:config, enable media.webspeech.recognition.enable, then reload this page.'
+                      : 'Dictation is unavailable in this Firefox version. Try Firefox Nightly or another supported browser.'}
+                  </span>
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  onClick={toggleDictation}
+                  disabled={!isClientReady || credentialsMissing || !speechSupported}
+                  aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
+                  aria-pressed={isListening}
+                  title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
+                  className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
+                    isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+                  }`}
+                >
+                  <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
+                </button>
+              )}
+              {isStreaming ? (
+                <>
+                  <button
+                    type="submit"
+                    disabled={!draft.trim()}
+                    aria-label="Queue message"
+                    title="Queue message"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                  >
+                    <FiArrowUp aria-hidden="true" className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={stop}
+                    aria-label="Stop"
+                    title="Stop"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gray-800 text-white transition-colors hover:bg-gray-900"
+                  >
+                    <FiSquare aria-hidden="true" className="h-4 w-4 fill-current" />
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!isClientReady || credentialsMissing || !draft.trim()}
+                  aria-label="Send"
+                  title="Send"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                >
+                  <FiArrowUp aria-hidden="true" className="h-5 w-5" />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </form>
     </main>

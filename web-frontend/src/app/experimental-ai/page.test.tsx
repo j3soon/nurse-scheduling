@@ -132,7 +132,10 @@ describe('ExperimentalAiPage', () => {
     );
     expect(screen.getByText(/Assume all AI chats are logged/)).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
-    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const sendButton = screen.getByRole('button', { name: 'Send' });
+    expect(sendButton).toHaveTextContent('');
+    expect(sendButton.querySelector('svg')).not.toBeNull();
+    await user.click(sendButton);
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
     const responseTime = document.querySelector('time');
@@ -307,9 +310,12 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(callbacks).toBeDefined());
     const activeSignal = mockStreamMessage.mock.calls[0][3] as AbortSignal;
     await user.type(draft, 'Focus on P2 instead.');
-    await user.click(screen.getByRole('button', { name: 'Queue message' }));
+    const queueButton = screen.getByRole('button', { name: 'Queue message' });
+    expect(queueButton).toHaveTextContent('');
+    expect(queueButton.querySelector('svg')).not.toBeNull();
+    await user.click(queueButton);
     await user.type(draft, 'Also compare P3.');
-    await user.click(screen.getByRole('button', { name: 'Queue message' }));
+    await user.click(queueButton);
 
     expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
     expect(activeSignal.aborted).toBe(false);
@@ -332,7 +338,9 @@ describe('ExperimentalAiPage', () => {
       'You',
       'Assistant',
     ]);
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    const stopButton = screen.getByRole('button', { name: 'Stop' });
+    expect(stopButton).toHaveTextContent('');
+    expect(stopButton.querySelector('svg')).not.toBeNull();
     await act(async () => finishStream?.());
   });
 
@@ -772,6 +780,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     const input = await screen.findByLabelText('Attach files');
+    expect(input.closest('label')?.querySelector('svg')).not.toBeNull();
     await user.upload(input, image);
     expect(screen.getByAltText('Preview of ward.png')).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'What is shown?');
