@@ -183,7 +183,10 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     await user.click(screen.getByRole('button', { name: 'Change' }));
-    await user.type(screen.getByRole('textbox', { name: 'Custom AI server URL' }), 'ai.example.com/');
+    const serverInput = screen.getByRole('textbox', { name: 'Custom AI server URL' });
+    expect(serverInput).toHaveValue('/ai');
+    await user.clear(serverInput);
+    await user.type(serverInput, 'ai.example.com/');
     await user.click(screen.getByRole('button', { name: 'Use custom' }));
 
     expect(screen.getByText('https://ai.example.com')).toBeInTheDocument();

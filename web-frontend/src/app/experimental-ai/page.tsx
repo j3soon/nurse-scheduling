@@ -577,6 +577,13 @@ export default function ExperimentalAiPage() {
     }
   };
 
+  const toggleServerEditor = () => {
+    setIsEditingServer(previous => {
+      if (!previous) setCustomEndpoint(aiEndpoint);
+      return !previous;
+    });
+  };
+
   const reportRequestError = (requestError: unknown, fallback: string) => {
     if (isAuthenticationError(requestError)) {
       setAuthRequired(true);
@@ -1060,7 +1067,7 @@ export default function ExperimentalAiPage() {
             <span className="text-xs capitalize text-gray-500">{serverStatus}</span>
             <button
               type="button"
-              onClick={() => setIsEditingServer(previous => !previous)}
+              onClick={toggleServerEditor}
               disabled={isStreaming || serverLocked}
               title={serverLocked ? 'The AI server is locked for this conversation.' : undefined}
               className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
