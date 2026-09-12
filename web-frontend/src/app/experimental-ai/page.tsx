@@ -685,6 +685,7 @@ export default function ExperimentalAiPage() {
       attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
     let activeAssistantId = messageId();
+    let activeAssistantHasOutput = false;
     let activeQuestion = question;
     let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
     const responseStartedAt = Date.now();
@@ -726,36 +727,45 @@ export default function ExperimentalAiPage() {
         sessionId,
         question,
         {
-          onDelta: text => setMessages(previous => previous.map(message => (
-            message.id === activeAssistantId
-              ? {
-                ...message,
-                content: message.content + text,
-                activity: appendResponseActivity(message.activity ?? [], text),
+          onDelta: text => {
+            if (text) activeAssistantHasOutput = true;
+            setMessages(previous => previous.map(message => (
+              message.id === activeAssistantId
+                ? {
+                  ...message,
+                  content: message.content + text,
+                  activity: appendResponseActivity(message.activity ?? [], text),
+                }
+                : message
+            )));
+          },
+          onReasoning: text => {
+            if (text) activeAssistantHasOutput = true;
+            setMessages(previous => previous.map(message => {
+              if (message.id !== activeAssistantId) return message;
+              const activity = message.activity ?? [];
+              const last = activity[activity.length - 1];
+              // Consecutive reasoning belongs to one entry, so the order of work stays readable.
+              if (last?.kind === 'reasoning') {
+                return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
               }
-              : message
-          ))),
-          onReasoning: text => setMessages(previous => previous.map(message => {
-            if (message.id !== activeAssistantId) return message;
-            const activity = message.activity ?? [];
-            const last = activity[activity.length - 1];
-            // Consecutive reasoning belongs to one entry, so the order of work stays readable.
-            if (last?.kind === 'reasoning') {
-              return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
-            }
-            return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
-          })),
-          onToolStart: activity => setMessages(previous => previous.map(message => (
-            message.id === activeAssistantId
-              ? {
-                ...message,
-                activity: [
-                  ...(message.activity ?? []),
-                  { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
-                ],
-              }
-              : message
-          ))),
+              return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
+            }));
+          },
+          onToolStart: activity => {
+            activeAssistantHasOutput = true;
+            setMessages(previous => previous.map(message => (
+              message.id === activeAssistantId
+                ? {
+                  ...message,
+                  activity: [
+                    ...(message.activity ?? []),
+                    { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
+                  ],
+                }
+                : message
+            )));
+          },
           onTool: activity => setMessages(previous => previous.map(message => {
             if (message.id !== activeAssistantId) return message;
             return { ...message, activity: finishToolActivity(message.activity ?? [], activity) };
@@ -763,25 +773,39 @@ export default function ExperimentalAiPage() {
           onSteering: (queuedId, queuedMessage) => {
             queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
             setQueuedMessages(queuedMessagesRef.current);
-            const completedAssistantId = activeAssistantId;
-            const nextAssistantId = messageId();
             const steeringStartedAt = Date.now();
-            setMessages(previous => [
-              ...previous.map(message => (
-                message.id === completedAssistantId
-                  ? { ...message, status: undefined, responseCompletedAt: steeringStartedAt }
-                  : message
-              )),
-              { id: queuedId, role: 'user', content: queuedMessage },
-              {
-                id: nextAssistantId,
-                role: 'assistant',
-                content: '',
-                status: 'pending',
-                responseStartedAt: steeringStartedAt,
-              },
-            ]);
-            activeAssistantId = nextAssistantId;
+            if (activeAssistantHasOutput) {
+              const completedAssistantId = activeAssistantId;
+              const nextAssistantId = messageId();
+              setMessages(previous => [
+                ...previous.map(message => (
+                  message.id === completedAssistantId
+                    ? { ...message, status: undefined, responseCompletedAt: steeringStartedAt }
+                    : message
+                )),
+                { id: queuedId, role: 'user', content: queuedMessage },
+                {
+                  id: nextAssistantId,
+                  role: 'assistant',
+                  content: '',
+                  status: 'pending',
+                  responseStartedAt: steeringStartedAt,
+                },
+              ]);
+              activeAssistantId = nextAssistantId;
+              activeAssistantHasOutput = false;
+            } else {
+              const pendingAssistantId = activeAssistantId;
+              setMessages(previous => {
+                const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
+                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage }];
+                return [
+                  ...previous.slice(0, pendingIndex),
+                  { id: queuedId, role: 'user', content: queuedMessage },
+                  ...previous.slice(pendingIndex),
+                ];
+              });
+            }
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
           },

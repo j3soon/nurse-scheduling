@@ -248,20 +248,27 @@ def create_session(client: TestClient, schedule_yaml: str = "description: test")
     return response.json()["id"]
 
 
-def test_active_session_accepts_a_queued_steering_message() -> None:
+def test_active_session_drains_all_queued_steering_messages() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
     owner = client.cookies[OWNER_COOKIE]
     app.state.session_store.begin(session_id, owner)
 
-    response = client.post(
+    first_response = client.post(
         f"/sessions/{session_id}/messages/queue",
         json={"message_id": "queued-1", "message": "Focus on P2 instead."},
     )
+    second_response = client.post(
+        f"/sessions/{session_id}/messages/queue",
+        json={"message_id": "queued-2", "message": "Also compare P3."},
+    )
 
-    assert response.status_code == 202
-    assert app.state.session_store.take_steering(session_id, False) == [("queued-1", "Focus on P2 instead.")]
+    assert first_response.status_code == second_response.status_code == 202
+    assert app.state.session_store.take_steering(session_id, False) == [
+        ("queued-1", "Focus on P2 instead."),
+        ("queued-2", "Also compare P3."),
+    ]
     app.state.session_store.abort(session_id)
 
 

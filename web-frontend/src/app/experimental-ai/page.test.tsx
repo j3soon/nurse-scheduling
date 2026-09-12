@@ -278,16 +278,23 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText(/enable media\.webspeech\.recognition\.enable, then reload/)).toBeInTheDocument();
   });
 
-  it('queues a message to steer the active turn without stopping it', async () => {
+  it('shows all steering messages before one assistant response without empty turns', async () => {
     const user = userEvent.setup();
-    let callbacks: { onSteering?: (messageId: string, message: string) => void } | undefined;
+    let callbacks: {
+      onSteering?: (messageId: string, message: string) => void;
+      onToolStart?: (activity: { name: string; arguments: string }) => void;
+    } | undefined;
     let finishStream: (() => void) | undefined;
     mockStreamMessage.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      streamCallbacks: { onSteering?: (messageId: string, message: string) => void },
+      streamCallbacks: {
+        onSteering?: (messageId: string, message: string) => void;
+        onToolStart?: (activity: { name: string; arguments: string }) => void;
+      },
     ) => {
       callbacks = streamCallbacks;
+      streamCallbacks.onToolStart?.({ name: 'read', arguments: '{}' });
       await new Promise<void>(resolve => {
         finishStream = resolve;
       });
@@ -301,21 +308,30 @@ describe('ExperimentalAiPage', () => {
     const activeSignal = mockStreamMessage.mock.calls[0][3] as AbortSignal;
     await user.type(draft, 'Focus on P2 instead.');
     await user.click(screen.getByRole('button', { name: 'Queue message' }));
+    await user.type(draft, 'Also compare P3.');
+    await user.click(screen.getByRole('button', { name: 'Queue message' }));
 
     expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
     expect(activeSignal.aborted).toBe(false);
-    expect(mockQueueMessage).toHaveBeenCalledWith(
-      'session-id',
-      expect.any(String),
-      'Focus on P2 instead.',
-      null,
-      '/ai',
-    );
-    const queuedId = mockQueueMessage.mock.calls[0][1] as string;
-    act(() => callbacks?.onSteering?.(queuedId, 'Focus on P2 instead.'));
+    expect(mockQueueMessage).toHaveBeenCalledTimes(2);
+    const firstQueuedId = mockQueueMessage.mock.calls[0][1] as string;
+    const secondQueuedId = mockQueueMessage.mock.calls[1][1] as string;
+    act(() => {
+      callbacks?.onSteering?.(firstQueuedId, 'Focus on P2 instead.');
+      callbacks?.onSteering?.(secondQueuedId, 'Also compare P3.');
+    });
 
     expect(screen.queryByText('Messages to be submitted after next tool call')).not.toBeInTheDocument();
     expect(screen.getByText('Focus on P2 instead.')).toBeInTheDocument();
+    expect(screen.getByText('Also compare P3.')).toBeInTheDocument();
+    const messageCards = screen.getByLabelText('Chat messages').querySelectorAll('article');
+    expect(Array.from(messageCards, card => card.querySelector('p')?.textContent)).toEqual([
+      'You',
+      'Assistant',
+      'You',
+      'You',
+      'Assistant',
+    ]);
     expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
     await act(async () => finishStream?.());
   });

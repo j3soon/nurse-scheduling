@@ -118,9 +118,12 @@ def test_a_tool_call_is_executed_and_returned_to_the_provider():
     }
 
 
-def test_queued_steering_is_injected_after_the_next_tool_batch():
+def test_all_queued_steering_is_injected_after_the_next_tool_batch():
     provider = FakeProvider(_calls(), _text("Steered answer."))
-    queued = [("message-2", "Focus on P2 instead.")]
+    queued = [
+        ("message-2", "Focus on P2 instead."),
+        ("message-3", "Also compare P3."),
+    ]
     close_checks: list[bool] = []
 
     async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
@@ -147,7 +150,11 @@ def test_queued_steering_is_injected_after_the_next_tool_batch():
     events = asyncio.run(collect())
 
     assert AgentSteering("message-2", "Focus on P2 instead.") in events
-    assert provider.requests[1][0][-1] == {"role": "user", "content": "Focus on P2 instead."}
+    assert AgentSteering("message-3", "Also compare P3.") in events
+    assert provider.requests[1][0][-2:] == [
+        {"role": "user", "content": "Focus on P2 instead."},
+        {"role": "user", "content": "Also compare P3."},
+    ]
     assert close_checks == [False, True]
 
 
