@@ -154,6 +154,19 @@ describe('ExperimentalAiPage', () => {
     expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(true);
   });
 
+  it('starts with a single-line composer and grows with the draft', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    expect(composer).toHaveAttribute('rows', '1');
+    expect(composer).toHaveStyle({ height: '24px', overflowY: 'hidden' });
+    Object.defineProperty(composer, 'scrollHeight', { configurable: true, value: 96 });
+    await user.type(composer, 'A longer question that wraps onto another line.');
+
+    expect(composer).toHaveStyle({ height: '96px', overflowY: 'hidden' });
+  });
+
   it('selects localhost and locks that server after the conversation starts', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
