@@ -23,7 +23,7 @@
 
 import Image from 'next/image';
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FiArrowDown, FiArrowUp, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
+import { FiArrowDown, FiArrowUp, FiChevronDown, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import {
@@ -74,6 +74,19 @@ const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
 const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
 const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
+const SPEECH_LANGUAGES = [
+  { value: '', label: 'Browser default' },
+  { value: 'en-US', label: 'English (United States)' },
+  { value: 'en-GB', label: 'English (United Kingdom)' },
+  { value: 'zh-TW', label: 'Mandarin (Taiwan)' },
+  { value: 'zh-CN', label: 'Mandarin (China)' },
+  { value: 'yue-Hant-HK', label: 'Cantonese (Hong Kong)' },
+  { value: 'ja-JP', label: 'Japanese' },
+  { value: 'ko-KR', label: 'Korean' },
+  { value: 'es-ES', label: 'Spanish' },
+  { value: 'fr-FR', label: 'French' },
+  { value: 'de-DE', label: 'German' },
+] as const;
 
 interface AiPreferences {
   showReasoning: boolean;
@@ -103,6 +116,7 @@ interface BrowserSpeechRecognitionEvent {
 interface BrowserSpeechRecognition {
   continuous: boolean;
   interimResults: boolean;
+  lang: string;
   processLocally?: boolean;
   onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
   onend: (() => void) | null;
@@ -320,6 +334,7 @@ export default function ExperimentalAiPage() {
   const [speechSupported, setSpeechSupported] = useState(false);
   const [firefoxVersion, setFirefoxVersion] = useState<number | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [speechLanguage, setSpeechLanguage] = useState('');
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
   const [showTools, setShowTools] = useState(true);
@@ -937,6 +952,7 @@ export default function ExperimentalAiPage() {
 
     const recognition = new SpeechRecognition();
     if (firefoxVersion !== null && 'processLocally' in recognition) recognition.processLocally = true;
+    if (speechLanguage) recognition.lang = speechLanguage;
     const originalDraft = draft.trimEnd();
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -1458,19 +1474,36 @@ export default function ExperimentalAiPage() {
                   </span>
                 </a>
               ) : (
-                <button
-                  type="button"
-                  onClick={toggleDictation}
-                  disabled={!isClientReady || credentialsMissing || !speechSupported}
-                  aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
-                  aria-pressed={isListening}
-                  title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
-                  className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
-                    isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-                  }`}
-                >
-                  <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={toggleDictation}
+                    disabled={!isClientReady || credentialsMissing || !speechSupported}
+                    aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
+                    aria-pressed={isListening}
+                    title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
+                    className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
+                      isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+                    }`}
+                  >
+                    <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
+                  </button>
+                  <span className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border border-gray-300 bg-white text-gray-600 shadow-sm focus-within:ring-2 focus-within:ring-blue-400">
+                    <select
+                      value={speechLanguage}
+                      onChange={event => setSpeechLanguage(event.target.value)}
+                      disabled={!isClientReady || credentialsMissing || !speechSupported || isListening}
+                      aria-label="Dictation language"
+                      title="Dictation language"
+                      className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                    >
+                      {SPEECH_LANGUAGES.map(language => (
+                        <option key={language.value} value={language.value}>{language.label}</option>
+                      ))}
+                    </select>
+                    <FiChevronDown aria-hidden="true" className="pointer-events-none h-full w-full p-0.5" />
+                  </span>
+                </div>
               )}
               {isStreaming ? (
                 <>

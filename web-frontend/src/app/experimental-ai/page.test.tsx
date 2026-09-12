@@ -203,12 +203,14 @@ describe('ExperimentalAiPage', () => {
       onerror: (() => void) | null;
       continuous: boolean;
       interimResults: boolean;
+      lang: string;
       processLocally: boolean;
       start: ReturnType<typeof vi.fn>;
       stop: ReturnType<typeof vi.fn>;
     } = {
       continuous: false,
       interimResults: false,
+      lang: '',
       processLocally: false,
       onresult: null,
       onend: null,
@@ -232,16 +234,22 @@ describe('ExperimentalAiPage', () => {
       render(<ExperimentalAiPage />);
       const draft = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
       await user.type(draft, 'Please');
+      const languageSelect = await screen.findByRole('combobox', { name: 'Dictation language' });
+      expect(languageSelect).toHaveValue('');
+      await user.selectOptions(languageSelect, 'zh-TW');
       await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
 
       expect(recognition.start).toHaveBeenCalledOnce();
+      expect(recognition.lang).toBe('zh-TW');
       expect(recognition.processLocally).toBe(true);
+      expect(languageSelect).toBeDisabled();
       act(() => recognition.onresult?.({ results: [[{ transcript: 'add a night shift' }]] }));
 
       expect(draft).toHaveValue('Please add a night shift');
       await user.click(screen.getByRole('button', { name: 'Stop dictation' }));
       expect(recognition.stop).toHaveBeenCalledOnce();
       act(() => recognition.onend?.());
+      expect(languageSelect).toBeEnabled();
       expect(screen.getByRole('button', { name: 'Start dictation' })).toHaveAttribute('aria-pressed', 'false');
     } finally {
       delete window.SpeechRecognition;
