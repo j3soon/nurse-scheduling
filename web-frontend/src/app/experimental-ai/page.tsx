@@ -26,7 +26,13 @@ import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo,
 import { FiArrowDown, FiMic } from 'react-icons/fi';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
-import { DOCUMENTATION_URLS, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL } from '@/constants/urls';
+import {
+  DOCUMENTATION_URLS,
+  FIREFOX_NIGHTLY_URL,
+  FIREFOX_SPEECH_RECOGNITION_STATUS_URL,
+  GITHUB_AI_BETA_ACCESS_URL,
+  GITHUB_PRIVACY_URL,
+} from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
@@ -67,6 +73,7 @@ interface ChatMessage {
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
 const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
+const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
 
 interface AiPreferences {
   showReasoning: boolean;
@@ -96,6 +103,7 @@ interface BrowserSpeechRecognitionEvent {
 interface BrowserSpeechRecognition {
   continuous: boolean;
   interimResults: boolean;
+  processLocally?: boolean;
   onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
   onend: (() => void) | null;
   onerror: (() => void) | null;
@@ -310,6 +318,7 @@ export default function ExperimentalAiPage() {
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [firefoxVersion, setFirefoxVersion] = useState<number | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
@@ -360,7 +369,15 @@ export default function ExperimentalAiPage() {
     setAuthToken(storedToken);
     setRememberAuthToken(storedToken !== null);
     setIsClientReady(true);
-    setSpeechSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
+    const firefoxVersionMatch = navigator.userAgent.match(/Firefox\/(\d+)/);
+    const detectedFirefoxVersion = firefoxVersionMatch === null
+      ? null
+      : Number.parseInt(firefoxVersionMatch[1], 10);
+    const hasSpeechRecognition = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+    setFirefoxVersion(detectedFirefoxVersion);
+    setSpeechSupported(hasSpeechRecognition && (
+      detectedFirefoxVersion === null || detectedFirefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+    ));
   }, []);
 
   const rememberPreferences = (preferences: AiPreferences) => {
@@ -888,6 +905,7 @@ export default function ExperimentalAiPage() {
     if (!SpeechRecognition) return;
 
     const recognition = new SpeechRecognition();
+    if (firefoxVersion !== null && 'processLocally' in recognition) recognition.processLocally = true;
     const originalDraft = draft.trimEnd();
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -1382,19 +1400,40 @@ export default function ExperimentalAiPage() {
               placeholder="Ask about the current schedule…"
               className="w-full resize-none rounded-xl border border-gray-300 bg-white py-3 pl-4 pr-12 text-gray-900 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100"
             />
-            <button
-              type="button"
-              onClick={toggleDictation}
-              disabled={!isClientReady || credentialsMissing || !speechSupported}
-              aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
-              aria-pressed={isListening}
-              title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
-              className={`absolute bottom-2.5 right-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
-                isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-              }`}
-            >
-              <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
-            </button>
+            {isClientReady && firefoxVersion !== null && !speechSupported ? (
+              <a
+                href={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                  ? FIREFOX_SPEECH_RECOGNITION_STATUS_URL
+                  : FIREFOX_NIGHTLY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                  ? 'Enable experimental dictation in Firefox'
+                  : 'Firefox dictation compatibility'}
+                className="group absolute bottom-2.5 right-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg text-amber-600 transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              >
+                <FiMic aria-hidden="true" className="h-4 w-4" />
+                <span className="pointer-events-none absolute bottom-10 right-0 z-10 hidden w-72 rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg group-hover:block group-focus-visible:block">
+                  {firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                    ? 'Firefox dictation is experimental. In about:config, enable media.webspeech.recognition.enable, then reload this page.'
+                    : 'Dictation is unavailable in this Firefox version. Try Firefox Nightly or another supported browser.'}
+                </span>
+              </a>
+            ) : (
+              <button
+                type="button"
+                onClick={toggleDictation}
+                disabled={!isClientReady || credentialsMissing || !speechSupported}
+                aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
+                aria-pressed={isListening}
+                title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
+                className={`absolute bottom-2.5 right-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
+                  isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+                }`}
+              >
+                <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
+              </button>
+            )}
           </label>
           {isStreaming ? (
             <div className="order-3 flex gap-2">

@@ -197,11 +197,13 @@ describe('ExperimentalAiPage', () => {
       onerror: (() => void) | null;
       continuous: boolean;
       interimResults: boolean;
+      processLocally: boolean;
       start: ReturnType<typeof vi.fn>;
       stop: ReturnType<typeof vi.fn>;
     } = {
       continuous: false,
       interimResults: false,
+      processLocally: false,
       onresult: null,
       onend: null,
       onerror: null,
@@ -215,6 +217,9 @@ describe('ExperimentalAiPage', () => {
       configurable: true,
       value: MockSpeechRecognition,
     });
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0',
+    );
     const user = userEvent.setup();
 
     try {
@@ -224,6 +229,7 @@ describe('ExperimentalAiPage', () => {
       await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
 
       expect(recognition.start).toHaveBeenCalledOnce();
+      expect(recognition.processLocally).toBe(true);
       act(() => recognition.onresult?.({ results: [[{ transcript: 'add a night shift' }]] }));
 
       expect(draft).toHaveValue('Please add a night shift');
@@ -234,6 +240,39 @@ describe('ExperimentalAiPage', () => {
     } finally {
       delete window.SpeechRecognition;
     }
+  });
+
+  it('does not offer the legacy speech recognition implementation in Firefox', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0',
+    );
+    Object.defineProperty(window, 'SpeechRecognition', {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    try {
+      render(<ExperimentalAiPage />);
+
+      const compatibilityLink = await screen.findByRole('link', { name: 'Firefox dictation compatibility' });
+      expect(compatibilityLink).toHaveAttribute('href', 'https://www.firefox.com/channel/desktop/#nightly');
+      expect(screen.getByText(/Dictation is unavailable in this Firefox version/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Start dictation' })).not.toBeInTheDocument();
+    } finally {
+      delete window.SpeechRecognition;
+    }
+  });
+
+  it('shows current setup guidance in Firefox builds with on-device recognition', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0',
+    );
+
+    render(<ExperimentalAiPage />);
+
+    const setupLink = await screen.findByRole('link', { name: 'Enable experimental dictation in Firefox' });
+    expect(setupLink).toHaveAttribute('href', 'https://bugzilla.mozilla.org/show_bug.cgi?id=1940906');
+    expect(screen.getByText(/enable media\.webspeech\.recognition\.enable, then reload/)).toBeInTheDocument();
   });
 
   it('queues a message to steer the active turn without stopping it', async () => {

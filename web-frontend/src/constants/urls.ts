@@ -36,6 +36,10 @@ export const GITHUB_BRANCHES_API_URL = 'https://api.github.com/repos/j3soon/nurs
 // Website URLs
 export const WEBSITE_URL = 'https://nursescheduling.org';
 
+// Mozilla URLs
+export const FIREFOX_NIGHTLY_URL = 'https://www.firefox.com/channel/desktop/#nightly';
+export const FIREFOX_SPEECH_RECOGNITION_STATUS_URL = 'https://bugzilla.mozilla.org/show_bug.cgi?id=1940906';
+
 // Netlify publishes Zensical at /docs. Local development serves it separately.
 const DEFAULT_DOCUMENTATION_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://127.0.0.1:8003/docs'
