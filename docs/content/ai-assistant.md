@@ -364,6 +364,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
 | `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for durable chat logging. Compose sets its internal URL directly. |
 | `AI_HISTORY_RETENTION_DAYS` | `30` | Positive number of days to retain chat text and metadata. |
+| `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `120` | Provider request timeout. |
 | `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
 | `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
@@ -468,8 +469,12 @@ enabled, never the owner cookie or bearer key. Raw attachments, extracted
 document text, schedule snapshots, tool arguments/results, and reasoning are
 excluded. User and assistant text can still contain staff information. Database
 access is for operators only. No history-reading API or browser viewer is added.
-Use a separate read-only database role for reporting. Existing stdout question
-previews have their own deployment log retention.
+Use a separate read-only database role for reporting. Question previews are
+logged separately to stdout and have their own deployment log retention. Set
+`AI_REQUEST_LOG_ENABLED=false` to stop logging chat text without silencing the
+rest of that logger, and configure the `nurse_scheduling.ai.requests` logger to
+redirect it. The built-in stdout handler is installed only when neither that
+logger nor the root logger already has one.
 
 Startup fails if configured storage is unavailable. A failed initial write
 returns HTTP 503 before contacting the provider. A failed final write emits an

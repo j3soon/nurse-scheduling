@@ -22,6 +22,7 @@
 import asyncio
 import base64
 import hashlib
+import io
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
@@ -41,6 +42,8 @@ from nurse_scheduling.ai.app import (
     SANDBOX_TURN_TIMEOUT_ERROR,
     SERVICE_NAME,
     STALE_TURN_ERROR,
+    configure_request_logging,
+    request_logger,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
@@ -284,6 +287,36 @@ def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixtur
     assert (
         f'AI request started session_id={session_id} question_chars=5 images=0 documents=0 question="Hello"' in output
     )
+
+
+def test_question_previews_can_be_turned_off_without_silencing_the_logger(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.requests")
+    client = AuthenticatedTestClient(
+        create_test_app(settings=make_settings(request_log_enabled=False), provider=FakeProvider())
+    )
+    session_id = create_session(client)
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"})
+
+    assert response.status_code == 200
+    # Chat text must be suppressible, and the logger must stay usable for real problems.
+    assert "Hello" not in caplog.text
+    assert "AI request started" not in caplog.text
+    request_logger.warning("still reported")
+    assert "still reported" in caplog.text
+
+
+def test_request_logging_leaves_an_operator_configured_root_alone() -> None:
+    root_handler = logging.StreamHandler(io.StringIO())
+    logging.getLogger().addHandler(root_handler)
+    try:
+        configure_request_logging(True)
+        assert request_logger.handlers == []
+        assert request_logger.level == logging.INFO
+    finally:
+        logging.getLogger().removeHandler(root_handler)
 
 
 def test_message_request_log_flattens_and_truncates_long_questions(

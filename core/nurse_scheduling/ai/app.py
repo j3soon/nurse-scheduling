@@ -105,12 +105,25 @@ SUPPORTED_DOCUMENT_MEDIA_TYPES = {
 }
 logger = logging.getLogger("nurse_scheduling.ai")
 request_logger = logging.getLogger("nurse_scheduling.ai.requests")
-request_logger.setLevel(logging.INFO)
-request_logger.propagate = False
-if not request_logger.handlers:
+
+
+def configure_request_logging(enabled: bool) -> None:
+    """Route question previews to stdout by default without seizing the logger.
+
+    The previews carry chat text, so a deployment must be able to silence or redirect
+    them. An operator's own handler wins, and `AI_REQUEST_LOG_ENABLED=false` turns the
+    previews off without losing the rest of this logger's records.
+    """
+    if not enabled:
+        request_logger.setLevel(logging.WARNING)
+        return
+    request_logger.setLevel(logging.INFO)
+    if request_logger.handlers or logging.getLogger().handlers:
+        return
     request_handler = logging.StreamHandler(sys.stdout)
     request_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     request_logger.addHandler(request_handler)
+
 
 QUESTION_LOG_PREVIEW_CHARS = 200
 
@@ -669,6 +682,7 @@ def create_app(
         required=settings.auth_required,
     )
     settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
+    configure_request_logging(settings.request_log_enabled)
     provider = provider or OpenAiCompatibleProvider(settings, include_usage=bool(settings.history_postgres_url))
     history_log = (
         ChatHistory(settings.history_postgres_url, settings.history_retention_days)

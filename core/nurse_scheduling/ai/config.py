@@ -139,6 +139,8 @@ class AiSettings:
     session_ttl_seconds: int = 3600
     history_postgres_url: str = ""
     history_retention_days: int = 30
+    request_log_enabled: bool = True
+    """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
     max_history_messages: int = 20
     max_message_chars: int = 8000
@@ -212,6 +214,7 @@ class AiSettings:
             session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 3600),
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
             history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),
+            request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
             max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 20),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
