@@ -225,6 +225,11 @@ followed by a constant-time comparison. Remove a pair and restart the server to
 revoke its bearer and stream tokens. `API_AUTH_TOKEN` remains
 supported and may be used alongside identified keys during migration.
 
+Identified keys attribute a request, they do not isolate one. Every configured
+key reaches every protected route, so any key may read, cancel, finish, and
+stream a job created with another key. Use separate deployments when callers
+must not see each other's jobs.
+
 When authentication is configured, the generated `/openapi.json`, `/docs`, and
 `/redoc` routes are disabled and return `404`.
 

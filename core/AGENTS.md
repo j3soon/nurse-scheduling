@@ -96,6 +96,9 @@ test paths when a narrower suite is known to be sufficient.
   administration and audit logs only. Clients continue to send only the key as
   a bearer token and must never receive the ID. Keep `legacy` reserved for
   `API_AUTH_TOKEN`.
+- Identified keys attribute requests, they do not isolate them. Every key
+  reaches every protected route and every job. Do not present them as tenants
+  or add per-key ownership checks without a deliberate multi-tenancy design.
 - `API_AUTH_REQUIRED` makes a token mandatory and is set in the deployment images,
   so a published backend fails to start rather than serving openly by accident.
   Leave it unset outside those images.
