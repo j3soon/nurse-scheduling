@@ -259,4 +259,10 @@ describe('DataTable', () => {
     expect(targetOnReorder).not.toHaveBeenCalled();
     expect(container.querySelectorAll('tbody tr')).toHaveLength(4);
   });
+
+  it('names each table by its title so tests need not match style classes', () => {
+    render(<DataTable title="Shift Types Groups" columns={[]} data={[]} />);
+
+    expect(screen.getByTestId('data-table-shift-types-groups')).toBeInTheDocument();
+  });
 });

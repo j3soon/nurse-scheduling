@@ -39,16 +39,16 @@ test('new schedule resets the app to an empty state from the home page flow', as
 
   await page.goto('/people');
   await expect(page.getByRole('heading', { name: 'People Management' })).toBeVisible();
-  const peopleTable = page.getByRole('heading', { name: 'People', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
-  const peopleGroupsTable = page.getByRole('heading', { name: 'People Groups', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  const peopleTable = page.getByTestId('data-table-people');
+  const peopleGroupsTable = page.getByTestId('data-table-people-groups');
   await expect(peopleTable.locator('tbody tr')).toHaveCount(0);
   await expect(peopleGroupsTable.locator('tbody tr')).toHaveCount(1);
   await expect(peopleGroupsTable.getByText('Auto', { exact: true })).toBeVisible();
 
   await page.goto('/shift-types');
   await expect(page.getByRole('heading', { name: 'Shift Type Management' })).toBeVisible();
-  const shiftTypesTable = page.getByRole('heading', { name: 'Shift Types', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
-  const shiftTypeGroupsTable = page.getByRole('heading', { name: 'Shift Types Groups', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  const shiftTypesTable = page.getByTestId('data-table-shift-types');
+  const shiftTypeGroupsTable = page.getByTestId('data-table-shift-types-groups');
   await expect(shiftTypesTable.locator('tbody tr')).toHaveCount(1);
   await expect(shiftTypesTable.getByText('Auto', { exact: true })).toBeVisible();
   await expect(shiftTypeGroupsTable.locator('tbody tr')).toHaveCount(1);
@@ -80,7 +80,7 @@ test('new schedule reset is undoable from downstream pages', async ({ page }) =>
 
   await page.goto('/people');
   await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
-  const peopleTable = page.getByRole('heading', { name: 'People', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  const peopleTable = page.getByTestId('data-table-people');
   await expect(peopleTable.locator('tbody tr')).toHaveCount(0);
 
   await page.getByRole('heading', { name: 'People Management', exact: true }).click();
