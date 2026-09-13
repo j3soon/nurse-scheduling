@@ -104,7 +104,10 @@ test paths when a narrower suite is known to be sufficient.
   Leave it unset outside those images.
 - `/optimize/{job_id}/events` accepts a signed, job-scoped, expiring URL token as
   well as the bearer header, because `EventSource` cannot set headers. Mint it
-  into `links.events`; never put a bearer key itself in a URL. Its lifetime
+  into `links.events`; never put a bearer key itself in a URL, and never put a
+  stable key-derived value such as a per-key selector there either, because it
+  correlates every stream a key opens and never expires. Verify the token
+  against each configured key instead. Its lifetime
   comes from `ServerSettings.stream_token_ttl_seconds`, which tracks the longest
   run the deployment allows.
 - Keep `/info` and `/ready` public. Clients discover the requirement from

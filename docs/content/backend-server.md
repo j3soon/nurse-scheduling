@@ -219,9 +219,10 @@ API_AUTH_TOKENS='{"institution-a":"first-key","person-b":"second-key"}'
 
 IDs may contain letters, numbers, underscores, and hyphens. The `legacy` ID is
 reserved for `API_AUTH_TOKEN`. IDs are recorded for administration, while
-clients send only the key and never receive the ID. Stream links use an opaque
-key-derived selector. Requests use a keyed fingerprint map for direct lookup
-followed by a constant-time comparison. Remove a pair and restart the server to
+clients send only the key and never receive the ID. Requests use a keyed
+fingerprint map for direct lookup followed by a constant-time comparison. Stream
+links carry no credential hint, so the server verifies a stream token against
+each configured key rather than putting a stable key-derived value in a URL. Remove a pair and restart the server to
 revoke its bearer and stream tokens. `API_AUTH_TOKEN` remains
 supported and may be used alongside identified keys during migration.
 

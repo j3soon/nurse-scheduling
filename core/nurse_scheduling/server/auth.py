@@ -49,7 +49,6 @@ auth_logger = logging.getLogger("nurse_scheduling.server.auth")
 LEGACY_AUTH_CREDENTIAL_ID = "legacy"
 """Internal identifier assigned to the backward-compatible single token."""
 _CREDENTIAL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
-_STREAM_SELECTOR_MESSAGE = b"nurse-scheduling-stream-credential-selector"
 
 
 @dataclass(frozen=True)
@@ -68,9 +67,6 @@ class AuthTokenRegistry:
         self._credentials_by_id = {credential.id: credential for credential in credentials}
         self._credentials_by_fingerprint = {
             self._fingerprint(credential.token): credential for credential in credentials
-        }
-        self._credentials_by_stream_selector = {
-            self._stream_selector(credential.token): credential for credential in credentials
         }
 
     def _fingerprint(self, token: str) -> bytes:
@@ -95,18 +91,19 @@ class AuthTokenRegistry:
         """Return the credential with an administrative identifier."""
         return self._credentials_by_id.get(credential_id)
 
-    @staticmethod
-    def _stream_selector(token: str) -> str:
-        """Derive a stable opaque stream selector without exposing the administrative ID."""
-        return hmac.new(token.encode("utf-8"), _STREAM_SELECTOR_MESSAGE, hashlib.sha256).hexdigest()
+    def authenticate_stream(self, job_id: str, token: str | None) -> AuthCredential | None:
+        """Resolve the credential that signed one job's stream token.
 
-    def stream_selector(self, credential: AuthCredential) -> str:
-        """Return the opaque selector embedded in this credential's stream tokens."""
-        return self._stream_selector(credential.token)
-
-    def get_by_stream_selector(self, selector: str) -> AuthCredential | None:
-        """Resolve an opaque stream selector without scanning credentials."""
-        return self._credentials_by_stream_selector.get(selector)
+        Stream tokens carry no credential hint, which keeps every stable key-derived value out
+        of URLs, proxy logs, and referrer headers. The credential set is small and operator
+        configured, so trying each signature costs far less than leaking a permanent selector.
+        """
+        if not job_id or not token:
+            return None
+        for credential in self._credentials_by_id.values():
+            if verify_stream_token(credential.token, job_id, token):
+                return credential
+        return None
 
 
 def parse_auth_credentials(value: str | None, *, name: str = AUTH_TOKENS_ENV_NAME) -> tuple[AuthCredential, ...]:
@@ -231,7 +228,6 @@ def create_stream_token(
     job_id: str,
     *,
     ttl_seconds: int,
-    credential_selector: str | None = None,
     now: datetime | None = None,
 ) -> str:
     """Mint a short-lived token authorizing only one job's event stream.
@@ -242,10 +238,7 @@ def create_stream_token(
     """
     issued_at = now or datetime.now(timezone.utc)
     expires_at = int(issued_at.timestamp()) + ttl_seconds
-    signature = _stream_signature(secret, job_id, expires_at)
-    if credential_selector is None:
-        return f"{expires_at}.{signature}"
-    return f"{credential_selector}.{expires_at}.{signature}"
+    return f"{expires_at}.{_stream_signature(secret, job_id, expires_at)}"
 
 
 def verify_stream_token(secret: str, job_id: str, token: str | None, *, now: datetime | None = None) -> bool:
@@ -315,22 +308,13 @@ def create_stream_auth_dependency(registry: AuthTokenRegistry) -> Callable[[Requ
         if credential is not None:
             request.state.auth_credential_id = credential.id
             return
-        job_id = request.path_params.get("job_id", "")
-        token = request.query_params.get("token")
-        credential_selector, separator, legacy_or_expiry = (token or "").partition(".")
-        if separator:
-            identified_credential = registry.get_by_stream_selector(credential_selector)
-            if identified_credential is not None and verify_stream_token(
-                identified_credential.token,
-                job_id,
-                f"{legacy_or_expiry}",
-            ):
-                request.state.auth_credential_id = identified_credential.id
-                return
-            legacy_credential = registry.get(LEGACY_AUTH_CREDENTIAL_ID)
-            if legacy_credential is not None and verify_stream_token(legacy_credential.token, job_id, token):
-                request.state.auth_credential_id = legacy_credential.id
-                return
+        stream_credential = registry.authenticate_stream(
+            request.path_params.get("job_id", ""),
+            request.query_params.get("token"),
+        )
+        if stream_credential is not None:
+            request.state.auth_credential_id = stream_credential.id
+            return
         raise HTTPException(
             status_code=401,
             detail=INVALID_CREDENTIALS_MESSAGE if provided_token else MISSING_CREDENTIALS_MESSAGE,

@@ -2200,17 +2200,45 @@ def test_event_stream_accepts_either_the_shared_token_or_a_stream_token():
         assert _stream_status(client, MISSING_JOB_ID, headers=_auth_header()) == 404
 
 
-def test_identified_token_mints_a_directly_resolvable_stream_token_without_exposing_its_id():
+def test_identified_token_mints_a_resolvable_stream_token_without_a_credential_hint():
     credential = AUTH_TOKENS[0]
     with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
         job = _create(client, headers=_auth_header(credential.token)).json()
         token = job["links"]["events"].split("token=", 1)[1]
 
+        # Nothing stable and key-derived may reach a URL, so the token carries only the
+        # job's expiry and signature and the server tries each configured key.
         assert credential.id not in token
-        assert len(token.split(".", 1)[0]) == 64
+        expiry, _, signature = token.partition(".")
+        assert expiry.isdigit() and signature
+        assert verify_stream_token(credential.token, job["id"], token)
+        assert not verify_stream_token(AUTH_TOKENS[1].token, job["id"], token)
 
     with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
         assert _stream_status(client, job["id"], f"?token={token}") == 404
+
+
+def test_stream_tokens_from_different_keys_never_share_a_prefix():
+    first, second = AUTH_TOKENS[0], AUTH_TOKENS[1]
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        first_job = _create(client, headers=_auth_header(first.token)).json()
+        second_job = _create(client, headers=_auth_header(second.token)).json()
+
+    first_token = first_job["links"]["events"].split("token=", 1)[1]
+    second_token = second_job["links"]["events"].split("token=", 1)[1]
+
+    # A per-key prefix would correlate every stream URL a key ever opens.
+    assert first_token.count(".") == second_token.count(".") == 1
+    assert first_token.split(".")[1] != second_token.split(".")[1]
+
+
+def test_stream_tokens_are_rejected_for_a_job_created_with_another_key():
+    first, second = AUTH_TOKENS[0], AUTH_TOKENS[1]
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        job = _create(client, headers=_auth_header(first.token)).json()
+        forged = create_stream_token(second.token, "another-job", ttl_seconds=60)
+
+        assert _stream_status(client, job["id"], f"?token={forged}") == 401
 
 
 def test_removing_an_identified_key_revokes_its_stream_tokens():

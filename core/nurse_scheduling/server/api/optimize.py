@@ -26,7 +26,7 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Respo
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from ..auth import LEGACY_AUTH_CREDENTIAL_ID, create_stream_token
+from ..auth import create_stream_token
 from ..config import ServerSettings
 from ..jobs.controller import JobController
 from ..jobs.models import JobState
@@ -62,9 +62,6 @@ def _events_token(request: Request, job_id: str) -> str | None:
         credential.token,
         job_id,
         ttl_seconds=_settings(request).stream_token_ttl_seconds,
-        credential_selector=(
-            None if credential_id == LEGACY_AUTH_CREDENTIAL_ID else registry.stream_selector(credential)
-        ),
     )
 
 
