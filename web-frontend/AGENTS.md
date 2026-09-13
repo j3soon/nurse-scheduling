@@ -24,6 +24,8 @@ Frontend unit/component tests use Vitest; browser integration tests use
 Playwright.
 `test:e2e:affected` does not infer browser coverage from changed `src/` files;
 pass relevant E2E spec paths explicitly when validating frontend behavior.
+New schedules contain no user-defined people, shift types, or groups. E2E tests
+that require populated entities must seed them explicitly.
 
 For deterministic checks of version-dependent UI, restart the dev server with
 an explicit version, for example:
