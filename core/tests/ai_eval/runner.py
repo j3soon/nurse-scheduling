@@ -62,6 +62,13 @@ from nurse_scheduling.ai.sandbox_agent import (
     SandboxTurnMetrics,
     run_sandbox_agent,
 )
+from nurse_scheduling.ai.schema import (
+    SCHEMA_REFERENCE_FILES,
+    TAIWAN_HOLIDAYS_SOURCE,
+    load_schedule_reference,
+    load_taiwan_holidays_reference,
+    load_user_guide_references,
+)
 from nurse_scheduling.loader import _load_yaml
 
 from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases
@@ -893,7 +900,6 @@ def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repeti
     diff = subprocess.run(
         ["git", "diff", "--binary", "HEAD"], cwd=REPOSITORY_ROOT, check=True, capture_output=True
     ).stdout
-    references = sorted((REPOSITORY_ROOT / "core/nurse_scheduling/ai/references").glob("*.md"))
     return {
         "git_revision": revision,
         "dirty_diff_sha256": hashlib.sha256(diff).hexdigest() if diff else None,
@@ -901,12 +907,28 @@ def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repeti
         "repetitions": repetitions,
         "case_ids": [case.id for case in cases],
         "prompt_sha256": hashlib.sha256(SANDBOX_SYSTEM_PROMPT.encode()).hexdigest(),
-        "references_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in references},
+        "references_sha256": _reference_digests(),
         "fixtures_sha256": {
             fixture: hashlib.sha256(fixture_text(fixture).encode()).hexdigest()
             for fixture in sorted({case.fixture for case in cases})
         },
     }
+
+
+def _reference_digests() -> dict[str, str]:
+    """Hash every reference hydrated into the sandbox, not only the schema Markdown.
+
+    The user guide pages and the Taiwan holiday source now steer the agent too, so an
+    edit to one of them has to be visible when comparing two runs.
+    """
+    digests = {
+        path.name: hashlib.sha256(str(load_schedule_reference(group)).encode()).hexdigest()
+        for group, path in SCHEMA_REFERENCE_FILES.items()
+    }
+    digests[TAIWAN_HOLIDAYS_SOURCE.name] = hashlib.sha256(load_taiwan_holidays_reference().encode()).hexdigest()
+    for relative_path, reference in load_user_guide_references().items():
+        digests[f"user-guide/{relative_path}"] = hashlib.sha256(reference.encode()).hexdigest()
+    return dict(sorted(digests.items()))
 
 
 if __name__ == "__main__":

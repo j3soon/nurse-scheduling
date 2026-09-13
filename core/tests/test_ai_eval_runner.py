@@ -43,12 +43,18 @@ from nurse_scheduling.ai.provider import (
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnMetrics
+from nurse_scheduling.ai.schema import (
+    SCHEMA_REFERENCE_FILES,
+    TAIWAN_HOLIDAYS_SOURCE,
+    load_user_guide_references,
+)
 
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
     CaseRun,
+    _reference_digests,
     default_output_dir,
     run_all,
     run_case,
@@ -672,6 +678,18 @@ def test_report_compares_reliability_and_cost_with_a_baseline(tmp_path: Path):
     summary = write_report([current], tmp_path / "current", baseline_report=baseline)
 
     assert "| a | 0% | 100% | +100% | -2.0 |" in summary.read_text(encoding="utf-8")
+
+
+def test_reference_digests_cover_every_file_hydrated_into_the_sandbox():
+    digests = _reference_digests()
+
+    # A user guide edit steers the 10-app-ui cases, so it has to move this fingerprint.
+    expected = {path.name for path in SCHEMA_REFERENCE_FILES.values()}
+    expected.add(TAIWAN_HOLIDAYS_SOURCE.name)
+    expected.update(f"user-guide/{relative}" for relative in load_user_guide_references())
+    assert set(digests) == expected
+    assert digests == dict(sorted(digests.items()))
+    assert all(len(digest) == 64 for digest in digests.values())
 
 
 def test_report_writes_reproducibility_metadata(tmp_path: Path):
