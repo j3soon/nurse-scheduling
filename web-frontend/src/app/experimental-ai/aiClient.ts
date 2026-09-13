@@ -105,6 +105,13 @@ export function getAiBaseUrl(): string {
   return PRODUCTION_AI_API_URL;
 }
 
+export const SAME_ORIGIN_AI_API_PATH = '/ai';
+
+export function isOfficialAiEndpoint(endpoint: string): boolean {
+  if (endpoint === SAME_ORIGIN_AI_API_PATH) return true;
+  return normalizeAiEndpoint(endpoint) === PRODUCTION_AI_API_URL;
+}
+
 export function normalizeAiEndpoint(endpoint: string): string {
   const trimmed = endpoint.trim();
   if (!trimmed) return '';

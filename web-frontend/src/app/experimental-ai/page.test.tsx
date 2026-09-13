@@ -34,6 +34,11 @@ const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
 const MockAiStaleTurnError = vi.hoisted(() => class AiStaleTurnError extends Error {});
+const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
+  const trimmed = endpoint.trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+});
 
 vi.mock('./aiClient', () => ({
   AiStaleTurnError: MockAiStaleTurnError,
@@ -42,11 +47,10 @@ vi.mock('./aiClient', () => ({
   createSession: mockCreateSession,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
-  normalizeAiEndpoint: (endpoint: string) => {
-    const trimmed = endpoint.trim().replace(/\/+$/, '');
-    if (!trimmed) return '';
-    return /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  },
+  normalizeAiEndpoint: mockNormalizeAiEndpoint,
+  isOfficialAiEndpoint: (endpoint: string) => (
+    endpoint === '/ai' || mockNormalizeAiEndpoint(endpoint) === 'https://api.nursescheduling.org/ai'
+  ),
   queueMessage: mockQueueMessage,
   streamMessage: mockStreamMessage,
   approveProposal: mockApproveProposal,

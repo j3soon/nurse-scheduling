@@ -48,6 +48,7 @@ import {
   createSession,
   getAiBaseUrl,
   getCapabilities,
+  isOfficialAiEndpoint,
   normalizeAiEndpoint,
   queueMessage,
   rejectProposal,
@@ -1138,7 +1139,7 @@ export default function ExperimentalAiPage() {
           {serverLocked && (
             <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation.</p>
           )}
-          {aiEndpoint !== PRODUCTION_AI_API_URL && aiEndpoint !== '/ai' && (
+          {!isOfficialAiEndpoint(aiEndpoint) && (
             <p className="mt-1 text-xs text-amber-700">
               This server is unofficially hosted. Privacy and data retention practices may vary.
             </p>

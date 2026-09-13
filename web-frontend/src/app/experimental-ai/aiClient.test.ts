@@ -21,10 +21,12 @@
 
 import {
   AiStaleTurnError,
+  PRODUCTION_AI_API_URL,
   approveProposal,
   createSession,
   getAiBaseUrl,
   getCapabilities,
+  isOfficialAiEndpoint,
   queueMessage,
   rejectProposal,
   scheduleRevision,
@@ -409,5 +411,13 @@ describe('AI client', () => {
       new AbortController().signal,
       null,
     )).rejects.toThrow('The AI backend returned an invalid schedule change.');
+  });
+
+  it('recognizes the official AI endpoints regardless of spelling', () => {
+    expect(isOfficialAiEndpoint(PRODUCTION_AI_API_URL)).toBe(true);
+    expect(isOfficialAiEndpoint('/ai')).toBe(true);
+    expect(isOfficialAiEndpoint('api.nursescheduling.org/ai/')).toBe(true);
+    expect(isOfficialAiEndpoint('https://ai.example.test')).toBe(false);
+    expect(isOfficialAiEndpoint('')).toBe(false);
   });
 });
