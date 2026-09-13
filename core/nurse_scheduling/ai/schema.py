@@ -17,7 +17,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from collections.abc import Mapping
+from functools import cache, lru_cache
 from pathlib import Path
+from types import MappingProxyType
 
 MAX_SCHEMA_REFERENCE_CHARS = 50_000
 REFERENCE_DIRECTORY = Path(__file__).with_name("references")
@@ -31,6 +34,7 @@ USER_GUIDE_DIRECTORY = Path(__file__).resolve().parents[3] / "docs/content/user-
 TAIWAN_HOLIDAYS_SOURCE = Path(__file__).resolve().parents[3] / "web-frontend/src/utils/taiwanHolidays.ts"
 
 
+@cache
 def load_schedule_reference(group: str) -> str | None:
     """Load one task-sized schema reference from its Markdown source."""
     path = SCHEMA_REFERENCE_FILES.get(group)
@@ -42,6 +46,7 @@ def load_schedule_reference(group: str) -> str | None:
     return reference
 
 
+@lru_cache(maxsize=1)
 def load_taiwan_holidays_reference() -> str:
     """Load the frontend's authoritative Taiwan holiday implementation."""
     reference = TAIWAN_HOLIDAYS_SOURCE.read_text(encoding="utf-8")
@@ -50,8 +55,13 @@ def load_taiwan_holidays_reference() -> str:
     return reference
 
 
-def load_user_guide_references() -> dict[str, str]:
-    """Load the canonical user-facing Markdown pages for in-app guidance."""
+@lru_cache(maxsize=1)
+def load_user_guide_references() -> Mapping[str, str]:
+    """Load the canonical user-facing Markdown pages for in-app guidance.
+
+    Cached because every turn hydrates the same read-only files, which do not change
+    while the process runs.
+    """
     references: dict[str, str] = {}
     for path in sorted(USER_GUIDE_DIRECTORY.rglob("*.md")):
         relative_path = path.relative_to(USER_GUIDE_DIRECTORY).as_posix()
@@ -59,4 +69,4 @@ def load_user_guide_references() -> dict[str, str]:
         if len(reference) > MAX_SCHEMA_REFERENCE_CHARS:
             raise ValueError(f"{relative_path} user guide exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
         references[relative_path] = reference
-    return references
+    return MappingProxyType(references)

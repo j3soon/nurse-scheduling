@@ -364,20 +364,23 @@ async def hydrate_sandbox(
 ) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
-    await sandbox.write_file(WORKSPACE_SCHEDULE, schedule_yaml)
+    files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
     if pending_proposal_yaml:
-        await sandbox.write_file(WORKSPACE_PENDING_PROPOSAL, pending_proposal_yaml)
-        await sandbox.write_file(WORKSPACE_PENDING_DIFF, pending_proposal_diff)
+        files[WORKSPACE_PENDING_PROPOSAL] = pending_proposal_yaml
+        files[WORKSPACE_PENDING_DIFF] = pending_proposal_diff
     for group, path in REFERENCE_SCHEMAS.items():
         reference = load_taiwan_holidays_reference() if group == "taiwan-holidays" else load_schedule_reference(group)
         if reference is None:  # pragma: no cover - constants are defined together
             raise ValueError(f"unknown schedule reference group: {group}")
-        await sandbox.write_file(path, reference)
+        files[path] = reference
     for relative_path, reference in load_user_guide_references().items():
-        await sandbox.write_file(f"{REFERENCE_USER_GUIDE}/{relative_path}", reference)
+        files[f"{REFERENCE_USER_GUIDE}/{relative_path}"] = reference
+    # One request, because hydration now precedes the first tool result rather than the turn.
+    await sandbox.write_files(files)
     logger.info(
-        "sandbox hydrated sandbox_id=%s schedule_bytes=%s latency_seconds=%.3f",
+        "sandbox hydrated sandbox_id=%s files=%s schedule_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,
+        len(files),
         len(schedule_yaml.encode("utf-8")),
         time.perf_counter() - started,
     )

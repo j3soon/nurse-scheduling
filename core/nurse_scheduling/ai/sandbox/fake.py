@@ -20,7 +20,7 @@
 # This code is mostly AI generated.
 
 import inspect
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 
 from .base import (
@@ -49,6 +49,7 @@ class FakeSandboxBackend:
         self.close_error = close_error
         self.commands: list[tuple[str, float | None]] = []
         self.close_calls = 0
+        self.write_files_calls = 0
         self.closed = False
 
     @property
@@ -63,6 +64,12 @@ class FakeSandboxBackend:
     async def write_file(self, path: str, content: str | bytes) -> None:
         self._ensure_open()
         self.files[path] = content.encode() if isinstance(content, str) else content
+
+    async def write_files(self, files: Mapping[str, str | bytes]) -> None:
+        self._ensure_open()
+        self.write_files_calls += 1
+        for path, content in files.items():
+            self.files[path] = content.encode() if isinstance(content, str) else content
 
     async def read_file(self, path: str) -> bytes:
         self._ensure_open()

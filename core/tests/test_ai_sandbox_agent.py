@@ -45,6 +45,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
+from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, schedule_yaml
 
@@ -169,6 +170,32 @@ def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
     backend = factory.created[0]
     assert backend.files[WORKSPACE_PENDING_PROPOSAL] == b"apiVersion: alpha\ndescription: Ready\n"
     assert backend.files[WORKSPACE_PENDING_DIFF] == b'- description: "" -> "Ready"'
+    assert backend.write_files_calls == 1
+
+
+def test_hydration_uploads_every_reference_in_one_request():
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=_rename_handler))
+
+    _collect(ScriptedProvider(_run_call(), [TextDelta("Done.")]), factory)
+
+    backend = factory.created[0]
+    # Hydration now runs in front of the first tool result, so per-file round trips are paid
+    # by the user rather than absorbed before the turn starts.
+    assert backend.write_files_calls == 1
+    assert len(backend.files) > len(REFERENCE_SCHEMAS)
+
+
+def test_reference_sources_are_read_from_disk_once_per_process():
+    load_user_guide_references.cache_clear()
+    load_taiwan_holidays_reference.cache_clear()
+
+    first_guide = load_user_guide_references()
+    first_holidays = load_taiwan_holidays_reference()
+
+    assert load_user_guide_references() is first_guide
+    assert load_taiwan_holidays_reference() is first_holidays
+    with pytest.raises(TypeError):
+        first_guide["people.md"] = "mutated"
 
 
 def test_write_tool_rewrites_validates_and_proposes_the_schedule():

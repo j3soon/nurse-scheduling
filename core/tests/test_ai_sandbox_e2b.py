@@ -26,7 +26,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from e2b.exceptions import FileNotFoundException, SandboxException, TimeoutException
+from e2b.exceptions import FileNotFoundException, InvalidArgumentException, SandboxException, TimeoutException
 from e2b.sandbox.commands.command_handle import CommandExitException
 
 from nurse_scheduling.ai.agent import AgentToolOutcome, AgentToolUse, run_tool_agent
@@ -46,6 +46,7 @@ class FakeE2BSandbox:
         self.sandbox_id = "sandbox-123"
         self.files = SimpleNamespace(
             write=AsyncMock(),
+            write_files=AsyncMock(),
             read=AsyncMock(return_value=bytearray(b"schedule")),
             exists=AsyncMock(return_value=True),
         )
@@ -189,6 +190,45 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
     sandbox.commands.run.assert_awaited_once_with("rg P1 schedule.yaml", user="user", cwd="/workspace", timeout=3)
     assert result.stdout == "ok\n"
     assert result.exit_code == 0
+
+
+def test_backend_uploads_a_file_set_in_one_request_holding_one_mutation_slot():
+    async def exercise() -> tuple[FakeE2BSandbox, int]:
+        sandbox = FakeE2BSandbox()
+        e2b_backend = make_backend(sandbox)
+        concurrent_writes = 0
+
+        async def record_overlap(*_args, **_kwargs):
+            nonlocal concurrent_writes
+            concurrent_writes += 1
+
+        sandbox.files.write_files.side_effect = record_overlap
+        await e2b_backend.write_files({"/reference/a.md": "a", "/reference/b.md": b"b"})
+        await e2b_backend.write_files({})
+        await e2b_backend.close()
+        return sandbox, concurrent_writes
+
+    sandbox, concurrent_writes = asyncio.run(exercise())
+    # An empty set must not spend a request, and a populated one must spend exactly one.
+    assert concurrent_writes == 1
+    entries, keywords = sandbox.files.write_files.await_args
+    assert keywords == {"user": "user"}
+    assert [(entry["path"], entry["data"]) for entry in entries[0]] == [
+        ("/reference/a.md", "a"),
+        ("/reference/b.md", b"b"),
+    ]
+
+
+def test_backend_reports_a_failed_file_set_upload_without_naming_contents():
+    async def exercise() -> None:
+        sandbox = FakeE2BSandbox()
+        sandbox.files.write_files.side_effect = InvalidArgumentException("bad path")
+        e2b_backend = make_backend(sandbox)
+        with pytest.raises(SandboxError, match="could not write 2 sandbox files"):
+            await e2b_backend.write_files({"/reference/a.md": "a", "/reference/b.md": "b"})
+        await e2b_backend.close()
+
+    asyncio.run(exercise())
 
 
 def test_backend_distinguishes_a_missing_file_from_a_service_failure():

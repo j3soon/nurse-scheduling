@@ -23,7 +23,7 @@ import asyncio
 import logging
 import math
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any, TypeVar
@@ -41,6 +41,7 @@ from e2b.exceptions import (
     TimeoutException,
 )
 from e2b.sandbox.commands.command_handle import CommandExitException
+from e2b.sandbox.filesystem.filesystem import WriteEntry
 
 from ..config import AiSettings
 from .base import CommandResult, SandboxError, SandboxFileNotFoundError, SandboxLifecycleMetrics
@@ -375,6 +376,24 @@ class E2BSandboxBackend:
                 )
             except Exception as exc:
                 raise SandboxError(f"E2B could not write sandbox file: {path}") from exc
+
+    async def write_files(self, files: Mapping[str, str | bytes]) -> None:
+        """Upload a whole file set in one provider request.
+
+        Turn hydration writes roughly twenty files, and a per-file request would pay a
+        round trip each while holding the exclusive mutation slot.
+        """
+        if not files:
+            return
+        entries = [WriteEntry(path=path, data=content) for path, content in files.items()]
+        async with self._active_operation():
+            try:
+                await self._request_with_retry(
+                    "write_files",
+                    lambda: self._sandbox.files.write_files(entries, user=E2B_USER),
+                )
+            except Exception as exc:
+                raise SandboxError(f"E2B could not write {len(entries)} sandbox files") from exc
 
     async def read_file(self, path: str) -> bytes:
         async with self._active_operation(read_only=True):
