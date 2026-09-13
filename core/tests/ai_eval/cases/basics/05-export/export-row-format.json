@@ -1,0 +1,26 @@
+{
+  "id": "export-row-format",
+  "fixture": "ward87",
+  "question": "In the exported workbook, highlight P2's row with the background colour #ffcc00.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "export",
+      "before": null,
+      "after": {
+        "formatting": [
+          {
+            "type": "row",
+            "people": [
+              "P2"
+            ],
+            "backgroundColor": "#ffcc00"
+          }
+        ]
+      }
+    }
+  ],
+  "changes": [
+    "export"
+  ]
+}

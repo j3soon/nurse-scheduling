@@ -62,6 +62,13 @@ test paths when a narrower suite is known to be sufficient.
   evaluation run, not from one trajectory. A repeated recoverable failure costs
   more than the case that exposed it, and a bounded tool should clamp an
   over-large request rather than refuse it.
+- Treat one provider pass as a smoke check. Before claiming a tuning improvement,
+  repeat affected cases at least three times with four total jobs and compare
+  pass rate, infrastructure failures, turns, and tokens with a recorded baseline.
+- Pair ambiguous-language cases with exact-target controls so clarification
+  guidance does not teach the agent to ask when the user already supplied a
+  unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
+  tune prompts directly against one held-out trajectory.
 - Expose only Pi's default `read`, `bash`, `edit`, and `write` model tools over
   the disposable sandbox. Use `read` for bounded inspection, `edit` for unique
   exact-text replacements, and `write` only for a complete file rewrite. Put
@@ -71,6 +78,9 @@ test paths when a narrower suite is known to be sufficient.
   structural diff at review, since those catch a dropped entry that still
   parses. Emit an intermediate working-copy preview only after that trusted
   validation.
+- Run a provider batch concurrently only when every call is read-only. Preserve
+  call order in the returned results, keep mixed or mutating batches sequential,
+  and make sandbox close wait for active reads before teardown.
 - Keep model-facing tool contracts and output behavior in pinned Pi ports under
   `ai/pi`. Keep E2B execution and service timeout policy in the thin sandbox
   adapter so upstream behavior remains identifiable and testable.
@@ -79,25 +89,33 @@ test paths when a narrower suite is known to be sufficient.
   rather than replaying the request and risking duplicate output or tool work.
 
 ## Server Authentication
-- `API_AUTH_TOKEN` is optional. Unset means the deployment serves without
-  authentication, which keeps local runs and older clients working.
+- `API_AUTH_TOKEN` is the optional legacy credential. Authentication is
+  disabled only when neither legacy nor identified credentials are configured,
+  which keeps local runs and older clients working.
+- `API_AUTH_TOKENS` accepts a JSON object mapping IDs to keys. IDs are for
+  administration and audit logs only. Clients continue to send only the key as
+  a bearer token and must never receive the ID. Keep `legacy` reserved for
+  `API_AUTH_TOKEN`.
 - `API_AUTH_REQUIRED` makes a token mandatory and is set in the deployment images,
   so a published backend fails to start rather than serving openly by accident.
   Leave it unset outside those images.
 - `/optimize/{job_id}/events` accepts a signed, job-scoped, expiring URL token as
   well as the bearer header, because `EventSource` cannot set headers. Mint it
-  into `links.events`; never put `API_AUTH_TOKEN` itself in a URL. Its lifetime
+  into `links.events`; never put a bearer key itself in a URL. Its lifetime
   comes from `ServerSettings.stream_token_ttl_seconds`, which tracks the longest
   run the deployment allows.
 - Keep `/info` and `/ready` public. Clients discover the requirement from
   `/info`, and deployment probes must not need credentials. Gate every other
-  route with the shared-token dependency.
-- The separately deployed AI service uses `AI_AUTH_TOKEN` when configured. Keep
+  route with the bearer-auth dependency.
+- The separately deployed AI service uses `AI_AUTH_TOKEN` or `AI_AUTH_TOKENS`
+  when configured. Keep
   `/health`, `/ready`, and `/capabilities` public, advertise the effective bearer
   auth requirement through `/capabilities`, and gate every session route when a
   token is set. Native runs may omit auth. Docker Compose services set
   `AI_AUTH_REQUIRED=true`; opting out must be explicit in the env file and must
-  leave `AI_AUTH_TOKEN` empty.
+  leave `AI_AUTH_TOKEN` and `AI_AUTH_TOKENS` empty.
+- `AI_AUTH_TOKENS` provides the same JSON static-key behavior for the AI
+  service. Either legacy or identified keys satisfy required-auth startup.
 
 ## Sentry
 - Initialize Sentry before configuration or logging in every first-party

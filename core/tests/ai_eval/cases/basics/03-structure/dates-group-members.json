@@ -1,0 +1,16 @@
+{
+  "id": "dates-group-members",
+  "fixture": "ward87",
+  "question": "Add the 3rd to the FREEDAY date group.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "dates.groups",
+      "removed": [{"id": "FREEDAY", "members": ["01", "02", "08", "09", "15", "16", "22", "23", "29", "30"], "description": "11 月沒有放假"}],
+      "added": [{"id": "FREEDAY", "members": ["01", "02", "03", "08", "09", "15", "16", "22", "23", "29", "30"], "description": "11 月沒有放假"}]
+    }
+  ],
+  "changes": [
+    "dates.groups"
+  ]
+}

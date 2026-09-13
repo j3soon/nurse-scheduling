@@ -1,0 +1,31 @@
+{
+  "id": "pref-requirement",
+  "fixture": "ward87",
+  "question": "Every day needs exactly 2 students on the D~ shift.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "D~"
+          ],
+          "requiredNumPeople": 2,
+          "qualifiedPeople": [
+            "Students"
+          ],
+          "date": [
+            "ALL"
+          ],
+          "weight": -1
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

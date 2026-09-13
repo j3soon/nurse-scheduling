@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 
@@ -29,6 +29,7 @@ const mockStreamMessage = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
 const mockApproveProposal = vi.hoisted(() => vi.fn());
 const mockRejectProposal = vi.hoisted(() => vi.fn());
+const mockQueueMessage = vi.hoisted(() => vi.fn());
 const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
@@ -46,6 +47,7 @@ vi.mock('./aiClient', () => ({
     if (!trimmed) return '';
     return /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   },
+  queueMessage: mockQueueMessage,
   streamMessage: mockStreamMessage,
   approveProposal: mockApproveProposal,
   rejectProposal: mockRejectProposal,
@@ -104,6 +106,7 @@ describe('ExperimentalAiPage', () => {
     mockGenerateYaml.mockClear();
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
     mockRejectProposal.mockReset().mockResolvedValue(undefined);
+    mockQueueMessage.mockReset().mockResolvedValue(undefined);
     mockUpdateSessionSchedule.mockReset().mockResolvedValue(undefined);
     mockLoadFromYaml.mockReset();
     mockUseTabSwitchWarning.mockReset();
@@ -129,9 +132,15 @@ describe('ExperimentalAiPage', () => {
     );
     expect(screen.getByText(/Assume all AI chats are logged/)).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
-    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const sendButton = screen.getByRole('button', { name: 'Send' });
+    expect(sendButton).toHaveTextContent('');
+    expect(sendButton.querySelector('svg')).not.toBeNull();
+    await user.click(sendButton);
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
+    const responseTime = document.querySelector('time');
+    expect(responseTime).toHaveAttribute('dateTime');
+    expect(responseTime).toHaveTextContent(/· (?:<1s|\d+(?:\.\d)?s|\d+m \d+s)$/);
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',
@@ -145,6 +154,19 @@ describe('ExperimentalAiPage', () => {
     expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(true);
   });
 
+  it('starts with a single-line composer and grows with the draft', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    expect(composer).toHaveAttribute('rows', '1');
+    expect(composer).toHaveStyle({ height: '24px', overflowY: 'hidden' });
+    Object.defineProperty(composer, 'scrollHeight', { configurable: true, value: 96 });
+    await user.type(composer, 'A longer question that wraps onto another line.');
+
+    expect(composer).toHaveStyle({ height: '96px', overflowY: 'hidden' });
+  });
+
   it('selects localhost and locks that server after the conversation starts', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -153,6 +175,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Use localhost' }));
 
     expect(screen.getByText('http://localhost:8001')).toBeInTheDocument();
+    expect(screen.getByText(/unofficially hosted.*privacy and data retention practices may vary/i)).toBeInTheDocument();
     expect(window.localStorage.getItem('nurse-scheduling-ai-server')).toBe('http://localhost:8001');
     await waitFor(() => expect(mockGetCapabilities).toHaveBeenLastCalledWith(
       expect.any(AbortSignal),
@@ -176,11 +199,170 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     await user.click(screen.getByRole('button', { name: 'Change' }));
-    await user.type(screen.getByRole('textbox', { name: 'Custom AI server URL' }), 'ai.example.com/');
+    const serverInput = screen.getByRole('textbox', { name: 'Custom AI server URL' });
+    expect(serverInput).toHaveValue('/ai');
+    await user.clear(serverInput);
+    await user.type(serverInput, 'ai.example.com/');
     await user.click(screen.getByRole('button', { name: 'Use custom' }));
 
     expect(screen.getByText('https://ai.example.com')).toBeInTheDocument();
     expect(window.localStorage.getItem('nurse-scheduling-ai-server')).toBe('https://ai.example.com');
+  });
+
+  it('adds browser speech recognition results to the message draft', async () => {
+    const recognition: {
+      onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+      onend: (() => void) | null;
+      onerror: (() => void) | null;
+      continuous: boolean;
+      interimResults: boolean;
+      lang: string;
+      processLocally: boolean;
+      start: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+    } = {
+      continuous: false,
+      interimResults: false,
+      lang: '',
+      processLocally: false,
+      onresult: null,
+      onend: null,
+      onerror: null,
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    function MockSpeechRecognition() {
+      return recognition;
+    }
+    Object.defineProperty(window, 'SpeechRecognition', {
+      configurable: true,
+      value: MockSpeechRecognition,
+    });
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0',
+    );
+    const user = userEvent.setup();
+
+    try {
+      render(<ExperimentalAiPage />);
+      const draft = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+      await user.type(draft, 'Please');
+      const languageSelect = await screen.findByRole('combobox', { name: 'Dictation language' });
+      expect(languageSelect).toHaveValue('');
+      await user.selectOptions(languageSelect, 'zh-TW');
+      await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
+
+      expect(recognition.start).toHaveBeenCalledOnce();
+      expect(recognition.lang).toBe('zh-TW');
+      expect(recognition.processLocally).toBe(true);
+      expect(languageSelect).toBeDisabled();
+      act(() => recognition.onresult?.({ results: [[{ transcript: 'add a night shift' }]] }));
+
+      expect(draft).toHaveValue('Please add a night shift');
+      await user.click(screen.getByRole('button', { name: 'Stop dictation' }));
+      expect(recognition.stop).toHaveBeenCalledOnce();
+      act(() => recognition.onend?.());
+      expect(languageSelect).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Start dictation' })).toHaveAttribute('aria-pressed', 'false');
+    } finally {
+      delete window.SpeechRecognition;
+    }
+  });
+
+  it('does not offer the legacy speech recognition implementation in Firefox', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0',
+    );
+    Object.defineProperty(window, 'SpeechRecognition', {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    try {
+      render(<ExperimentalAiPage />);
+
+      const compatibilityLink = await screen.findByRole('link', { name: 'Firefox dictation compatibility' });
+      expect(compatibilityLink).toHaveAttribute('href', 'https://www.firefox.com/channel/desktop/#nightly');
+      expect(screen.getByText(/Dictation is unavailable in this Firefox version/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Start dictation' })).not.toBeInTheDocument();
+    } finally {
+      delete window.SpeechRecognition;
+    }
+  });
+
+  it('shows current setup guidance in Firefox builds with on-device recognition', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0',
+    );
+
+    render(<ExperimentalAiPage />);
+
+    const setupLink = await screen.findByRole('link', { name: 'Enable experimental dictation in Firefox' });
+    expect(setupLink).toHaveAttribute('href', 'https://bugzilla.mozilla.org/show_bug.cgi?id=1940906');
+    expect(screen.getByText(/enable media\.webspeech\.recognition\.enable, then reload/)).toBeInTheDocument();
+  });
+
+  it('shows all steering messages before one assistant response without empty turns', async () => {
+    const user = userEvent.setup();
+    let callbacks: {
+      onSteering?: (messageId: string, message: string) => void;
+      onToolStart?: (activity: { name: string; arguments: string }) => void;
+    } | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      streamCallbacks: {
+        onSteering?: (messageId: string, message: string) => void;
+        onToolStart?: (activity: { name: string; arguments: string }) => void;
+      },
+    ) => {
+      callbacks = streamCallbacks;
+      streamCallbacks.onToolStart?.({ name: 'read', arguments: '{}' });
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    render(<ExperimentalAiPage />);
+    const draft = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    await user.type(draft, 'Inspect P1.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(callbacks).toBeDefined());
+    const activeSignal = mockStreamMessage.mock.calls[0][3] as AbortSignal;
+    await user.type(draft, 'Focus on P2 instead.');
+    const queueButton = screen.getByRole('button', { name: 'Queue message' });
+    expect(queueButton).toHaveTextContent('');
+    expect(queueButton.querySelector('svg')).not.toBeNull();
+    await user.click(queueButton);
+    await user.type(draft, 'Also compare P3.');
+    await user.click(queueButton);
+
+    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+    expect(activeSignal.aborted).toBe(false);
+    expect(mockQueueMessage).toHaveBeenCalledTimes(2);
+    const firstQueuedId = mockQueueMessage.mock.calls[0][1] as string;
+    const secondQueuedId = mockQueueMessage.mock.calls[1][1] as string;
+    act(() => {
+      callbacks?.onSteering?.(firstQueuedId, 'Focus on P2 instead.');
+      callbacks?.onSteering?.(secondQueuedId, 'Also compare P3.');
+    });
+
+    expect(screen.queryByText('Messages to be submitted after next tool call')).not.toBeInTheDocument();
+    expect(screen.getByText('Focus on P2 instead.')).toBeInTheDocument();
+    expect(screen.getByText('Also compare P3.')).toBeInTheDocument();
+    const messageCards = screen.getByLabelText('Chat messages').querySelectorAll('article');
+    expect(Array.from(messageCards, card => card.querySelector('p')?.textContent)).toEqual([
+      'You',
+      'Assistant',
+      'You',
+      'You',
+      'Assistant',
+    ]);
+    const stopButton = screen.getByRole('button', { name: 'Stop' });
+    expect(stopButton).toHaveTextContent('');
+    expect(stopButton.querySelector('svg')).not.toBeNull();
+    await act(async () => finishStream?.());
   });
 
   it('ignores non-user scroll events while following streamed text', async () => {
@@ -428,7 +610,7 @@ describe('ExperimentalAiPage', () => {
     expect(activity.querySelectorAll('hr')).toHaveLength(5);
   });
 
-  it('allows drafting the next question while a response is streaming', async () => {
+  it('queues a drafted question while a response is streaming', async () => {
     const user = userEvent.setup();
     let finishStream: (() => void) | undefined;
     mockStreamMessage.mockImplementationOnce(async () => {
@@ -447,11 +629,20 @@ describe('ExperimentalAiPage', () => {
     await user.type(composer, 'Next question.');
     await user.keyboard('{Enter}');
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
-    expect(composer).toHaveValue('Next question.');
+    expect(composer).toHaveValue('');
+    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+    expect(mockQueueMessage).toHaveBeenCalledWith(
+      'session-id',
+      expect.any(String),
+      'Next question.',
+      null,
+      '/ai',
+    );
 
     finishStream?.();
     await screen.findByRole('button', { name: 'Send' });
-    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
   it('requires the advertised AI token and uses a session-only credential', async () => {
@@ -610,6 +801,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     const input = await screen.findByLabelText('Attach files');
+    expect(input.closest('label')?.querySelector('svg')).not.toBeNull();
     await user.upload(input, image);
     expect(screen.getByAltText('Preview of ward.png')).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'What is shown?');
@@ -627,6 +819,38 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
     expect(createObjectUrl).toHaveBeenCalledWith(image);
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:image-preview');
+  });
+
+  it('adds attachments dropped onto the message composer', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({
+      image_attachments: {
+        enabled: true,
+        accepted_media_types: ['image/png'],
+        max_files: 2,
+        max_bytes_per_file: 1000,
+      },
+      document_attachments: {
+        enabled: false,
+        accepted_extensions: [],
+        max_files: 1,
+        max_bytes_per_file: 1,
+      },
+    });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:dropped-image');
+    const image = new File(['png'], 'dropped.png', { type: 'image/png' });
+    render(<ExperimentalAiPage />);
+
+    const composer = await screen.findByRole('form', { name: 'Message composer' });
+    const dataTransfer = { files: [image], types: ['Files'], dropEffect: 'none' };
+    fireEvent.dragEnter(composer, { dataTransfer });
+    expect(screen.getByText('Drop files to attach')).toBeInTheDocument();
+
+    fireEvent.dragOver(composer, { dataTransfer });
+    expect(dataTransfer.dropEffect).toBe('copy');
+    fireEvent.drop(composer, { dataTransfer });
+
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument();
+    expect(screen.getByAltText('Preview of dropped.png')).toBeInTheDocument();
   });
 
   it('previews and sends text documents when the backend enables them', async () => {

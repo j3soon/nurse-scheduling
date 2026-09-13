@@ -12,7 +12,8 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
   `/ai/*` to the AI service and all other paths to the optimization API.
 - Copy `.env.example` to `.env`.
 - Set `CLOUDFLARE_TUNNEL_TOKEN` in `.env` to the token from the dashboard.
-- Set `API_AUTH_TOKEN` in `.env`. The deployment image requires it.
+- Set `API_AUTH_TOKEN` or `API_AUTH_TOKENS` in `.env`. The deployment image
+  requires at least one key.
 - Enable [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/).
 - (Optional) Add a WAF/rate limit rule for `POST /optimize`.
 - Keep ports `80` and `443` closed on the VM unless another service needs them.
@@ -23,17 +24,32 @@ Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 
 Compose deployments are internet-facing, so they authenticate by default.
 `Dockerfile.api` and `Dockerfile.api.staging` set `API_AUTH_REQUIRED=true` in the
-image, which makes an empty `API_AUTH_TOKEN` a startup failure:
+image, which makes an empty credential set a startup failure:
 
 ```text
-API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty
+API_AUTH_REQUIRED is set, so API_AUTH_TOKEN or API_AUTH_TOKENS must not be empty
 ```
 
-Generate a token and put it in the environment file:
+Generate keys and put either the legacy single key or identified keys in the
+environment file:
 
 ```sh
 openssl rand -base64 32
 ```
+
+```dotenv
+# Backward-compatible single key
+API_AUTH_TOKEN=generated-key
+
+# Or multiple static keys
+API_AUTH_TOKENS='{"institution-a":"generated-key","person-b":"another-generated-key"}'
+```
+
+IDs may contain letters, numbers, underscores, and hyphens. `legacy` is
+reserved for `API_AUTH_TOKEN`. IDs are used only in server logs and are not
+returned to clients. Clients still send only the key. Both settings may be used during
+migration, but IDs and keys must be unique. Remove a pair and restart the
+service to revoke it.
 
 Serving a Compose deployment with no authentication is possible but has to be
 chosen, by setting `API_AUTH_REQUIRED=false` in `.env`. That overrides the value
@@ -42,12 +58,12 @@ baked into the image.
 Running the server outside these images leaves `API_AUTH_REQUIRED` unset, so
 local development stays unauthenticated with no extra configuration.
 
-Use at least 16 characters. When `API_AUTH_REQUIRED=true`, the backend rejects a
-shorter token. When it is `false`, a shorter token is accepted with a warning for
-local testing. Requests present the token as a bearer credential:
+Use at least 16 characters per key. When `API_AUTH_REQUIRED=true`, the backend
+rejects shorter keys. When it is `false`, a shorter key is accepted with a
+warning for local testing. Requests present only the key as a bearer credential:
 
 ```sh
-curl -H "Authorization: Bearer ${API_AUTH_TOKEN}" https://api.nursescheduling.org/optimize/options
+curl -H "Authorization: Bearer ${AUTH_KEY}" https://api.nursescheduling.org/optimize/options
 ```
 
 `GET /info` and `GET /ready` stay public so clients and deployment probes can
@@ -55,25 +71,50 @@ discover the deployment without credentials. `/info` reports
 `"auth": {"required": true, "scheme": "bearer"}`, which the frontend uses to
 prompt for a token before calling a protected route. Every other application
 route, including `/` and all of `/optimize`, answers `401` with a
-`WWW-Authenticate: Bearer` header when the token is missing or wrong. Tokens
-are compared in constant time, and `401` responses are not reported to Sentry
-because unauthenticated probes of a public URL are expected.
+`WWW-Authenticate: Bearer` header when the key is missing or wrong. Keys are
+resolved through a process-local keyed fingerprint map, then compared in
+constant time. A request does not scan every configured key. `401` responses
+are not reported to Sentry because unauthenticated probes are expected.
 
 When authentication is configured, the generated `/openapi.json`, `/docs`, and
 `/redoc` routes are disabled and return `404`.
 
-Running the backend outside Compose leaves `API_AUTH_TOKEN` unset, so local
+Running the backend outside Compose leaves both key settings unset, so local
 development stays unauthenticated and needs no frontend changes.
 
-The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which both compose files
-set from `API_AUTH_TOKEN`.
+The diagnostic service reads `DIAGNOSTIC_AUTH_TOKEN`, which defaults to
+`API_AUTH_TOKEN`. When using only `API_AUTH_TOKENS`, set
+`DIAGNOSTIC_AUTH_TOKEN` to one of its keys.
 
 The AI service in both backend Compose files applies the same secure default
-with `AI_AUTH_REQUIRED=true`. Set `AI_AUTH_TOKEN` before starting Compose. To
-deliberately serve without AI authentication, set
-`AI_AUTH_REQUIRED=false` in `docker/.env` and leave `AI_AUTH_TOKEN` empty. Native
-runs leave required mode disabled, although setting a token still enables bearer
-authentication.
+with `AI_AUTH_REQUIRED=true`. Set `AI_AUTH_TOKEN` or `AI_AUTH_TOKENS` before
+starting Compose. The latter uses a JSON object mapping IDs to keys. To
+deliberately serve without AI authentication, set `AI_AUTH_REQUIRED=false` in
+`docker/.env` and leave both settings empty. Native runs leave required mode
+disabled, although setting either one still enables bearer authentication.
+
+Both Compose variants enable AI chat logging through a fixed private PostgreSQL
+service connection. The database uses the persistent `postgres-ai-data` volume
+and is not published on a host port. See
+[durable chat logging](../docs/content/ai-assistant.md#durable-chat-logging) for
+retention and failure behavior.
+
+The deployment separates container traffic by purpose. Cloudflared shares only
+the `tunnel` network with NGINX. NGINX reaches the optimization and AI services
+through their separate `api` and `ai` networks. The optimization services join
+the `redis` network, while the AI service joins the `postgres` network. A
+service name resolves only on networks shared by both containers. The optional
+inspection UIs join only the network for the datastore they inspect.
+
+For local inspection, start the loopback-only pgAdmin UI and open
+`http://127.0.0.1:5050`:
+
+```sh
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
+```
+
+See [inspect chat history with pgAdmin](../docs/content/ai-assistant.md#inspect-chat-history-with-pgadmin)
+for login, remote SSH forwarding, connection, and query instructions.
 
 NGINX removes the `/ai` prefix before forwarding requests to this
 service and disables response buffering for its streaming endpoints. Keep the
@@ -140,7 +181,7 @@ Cloudflare Tunnel token:
 
 ```sh
 cp .env.staging.example .env.staging
-# Set CLOUDFLARE_TUNNEL_TOKEN, API_AUTH_TOKEN, and DIAGNOSTIC_TARGET_URL in .env.staging.
+# Set the tunnel token, backend auth keys, and diagnostic target in .env.staging.
 APP_VERSION="$(git -C .. describe --tags --always --dirty)" \
   docker compose --env-file .env.staging -f compose.backend.yml up -d --build
 ```
@@ -175,6 +216,16 @@ with:
 - `JOB_MAX_EVENTS_PER_JOB=1000` by default
 - `USAGE_METRICS_ENABLED=true`
 - `USAGE_METRICS_RETENTION_DAYS=30` by default
+
+To inspect this Redis database through a temporary, loopback-only UI, run:
+
+```sh
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports redisinsight
+```
+
+Open `http://127.0.0.1:5540`. See
+[inspect Redis with RedisInsight](../docs/content/backend-server.md#inspect-redis-with-redisinsight)
+for remote access, key prefixes, and data-safety guidance.
 
 The backend publishes its accepted run options at `GET /optimize/options`.
 The frontend uses this response for solver choices, timeout limits,
@@ -262,8 +313,9 @@ The Redis deployment collects minimal per-job telemetry. Collection is
 enabled by Compose and disabled by default for direct development launches.
 It records job and pseudonymous client IDs, solver, lifecycle timestamps and
 state, queue and runtime durations, outcome, failure code, solver status,
-termination reason, configured timeout, and download count. It does not record
-scheduling input, filenames, IP addresses, or email addresses.
+termination reason, configured timeout, download count, people count, shift type
+count, and schedule date range. It does not retain uploaded YAML or record people
+and shift identifiers, descriptions, filenames, IP addresses, or email addresses.
 
 Buckets run from Sunday at 00:00 through the next Sunday at 00:00 in the host
 machine timezone. Each event belongs to the week when it occurs, so a job
@@ -280,7 +332,7 @@ before its reporting deadline.
 Set `USAGE_METRICS_ENABLED=false` in the Docker environment file to disable
 collection for a self-hosted deployment.
 
-The `reporting` profile runs one weekly service that stores delivery status in
+The default deployment runs one weekly service that stores delivery status in
 Redis and writes reports to its container log by default. On startup it catches
 up on completed, unsent weeks still covered by telemetry retention. It then
 sleeps until the next reporting deadline.
@@ -306,7 +358,7 @@ settings are missing.
 Then start the normal deployment with the reporter:
 
 ```sh
-docker compose -f compose.backend.yml --profile reporting up -d --build
+docker compose -f compose.backend.yml up -d --build
 ```
 
 The reporter delivers the completed week on Sunday at or shortly after 00:00 in
@@ -327,7 +379,7 @@ multiline templates stop the reporter during startup.
 Trigger completed unsent reports immediately, without waiting for Sunday:
 
 ```sh
-docker compose -f compose.backend.yml --profile reporting run --rm \
+docker compose -f compose.backend.yml run --rm \
   usage-reporter python -m nurse_scheduling.server.usage_report --once
 ```
 
@@ -337,7 +389,7 @@ To send the newest retained week immediately, including the current partial
 week or one already checkpointed as sent, add `--force`:
 
 ```sh
-docker compose -f compose.backend.yml --profile reporting run --rm \
+docker compose -f compose.backend.yml run --rm \
   usage-reporter python -m nurse_scheduling.server.usage_report --once --force
 ```
 
@@ -355,7 +407,7 @@ the report as delivered, so use an isolated Redis namespace if it must still be
 emailed later:
 
 ```sh
-docker compose -f compose.backend.yml --profile reporting run --rm usage-reporter \
+docker compose -f compose.backend.yml run --rm usage-reporter \
   python -m nurse_scheduling.server.usage_report --once
 ```
 

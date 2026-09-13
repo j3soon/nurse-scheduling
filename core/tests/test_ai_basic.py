@@ -23,6 +23,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
 
@@ -43,11 +44,19 @@ from nurse_scheduling.ai.app import (
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
+from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnTimeoutError
+from nurse_scheduling.ai.sandbox_agent import (
+    WORKSPACE_PENDING_DIFF,
+    WORKSPACE_PENDING_PROPOSAL,
+    WORKSPACE_SCHEDULE,
+    SandboxTurnTimeoutError,
+)
+from nurse_scheduling.server.auth import AuthCredential
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
 
@@ -58,6 +67,10 @@ JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
 WEBP_BYTES = b"RIFF\x04\x00\x00\x00WEBP"
 AI_AUTH_TOKEN = "ai-shared-test-token"
 AI_AUTH_HEADERS = {"Authorization": f"Bearer {AI_AUTH_TOKEN}"}
+AI_AUTH_TOKENS = (
+    AuthCredential(id="institution-a", token="institution-a-ai-token"),
+    AuthCredential(id="person_b", token="person-b-ai-token"),
+)
 
 
 class AuthenticatedTestClient(TestClient):
@@ -169,6 +182,7 @@ def test_ai_authentication_discovery_and_healthchecks_stay_public() -> None:
     [
         ("post", "/sessions", {"schedule_yaml": "description: test"}),
         ("post", "/sessions/missing/messages", {"message": "Hello"}),
+        ("post", "/sessions/missing/messages/queue", {"message_id": "queued-1", "message": "Hello"}),
         ("put", "/sessions/missing/schedule", {"schedule_yaml": "description: changed"}),
         ("post", "/sessions/missing/proposal/approve", {"base_sha256": "0" * 64}),
         ("post", "/sessions/missing/proposal/reject", None),
@@ -234,6 +248,65 @@ def create_session(client: TestClient, schedule_yaml: str = "description: test")
     return response.json()["id"]
 
 
+def test_active_session_drains_all_queued_steering_messages() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+    owner = client.cookies[OWNER_COOKIE]
+    app.state.session_store.begin(session_id, owner)
+
+    first_response = client.post(
+        f"/sessions/{session_id}/messages/queue",
+        json={"message_id": "queued-1", "message": "Focus on P2 instead."},
+    )
+    second_response = client.post(
+        f"/sessions/{session_id}/messages/queue",
+        json={"message_id": "queued-2", "message": "Also compare P3."},
+    )
+
+    assert first_response.status_code == second_response.status_code == 202
+    assert app.state.session_store.take_steering(session_id, False) == [
+        ("queued-1", "Focus on P2 instead."),
+        ("queued-2", "Also compare P3."),
+    ]
+    app.state.session_store.abort(session_id)
+
+
+def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.requests")
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    session_id = create_session(client)
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"})
+
+    assert response.status_code == 200
+    output = caplog.text
+    assert (
+        f'AI request started session_id={session_id} question_chars=5 images=0 documents=0 question="Hello"' in output
+    )
+
+
+def test_message_request_log_flattens_and_truncates_long_questions(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai.requests")
+    client = AuthenticatedTestClient(
+        create_test_app(settings=make_settings(max_message_chars=500), provider=FakeProvider())
+    )
+    session_id = create_session(client)
+    question = f"First line\n{'x' * 250}"
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"message": question})
+
+    assert response.status_code == 200
+    output = caplog.text
+    assert "question_chars=261" in output
+    assert 'question="First line ' in output
+    assert "\\n" not in output
+    assert f'{"x" * 186}..."' in output
+    assert "x" * 187 not in output
+
+
 def test_secure_ai_owner_cookie_allows_cross_site_frontends() -> None:
     client = TestClient(
         create_test_app(settings=make_settings(cookie_secure=True), provider=FakeProvider()),
@@ -272,8 +345,12 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
 
 
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
-def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str) -> None:
-    async def exercise() -> tuple[FakeSandboxBackend, bool, bool, list[ChatMessage]]:
+def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str, monkeypatch) -> None:
+    saved = []
+    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+
+    async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[ChatMessage]]:
         operation_started = asyncio.Event()
         operation_cancelled = asyncio.Event()
 
@@ -297,7 +374,11 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
             return CommandResult("", "", 0)
 
         factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=command_handler))
-        app = create_test_app(settings=make_settings(), provider=WaitingProvider(), sandbox_factory=factory)
+        app = create_test_app(
+            settings=make_settings(history_postgres_url="test"),
+            provider=WaitingProvider(),
+            sandbox_factory=factory,
+        )
         session = app.state.session_store.create("browser-owner", schedule_yaml())
         request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         await request_events.put(
@@ -341,21 +422,31 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
         await request_events.put({"type": "http.disconnect"})
         await asyncio.wait_for(request_task, timeout=1)
 
-        backend = factory.created[0]
+        backend = factory.created[0] if factory.created else None
         return backend, operation_cancelled.is_set(), session.active, list(session.history)
 
     backend, operation_cancelled, session_active, history = asyncio.run(exercise())
 
     assert operation_cancelled
-    assert backend.closed
-    assert backend.close_calls == 1
+    if wait_stage == "provider":
+        assert backend is None
+    else:
+        assert backend is not None
+        assert backend.closed
+        assert backend.close_calls == 1
     assert not session_active
     assert history == []
+    assert len(saved) == 1
+    assert saved[0][2] == "cancelled"
 
 
-def test_disconnect_before_stream_iteration_releases_the_session() -> None:
+def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) -> None:
+    saved = []
+    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+
     async def exercise() -> bool:
-        app = create_test_app(settings=make_settings(), provider=FakeProvider())
+        app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
         session = app.state.session_store.create("browser-owner", schedule_yaml())
         request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         await request_events.put(
@@ -371,7 +462,8 @@ def test_disconnect_before_stream_iteration_releases_the_session() -> None:
             return await request_events.get()
 
         async def send(_message: dict[str, object]) -> None:
-            pass
+            # Let the queued disconnect cancel response startup before iteration.
+            await asyncio.sleep(0)
 
         path = f"/sessions/{session.id}/messages"
         scope = {
@@ -397,6 +489,8 @@ def test_disconnect_before_stream_iteration_releases_the_session() -> None:
         return session.active
 
     assert not asyncio.run(exercise())
+    assert len(saved) == 1
+    assert saved[0][2] == "cancelled"
 
 
 def test_health_and_streamed_schedule_question() -> None:
@@ -826,7 +920,11 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
     assert "Provisional answer." not in recovered_prompt
 
 
-def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming() -> None:
+def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monkeypatch) -> None:
+    saved = []
+    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+
     class ScheduleUpdatingProvider(FakeProvider):
         update_schedule = lambda self: None
 
@@ -836,7 +934,7 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming() -> 
             self.update_schedule()
 
     provider = ScheduleUpdatingProvider([["Obsolete answer."]])
-    app = create_test_app(settings=make_settings(), provider=provider)
+    app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=provider)
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
     owner = client.cookies[OWNER_COOKIE]
@@ -852,6 +950,8 @@ def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming() -> 
         ("delta", {"text": "Obsolete answer."}),
         ("stale", {"message": STALE_TURN_ERROR}),
     ]
+    assert len(saved) == 1
+    assert saved[0][1:3] == ("Obsolete answer.", "stale")
 
 
 def test_sandbox_timeout_does_not_expose_exception_details() -> None:
@@ -894,6 +994,7 @@ def test_environment_configuration_allows_local_ai_without_auth(monkeypatch: pyt
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
     monkeypatch.delenv("AI_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("AI_AUTH_TOKENS", raising=False)
 
     settings = AiSettings.from_env()
     client = TestClient(create_test_app(settings=settings, provider=FakeProvider()))
@@ -904,15 +1005,62 @@ def test_environment_configuration_allows_local_ai_without_auth(monkeypatch: pyt
     assert client.get("/docs").status_code == 200
 
 
-@pytest.mark.parametrize("token", ["short", "   "])
-def test_required_ai_auth_rejects_an_unsafe_token(token: str) -> None:
-    with pytest.raises(ValueError, match="AI_AUTH_TOKEN must"):
+@pytest.mark.parametrize(
+    "token,error",
+    [("short", "AI_AUTH_TOKEN must"), ("   ", "AI_AUTH_TOKEN or AI_AUTH_TOKENS")],
+)
+def test_required_ai_auth_rejects_an_unsafe_token(token: str, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
         create_test_app(settings=make_settings(auth_token=token, auth_required=True), provider=FakeProvider())
 
 
 def test_required_ai_auth_rejects_a_missing_token() -> None:
-    with pytest.raises(ValueError, match="AI_AUTH_REQUIRED is set, so AI_AUTH_TOKEN must not be empty"):
+    with pytest.raises(ValueError, match="AI_AUTH_REQUIRED is set, so AI_AUTH_TOKEN or AI_AUTH_TOKENS"):
         create_test_app(settings=make_settings(auth_token=None, auth_required=True), provider=FakeProvider())
+
+
+def test_ai_routes_accept_each_identified_token_without_a_legacy_token(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="nurse_scheduling.ai")
+    client = TestClient(
+        create_test_app(
+            settings=make_settings(auth_token=None, auth_tokens=AI_AUTH_TOKENS, auth_required=True),
+            provider=FakeProvider(),
+        )
+    )
+
+    for credential in AI_AUTH_TOKENS:
+        response = client.post(
+            "/sessions",
+            json={"schedule_yaml": "description: test"},
+            headers={"Authorization": f"Bearer {credential.token}"},
+        )
+        assert response.status_code == 201
+        assert client.app.state.auth_registry.authenticate(credential.token).id == credential.id
+
+    assert (
+        client.post(
+            "/sessions",
+            json={"schedule_yaml": "description: test"},
+            headers={"Authorization": "Bearer revoked-ai-token"},
+        ).status_code
+        == 401
+    )
+    assert "auth_credential_id=institution-a" in caplog.text
+    assert "auth_credential_id=person_b" in caplog.text
+
+
+def test_environment_configuration_loads_identified_ai_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv(
+        "AI_AUTH_TOKENS",
+        '{"institution-a":"institution-a-ai-token","person_b":"person-b-ai-token"}',
+    )
+
+    settings = AiSettings.from_env()
+
+    assert settings.auth_tokens == AI_AUTH_TOKENS
 
 
 def test_optional_short_ai_auth_token_still_enables_authentication(caplog: pytest.LogCaptureFixture) -> None:
@@ -1045,7 +1193,10 @@ def test_environment_configuration_defaults_to_a_fifteen_minute_sandbox_turn(
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
     monkeypatch.delenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", raising=False)
 
-    assert AiSettings.from_env().sandbox_turn_timeout_seconds == 900
+    settings = AiSettings.from_env()
+    assert settings.sandbox_turn_timeout_seconds == 900
+    assert settings.agent_max_tool_rounds == 10
+    assert settings.agent_max_tool_calls == 20
 
 
 def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1062,6 +1213,8 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     monkeypatch.setenv("AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", "1.5")
     monkeypatch.setenv("AI_SANDBOX_REAPER_INTERVAL_SECONDS", "45")
+    monkeypatch.setenv("AI_AGENT_MAX_TOOL_ROUNDS", "7")
+    monkeypatch.setenv("AI_AGENT_MAX_TOOL_CALLS", "12")
 
     settings = AiSettings.from_env()
 
@@ -1076,6 +1229,8 @@ def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytes
     assert settings.sandbox_pause_request_timeout_seconds == 4.5
     assert settings.sandbox_control_request_timeout_seconds == 1.5
     assert settings.sandbox_reaper_interval_seconds == 45
+    assert settings.agent_max_tool_rounds == 7
+    assert settings.agent_max_tool_calls == 12
 
 
 def test_environment_configuration_requires_a_sandbox_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1154,6 +1309,7 @@ def proposal_decision_context() -> tuple[
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Renamed P1.")],
+        [ToolCallRequest((ToolCall("call_1", READ_TOOL, json.dumps({"path": "schedule.yaml"})),))],
         [TextDelta("Decision acknowledged.")],
     )
     factory = rename_factory()
@@ -1306,7 +1462,7 @@ def test_final_validation_failure_discards_the_turn_without_a_history_note() -> 
     recovered_prompt = json.dumps(provider.calls[2])
     assert "Invalid edit" not in recovered_prompt
     assert "Provisional invalid answer." not in recovered_prompt
-    assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule.encode()
+    assert len(factory.created) == 1
 
 
 def test_one_message_routes_through_a_fresh_backend_and_trusted_proposal() -> None:
@@ -1376,6 +1532,18 @@ def test_approval_is_recorded_for_the_next_fresh_turn() -> None:
     assert b"description: Head" in factory.created[1].files[WORKSPACE_SCHEDULE]
 
 
+def test_pending_proposal_is_available_to_the_next_fresh_turn() -> None:
+    client, session_id, _, provider, factory = proposal_decision_context()
+
+    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "What is pending?"})
+
+    assert follow_up.status_code == 200
+    assert "A validated proposal is pending" in provider.calls[2][0]["content"]
+    assert b"description: Head" in factory.created[1].files[WORKSPACE_PENDING_PROPOSAL]
+    assert b"people.items[0].description" in factory.created[1].files[WORKSPACE_PENDING_DIFF]
+    assert factory.created[1].files[WORKSPACE_SCHEDULE] == schedule_yaml().encode()
+
+
 def test_approval_is_refused_when_the_browser_holds_another_revision() -> None:
     client, session_id, _ = proposing_client()
 
@@ -1419,7 +1587,7 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     owner = client.cookies[OWNER_COOKIE]
     broken_payload = base_schedule_payload()
     broken_payload["preferences"][1]["person"] = ["P9"]
-    _, _, base_revision = store.begin(session_id, owner)
+    _, _, base_revision, _, _ = store.begin(session_id, owner)
     assert store.finish(
         session_id,
         "Break it",
@@ -1436,7 +1604,7 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     assert "no longer valid" in approved.json()["detail"]
     assert retried.status_code == 404
     assert follow_up.status_code == 200
-    assert factory.created[0].files[WORKSPACE_SCHEDULE] == schedule.encode()
+    assert factory.created == []
     assert {"role": "user", "content": PROPOSAL_INVALID_HISTORY} in provider.calls[0]
 
 
@@ -1459,7 +1627,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     first_proposal = original.replace("description: ''", "description: First", 1)
     stale_proposal = original.replace("description: ''", "description: Stale", 1)
     session = store.create("browser-owner", original)
-    _, _, original_revision = store.begin(session.id, "browser-owner")
+    _, _, original_revision, _, _ = store.begin(session.id, "browser-owner")
     assert store.finish(
         session.id,
         "First edit",
@@ -1467,7 +1635,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         (first_proposal, "first diff"),
         base_revision=original_revision,
     ).proposal_saved
-    _, _, active_turn_revision = store.begin(session.id, "browser-owner")
+    _, _, active_turn_revision, _, _ = store.begin(session.id, "browser-owner")
 
     store.adopt_proposal(session.id, "browser-owner", original_revision)
     completion = store.finish(
@@ -1487,6 +1655,49 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     with pytest.raises(HTTPException) as exc_info:
         store.adopt_proposal(session.id, "browser-owner", active_turn_revision)
     assert exc_info.value.status_code == 404
+
+
+def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", schedule_yaml())
+    _, _, revision, _, _ = store.begin(session.id, "browser-owner")
+
+    store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
+    store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
+
+    assert store.take_steering(session.id, False) == [("queued-1", "Focus on P2 instead.")]
+    assert store.finish(
+        session.id,
+        "Inspect P1.",
+        "P2 is the better target.",
+        base_revision=revision,
+        turn_messages=[
+            ChatMessage(role="user", content="Inspect P1."),
+            ChatMessage(role="assistant", content="P1 needs review."),
+            ChatMessage(role="user", content="Focus on P2 instead."),
+            ChatMessage(role="assistant", content="P2 is the better target."),
+        ],
+    ).turn_saved
+    assert session.history == [
+        ChatMessage(role="user", content="Inspect P1."),
+        ChatMessage(role="assistant", content="P1 needs review."),
+        ChatMessage(role="user", content="Focus on P2 instead."),
+        ChatMessage(role="assistant", content="P2 is the better target."),
+    ]
+
+
+def test_session_store_rejects_steering_after_the_final_boundary() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", schedule_yaml())
+    store.begin(session.id, "browser-owner")
+
+    assert store.take_steering(session.id, True) == []
+    with pytest.raises(HTTPException) as exc_info:
+        store.queue_steering(session.id, "browser-owner", "too-late", "One more thing.")
+
+    assert exc_info.value.status_code == 409
 
 
 def test_sessions_are_private_to_their_browser() -> None:
@@ -1545,6 +1756,8 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "read one task-sized document" in normalized_prompt
     assert "`/reference/schema-core.md`" in normalized_prompt
     assert "`/reference/schema-preferences.md`" in normalized_prompt
+    assert "read the relevant reference before the first mutation" in normalized_prompt
+    assert "at most one focused verification" in normalized_prompt
     assert "`/reference/schema-export.md`" in normalized_prompt
     assert "not the PyYAML `yaml` module" in normalized_prompt
     assert "Preserve existing fields" in normalized_prompt

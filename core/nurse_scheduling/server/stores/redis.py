@@ -240,7 +240,7 @@ class RedisJobStore:
                         self._with_initial_queue_position(events, queue_position),
                     )
                     if self._usage_metrics is not None:
-                        self._usage_metrics.stage_job_created(transaction, saved)
+                        self._usage_metrics.stage_job_created(transaction, saved, input_bytes)
                     for position, (queued_id, _score) in enumerate(queue_order, start=1):
                         if queued_id != job.id:
                             self._stage_queue_position_event(transaction, queued_id, position, job.created_at)

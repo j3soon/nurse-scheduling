@@ -1,0 +1,28 @@
+{
+  "id": "dates-range-set",
+  "fixture": "new-schedule",
+  "question": "The roster should cover 2026-03-01 through 2026-03-14.",
+  "expect_proposal": true,
+  "changes": [
+    "dates.range",
+    "preferences"
+  ],
+  "expected_diff": [
+    {
+      "path": "dates.range",
+      "before": {},
+      "after": {
+        "startDate": "2026-03-01",
+        "endDate": "2026-03-14"
+      }
+    },
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "at most one shift per day"
+        }
+      ]
+    }
+  ]
+}

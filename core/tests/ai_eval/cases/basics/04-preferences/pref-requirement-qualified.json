@@ -1,0 +1,29 @@
+{
+  "id": "pref-requirement-qualified",
+  "fixture": "ward87",
+  "question": "On WORKDAY dates the K shift needs 1 person, and only the 'Night People' group may cover it.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift type requirement",
+          "shiftType": [
+            "K"
+          ],
+          "requiredNumPeople": 1,
+          "qualifiedPeople": [
+            "Night People"
+          ],
+          "date": [
+            "WORKDAY"
+          ]
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

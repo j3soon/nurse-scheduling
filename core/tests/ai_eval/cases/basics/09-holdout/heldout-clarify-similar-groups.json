@@ -1,0 +1,34 @@
+{
+  "id": "heldout-clarify-similar-groups",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "Add Omar to a day team group.",
+    "Use `Day Team Backup`."
+  ],
+  "intermediate_answer_contains": [
+    ["Day Team", "Backup"]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "people.groups",
+      "removed": [
+        {
+          "id": "Day Team Backup",
+          "description": "Backup daytime team",
+          "members": ["Ana-M"]
+        }
+      ],
+      "added": [
+        {
+          "id": "Day Team Backup",
+          "description": "Backup daytime team",
+          "members": ["Ana-M", "Omar"]
+        }
+      ]
+    }
+  ],
+  "changes": ["people.groups"],
+  "tags": ["holdout", "clarification", "multi-turn", "generalization"],
+  "note": "The first turn is ambiguous across two similarly named groups and must not produce a proposal."
+}

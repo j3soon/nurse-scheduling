@@ -22,8 +22,9 @@ cp docker/.env.example docker/.env
 
 Review the AI assistant block in `docker/.env`. Set the provider URL, API key,
 model, and other settings for your environment. For an authenticated service,
-also set the AI token. To serve locally without auth, explicitly set
-`AI_AUTH_REQUIRED=false` and leave `AI_AUTH_TOKEN` empty. Then start the service:
+also set one or more AI keys. To serve locally without auth, explicitly set
+`AI_AUTH_REQUIRED=false` and leave `AI_AUTH_TOKEN` and `AI_AUTH_TOKENS` empty.
+Then start the service:
 
 ```sh
 ./scripts/start_ai_backend.sh
@@ -72,7 +73,8 @@ new sandbox. Only conversation history, the canonical schedule revision, and a
 pending validated proposal remain in application state.
 
 When a turn fails, its provisional activity remains visible but is not added to
-backend history. **Retry** resends the original text in a fresh sandbox. For a
+model conversation history. Optional PostgreSQL logging retains failed turns
+for operators. **Retry** resends the original text in a fresh sandbox. For a
 request with attachments, **Prepare retry** restores the text and requires the
 files to be attached again before sending.
 
@@ -91,6 +93,12 @@ asked. Sandbox backends return raw command output to the AI layer. The AI
 `bash` adapter combines stdout and stderr, keeps the last 2,000 lines or 50 KB,
 and stores the full output in the temporary sandbox when truncation occurs.
 This policy stays outside the provider-neutral sandbox interface.
+
+When one model response requests multiple reads, the reads run concurrently
+and their results are returned in the model's original call order. Batches that
+contain `bash`, `edit`, or `write` remain sequential so filesystem mutations
+have deterministic ordering. E2B stays active for either kind of batch and
+pauses again before the next provider reasoning turn.
 
 When a Bash command changes the schedule, the backend reads the working copy
 and validates it outside the sandbox before emitting `schedule_change`. The
@@ -127,8 +135,20 @@ The launcher reads them from `docker/.env`, so the shortest form is:
 
 ```sh
 ./scripts/run_ai_eval.sh
+./scripts/run_ai_eval.sh --full
 ./scripts/run_ai_eval.sh --category 01-reading
 ```
+
+The default run selects cases tagged `difficult` or `tuning`, keeping prompt
+tuning focused as the corpus grows. Pass `--full` to run every case. Explicit
+`--case`, `--category`, or `--tag` selectors bypass the default tag filter.
+Cases may use `user_turns` for a real multi-turn conversation and
+`intermediate_answer_contains` to verify that earlier turns ask a required
+question without producing a proposal.
+
+The launcher checks provider authentication before provisioning any E2B
+sandbox. Providers without a `/models` endpoint produce an inconclusive result
+and continue.
 
 To run it without the launcher, load the settings first:
 
@@ -152,6 +172,23 @@ its reasoning, every tool call with its arguments and result, the answer, the
 proposed schedule, timing breakdown, and each criterion with its outcome. Pass `--output-dir` to
 choose the directory, which must not already exist, or set
 `AI_EVAL_ARTIFACT_ROOT` to move the root.
+
+Each case also records tool batches, calls per model turn, calls per batch,
+parallel execution, execution time per batch, and the number of batches
+containing multiple calls. The summary lists batch counts beside sandbox pause
+metrics so pause behavior can be checked at model-turn boundaries instead of
+inferred from the total tool count.
+
+To measure E2B read concurrency without provider or model variance, run:
+
+```sh
+./scripts/run_ai_read_benchmark.sh
+```
+
+The benchmark alternates repeated sequential and concurrent read batches in one
+warm sandbox. It reports median and p95 latency plus the median speedup under
+`artifacts/ai-read-benchmarks/`. Use `--runs`, `--calls`, and `--bytes` to change
+the sample count, calls per batch, and file size.
 
 Timing fields use wall-clock seconds. `end_to_end_seconds` covers the agent run.
 `llm_inference_seconds` sums only time awaiting provider stream events.
@@ -320,10 +357,13 @@ response cannot prove that the original operation did not take effect.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `AI_AUTH_TOKEN` | Unset | Shared bearer token. Setting it protects every AI session route. Use at least 16 ASCII characters. |
-| `AI_AUTH_REQUIRED` | `false` (`true` in Docker) | Fail startup unless a token of at least 16 ASCII characters is configured. |
+| `AI_AUTH_TOKENS` | Unset | JSON object mapping administrative IDs to bearer keys. |
+| `AI_AUTH_REQUIRED` | `false` (`true` in Docker) | Fail startup unless at least one key of 16 or more ASCII characters is configured. |
 | `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
 | `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
 | `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
+| `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for durable chat logging. Compose sets its internal URL directly. |
+| `AI_HISTORY_RETENTION_DAYS` | `30` | Positive number of days to retain chat text and metadata. |
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `120` | Provider request timeout. |
 | `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
 | `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
@@ -332,6 +372,8 @@ response cannot prove that the original operation did not take effect.
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
 | `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `10` | Default and maximum deadline for one shell command. |
 | `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `900` | Deadline for the complete sandbox-backed user message. |
+| `AI_AGENT_MAX_TOOL_ROUNDS` | `10` | Maximum model tool-call rounds before the agent must answer from verified results. |
+| `AI_AGENT_MAX_TOOL_CALLS` | `20` | Maximum total tool calls in one sandbox-backed user message. |
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
 | `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
 | `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
@@ -357,6 +399,13 @@ response cannot prove that the original operation did not take effect.
 | `AI_MAX_XLSX_SHEETS` | `20` | Maximum worksheets per XLSX workbook. |
 | `AI_MAX_XLSX_CELLS` | `100000` | Maximum rectangular cell span across an XLSX workbook. |
 | `AI_MAX_XLSX_UNCOMPRESSED_BYTES` | `50000000` | Maximum total expanded XLSX archive bytes. |
+
+`AI_AUTH_TOKENS` uses a JSON object such as
+`'{"institution-a":"first-key","person-b":"second-key"}'`. IDs may contain
+letters, numbers, underscores, and hyphens. They appear in administrative
+session logs, while clients send only the key and never receive the ID. Remove a
+pair and restart the service to revoke it. The legacy and identified settings
+may coexist during migration.
 
 ## Run in the development container
 
@@ -400,6 +449,94 @@ Use `compose.backend.memory.yml` in the same command when running the
 process-local optimization backend. The AI service itself remains process-local
 in both variants and listens on port `8001` inside the Compose network.
 
+### Durable chat logging
+
+Both Compose variants include PostgreSQL with the `postgres-ai-data` volume and
+no published database port. As with Redis, the private service connection is
+fixed in Compose and needs no setting in `docker/.env`. Native runs enable
+logging only when `AI_HISTORY_POSTGRES_URL` is set.
+
+Startup applies numbered SQL migrations transactionally. Chat sessions are
+recorded on their first message. Each turn stores the user text, assistant text
+(including partial answers), model, timestamps, attachment counts, available
+token usage, and a completed, failed, cancelled, or stale status. Writes reuse a
+server-generated turn UUID, also returned as `message_id`, to avoid duplicate
+rows. Sending another HTTP request creates another turn.
+
+The database stores the administrative credential ID when authentication is
+enabled, never the owner cookie or bearer key. Raw attachments, extracted
+document text, schedule snapshots, tool arguments/results, and reasoning are
+excluded. User and assistant text can still contain staff information. Database
+access is for operators only. No history-reading API or browser viewer is added.
+Use a separate read-only database role for reporting. Existing stdout question
+previews have their own deployment log retention.
+
+Startup fails if configured storage is unavailable. A failed initial write
+returns HTTP 503 before contacting the provider. A failed final write emits an
+operator error log and reports `history_saved: false` in a successful `done`
+event without discarding the live conversation. A process crash or final-write
+failure can leave a row in `running` with no final answer. These rows indicate
+incomplete logging, not a confirmed active request. There is no durable retry
+queue or recovery of partial output after a process crash.
+
+Retention runs on startup and hourly, deleting turns older than
+`AI_HISTORY_RETENTION_DAYS` and expired empty session records. Configure backups
+and their retention separately. Active sessions, schedules, and proposals remain
+in memory, so stored history does not enable resuming a chat after restart.
+
+### Inspect chat history with pgAdmin
+
+The optional pgAdmin service listens only on the backend host's loopback
+interface. Start it from `docker/` with the same Compose file and environment
+file used by that deployment:
+
+```sh
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
+```
+
+For a remote backend, forward the loopback port over SSH:
+
+```sh
+ssh -L 5050:127.0.0.1:5050 user@backend-host
+```
+
+Open `http://127.0.0.1:5050` and sign in with
+`admin@nursescheduling.local` / `pgadmin`. Expand **Nurse Scheduling**, then
+connect to **AI chat history** with database password `ai_history`. The server
+definition is preloaded on every run.
+
+Use **Tools > Query Tool** to inspect the newest turns:
+
+```sql
+SELECT
+    turns.started_at,
+    sessions.auth_credential_id,
+    turns.status,
+    turns.user_message,
+    turns.assistant_message,
+    turns.error_code,
+    turns.usage
+FROM chat_turns AS turns
+JOIN chat_sessions AS sessions ON sessions.id = turns.session_id
+ORDER BY turns.started_at DESC
+LIMIT 100;
+```
+
+Press Ctrl+C when finished. Compose removes the temporary pgAdmin container;
+the PostgreSQL service and its `postgres-ai-data` volume remain intact.
+
+Use `compose.backend.memory.yml` in these commands for the process-local backend
+variant. For staging, also pass its `--env-file .env.staging` option.
+
+Run PostgreSQL integration checks against a test database whose role can create
+schemas. Each test creates and removes its own temporary schema:
+
+```sh
+cd core
+AI_HISTORY_TEST_POSTGRES_URL=postgresql:///ai_history_test \
+  .venv/bin/pytest -q tests/test_ai_history.py
+```
+
 ## Production path proxy
 
 The backend Compose deployment routes Cloudflare Tunnel traffic through NGINX.
@@ -436,14 +573,15 @@ backend instance until shared AI storage is added.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
 probes work and the frontend can discover authentication and attachment limits.
-Capabilities reports whether bearer auth is active. When `AI_AUTH_TOKEN` is
-set, every session route requires `Authorization: Bearer <AI_AUTH_TOKEN>` and
+Capabilities reports whether bearer auth is active. When either AI key setting
+is set, every session route requires `Authorization: Bearer <key>` and
 returns `401` when the credential is missing or wrong. Native runs may leave the
-token unset to serve locally without auth. Docker Compose sets
-`AI_AUTH_REQUIRED=true` on the service, so its env file must explicitly set `AI_AUTH_REQUIRED=false` and
-leave `AI_AUTH_TOKEN` empty to serve without authentication. Required mode
-refuses to start with a missing, blank, shorter than 16 character, or non-ASCII
-token.
+key settings unset to serve locally without auth. Docker Compose sets
+`AI_AUTH_REQUIRED=true` on the service, so its env file must explicitly set
+`AI_AUTH_REQUIRED=false` and leave both key settings empty to serve without
+authentication. Required mode refuses to start with a missing, blank, shorter
+than 16 character, or non-ASCII key. `AI_AUTH_TOKEN` remains supported for
+backward compatibility.
 
 For example, create a session directly with:
 
@@ -460,8 +598,8 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   contains only empty secret fields and documented defaults.
 - The browser keeps the AI token in memory unless the user explicitly chooses
   to store it unencrypted on that device. A stored token is scoped to the AI
-  endpoint that requested it. The AI token is independent from the optimizer's
-  `API_AUTH_TOKEN`, although an operator may configure equal values.
+  endpoint that requested it. AI keys are independent from optimizer keys,
+  although an operator may configure equal values.
 - E2B Cloud is currently the only sandbox backend. The agent depends on the
   project `SandboxBackend` contract so a future self-hosted E2B or remote gVisor
   backend does not require changing model logic.

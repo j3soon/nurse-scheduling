@@ -22,11 +22,17 @@
 'use client';
 
 import Image from 'next/image';
-import { ChangeEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FiArrowDown } from 'react-icons/fi';
-import BackendTokenField from '@/components/BackendTokenField';
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { FiArrowDown, FiArrowUp, FiChevronDown, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
+import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
-import { DOCUMENTATION_URLS, GITHUB_AI_BETA_ACCESS_URL, GITHUB_PRIVACY_URL } from '@/constants/urls';
+import {
+  DOCUMENTATION_URLS,
+  FIREFOX_NIGHTLY_URL,
+  FIREFOX_SPEECH_RECOGNITION_STATUS_URL,
+  GITHUB_AI_BETA_ACCESS_URL,
+  GITHUB_PRIVACY_URL,
+} from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
@@ -43,6 +49,7 @@ import {
   getAiBaseUrl,
   getCapabilities,
   normalizeAiEndpoint,
+  queueMessage,
   rejectProposal,
   streamMessage,
   updateSessionSchedule,
@@ -55,6 +62,8 @@ interface ChatMessage {
   attachmentNames?: string[];
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed';
+  responseStartedAt?: number;
+  responseCompletedAt?: number;
   retry?: {
     question: string;
     requiresAttachments: boolean;
@@ -64,6 +73,20 @@ interface ChatMessage {
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
 const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
+const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
+const SPEECH_LANGUAGES = [
+  { value: '', label: 'Browser default' },
+  { value: 'en-US', label: 'English (United States)' },
+  { value: 'en-GB', label: 'English (United Kingdom)' },
+  { value: 'zh-TW', label: 'Mandarin (Taiwan)' },
+  { value: 'zh-CN', label: 'Mandarin (China)' },
+  { value: 'yue-Hant-HK', label: 'Cantonese (Hong Kong)' },
+  { value: 'ja-JP', label: 'Japanese' },
+  { value: 'ko-KR', label: 'Korean' },
+  { value: 'es-ES', label: 'Spanish' },
+  { value: 'fr-FR', label: 'French' },
+  { value: 'de-DE', label: 'German' },
+] as const;
 
 interface AiPreferences {
   showReasoning: boolean;
@@ -78,6 +101,39 @@ interface StoredAiAuth {
 
 type AiServerStatus = 'checking' | 'online' | 'offline' | 'unauthorized';
 
+interface BrowserSpeechRecognitionResult {
+  readonly length: number;
+  readonly [index: number]: { transcript: string };
+}
+
+interface BrowserSpeechRecognitionEvent {
+  readonly results: {
+    readonly length: number;
+    readonly [index: number]: BrowserSpeechRecognitionResult;
+  };
+}
+
+interface BrowserSpeechRecognition {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  processLocally?: boolean;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  }
+}
+
 function readStoredAuthTokens(): Record<string, string> {
   try {
     const stored = window.localStorage.getItem(AI_AUTH_STORAGE_KEY);
@@ -85,10 +141,14 @@ function readStoredAuthTokens(): Record<string, string> {
     const parsed = JSON.parse(stored) as StoredAiAuth;
     const tokens = typeof parsed.tokens === 'object' && parsed.tokens !== null
       ? Object.fromEntries(Object.entries(parsed.tokens).filter((entry): entry is [string, string] => (
-          typeof entry[1] === 'string' && entry[1].trim().length > 0
+          typeof entry[1] === 'string' && isValidBackendToken(entry[1].trim())
         )))
       : {};
-    if (typeof parsed.endpoint === 'string' && typeof parsed.token === 'string' && parsed.token.trim()) {
+    if (
+      typeof parsed.endpoint === 'string'
+      && typeof parsed.token === 'string'
+      && isValidBackendToken(parsed.token.trim())
+    ) {
       tokens[parsed.endpoint] = parsed.token.trim();
     }
     return tokens;
@@ -110,6 +170,11 @@ interface SelectedAttachment {
   file: File;
   kind: 'image' | 'document';
   previewUrl?: string;
+}
+
+interface QueuedChatMessage {
+  id: string;
+  content: string;
 }
 
 const DISABLED_IMAGE_CAPABILITY: AiCapabilities['image_attachments'] = {
@@ -143,6 +208,25 @@ function messageId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random()}`;
+}
+
+function formatResponseDuration(startedAt: number, completedAt: number): string {
+  const seconds = Math.max(0, completedAt - startedAt) / 1000;
+  if (seconds < 1) return '<1s';
+  if (seconds < 10) return `${seconds.toFixed(1)}s`;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
+function formatResponseTime(timestamp: number): string {
+  const completed = new Date(timestamp);
+  const now = new Date();
+  const sameDate = completed.getFullYear() === now.getFullYear()
+    && completed.getMonth() === now.getMonth()
+    && completed.getDate() === now.getDate();
+  return completed.toLocaleString([], sameDate
+    ? { hour: 'numeric', minute: '2-digit' }
+    : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 function isAuthenticationError(error: unknown): boolean {
@@ -245,6 +329,12 @@ export default function ExperimentalAiPage() {
   const [imageCapability, setImageCapability] = useState(DISABLED_IMAGE_CAPABILITY);
   const [documentCapability, setDocumentCapability] = useState(DISABLED_DOCUMENT_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [firefoxVersion, setFirefoxVersion] = useState<number | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [speechLanguage, setSpeechLanguage] = useState('');
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
   const [showTools, setShowTools] = useState(true);
@@ -261,6 +351,10 @@ export default function ExperimentalAiPage() {
   const followPageBottomRef = useRef(true);
   const hasMessagesRef = useRef(false);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerDragDepthRef = useRef(0);
+  const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   hasMessagesRef.current = messages.length > 0;
   useTabSwitchWarning(messages.length > 0);
 
@@ -291,6 +385,15 @@ export default function ExperimentalAiPage() {
     setAuthToken(storedToken);
     setRememberAuthToken(storedToken !== null);
     setIsClientReady(true);
+    const firefoxVersionMatch = navigator.userAgent.match(/Firefox\/(\d+)/);
+    const detectedFirefoxVersion = firefoxVersionMatch === null
+      ? null
+      : Number.parseInt(firefoxVersionMatch[1], 10);
+    const hasSpeechRecognition = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+    setFirefoxVersion(detectedFirefoxVersion);
+    setSpeechSupported(hasSpeechRecognition && (
+      detectedFirefoxVersion === null || detectedFirefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+    ));
   }, []);
 
   const rememberPreferences = (preferences: AiPreferences) => {
@@ -330,6 +433,7 @@ export default function ExperimentalAiPage() {
 
   useEffect(() => () => {
       abortControllerRef.current?.abort();
+      speechRecognitionRef.current?.stop();
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
@@ -420,6 +524,14 @@ export default function ExperimentalAiPage() {
     }
   }, [messages]);
 
+  useLayoutEffect(() => {
+    const input = draftInputRef.current;
+    if (input === null) return;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(Math.max(input.scrollHeight, 24), 160)}px`;
+    input.style.overflowY = input.scrollHeight > 160 ? 'auto' : 'hidden';
+  }, [draft]);
+
   const scrollToPageBottom = () => {
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
@@ -489,6 +601,13 @@ export default function ExperimentalAiPage() {
     }
   };
 
+  const toggleServerEditor = () => {
+    setIsEditingServer(previous => {
+      if (!previous) setCustomEndpoint(aiEndpoint);
+      return !previous;
+    });
+  };
+
   const reportRequestError = (requestError: unknown, fallback: string) => {
     if (isAuthenticationError(requestError)) {
       setAuthRequired(true);
@@ -500,9 +619,7 @@ export default function ExperimentalAiPage() {
     setError(requestError instanceof Error ? requestError.message : fallback);
   };
 
-  const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = '';
+  const addAttachments = (files: File[]) => {
     if (files.length === 0) return;
 
     const candidates = files.map(file => {
@@ -564,6 +681,12 @@ export default function ExperimentalAiPage() {
     ]);
   };
 
+  const selectAttachments = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    addAttachments(files);
+  };
+
   const removeAttachment = (id: string) => {
     setSelectedAttachments(previous => {
       const removed = previous.find(attachment => attachment.id === id);
@@ -585,13 +708,17 @@ export default function ExperimentalAiPage() {
       content: question,
       attachmentNames: attachmentsForMessage.map(attachment => attachment.file.name),
     };
-    const assistantId = messageId();
+    let activeAssistantId = messageId();
+    let activeAssistantHasOutput = false;
+    let activeQuestion = question;
+    let activeQuestionRequiresAttachments = attachmentsForMessage.length > 0;
+    const responseStartedAt = Date.now();
     followPageBottomRef.current = true;
     setShowScrollToBottom(false);
     setMessages(previous => [
       ...previous,
       userMessage,
-      { id: assistantId, role: 'assistant', content: '', status: 'pending' },
+      { id: activeAssistantId, role: 'assistant', content: '', status: 'pending', responseStartedAt },
     ]);
     if (clearComposer) {
       setDraft('');
@@ -624,45 +751,93 @@ export default function ExperimentalAiPage() {
         sessionId,
         question,
         {
-          onDelta: text => setMessages(previous => previous.map(message => (
-            message.id === assistantId
-              ? {
-                ...message,
-                content: message.content + text,
-                activity: appendResponseActivity(message.activity ?? [], text),
+          onDelta: text => {
+            if (text) activeAssistantHasOutput = true;
+            setMessages(previous => previous.map(message => (
+              message.id === activeAssistantId
+                ? {
+                  ...message,
+                  content: message.content + text,
+                  activity: appendResponseActivity(message.activity ?? [], text),
+                }
+                : message
+            )));
+          },
+          onReasoning: text => {
+            if (text) activeAssistantHasOutput = true;
+            setMessages(previous => previous.map(message => {
+              if (message.id !== activeAssistantId) return message;
+              const activity = message.activity ?? [];
+              const last = activity[activity.length - 1];
+              // Consecutive reasoning belongs to one entry, so the order of work stays readable.
+              if (last?.kind === 'reasoning') {
+                return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
               }
-              : message
-          ))),
-          onReasoning: text => setMessages(previous => previous.map(message => {
-            if (message.id !== assistantId) return message;
-            const activity = message.activity ?? [];
-            const last = activity[activity.length - 1];
-            // Consecutive reasoning belongs to one entry, so the order of work stays readable.
-            if (last?.kind === 'reasoning') {
-              return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
-            }
-            return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
-          })),
-          onToolStart: activity => setMessages(previous => previous.map(message => (
-            message.id === assistantId
-              ? {
-                ...message,
-                activity: [
-                  ...(message.activity ?? []),
-                  { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
-                ],
-              }
-              : message
-          ))),
+              return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
+            }));
+          },
+          onToolStart: activity => {
+            activeAssistantHasOutput = true;
+            setMessages(previous => previous.map(message => (
+              message.id === activeAssistantId
+                ? {
+                  ...message,
+                  activity: [
+                    ...(message.activity ?? []),
+                    { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
+                  ],
+                }
+                : message
+            )));
+          },
           onTool: activity => setMessages(previous => previous.map(message => {
-            if (message.id !== assistantId) return message;
+            if (message.id !== activeAssistantId) return message;
             return { ...message, activity: finishToolActivity(message.activity ?? [], activity) };
           })),
+          onSteering: (queuedId, queuedMessage) => {
+            queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
+            setQueuedMessages(queuedMessagesRef.current);
+            const steeringStartedAt = Date.now();
+            if (activeAssistantHasOutput) {
+              const completedAssistantId = activeAssistantId;
+              const nextAssistantId = messageId();
+              setMessages(previous => [
+                ...previous.map(message => (
+                  message.id === completedAssistantId
+                    ? { ...message, status: undefined, responseCompletedAt: steeringStartedAt }
+                    : message
+                )),
+                { id: queuedId, role: 'user', content: queuedMessage },
+                {
+                  id: nextAssistantId,
+                  role: 'assistant',
+                  content: '',
+                  status: 'pending',
+                  responseStartedAt: steeringStartedAt,
+                },
+              ]);
+              activeAssistantId = nextAssistantId;
+              activeAssistantHasOutput = false;
+            } else {
+              const pendingAssistantId = activeAssistantId;
+              setMessages(previous => {
+                const pendingIndex = previous.findIndex(message => message.id === pendingAssistantId);
+                if (pendingIndex < 0) return [...previous, { id: queuedId, role: 'user', content: queuedMessage }];
+                return [
+                  ...previous.slice(0, pendingIndex),
+                  { id: queuedId, role: 'user', content: queuedMessage },
+                  ...previous.slice(pendingIndex),
+                ];
+              });
+            }
+            activeQuestion = queuedMessage;
+            activeQuestionRequiresAttachments = false;
+          },
           onScheduleChange: candidate => {
             const before = sandboxScheduleRef.current ?? scheduleYaml;
             sandboxScheduleRef.current = candidate;
             setMessages(previous => previous.map(message => (
-              message.id === assistantId
+              message.id === activeAssistantId
                 ? {
                   ...message,
                   activity: [
@@ -688,22 +863,25 @@ export default function ExperimentalAiPage() {
         sessionEndpoint,
       );
       setMessages(previous => previous.map(message => (
-        message.id === assistantId ? { ...message, status: undefined } : message
+        message.id === activeAssistantId
+          ? { ...message, status: undefined, responseCompletedAt: Date.now() }
+          : message
       )));
     } catch (streamError) {
       const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
       setMessages(previous => previous.map(message => (
-        message.id === assistantId
+        message.id === activeAssistantId
           ? {
             ...message,
             content: staleTurnMessage ?? message.content,
             status: 'failed',
+            responseCompletedAt: Date.now(),
             activity: staleTurnMessage === null
               ? interruptRunningTools(message.activity ?? [])
               : [{ kind: 'response' as const, text: staleTurnMessage }],
             retry: {
-              question,
-              requiresAttachments: attachmentsForMessage.length > 0,
+              question: activeQuestion,
+              requiresAttachments: activeQuestionRequiresAttachments,
             },
           }
           : message
@@ -714,13 +892,44 @@ export default function ExperimentalAiPage() {
     } finally {
       abortControllerRef.current = null;
       setIsStreaming(false);
+      const nextMessage = queuedMessagesRef.current[0];
+      if (nextMessage) {
+        queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
+        setQueuedMessages(queuedMessagesRef.current);
+        window.setTimeout(() => void sendRequest(nextMessage.content, [], false), 0);
+      }
     }
   };
 
   const send = async (event: FormEvent) => {
     event.preventDefault();
     const question = draft.trim();
-    if (!question || isStreaming || (authRequired && authToken === null)) return;
+    if (!question || (authRequired && authToken === null)) return;
+    if (isStreaming) {
+      const queuedMessage = { id: messageId(), content: question };
+      queuedMessagesRef.current = [...queuedMessagesRef.current, queuedMessage];
+      setQueuedMessages(queuedMessagesRef.current);
+      setDraft('');
+      const sessionId = sessionIdRef.current;
+      if (sessionId !== null) {
+        try {
+          await queueMessage(
+            sessionId,
+            queuedMessage.id,
+            queuedMessage.content,
+            authToken,
+            sessionEndpointRef.current ?? aiEndpoint,
+          );
+        } catch (queueError) {
+          const responseFinishing = typeof queueError === 'object'
+            && queueError !== null
+            && 'status' in queueError
+            && queueError.status === 409;
+          if (!responseFinishing) reportRequestError(queueError, 'The queued AI message could not be submitted yet.');
+        }
+      }
+      return;
+    }
     await sendRequest(question, selectedAttachments, true);
   };
 
@@ -742,6 +951,45 @@ export default function ExperimentalAiPage() {
   };
 
   const stop = () => abortControllerRef.current?.abort();
+  const toggleDictation = () => {
+    if (isListening) {
+      speechRecognitionRef.current?.stop();
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    if (firefoxVersion !== null && 'processLocally' in recognition) recognition.processLocally = true;
+    if (speechLanguage) recognition.lang = speechLanguage;
+    const originalDraft = draft.trimEnd();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = event => {
+      const transcript = Array.from({ length: event.results.length }, (_, index) => (
+        event.results[index][0]?.transcript ?? ''
+      )).join('').trim();
+      setDraft(`${originalDraft}${originalDraft && transcript ? ' ' : ''}${transcript}`);
+    };
+    recognition.onend = () => {
+      if (speechRecognitionRef.current === recognition) speechRecognitionRef.current = null;
+      setIsListening(false);
+    };
+    recognition.onerror = () => {
+      setError('Speech recognition stopped before it could transcribe audio.');
+      setIsListening(false);
+    };
+    speechRecognitionRef.current = recognition;
+    setError(null);
+    setIsListening(true);
+    try {
+      recognition.start();
+    } catch {
+      speechRecognitionRef.current = null;
+      setIsListening(false);
+      setError('Speech recognition could not start in this browser.');
+    }
+  };
   const selectedImageCount = selectedAttachments.filter(attachment => attachment.kind === 'image').length;
   const selectedDocumentCount = selectedAttachments.length - selectedImageCount;
   const credentialsMissing = authRequired && authToken === null;
@@ -749,6 +997,30 @@ export default function ExperimentalAiPage() {
     (!imageCapability.enabled || selectedImageCount >= imageCapability.max_files)
     && (!documentCapability.enabled || selectedDocumentCount >= documentCapability.max_files)
   );
+  const isFileDrag = (event: DragEvent<HTMLElement>) => event.dataTransfer.types.includes('Files');
+  const enterAttachmentDropZone = (event: DragEvent<HTMLFormElement>) => {
+    if (attachmentPickerDisabled || !isFileDrag(event)) return;
+    event.preventDefault();
+    composerDragDepthRef.current += 1;
+    setIsDraggingFiles(true);
+  };
+  const dragOverAttachmentDropZone = (event: DragEvent<HTMLFormElement>) => {
+    if (attachmentPickerDisabled || !isFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+  const leaveAttachmentDropZone = (event: DragEvent<HTMLFormElement>) => {
+    if (!isFileDrag(event)) return;
+    composerDragDepthRef.current = Math.max(0, composerDragDepthRef.current - 1);
+    if (composerDragDepthRef.current === 0) setIsDraggingFiles(false);
+  };
+  const dropAttachments = (event: DragEvent<HTMLFormElement>) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    composerDragDepthRef.current = 0;
+    setIsDraggingFiles(false);
+    if (!attachmentPickerDisabled) addAttachments(Array.from(event.dataTransfer.files));
+  };
   const serverLocked = sessionIdRef.current !== null || messages.length > 0;
 
   const applyProposal = async () => {
@@ -844,7 +1116,7 @@ export default function ExperimentalAiPage() {
             <span className="text-xs capitalize text-gray-500">{serverStatus}</span>
             <button
               type="button"
-              onClick={() => setIsEditingServer(previous => !previous)}
+              onClick={toggleServerEditor}
               disabled={isStreaming || serverLocked}
               title={serverLocked ? 'The AI server is locked for this conversation.' : undefined}
               className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
@@ -854,6 +1126,11 @@ export default function ExperimentalAiPage() {
           </div>
           {serverLocked && (
             <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation.</p>
+          )}
+          {aiEndpoint !== PRODUCTION_AI_API_URL && aiEndpoint !== '/ai' && (
+            <p className="mt-1 text-xs text-amber-700">
+              This server is unofficially hosted. Privacy and data retention practices may vary.
+            </p>
           )}
           {isEditingServer && !serverLocked && (
             <form
@@ -979,6 +1256,17 @@ export default function ExperimentalAiPage() {
                 Attached: {message.attachmentNames.join(', ')}
               </p>
             )}
+            {message.role === 'assistant'
+              && message.responseStartedAt !== undefined
+              && message.responseCompletedAt !== undefined && (
+              <time
+                dateTime={new Date(message.responseCompletedAt).toISOString()}
+                className="mt-2 block text-[0.6875rem] text-gray-400"
+              >
+                {formatResponseTime(message.responseCompletedAt)} ·{' '}
+                {formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}
+              </time>
+            )}
             {message.role === 'assistant' && message.status === 'failed' && message.retry && (
               <div className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
                 <p>This turn failed and was not saved to AI history.</p>
@@ -1064,8 +1352,20 @@ export default function ExperimentalAiPage() {
       <form
         ref={composerRef}
         onSubmit={send}
-        className="fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6"
+        onDragEnter={enterAttachmentDropZone}
+        onDragOver={dragOverAttachmentDropZone}
+        onDragLeave={leaveAttachmentDropZone}
+        onDrop={dropAttachments}
+        aria-label="Message composer"
+        className={`fixed inset-x-10 bottom-0 z-30 mx-auto max-w-5xl space-y-3 bg-gradient-to-t from-white via-white to-white/90 px-4 pb-4 pt-3 sm:px-6 ${
+          isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
+        }`}
       >
+        {isDraggingFiles && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/90 text-sm font-semibold text-blue-800">
+            Drop files to attach
+          </div>
+        )}
         {showScrollToBottom && (
           <button
             type="button"
@@ -1076,6 +1376,16 @@ export default function ExperimentalAiPage() {
           >
             <FiArrowDown aria-hidden="true" className="h-4 w-4" />
           </button>
+        )}
+        {queuedMessages.length > 0 && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            <p className="font-medium">Messages to be submitted after next tool call</p>
+            <div className="mt-1 space-y-1">
+              {queuedMessages.map(message => (
+                <p key={message.id} className="truncate">{message.content}</p>
+              ))}
+            </div>
+          </div>
         )}
         {selectedAttachments.length > 0 && (
           <div aria-label="Files attached to next message" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
@@ -1108,13 +1418,16 @@ export default function ExperimentalAiPage() {
             ))}
           </div>
         )}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex min-h-14 items-end gap-1 rounded-[1.75rem] border border-gray-300 bg-white p-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">
           {(imageCapability.enabled || documentCapability.enabled) && (
-            <label className={`order-2 rounded-xl border px-3 py-3 text-center text-sm font-medium sm:order-1 ${
-              attachmentPickerDisabled
-                ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400'
-                : 'cursor-pointer border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-            }`}>
+            <label
+              title="Attach files"
+              className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${
+                attachmentPickerDisabled
+                  ? 'cursor-not-allowed text-gray-300'
+                  : 'cursor-pointer text-gray-700 hover:bg-gray-100'
+              }`}
+            >
               <input
                 type="file"
                 accept={[
@@ -1124,46 +1437,114 @@ export default function ExperimentalAiPage() {
                 multiple
                 disabled={attachmentPickerDisabled}
                 onChange={selectAttachments}
+                aria-label="Attach files"
                 className="sr-only"
               />
-              Attach files
+              <FiPlus aria-hidden="true" className="h-6 w-6" />
             </label>
           )}
-          <label className="order-1 flex-1 sm:order-2">
-            <span className="sr-only">Ask about the current schedule</span>
-            <textarea
-              value={draft}
-              onChange={event => setDraft(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              disabled={!isClientReady || credentialsMissing}
-              rows={3}
-              maxLength={8000}
-              placeholder="Ask about the current schedule…"
-              className="w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100"
-            />
-          </label>
-          {isStreaming ? (
-            <button
-              type="button"
-              onClick={stop}
-              className="order-3 rounded-xl bg-gray-800 px-5 py-3 font-medium text-white hover:bg-gray-900"
-            >
-              Stop
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!isClientReady || credentialsMissing || !draft.trim()}
-              className="order-3 rounded-xl bg-blue-600 px-5 py-3 font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-            >
-              Send
-            </button>
-          )}
+          <textarea
+            ref={draftInputRef}
+            value={draft}
+            onChange={event => setDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            disabled={!isClientReady || credentialsMissing}
+            rows={1}
+            maxLength={8000}
+            aria-label="Ask about the current schedule"
+            placeholder="Ask anything…"
+            className="min-h-6 max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none disabled:text-gray-400"
+          />
+          <div className="flex shrink-0 items-center gap-1">
+            {isClientReady && firefoxVersion !== null && !speechSupported ? (
+              <a
+                href={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                  ? FIREFOX_SPEECH_RECOGNITION_STATUS_URL
+                  : FIREFOX_NIGHTLY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                  ? 'Enable experimental dictation in Firefox'
+                  : 'Firefox dictation compatibility'}
+                className="group relative inline-flex h-10 w-10 items-center justify-center rounded-full text-amber-600 transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              >
+                <FiMic aria-hidden="true" className="h-4 w-4" />
+                <span className="pointer-events-none absolute bottom-10 right-0 z-10 hidden w-72 rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg group-hover:block group-focus-visible:block">
+                  {firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
+                    ? 'Firefox dictation is experimental. In about:config, enable media.webspeech.recognition.enable, then reload this page.'
+                    : 'Dictation is unavailable in this Firefox version. Try Firefox Nightly or another supported browser.'}
+                </span>
+              </a>
+            ) : (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={toggleDictation}
+                  disabled={!isClientReady || credentialsMissing || !speechSupported}
+                  aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
+                  aria-pressed={isListening}
+                  title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
+                  className={`inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
+                    isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+                  }`}
+                >
+                  <FiMic aria-hidden="true" className={`h-4 w-4 ${isListening ? 'animate-pulse' : ''}`} />
+                </button>
+                <span className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border border-gray-300 bg-white text-gray-600 shadow-sm focus-within:ring-2 focus-within:ring-blue-400">
+                  <select
+                    value={speechLanguage}
+                    onChange={event => setSpeechLanguage(event.target.value)}
+                    disabled={!isClientReady || credentialsMissing || !speechSupported || isListening}
+                    aria-label="Dictation language"
+                    title="Dictation language"
+                    className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                  >
+                    {SPEECH_LANGUAGES.map(language => (
+                      <option key={language.value} value={language.value}>{language.label}</option>
+                    ))}
+                  </select>
+                  <FiChevronDown aria-hidden="true" className="pointer-events-none h-full w-full p-0.5" />
+                </span>
+              </div>
+            )}
+            {isStreaming ? (
+              <>
+                <button
+                  type="submit"
+                  disabled={!draft.trim()}
+                  aria-label="Queue message"
+                  title="Queue message"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                >
+                  <FiArrowUp aria-hidden="true" className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={stop}
+                  aria-label="Stop"
+                  title="Stop"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-white transition-colors hover:bg-gray-900"
+                >
+                  <FiSquare aria-hidden="true" className="h-4 w-4 fill-current" />
+                </button>
+              </>
+            ) : (
+              <button
+                type="submit"
+                disabled={!isClientReady || credentialsMissing || !draft.trim()}
+                aria-label="Send"
+                title="Send"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                <FiArrowUp aria-hidden="true" className="h-5 w-5" />
+              </button>
+            )}
+          </div>
         </div>
       </form>
     </main>

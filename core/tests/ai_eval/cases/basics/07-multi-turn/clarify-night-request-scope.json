@@ -1,0 +1,22 @@
+{
+  "id": "clarify-night-request-scope",
+  "fixture": "ward87",
+  "user_turns": [
+    "Remove P85's night requests.",
+    "N only. Keep anything using the Night group, plus the K and OFF requests."
+  ],
+  "intermediate_answer_contains": [
+    [["N", "N shift"], "Night"]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {"type": "shift request", "person": ["P85"], "date": ["04"], "shiftType": ["N"], "weight": 11000000000}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "advanced-multi-turn", "clarification", "similar-ids"]
+}

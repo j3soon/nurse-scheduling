@@ -1,0 +1,28 @@
+{
+  "id": "pref-shift-request",
+  "fixture": "ward87",
+  "question": "P60 wants to work the N shift on the 7th.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "P60"
+          ],
+          "date": [
+            "07"
+          ],
+          "shiftType": [
+            "N"
+          ]
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

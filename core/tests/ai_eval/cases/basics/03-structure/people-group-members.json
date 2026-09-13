@@ -1,0 +1,17 @@
+{
+  "id": "people-group-members",
+  "fixture": "ward87",
+  "question": "Add P50 to the 'Night People' group.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "people.groups",
+      "removed": [{"id": "Night People", "members": ["P61", "P62", "P63", "P64", "P65", "P66", "P67", "P68", "P69", "P70", "P71", "P72", "P73", "P74", "P75", "P76", "P77", "P78", "P79", "P80", "P81", "P82", "P83", "P84", "P85", "P86", "P87"], "description": ""}],
+      "added": [{"id": "Night People", "members": ["P61", "P62", "P63", "P64", "P65", "P66", "P67", "P68", "P69", "P70", "P71", "P72", "P73", "P74", "P75", "P76", "P77", "P78", "P79", "P80", "P81", "P82", "P83", "P84", "P85", "P86", "P87", "P50"], "description": ""}]
+    }
+  ],
+  "changes": [
+    "people.groups"
+  ],
+  "tags": ["difficult", "tuning", "clarification-control", "exact-target"]
+}

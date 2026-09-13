@@ -1,0 +1,14 @@
+{
+  "id": "explain-ai-attachments",
+  "fixture": "small-clinic",
+  "question": "Can I attach a spreadsheet or an image to this chat? How do I do that?",
+  "expect_proposal": false,
+  "tags": ["tuning", "app-ui", "attachments"],
+  "answer_contains": [
+    "Attach files",
+    ["image", "images"],
+    ["spreadsheet", "XLSX", "document"],
+    ["backend enables", "backend supports", "available", "enabled by the backend"]
+  ],
+  "note": "The assistant should describe the attachment control and its capability gate without inspecting or changing the schedule."
+}

@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "AI chat history",
+      "Group": "Nurse Scheduling",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "ai_history",
+      "Username": "ai_history",
+      "SSLMode": "prefer"
+    }
+  }
+}

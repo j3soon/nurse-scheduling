@@ -1,0 +1,29 @@
+{
+  "id": "export-extra-row",
+  "fixture": "ward87",
+  "question": "Add an export row headed 'Day cover' counting how many people work D on each date.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "export",
+      "before": null,
+      "after": {
+        "extraRows": [
+          {
+            "type": "count",
+            "header": "Day cover",
+            "countShiftTypes": [
+              "D"
+            ],
+            "countPeople": [
+              "ALL"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "changes": [
+    "export"
+  ]
+}

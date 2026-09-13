@@ -1,0 +1,20 @@
+{
+  "id": "pref-requirement-modify-existing",
+  "fixture": "ward87",
+  "question": "On WORKDAY dates, keep the D shift minimum at 13 people but change its preferred staffing from 14 to 15. Preserve the existing qualified people, weight, and description.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {"type": "shift type requirement", "description": "", "shiftType": ["D"], "requiredNumPeople": 13, "qualifiedPeople": ["All Nurses w/o Students"], "preferredNumPeople": 14, "date": ["WORKDAY"], "weight": -1000000000000}
+      ],
+      "added": [
+        {"type": "shift type requirement", "description": "", "shiftType": ["D"], "requiredNumPeople": 13, "qualifiedPeople": ["All Nurses w/o Students"], "preferredNumPeople": 15, "date": ["WORKDAY"], "weight": -1000000000000}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "preference-update"],
+  "note": "The matching rule must be updated in place rather than duplicated. A nearby FREEDAY D requirement has different staffing values and must remain unchanged."
+}

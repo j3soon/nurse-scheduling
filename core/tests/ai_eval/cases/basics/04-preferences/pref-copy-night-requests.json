@@ -1,0 +1,38 @@
+{
+  "id": "pref-copy-night-requests",
+  "fixture": "ward87",
+  "question": "Give P86 the same N-shift requests as P85. Do not copy P85's K or OFF requests.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "P86"
+          ],
+          "date": [
+            "04"
+          ],
+          "shiftType": [
+            "N"
+          ],
+          "weight": 11000000000
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "tags": [
+    "difficult",
+    "tuning",
+    "preference-copy",
+    "reading",
+    "clarification-control",
+    "exact-target"
+  ],
+  "note": "P85 has one N request, one K request, and one OFF request. The assistant must inspect and copy only the requested subset with its original date and weight."
+}

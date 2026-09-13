@@ -1,0 +1,93 @@
+{
+  "id": "tool-write-minimal-schedule",
+  "fixture": "new-schedule",
+  "question": "Rewrite the entire empty schedule as a fresh minimal schedule for the single calendar day March 1, 2026. Both startDate and endDate must be 2026-03-01. Set its description to 'Minimal March schedule'. Add exactly one person, Alex, described as 'Only nurse', with empty history. Add exactly one shift type, D, described as 'Day'. Keep all groups empty, add only the required 'at most one shift per day' preference, and preserve the existing apiVersion. Use write once for this complete-file rewrite.",
+  "expect_proposal": true,
+  "changes": [
+    "description",
+    "dates",
+    "people",
+    "shiftTypes",
+    "preferences"
+  ],
+  "tags": [
+    "tuning"
+  ],
+  "tool_usage": {
+    "required": [
+      "write"
+    ],
+    "forbidden": [
+      "bash",
+      "edit"
+    ],
+    "max_total": 5,
+    "max_per_tool": {
+      "write": 1
+    }
+  },
+  "expected_diff": [
+    {
+      "path": "description",
+      "before": "",
+      "after": "Minimal March schedule"
+    },
+    {
+      "path": "dates",
+      "before": {
+        "range": {},
+        "items": [],
+        "groups": []
+      },
+      "after": {
+        "range": {
+          "startDate": "2026-03-01",
+          "endDate": "2026-03-01"
+        },
+        "items": [],
+        "groups": []
+      }
+    },
+    {
+      "path": "people",
+      "before": {
+        "items": [],
+        "groups": []
+      },
+      "after": {
+        "items": [
+          {
+            "id": "Alex",
+            "description": "Only nurse",
+            "history": []
+          }
+        ],
+        "groups": []
+      }
+    },
+    {
+      "path": "shiftTypes",
+      "before": {
+        "items": [],
+        "groups": []
+      },
+      "after": {
+        "items": [
+          {
+            "id": "D",
+            "description": "Day"
+          }
+        ],
+        "groups": []
+      }
+    },
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "at most one shift per day"
+        }
+      ]
+    }
+  ]
+}

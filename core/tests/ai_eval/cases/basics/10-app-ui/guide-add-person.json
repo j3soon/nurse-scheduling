@@ -1,0 +1,14 @@
+{
+  "id": "guide-add-person",
+  "fixture": "small-clinic",
+  "question": "I want to add a nurse myself instead of asking you to edit the schedule. Where do I go in the app?",
+  "expect_proposal": false,
+  "tags": ["tuning", "app-ui", "navigation"],
+  "answer_contains": [
+    "People",
+    "Add Person",
+    ["ID", "identifier"],
+    ["experimental AI chat", "ask me", "assistant can"]
+  ],
+  "note": "The assistant should guide the user to the People page, then briefly offer schedule editing through the experimental AI chat as an alternative."
+}

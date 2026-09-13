@@ -1,0 +1,17 @@
+{
+  "id": "pref-copy-selected-shift-requests",
+  "fixture": "ward87",
+  "question": "Copy P85's N and K shift requests to P86 with the same dates and weights. Do not copy any OFF request.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {"type": "shift request", "person": ["P86"], "date": ["04"], "shiftType": ["N"], "weight": 11000000000},
+        {"type": "shift request", "person": ["P86"], "date": ["23"], "shiftType": ["K"], "weight": 11000000000}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "preference-copy", "exclusion"]
+}

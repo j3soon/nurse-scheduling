@@ -1,0 +1,21 @@
+{
+  "id": "revise-unapproved-proposal-twice",
+  "fixture": "new-schedule",
+  "user_turns": [
+    "Set the schedule description to March roster.",
+    "Revise that pending description to March training roster.",
+    "One more revision: make it March ICU training roster."
+  ],
+  "intermediate_answer_contains": [
+    ["March roster"],
+    ["March training roster"]
+  ],
+  "expect_proposal": true,
+  "proposal_turns": [1, 2, 3],
+  "expected_diff": [
+    {"path": "description", "before": "", "after": "March ICU training roster"}
+  ],
+  "changes": ["description"],
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "proposal-revision"],
+  "note": "Each revision replaces the unapproved proposal. The final proposal contains only the latest description."
+}

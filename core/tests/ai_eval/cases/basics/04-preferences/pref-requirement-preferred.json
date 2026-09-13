@@ -1,0 +1,32 @@
+{
+  "id": "pref-requirement-preferred",
+  "fixture": "ward87",
+  "question": "The E~ shift needs at least 1 student but we would prefer 3, and this preference is worth -5.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift type requirement",
+          "description": "",
+          "shiftType": [
+            "E~"
+          ],
+          "requiredNumPeople": 1,
+          "qualifiedPeople": [
+            "Students"
+          ],
+          "preferredNumPeople": 3,
+          "date": [
+            "ALL"
+          ],
+          "weight": -5
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

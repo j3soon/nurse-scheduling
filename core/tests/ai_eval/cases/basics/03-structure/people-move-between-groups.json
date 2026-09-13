@@ -1,0 +1,21 @@
+{
+  "id": "people-move-between-groups",
+  "fixture": "ward87",
+  "question": "Move P50 from the Evening People group to the Night People group. Preserve every other group membership.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "people.groups",
+      "removed": [
+        {"id": "Evening People", "members": ["P34", "P35", "P36", "P37", "P38", "P39", "P40", "P41", "P42", "P43", "P44", "P45", "P46", "P47", "P48", "P49", "P50", "P51", "P52", "P53", "P54", "P55", "P56", "P57", "P58", "P59", "P60"], "description": ""},
+        {"id": "Night People", "members": ["P61", "P62", "P63", "P64", "P65", "P66", "P67", "P68", "P69", "P70", "P71", "P72", "P73", "P74", "P75", "P76", "P77", "P78", "P79", "P80", "P81", "P82", "P83", "P84", "P85", "P86", "P87"], "description": ""}
+      ],
+      "added": [
+        {"id": "Evening People", "members": ["P34", "P35", "P36", "P37", "P38", "P39", "P40", "P41", "P42", "P43", "P44", "P45", "P46", "P47", "P48", "P49", "P51", "P52", "P53", "P54", "P55", "P56", "P57", "P58", "P59", "P60"], "description": ""},
+        {"id": "Night People", "members": ["P61", "P62", "P63", "P64", "P65", "P66", "P67", "P68", "P69", "P70", "P71", "P72", "P73", "P74", "P75", "P76", "P77", "P78", "P79", "P80", "P81", "P82", "P83", "P84", "P85", "P86", "P87", "P50"], "description": ""}
+      ]
+    }
+  ],
+  "changes": ["people.groups"],
+  "tags": ["difficult", "tuning", "coordinated-edit"]
+}

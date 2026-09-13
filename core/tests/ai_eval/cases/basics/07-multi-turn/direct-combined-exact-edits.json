@@ -1,0 +1,21 @@
+{
+  "id": "direct-combined-exact-edits",
+  "fixture": "ward87",
+  "question": "Change only P84's OFF request on the 1st to weight -100, and copy only P85's N request to P86 with its existing date and weight. Do not copy K or OFF.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": 11000000000}
+      ],
+      "added": [
+        {"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": -100},
+        {"type": "shift request", "person": ["P86"], "date": ["04"], "shiftType": ["N"], "weight": 11000000000}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "clarification-control", "exact-target", "coordinated-edit"],
+  "note": "Every target and exclusion is explicit, so the assistant should edit directly without asking for clarification."
+}

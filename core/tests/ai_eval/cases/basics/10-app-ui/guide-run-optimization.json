@@ -1,0 +1,13 @@
+{
+  "id": "guide-run-optimization",
+  "fixture": "small-clinic",
+  "question": "How do I run the scheduler from the web app once my setup is ready?",
+  "expect_proposal": false,
+  "tags": ["tuning", "app-ui", "navigation"],
+  "answer_contains": [
+    "Optimize and Export",
+    ["Auto", "backend", "server"],
+    "Optimize and Download"
+  ],
+  "note": "The assistant should guide the user to the optimization UI while remaining clear that it cannot run optimization itself."
+}

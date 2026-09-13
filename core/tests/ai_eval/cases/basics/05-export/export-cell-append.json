@@ -1,0 +1,36 @@
+{
+  "id": "export-cell-append",
+  "fixture": "ward87",
+  "question": "In the export, append the text * to P3's D shift cells and add the note 'Requested'.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "export",
+      "before": null,
+      "after": {
+        "formatting": [
+          {
+            "type": "cell",
+            "people": [
+              "P3"
+            ],
+            "dates": [
+              "ALL"
+            ],
+            "shiftTypes": [
+              "D"
+            ],
+            "appendText": "*",
+            "note": {
+              "text": "Requested"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "changes": [
+    "export"
+  ],
+  "note": "The appended text is given exactly, since a star could otherwise be any of several characters."
+}

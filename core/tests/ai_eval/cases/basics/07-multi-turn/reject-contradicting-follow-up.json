@@ -1,0 +1,17 @@
+{
+  "id": "reject-contradicting-follow-up",
+  "fixture": "ward87",
+  "user_turns": [
+    "Add a hard shift request for P60 on the 7th.",
+    "Make it N, and also forbid P60 from working N on the 7th."
+  ],
+  "intermediate_answer_contains": [
+    [["which shift", "shift type", "which shift type"]]
+  ],
+  "expect_proposal": false,
+  "answer_contains": [
+    ["conflict", "contradict", "cannot both", "can't both", "clarify"]
+  ],
+  "tags": ["difficult", "tuning", "advanced-multi-turn", "conflicting-intent", "refusal"],
+  "note": "Neither the underspecified first turn nor the contradictory final turn may produce a proposal."
+}

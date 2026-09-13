@@ -101,6 +101,12 @@ export const BACKEND_API_CANDIDATES = process.env.NODE_ENV === 'test'
   ? [LOCAL_BACKEND_API_URL]
   : createBackendApiCandidates(SHOULD_DISABLE_PRODUCTION_BACKEND_API);
 
+export function isOfficialBackendEndpoint(endpoint: string): boolean {
+  const normalizedEndpoint = normalizeEndpoint(endpoint);
+  return normalizedEndpoint === PRODUCTION_BACKEND_API_URL
+    || normalizedEndpoint === SECONDARY_BACKEND_API_URL;
+}
+
 const ENDPOINT_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 
 function isLoopbackAuthority(authority: string): boolean {

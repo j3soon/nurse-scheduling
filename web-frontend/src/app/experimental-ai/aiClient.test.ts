@@ -25,6 +25,7 @@ import {
   createSession,
   getAiBaseUrl,
   getCapabilities,
+  queueMessage,
   rejectProposal,
   scheduleRevision,
   streamMessage,
@@ -279,6 +280,7 @@ describe('AI client', () => {
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
       'event: tool_start\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
       'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
+      'event: steering\ndata: {"message_id":"queued-1","message":"Focus on P2."}\n\n',
       'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
@@ -288,6 +290,7 @@ describe('AI client', () => {
     const tools: string[] = [];
     const reasoning: string[] = [];
     const scheduleChanges: string[] = [];
+    const steering: string[] = [];
     const diffs: string[] = [];
     const texts: string[] = [];
 
@@ -299,6 +302,7 @@ describe('AI client', () => {
         onReasoning: text => reasoning.push(text),
         onToolStart: activity => toolStarts.push(`${activity.name}:${activity.arguments}`),
         onTool: activity => tools.push(`${activity.name}:${activity.ok}:${activity.result}`),
+        onSteering: (messageId, message) => steering.push(`${messageId}:${message}`),
         onScheduleChange: scheduleYaml => scheduleChanges.push(scheduleYaml),
         onProposal: diff => diffs.push(diff),
       },
@@ -308,10 +312,28 @@ describe('AI client', () => {
 
     expect(toolStarts).toEqual(['bash:{"command":"sed -n 1p schedule.yaml"}']);
     expect(tools).toEqual(['bash:true:exit_code: 0']);
+    expect(steering).toEqual(['queued-1:Focus on P2.']);
     expect(reasoning).toEqual(['Checking people.']);
     expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
     expect(texts).toEqual(['Renamed P1.']);
     expect(diffs).toEqual(['- people.items[0].id']);
+  });
+
+  it('queues a steering message without cancelling the active stream', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await queueMessage('session/id', 'queued-1', 'Focus on P2.', 'stream-token');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages/queue',
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
+        body: JSON.stringify({ message_id: 'queued-1', message: 'Focus on P2.' }),
+      },
+    );
   });
 
   it('approves a proposal with the revision the browser holds', async () => {

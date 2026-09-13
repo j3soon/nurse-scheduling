@@ -1,0 +1,42 @@
+{
+  "id": "pref-count-coefficients",
+  "fixture": "ward87",
+  "question": "P6 should work exactly 6 workload points over the roster, counting D as 1 and N as 2.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift count",
+          "person": [
+            "P6"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "D",
+            "N"
+          ],
+          "countShiftTypeCoefficients": [
+            [
+              "D",
+              1
+            ],
+            [
+              "N",
+              2
+            ]
+          ],
+          "expression": "x = T",
+          "target": 6,
+          "weight": "-.inf"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

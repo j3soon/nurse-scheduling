@@ -22,12 +22,12 @@
 import { expect, test } from './test';
 import { disableModalDialogs, seedSchedulingState } from './helpers';
 
-test('new schedule resets the app to the default seeded state from the home page flow', async ({ page }) => {
+test('new schedule resets the app to an empty state from the home page flow', async ({ page }) => {
   /*
    * Steps:
    * 1. Visit the home page and confirm the reset entry point is visible.
    * 2. Trigger the New Schedule confirmation flow from the real home page.
-   * 3. Confirm the default seeded state appears on downstream management pages.
+   * 3. Confirm downstream management pages contain no user-defined entries.
    */
   await disableModalDialogs(page);
 
@@ -39,24 +39,29 @@ test('new schedule resets the app to the default seeded state from the home page
 
   await page.goto('/people');
   await expect(page.getByRole('heading', { name: 'People Management' })).toBeVisible();
-  await expect(page.getByText('1. Person 1', { exact: true })).toBeVisible();
-  await expect(page.getByText('2. Person 2', { exact: true })).toBeVisible();
-  await expect(page.getByTitle('Group 1', { exact: true })).toBeVisible();
+  const peopleTable = page.getByRole('heading', { name: 'People', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  const peopleGroupsTable = page.getByRole('heading', { name: 'People Groups', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  await expect(peopleTable.locator('tbody tr')).toHaveCount(0);
+  await expect(peopleGroupsTable.locator('tbody tr')).toHaveCount(1);
+  await expect(peopleGroupsTable.getByText('Auto', { exact: true })).toBeVisible();
 
   await page.goto('/shift-types');
   await expect(page.getByRole('heading', { name: 'Shift Type Management' })).toBeVisible();
-  await expect(page.getByText('1. D', { exact: true })).toBeVisible();
-  await expect(page.getByText('2. D+', { exact: true })).toBeVisible();
-  await expect(page.getByTitle('Day', { exact: true }).first()).toBeVisible();
+  const shiftTypesTable = page.getByRole('heading', { name: 'Shift Types', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  const shiftTypeGroupsTable = page.getByRole('heading', { name: 'Shift Types Groups', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  await expect(shiftTypesTable.locator('tbody tr')).toHaveCount(1);
+  await expect(shiftTypesTable.getByText('Auto', { exact: true })).toBeVisible();
+  await expect(shiftTypeGroupsTable.locator('tbody tr')).toHaveCount(1);
+  await expect(shiftTypeGroupsTable.getByText('Auto', { exact: true })).toBeVisible();
 });
 
 test('new schedule reset is undoable from downstream pages', async ({ page }) => {
   /*
    * Steps:
    * 1. Seed a distinctive schedule, then reset through the New Schedule flow.
-   * 2. Confirm the seeded person disappeared and defaults are visible.
+   * 2. Confirm the seeded person disappeared and the reset state is empty.
    * 3. Undo from a downstream page and confirm the seeded state returns.
-   * 4. Redo and confirm the default reset state returns again.
+   * 4. Redo and confirm the empty reset state returns again.
   */
   await disableModalDialogs(page);
   await seedSchedulingState(page, {
@@ -74,17 +79,17 @@ test('new schedule reset is undoable from downstream pages', async ({ page }) =>
   await page.getByRole('button', { name: 'Reset Data' }).click();
 
   await page.goto('/people');
-  await expect(page.getByText('1. Person 1', { exact: true })).toBeVisible();
   await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
+  const peopleTable = page.getByRole('heading', { name: 'People', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
+  await expect(peopleTable.locator('tbody tr')).toHaveCount(0);
 
   await page.getByRole('heading', { name: 'People Management', exact: true }).click();
   await page.keyboard.press('Control+z');
   await expect(page.getByText('1. P9', { exact: true })).toBeVisible();
-  await expect(page.getByText('1. Person 1', { exact: true })).toHaveCount(0);
 
   await page.keyboard.press('Control+y');
-  await expect(page.getByText('1. Person 1', { exact: true })).toBeVisible();
   await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
+  await expect(peopleTable.locator('tbody tr')).toHaveCount(0);
 });
 
 test('new schedule reset clears custom people history and export layout', async ({ page }) => {

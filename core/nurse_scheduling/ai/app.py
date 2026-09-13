@@ -24,9 +24,10 @@ import base64
 import hashlib
 import json
 import logging
+import sys
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
@@ -41,11 +42,19 @@ from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 
 from ..sentry import init_sentry
-from ..server.auth import AUTH_SCHEME, create_auth_dependency
-from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
-from .config import AiSettings, validate_ai_auth_token
+from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
+from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
+from .config import AiSettings, validate_ai_auth_credentials
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
-from .provider import ChatContent, ChatMessage, OpenAiCompatibleProvider, ProviderError, ToolCapableChatProvider
+from .history import ChatHistory, stop_maintenance
+from .provider import (
+    ChatContent,
+    ChatMessage,
+    OpenAiCompatibleProvider,
+    ProviderError,
+    TokenUsage,
+    ToolCapableChatProvider,
+)
 from .sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .sandbox_agent import (
@@ -95,6 +104,23 @@ SUPPORTED_DOCUMENT_MEDIA_TYPES = {
     ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",),
 }
 logger = logging.getLogger("nurse_scheduling.ai")
+request_logger = logging.getLogger("nurse_scheduling.ai.requests")
+request_logger.setLevel(logging.INFO)
+request_logger.propagate = False
+if not request_logger.handlers:
+    request_handler = logging.StreamHandler(sys.stdout)
+    request_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    request_logger.addHandler(request_handler)
+
+QUESTION_LOG_PREVIEW_CHARS = 200
+
+
+def _question_log_preview(question: str) -> str:
+    """Return a compact, single-line question preview for request logs."""
+    preview = " ".join(question.split())
+    if len(preview) > QUESTION_LOG_PREVIEW_CHARS:
+        return f"{preview[: QUESTION_LOG_PREVIEW_CHARS - 3]}..."
+    return preview
 
 
 class ProposalResponse(BaseModel):
@@ -131,6 +157,12 @@ class ChatRequest(BaseModel):
     """One user question for an existing schedule chat."""
 
     message: str = Field(min_length=1, max_length=100_000)
+
+
+class QueueChatRequest(ChatRequest):
+    """One user message queued while the assistant is working."""
+
+    message_id: str = Field(min_length=1, max_length=100)
 
 
 class HealthResponse(BaseModel):
@@ -200,6 +232,9 @@ class ChatSession:
     revision: str
     history: list[ChatMessage] = field(default_factory=list)
     active: bool = False
+    accepting_steering: bool = False
+    steering_queue: list[tuple[str, str]] = field(default_factory=list)
+    steering_ids: set[str] = field(default_factory=set)
     proposal_yaml: str = ""
     proposal_diff: str = ""
 
@@ -236,15 +271,24 @@ class SessionStore:
             self._sessions[session.id] = session
             return session
 
-    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str]:
+    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str, str, str]:
         """Reserve a session and return its history and schedule snapshots."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
             if session.active:
                 raise HTTPException(status_code=409, detail="This chat session already has an active response.")
             session.active = True
+            session.accepting_steering = True
+            session.steering_queue.clear()
+            session.steering_ids.clear()
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            return list(session.history), session.schedule_yaml, session.revision
+            return (
+                list(session.history),
+                session.schedule_yaml,
+                session.revision,
+                session.proposal_yaml,
+                session.proposal_diff,
+            )
 
     def finish(
         self,
@@ -254,6 +298,7 @@ class SessionStore:
         proposal: tuple[str, str] | None = None,
         *,
         base_revision: str,
+        turn_messages: Sequence[ChatMessage] = (),
     ) -> TurnCompletion:
         """Save a completed turn when its schedule revision is still current."""
         with self._lock:
@@ -262,19 +307,58 @@ class SessionStore:
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
             if session.revision != base_revision:
                 session.active = False
+                session.accepting_steering = False
+                session.steering_queue.clear()
+                session.steering_ids.clear()
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
             session.history.extend(
-                [
+                turn_messages
+                or (
                     ChatMessage(role="user", content=user_message),
                     ChatMessage(role="assistant", content=assistant_message),
-                ]
+                )
             )
             session.history = session.history[-self._settings.max_history_messages :]
             proposal_saved = proposal is not None
             if proposal_saved:
                 session.proposal_yaml, session.proposal_diff = proposal
             session.active = False
+            session.accepting_steering = False
+            session.steering_queue.clear()
+            session.steering_ids.clear()
             return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
+
+    def queue_steering(
+        self,
+        session_id: str,
+        owner_token: str | None,
+        message_id: str,
+        message: str,
+    ) -> None:
+        """Queue a message for the next model boundary of an active response."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            if not session.active or not session.accepting_steering:
+                raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
+            if message_id in session.steering_ids:
+                return
+            if len(session.steering_queue) >= self._settings.max_history_messages:
+                raise HTTPException(status_code=429, detail="Too many messages are already queued.")
+            session.steering_queue.append((message_id, message))
+            session.steering_ids.add(message_id)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+
+    def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]:
+        """Drain queued messages and close the final race when a response is done."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None or not session.active:
+                return []
+            queued = list(session.steering_queue)
+            session.steering_queue.clear()
+            if close_if_empty and not queued:
+                session.accepting_steering = False
+            return queued
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
         """Replace the schedule snapshot, which drops any proposal made against the old one."""
@@ -340,6 +424,9 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is not None:
                 session.active = False
+                session.accepting_steering = False
+                session.steering_queue.clear()
+                session.steering_ids.clear()
 
     def _append_history_event(self, session: ChatSession, content: str) -> None:
         """Append one trusted application event within the caller's lock."""
@@ -529,9 +616,15 @@ def build_provider_messages(
     documents: list[DocumentAttachment],
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
+    pending_proposal: bool = False,
 ) -> list[ChatMessage]:
     """Build a provider prompt that keeps schedule data separate from instructions."""
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
+    if pending_proposal:
+        system_content += (
+            "\nA validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
+            "files described above."
+        )
     text_content = question
     if documents:
         document_data = json.dumps(
@@ -568,23 +661,38 @@ def create_app(
     """Construct the independently deployable AI application."""
     init_sentry(API_VERSION, app="ai-backend")
     settings = settings or AiSettings.from_env()
-    settings = replace(
-        settings,
-        auth_token=validate_ai_auth_token(settings.auth_token, required=settings.auth_required),
+    auth_token, auth_tokens = validate_ai_auth_credentials(
+        settings.auth_token,
+        settings.auth_tokens,
+        required=settings.auth_required,
     )
-    provider = provider or OpenAiCompatibleProvider(settings)
+    settings = replace(settings, auth_token=auth_token, auth_tokens=auth_tokens)
+    provider = provider or OpenAiCompatibleProvider(settings, include_usage=bool(settings.history_postgres_url))
+    history_log = (
+        ChatHistory(settings.history_postgres_url, settings.history_retention_days)
+        if settings.history_postgres_url
+        else None
+    )
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
-    require_auth = create_auth_dependency(settings.auth_token)
+    auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
+    require_auth = create_auth_dependency(auth_registry)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        async with managed_sandbox_factory(sandbox_factory):
-            yield
+        if history_log is not None and not await history_log.write("initialize"):
+            raise RuntimeError("AI history database initialization failed")
+        maintenance = asyncio.create_task(history_log.maintain()) if history_log is not None else None
+        try:
+            async with managed_sandbox_factory(sandbox_factory):
+                yield
+        finally:
+            if maintenance is not None:
+                await stop_maintenance(maintenance)
 
-    generated_docs_are_public = settings.auth_token is None
+    generated_docs_are_public = not auth_registry.enabled
     app = FastAPI(
         title="Nurse Scheduling AI API",
         version=API_VERSION,
@@ -601,6 +709,7 @@ def create_app(
         allow_headers=["Authorization", "Content-Type"],
     )
     app.state.settings = settings
+    app.state.auth_registry = auth_registry
     app.state.session_store = store
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
@@ -631,7 +740,7 @@ def create_app(
                 max_files=settings.max_document_files,
                 max_bytes_per_file=settings.max_document_bytes,
             ),
-            auth={"required": settings.auth_token is not None, "scheme": AUTH_SCHEME},
+            auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
         )
 
     @app.post(
@@ -642,6 +751,7 @@ def create_app(
     )
     async def create_session(
         request: CreateSessionRequest,
+        http_request: Request,
         response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ):
@@ -661,7 +771,35 @@ def create_app(
                 max_age=settings.session_ttl_seconds,
             )
         session = store.create(owner, request.schedule_yaml)
+        logger.info(
+            "Created AI session session_id=%s auth_credential_id=%s",
+            session.id,
+            http_request.state.auth_credential_id,
+        )
         return CreateSessionResponse(id=session.id)
+
+    @app.post(
+        "/sessions/{session_id}/messages/queue",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth)],
+    )
+    async def queue_message(
+        session_id: str,
+        request: QueueChatRequest,
+        http_request: Request,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Queue a follow-up for the next boundary in an active agent turn."""
+        message = _validate_question(request.message, settings)
+        store.queue_steering(session_id, owner, request.message_id, message)
+        request_logger.info(
+            "AI steering queued session_id=%s message_chars=%s message=%s auth_credential_id=%s",
+            session_id,
+            len(message),
+            json.dumps(_question_log_preview(message), ensure_ascii=False),
+            http_request.state.auth_credential_id,
+        )
+        return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
@@ -671,7 +809,33 @@ def create_app(
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
         question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
-        history, schedule_yaml, base_revision = store.begin(session_id, owner)
+        history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
+        turn_id = str(uuid4())
+        if history_log is not None:
+            try:
+                logged = await history_log.write(
+                    "start_turn",
+                    turn_id,
+                    session_id,
+                    request.state.auth_credential_id,
+                    question,
+                    settings.provider_model,
+                    len(images),
+                    len(documents),
+                )
+                if not logged:
+                    raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
+            except BaseException:
+                store.abort(session_id)
+                raise
+        request_logger.info(
+            "AI request started session_id=%s question_chars=%s images=%s documents=%s question=%s",
+            session_id,
+            len(question),
+            len(images),
+            len(documents),
+            json.dumps(_question_log_preview(question), ensure_ascii=False),
+        )
         stream_started = threading.Event()
         messages = build_provider_messages(
             history,
@@ -680,6 +844,7 @@ def create_app(
             images,
             documents,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
+            pending_proposal=bool(proposal_yaml),
         )
         history_question = question
         if images:
@@ -693,6 +858,11 @@ def create_app(
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
             completed = False
+            outcome = "cancelled"
+            error_code = None
+            usage = None
+            turn_messages = [ChatMessage(role="user", content=history_question)]
+            assistant_segment: list[str] = []
             try:
                 async with concurrency_limit:
                     agent_events = run_sandbox_agent(
@@ -701,13 +871,19 @@ def create_app(
                         schedule_yaml,
                         messages,
                         SandboxAgentLimits.from_settings(settings),
+                        take_steering=lambda close_if_empty: store.take_steering(session_id, close_if_empty),
+                        pending_proposal_yaml=proposal_yaml,
+                        pending_proposal_diff=proposal_diff,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):
                             assistant_parts.append(event.text)
+                            assistant_segment.append(event.text)
                             yield _sse_event("delta", {"text": event.text})
                         elif isinstance(event, AgentReasoning):
                             yield _sse_event("reasoning", {"text": event.text})
+                        elif isinstance(event, TokenUsage):
+                            usage = event if usage is None else usage + event
                         elif isinstance(event, AgentToolStart):
                             yield _sse_event(
                                 "tool_start",
@@ -726,6 +902,18 @@ def create_app(
                                     "ok": event.ok,
                                 },
                             )
+                        elif isinstance(event, AgentSteering):
+                            if assistant_segment:
+                                turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
+                            turn_messages.append(ChatMessage(role="user", content=event.text))
+                            assistant_segment.clear()
+                            yield _sse_event(
+                                "steering",
+                                {
+                                    "message_id": event.message_id,
+                                    "message": event.text,
+                                },
+                            )
                         elif isinstance(event, AgentScheduleChange):
                             yield _sse_event(
                                 "schedule_change",
@@ -736,42 +924,74 @@ def create_app(
                 proposal = None
                 if pending_proposal is not None:
                     proposal = (pending_proposal.text, pending_proposal.diff)
+                turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
                 completion = store.finish(
                     session_id,
                     history_question,
                     "".join(assistant_parts),
                     proposal,
                     base_revision=base_revision,
+                    turn_messages=turn_messages,
                 )
                 completed = True
+                outcome = "completed" if completion.turn_saved else "stale"
+                history_saved = None
+                if history_log is not None:
+                    history_saved = await history_log.write(
+                        "finish_turn",
+                        turn_id,
+                        "".join(assistant_parts),
+                        outcome,
+                        None,
+                        usage,
+                    )
                 if not completion.turn_saved:
                     yield _sse_event("stale", {"message": STALE_TURN_ERROR})
                     return
                 if completion.proposal_saved:
                     yield _sse_event("proposal", {"diff": pending_proposal.diff})
-                yield _sse_event("done", {"message_id": str(uuid4())})
+                done = {"message_id": turn_id}
+                if history_saved is not None:
+                    done["history_saved"] = history_saved
+                yield _sse_event("done", done)
             except asyncio.CancelledError:
                 raise
             except ProviderError:
+                outcome, error_code = "failed", "provider_error"
                 yield _sse_event("error", {"message": PROVIDER_ERROR})
             except SandboxTurnTimeoutError:
+                outcome, error_code = "failed", "sandbox_timeout"
                 yield _sse_event("error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
             except SandboxCandidateError as exc:
+                outcome, error_code = "failed", "candidate_validation"
                 logger.warning("AI candidate validation failed: %s", exc)
                 yield _sse_event("error", {"message": CANDIDATE_VALIDATION_ERROR})
             except SandboxError:
+                outcome, error_code = "failed", "sandbox_error"
                 logger.exception("AI sandbox turn failed")
                 yield _sse_event("error", {"message": "The temporary AI sandbox failed. Please try again."})
             except Exception:
+                outcome, error_code = "failed", "internal_error"
                 logger.exception("Unexpected AI stream failure")
                 yield _sse_event("error", {"message": "The AI response failed unexpectedly."})
             finally:
                 if not completed:
                     store.abort(session_id)
+                    if history_log is not None:
+                        await history_log.write(
+                            "finish_turn",
+                            turn_id,
+                            "".join(assistant_parts),
+                            outcome,
+                            error_code,
+                            usage,
+                        )
 
-        def abort_unstarted_stream() -> None:
+        async def abort_unstarted_stream() -> None:
             if not stream_started.is_set():
                 store.abort(session_id)
+                if history_log is not None:
+                    await history_log.write("finish_turn", turn_id, "", "cancelled", None, None)
 
         return StreamingResponse(
             generate_events(),

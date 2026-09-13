@@ -29,6 +29,7 @@ import pytest
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
+from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ProviderAttempt,
@@ -43,7 +44,7 @@ from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnMetrics
 
-from .ai_eval.grading import EvalCase, ToolUsageExpectation, load_cases
+from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
 from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
@@ -79,8 +80,10 @@ class ScriptedProvider:
 
     def __init__(self, *turns) -> None:
         self._turns = list(turns)
+        self.messages: list[Sequence[ChatMessage]] = []
 
     async def stream_events(self, messages: Sequence[ChatMessage], tools=None) -> AsyncIterator:
+        self.messages.append(messages)
         turn = self._turns.pop(0) if self._turns else [TextDelta("Done.")]
         if isinstance(turn, Exception):
             raise turn
@@ -133,7 +136,7 @@ def test_a_correct_answer_passes_and_records_its_cost():
     run = _run("ask-people-count", ScriptedProvider([TextDelta("There are 87 people.")]))
 
     assert run.passed
-    assert run.category == "00-summary"
+    assert run.category == "basics/00-summary"
     assert run.turns == 1
     assert run.tools == []
     assert not run.proposed
@@ -159,6 +162,34 @@ def test_provider_retries_are_reported_separately_from_logical_turns():
         "retries": 1,
         "retried_turns": 1,
         "attempts_per_turn": [2],
+    }
+
+
+def test_multi_tool_batches_are_recorded_per_model_turn():
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (
+                    ToolCall("call_0", READ_TOOL, '{"path":"schedule.yaml"}'),
+                    ToolCall("call_1", READ_TOOL, '{"path":"schedule.yaml"}'),
+                )
+            )
+        ],
+        [TextDelta("There are 87 people.")],
+    )
+
+    run = _run("ask-people-count", provider)
+
+    assert run.tool_calls_per_turn == [2, 0]
+    assert run.as_record()["tool_batches"] == {
+        "count": 1,
+        "multi_call_batches": 1,
+        "max_calls_per_batch": 2,
+        "calls_per_batch": [2],
+        "calls_per_turn": [2, 0],
+        "parallel_batches": 1,
+        "parallel_per_batch": [True],
+        "execution_seconds_per_batch": [pytest.approx(run.tool_batch_metrics[0].execution_seconds, abs=0.001)],
     }
 
 
@@ -359,9 +390,141 @@ def test_missing_provider_usage_is_recorded_explicitly():
 def test_cases_are_selected_by_id_and_by_category():
     cases = load_cases(CASES)
 
-    assert len(select(cases, [], [])) == len(cases)
+    assert {case.id for case in select(cases, [], [])} == {
+        "answer-about-earlier-proposal",
+        "apply-two-follow-up-edits",
+        "approve-then-follow-up-edit",
+        "cancel-ambiguous-request",
+        "clarify-night-request-scope",
+        "clarify-similar-people-groups",
+        "confirm-one-cancel-other",
+        "dates-range-expand-taiwan-detailed-yes",
+        "dates-range-expand-taiwan-no",
+        "dates-range-expand-taiwan-yes",
+        "dates-range-shrink",
+        "direct-combined-exact-edits",
+        "external-update-invalidates-pending",
+        "explain-ai-attachments",
+        "guide-add-person",
+        "guide-load-yaml",
+        "guide-run-optimization",
+        "ask-people-group-union",
+        "ask-positive-k-exceptions",
+        "people-add-group-request",
+        "people-group-members",
+        "people-move-between-groups",
+        "pref-add-two-student-requirements",
+        "pref-copy-night-requests",
+        "pref-copy-all-requests",
+        "pref-copy-selected-shift-requests",
+        "pref-group-affinity-specific-dates",
+        "pref-modify-group-shift-count",
+        "pref-modify-one-near-duplicate",
+        "pref-requirement-modify-existing",
+        "pronoun-selects-second-request",
+        "question-then-approve-pending",
+        "reject-contradicting-follow-up",
+        "reject-conflicting-shift-request",
+        "reject-shift-type-rename-collision",
+        "reject-unknown-person",
+        "reject-then-narrower-edit",
+        "revise-unapproved-proposal-twice",
+        "shift-type-remove-cascade",
+        "shift-type-rename-cascade",
+        "tool-write-minimal-schedule",
+        "remember-edit-after-clarification",
+        "revise-pending-copy-scope",
+    }
+    assert len(select(cases, [], [], full=True)) == len(cases)
     assert [case.id for case in select(cases, ["people-add"], [])] == ["people-add"]
-    assert {case.category for case in select(cases, [], ["06-refusal"])} == {"06-refusal"}
+    assert {case.category for case in select(cases, [], ["06-refusal"])} == {"basics/06-refusal"}
+    assert {case.category for case in select(cases, [], ["basics/06-refusal"])} == {"basics/06-refusal"}
+    assert {case.id for case in select(cases, [], [], ["taiwan-holidays"])} == {
+        "dates-range-expand-taiwan-detailed-yes",
+        "dates-range-expand-taiwan-no",
+        "dates-range-expand-taiwan-yes",
+        "heldout-expand-cross-year-no-renewal",
+    }
+
+
+def test_a_multi_user_turn_case_preserves_the_conversation_history():
+    case = EvalCase(
+        id="conversation",
+        fixture="new-schedule",
+        question="Expand the range.",
+        expect_proposal=False,
+        user_turns=("Expand the range.", "No."),
+        intermediate_answer_contains=(("Taiwan",),),
+    )
+    provider = ScriptedProvider([TextDelta("Renew Taiwan holidays?")], [TextDelta("Okay, unchanged.")])
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory()))
+
+    assert run.passed
+    assert len(provider.messages) == 2
+    assert provider.messages[1][-3:] == [
+        {"role": "user", "content": "Expand the range."},
+        {"role": "assistant", "content": "Renew Taiwan holidays?"},
+        {"role": "user", "content": "No."},
+    ]
+
+
+def test_a_multi_user_turn_case_can_grade_an_earlier_proposal():
+    case = EvalCase(
+        id="conversation",
+        fixture="new-schedule",
+        question="Set the description.",
+        expect_proposal=True,
+        proposal_turn=1,
+        user_turns=("Set the description.", "What is it now?"),
+        expected_diff=(ExpectedDiff(path="description", before="", after="Ready", compares_value=True),),
+        changes=("description",),
+        answer_contains=("Ready",),
+    )
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"edit description"}'),))],
+        [TextDelta("I set it to Ready.")],
+        [TextDelta("It is Ready.")],
+    )
+
+    def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        current = backend.files[WORKSPACE_SCHEDULE].decode()
+        backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Ready", 1).encode()
+        return CommandResult("updated\n", "", 0)
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory(edit)))
+
+    assert run.passed
+
+
+def test_approval_adopts_the_proposal_and_adds_trusted_history():
+    case = EvalCase(
+        id="approval",
+        fixture="new-schedule",
+        question="Set the description.",
+        expect_proposal=True,
+        proposal_turn=1,
+        user_turns=("Set the description.", "Is it current?"),
+        turn_actions=(TurnAction(1, "approve"),),
+        expected_diff=(ExpectedDiff(path="description", before="", after="Ready", compares_value=True),),
+        changes=("description",),
+        answer_contains=("current",),
+    )
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"command":"edit description"}'),))],
+        [TextDelta("I propose Ready.")],
+        [TextDelta("It is current.")],
+    )
+
+    def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
+        current = backend.files[WORKSPACE_SCHEDULE].decode()
+        backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Ready", 1).encode()
+        return CommandResult("updated\n", "", 0)
+
+    run = asyncio.run(run_case(provider, settings(), case, _factory(edit)))
+
+    assert run.passed
+    assert any("approved the previous schedule proposal" in message["content"] for message in provider.messages[2])
 
 
 def test_an_unknown_case_id_stops_the_run():
@@ -381,8 +544,25 @@ def test_run_all_bounds_parallelism_and_preserves_case_order(jobs: int, expected
 
 
 def test_run_all_rejects_non_positive_jobs():
-    with pytest.raises(ValueError, match="jobs must be positive"):
+    with pytest.raises(ValueError, match="jobs and repetitions must be positive"):
         asyncio.run(run_all([], settings(), ScriptedProvider(), 0, _factory()))
+
+
+def test_run_all_repeats_cases_with_one_global_concurrency_limit():
+    cases = load_cases(CASES)[:2]
+    provider = ConcurrentProvider()
+
+    runs = asyncio.run(run_all(cases, settings(), provider, 2, _factory(), repetitions=3))
+
+    assert provider.max_active == 2
+    assert [(run.case_id, run.repetition) for run in runs] == [
+        (cases[0].id, 1),
+        (cases[0].id, 2),
+        (cases[0].id, 3),
+        (cases[1].id, 1),
+        (cases[1].id, 2),
+        (cases[1].id, 3),
+    ]
 
 
 def test_the_summary_reports_each_category_and_every_failure():
@@ -409,6 +589,7 @@ def test_the_report_records_enough_to_explain_a_run():
 
     assert set(record) == {
         "case_id",
+        "repetition",
         "category",
         "passed",
         "seconds",
@@ -422,6 +603,7 @@ def test_the_report_records_enough_to_explain_a_run():
         "error",
         "token_usage",
         "provider_requests",
+        "tool_batches",
     }
     assert record["timing"]["end_to_end_seconds"] == pytest.approx(run.seconds, abs=0.001)
     assert record["timing"]["llm_inference_seconds"] == pytest.approx(run.llm_inference_seconds, abs=0.001)
@@ -468,6 +650,38 @@ def test_a_report_records_case_concurrency_and_wall_time(tmp_path: Path):
     assert "Wall time: 1.2 seconds" in text
 
 
+def test_repeated_report_records_stability_and_distinct_trajectories(tmp_path: Path):
+    runs = [
+        CaseRun("a", "00-summary", True, 2.0, 2, [], repetition=1),
+        CaseRun("a", "00-summary", False, 4.0, 4, [], error="provider failed", repetition=2),
+    ]
+
+    summary = write_report(runs, tmp_path / "run")
+
+    text = summary.read_text(encoding="utf-8")
+    assert "| a | 1/2 | 1 | 3.0 | 4.0 |" in text
+    assert (tmp_path / "run/cases/a--run-1.json").exists()
+    assert (tmp_path / "run/cases/a--run-2.json").exists()
+
+
+def test_report_compares_reliability_and_cost_with_a_baseline(tmp_path: Path):
+    baseline = tmp_path / "baseline"
+    write_report([CaseRun("a", "00-summary", False, 4.0, 4, [])], baseline)
+    current = CaseRun("a", "00-summary", True, 2.0, 2, [])
+
+    summary = write_report([current], tmp_path / "current", baseline_report=baseline)
+
+    assert "| a | 0% | 100% | +100% | -2.0 |" in summary.read_text(encoding="utf-8")
+
+
+def test_report_writes_reproducibility_metadata(tmp_path: Path):
+    metadata = {"git_revision": "abc", "prompt_sha256": "123"}
+
+    write_report([CaseRun("a", "00-summary", True, 2.0, 1, [])], tmp_path / "run", metadata=metadata)
+
+    assert json.loads((tmp_path / "run/metadata.json").read_text(encoding="utf-8")) == metadata
+
+
 def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
     metrics = SandboxTurnMetrics(
         provisioning_seconds=0.4,
@@ -492,6 +706,7 @@ def test_summary_markdown_reports_every_sandbox_metric_per_case(tmp_path: Path):
     assert "mutually exclusive lifetime components" in text
     assert "| a | 10.000 | 0.400 | 1.000 | 0.300 | 3.000 | 5.000 | 0.100 | 0.200 |" in text
     assert "| a | 2 | 1 | 2 | 0.100 | 0.060 |" in text
+    assert "| a | 0 | 0 | 0 | none | 0 | none |" in text
 
 
 def test_a_report_never_overwrites_an_earlier_one(tmp_path: Path):
@@ -516,9 +731,9 @@ def test_a_run_records_everything_it_did():
     assert trajectory["question"].startswith("Give this schedule the description")
     assert trajectory["prompt"][0]["role"] == "system"
     kinds = [event["kind"] for event in trajectory["events"]]
-    assert kinds == ["reasoning", "tool_start", "tool", "text", "proposal"]
-    assert trajectory["events"][1]["arguments"] == edit
-    tool_event = trajectory["events"][2]
+    assert kinds == ["user", "reasoning", "tool_start", "tool", "text", "proposal"]
+    assert trajectory["events"][2]["arguments"] == edit
+    tool_event = trajectory["events"][3]
     assert tool_event["ok"]
     assert "passed trusted server-side validation" in tool_event["result"]
     assert "March ward roster" in trajectory["proposal"]["schedule_yaml"]

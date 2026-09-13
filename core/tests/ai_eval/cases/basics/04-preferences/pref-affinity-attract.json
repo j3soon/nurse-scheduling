@@ -1,0 +1,31 @@
+{
+  "id": "pref-affinity-attract",
+  "fixture": "ward87",
+  "question": "P64 and P65 should be scheduled together on N shifts throughout the month.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift affinity",
+          "date": [
+            "ALL"
+          ],
+          "people1": [
+            "P64"
+          ],
+          "people2": [
+            "P65"
+          ],
+          "shiftTypes": [
+            "N"
+          ]
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

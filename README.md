@@ -356,7 +356,7 @@ Create a local configuration file. The real `docker/.env` file is ignored by Git
 ```sh
 cp docker/.env.example docker/.env
 # Review and update the AI values. Set AI_AUTH_REQUIRED=false and leave
-# AI_AUTH_TOKEN empty only when intentionally serving locally without auth.
+# AI_AUTH_TOKEN and AI_AUTH_TOKENS empty only for intentional local no-auth use.
 ```
 
 Start the AI backend and frontend in separate terminals:
@@ -530,8 +530,9 @@ export OPTIMIZE_DEFAULT_PRETTIFY=true
 ```
 
 The server is unauthenticated by default, which suits local development. Set
-`API_AUTH_TOKEN` to require a shared bearer token on every application route
-except `/info` and `/ready`:
+the legacy `API_AUTH_TOKEN` or a JSON object such as
+`API_AUTH_TOKENS='{"institution-a":"key"}'` to require a bearer key on every
+application route except `/info` and `/ready`:
 
 ```sh
 cd core
@@ -539,11 +540,11 @@ API_AUTH_TOKEN="$(openssl rand -base64 32)" \
 uvicorn nurse_scheduling.serve:app --no-access-log
 ```
 
-`GET /info` reports `auth.required` so the frontend can prompt for the token.
+`GET /info` reports `auth.required` so the frontend can prompt for a key.
 The generated `/openapi.json`, `/docs`, and `/redoc` routes are disabled while
 authentication is configured.
 The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployed backend
-refuses to start without a token, and serving one without authentication
+refuses to start without a configured key. Serving one without authentication
 requires `API_AUTH_REQUIRED=false`.
 
 Only advertise solvers available on that machine. The server validates the
@@ -611,32 +612,6 @@ HGETALL nurse_scheduling:jobs:v0:job:<job-id>:artifact_metadata
 
 Use `SCAN` instead of `KEYS *` on a busy database. Job artifacts are binary and
 are better inspected through the API download endpoint.
-
-For a graphical browser, run
-[Redis Insight](https://redis.io/docs/latest/operate/redisinsight/install/install-on-docker/)
-on the Compose network:
-
-```sh
-docker run --rm \
-  --name redisinsight \
-  --network nurse-scheduling-backend_default \
-  -p 127.0.0.1:5540:5540 \
-  -v redisinsight:/data \
-  redis/redisinsight:latest
-```
-
-Open `http://localhost:5540` and add a database with `redis://default@redis:6379`. Filter the Browser view with
-`nurse_scheduling:jobs:v0:*`.
-
-When Redis Insight runs on a remote VM, forward its locally bound port before
-opening it in a local browser:
-
-```sh
-ssh -L 5540:127.0.0.1:5540 user@your-server
-```
-
-Keep Redis and Redis Insight off public interfaces. Redis Insight can modify or
-delete stored data.
 
 To run one backend worker with process-local memory and no Redis service, use
 the pre-Redis deployment configuration:

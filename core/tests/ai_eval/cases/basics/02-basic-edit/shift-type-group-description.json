@@ -1,0 +1,20 @@
+{
+  "id": "shift-type-group-description",
+  "fixture": "ward87",
+  "question": "Describe the Night shift type group as 'Overnight cover'.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "shiftTypes.groups",
+      "removed": [
+        {"id": "Night", "members": ["N", "N+", "N~"], "description": ""}
+      ],
+      "added": [
+        {"id": "Night", "members": ["N", "N+", "N~"], "description": "Overnight cover"}
+      ]
+    }
+  ],
+  "changes": [
+    "shiftTypes.groups"
+  ]
+}

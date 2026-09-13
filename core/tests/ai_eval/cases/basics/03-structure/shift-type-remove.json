@@ -1,0 +1,62 @@
+{
+  "id": "shift-type-remove",
+  "fixture": "ward87",
+  "question": "We do not use the E~ shift type. Remove it, including from any group.",
+  "expect_proposal": true,
+  "changes": [
+    "shiftTypes.items",
+    "shiftTypes.groups"
+  ],
+  "expected_diff": [
+    {
+      "path": "shiftTypes.items",
+      "removed": [
+        {
+          "id": "E~",
+          "description": "新人不算人力"
+        }
+      ]
+    },
+    {
+      "path": "shiftTypes.groups",
+      "removed": [
+        {
+          "id": "Evening",
+          "members": [
+            "E",
+            "E+",
+            "E~"
+          ],
+          "description": ""
+        },
+        {
+          "id": "Student Shifts",
+          "members": [
+            "D~",
+            "E~",
+            "N~"
+          ],
+          "description": "includes D~, E~, N~"
+        }
+      ],
+      "added": [
+        {
+          "id": "Evening",
+          "members": [
+            "E",
+            "E+"
+          ],
+          "description": ""
+        },
+        {
+          "id": "Student Shifts",
+          "members": [
+            "D~",
+            "N~"
+          ],
+          "description": "includes D~, N~"
+        }
+      ]
+    }
+  ]
+}

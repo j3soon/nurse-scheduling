@@ -35,6 +35,9 @@ from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_SCHEMAS,
+    REFERENCE_USER_GUIDE,
+    WORKSPACE_PENDING_DIFF,
+    WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
     SandboxAgentLimits,
@@ -72,6 +75,8 @@ def _limits(**overrides) -> SandboxAgentLimits:
         "turn_timeout_seconds": 2,
         "cleanup_timeout_seconds": 1,
         "bash_command_timeout_seconds": 10,
+        "max_tool_rounds": 10,
+        "max_tool_calls": 20,
     }
     values.update(overrides)
     return SandboxAgentLimits(**values)
@@ -87,7 +92,14 @@ def _rename_handler(_command: str, _timeout: float | None, backend: FakeSandboxB
     return CommandResult("updated\n", "", 0)
 
 
-def _collect(provider, factory, **limit_overrides) -> list:
+def _collect(
+    provider,
+    factory,
+    *,
+    pending_proposal_yaml: str = "",
+    pending_proposal_diff: str = "",
+    **limit_overrides,
+) -> list:
     async def collect() -> list:
         return [
             event
@@ -97,6 +109,8 @@ def _collect(provider, factory, **limit_overrides) -> list:
                 schedule_yaml(),
                 MESSAGES,
                 _limits(**limit_overrides),
+                pending_proposal_yaml=pending_proposal_yaml,
+                pending_proposal_diff=pending_proposal_diff,
             )
         ]
 
@@ -113,9 +127,12 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert backend.closed
     assert WORKSPACE_SCHEDULE in backend.files
     assert set(REFERENCE_SCHEMAS.values()) <= backend.files.keys()
+    assert b"# Experimental AI Chat" in backend.files[f"{REFERENCE_USER_GUIDE}/experimental-ai.md"]
+    assert b"# People" in backend.files[f"{REFERENCE_USER_GUIDE}/people.md"]
     assert b"Path: preferences.shift count" in backend.files[REFERENCE_SCHEMAS["preferences"]]
     assert b"Path: export.formatting.cell" in backend.files[REFERENCE_SCHEMAS["export"]]
     assert b"Path: people.items" in backend.files[REFERENCE_SCHEMAS["core"]]
+    assert b"SPECIAL_DATE_INFO" in backend.files[REFERENCE_SCHEMAS["taiwan-holidays"]]
     assert backend.commands == [("edit", None)]
     assert [tool["function"]["name"] for tool in provider.requests[0][1]] == [
         READ_TOOL,
@@ -134,6 +151,24 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     proposal = next(event for event in events if isinstance(event, AgentProposal))
     assert "description: Head" in proposal.text
     assert "people.items[0].description" in proposal.diff
+
+
+def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
+    factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
+
+    _collect(
+        ScriptedProvider(
+            [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_PENDING_PROPOSAL})),))],
+            [TextDelta("The pending description is Ready.")],
+        ),
+        factory,
+        pending_proposal_yaml="apiVersion: alpha\ndescription: Ready\n",
+        pending_proposal_diff='- description: "" -> "Ready"',
+    )
+
+    backend = factory.created[0]
+    assert backend.files[WORKSPACE_PENDING_PROPOSAL] == b"apiVersion: alpha\ndescription: Ready\n"
+    assert backend.files[WORKSPACE_PENDING_DIFF] == b'- description: "" -> "Ready"'
 
 
 def test_write_tool_rewrites_validates_and_proposes_the_schedule():
@@ -221,12 +256,21 @@ def test_read_tool_does_not_trigger_a_redundant_schedule_change_scan():
     assert backend.read_paths.count(WORKSPACE_SCHEDULE) == 2
 
 
-def test_separate_agent_turns_get_fresh_isolated_sandboxes():
+def test_text_only_turns_do_not_start_sandboxes():
     factory = FakeSandboxFactory()
     provider = ScriptedProvider([TextDelta("No change.")])
 
     _collect(provider, factory)
     _collect(provider, factory)
+
+    assert factory.created == []
+
+
+def test_separate_tool_turns_get_fresh_isolated_sandboxes():
+    factory = FakeSandboxFactory()
+
+    _collect(ScriptedProvider(_run_call(), [TextDelta("No change.")]), factory)
+    _collect(ScriptedProvider(_run_call(), [TextDelta("No change.")]), factory)
 
     assert len(factory.created) == 2
     assert factory.created[0].sandbox_id != factory.created[1].sandbox_id
@@ -243,7 +287,7 @@ def test_separate_agent_turns_get_fresh_isolated_sandboxes():
     ],
     ids=["model", "command"],
 )
-def test_model_or_command_failure_closes_the_sandbox(failure: BaseException):
+def test_failure_before_tools_skips_sandbox_and_command_failure_closes_it(failure: BaseException):
     if isinstance(failure, ProviderError):
         provider = ScriptedProvider(failure)
         factory = FakeSandboxFactory()
@@ -258,7 +302,10 @@ def test_model_or_command_failure_closes_the_sandbox(failure: BaseException):
     with pytest.raises(type(failure)):
         _collect(provider, factory)
 
-    assert factory.created[0].closed
+    if isinstance(failure, ProviderError):
+        assert factory.created == []
+    else:
+        assert factory.created[0].closed
 
 
 def test_candidate_read_failure_closes_the_sandbox():
@@ -269,7 +316,7 @@ def test_candidate_read_failure_closes_the_sandbox():
     factory = FakeSandboxFactory(ReadFailureBackend)
 
     with pytest.raises(SandboxError, match="cannot read"):
-        _collect(ScriptedProvider([TextDelta("Done.")]), factory)
+        _collect(ScriptedProvider(_run_call(), [TextDelta("Done.")]), factory)
 
     assert factory.created[0].closed
 
@@ -367,8 +414,8 @@ def test_a_turn_that_ends_without_the_working_copy_fails_candidate_validation():
     assert factory.created[0].closed
 
 
-def test_cancelling_the_model_turn_closes_the_sandbox():
-    async def exercise() -> FakeSandboxBackend:
+def test_cancelling_before_a_tool_call_does_not_start_a_sandbox():
+    async def exercise() -> FakeSandboxFactory:
         entered = asyncio.Event()
 
         class WaitingProvider:
@@ -394,12 +441,12 @@ def test_cancelling_the_model_turn_closes_the_sandbox():
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        return factory.created[0]
+        return factory
 
-    assert asyncio.run(exercise()).closed
+    assert asyncio.run(exercise()).created == []
 
 
-def test_whole_turn_timeout_closes_the_sandbox():
+def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
     class WaitingProvider:
         async def stream_events(self, _messages, tools=None):
             await asyncio.Event().wait()
@@ -410,4 +457,4 @@ def test_whole_turn_timeout_closes_the_sandbox():
     with pytest.raises(SandboxTurnTimeoutError, match="0.01-second limit"):
         _collect(WaitingProvider(), factory, turn_timeout_seconds=0.01)
 
-    assert factory.created[0].closed
+    assert factory.created == []

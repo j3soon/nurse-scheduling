@@ -12,9 +12,48 @@ x-sentry-environment: &sentry-environment
   DISABLE_SENTRY: "${DISABLE_SENTRY:-}"
 
 services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    networks:
+      - postgres
+    environment:
+      POSTGRES_DB: ai_history
+      POSTGRES_USER: ai_history
+      POSTGRES_PASSWORD: ai_history
+    volumes:
+      - postgres-ai-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_history -d ai_history"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  pgadmin:
+    profiles: ["inspection"]
+    image: dpage/pgadmin4:9.17
+    restart: "no"
+    networks:
+      - postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@nursescheduling.org
+      PGADMIN_DEFAULT_PASSWORD: pgadmin
+      PGADMIN_DISABLE_POSTFIX: "1"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
+    ports:
+      - "127.0.0.1:5050:80"
+    volumes:
+      - ./pgadmin-servers.json:/pgadmin4/servers.json:ro
+
   redis:
     image: redis:8.8
     restart: unless-stopped
+    networks:
+      - redis
     # Allow a final RDB save to finish instead of inheriting Compose's
     # ten-second grace period before SIGKILL.
     stop_grace_period: 1m
@@ -37,10 +76,31 @@ services:
       timeout: 3s
       retries: 30
 
+  redisinsight:
+    profiles: ["inspection"]
+    image: redis/redisinsight:3.8.0
+    restart: "no"
+    networks:
+      - redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_ALIAS: Nurse Scheduling Redis
+      RI_REDIS_DB: "0"
+      RI_DATABASE_MANAGEMENT: "false"
+    ports:
+      - "127.0.0.1:5540:5540"
+
   api:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
+    networks:
+      - api
+      - redis
     depends_on:
       redis:
         condition: service_healthy
@@ -59,6 +119,7 @@ services:
       # without a token. Serving it open needs a deliberate API_AUTH_REQUIRED=false.
       API_AUTH_REQUIRED: "${API_AUTH_REQUIRED:-true}"
       API_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
+      API_AUTH_TOKENS: "${API_AUTH_TOKENS:-}"
       CLAIMED_PERFORMANCE_SCORE: "${CLAIMED_PERFORMANCE_SCORE:-}"
       CLAIMED_PERFORMANCE_APP_VERSION: "${CLAIMED_PERFORMANCE_APP_VERSION:-}"
       CLAIMED_PERFORMANCE_MEASURED_AT: "${CLAIMED_PERFORMANCE_MEASURED_AT:-}"
@@ -91,14 +152,23 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
+    networks:
+      - ai
+      - postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       <<: *sentry-environment
       # Compose-hosted AI requires authentication unless the env file explicitly opts out.
       AI_AUTH_REQUIRED: "${AI_AUTH_REQUIRED:-true}"
       AI_AUTH_TOKEN: "${AI_AUTH_TOKEN:-}"
+      AI_AUTH_TOKENS: "${AI_AUTH_TOKENS:-}"
       AI_PROVIDER_BASE_URL: "${AI_PROVIDER_BASE_URL:-}"
       AI_PROVIDER_API_KEY: "${AI_PROVIDER_API_KEY:-}"
       AI_PROVIDER_MODEL: "${AI_PROVIDER_MODEL:-local-model}"
+      AI_HISTORY_POSTGRES_URL: postgresql://ai_history:ai_history@postgres:5432/ai_history
+      AI_HISTORY_RETENTION_DAYS: "${AI_HISTORY_RETENTION_DAYS:-30}"
       AI_PROVIDER_TIMEOUT_SECONDS: "${AI_PROVIDER_TIMEOUT_SECONDS:-120}"
       AI_PROVIDER_MAX_ATTEMPTS: "${AI_PROVIDER_MAX_ATTEMPTS:-3}"
       AI_PROVIDER_RETRY_BACKOFF_SECONDS: "${AI_PROVIDER_RETRY_BACKOFF_SECONDS:-1}"
@@ -107,6 +177,8 @@ services:
       E2B_TEMPLATE: "${E2B_TEMPLATE:-nurse-scheduling-ai-sandbox}"
       AI_SANDBOX_COMMAND_TIMEOUT_SECONDS: "${AI_SANDBOX_COMMAND_TIMEOUT_SECONDS:-10}"
       AI_SANDBOX_TURN_TIMEOUT_SECONDS: "${AI_SANDBOX_TURN_TIMEOUT_SECONDS:-900}"
+      AI_AGENT_MAX_TOOL_ROUNDS: "${AI_AGENT_MAX_TOOL_ROUNDS:-10}"
+      AI_AGENT_MAX_TOOL_CALLS: "${AI_AGENT_MAX_TOOL_CALLS:-20}"
       AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS: "${AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS:-10}"
       AI_SANDBOX_MAX_ATTEMPTS: "${AI_SANDBOX_MAX_ATTEMPTS:-3}"
       AI_SANDBOX_RETRY_BACKOFF_SECONDS: "${AI_SANDBOX_RETRY_BACKOFF_SECONDS:-0.5}"
@@ -137,6 +209,10 @@ services:
   nginx:
     image: nginx:1.29-alpine
     restart: unless-stopped
+    networks:
+      - tunnel
+      - api
+      - ai
     depends_on:
       api:
         condition: service_healthy
@@ -155,6 +231,8 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
+    networks:
+      - tunnel
     depends_on:
       nginx:
         condition: service_healthy
@@ -165,6 +243,8 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: "no"
+    networks:
+      - tunnel
     depends_on:
       cloudflared:
         condition: service_started
@@ -179,16 +259,17 @@ services:
       DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS: ${DIAGNOSTIC_WORKFLOW_TIMEOUT_SECONDS:-600}
       DIAGNOSTIC_JOB_TIMEOUT_SECONDS: ${DIAGNOSTIC_JOB_TIMEOUT_SECONDS:-3600}
       DIAGNOSTIC_REPORT_DIR: /reports
-      DIAGNOSTIC_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
+      DIAGNOSTIC_AUTH_TOKEN: "${DIAGNOSTIC_AUTH_TOKEN:-${API_AUTH_TOKEN:-}}"
     command: ["python", "-m", "nurse_scheduling.server.diagnostic"]
     volumes:
       - diagnostic-reports:/reports
 
   usage-reporter:
-    profiles: ["reporting"]
     image: ${COMPOSE_PROJECT_NAME:-nurse-scheduling-backend}-api:local
     build: *api-build
     restart: unless-stopped
+    networks:
+      - redis
     depends_on:
       redis:
         condition: service_healthy
@@ -211,6 +292,14 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
 
+networks:
+  tunnel:
+  api:
+  ai:
+  redis:
+  postgres:
+
 volumes:
+  postgres-ai-data:
   redis-data:
   diagnostic-reports:
