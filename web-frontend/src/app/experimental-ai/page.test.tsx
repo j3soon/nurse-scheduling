@@ -213,7 +213,7 @@ describe('ExperimentalAiPage', () => {
     const recognition: {
       onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
       onend: (() => void) | null;
-      onerror: (() => void) | null;
+      onerror: ((event: { error?: string }) => void) | null;
       continuous: boolean;
       interimResults: boolean;
       lang: string;
@@ -259,11 +259,59 @@ describe('ExperimentalAiPage', () => {
       act(() => recognition.onresult?.({ results: [[{ transcript: 'add a night shift' }]] }));
 
       expect(draft).toHaveValue('Please add a night shift');
+      // Continuous recognition reports one entry per utterance, so segments need a separator.
+      act(() => recognition.onresult?.({
+        results: [[{ transcript: 'add a night shift' }], [{ transcript: 'for P1' }]],
+      }));
+
+      expect(draft).toHaveValue('Please add a night shift for P1');
+      act(() => recognition.onresult?.({
+        results: [[{ transcript: ' add a night shift ' }], [{ transcript: ' for P1' }]],
+      }));
+
+      expect(draft).toHaveValue('Please add a night shift for P1');
       await user.click(screen.getByRole('button', { name: 'Stop dictation' }));
       expect(recognition.stop).toHaveBeenCalledOnce();
       act(() => recognition.onend?.());
       expect(languageSelect).toBeEnabled();
       expect(screen.getByRole('button', { name: 'Start dictation' })).toHaveAttribute('aria-pressed', 'false');
+    } finally {
+      delete window.SpeechRecognition;
+    }
+  });
+
+  it('reports a real dictation fault but stays quiet when nobody spoke', async () => {
+    const recognition = {
+      continuous: false,
+      interimResults: false,
+      lang: '',
+      onresult: null,
+      onend: null as (() => void) | null,
+      onerror: null as ((event: { error?: string }) => void) | null,
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    Object.defineProperty(window, 'SpeechRecognition', {
+      configurable: true,
+      value: function MockSpeechRecognition() {
+        return recognition;
+      },
+    });
+    const user = userEvent.setup();
+
+    try {
+      render(<ExperimentalAiPage />);
+      await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
+
+      // Silence and a deliberate stop both arrive as errors, so neither may alarm the user.
+      act(() => recognition.onerror?.({ error: 'no-speech' }));
+      expect(screen.queryByText(/Speech recognition stopped/)).not.toBeInTheDocument();
+      act(() => recognition.onerror?.({ error: 'aborted' }));
+      expect(screen.queryByText(/Speech recognition stopped/)).not.toBeInTheDocument();
+
+      await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
+      act(() => recognition.onerror?.({ error: 'audio-capture' }));
+      expect(await screen.findByText(/Speech recognition stopped/)).toBeInTheDocument();
     } finally {
       delete window.SpeechRecognition;
     }

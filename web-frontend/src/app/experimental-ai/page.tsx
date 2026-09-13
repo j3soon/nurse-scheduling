@@ -113,6 +113,13 @@ interface BrowserSpeechRecognitionEvent {
   };
 }
 
+interface BrowserSpeechRecognitionErrorEvent {
+  readonly error?: string;
+}
+
+// Silence and a deliberate stop both surface as errors, so only a real fault is reported.
+const BENIGN_SPEECH_ERRORS = new Set(['no-speech', 'aborted']);
+
 interface BrowserSpeechRecognition {
   continuous: boolean;
   interimResults: boolean;
@@ -120,7 +127,7 @@ interface BrowserSpeechRecognition {
   processLocally?: boolean;
   onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
   onend: (() => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
   start(): void;
   stop(): void;
 }
@@ -966,17 +973,21 @@ export default function ExperimentalAiPage() {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.onresult = event => {
+      // Continuous recognition reports one entry per utterance, and browsers differ on
+      // whether a transcript carries its own leading space.
       const transcript = Array.from({ length: event.results.length }, (_, index) => (
         event.results[index][0]?.transcript ?? ''
-      )).join('').trim();
+      )).join(' ').replace(/\s+/g, ' ').trim();
       setDraft(`${originalDraft}${originalDraft && transcript ? ' ' : ''}${transcript}`);
     };
     recognition.onend = () => {
       if (speechRecognitionRef.current === recognition) speechRecognitionRef.current = null;
       setIsListening(false);
     };
-    recognition.onerror = () => {
-      setError('Speech recognition stopped before it could transcribe audio.');
+    recognition.onerror = event => {
+      if (!BENIGN_SPEECH_ERRORS.has(event?.error ?? '')) {
+        setError('Speech recognition stopped before it could transcribe audio.');
+      }
       setIsListening(false);
     };
     speechRecognitionRef.current = recognition;
