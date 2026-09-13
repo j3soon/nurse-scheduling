@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 import fakeredis
 import pytest
+import redis
 
 from nurse_scheduling.server.config import ServerSettings
 from nurse_scheduling.server.jobs.controller import JobController
@@ -39,7 +40,13 @@ from nurse_scheduling.server.jobs.models import (
     StoredArtifact,
     StoreLimits,
 )
-from nurse_scheduling.server.usage_metrics import REPORT_LOCK_SECONDS, RedisUsageMetrics, week_bounds, week_id_for
+from nurse_scheduling.server.usage_metrics import (
+    REPORT_LOCK_SECONDS,
+    RedisUsageMetrics,
+    schedule_basics_for,
+    week_bounds,
+    week_id_for,
+)
 from nurse_scheduling.server.usage_report import (
     MailgunReportTransport,
     UsageReporter,
@@ -203,7 +210,10 @@ def test_malformed_schedule_omits_basics_without_dropping_job_telemetry(redis_cl
         report_timezone=timezone.utc,
     )
     submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
-    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted, b"not: [valid"))
+    basics = schedule_basics_for(b"not: [valid")
+
+    assert basics == {}
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted, basics))
 
     entry = metrics.load_week("2026-08-23").entries[0]
 
@@ -212,6 +222,74 @@ def test_malformed_schedule_omits_basics_without_dropping_job_telemetry(redis_cl
     assert entry.shift_type_count is None
     assert entry.date_range_start is None
     assert entry.date_range_end is None
+
+
+def test_submitted_schedule_is_parsed_once_even_when_the_transaction_retries(monkeypatch):
+    from nurse_scheduling.server.stores import redis as redis_store
+
+    fake_server = fakeredis.FakeServer()
+    monkeypatch.setattr(
+        redis_store.redis.Redis,
+        "from_url",
+        lambda url, **kwargs: fakeredis.FakeRedis.from_url(url, server=fake_server, **kwargs),
+    )
+    store = redis_store.RedisJobStore(
+        url="redis://localhost/0",
+        key_prefix="test:jobs",
+        usage_metrics_key_prefix="test:usage",
+        usage_metrics_retention_days=30,
+    )
+    parses = 0
+    parse_schedule_basics = redis_store.schedule_basics_for
+
+    def counted_schedule_basics(input_bytes: bytes):
+        nonlocal parses
+        parses += 1
+        return parse_schedule_basics(input_bytes)
+
+    monkeypatch.setattr(redis_store, "schedule_basics_for", counted_schedule_basics)
+    _raise_watch_error_once(store, monkeypatch)
+    created = store.create(
+        _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc)),
+        PRIVATE_SCHEDULE,
+        StoreLimits(max_pending=10, max_retained=10),
+        events=(),
+    )
+
+    # A watched transaction retries its whole body, and the submitted YAML can be megabytes.
+    assert parses == 1
+    entry = store._usage_metrics.load_week("2026-08-23").entries[0]
+    assert entry.job_id == created.id
+    assert entry.people_count == 2
+
+
+def _raise_watch_error_once(store, monkeypatch) -> None:
+    """Force exactly one optimistic-locking retry of the next watched transaction."""
+    original_pipeline = store._redis.pipeline
+    error_pending = True
+
+    class WatchErrorPipeline:
+        def __init__(self, pipeline):
+            self.pipeline = pipeline
+
+        def __enter__(self):
+            self.pipeline.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.pipeline.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.pipeline, name)
+
+        def execute(self):
+            nonlocal error_pending
+            if error_pending:
+                error_pending = False
+                raise redis.WatchError
+            return self.pipeline.execute()
+
+    monkeypatch.setattr(store._redis, "pipeline", lambda: WatchErrorPipeline(original_pipeline()))
 
 
 def test_terminal_events_are_bucketed_when_they_occur(redis_client):

@@ -81,7 +81,7 @@ def week_bounds(week_id: str, report_timezone: tzinfo | None = None) -> tuple[da
     return starts_at, ends_at
 
 
-def _schedule_basics(input_bytes: bytes) -> dict[str, str | int | float]:
+def schedule_basics_for(input_bytes: bytes) -> dict[str, str | int | float]:
     """Extract bounded aggregate schedule fields without retaining YAML content."""
     try:
         schedule = _load_yaml(input_bytes)
@@ -166,9 +166,14 @@ class RedisUsageMetrics:
         self._retention_days = retention_days
         self._timezone = report_timezone or machine_timezone()
 
-    def stage_job_created(self, transaction: Any, job: Job, input_bytes: bytes | None = None) -> None:
+    def stage_job_created(
+        self,
+        transaction: Any,
+        job: Job,
+        schedule_basics: dict[str, str | int | float] | None = None,
+    ) -> None:
         """Store a queued telemetry row with the job creation transaction."""
-        self._stage_snapshot(transaction, job, job.created_at, input_bytes=input_bytes)
+        self._stage_snapshot(transaction, job, job.created_at, schedule_basics=schedule_basics)
 
     def stage_job_started(self, transaction: Any, job: Job) -> None:
         """Update a telemetry row with start and queue-wait information."""
@@ -455,12 +460,12 @@ class RedisUsageMetrics:
         job: Job,
         occurred_at: datetime,
         *,
-        input_bytes: bytes | None = None,
+        schedule_basics: dict[str, str | int | float] | None = None,
     ) -> None:
         """Write the latest minimal snapshot and associate it with its event week."""
         week_id = week_id_for(occurred_at, self._timezone)
         self._stage_week_reference(transaction, week_id, job.id, occurred_at)
-        transaction.hset(self._entry_key(job.id), mapping=self._entry_mapping(job, input_bytes))
+        transaction.hset(self._entry_key(job.id), mapping=self._entry_mapping(job, schedule_basics))
         transaction.expireat(self._entry_key(job.id), self._week_expires_at(week_id))
 
     def _stage_week_reference(
@@ -476,7 +481,10 @@ class RedisUsageMetrics:
         transaction.expireat(week_jobs_key, self._week_expires_at(week_id))
 
     @staticmethod
-    def _entry_mapping(job: Job, input_bytes: bytes | None = None) -> dict[str, str | int | float]:
+    def _entry_mapping(
+        job: Job,
+        schedule_basics: dict[str, str | int | float] | None = None,
+    ) -> dict[str, str | int | float]:
         """Serialize the reportable fields available in one job snapshot."""
         mapping: dict[str, str | int | float] = {
             "job_id": job.id,
@@ -486,8 +494,8 @@ class RedisUsageMetrics:
             "created_at": job.created_at.isoformat(),
             "timeout_seconds": job.request.timeout_seconds,
         }
-        if input_bytes is not None:
-            mapping.update(_schedule_basics(input_bytes))
+        if schedule_basics:
+            mapping.update(schedule_basics)
         if job.started_at is not None:
             mapping["started_at"] = job.started_at.isoformat()
             mapping["queue_wait_seconds"] = max(0.0, (job.started_at - job.created_at).total_seconds())
