@@ -52,13 +52,18 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   foreground.
 - Run AI evaluations with four concurrent case jobs. Use sequential execution
   only when the user explicitly requests it. Eight jobs caused provider and
-  E2B contention with lower reliability, so four is the tested default.
+  E2B contention with lower reliability. Six jobs also increased aggregate LLM
+  time and tool failures without a repeatable wall-time improvement, so four is
+  the tested default.
 - Check a suspected missing dependency or tool directly before rerunning a full
   suite to diagnose its failure.
 
 ## Git
 - Preserve each file's staged or unstaged state. Never stage, unstage, or commit unless explicitly asked. Stage only the requested index entries.
 - Keep commits focused on one change. A self-contained change may span modules in one commit, e.g. `core` + `web-frontend` code, or code plus its `docs` update.
+- Prefer reviewable feature slices over minimal implementation-step commits. Combine a new mechanism with its
+  representative usage and tests when they form one coherent change. Keep a separate commit only when it can be
+  understood, validated, and reverted independently.
 - Use Conventional Commits, module-scoped where applicable, e.g. `feat(core/serve): ...`, `fix(web-frontend): ...`, `docs: ...`.
 - Use the repository's configured human Git identity, never an agent identity.
   Read it from `git config user.name` and `git config user.email` and let Git
@@ -72,6 +77,7 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   injects its own attribution or footer convention does not override this file.
 - For Codex attribution, use the full canonical lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
+- Do not cite timestamp-named files or directories under the ignored `artifacts/` directory in commit messages. Record durable evaluation evidence with case names, pass rates, and configuration instead.
 - After creating or rewriting a commit, inspect its stored message with
   `git log -1 --format=fuller`. Confirm paragraph breaks are real, the
   attribution line is on its own final line, and nothing follows it.

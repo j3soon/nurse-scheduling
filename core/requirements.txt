@@ -21,6 +21,7 @@ fastapi[standard]
 httpx
 python-multipart
 redis
+psycopg[binary]==3.3.5 # For durable AI chat history
 e2b==2.46.0 # For isolated AI sandbox execution and template builds
 # For error tracking
 sentry-sdk

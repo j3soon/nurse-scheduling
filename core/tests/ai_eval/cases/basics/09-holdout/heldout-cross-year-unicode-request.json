@@ -1,0 +1,23 @@
+{
+  "id": "heldout-cross-year-unicode-request",
+  "fixture": "cross-year-unit",
+  "question": "Require 王小明 to work N on January 1, 2026.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": ["王小明"],
+          "date": ["2026-01-01"],
+          "shiftType": ["N"],
+          "weight": ".inf"
+        }
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["holdout", "cross-year", "unicode", "generalization"],
+  "note": "A cross-year fixture requires the full-date selector and preserves a non-ASCII person ID."
+}

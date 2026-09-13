@@ -19,8 +19,11 @@
 
 # This code is mostly AI generated.
 
+import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +31,8 @@ from .provider import (
     ChatMessage,
     ReasoningDelta,
     TextDelta,
+    TokenUsage,
+    ToolCall,
     ToolCallRequest,
     ToolCapableChatProvider,
     assistant_tool_call_message,
@@ -70,6 +75,14 @@ class AgentToolUse:
 
 
 @dataclass(frozen=True)
+class AgentSteering:
+    """One queued user message injected at a model turn boundary."""
+
+    message_id: str
+    text: str
+
+
+@dataclass(frozen=True)
 class AgentProposal:
     """The schedule the run ended with, waiting for the user to approve it."""
 
@@ -77,8 +90,15 @@ class AgentProposal:
     diff: str
 
 
-AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentProposal
+AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentSteering | AgentProposal | TokenUsage
 ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]
+ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
+SteeringSource = Callable[[bool], Sequence[tuple[str, str]]]
+
+
+@asynccontextmanager
+async def _unbatched_activity() -> AsyncIterator[None]:
+    yield
 
 
 @dataclass(frozen=True)
@@ -89,36 +109,127 @@ class AgentToolOutcome:
     ok: bool
 
 
+@dataclass(frozen=True)
+class AgentToolBatchMetrics:
+    """Execution timing for one model-issued tool batch."""
+
+    call_count: int
+    parallel: bool
+    execution_seconds: float
+
+
+ToolBatchObserver = Callable[[AgentToolBatchMetrics], None]
+
+
 async def run_tool_agent(
     provider: ToolCapableChatProvider,
     messages: Sequence[ChatMessage],
     tools: Sequence[dict[str, Any]],
     execute: ToolExecutor,
+    activity_batch: ToolBatchScope | None = None,
+    parallel_tool_names: frozenset[str] = frozenset(),
+    observe_tool_batch: ToolBatchObserver | None = None,
+    take_steering: SteeringSource | None = None,
+    max_tool_rounds: int | None = None,
+    max_tool_calls: int | None = None,
 ) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
     """Run the model/tool loop shared by agent capability layers."""
     conversation = list(messages)
+    tool_rounds = 0
+    tool_calls = 0
+    final_answer_only = False
     while True:
         answer, calls = [], ()
-        async for event in provider.stream_events(conversation, tools):
+        async for event in provider.stream_events(conversation, [] if final_answer_only else tools):
             if isinstance(event, TextDelta):
                 answer.append(event.text)
                 yield AgentText(event.text)
             elif isinstance(event, ReasoningDelta):
                 yield AgentReasoning(event.text)
+            elif isinstance(event, TokenUsage):
+                yield event
             elif isinstance(event, ToolCallRequest):
                 calls = event.calls
         if not calls:
-            break
+            steering = tuple(take_steering(True)) if take_steering is not None else ()
+            if not steering:
+                break
+            conversation.append(ChatMessage(role="assistant", content="".join(answer)))
+            for message_id, text in steering:
+                conversation.append(ChatMessage(role="user", content=text))
+                yield AgentSteering(message_id, text)
+            continue
+
+        exceeds_rounds = max_tool_rounds is not None and tool_rounds >= max_tool_rounds
+        exceeds_calls = max_tool_calls is not None and tool_calls + len(calls) > max_tool_calls
+        if final_answer_only or exceeds_rounds or exceeds_calls:
+            if final_answer_only:
+                break
+            conversation.append(assistant_tool_call_message(calls, "".join(answer)))
+            for call in calls:
+                outcome = AgentToolOutcome(
+                    "The trusted tool budget is exhausted. Finish with the verified information already available.",
+                    False,
+                )
+                yield AgentToolStart(call.name, call.arguments)
+                yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                conversation.append(tool_result_message(call.id, outcome.text))
+            final_answer_only = True
+            continue
 
         conversation.append(assistant_tool_call_message(calls, "".join(answer)))
-        for call in calls:
-            yield AgentToolStart(call.name, call.arguments)
-            outcome = await execute(call.name, call.arguments)
-            logger.info(
-                "agent tool call name=%s ok=%s result_chars=%s",
-                call.name,
-                outcome.ok,
-                len(outcome.text),
-            )
-            yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
-            conversation.append(tool_result_message(call.id, outcome.text))
+        tool_rounds += 1
+        tool_calls += len(calls)
+        batch_scope = activity_batch or _unbatched_activity
+        async with batch_scope():
+            parallel = len(calls) > 1 and all(call.name in parallel_tool_names for call in calls)
+            if parallel:
+                for call in calls:
+                    yield AgentToolStart(call.name, call.arguments)
+                started = time.perf_counter()
+                outcomes = await _execute_parallel_tool_calls(calls, execute)
+                execution_seconds = time.perf_counter() - started
+                completed = zip(calls, outcomes, strict=True)
+                for call, outcome in completed:
+                    _log_tool_outcome(call.name, outcome)
+                    yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                    conversation.append(tool_result_message(call.id, outcome.text))
+            else:
+                execution_seconds = 0.0
+                for call in calls:
+                    yield AgentToolStart(call.name, call.arguments)
+                    started = time.perf_counter()
+                    outcome = await execute(call.name, call.arguments)
+                    execution_seconds += time.perf_counter() - started
+                    _log_tool_outcome(call.name, outcome)
+                    yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                    conversation.append(tool_result_message(call.id, outcome.text))
+            if observe_tool_batch is not None:
+                observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
+        if take_steering is not None:
+            for message_id, text in take_steering(False):
+                conversation.append(ChatMessage(role="user", content=text))
+                yield AgentSteering(message_id, text)
+
+
+async def _execute_parallel_tool_calls(
+    calls: Sequence[ToolCall],
+    execute: ToolExecutor,
+) -> list[AgentToolOutcome]:
+    tasks = [asyncio.create_task(execute(call.name, call.arguments)) for call in calls]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+def _log_tool_outcome(name: str, outcome: AgentToolOutcome) -> None:
+    logger.info(
+        "agent tool call name=%s ok=%s result_chars=%s",
+        name,
+        outcome.ok,
+        len(outcome.text),
+    )

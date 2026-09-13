@@ -1,0 +1,16 @@
+{
+  "id": "shift-type-group-members",
+  "fixture": "ward87",
+  "question": "Add the E shift type to the Day group as well.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "shiftTypes.groups",
+      "removed": [{"id": "Day", "members": ["D", "D+", "A", "D~", "K"], "description": "includes special day shifts"}],
+      "added": [{"id": "Day", "members": ["D", "D+", "A", "D~", "K", "E"], "description": "includes special day shifts"}]
+    }
+  ],
+  "changes": [
+    "shiftTypes.groups"
+  ]
+}

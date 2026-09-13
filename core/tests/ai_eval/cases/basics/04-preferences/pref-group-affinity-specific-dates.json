@@ -1,0 +1,14 @@
+{
+  "id": "pref-group-affinity-specific-dates",
+  "fixture": "ward87",
+  "question": "Discourage Day People and Night People from sharing N shifts on FREEDAY dates with weight -25.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [{"type": "shift affinity", "date": ["FREEDAY"], "people1": ["Day People"], "people2": ["Night People"], "shiftTypes": ["N"], "weight": -25}]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "groups", "preference-reasoning"]
+}

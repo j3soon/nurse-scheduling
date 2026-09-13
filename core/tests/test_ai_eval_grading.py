@@ -45,7 +45,16 @@ from .ai_eval.grading import (
 
 CASES_PATH = Path(__file__).parent / "ai_eval" / "cases"
 NEW_SCHEDULE_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "new-schedule.yaml"
+SMALL_CLINIC_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "small-clinic.yaml"
+CROSS_YEAR_UNIT_PATH = Path(__file__).parent / "ai_eval" / "fixtures" / "cross-year-unit.yaml"
 WARD_PATH = Path(__file__).parent / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
+
+FIXTURE_SCHEDULES = {
+    "cross-year-unit": _load_yaml(CROSS_YEAR_UNIT_PATH.read_bytes()),
+    "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
+    "small-clinic": _load_yaml(SMALL_CLINIC_PATH.read_bytes()),
+    "ward87": _load_yaml(WARD_PATH.read_bytes()),
+}
 
 SCHEDULE = {
     "description": "Ward A",
@@ -149,6 +158,84 @@ def test_added_catches_an_extra_entry_that_a_size_would_miss(tmp_path: Path):
 
     assert [check.passed for check in result.checks[1:3]] == [True, False]
     assert "Bob" in result.failures()[0].detail
+
+
+def test_expected_diff_compares_the_complete_collection_delta(tmp_path: Path):
+    added = {"id": "P3", "description": "Float nurse"}
+    changed = copy.deepcopy(SCHEDULE)
+    changed["people"]["items"].append(added)
+    case = _case(
+        expected_diff=[{"path": "people.items", "added": [added]}],
+        changes=["people.items"],
+    )
+    loaded = load_cases(_write(tmp_path, case))[0]
+
+    assert grade(loaded, RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+    changed["people"]["items"].append({"id": "P4", "description": ""})
+    result = grade(loaded, RunOutcome(proposed=changed, initial=SCHEDULE))
+    assert not result.passed
+    assert "P4" in result.failures()[0].detail
+
+
+def test_expected_diff_supports_replacing_a_complete_object(tmp_path: Path):
+    before = SCHEDULE["people"]["items"][0]
+    after = {**before, "description": "Lead nurse"}
+    changed = copy.deepcopy(SCHEDULE)
+    changed["people"]["items"][0] = after
+    case = _case(
+        expected_diff=[{"path": "people.items", "removed": [before], "added": [after]}],
+        changes=["people.items"],
+    )
+
+    assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+def test_expected_diff_uses_json_strings_for_yaml_infinity(tmp_path: Path):
+    changed = copy.deepcopy(SCHEDULE)
+    added = {"type": "shift count", "weight": float("-inf")}
+    changed["preferences"].append(added)
+    case = _case(
+        expected_diff=[{"path": "preferences", "added": [{"type": "shift count", "weight": "-.inf"}]}],
+        changes=["preferences"],
+    )
+
+    assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+def test_expected_diff_normalizes_unordered_members_and_optional_defaults(tmp_path: Path):
+    changed = copy.deepcopy(SCHEDULE)
+    changed["people"]["items"].append({"id": "P3"})
+    changed["people"]["groups"][0]["members"] = ["P2", "P1"]
+    expected_group = {"id": "Day People", "members": ["P1", "P2"]}
+    case = _case(
+        expected_diff=[
+            {"path": "people.items", "added": [{"id": "P3", "description": "", "history": []}]},
+            {
+                "path": "people.groups",
+                "removed": [SCHEDULE["people"]["groups"][0]],
+                "added": [expected_group],
+            },
+        ],
+        changes=["people.items", "people.groups"],
+    )
+
+    assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
+
+
+def test_expected_diff_supports_replacing_or_adding_a_value(tmp_path: Path):
+    changed = copy.deepcopy(SCHEDULE)
+    changed["description"] = "Ward B"
+    changed["export"] = {"format": "csv"}
+    case = _case(
+        expected_diff=[
+            {"path": "description", "before": "Ward A", "after": "Ward B"},
+            {"path": "export", "before": None, "after": {"format": "csv"}},
+        ],
+        changes=["description", "export"],
+    )
+
+    assert grade(load_cases(_write(tmp_path, case))[0], RunOutcome(proposed=changed, initial=SCHEDULE)).passed
 
 
 def test_count_reads_list_length_or_match_count(tmp_path: Path):
@@ -262,6 +349,14 @@ def test_answer_values_come_from_the_fixture(tmp_path: Path):
     assert not failing.passed
 
 
+def test_unknown_person_refusal_accepts_contracted_does_not_exist():
+    case = next(case for case in load_cases(CASES_PATH) if case.id == "reject-unknown-person")
+
+    result = grade(case, RunOutcome(answer="P999 doesn't exist, so I made no change."))
+
+    assert result.passed
+
+
 def test_optional_tool_usage_grades_required_forbidden_and_bounded_calls(tmp_path: Path):
     case = _case(
         expect_proposal=False,
@@ -339,6 +434,139 @@ def test_an_ungradable_case_is_rejected(tmp_path: Path, entry: dict, message: st
         load_cases(_write(tmp_path, entry))
 
 
+def test_loads_multi_turn_cases_and_tags(tmp_path: Path):
+    entry = _case(
+        user_turns=["Expand the range.", "Yes."],
+        intermediate_answer_contains=[["Taiwan", ["holiday", "holidays"]]],
+        tags=["difficult", "tuning"],
+        **{"assert": [{"path": "dates.range.endDate", "equals": "2026-03-14"}]},
+        changes=["dates.range"],
+    )
+
+    case = load_cases(_write(tmp_path, entry))[0]
+
+    assert case.user_turns == ("Expand the range.", "Yes.")
+    assert case.intermediate_answer_contains == (("Taiwan", ("holiday", "holidays")),)
+    assert case.tags == ("difficult", "tuning")
+
+
+@pytest.mark.parametrize(
+    "intermediate_answer_contains",
+    [
+        ["Taiwan"],
+        [[1]],
+        [[""]],
+        [[[]]],
+        [[["holiday", 1]]],
+    ],
+)
+def test_rejects_invalid_intermediate_answer_expectations(tmp_path: Path, intermediate_answer_contains: object):
+    entry = _case(
+        user_turns=["Expand the range.", "Yes."],
+        intermediate_answer_contains=intermediate_answer_contains,
+        **{"assert": [{"path": "dates.range.endDate", "equals": "2026-03-14"}]},
+        changes=["dates.range"],
+    )
+
+    with pytest.raises(EvalCaseError, match="invalid `intermediate_answer_contains`"):
+        load_cases(_write(tmp_path, entry))
+
+
+def test_loads_nested_dataset_and_category_path(tmp_path: Path):
+    case_path = tmp_path / "basics" / "03-structure" / "case.json"
+    case_path.parent.mkdir(parents=True)
+    case_path.write_text(json.dumps(_case(expect_proposal=False)), encoding="utf-8")
+
+    case = load_cases(tmp_path)[0]
+
+    assert case.category == "basics/03-structure"
+
+
+def test_a_multi_turn_case_can_designate_an_earlier_proposal(tmp_path: Path):
+    entry = _case(
+        user_turns=["Change it.", "What changed?"],
+        proposal_turn=1,
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+    )
+    case = load_cases(_write(tmp_path, entry))[0]
+    proposed = copy.deepcopy(SCHEDULE)
+    proposed["description"] = "changed"
+
+    result = grade(
+        case,
+        RunOutcome(proposed=proposed, initial=SCHEDULE, proposal_turns=[True, False]),
+    )
+
+    assert case.proposal_turn == 1
+    assert result.passed
+
+
+def test_loads_multiple_proposal_turns_and_lifecycle_actions(tmp_path: Path):
+    entry = _case(
+        user_turns=["Change it.", "Revise it.", "Done?"],
+        proposal_turns=[1, 2],
+        turn_actions=[{"after_turn": 2, "action": "approve"}],
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+    )
+
+    case = load_cases(_write(tmp_path, entry))[0]
+
+    assert case.proposal_turns == (1, 2)
+    assert case.proposal_turn == 2
+    assert case.turn_actions[0].action == "approve"
+
+
+def test_loads_external_schedule_update_action(tmp_path: Path):
+    entry = _case(
+        user_turns=["Change it.", "Continue."],
+        turn_actions=[{"after_turn": 1, "action": "update", "schedule_patch": {"description": "External"}}],
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+    )
+
+    case = load_cases(_write(tmp_path, entry))[0]
+
+    assert case.turn_actions[0].schedule_patch == (("description", "External"),)
+
+
+@pytest.mark.parametrize("proposal_turn", [0, 3, True, "1"])
+def test_invalid_proposal_turn_is_rejected(tmp_path: Path, proposal_turn: object):
+    entry = _case(
+        user_turns=["Change it.", "Okay."],
+        proposal_turn=proposal_turn,
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+    )
+
+    with pytest.raises(EvalCaseError, match="must identify user turns"):
+        load_cases(_write(tmp_path, entry))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"proposal_turn": 1, "proposal_turns": [1]},
+        {"proposal_turns": [2, 1]},
+        {"proposal_turns": [1, 1]},
+        {"turn_actions": "approve"},
+        {"turn_actions": [{"after_turn": 2, "action": "approve"}]},
+        {"turn_actions": [{"after_turn": 1, "action": "update"}]},
+    ],
+)
+def test_invalid_lifecycle_configuration_is_rejected(tmp_path: Path, overrides: dict):
+    entry = _case(
+        user_turns=["Change it.", "Continue."],
+        **{"assert": [{"path": "description", "equals": "changed"}]},
+        changes=["description"],
+        **overrides,
+    )
+
+    with pytest.raises(EvalCaseError):
+        load_cases(_write(tmp_path, entry))
+
+
 def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     entry = _case(**{"assert": [{"path": "description", "equals": "x"}], "changes": ["description"]})
@@ -348,11 +576,22 @@ def test_a_file_name_that_disagrees_with_its_case_id_is_rejected(tmp_path: Path)
         load_cases(tmp_path)
 
 
-def test_the_dataset_only_uses_the_two_agreed_fixtures():
+def test_the_dataset_only_uses_registered_fixtures():
     cases = load_cases(CASES_PATH)
 
-    assert {case.fixture for case in cases} == {"new-schedule", "ward87"}
+    assert {case.fixture for case in cases} == {"cross-year-unit", "new-schedule", "small-clinic", "ward87"}
     assert len(cases) == len({case.id for case in cases})
+
+
+def test_new_schedule_fixture_matches_the_frontend_empty_state():
+    assert FIXTURE_SCHEDULES["new-schedule"] == {
+        "apiVersion": "alpha",
+        "description": "",
+        "dates": {"range": {}, "items": [], "groups": []},
+        "people": {"items": [], "groups": []},
+        "shiftTypes": {"items": [], "groups": []},
+        "preferences": [],
+    }
 
 
 def test_every_case_is_stored_as_one_readable_file():
@@ -367,16 +606,15 @@ def test_every_case_is_stored_as_one_readable_file():
 
 
 def test_every_dataset_path_and_placeholder_resolves_against_its_fixture():
-    fixtures = {
-        "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
-        "ward87": _load_yaml(WARD_PATH.read_bytes()),
-    }
-
     for case in load_cases(CASES_PATH):
-        schedule = fixtures[case.fixture]
+        schedule = FIXTURE_SCHEDULES[case.fixture]
         values = computed_values(schedule)
         for assertion in case.assertions:
             resolve(schedule, assertion.path)
+        for expected_diff in case.expected_diff:
+            found = resolve(schedule, expected_diff.path)
+            if not expected_diff.compares_value:
+                assert len(found) == 1 and isinstance(found[0], list), f"{case.id} diff path must select one list"
         for changed in case.changes:
             assert resolve(schedule, changed) or changed == "export", f"{case.id} may change a missing part {changed}"
         for expected in case.answer_contains:
@@ -385,15 +623,10 @@ def test_every_dataset_path_and_placeholder_resolves_against_its_fixture():
 
 
 def test_no_edit_case_is_satisfied_by_a_proposal_that_changes_nothing():
-    fixtures = {
-        "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
-        "ward87": _load_yaml(WARD_PATH.read_bytes()),
-    }
-
     for case in load_cases(CASES_PATH):
         if not case.expect_proposal:
             continue
-        schedule = fixtures[case.fixture]
+        schedule = FIXTURE_SCHEDULES[case.fixture]
         outcome = RunOutcome(proposed=copy.deepcopy(schedule), initial=schedule)
         assert not grade(case, outcome, computed_values(schedule)).passed, f"{case.id} asserts nothing"
 
@@ -442,41 +675,49 @@ def test_every_case_sits_in_a_category_directory():
     cases = load_cases(CASES_PATH)
 
     assert {case.category for case in cases} == {
-        "00-tools",
-        "00-summary",
-        "01-reading",
-        "02-basic-edit",
-        "03-structure",
-        "04-preferences",
-        "05-export",
-        "06-refusal",
+        "basics/00-tools",
+        "basics/00-summary",
+        "basics/01-reading",
+        "basics/02-basic-edit",
+        "basics/03-structure",
+        "basics/04-preferences",
+        "basics/05-export",
+        "basics/06-refusal",
+        "basics/07-multi-turn",
+        "basics/08-proposal-lifecycle",
+        "basics/09-holdout",
+        "basics/10-app-ui",
     }
     assert all(
-        not case.expect_proposal for case in cases if case.category in {"00-summary", "01-reading", "06-refusal"}
+        not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))
     )
-    assert all(case.expect_proposal for case in cases if case.category.startswith(("02", "03", "04", "05")))
+    assert all(
+        case.expect_proposal
+        for case in cases
+        if case.category.removeprefix("basics/").startswith(("02", "03", "04", "05"))
+    )
 
 
 def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
     """A summary-answerable question measures copying, not reading."""
     summaries = {
+        "cross-year-unit": describe_schedule(CROSS_YEAR_UNIT_PATH.read_text(encoding="utf-8")),
         "new-schedule": describe_schedule(NEW_SCHEDULE_PATH.read_text(encoding="utf-8")),
+        "small-clinic": describe_schedule(SMALL_CLINIC_PATH.read_text(encoding="utf-8")),
         "ward87": describe_schedule(WARD_PATH.read_text(encoding="utf-8")),
     }
 
     for case in load_cases(CASES_PATH):
         if not case.answer_contains:
             continue
-        values = computed_values(
-            _load_yaml(Path(WARD_PATH if case.fixture == "ward87" else NEW_SCHEDULE_PATH).read_bytes())
-        )
+        values = computed_values(FIXTURE_SCHEDULES[case.fixture])
         # A value may be offered in several wordings, so one of them counts.
         expected = [
             [option.format(**values) for option in ([value] if isinstance(value, str) else value)]
             for value in case.answer_contains
         ]
         in_summary = [options for options in expected if any(o in summaries[case.fixture] for o in options)]
-        if case.category == "00-summary":
+        if case.category.endswith("00-summary"):
             assert len(in_summary) == len(expected), f"{case.id} is not answerable from the summary"
         else:
             assert len(in_summary) < len(expected), f"{case.id} is answerable from the summary alone"
@@ -484,13 +725,8 @@ def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
 
 def test_every_membership_check_also_pins_the_collection_size():
     """A `contains` without a size passes when extra entries are added too."""
-    fixtures = {
-        "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
-        "ward87": _load_yaml(WARD_PATH.read_bytes()),
-    }
-
     for case in load_cases(CASES_PATH):
-        schedule = fixtures[case.fixture]
+        schedule = FIXTURE_SCHEDULES[case.fixture]
         sized = {a.path for a in case.assertions if a.kind in {"count", "delta", "added", "removed"}}
         for assertion in case.assertions:
             if assertion.kind != "contains" or assertion.path in sized:
@@ -520,15 +756,10 @@ def _references(schedule: dict, token: str) -> set[str]:
 
 def test_every_removal_case_asserts_the_references_it_orphans():
     """Removing an entry that other parts still name must clear those names."""
-    fixtures = {
-        "new-schedule": _load_yaml(NEW_SCHEDULE_PATH.read_bytes()),
-        "ward87": _load_yaml(WARD_PATH.read_bytes()),
-    }
-
     for case in load_cases(CASES_PATH):
         removed = [value for assertion in case.assertions if assertion.kind == "removed" for value in assertion.value]
         for token in removed:
-            for container in _references(fixtures[case.fixture], token):
+            for container in _references(FIXTURE_SCHEDULES[case.fixture], token):
                 assert any(assertion.path.startswith(container) for assertion in case.assertions), (
                     f"{case.id} removes {token} but says nothing about {container}"
                 )

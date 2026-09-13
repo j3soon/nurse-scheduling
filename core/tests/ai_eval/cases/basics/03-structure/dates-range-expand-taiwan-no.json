@@ -1,0 +1,32 @@
+{
+  "id": "dates-range-expand-taiwan-no",
+  "fixture": "ward87",
+  "user_turns": [
+    "Extend the roster through December 31, 2025.",
+    "No, keep the existing Taiwan holiday date groups."
+  ],
+  "intermediate_answer_contains": [
+    ["Taiwan", ["holiday", "holidays"], ["renew", "update", "import"]]
+  ],
+  "expect_proposal": true,
+  "assert": [
+    {"path": "dates.range.startDate", "equals": "2025-11-01"},
+    {"path": "dates.range.endDate", "equals": "2025-12-31"},
+    {
+      "path": "dates.groups[?id=WORKDAY].members",
+      "equals": ["11-03", "11-04", "11-05", "11-06", "11-07", "11-10", "11-11", "11-12", "11-13", "11-14", "11-17", "11-18", "11-19", "11-20", "11-21", "11-24", "11-25", "11-26", "11-27", "11-28"]
+    },
+    {
+      "path": "dates.groups[?id=FREEDAY].members",
+      "equals": ["11-01", "11-02", "11-08", "11-09", "11-15", "11-16", "11-22", "11-23", "11-29", "11-30"]
+    },
+    {"path": "dates.groups[?id=WORKDAY].description", "equals": "11 月沒有放假"},
+    {"path": "dates.groups[?id=FREEDAY].description", "equals": "11 月沒有放假"},
+    {"path": "dates.groups[?id=Freeday shift right].members", "equals": ["11-02", "11-03", "11-09", "11-10", "11-16", "11-17", "11-23", "11-24", "11-30"]},
+    {"path": "preferences[?date=11-01]", "present": true},
+    {"path": "preferences[?date=11-30]", "present": true}
+  ],
+  "changes": ["dates", "preferences"],
+  "tags": ["difficult", "tuning", "multi-turn", "date-expansion", "taiwan-holidays"],
+  "note": "The first turn must ask about Taiwan holiday renewal without proposing. Declining preserves the membership and descriptions of existing groups while the cross-month range forces concrete date references to MM-DD."
+}

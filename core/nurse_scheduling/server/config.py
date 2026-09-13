@@ -26,9 +26,11 @@ from ..scheduler import ORTOOLS_CP_SAT_SOLVER
 from .auth import (
     AUTH_REQUIRED_ENV_NAME,
     AUTH_TOKEN_ENV_NAME,
-    RECOMMENDED_AUTH_TOKEN_LENGTH,
+    AUTH_TOKENS_ENV_NAME,
     STREAM_TOKEN_GRACE_SECONDS,
-    normalize_auth_token,
+    AuthCredential,
+    normalize_auth_credentials,
+    parse_auth_credentials,
 )
 from .solver_options import normalize_solver_option
 
@@ -198,6 +200,8 @@ class ServerSettings:
     """Optional self-reported benchmark score and its provenance."""
     auth_token: str | None = None
     """Shared token required by protected routes, `None` to serve without authentication."""
+    auth_tokens: tuple[AuthCredential, ...] = ()
+    """Identified static tokens required by protected routes."""
     auth_required: bool = False
     """Whether this deployment must authenticate, which makes a missing token a startup failure."""
     usage_metrics_enabled: bool = False
@@ -256,20 +260,13 @@ class ServerSettings:
             raise TypeError("default_prettify must be a boolean")
         object.__setattr__(self, "solver_ids", normalized_solver_ids)
         object.__setattr__(self, "default_solver", normalized_default_solver)
-        object.__setattr__(
-            self,
-            "auth_token",
-            normalize_auth_token(self.auth_token, warn_on_short=not self.auth_required),
+        auth_token, auth_tokens = normalize_auth_credentials(
+            self.auth_token,
+            self.auth_tokens,
+            required=self.auth_required,
         )
-        # Images built for deployment set this, so an unauthenticated public server stays a
-        # deliberate choice rather than the result of a forgotten token.
-        if self.auth_required and self.auth_token is None:
-            raise ValueError(f"{AUTH_REQUIRED_ENV_NAME} is set, so {AUTH_TOKEN_ENV_NAME} must not be empty")
-        if self.auth_required and len(self.auth_token) < RECOMMENDED_AUTH_TOKEN_LENGTH:
-            raise ValueError(
-                f"{AUTH_REQUIRED_ENV_NAME} is set, so {AUTH_TOKEN_ENV_NAME} must be at least "
-                f"{RECOMMENDED_AUTH_TOKEN_LENGTH} characters"
-            )
+        object.__setattr__(self, "auth_token", auth_token)
+        object.__setattr__(self, "auth_tokens", auth_tokens)
 
         if self.usage_metrics_enabled and self.job_backend != "redis":
             raise ValueError("USAGE_METRICS_ENABLED requires JOB_BACKEND=redis")
@@ -323,6 +320,7 @@ class ServerSettings:
             ),
             claimed_performance=_claimed_performance(),
             auth_token=os.getenv(AUTH_TOKEN_ENV_NAME),
+            auth_tokens=parse_auth_credentials(os.getenv(AUTH_TOKENS_ENV_NAME)),
             auth_required=_boolean(AUTH_REQUIRED_ENV_NAME, False),
             usage_metrics_enabled=_boolean("USAGE_METRICS_ENABLED", False),
             usage_metrics_key_prefix=os.getenv(

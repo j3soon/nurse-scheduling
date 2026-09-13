@@ -69,9 +69,13 @@ The blue development-version banner appears only in non-release builds.
    documents and confirm the displayed files. Remove an incorrect file with
    its **×** button.
 5. Enter a question and select **Send**. Press <kbd>Enter</kbd> to send or
-   <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line.
-6. Select **Stop** to cancel a response in progress.
-7. If you scroll up in a long conversation, use the floating down-arrow button
+   <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line. Where browser speech
+   recognition is available, select the microphone to dictate the question.
+6. While the assistant is working, enter another message and select **Queue**
+   to steer the same turn after its next tool call. This does not cancel work
+   already in progress.
+7. Select **Stop** to interrupt a response in progress.
+8. If you scroll up in a long conversation, use the floating down-arrow button
    to return to the composer and latest message.
 
 The animated **Thinking** indicator means the assistant is waiting for its
@@ -80,6 +84,18 @@ first response text.
 Assistant answers render Markdown, including headings, lists, links, code, and
 tables. Use the copy icon at the top-right of a code block to copy its contents.
 Raw HTML is ignored. Remote images written in an answer are not loaded.
+
+## Ask how to use the app
+
+The assistant runs inside the existing Nurse Scheduling app and can explain
+which page and visible control to use for a task. For example, ask how to add a
+person, upload schedule YAML, configure a rule, or start optimization. It can
+guide you through those controls, but it cannot navigate, click, upload, or run
+optimization for you.
+
+Files attached with **Attach files** belong to the next chat message. To replace
+the schedule currently open in the app, use **Upload** on **Save and Load**
+instead.
 
 The browser uploads one YAML snapshot when it creates the chat session. Later
 questions in that session use the same backend-owned snapshot. Reload the page

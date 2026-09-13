@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import json
+import math
 import re
 from collections import Counter
 from collections.abc import Sequence
@@ -30,7 +31,7 @@ from typing import Any
 # Most cases grade only the produced schedule or answer. Focused capability cases
 # may also assert a small, intentional tool trajectory.
 _STEP = re.compile(r"\.?([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]|\[\?([^=\]]+)=([^\]]*)\]|(\[\])")
-_ASSERTION_KINDS = ("equals", "one_of", "contains", "count", "delta", "added", "removed", "absent", "present")
+_ASSERTION_KINDS = ("equals", "contains", "count", "delta", "added", "removed", "absent", "present")
 _TOOL_USAGE_KEYS = {"required", "forbidden", "max_total", "max_per_tool"}
 
 
@@ -53,6 +54,21 @@ class Assertion:
 
 
 @dataclass(frozen=True)
+class ExpectedDiff:
+    """The complete semantic change expected at one schedule path."""
+
+    path: str
+    added: tuple[Any, ...] = ()
+    removed: tuple[Any, ...] = ()
+    before: Any = None
+    after: Any = None
+    compares_value: bool = False
+
+    def describe(self) -> str:
+        return f"{self.path} has the expected semantic diff"
+
+
+@dataclass(frozen=True)
 class ToolUsageExpectation:
     """Optional trajectory checks for cases designed to exercise model tools."""
 
@@ -63,6 +79,15 @@ class ToolUsageExpectation:
 
 
 @dataclass(frozen=True)
+class TurnAction:
+    """A trusted frontend action applied after one assistant turn."""
+
+    after_turn: int
+    action: str
+    schedule_patch: tuple[tuple[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
 class EvalCase:
     """One question with verifiable criteria for the schedule it should produce."""
 
@@ -70,12 +95,28 @@ class EvalCase:
     fixture: str
     question: str
     expect_proposal: bool
+    proposal_turn: int | None = None
+    proposal_turns: tuple[int, ...] = ()
+    turn_actions: tuple[TurnAction, ...] = ()
+    user_turns: tuple[str, ...] = ()
+    intermediate_answer_contains: tuple[tuple[str | tuple[str, ...], ...], ...] = ()
+    tags: tuple[str, ...] = ()
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
+    expected_diff: tuple[ExpectedDiff, ...] = ()
     changes: tuple[str, ...] = ()
     answer_contains: tuple[str | tuple[str, ...], ...] = ()
     tool_usage: ToolUsageExpectation | None = None
     note: str = ""
+
+    def __post_init__(self) -> None:
+        """Keep direct test construction compatible with single-turn cases."""
+        if not self.user_turns:
+            object.__setattr__(self, "user_turns", (self.question,))
+        if self.expect_proposal and self.proposal_turn is None:
+            object.__setattr__(self, "proposal_turn", len(self.user_turns))
+        if not self.proposal_turns and self.proposal_turn is not None:
+            object.__setattr__(self, "proposal_turns", (self.proposal_turn,))
 
 
 @dataclass(frozen=True)
@@ -110,6 +151,9 @@ class RunOutcome:
     proposed: Any = None
     initial: Any = None
     activity: list[dict[str, Any]] = field(default_factory=list)
+    intermediate_answers: list[str] = field(default_factory=list)
+    intermediate_proposals: list[bool] = field(default_factory=list)
+    proposal_turns: list[bool] = field(default_factory=list)
 
 
 def load_cases(path: Path) -> list[EvalCase]:
@@ -128,7 +172,8 @@ def load_cases(path: Path) -> list[EvalCase]:
             entry = json.loads(file.read_text(encoding="utf-8"))
         except json.JSONDecodeError as error:
             raise EvalCaseError(f"{file.name} is not valid JSON. {error}") from error
-        case = _build_case(entry, file.name, file.parent.name if path.is_dir() else "")
+        category = file.parent.relative_to(path).as_posix() if path.is_dir() else ""
+        case = _build_case(entry, file.name, category)
         if path.is_dir() and case.id != file.stem:
             raise EvalCaseError(f"{file.name} holds case id {case.id}.")
         if case.id in seen:
@@ -140,23 +185,69 @@ def load_cases(path: Path) -> list[EvalCase]:
 
 def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     """Convert one dataset entry into a case, or explain why it cannot be graded."""
-    for required in ("id", "fixture", "question", "expect_proposal"):
+    for required in ("id", "fixture", "expect_proposal"):
         if required not in entry:
             raise EvalCaseError(f"{source} is missing `{required}`.")
+    raw_turns = entry.get("user_turns")
+    if raw_turns is None:
+        if "question" not in entry:
+            raise EvalCaseError(f"{source} is missing `question` or `user_turns`.")
+        raw_turns = [entry["question"]]
+    if (
+        not isinstance(raw_turns, list)
+        or not raw_turns
+        or not all(isinstance(turn, str) and turn for turn in raw_turns)
+    ):
+        raise EvalCaseError(f"{source} `user_turns` must be a non-empty list of strings.")
+    raw_intermediate = entry.get("intermediate_answer_contains", [])
+    if (
+        not isinstance(raw_intermediate, list)
+        or len(raw_intermediate) > len(raw_turns) - 1
+        or not all(
+            isinstance(expected, list)
+            and all(
+                (isinstance(value, str) and bool(value))
+                or (
+                    isinstance(value, list)
+                    and bool(value)
+                    and all(isinstance(option, str) and option for option in value)
+                )
+                for value in expected
+            )
+            for expected in raw_intermediate
+        )
+    ):
+        raise EvalCaseError(f"{source} has invalid `intermediate_answer_contains`.")
+    intermediate = tuple(
+        tuple(tuple(value) if isinstance(value, list) else value for value in expected) for expected in raw_intermediate
+    )
+    raw_tags = entry.get("tags", [])
+    if not isinstance(raw_tags, list) or not all(isinstance(tag, str) and tag for tag in raw_tags):
+        raise EvalCaseError(f"{source} `tags` must be a list of strings.")
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
-    if entry["expect_proposal"] and not assertions:
+    expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
+    proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
+    turn_actions = _turn_actions(entry.get("turn_actions", []), len(raw_turns), source)
+    if entry["expect_proposal"] and not assertions and not expected_diff:
         raise EvalCaseError(f"{source} expects a proposal but asserts nothing about it.")
     if entry["expect_proposal"] and not entry.get("changes"):
         raise EvalCaseError(f"{source} expects a proposal but names no part it may change.")
-    if not entry["expect_proposal"] and assertions:
-        raise EvalCaseError(f"{source} expects no proposal, so its assertions can never run.")
+    if not entry["expect_proposal"] and (assertions or expected_diff):
+        raise EvalCaseError(f"{source} expects no proposal, so its schedule criteria can never run.")
     return EvalCase(
         id=str(entry["id"]),
         fixture=str(entry["fixture"]),
-        question=str(entry["question"]),
+        question=str(raw_turns[0]),
         expect_proposal=bool(entry["expect_proposal"]),
+        proposal_turn=proposal_turn,
+        proposal_turns=proposal_turns,
+        turn_actions=turn_actions,
+        user_turns=tuple(raw_turns),
+        intermediate_answer_contains=intermediate,
+        tags=tuple(raw_tags),
         category=category,
         assertions=assertions,
+        expected_diff=expected_diff,
         changes=tuple(entry.get("changes", ())),
         answer_contains=tuple(
             tuple(value) if isinstance(value, list) else value for value in entry.get("answer_contains", ())
@@ -194,6 +285,51 @@ def _build_tool_usage(raw: object, source: str) -> ToolUsageExpectation | None:
     return ToolUsageExpectation(required, forbidden, max_total, tuple(sorted(raw_per_tool.items())))
 
 
+def _proposal_turns(entry: dict[str, Any], turn_count: int, source: str) -> tuple[int | None, tuple[int, ...]]:
+    raw_single = entry.get("proposal_turn")
+    raw_multiple = entry.get("proposal_turns")
+    if raw_single is not None and raw_multiple is not None:
+        raise EvalCaseError(f"{source} must use either `proposal_turn` or `proposal_turns`.")
+    raw = raw_multiple if raw_multiple is not None else ([raw_single] if raw_single is not None else [])
+    if not raw and entry["expect_proposal"]:
+        raw = [turn_count]
+    if not isinstance(raw, list) or any(
+        isinstance(turn, bool) or not isinstance(turn, int) or not 1 <= turn <= turn_count for turn in raw
+    ):
+        raise EvalCaseError(f"{source} proposal turns must identify user turns.")
+    turns = tuple(raw)
+    if len(turns) != len(set(turns)) or tuple(sorted(turns)) != turns:
+        raise EvalCaseError(f"{source} proposal turns must be unique and ordered.")
+    if bool(entry["expect_proposal"]) != bool(turns):
+        raise EvalCaseError(f"{source} proposal turns must agree with `expect_proposal`.")
+    return (turns[-1] if turns else None), turns
+
+
+def _turn_actions(raw: object, turn_count: int, source: str) -> tuple[TurnAction, ...]:
+    if not isinstance(raw, list):
+        raise EvalCaseError(f"{source} `turn_actions` must be a list.")
+    actions: list[TurnAction] = []
+    for item in raw:
+        if not isinstance(item, dict) or set(item) - {"after_turn", "action", "schedule_patch"}:
+            raise EvalCaseError(f"{source} has an invalid turn action.")
+        after_turn = item.get("after_turn")
+        action = item.get("action")
+        patch = item.get("schedule_patch", {})
+        if (
+            isinstance(after_turn, bool)
+            or not isinstance(after_turn, int)
+            or not 1 <= after_turn < turn_count
+            or action not in {"approve", "reject", "update"}
+            or not isinstance(patch, dict)
+            or (action == "update") != bool(patch)
+        ):
+            raise EvalCaseError(f"{source} has an invalid turn action.")
+        actions.append(TurnAction(after_turn, action, tuple(patch.items())))
+    if len({action.after_turn for action in actions}) != len(actions):
+        raise EvalCaseError(f"{source} repeats a turn action.")
+    return tuple(actions)
+
+
 def _tool_names(raw: object, source: str, field_name: str) -> tuple[str, ...]:
     if not isinstance(raw, list) or not all(isinstance(name, str) and name for name in raw):
         raise EvalCaseError(f"{source} `tool_usage.{field_name}` must be a list of tool names.")
@@ -214,9 +350,50 @@ def _build_assertion(raw: dict[str, Any], source: str) -> Assertion:
     return Assertion(path=str(raw["path"]), kind=kinds[0], value=raw[kinds[0]])
 
 
+def _build_expected_diff(raw: object, source: str) -> ExpectedDiff:
+    """Validate one exact semantic collection diff."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("path"), str) or not raw["path"]:
+        raise EvalCaseError(f"{source} has an expected diff without a path.")
+    unknown = set(raw) - {"path", "added", "removed", "before", "after"}
+    if unknown:
+        raise EvalCaseError(f"{source} expected diff has unknown fields: {', '.join(sorted(unknown))}.")
+    added = raw.get("added", [])
+    removed = raw.get("removed", [])
+    if not isinstance(added, list) or not isinstance(removed, list):
+        raise EvalCaseError(f"{source} expected diff `added` and `removed` must be lists.")
+    compares_value = "before" in raw or "after" in raw
+    if compares_value and ("before" not in raw or "after" not in raw or added or removed):
+        raise EvalCaseError(f"{source} expected diff must use either before/after or added/removed.")
+    if not compares_value and not added and not removed:
+        raise EvalCaseError(f"{source} expected diff must add or remove something.")
+    return ExpectedDiff(
+        path=raw["path"],
+        added=tuple(added),
+        removed=tuple(removed),
+        before=raw.get("before"),
+        after=raw.get("after"),
+        compares_value=compares_value,
+    )
+
+
 def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None = None) -> CaseResult:
     """Apply every criterion of one case to what the run produced."""
     checks: list[CheckResult] = []
+    proposal_turns = outcome.proposal_turns
+    if not proposal_turns and outcome.intermediate_proposals:
+        proposal_turns = [*outcome.intermediate_proposals, outcome.proposed is not None]
+    for index, proposed in enumerate(proposal_turns, start=1):
+        expected = index in case.proposal_turns
+        checks.append(
+            CheckResult(
+                description=f"turn {index} proposal {'expected' if expected else 'not expected'}",
+                passed=proposed == expected,
+                detail="" if proposed == expected else f"a proposal was {'not ' if not proposed else ''}made",
+            )
+        )
+    for index, expected_values in enumerate(case.intermediate_answer_contains):
+        answer = outcome.intermediate_answers[index] if index < len(outcome.intermediate_answers) else ""
+        checks.extend(_check_answer(answer, expected, computed or {}) for expected in expected_values)
     proposed = outcome.proposed is not None
     checks.append(
         CheckResult(
@@ -227,11 +404,45 @@ def grade(case: EvalCase, outcome: RunOutcome, computed: dict[str, Any] | None =
     )
     if case.expect_proposal and proposed:
         checks.extend(_check_assertion(outcome, assertion) for assertion in case.assertions)
+        checks.extend(_check_expected_diff(outcome, expected) for expected in case.expected_diff)
         checks.append(_check_nothing_else_changed(outcome, case.changes))
     checks.extend(_check_answer(outcome.answer, expected, computed or {}) for expected in case.answer_contains)
     if case.tool_usage is not None:
         checks.extend(_check_tool_usage(outcome.activity, case.tool_usage))
     return CaseResult(case_id=case.id, checks=tuple(checks))
+
+
+def _check_expected_diff(outcome: RunOutcome, expected: ExpectedDiff) -> CheckResult:
+    """Compare a complete value replacement or list multiset delta."""
+    try:
+        before = resolve(outcome.initial, expected.path)
+        after = resolve(outcome.proposed, expected.path)
+    except EvalCaseError as error:
+        return CheckResult(expected.describe(), False, str(error))
+    if expected.compares_value:
+        actual_before = before[0] if len(before) == 1 else None
+        actual_after = after[0] if len(after) == 1 else None
+        passed = _key(actual_before) == _key(expected.before) and _key(actual_after) == _key(expected.after)
+        detail = "" if passed else f"changed from {actual_before!r} to {actual_after!r}"
+        return CheckResult(expected.describe(), passed, detail)
+    if len(before) != 1 or not isinstance(before[0], list) or len(after) != 1 or not isinstance(after[0], list):
+        return CheckResult(expected.describe(), False, "path must resolve to one list before and after")
+    before_keys = Counter(_key(item) for item in before[0])
+    after_keys = Counter(_key(item) for item in after[0])
+    actual_added = after_keys - before_keys
+    actual_removed = before_keys - after_keys
+    wanted_added = Counter(_key(item) for item in expected.added)
+    wanted_removed = Counter(_key(item) for item in expected.removed)
+    passed = actual_added == wanted_added and actual_removed == wanted_removed
+    if passed:
+        return CheckResult(expected.describe(), True)
+    detail = f"added {_counter_values(actual_added)!r}, removed {_counter_values(actual_removed)!r}"
+    return CheckResult(expected.describe(), False, detail)
+
+
+def _counter_values(values: Counter[str]) -> list[Any]:
+    """Decode semantic keys for readable failure output."""
+    return [json.loads(value) for value in values.elements()]
 
 
 def _check_tool_usage(
@@ -299,8 +510,6 @@ def _check_assertion(outcome: RunOutcome, assertion: Assertion) -> CheckResult:
         return CheckResult(assertion.describe(), False, "nothing matched")
     if assertion.kind == "equals":
         passed = any(_matches(value, assertion.value) for value in found)
-    elif assertion.kind == "one_of":
-        passed = any(any(_matches(value, option) for option in assertion.value) for value in found)
     else:
         passed = any(_contains(value, assertion.value) for value in found)
     return CheckResult(assertion.describe(), passed, "" if passed else f"found {found!r}")
@@ -337,7 +546,36 @@ def _collection(found: list[Any]) -> list[Any]:
 
 def _key(value: Any) -> str:
     """Give any resolved value a comparable identity, including a mapping."""
-    return json.dumps(value, sort_keys=True, default=str)
+    return json.dumps(_json_value(value), sort_keys=True, default=str)
+
+
+def _json_value(value: Any, field_name: str = "") -> Any:
+    """Represent YAML infinities with valid JSON strings in testcase expectations."""
+    if isinstance(value, float) and math.isinf(value):
+        return ".inf" if value > 0 else "-.inf"
+    if isinstance(value, dict):
+        default_weight = {
+            "shift request": 1,
+            "shift type successions": 1,
+            "shift type requirement": -1,
+            "shift count": -1,
+            "shift affinity": 1,
+        }.get(value.get("type"))
+        return {
+            key: _json_value(child, key)
+            for key, child in value.items()
+            if not (
+                (key == "description" and child == "")
+                or (key == "history" and child == [])
+                or (key == "weight" and child == default_weight)
+            )
+        }
+    if isinstance(value, list):
+        normalized = [_json_value(child) for child in value]
+        if field_name != "pattern":
+            normalized.sort(key=lambda child: json.dumps(child, sort_keys=True, default=str))
+        return normalized
+    return value
 
 
 def _check_nothing_else_changed(outcome: RunOutcome, changes: tuple[str, ...]) -> CheckResult:
@@ -486,7 +724,15 @@ def covered_paths(case: EvalCase) -> set[str]:
     assertions beside it and a typo silently covers nothing.
     """
     sources = [assertion.path for assertion in case.assertions] + list(case.changes)
-    return {_generalize(path) for path in sources if path}
+    covered = {_generalize(path) for path in sources if path}
+    for expected in case.expected_diff:
+        covered.add(_generalize(expected.path))
+        if expected.compares_value:
+            covered.update(_value_paths(expected.path, expected.after))
+        else:
+            for value in (*expected.added, *expected.removed):
+                covered.update(_value_paths(f"{expected.path}[]", value))
+    return covered
 
 
 def covered_preference_types(case: EvalCase) -> set[str]:
@@ -496,7 +742,25 @@ def covered_preference_types(case: EvalCase) -> set[str]:
         if not assertion.path.startswith("preferences"):
             continue
         types.update(match.group(1) for match in re.finditer(r"\[\?type=([^\]]+)\]", assertion.path))
+    for expected in case.expected_diff:
+        if expected.path != "preferences":
+            continue
+        for value in (*expected.added, *expected.removed):
+            if isinstance(value, dict) and isinstance(value.get("type"), str):
+                types.add(value["type"])
     return types
+
+
+def _value_paths(path: str, value: Any) -> set[str]:
+    """Describe every nested shape named by an exact expected value."""
+    paths = {_generalize(path)}
+    if isinstance(value, dict):
+        for key, child in value.items():
+            paths.update(_value_paths(f"{path}.{key}", child))
+    elif isinstance(value, list):
+        for child in value:
+            paths.update(_value_paths(f"{path}[]", child))
+    return paths
 
 
 def _generalize(path: str) -> str:

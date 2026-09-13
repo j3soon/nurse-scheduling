@@ -1,0 +1,29 @@
+{
+  "id": "heldout-clarify-night-selector",
+  "fixture": "small-clinic",
+  "user_turns": [
+    "Remove Ana's night requests.",
+    "Only the `Night` group request on the 7th. Keep the concrete `N` request on the 6th."
+  ],
+  "intermediate_answer_contains": [
+    [["N", "N shift"], "Night"]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "shift request",
+          "person": ["Ana"],
+          "date": ["07"],
+          "shiftType": ["Night"],
+          "weight": -1
+        }
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["holdout", "clarification", "multi-turn", "similar-ids", "generalization"],
+  "note": "The first turn must distinguish the concrete N selector from the Night group on a new fixture."
+}

@@ -1,0 +1,15 @@
+{
+  "id": "pref-modify-one-near-duplicate",
+  "fixture": "ward87",
+  "question": "Change only P84's OFF request for the 1st from weight 11000000000 to -100. Leave P84's other OFF request unchanged.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [{"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": 11000000000}],
+      "added": [{"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": -100}]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "near-duplicate", "preference-update", "clarification-control", "exact-target"]
+}

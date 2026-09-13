@@ -22,8 +22,8 @@
 import asyncio
 import logging
 import sys
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -76,8 +76,16 @@ class SandboxBackend(Protocol):
         """Return an opaque provider identifier safe for lifecycle logging."""
         ...
 
+    def activity_batch(self) -> AbstractAsyncContextManager[None]:
+        """Keep the sandbox active across one related batch of operations."""
+        ...
+
     async def write_file(self, path: str, content: str | bytes) -> None:
         """Create or replace one file inside the sandbox."""
+        ...
+
+    async def write_files(self, files: Mapping[str, str | bytes]) -> None:
+        """Create or replace several files inside the sandbox in one request."""
         ...
 
     async def read_file(self, path: str) -> bytes:

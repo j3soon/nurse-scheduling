@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 import fakeredis
 import pytest
+import redis
 
 from nurse_scheduling.server.config import ServerSettings
 from nurse_scheduling.server.jobs.controller import JobController
@@ -39,7 +40,13 @@ from nurse_scheduling.server.jobs.models import (
     StoredArtifact,
     StoreLimits,
 )
-from nurse_scheduling.server.usage_metrics import REPORT_LOCK_SECONDS, RedisUsageMetrics, week_bounds, week_id_for
+from nurse_scheduling.server.usage_metrics import (
+    REPORT_LOCK_SECONDS,
+    RedisUsageMetrics,
+    schedule_basics_for,
+    week_bounds,
+    week_id_for,
+)
 from nurse_scheduling.server.usage_report import (
     MailgunReportTransport,
     UsageReporter,
@@ -53,6 +60,22 @@ from nurse_scheduling.server.usage_report import (
 @pytest.fixture
 def redis_client():
     return fakeredis.FakeRedis(decode_responses=False)
+
+
+PRIVATE_SCHEDULE = b"""\
+dates:
+  range:
+    startDate: 2026-01-05
+    endDate: 2026-01-11
+people:
+  items:
+    - id: Private Person A
+    - id: Private Person B
+shiftTypes:
+  items:
+    - id: Private Shift D
+    - id: Private Shift N
+"""
 
 
 def _job(created_at: datetime, *, job_id: str = "job_metrics", client_id: str = "private-client-id") -> Job:
@@ -130,7 +153,7 @@ def test_redis_job_store_records_complete_lifecycle_atomically(monkeypatch):
         solver="ortools/cp-sat",
         prettify=True,
         timeout_seconds=60,
-        input_bytes=b"private scheduling input",
+        input_bytes=PRIVATE_SCHEDULE,
     )
     now += timedelta(seconds=10)
     lease = controller.register_worker("worker")
@@ -164,13 +187,109 @@ def test_redis_job_store_records_complete_lifecycle_atomically(monkeypatch):
     assert entry.outcome == "optimal"
     assert entry.solver_status == "OPTIMAL"
     assert entry.termination_reason == "optimality_proven"
+    assert entry.people_count == 2
+    assert entry.shift_type_count == 2
+    assert entry.date_range_start == "2026-01-05"
+    assert entry.date_range_end == "2026-01-11"
     assert entry.download_count == 1
     assert store._redis.get(store._job_key(created.id)) is None
     assert store._redis.get(store._input_key(created.id)) is None
     assert store._redis.get(store._artifact_key(created.id)) is None
     assert store._redis.exists("test:usage:job:job_metrics")
-    assert b"input_name" not in store._redis.hgetall("test:usage:job:job_metrics")
+    telemetry = store._redis.hgetall("test:usage:job:job_metrics")
+    assert b"input_name" not in telemetry
+    assert all(b"Private Person" not in value and b"Private Shift" not in value for value in telemetry.values())
     assert not list(store._redis.scan_iter("test:usage:*private-filename*"))
+
+
+def test_malformed_schedule_omits_basics_without_dropping_job_telemetry(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    basics = schedule_basics_for(b"not: [valid")
+
+    assert basics == {}
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted, basics))
+
+    entry = metrics.load_week("2026-08-23").entries[0]
+
+    assert entry.state == JobState.QUEUED
+    assert entry.people_count is None
+    assert entry.shift_type_count is None
+    assert entry.date_range_start is None
+    assert entry.date_range_end is None
+
+
+def test_submitted_schedule_is_parsed_once_even_when_the_transaction_retries(monkeypatch):
+    from nurse_scheduling.server.stores import redis as redis_store
+
+    fake_server = fakeredis.FakeServer()
+    monkeypatch.setattr(
+        redis_store.redis.Redis,
+        "from_url",
+        lambda url, **kwargs: fakeredis.FakeRedis.from_url(url, server=fake_server, **kwargs),
+    )
+    store = redis_store.RedisJobStore(
+        url="redis://localhost/0",
+        key_prefix="test:jobs",
+        usage_metrics_key_prefix="test:usage",
+        usage_metrics_retention_days=30,
+    )
+    parses = 0
+    parse_schedule_basics = redis_store.schedule_basics_for
+
+    def counted_schedule_basics(input_bytes: bytes):
+        nonlocal parses
+        parses += 1
+        return parse_schedule_basics(input_bytes)
+
+    monkeypatch.setattr(redis_store, "schedule_basics_for", counted_schedule_basics)
+    _raise_watch_error_once(store, monkeypatch)
+    created = store.create(
+        _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc)),
+        PRIVATE_SCHEDULE,
+        StoreLimits(max_pending=10, max_retained=10),
+        events=(),
+    )
+
+    # A watched transaction retries its whole body, and the submitted YAML can be megabytes.
+    assert parses == 1
+    entry = store._usage_metrics.load_week("2026-08-23").entries[0]
+    assert entry.job_id == created.id
+    assert entry.people_count == 2
+
+
+def _raise_watch_error_once(store, monkeypatch) -> None:
+    """Force exactly one optimistic-locking retry of the next watched transaction."""
+    original_pipeline = store._redis.pipeline
+    error_pending = True
+
+    class WatchErrorPipeline:
+        def __init__(self, pipeline):
+            self.pipeline = pipeline
+
+        def __enter__(self):
+            self.pipeline.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.pipeline.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.pipeline, name)
+
+        def execute(self):
+            nonlocal error_pending
+            if error_pending:
+                error_pending = False
+                raise redis.WatchError
+            return self.pipeline.execute()
+
+    monkeypatch.setattr(store._redis, "pipeline", lambda: WatchErrorPipeline(original_pipeline()))
 
 
 def test_terminal_events_are_bucketed_when_they_occur(redis_client):
@@ -296,7 +415,13 @@ def test_render_report_adds_local_summary_before_csv(monkeypatch, redis_client):
     submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     report = metrics.load_week("2026-08-23")
-    base = report.entries[0]
+    base = replace(
+        report.entries[0],
+        people_count=4,
+        shift_type_count=3,
+        date_range_start="2026-01-05",
+        date_range_end="2026-01-11",
+    )
     report = replace(
         report,
         starts_at=datetime(2026, 8, 22, 16, tzinfo=timezone.utc),
@@ -332,6 +457,9 @@ def test_render_report_adds_local_summary_before_csv(monkeypatch, redis_client):
         "\n"
         "job_id,client_id,solver,state,"
     )
+    assert "people_count,shift_type_count,date_range_start,date_range_end" in rendered
+    assert ",4,3,2026-01-05,2026-01-11,60,0\n" in rendered
+    assert "Schedule telemetry includes only counts and the date range" in rendered
 
 
 def test_reporter_retries_transport_within_one_weekly_run(redis_client):

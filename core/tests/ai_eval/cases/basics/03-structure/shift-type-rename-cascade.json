@@ -1,0 +1,19 @@
+{
+  "id": "shift-type-rename-cascade",
+  "fixture": "ward87",
+  "question": "Rename the N shift type to ON everywhere.",
+  "expect_proposal": true,
+  "assert": [
+    {"path": "shiftTypes.items[].id", "added": ["ON"]},
+    {"path": "shiftTypes.items[].id", "removed": ["N"]},
+    {"path": "shiftTypes.items[?id=ON].description", "equals": "12~8(4), Any"},
+    {"path": "shiftTypes.groups[?id=Night].members", "equals": ["ON", "N+", "N~"]},
+    {"path": "people.items[?history=N]", "absent": true},
+    {"path": "people.items[?history=ON]", "present": true},
+    {"path": "preferences[?shiftType=N]", "absent": true},
+    {"path": "preferences[?shiftType=ON]", "present": true}
+  ],
+  "changes": ["shiftTypes", "people.items", "preferences"],
+  "tags": ["difficult", "tuning", "rename", "cross-module"],
+  "note": "The shift type is referenced by a group, repeated people history entries, staffing requirements, and shift requests. Similar IDs such as N+ and the Night group must remain unchanged."
+}

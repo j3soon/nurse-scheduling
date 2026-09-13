@@ -20,7 +20,7 @@
 'use client';
 
 import { useState } from 'react';
-import { FiLock, FiUnlock } from 'react-icons/fi';
+import { FiEye, FiEyeOff, FiLock, FiUnlock } from 'react-icons/fi';
 
 interface BackendTokenFieldProps {
   endpoint: string;
@@ -45,6 +45,13 @@ interface BackendTokenEditorProps {
 
 const CONTROL_CLASSES = 'rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400';
 
+export function isValidBackendToken(token: string): boolean {
+  return token.length > 0 && Array.from(token).every(character => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint >= 0x21 && codePoint <= 0x7e;
+  });
+}
+
 function BackendTokenEditor({
   endpoint,
   initialToken,
@@ -55,36 +62,58 @@ function BackendTokenEditor({
 }: BackendTokenEditorProps) {
   const [tokenDraft, setTokenDraft] = useState(initialToken);
   const [remember, setRemember] = useState(rememberToken);
+  const [showToken, setShowToken] = useState(false);
   const trimmedToken = tokenDraft.trim();
+  const tokenIsValid = isValidBackendToken(trimmedToken);
+  const tokenWarning = tokenDraft.length > 0 && trimmedToken.length === 0
+    ? 'Token cannot contain only spaces.'
+    : trimmedToken.length > 0 && !tokenIsValid
+      ? 'Use visible ASCII characters only.'
+      : null;
 
   const submitToken = () => {
-    if (trimmedToken) {
+    if (tokenIsValid) {
       onSave(trimmedToken, remember);
     }
   };
 
   return (
     <div className="mt-1 space-y-2">
-      <input
-        type="password"
-        value={tokenDraft}
-        autoComplete="off"
-        autoFocus
-        spellCheck={false}
-        placeholder="Backend token"
-        aria-label={`Token for ${endpoint}`}
-        onChange={(event) => setTokenDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            submitToken();
-          } else if (event.key === 'Escape') {
-            event.preventDefault();
-            onCancel();
-          }
-        }}
-        className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
-      />
+      <div className="flex items-center gap-2">
+        <input
+          type={showToken ? 'text' : 'password'}
+          value={tokenDraft}
+          autoComplete="off"
+          autoFocus
+          spellCheck={false}
+          placeholder="Backend token"
+          aria-label={`Token for ${endpoint}`}
+          onChange={(event) => setTokenDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              submitToken();
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+          className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+        />
+        <button
+          type="button"
+          onClick={() => setShowToken((visible) => !visible)}
+          aria-label={`${showToken ? 'Hide' : 'Show'} token for ${endpoint}`}
+          aria-pressed={showToken}
+          title={showToken ? 'Hide token' : 'Show token'}
+          className="rounded border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+        >
+          {showToken ? <FiEyeOff className="h-3.5 w-3.5" /> : <FiEye className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+      {tokenWarning && (
+        <p role="alert" className="text-xs text-amber-700">{tokenWarning}</p>
+      )}
       <label className="flex items-center gap-2 text-xs text-gray-600">
         <input
           type="checkbox"
@@ -98,7 +127,7 @@ function BackendTokenEditor({
         <button
           type="button"
           onClick={submitToken}
-          disabled={disabled || trimmedToken.length === 0}
+          disabled={disabled || !tokenIsValid}
           aria-label={`Save token for ${endpoint}`}
           className="rounded border border-blue-600 bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:border-gray-300 disabled:bg-gray-100 disabled:text-gray-400"
         >

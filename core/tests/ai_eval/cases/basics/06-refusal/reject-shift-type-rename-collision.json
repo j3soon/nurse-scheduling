@@ -1,0 +1,11 @@
+{
+  "id": "reject-shift-type-rename-collision",
+  "fixture": "ward87",
+  "question": "Rename the N shift type to Night everywhere.",
+  "expect_proposal": false,
+  "answer_contains": [
+    ["already exists", "already contains", "collide", "collision", "conflict", "in use", "must be unique"]
+  ],
+  "tags": ["difficult", "tuning", "rename", "refusal"],
+  "note": "Night is already a shift-type group ID, so frontend uniqueness rules require refusing the rename rather than merging the item and group."
+}

@@ -1,0 +1,19 @@
+{
+  "id": "pref-copy-all-requests",
+  "fixture": "ward87",
+  "question": "Copy all three of P85's shift requests to P86 with exactly the same dates, shift types, and weights.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {"type": "shift request", "person": ["P86"], "date": ["04"], "shiftType": ["N"], "weight": 11000000000},
+        {"type": "shift request", "person": ["P86"], "date": ["23"], "shiftType": ["K"], "weight": 11000000000},
+        {"type": "shift request", "person": ["P86"], "date": ["05", "06", "07", "08", "09", "10", "11", "22"], "shiftType": ["OFF"], "weight": 11000000000}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "clarification-control", "explicit-all", "preference-copy"],
+  "note": "The source count and all-inclusive scope are explicit, so the assistant should copy without clarification."
+}

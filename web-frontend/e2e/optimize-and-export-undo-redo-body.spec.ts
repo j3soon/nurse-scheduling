@@ -20,19 +20,17 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, setDateRange, waitForStoredCurrentSchedulingData } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalSchedulingState, setDateRange, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('optimize request body follows undo and redo of upstream edits', async ({ page }) => {
   /*
    * Steps:
-   * 1. Reset to the default schedule and add a new person upstream.
+   * 1. Seed a minimal schedule and add a new person upstream.
    * 2. Undo that edit and optimize once, confirming the request body excludes the new person.
    * 3. Redo the edit and optimize again, confirming the request body includes the new person.
    */
   await disableModalDialogs(page);
-  await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await seedMinimalSchedulingState(page);
   await setDateRange(page);
 
   await page.goto('/people');

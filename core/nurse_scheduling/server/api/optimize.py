@@ -51,10 +51,18 @@ def _controller(request: Request) -> JobController:
 
 def _events_token(request: Request, job_id: str) -> str | None:
     """Mint the stream credential embedded in a job's events link, when authentication is on."""
-    settings = _settings(request)
-    if settings.auth_token is None:
+    registry = request.app.state.auth_registry
+    if not registry.enabled:
         return None
-    return create_stream_token(settings.auth_token, job_id, ttl_seconds=settings.stream_token_ttl_seconds)
+    credential_id = request.state.auth_credential_id
+    credential = registry.get(credential_id)
+    if credential is None:
+        raise RuntimeError("authenticated request has no matching credential")
+    return create_stream_token(
+        credential.token,
+        job_id,
+        ttl_seconds=_settings(request).stream_token_ttl_seconds,
+    )
 
 
 def _settings(request: Request) -> ServerSettings:
@@ -152,6 +160,7 @@ async def create_job(
         prettify=prettify if prettify is not None else settings.default_prettify,
         timeout_seconds=timeout_seconds,
         input_bytes=content,
+        auth_credential_id=request.state.auth_credential_id,
     )
     response.headers["Location"] = f"/optimize/{job.id}"
     response.headers["Retry-After"] = "1"

@@ -1,0 +1,15 @@
+{
+  "id": "shift-type-group-add",
+  "fixture": "ward87",
+  "question": "Create a shift type group 'Long shifts' containing N and N+.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "shiftTypes.groups",
+      "added": [{"id": "Long shifts", "members": ["N", "N+"], "description": ""}]
+    }
+  ],
+  "changes": [
+    "shiftTypes.groups"
+  ]
+}
