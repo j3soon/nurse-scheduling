@@ -381,9 +381,7 @@ def _apply_turn_action(
 ) -> tuple[str, AgentProposal | None]:
     """Apply one trusted proposal lifecycle action between user turns."""
     if action.action in {"approve", "reject"} and pending is None:
-        events.append(
-            {"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": False}
-        )
+        events.append({"kind": "turn_action", "turn": action.after_turn, "action": action.action, "ok": False})
         return text, None
     if action.action == "approve":
         text = pending.text
@@ -757,9 +755,7 @@ def comparison_markdown(baseline: Sequence[dict[str, Any]], current: Sequence[Ca
         before_tokens = _median(
             [float(record["token_usage"]["total_tokens"]) for record in before if record["token_usage"]["total_tokens"]]
         )
-        after_tokens = _median(
-            [float(run.token_usage.total_tokens) for run in after if run.token_usage is not None]
-        )
+        after_tokens = _median([float(run.token_usage.total_tokens) for run in after if run.token_usage is not None])
         lines.append(
             f"| {case_id} | {before_rate:.0%} | {after_rate:.0%} | {after_rate - before_rate:+.0%} "
             f"| {after_turns - before_turns:+.1f} | {after_tokens - before_tokens:+.0f} |"
@@ -905,9 +901,7 @@ def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repeti
         "repetitions": repetitions,
         "case_ids": [case.id for case in cases],
         "prompt_sha256": hashlib.sha256(SANDBOX_SYSTEM_PROMPT.encode()).hexdigest(),
-        "references_sha256": {
-            path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in references
-        },
+        "references_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in references},
         "fixtures_sha256": {
             fixture: hashlib.sha256(fixture_text(fixture).encode()).hexdigest()
             for fixture in sorted({case.fixture for case in cases})

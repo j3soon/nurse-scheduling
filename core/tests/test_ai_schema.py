@@ -223,9 +223,7 @@ def test_user_guide_references_are_the_canonical_user_facing_markdown():
     assert set(references) == {
         path.relative_to(USER_GUIDE_DIRECTORY).as_posix() for path in USER_GUIDE_DIRECTORY.rglob("*.md")
     }
-    assert references["experimental-ai.md"] == (USER_GUIDE_DIRECTORY / "experimental-ai.md").read_text(
-        encoding="utf-8"
-    )
+    assert references["experimental-ai.md"] == (USER_GUIDE_DIRECTORY / "experimental-ai.md").read_text(encoding="utf-8")
     assert "developer-guide" not in references
 
 

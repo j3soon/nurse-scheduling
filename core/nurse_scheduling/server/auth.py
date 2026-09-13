@@ -172,9 +172,7 @@ def normalize_auth_credentials(
     return normalized_legacy, tuple(normalized_credentials)
 
 
-def create_auth_registry(
-    legacy_token: str | None, credentials: tuple[AuthCredential, ...]
-) -> AuthTokenRegistry:
+def create_auth_registry(legacy_token: str | None, credentials: tuple[AuthCredential, ...]) -> AuthTokenRegistry:
     """Build the runtime registry, assigning the legacy token its reserved ID."""
     combined = credentials
     if legacy_token is not None:

@@ -158,11 +158,7 @@ def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
 
     _collect(
         ScriptedProvider(
-            [
-                ToolCallRequest(
-                    (ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_PENDING_PROPOSAL})),)
-                )
-            ],
+            [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_PENDING_PROPOSAL})),))],
             [TextDelta("The pending description is Ready.")],
         ),
         factory,
