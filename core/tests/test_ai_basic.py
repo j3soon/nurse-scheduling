@@ -1687,6 +1687,31 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
     ]
 
 
+def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue() -> None:
+    settings = make_settings(max_history_messages=3)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", schedule_yaml())
+    store.begin(session.id, "browser-owner")
+
+    for index in range(settings.max_history_messages):
+        store.queue_steering(session.id, "browser-owner", f"queued-{index}", "Keep going.")
+        # Draining empties the queue but keeps the IDs that make a retried POST idempotent.
+        assert store.take_steering(session.id, False) == [(f"queued-{index}", "Keep going.")]
+
+    with pytest.raises(HTTPException) as exc_info:
+        store.queue_steering(session.id, "browser-owner", "one-too-many", "Keep going.")
+
+    assert exc_info.value.status_code == 429
+    assert len(session.steering_ids) == settings.max_history_messages
+
+    # A fresh turn starts the budget over.
+    store.abort(session.id)
+    store.begin(session.id, "browser-owner")
+    store.queue_steering(session.id, "browser-owner", "queued-0", "Keep going.")
+    assert store.take_steering(session.id, False) == [("queued-0", "Keep going.")]
+
+
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store

@@ -342,7 +342,9 @@ class SessionStore:
                 raise HTTPException(status_code=409, detail="The active response is no longer accepting messages.")
             if message_id in session.steering_ids:
                 return
-            if len(session.steering_queue) >= self._settings.max_history_messages:
+            # Counted over the whole turn, not the drained queue, because the seen-ID set
+            # that makes a retried POST idempotent is never emptied mid-turn.
+            if len(session.steering_ids) >= self._settings.max_history_messages:
                 raise HTTPException(status_code=429, detail="Too many messages are already queued.")
             session.steering_queue.append((message_id, message))
             session.steering_ids.add(message_id)
