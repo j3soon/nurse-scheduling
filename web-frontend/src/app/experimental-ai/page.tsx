@@ -23,7 +23,7 @@
 
 import Image from 'next/image';
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FiArrowDown, FiArrowUp, FiChevronDown, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
+import { FiArrowDown, FiArrowUp, FiChevronDown, FiDownload, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import {
@@ -38,6 +38,7 @@ import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
+import { ChatExportMessage, downloadChatExport } from './chatExport';
 import {
   AiCapabilities,
   AiStaleTurnError,
@@ -56,15 +57,8 @@ import {
   updateSessionSchedule,
 } from './aiClient';
 
-interface ChatMessage {
+interface ChatMessage extends ChatExportMessage {
   id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  attachmentNames?: string[];
-  activity?: ActivityEntry[];
-  status?: 'pending' | 'failed';
-  responseStartedAt?: number;
-  responseCompletedAt?: number;
   retry?: {
     question: string;
     requiresAttachments: boolean;
@@ -1189,25 +1183,47 @@ export default function ExperimentalAiPage() {
             </form>
           )}
         </div>
-        <div className="mt-2 flex flex-wrap gap-4 text-xs text-gray-500">
-          <label className="flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={showReasoning}
-              onChange={event => rememberPreferences({ showReasoning: event.target.checked, showTools })}
-              className="h-3 w-3 accent-gray-400"
-            />
-            Show reasoning
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={showTools}
-              onChange={event => rememberPreferences({ showReasoning, showTools: event.target.checked })}
-              className="h-3 w-3 accent-gray-400"
-            />
-            Show tool activity
-          </label>
+        <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={showReasoning}
+                onChange={event => rememberPreferences({ showReasoning: event.target.checked, showTools })}
+                className="h-3 w-3 accent-gray-400"
+              />
+              Show reasoning
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={showTools}
+                onChange={event => rememberPreferences({ showReasoning, showTools: event.target.checked })}
+                className="h-3 w-3 accent-gray-400"
+              />
+              Show tool activity
+            </label>
+          </div>
+          {messages.length > 0 && (
+            <div className="ml-auto flex items-center gap-2">
+              <FiDownload aria-hidden="true" className="h-3.5 w-3.5" />
+              <span>Export chat:</span>
+              <button
+                type="button"
+                onClick={() => downloadChatExport('html', messages, sessionEndpointRef.current ?? aiEndpoint)}
+                className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
+              >
+                HTML
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadChatExport('markdown', messages, sessionEndpointRef.current ?? aiEndpoint)}
+                className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900"
+              >
+                Markdown
+              </button>
+            </div>
+          )}
         </div>
         {(authRequired || authToken !== null) && (
           <div className="mt-3 max-w-md rounded-lg border border-gray-200 bg-white px-3 py-2">
