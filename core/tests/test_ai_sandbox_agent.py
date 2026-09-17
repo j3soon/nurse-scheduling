@@ -25,7 +25,8 @@ from collections.abc import AsyncIterator, Sequence
 
 import pytest
 
-from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolStart, AgentToolUse
+from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolOutcome, AgentToolStart, AgentToolUse
+from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
@@ -152,6 +153,38 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     proposal = next(event for event in events if isinstance(event, AgentProposal))
     assert "description: Head" in proposal.text
     assert "people.items[0].description" in proposal.diff
+
+
+def test_optimizer_tool_receives_the_current_working_schedule() -> None:
+    optimizer_call = ToolCallRequest(
+        (ToolCall("call-1", OPTIMIZER_TOOL, json.dumps({"action": "start", "timeout_seconds": 30})),)
+    )
+    provider = ScriptedProvider([optimizer_call], [TextDelta("The optimizer is running.")])
+    factory = FakeSandboxFactory()
+    received: list[tuple[str, str]] = []
+
+    async def execute_optimizer(current_schedule: str, arguments: str):
+        received.append((current_schedule, arguments))
+        return AgentToolOutcome("Started in the background.", True)
+
+    async def collect() -> list:
+        return [
+            event
+            async for event in run_sandbox_agent(
+                provider,
+                factory,
+                schedule_yaml(),
+                MESSAGES,
+                _limits(),
+                execute_optimizer=execute_optimizer,
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert received == [(schedule_yaml(), '{"action": "start", "timeout_seconds": 30}')]
+    assert OPTIMIZER_TOOL in [tool["function"]["name"] for tool in provider.requests[0][1]]
+    assert next(event for event in events if isinstance(event, AgentToolUse)).ok
 
 
 def test_pending_proposal_is_hydrated_as_trusted_read_only_context():

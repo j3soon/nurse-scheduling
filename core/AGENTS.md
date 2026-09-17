@@ -69,8 +69,10 @@ test paths when a narrower suite is known to be sufficient.
   guidance does not teach the agent to ask when the user already supplied a
   unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
   tune prompts directly against one held-out trajectory.
-- Expose only Pi's default `read`, `bash`, `edit`, and `write` model tools over
-  the disposable sandbox. Use `read` for bounded inspection, `edit` for unique
+- Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over the
+  disposable sandbox. The server-side `optimizer` lifecycle tool may also be
+  offered when configured. Keep optimizer execution and credentials outside the sandbox.
+  Use `read` for bounded inspection, `edit` for unique
   exact-text replacements, and `write` only for a complete file rewrite. Put
   domain guidance in task-sized reference documents that return related schema
   shapes together instead of adding model-specific tools or fine-grained lookup

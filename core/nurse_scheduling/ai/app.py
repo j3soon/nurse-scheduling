@@ -47,6 +47,7 @@ from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, Agen
 from .config import AiSettings, validate_ai_auth_credentials
 from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .history import ChatHistory, stop_maintenance
+from .optimizer import HttpOptimizerBackend, OptimizerBackend, OptimizerResultUnavailable, SessionOptimizer
 from .provider import (
     ChatContent,
     ChatMessage,
@@ -204,11 +205,19 @@ class DocumentAttachmentCapability(BaseModel):
     max_bytes_per_file: int
 
 
+class OptimizerCapability(BaseModel):
+    """Whether this deployment can run optimization for the assistant."""
+
+    enabled: bool
+    max_runs_per_session: int
+
+
 class CapabilitiesResponse(BaseModel):
     """Enabled experimental features and their public limits."""
 
     image_attachments: ImageAttachmentCapability
     document_attachments: DocumentAttachmentCapability
+    optimizer: OptimizerCapability
     auth: dict[str, bool | str]
 
 
@@ -294,6 +303,24 @@ class SessionStore:
             session.accepting_steering = True
             session.steering_queue.clear()
             session.steering_ids.clear()
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+            return (
+                list(session.history),
+                session.schedule_yaml,
+                session.revision,
+                session.proposal_yaml,
+                session.proposal_diff,
+            )
+
+    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str] | None:
+        """Reserve an idle session for a trusted background-triggered turn."""
+        with self._lock:
+            self._prune_expired()
+            session = self._sessions.get(session_id)
+            if session is None or session.active:
+                return None
+            session.active = True
+            session.accepting_steering = False
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return (
                 list(session.history),
@@ -465,6 +492,55 @@ class SessionStore:
         expired_ids = [session_id for session_id, session in self._sessions.items() if session.expires_at <= now]
         for session_id in expired_ids:
             del self._sessions[session_id]
+
+
+@dataclass(frozen=True)
+class SessionEvent:
+    """One replayable event from an assistant turn initiated by background work."""
+
+    id: int
+    type: str
+    data: dict[str, object]
+
+
+class SessionEventBroker:
+    """Process-local replay and notification for background assistant turns."""
+
+    def __init__(self, max_events_per_session: int = 200, max_sessions: int = 1000) -> None:
+        self._max_events_per_session = max_events_per_session
+        self._max_sessions = max_sessions
+        self._events: dict[str, list[SessionEvent]] = {}
+        self._signals: dict[str, asyncio.Event] = {}
+
+    def publish(self, session_id: str, event_type: str, data: dict[str, object]) -> None:
+        if session_id not in self._events and len(self._events) >= self._max_sessions:
+            oldest_session_id = next(iter(self._events))
+            self._events.pop(oldest_session_id, None)
+            self._signals.pop(oldest_session_id, None)
+        events = self._events.setdefault(session_id, [])
+        event_id = events[-1].id + 1 if events else 1
+        events.append(SessionEvent(event_id, event_type, data))
+        del events[: -self._max_events_per_session]
+        self._signals.setdefault(session_id, asyncio.Event()).set()
+
+    def events_after(self, session_id: str, after_id: int = 0) -> tuple[SessionEvent, ...]:
+        """Return retained events after a cursor for replay and diagnostics."""
+        return tuple(event for event in self._events.get(session_id, ()) if event.id > after_id)
+
+    async def stream(self, session_id: str, after_id: int) -> AsyncIterator[SessionEvent | None]:
+        while True:
+            pending = self.events_after(session_id, after_id)
+            if pending:
+                for event in pending:
+                    after_id = event.id
+                    yield event
+                continue
+            signal = self._signals.setdefault(session_id, asyncio.Event())
+            signal.clear()
+            try:
+                await asyncio.wait_for(signal.wait(), timeout=15)
+            except TimeoutError:
+                yield None
 
 
 def _sse_event(event_type: str, data: dict[str, object]) -> str:
@@ -677,6 +753,7 @@ def create_app(
     settings: AiSettings | None = None,
     provider: ToolCapableChatProvider | None = None,
     sandbox_factory: SandboxFactory | None = None,
+    optimizer_backend: OptimizerBackend | None = None,
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
     init_sentry(API_VERSION, app="ai-backend")
@@ -697,6 +774,8 @@ def create_app(
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
+    event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
+    turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
@@ -713,6 +792,34 @@ def create_app(
             if task is not None and active_turn_tasks.get(session_id) is task:
                 del active_turn_tasks[session_id]
 
+    if optimizer_backend is None and settings.optimizer_base_url:
+        optimizer_backend = HttpOptimizerBackend(
+            settings.optimizer_base_url,
+            settings.optimizer_auth_token,
+            settings.optimizer_request_timeout_seconds,
+            settings.optimizer_max_result_bytes,
+        )
+
+    async def optimizer_completed(session_id: str, prompt: str) -> None:
+        await run_background_turn(session_id, prompt)
+
+    async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
+        event_broker.publish(session_id, "optimization", update)
+
+    session_optimizer = (
+        SessionOptimizer(
+            optimizer_backend,
+            poll_interval_seconds=settings.optimizer_poll_interval_seconds,
+            on_completion=optimizer_completed,
+            on_update=optimizer_updated,
+            max_sessions=settings.max_sessions,
+            max_runs_per_session=settings.optimizer_max_runs_per_session,
+            max_cached_result_bytes=settings.optimizer_result_cache_bytes,
+        )
+        if optimizer_backend is not None
+        else None
+    )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if history_log is not None and not await history_log.write("initialize"):
@@ -722,6 +829,8 @@ def create_app(
             async with managed_sandbox_factory(sandbox_factory):
                 yield
         finally:
+            if session_optimizer is not None:
+                await session_optimizer.close()
             if maintenance is not None:
                 await stop_maintenance(maintenance)
 
@@ -746,6 +855,8 @@ def create_app(
     app.state.session_store = store
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
+    app.state.session_optimizer = session_optimizer
+    app.state.session_event_broker = event_broker
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
@@ -773,8 +884,167 @@ def create_app(
                 max_files=settings.max_document_files,
                 max_bytes_per_file=settings.max_document_bytes,
             ),
+            optimizer=OptimizerCapability(
+                enabled=session_optimizer is not None,
+                max_runs_per_session=settings.optimizer_max_runs_per_session,
+            ),
             auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
         )
+
+    async def run_background_turn(session_id: str, question: str) -> None:
+        """Wake an idle agent after a background optimizer job reaches a terminal state."""
+        turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
+        async with turn_lock, track_active_turn(session_id):
+            snapshot = store.begin_background(session_id)
+            if snapshot is None:
+                return
+            history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = snapshot
+            turn_id = str(uuid4())
+            event_broker.publish(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
+            if history_log is not None:
+                logged = await history_log.write(
+                    "start_turn",
+                    turn_id,
+                    session_id,
+                    None,
+                    question,
+                    settings.provider_model,
+                    0,
+                    0,
+                )
+                if not logged:
+                    store.abort(session_id)
+                    event_broker.publish(
+                        session_id,
+                        "error",
+                        {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
+                    )
+                    return
+            messages = build_provider_messages(
+                history,
+                schedule_yaml,
+                question,
+                [],
+                [],
+                system_prompt=SANDBOX_SYSTEM_PROMPT,
+                pending_proposal=bool(proposal_yaml),
+            )
+            assistant_parts: list[str] = []
+            pending_proposal: AgentProposal | None = None
+            completed = False
+            outcome = "failed"
+            error_code: str | None = "internal_error"
+            usage: TokenUsage | None = None
+            try:
+                async with concurrency_limit:
+                    agent_events = run_sandbox_agent(
+                        provider,
+                        sandbox_factory,
+                        schedule_yaml,
+                        messages,
+                        SandboxAgentLimits.from_settings(settings),
+                        pending_proposal_yaml=proposal_yaml,
+                        pending_proposal_diff=proposal_diff,
+                        execute_optimizer=(
+                            lambda current_yaml, arguments: session_optimizer.execute(
+                                session_id, current_yaml, arguments
+                            )
+                        )
+                        if session_optimizer is not None
+                        else None,
+                    )
+                    async for event in agent_events:
+                        if isinstance(event, AgentText):
+                            assistant_parts.append(event.text)
+                            event_broker.publish(session_id, "delta", {"text": event.text})
+                        elif isinstance(event, AgentReasoning):
+                            event_broker.publish(session_id, "reasoning", {"text": event.text})
+                        elif isinstance(event, TokenUsage):
+                            usage = event if usage is None else usage + event
+                        elif isinstance(event, AgentToolStart):
+                            event_broker.publish(
+                                session_id,
+                                "tool_start",
+                                {"name": event.name, "arguments": event.arguments},
+                            )
+                        elif isinstance(event, AgentToolUse):
+                            event_broker.publish(
+                                session_id,
+                                "tool",
+                                {
+                                    "name": event.name,
+                                    "arguments": event.arguments,
+                                    "result": event.result,
+                                    "ok": event.ok,
+                                },
+                            )
+                        elif isinstance(event, AgentScheduleChange):
+                            event_broker.publish(
+                                session_id,
+                                "schedule_change",
+                                {"schedule_yaml": event.schedule_yaml},
+                            )
+                        elif isinstance(event, AgentProposal):
+                            pending_proposal = event
+                proposal = None
+                if pending_proposal is not None:
+                    proposal = (pending_proposal.text, pending_proposal.diff)
+                completion = store.finish(
+                    session_id,
+                    question,
+                    "".join(assistant_parts),
+                    proposal,
+                    base_revision=base_revision,
+                )
+                completed = True
+                if not completion.turn_saved:
+                    outcome, error_code = "stale", None
+                    event_broker.publish(session_id, "stale", {"message": STALE_TURN_ERROR})
+                    return
+                outcome, error_code = "completed", None
+                if completion.proposal_saved and pending_proposal is not None:
+                    event_broker.publish(session_id, "proposal", {"diff": pending_proposal.diff})
+                event_broker.publish(session_id, "done", {"message_id": turn_id})
+            except asyncio.CancelledError:
+                outcome, error_code = "cancelled", None
+                event_broker.publish(session_id, "stopped", {"message_id": turn_id})
+                raise
+            except ProviderError:
+                error_code = "provider_error"
+                event_broker.publish(session_id, "error", {"message": PROVIDER_ERROR})
+            except SandboxTurnTimeoutError:
+                error_code = "sandbox_timeout"
+                event_broker.publish(session_id, "error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
+            except SandboxCandidateError:
+                error_code = "candidate_validation"
+                event_broker.publish(session_id, "error", {"message": CANDIDATE_VALIDATION_ERROR})
+            except SandboxError:
+                error_code = "sandbox_error"
+                logger.exception("Background AI sandbox turn failed session_id=%s", session_id)
+                event_broker.publish(
+                    session_id,
+                    "error",
+                    {"message": "The temporary AI sandbox failed while reviewing optimizer results."},
+                )
+            except Exception:
+                logger.exception("Unexpected background AI turn failure session_id=%s", session_id)
+                event_broker.publish(
+                    session_id,
+                    "error",
+                    {"message": "The AI could not review the optimizer result."},
+                )
+            finally:
+                if not completed:
+                    store.abort(session_id)
+                if history_log is not None:
+                    await history_log.write(
+                        "finish_turn",
+                        turn_id,
+                        "".join(assistant_parts),
+                        outcome,
+                        error_code,
+                        usage,
+                    )
 
     @app.post(
         "/sessions",
@@ -811,6 +1081,33 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
+    @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth)])
+    async def stream_session_events(
+        session_id: str,
+        request: Request,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> StreamingResponse:
+        """Replay and stream assistant turns triggered by background work."""
+        store.require_owned(session_id, owner)
+        raw_cursor = request.headers.get("last-event-id", "0")
+        try:
+            after_id = max(0, int(raw_cursor))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer.") from None
+
+        async def generate_session_events():
+            async for event in event_broker.stream(session_id, after_id):
+                if event is None:
+                    yield ": keepalive\n\n"
+                else:
+                    yield f"id: {event.id}\n{_sse_event(event.type, event.data)}"
+
+        return StreamingResponse(
+            generate_session_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @app.post(
         "/sessions/{session_id}/stop",
         status_code=status.HTTP_202_ACCEPTED,
@@ -820,12 +1117,35 @@ def create_app(
         session_id: str,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Cancel the assistant turn active in a session."""
+        """Cancel the foreground or background assistant turn active in a session."""
         store.require_owned(session_id, owner)
         task = active_turn_tasks.get(session_id)
         if task is not None and not task.done():
             task.cancel()
         return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    @app.get(
+        "/sessions/{session_id}/optimizations/{job_id}/xlsx",
+        dependencies=[Depends(require_auth)],
+    )
+    async def download_optimization(
+        session_id: str,
+        job_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Download a completed optimizer result without exposing optimizer credentials."""
+        store.require_owned(session_id, owner)
+        if session_optimizer is None:
+            raise HTTPException(status_code=404, detail="Optimizer result not found.")
+        try:
+            artifact = await session_optimizer.result_artifact(session_id, job_id)
+        except OptimizerResultUnavailable as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
+        )
 
     @app.post(
         "/sessions/{session_id}/messages/queue",
@@ -858,7 +1178,23 @@ def create_app(
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
         question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
-        history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
+        turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
+        if turn_lock.locked():
+            raise HTTPException(status_code=409, detail="This chat session already has an active response.")
+        await turn_lock.acquire()
+        turn_released = False
+
+        def release_turn() -> None:
+            nonlocal turn_released
+            if not turn_released:
+                turn_released = True
+                turn_lock.release()
+
+        try:
+            history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
+        except BaseException:
+            release_turn()
+            raise
         turn_id = str(uuid4())
         if history_log is not None:
             try:
@@ -876,6 +1212,7 @@ def create_app(
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
             except BaseException:
                 store.abort(session_id)
+                release_turn()
                 raise
         request_logger.info(
             "AI request started session_id=%s question_chars=%s images=%s documents=%s question=%s",
@@ -904,7 +1241,9 @@ def create_app(
 
         async def generate_events():
             stream_started.set()
-            active_turn = track_active_turn(session_id)
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                active_turn_tasks[session_id] = current_task
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
             completed = False
@@ -914,7 +1253,7 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
-                async with active_turn, concurrency_limit:
+                async with concurrency_limit:
                     agent_events = run_sandbox_agent(
                         provider,
                         sandbox_factory,
@@ -924,6 +1263,13 @@ def create_app(
                         take_steering=lambda close_if_empty: store.take_steering(session_id, close_if_empty),
                         pending_proposal_yaml=proposal_yaml,
                         pending_proposal_diff=proposal_diff,
+                        execute_optimizer=(
+                            lambda current_yaml, arguments: session_optimizer.execute(
+                                session_id, current_yaml, arguments
+                            )
+                        )
+                        if session_optimizer is not None
+                        else None,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):
@@ -1025,6 +1371,8 @@ def create_app(
                 logger.exception("Unexpected AI stream failure")
                 yield _sse_event("error", {"message": "The AI response failed unexpectedly."})
             finally:
+                if current_task is not None and active_turn_tasks.get(session_id) is current_task:
+                    del active_turn_tasks[session_id]
                 if not completed:
                     store.abort(session_id)
                     if history_log is not None:
@@ -1036,12 +1384,14 @@ def create_app(
                             error_code,
                             usage,
                         )
+                release_turn()
 
         async def abort_unstarted_stream() -> None:
             if not stream_started.is_set():
                 store.abort(session_id)
                 if history_log is not None:
                     await history_log.write("finish_turn", turn_id, "", "cancelled", None, None)
+                release_turn()
 
         return StreamingResponse(
             generate_events(),

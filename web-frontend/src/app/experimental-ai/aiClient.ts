@@ -34,7 +34,15 @@ export interface ToolActivity {
 
 export type ToolStartActivity = Pick<ToolActivity, 'name' | 'arguments'>;
 
+export interface OptimizationActivity {
+  jobId: string;
+  state: string;
+  terminal: boolean;
+  downloadable: boolean;
+}
+
 export interface StreamCallbacks {
+  onTurnStart?: (messageId: string, trigger: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
@@ -42,7 +50,10 @@ export interface StreamCallbacks {
   onSteering?: (messageId: string, message: string) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
   onProposal?: (diff: string) => void;
+  onOptimization?: (activity: OptimizationActivity) => void;
   onDone?: () => void;
+  onStopped?: () => void;
+  onError?: (message: string) => void;
 }
 
 export interface AiCapabilities {
@@ -58,6 +69,10 @@ export interface AiCapabilities {
     accepted_extensions: string[];
     max_files: number;
     max_bytes_per_file: number;
+  };
+  optimizer: {
+    enabled: boolean;
+    max_runs_per_session: number;
   };
 }
 
@@ -80,6 +95,11 @@ interface SsePayload {
   ok?: unknown;
   schedule_yaml?: unknown;
   message_id?: unknown;
+  trigger?: unknown;
+  job_id?: unknown;
+  state?: unknown;
+  terminal?: unknown;
+  downloadable?: unknown;
 }
 
 export class AiHttpError extends Error {
@@ -156,6 +176,7 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
   const auth = parseAuthRequirement(body.auth);
   const images = body.image_attachments;
   const documents = body.document_attachments;
+  const optimizer = body.optimizer ?? { enabled: false, max_runs_per_session: 1 };
   if (
     typeof images?.enabled !== 'boolean'
     || !Array.isArray(images.accepted_media_types)
@@ -171,10 +192,13 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
     || documents.max_files <= 0
     || !Number.isInteger(documents.max_bytes_per_file)
     || documents.max_bytes_per_file <= 0
+    || typeof optimizer.enabled !== 'boolean'
+    || !Number.isInteger(optimizer.max_runs_per_session)
+    || optimizer.max_runs_per_session <= 0
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
-  return { ...body, auth } as AiCapabilities;
+  return { ...body, auth, optimizer } as AiCapabilities;
 }
 
 export async function createSession(
@@ -213,7 +237,12 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     throw new Error('The AI backend returned an invalid stream.');
   }
 
-  if (eventType === 'delta' && typeof payload.text === 'string') {
+  if (eventType === 'turn_start' && typeof payload.message_id === 'string') {
+    callbacks.onTurnStart?.(
+      payload.message_id,
+      typeof payload.trigger === 'string' ? payload.trigger : 'background work',
+    );
+  } else if (eventType === 'delta' && typeof payload.text === 'string') {
     callbacks.onDelta(payload.text);
   } else if (eventType === 'reasoning' && typeof payload.text === 'string') {
     callbacks.onReasoning?.(payload.text);
@@ -242,14 +271,31 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     callbacks.onScheduleChange?.(payload.schedule_yaml);
   } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
     callbacks.onProposal?.(payload.diff);
+  } else if (
+    eventType === 'optimization'
+    && typeof payload.job_id === 'string'
+    && typeof payload.state === 'string'
+    && typeof payload.terminal === 'boolean'
+    && typeof payload.downloadable === 'boolean'
+  ) {
+    callbacks.onOptimization?.({
+      jobId: payload.job_id,
+      state: payload.state,
+      terminal: payload.terminal,
+      downloadable: payload.downloadable,
+    });
   } else if (eventType === 'done') {
     callbacks.onDone?.();
+  } else if (eventType === 'stopped') {
+    callbacks.onStopped?.();
   } else if (eventType === 'stale') {
     throw new AiStaleTurnError(
       typeof payload.message === 'string' ? payload.message : 'The AI response became stale.',
     );
   } else if (eventType === 'error') {
-    throw new Error(typeof payload.message === 'string' ? payload.message : 'The AI response failed.');
+    const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
+    if (callbacks.onError) callbacks.onError(message);
+    else throw new Error(message);
   }
 }
 
@@ -285,6 +331,10 @@ export async function streamMessage(
     signal,
   });
   if (!response.ok) throw await responseError(response);
+  await consumeStream(response, callbacks);
+}
+
+async function consumeStream(response: Response, callbacks: StreamCallbacks): Promise<void> {
   if (!response.body) throw new Error('The AI backend returned an empty stream.');
 
   const reader = response.body.getReader();
@@ -306,6 +356,23 @@ export async function streamMessage(
   }
 
   if (buffer.trim()) consumeEvent(buffer, callbacks);
+}
+
+export async function streamSessionEvents(
+  sessionId: string,
+  callbacks: StreamCallbacks,
+  signal: AbortSignal,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/events`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: authorizedHeaders(authToken),
+    signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  await consumeStream(response, callbacks);
 }
 
 export async function queueMessage(
@@ -335,6 +402,24 @@ export async function stopSession(
     headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
+}
+
+export async function downloadOptimization(
+  sessionId: string,
+  jobId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<Blob> {
+  const response = await fetch(
+    `${endpoint}/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/xlsx`,
+    {
+      method: 'GET',
+      credentials: 'include',
+      headers: authorizedHeaders(authToken),
+    },
+  );
+  if (!response.ok) throw await responseError(response);
+  return response.blob();
 }
 
 export async function scheduleRevision(scheduleYaml: string): Promise<string> {

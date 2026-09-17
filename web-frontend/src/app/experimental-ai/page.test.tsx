@@ -24,8 +24,10 @@ import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
+const mockDownloadOptimization = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockStreamMessage = vi.hoisted(() => vi.fn());
+const mockStreamSessionEvents = vi.hoisted(() => vi.fn());
 const mockStopSession = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
 const mockApproveProposal = vi.hoisted(() => vi.fn());
@@ -46,6 +48,7 @@ vi.mock('./aiClient', () => ({
   LOCAL_AI_API_URL: 'http://localhost:8001',
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
+  downloadOptimization: mockDownloadOptimization,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
   normalizeAiEndpoint: mockNormalizeAiEndpoint,
@@ -54,6 +57,7 @@ vi.mock('./aiClient', () => ({
   ),
   queueMessage: mockQueueMessage,
   streamMessage: mockStreamMessage,
+  streamSessionEvents: mockStreamSessionEvents,
   stopSession: mockStopSession,
   approveProposal: mockApproveProposal,
   rejectProposal: mockRejectProposal,
@@ -87,6 +91,7 @@ describe('ExperimentalAiPage', () => {
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
+    mockDownloadOptimization.mockReset().mockResolvedValue(new Blob(['workbook']));
     mockGetCapabilities.mockReset().mockResolvedValue({
       image_attachments: {
         enabled: false,
@@ -109,6 +114,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onDelta('Alice');
       callbacks.onDelta(' works Monday.');
     });
+    mockStreamSessionEvents.mockReset().mockResolvedValue(undefined);
     mockStopSession.mockReset().mockResolvedValue(undefined);
     mockGenerateYaml.mockClear();
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
@@ -159,6 +165,106 @@ describe('ExperimentalAiPage', () => {
       '/ai',
     );
     expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(true);
+  });
+
+  it('renders an assistant turn when background optimization wakes the agent', async () => {
+    const user = userEvent.setup();
+    let backgroundCallbacks: {
+      onTurnStart?: (messageId: string, trigger: string) => void;
+      onDelta: (text: string) => void;
+      onOptimization?: (activity: {
+        jobId: string;
+        state: string;
+        terminal: boolean;
+        downloadable: boolean;
+      }) => void;
+      onDone?: () => void;
+    } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+
+    act(() => backgroundCallbacks?.onOptimization?.({
+      jobId: 'opt-result-1',
+      state: 'running',
+      terminal: false,
+      downloadable: false,
+    }));
+    expect(screen.getByRole('status')).toHaveTextContent('Optimizer running in the background · running');
+
+    act(() => {
+      backgroundCallbacks?.onOptimization?.({
+        jobId: 'opt-result-1',
+        state: 'completed',
+        terminal: true,
+        downloadable: true,
+      });
+      backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
+      backgroundCallbacks?.onDelta('The optimizer returned score 23.');
+      backgroundCallbacks?.onDone?.();
+    });
+
+    expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
+    expect(screen.getByText('Optimization finished. Download the optimized schedule to review it.')).toBeInTheDocument();
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    await user.click(screen.getByRole('button', { name: 'Download result' }));
+    await waitFor(() => expect(mockDownloadOptimization).toHaveBeenCalledWith(
+      'session-id',
+      'opt-result-1',
+      null,
+      '/ai',
+    ));
+    expect(createObjectUrl).toHaveBeenCalled();
+    expect(clickDownload).toHaveBeenCalled();
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:optimizer-result');
+    expect(screen.getByText('The optimizer returned score 23.')).toBeInTheDocument();
+    expect(mockStreamSessionEvents).toHaveBeenCalledWith(
+      'session-id',
+      expect.any(Object),
+      expect.any(AbortSignal),
+      null,
+      '/ai',
+    );
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Thanks');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+  });
+
+  it('stops a background assistant turn through the session endpoint', async () => {
+    const user = userEvent.setup();
+    let backgroundCallbacks: {
+      onTurnStart?: (messageId: string, trigger: string) => void;
+      onDelta: (text: string) => void;
+      onStopped?: () => void;
+    } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer'));
+
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
+    act(() => backgroundCallbacks?.onStopped?.());
+
+    expect(screen.getByText('Stopped.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
   it('starts with a single-line composer and grows with the draft', async () => {

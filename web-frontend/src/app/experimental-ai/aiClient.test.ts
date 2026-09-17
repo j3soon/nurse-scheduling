@@ -24,6 +24,7 @@ import {
   PRODUCTION_AI_API_URL,
   approveProposal,
   createSession,
+  downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
   isOfficialAiEndpoint,
@@ -31,6 +32,7 @@ import {
   rejectProposal,
   scheduleRevision,
   streamMessage,
+  streamSessionEvents,
   stopSession,
   updateSessionSchedule,
 } from './aiClient';
@@ -102,6 +104,7 @@ describe('AI client', () => {
         max_files: 3,
         max_bytes_per_file: 5000000,
       },
+      optimizer: { enabled: false, max_runs_per_session: 1 },
     });
   });
 
@@ -322,6 +325,51 @@ describe('AI client', () => {
     expect(diffs).toEqual(['- people.items[0].id']);
   });
 
+  it('streams optimizer-triggered turns with authentication', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: optimization\ndata: {"job_id":"opt-1","state":"running","terminal":false,"downloadable":false}\n\n',
+      'id: 2\nevent: turn_start\ndata: {"message_id":"background-1","trigger":"optimizer"}\n\n',
+      'id: 3\nevent: delta\ndata: {"text":"Score 23."}\n\n',
+      'id: 4\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const starts: string[] = [];
+    const texts: string[] = [];
+    const done = vi.fn();
+    const optimizations = vi.fn();
+
+    await streamSessionEvents(
+      'session/id',
+      {
+        onTurnStart: (messageId, trigger) => starts.push(`${messageId}:${trigger}`),
+        onDelta: text => texts.push(text),
+        onOptimization: optimizations,
+        onDone: done,
+      },
+      new AbortController().signal,
+      'event-token',
+    );
+
+    expect(starts).toEqual(['background-1:optimizer']);
+    expect(texts).toEqual(['Score 23.']);
+    expect(done).toHaveBeenCalledOnce();
+    expect(optimizations).toHaveBeenCalledWith({
+      jobId: 'opt-1',
+      state: 'running',
+      terminal: false,
+      downloadable: false,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/events',
+      {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Authorization: 'Bearer event-token' },
+        signal: expect.any(AbortSignal),
+      },
+    );
+  });
+
   it('stops a session turn with authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -332,6 +380,25 @@ describe('AI client', () => {
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/stop',
       {
         method: 'POST',
+        credentials: 'include',
+        headers: { Authorization: 'Bearer result-token' },
+      },
+    );
+  });
+
+  it('downloads an optimizer result with authentication', async () => {
+    const workbook = new Blob(['workbook'], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(workbook, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(downloadOptimization('session/id', 'opt/id', 'result-token')).resolves.toEqual(workbook);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/optimizations/opt%2Fid/xlsx',
+      {
+        method: 'GET',
         credentials: 'include',
         headers: { Authorization: 'Bearer result-token' },
       },

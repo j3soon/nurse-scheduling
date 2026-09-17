@@ -23,7 +23,7 @@
 
 import Image from 'next/image';
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { FiArrowDown, FiArrowUp, FiChevronDown, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
+import { FiArrowDown, FiArrowUp, FiChevronDown, FiDownload, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import {
@@ -42,10 +42,12 @@ import {
   AiCapabilities,
   AiStaleTurnError,
   LOCAL_AI_API_URL,
+  OptimizationActivity,
   PRODUCTION_AI_API_URL,
   ToolActivity,
   approveProposal,
   createSession,
+  downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
   isOfficialAiEndpoint,
@@ -53,13 +55,14 @@ import {
   queueMessage,
   rejectProposal,
   streamMessage,
+  streamSessionEvents,
   stopSession,
   updateSessionSchedule,
 } from './aiClient';
 
 interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'optimizer';
   content: string;
   attachmentNames?: string[];
   activity?: ActivityEntry[];
@@ -70,6 +73,7 @@ interface ChatMessage {
     question: string;
     requiresAttachments: boolean;
   };
+  optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
 }
 
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
@@ -323,6 +327,8 @@ export default function ExperimentalAiPage() {
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [activeOptimization, setActiveOptimization] = useState<OptimizationActivity | null>(null);
+  const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
   const [serverStatus, setServerStatus] = useState<AiServerStatus>('checking');
@@ -356,6 +362,10 @@ export default function ExperimentalAiPage() {
   const sessionEndpointRef = useRef<string | null>(null);
   const authTokensRef = useRef<Record<string, string>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
+  const sessionEventsControllerRef = useRef<AbortController | null>(null);
+  const backgroundAssistantIdRef = useRef<string | null>(null);
+  const backgroundTurnActiveRef = useRef(false);
+  const scheduleYamlRef = useRef(scheduleYaml);
   const sandboxScheduleRef = useRef<string | null>(null);
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
   const followPageBottomRef = useRef(true);
@@ -366,6 +376,7 @@ export default function ExperimentalAiPage() {
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   hasMessagesRef.current = messages.length > 0;
+  scheduleYamlRef.current = scheduleYaml;
   useTabSwitchWarning(messages.length > 0);
 
   useEffect(() => {
@@ -443,6 +454,7 @@ export default function ExperimentalAiPage() {
 
   useEffect(() => () => {
       abortControllerRef.current?.abort();
+      sessionEventsControllerRef.current?.abort();
       speechRecognitionRef.current?.stop();
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -705,6 +717,142 @@ export default function ExperimentalAiPage() {
     });
   };
 
+  const startBackgroundEventStream = (sessionId: string, endpoint: string) => {
+    sessionEventsControllerRef.current?.abort();
+    const controller = new AbortController();
+    sessionEventsControllerRef.current = controller;
+    const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage) => {
+      const activeId = backgroundAssistantIdRef.current;
+      if (activeId === null) return;
+      setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
+    };
+    void streamSessionEvents(
+      sessionId,
+      {
+        onTurnStart: messageId => {
+          backgroundAssistantIdRef.current = messageId;
+          backgroundTurnActiveRef.current = true;
+          sandboxScheduleRef.current = scheduleYamlRef.current;
+          setIsStreaming(true);
+          setMessages(previous => [
+            ...previous,
+            {
+              id: messageId,
+              role: 'assistant',
+              content: '',
+              status: 'pending',
+              responseStartedAt: Date.now(),
+            },
+          ]);
+        },
+        onDelta: text => updateBackgroundMessage(message => ({
+          ...message,
+          content: message.content + text,
+          activity: appendResponseActivity(message.activity ?? [], text),
+        })),
+        onReasoning: text => updateBackgroundMessage(message => {
+          const activity = message.activity ?? [];
+          const last = activity[activity.length - 1];
+          if (last?.kind === 'reasoning') {
+            return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
+          }
+          return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
+        }),
+        onToolStart: activity => updateBackgroundMessage(message => ({
+          ...message,
+          activity: [
+            ...(message.activity ?? []),
+            { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
+          ],
+        })),
+        onTool: activity => updateBackgroundMessage(message => ({
+          ...message,
+          activity: finishToolActivity(message.activity ?? [], activity),
+        })),
+        onScheduleChange: candidate => {
+          const before = sandboxScheduleRef.current ?? scheduleYamlRef.current;
+          sandboxScheduleRef.current = candidate;
+          updateBackgroundMessage(message => ({
+            ...message,
+            activity: [
+              ...(message.activity ?? []),
+              { kind: 'schedule-change' as const, before, after: candidate },
+            ],
+          }));
+        },
+        onProposal: diff => setProposalDiff(diff),
+        onOptimization: activity => {
+          if (!activity.terminal) {
+            setActiveOptimization(activity);
+            return;
+          }
+          setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
+          const content = activity.state === 'completed'
+            ? activity.downloadable
+              ? 'Optimization finished. Download the optimized schedule to review it.'
+              : 'Optimization finished, but no result workbook is available to download.'
+            : `Optimization ended with status: ${activity.state}.`;
+          setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
+            ? previous
+            : [
+              ...previous,
+              {
+                id: `optimizer-${activity.jobId}`,
+                role: 'optimizer',
+                content,
+                optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
+              },
+            ]);
+        },
+        onDone: () => {
+          updateBackgroundMessage(message => ({
+            ...message,
+            status: undefined,
+            responseCompletedAt: Date.now(),
+          }));
+          backgroundAssistantIdRef.current = null;
+          backgroundTurnActiveRef.current = false;
+          setIsStreaming(false);
+        },
+        onStopped: () => {
+          updateBackgroundMessage(message => ({
+            ...message,
+            content: message.content || 'Stopped.',
+            status: undefined,
+            responseCompletedAt: Date.now(),
+            activity: message.content
+              ? interruptRunningTools(message.activity ?? [])
+              : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
+          }));
+          backgroundAssistantIdRef.current = null;
+          backgroundTurnActiveRef.current = false;
+          setIsStreaming(false);
+          setIsStopping(false);
+        },
+        onError: message => {
+          updateBackgroundMessage(entry => ({
+            ...entry,
+            content: entry.content || message,
+            status: 'failed',
+            responseCompletedAt: Date.now(),
+            activity: interruptRunningTools(entry.activity ?? []),
+          }));
+          backgroundAssistantIdRef.current = null;
+          backgroundTurnActiveRef.current = false;
+          setIsStreaming(false);
+          setError(message);
+        },
+      },
+      controller.signal,
+      authToken,
+      endpoint,
+    ).catch(streamError => {
+      if (!controller.signal.aborted) {
+        reportRequestError(streamError, 'The background AI event stream disconnected.');
+      }
+    });
+  };
+
   const sendRequest = async (
     question: string,
     attachmentsForMessage: SelectedAttachment[],
@@ -752,6 +900,7 @@ export default function ExperimentalAiPage() {
         sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint);
         sessionIdRef.current = sessionId;
         sessionEndpointRef.current = sessionEndpoint;
+        startBackgroundEventStream(sessionId, sessionEndpoint);
       } else if (syncedScheduleRef.current !== scheduleYaml) {
         // The schedule can change elsewhere in the app between questions.
         await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
@@ -912,7 +1061,7 @@ export default function ExperimentalAiPage() {
     } finally {
       abortControllerRef.current = null;
       setIsStopping(false);
-      setIsStreaming(false);
+      setIsStreaming(backgroundTurnActiveRef.current);
       const nextMessage = queuedMessagesRef.current[0];
       if (nextMessage) {
         queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
@@ -985,6 +1134,32 @@ export default function ExperimentalAiPage() {
     void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
       .catch(stopError => reportRequestError(stopError, 'The AI response could not be stopped.'))
       .finally(() => setIsStopping(false));
+  };
+
+  const downloadOptimizationResult = async (jobId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (sessionId === null || downloadingOptimizationId !== null) return;
+    setDownloadingOptimizationId(jobId);
+    try {
+      const blob = await downloadOptimization(
+        sessionId,
+        jobId,
+        authToken,
+        sessionEndpointRef.current ?? aiEndpoint,
+      );
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `optimized-schedule-${jobId.slice(-8)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+    } catch (downloadError) {
+      reportRequestError(downloadError, 'The optimized schedule could not be downloaded.');
+    } finally {
+      setDownloadingOptimizationId(null);
+    }
   };
   const toggleDictation = () => {
     if (isListening) {
@@ -1272,11 +1447,13 @@ export default function ExperimentalAiPage() {
             className={`max-w-[85%] rounded-xl px-4 py-3 ${
               message.role === 'user'
                 ? 'ml-auto bg-blue-600 text-white'
-                : 'mr-auto border border-gray-200 bg-white text-gray-900'
+                : message.role === 'optimizer'
+                  ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
+                  : 'mr-auto border border-gray-200 bg-white text-gray-900'
             }`}
           >
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
-              {message.role === 'user' ? 'You' : 'Assistant'}
+              {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
             </p>
             {message.activity && (
               <AssistantActivity
@@ -1287,9 +1464,20 @@ export default function ExperimentalAiPage() {
             )}
             {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
               <ThinkingIndicator />
-            ) : message.role === 'user' ? (
+            ) : message.role !== 'assistant' ? (
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
             ) : null}
+            {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
+              <button
+                type="button"
+                onClick={() => void downloadOptimizationResult(message.optimizerJob?.jobId ?? '')}
+                disabled={downloadingOptimizationId !== null}
+                className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
+              >
+                <FiDownload aria-hidden="true" className="h-4 w-4" />
+                {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
+              </button>
+            )}
             {message.attachmentNames && message.attachmentNames.length > 0 && (
               <p className="mt-2 text-xs opacity-80">
                 Attached: {message.attachmentNames.join(', ')}
@@ -1415,6 +1603,15 @@ export default function ExperimentalAiPage() {
           >
             <FiArrowDown aria-hidden="true" className="h-4 w-4" />
           </button>
+        )}
+        {activeOptimization !== null && (
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900"
+          >
+            <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-violet-600" />
+            <span>Optimizer running in the background · {activeOptimization.state}</span>
+          </div>
         )}
         {queuedMessages.length > 0 && (
           <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">

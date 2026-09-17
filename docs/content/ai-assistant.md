@@ -51,8 +51,10 @@ flowchart LR
     Session -->|OpenAI-compatible chat request| Provider[Model provider]
     Provider -->|streamed deltas and tool calls| Session
     Session -->|one fresh turn| Sandbox[E2B Cloud sandbox<br/>shell working copy]
+    Session -->|background job with YAML snapshot| Optimizer[Optimizer API<br/>durable job]
+    Optimizer -->|status, score, and output workbook| Session
     Sandbox -->|candidate schedule| Validation[Trusted server validation<br/>and structural diff]
-    Session -->|SSE text, reasoning, tool, validated change, and proposal events| Browser
+    Session -->|SSE text, tool, optimization status, and proposal events| Browser
     Browser -->|approve with base revision| Session
 ```
 
@@ -64,6 +66,17 @@ request. **Images and document contents are not included in subsequent chat
 history.** This is intentional to avoid repeatedly consuming provider context
 tokens. History retains only attachment markers and document filenames.
 Schedules and attachments are labeled as untrusted data in the system prompt.
+
+When configured, the server-side `optimizer` tool submits the current sandbox
+working copy to the existing optimizer API. It returns immediately and keeps
+the remote credential and job ID outside the sandbox. A process-local monitor
+waits for terminal status, retains a size-bounded output workbook for an
+authenticated browser download, deletes the remote optimizer job, and starts a
+new assistant turn with result metadata only. The browser keeps a separate
+replayable session event stream open for optimizer status and background turns.
+Foreground chat and optimization can proceed at the same time. Assistant turns
+remain serialized per session. The Stop control cancels either a foreground or
+background assistant turn. It does not cancel the independent optimizer run.
 
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
@@ -368,6 +381,13 @@ response cannot prove that the original operation did not take effect.
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `120` | Provider request timeout. |
 | `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
 | `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
+| `AI_OPTIMIZER_BASE_URL` | Unset (`http://api:8000` in Docker Compose) | Optimizer API base URL. Leave unset to disable the assistant optimizer tool. |
+| `AI_OPTIMIZER_AUTH_TOKEN` | Unset (defaults to `API_AUTH_TOKEN` in Docker Compose) | Server-side optimizer API bearer token. Set it explicitly when the API uses identified keys. |
+| `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |
+| `AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS` | `30` | Timeout for one optimizer API request or result download. |
+| `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | `5` | Maximum background optimizer runs one chat session may start. |
+| `AI_OPTIMIZER_MAX_RESULT_BYTES` | `10000000` | Maximum workbook bytes retained for one result download. |
+| `AI_OPTIMIZER_RESULT_CACHE_BYTES` | `100000000` | Maximum total optimizer workbook bytes retained by one AI process. Oldest results are evicted first. |
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
@@ -435,7 +455,9 @@ docker exec -it -w /app nurse-scheduling-dev \
   ./scripts/start_frontend.sh --hostname 0.0.0.0
 ```
 
-The normal optimization backend is optional for this chat flow.
+The normal optimization backend is optional. Without
+`AI_OPTIMIZER_BASE_URL`, chat remains available and the optimizer tool is not
+advertised to the model or browser.
 
 ## Run with Docker Compose
 

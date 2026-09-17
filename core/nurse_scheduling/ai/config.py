@@ -136,6 +136,13 @@ class AiSettings:
     provider_timeout_seconds: float = 120.0
     provider_max_attempts: int = 3
     provider_retry_backoff_seconds: float = 1.0
+    optimizer_base_url: str = ""
+    optimizer_auth_token: str = ""
+    optimizer_poll_interval_seconds: float = 1.0
+    optimizer_request_timeout_seconds: float = 30.0
+    optimizer_max_runs_per_session: int = 5
+    optimizer_max_result_bytes: int = 10_000_000
+    optimizer_result_cache_bytes: int = 100_000_000
     session_ttl_seconds: int = 3600
     history_postgres_url: str = ""
     history_retention_days: int = 30
@@ -211,6 +218,13 @@ class AiSettings:
             provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 120.0),
             provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
             provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),
+            optimizer_base_url=os.getenv("AI_OPTIMIZER_BASE_URL", "").strip().rstrip("/"),
+            optimizer_auth_token=os.getenv("AI_OPTIMIZER_AUTH_TOKEN", "").strip(),
+            optimizer_poll_interval_seconds=_read_positive_float("AI_OPTIMIZER_POLL_INTERVAL_SECONDS", 1.0),
+            optimizer_request_timeout_seconds=_read_positive_float("AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS", 30.0),
+            optimizer_max_runs_per_session=_read_positive_int("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", 5),
+            optimizer_max_result_bytes=_read_positive_int("AI_OPTIMIZER_MAX_RESULT_BYTES", 10_000_000),
+            optimizer_result_cache_bytes=_read_positive_int("AI_OPTIMIZER_RESULT_CACHE_BYTES", 100_000_000),
             session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 3600),
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
             history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),

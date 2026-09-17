@@ -25,6 +25,8 @@ import hashlib
 import io
 import json
 import logging
+import threading
+import time
 from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
 
@@ -49,6 +51,7 @@ from nurse_scheduling.ai.app import (
 from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
+from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
@@ -132,12 +135,13 @@ def make_settings(**overrides: object) -> AiSettings:
     return AiSettings(**values)
 
 
-def create_test_app(*, settings: AiSettings, provider, sandbox_factory=None):
+def create_test_app(*, settings: AiSettings, provider, sandbox_factory=None, optimizer_backend=None):
     """Create the app with a fake disposable sandbox unless a test supplies one."""
     return create_ai_app(
         settings=settings,
         provider=provider,
         sandbox_factory=sandbox_factory or FakeSandboxFactory(),
+        optimizer_backend=optimizer_backend,
     )
 
 
@@ -186,7 +190,9 @@ def test_ai_authentication_discovery_and_healthchecks_stay_public() -> None:
     [
         ("post", "/sessions", {"schedule_yaml": "description: test"}),
         ("post", "/sessions/missing/messages", {"message": "Hello"}),
+        ("get", "/sessions/missing/events", None),
         ("post", "/sessions/missing/stop", None),
+        ("get", "/sessions/missing/optimizations/opt-missing/xlsx", None),
         ("post", "/sessions/missing/messages/queue", {"message_id": "queued-1", "message": "Hello"}),
         ("put", "/sessions/missing/schedule", {"schedule_yaml": "description: changed"}),
         ("post", "/sessions/missing/proposal/approve", {"base_sha256": "0" * 64}),
@@ -636,6 +642,7 @@ def test_capabilities_report_configured_attachment_limits() -> None:
             "max_files": 3,
             "max_bytes_per_file": 4321,
         },
+        "optimizer": {"enabled": False, "max_runs_per_session": 5},
         "auth": {"required": True, "scheme": "bearer"},
     }
 
@@ -1247,6 +1254,28 @@ def test_environment_configuration_reads_document_extraction_limits(monkeypatch:
     assert settings.max_xlsx_uncompressed_bytes == 60_000_000
 
 
+def test_environment_configuration_reads_optimizer_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_OPTIMIZER_BASE_URL", "http://optimizer:8000/")
+    monkeypatch.setenv("AI_OPTIMIZER_AUTH_TOKEN", "optimizer-token")
+    monkeypatch.setenv("AI_OPTIMIZER_POLL_INTERVAL_SECONDS", "0.25")
+    monkeypatch.setenv("AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", "7")
+    monkeypatch.setenv("AI_OPTIMIZER_MAX_RESULT_BYTES", "9000000")
+    monkeypatch.setenv("AI_OPTIMIZER_RESULT_CACHE_BYTES", "80000000")
+
+    settings = AiSettings.from_env()
+
+    assert settings.optimizer_base_url == "http://optimizer:8000"
+    assert settings.optimizer_auth_token == "optimizer-token"
+    assert settings.optimizer_poll_interval_seconds == 0.25
+    assert settings.optimizer_request_timeout_seconds == 12
+    assert settings.optimizer_max_runs_per_session == 7
+    assert settings.optimizer_max_result_bytes == 9_000_000
+    assert settings.optimizer_result_cache_bytes == 80_000_000
+
+
 def test_environment_configuration_requires_e2b_key_when_selected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
@@ -1333,10 +1362,117 @@ class ScriptedToolProvider:
             yield event
 
 
+class BackgroundTestOptimizer:
+    """Hold a fake optimization open until a foreground follow-up completes."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.submitted_yaml = ""
+        self.closed = False
+        self.deleted: list[str] = []
+
+    async def submit(self, schedule_yaml: str, _timeout_seconds: int | None) -> OptimizerJobPayload:
+        self.submitted_yaml = schedule_yaml
+        return OptimizerJobPayload(id="remote-background", state="running")
+
+    async def get(self, job_id: str) -> OptimizerJobPayload:
+        if not self.release.is_set():
+            return OptimizerJobPayload(id=job_id, state="running")
+        return OptimizerJobPayload(
+            id=job_id,
+            state="completed",
+            terminal=True,
+            result={"outcome": "feasible", "score": 23},
+        )
+
+    async def finish_now(self, job_id: str) -> OptimizerJobPayload:
+        self.release.set()
+        return OptimizerJobPayload(id=job_id, state="running")
+
+    async def result_artifact(self, _job: OptimizerJobPayload) -> OptimizerArtifact:
+        return OptimizerArtifact(
+            b"optimized workbook",
+            "optimized-schedule.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def delete(self, job_id: str) -> None:
+        self.deleted.append(job_id)
+
+
 def rename_call() -> list[object]:
     """Ask Bash to give the first person a description."""
     arguments = json.dumps({"command": "python3 -c 'set P1 description to Head'"})
     return [ToolCallRequest((ToolCall("call_0", BASH_TOOL, arguments),))]
+
+
+def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion() -> None:
+    optimizer_call = [ToolCallRequest((ToolCall("optimizer-call", OPTIMIZER_TOOL, json.dumps({"action": "start"})),))]
+    provider = ScriptedToolProvider(
+        optimizer_call,
+        [TextDelta("Optimization started. You can keep chatting.")],
+        [TextDelta("Yes, I can answer while it runs.")],
+        [TextDelta("The optimizer returned score 23.")],
+    )
+    optimizer = BackgroundTestOptimizer()
+    app = create_test_app(
+        settings=make_settings(
+            max_schedule_bytes=SCHEDULE_BYTE_LIMIT,
+            optimizer_poll_interval_seconds=0.001,
+        ),
+        provider=provider,
+        optimizer_backend=optimizer,
+    )
+
+    with AuthenticatedTestClient(app) as client:
+        session_id = create_session(client, schedule_yaml())
+        assert client.get("/capabilities").json()["optimizer"] == {
+            "enabled": True,
+            "max_runs_per_session": 5,
+        }
+        started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize this schedule."})
+        follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
+
+        assert started.status_code == 200
+        assert follow_up.status_code == 200
+        assert "Optimization started" in started.text
+        assert "answer while it runs" in follow_up.text
+        assert optimizer.submitted_yaml == schedule_yaml()
+
+        optimizer.release.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            events = app.state.session_event_broker.events_after(session_id)
+            if any(event.type == "done" for event in events):
+                break
+            time.sleep(0.01)
+
+        assert [event.type for event in events] == [
+            "optimization",
+            "optimization",
+            "turn_start",
+            "delta",
+            "done",
+        ]
+        assert events[0].data["state"] == "running"
+        assert events[0].data["terminal"] is False
+        assert events[1].data["state"] == "completed"
+        assert events[1].data["downloadable"] is True
+        assert events[3].data == {"text": "The optimizer returned score 23."}
+        assert '"score": 23' in str(provider.calls[3][-1]["content"])
+        assert "optimized workbook" not in str(provider.calls[3][-1]["content"])
+
+        job_id = str(events[1].data["job_id"])
+        download = client.get(f"/sessions/{session_id}/optimizations/{job_id}/xlsx")
+        assert download.status_code == 200
+        assert download.content == b"optimized workbook"
+        assert download.headers["content-disposition"] == 'attachment; filename="optimized-schedule.xlsx"'
+
+    assert optimizer.closed
+    assert optimizer.deleted == ["remote-background"]
 
 
 def rename_factory() -> FakeSandboxFactory:
@@ -1863,7 +1999,8 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "trusted validation status" in normalized_prompt
     assert "explicit user approval" in normalized_prompt
     assert "say it does not exist and make no change" in normalized_prompt
-    assert "cannot run the scheduling optimizer" in normalized_prompt
+    assert "When an `optimizer` tool is available" in normalized_prompt
+    assert "Do not poll repeatedly" in normalized_prompt
     assert "do not probe installed programs" in normalized_prompt
     summary = system_prompt.split("Current schedule summary:\n")[1]
     assert len(summary) < len(schedule) / 2

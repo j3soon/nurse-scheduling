@@ -22,7 +22,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +30,7 @@ from pathlib import Path
 from .agent import AgentEvent, AgentProposal, AgentToolBatchMetrics, AgentToolOutcome, AgentToolUse, run_tool_agent
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
+from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import (
@@ -266,6 +267,7 @@ async def run_sandbox_agent(
     take_steering: Callable[[bool], Sequence[tuple[str, str]]] | None = None,
     pending_proposal_yaml: str = "",
     pending_proposal_diff: str = "",
+    execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None = None,
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
@@ -290,6 +292,12 @@ async def run_sandbox_agent(
                 async def execute_command(name: str, arguments: str) -> AgentToolOutcome:
                     nonlocal pending_schedule_change
                     pending_schedule_change = None
+                    if name == OPTIMIZER_TOOL and execute_optimizer is not None:
+                        try:
+                            current_schedule = (await sandbox.read_file(WORKSPACE_SCHEDULE)).decode("utf-8")
+                        except (SandboxFileNotFoundError, UnicodeDecodeError):
+                            return AgentToolOutcome("The current working schedule is unavailable or invalid.", False)
+                        return await execute_optimizer(current_schedule, arguments)
                     outcome = await sandbox_tools.execute(name, arguments)
                     if name == READ_TOOL:
                         return outcome
@@ -305,7 +313,10 @@ async def run_sandbox_agent(
                 async for event in run_tool_agent(
                     provider,
                     messages,
-                    sandbox_tools.definitions,
+                    [
+                        *sandbox_tools.definitions,
+                        *([optimizer_tool_definition()] if execute_optimizer is not None else []),
+                    ],
                     execute_command,
                     activity_batch=sandbox.activity_batch,
                     parallel_tool_names=frozenset({READ_TOOL}),

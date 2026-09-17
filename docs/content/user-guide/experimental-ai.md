@@ -12,8 +12,33 @@ to request access.
 This page answers questions about the schedule currently open in the browser.
 When enabled by the AI backend, a question can include PNG, JPEG, and WebP
 images or TXT, Markdown, CSV, PDF, and XLSX documents. The assistant can propose
-changes to the schedule, which apply only after you approve them. It cannot run
-optimization.
+changes to the schedule, which apply only after you approve them. When the AI
+backend enables optimization, the assistant can also run the optimizer and
+review its result.
+
+## Ask the assistant to optimize
+
+Ask the assistant to optimize the current schedule and describe the result or
+improve a specific outcome. The assistant starts the run in the background, so
+you can continue chatting while it solves.
+
+- Ask it to **finish now** to request the best solution currently available.
+- A small status indicator remains above the message box while optimization is
+  running.
+- When the run ends, the chat offers the result workbook as a download. The
+  assistant receives the score and other result metadata, but does not read the
+  workbook.
+- The assistant wakes automatically and replies in a new turn.
+- The assistant may propose a YAML change and run the optimizer again. The
+  changed YAML still requires your approval before it replaces the schedule in
+  the browser.
+
+The backend limits one chat to five optimizer runs by default. A deployment may
+advertise a different limit.
+
+Each run records the exact YAML revision it used. If the browser schedule
+changes before the result returns, the assistant can distinguish that older
+result from the current accepted schedule.
 
 ## Review a proposed change
 
@@ -41,7 +66,9 @@ until you select one.
   is a preview only. The current schedule still changes only after you approve
   the final proposal.
 - A row marked `failed` means that step changed nothing. This is the usual
-  reason an answer arrives without a proposal.
+reason an answer arrives without a proposal.
+- The `optimizer` tool shows whether the assistant started, checked, or asked
+  the current optimization to finish.
 
 Long output is revealed a portion at a time with **Show more**. Clear
 **Show reasoning** or **Show tool activity** near the top of the page to hide
@@ -90,8 +117,9 @@ Raw HTML is ignored. Remote images written in an answer are not loaded.
 The assistant runs inside the existing Nurse Scheduling app and can explain
 which page and visible control to use for a task. For example, ask how to add a
 person, upload schedule YAML, configure a rule, or start optimization. It can
-guide you through those controls, but it cannot navigate, click, upload, or run
-optimization for you.
+guide you through those controls, but it cannot navigate, click, or upload for
+you. It can run optimization only when the configured AI backend advertises
+that capability.
 
 Files attached with **Attach files** belong to the next chat message. To replace
 the schedule currently open in the app, use **Upload** on **Save and Load**
