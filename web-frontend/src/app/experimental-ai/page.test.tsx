@@ -134,7 +134,7 @@ describe('ExperimentalAiPage', () => {
       'href',
       'https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md',
     );
-    expect(screen.getByText(/Assume all AI chats are logged/)).toBeInTheDocument();
+    expect(screen.getByText(/All AI chats are logged and are not currently anonymized/)).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
     const sendButton = screen.getByRole('button', { name: 'Send' });
     expect(sendButton).toHaveTextContent('');

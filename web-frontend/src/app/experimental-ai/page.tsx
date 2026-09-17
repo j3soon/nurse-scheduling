@@ -1084,7 +1084,7 @@ export default function ExperimentalAiPage() {
           </span>
         </div>
         <p className="text-sm text-gray-600">
-          Ask questions about the schedule currently open in this browser, or ask for a change. You can attach supported images and documents when the backend enables them. Proposed changes apply only after you approve them.
+          Ask questions about the schedule currently open in this browser, or request a change. You can attach supported images and documents when available. Proposed changes are applied only after you approve them.
         </p>
         <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           This beta is API-key gated by default.{' '}
@@ -1096,7 +1096,7 @@ export default function ExperimentalAiPage() {
           >
             Request beta access
           </a>
-          . Assume all AI chats are logged, may be used to improve our product and the AI provider&apos;s product, and are not currently anonymized.{' '}
+          . All AI chats are logged and are not currently anonymized. Chat data may be used for the development and improvement of our product and the AI provider&apos;s products.{' '}
           <a
             className="font-medium underline"
             href={GITHUB_PRIVACY_URL}
