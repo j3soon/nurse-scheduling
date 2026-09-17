@@ -31,6 +31,7 @@ import {
   rejectProposal,
   scheduleRevision,
   streamMessage,
+  stopSession,
   updateSessionSchedule,
 } from './aiClient';
 
@@ -319,6 +320,22 @@ describe('AI client', () => {
     expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
     expect(texts).toEqual(['Renamed P1.']);
     expect(diffs).toEqual(['- people.items[0].id']);
+  });
+
+  it('stops a session turn with authentication', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await stopSession('session/id', 'result-token');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/stop',
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Authorization: 'Bearer result-token' },
+      },
+    );
   });
 
   it('queues a steering message without cancelling the active stream', async () => {

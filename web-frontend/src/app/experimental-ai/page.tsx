@@ -53,6 +53,7 @@ import {
   queueMessage,
   rejectProposal,
   streamMessage,
+  stopSession,
   updateSessionSchedule,
 } from './aiClient';
 
@@ -321,6 +322,7 @@ export default function ExperimentalAiPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
   const [serverStatus, setServerStatus] = useState<AiServerStatus>('checking');
@@ -877,28 +879,39 @@ export default function ExperimentalAiPage() {
       )));
     } catch (streamError) {
       const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
-      setMessages(previous => previous.map(message => (
-        message.id === activeAssistantId
-          ? {
+      setMessages(previous => previous.map(message => {
+        if (message.id !== activeAssistantId) return message;
+        if (controller.signal.aborted) {
+          return {
             ...message,
-            content: staleTurnMessage ?? message.content,
-            status: 'failed',
+            content: message.content || 'Stopped.',
+            status: undefined,
             responseCompletedAt: Date.now(),
-            activity: staleTurnMessage === null
+            activity: message.content
               ? interruptRunningTools(message.activity ?? [])
-              : [{ kind: 'response' as const, text: staleTurnMessage }],
-            retry: {
-              question: activeQuestion,
-              requiresAttachments: activeQuestionRequiresAttachments,
-            },
-          }
-          : message
-      )));
+              : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
+          };
+        }
+        return {
+          ...message,
+          content: staleTurnMessage ?? message.content,
+          status: 'failed',
+          responseCompletedAt: Date.now(),
+          activity: staleTurnMessage === null
+            ? interruptRunningTools(message.activity ?? [])
+            : [{ kind: 'response' as const, text: staleTurnMessage }],
+          retry: {
+            question: activeQuestion,
+            requiresAttachments: activeQuestionRequiresAttachments,
+          },
+        };
+      }));
       if (!controller.signal.aborted && staleTurnMessage === null) {
         reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {
       abortControllerRef.current = null;
+      setIsStopping(false);
       setIsStreaming(false);
       const nextMessage = queuedMessagesRef.current[0];
       if (nextMessage) {
@@ -958,7 +971,21 @@ export default function ExperimentalAiPage() {
     setError(null);
   };
 
-  const stop = () => abortControllerRef.current?.abort();
+  const stop = () => {
+    if (isStopping) return;
+    setIsStopping(true);
+    queuedMessagesRef.current = [];
+    setQueuedMessages([]);
+    abortControllerRef.current?.abort();
+    const sessionId = sessionIdRef.current;
+    if (sessionId === null) {
+      setIsStopping(false);
+      return;
+    }
+    void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
+      .catch(stopError => reportRequestError(stopError, 'The AI response could not be stopped.'))
+      .finally(() => setIsStopping(false));
+  };
   const toggleDictation = () => {
     if (isListening) {
       speechRecognitionRef.current?.stop();
@@ -1538,9 +1565,10 @@ export default function ExperimentalAiPage() {
                 <button
                   type="button"
                   onClick={stop}
+                  disabled={isStopping}
                   aria-label="Stop"
                   title="Stop"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-white transition-colors hover:bg-gray-900"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-white transition-colors hover:bg-gray-900 disabled:cursor-wait disabled:bg-gray-500"
                 >
                   <FiSquare aria-hidden="true" className="h-4 w-4 fill-current" />
                 </button>

@@ -28,6 +28,7 @@ import logging
 from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -185,6 +186,7 @@ def test_ai_authentication_discovery_and_healthchecks_stay_public() -> None:
     [
         ("post", "/sessions", {"schedule_yaml": "description: test"}),
         ("post", "/sessions/missing/messages", {"message": "Hello"}),
+        ("post", "/sessions/missing/stop", None),
         ("post", "/sessions/missing/messages/queue", {"message_id": "queued-1", "message": "Hello"}),
         ("put", "/sessions/missing/schedule", {"schedule_yaml": "description: changed"}),
         ("post", "/sessions/missing/proposal/approve", {"base_sha256": "0" * 64}),
@@ -471,6 +473,44 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
     assert history == []
     assert len(saved) == 1
     assert saved[0][2] == "cancelled"
+
+
+def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
+    async def exercise() -> tuple[int, bool]:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class WaitingProvider:
+            async def stream_events(self, _messages, tools=None):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                yield TextDelta("unreachable")
+
+        app = create_test_app(settings=make_settings(), provider=WaitingProvider())
+        transport = httpx.ASGITransport(app=app)
+        async with app.router.lifespan_context(app), httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+        ) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            turn = asyncio.create_task(
+                client.post(f"/sessions/{session_id}/messages", json={"message": "Keep working"})
+            )
+            await asyncio.wait_for(started.wait(), timeout=1)
+            stopped = await client.post(f"/sessions/{session_id}/stop")
+            await asyncio.wait_for(cancelled.wait(), timeout=1)
+            await asyncio.gather(turn, return_exceptions=True)
+            return stopped.status_code, app.state.session_store._sessions[session_id].active
+
+    status_code, session_active = asyncio.run(exercise())
+
+    assert status_code == 202
+    assert not session_active
 
 
 def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) -> None:

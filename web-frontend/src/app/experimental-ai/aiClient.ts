@@ -324,6 +324,19 @@ export async function queueMessage(
   if (!response.ok) throw await responseError(response);
 }
 
+export async function stopSession(
+  sessionId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/stop`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+}
+
 export async function scheduleRevision(scheduleYaml: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(scheduleYaml));
   return Array.from(new Uint8Array(digest))

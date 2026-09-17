@@ -26,6 +26,7 @@ import ExperimentalAiPage from './page';
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
 const mockStreamMessage = vi.hoisted(() => vi.fn());
+const mockStopSession = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
 const mockApproveProposal = vi.hoisted(() => vi.fn());
 const mockRejectProposal = vi.hoisted(() => vi.fn());
@@ -53,6 +54,7 @@ vi.mock('./aiClient', () => ({
   ),
   queueMessage: mockQueueMessage,
   streamMessage: mockStreamMessage,
+  stopSession: mockStopSession,
   approveProposal: mockApproveProposal,
   rejectProposal: mockRejectProposal,
   updateSessionSchedule: mockUpdateSessionSchedule,
@@ -107,6 +109,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onDelta('Alice');
       callbacks.onDelta(' works Monday.');
     });
+    mockStopSession.mockReset().mockResolvedValue(undefined);
     mockGenerateYaml.mockClear();
     mockApproveProposal.mockReset().mockResolvedValue('description: proposed schedule\n');
     mockRejectProposal.mockReset().mockResolvedValue(undefined);
@@ -660,6 +663,29 @@ describe('ExperimentalAiPage', () => {
       expect(ordered[index].compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
     expect(activity.querySelectorAll('hr')).toHaveLength(5);
+  });
+
+  it('stops the active response through the session endpoint', async () => {
+    const user = userEvent.setup();
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      _callbacks: unknown,
+      signal: AbortSignal,
+    ) => {
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+    });
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(await screen.findByRole('button', { name: 'Stop' }));
+
+    expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
+    expect(await screen.findByText('Stopped.')).toBeInTheDocument();
+    expect(screen.queryByText('This turn failed and was not saved to AI history.')).not.toBeInTheDocument();
   });
 
   it('queues a drafted question while a response is streaming', async () => {

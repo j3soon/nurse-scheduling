@@ -303,6 +303,11 @@ class SessionStore:
                 session.proposal_diff,
             )
 
+    def require_owned(self, session_id: str, owner_token: str | None) -> None:
+        """Validate access to a session without exposing its state."""
+        with self._lock:
+            self._get_owned(session_id, owner_token)
+
     def finish(
         self,
         session_id: str,
@@ -692,9 +697,21 @@ def create_app(
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
+    active_turn_tasks: dict[str, asyncio.Task[object]] = {}
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
+
+    @asynccontextmanager
+    async def track_active_turn(session_id: str) -> AsyncIterator[None]:
+        task = asyncio.current_task()
+        if task is not None:
+            active_turn_tasks[session_id] = task
+        try:
+            yield
+        finally:
+            if task is not None and active_turn_tasks.get(session_id) is task:
+                del active_turn_tasks[session_id]
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -795,6 +812,22 @@ def create_app(
         return CreateSessionResponse(id=session.id)
 
     @app.post(
+        "/sessions/{session_id}/stop",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth)],
+    )
+    async def stop_active_turn(
+        session_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Cancel the assistant turn active in a session."""
+        store.require_owned(session_id, owner)
+        task = active_turn_tasks.get(session_id)
+        if task is not None and not task.done():
+            task.cancel()
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    @app.post(
         "/sessions/{session_id}/messages/queue",
         status_code=status.HTTP_202_ACCEPTED,
         dependencies=[Depends(require_auth)],
@@ -871,6 +904,7 @@ def create_app(
 
         async def generate_events():
             stream_started.set()
+            active_turn = track_active_turn(session_id)
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
             completed = False
@@ -880,7 +914,7 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
-                async with concurrency_limit:
+                async with active_turn, concurrency_limit:
                     agent_events = run_sandbox_agent(
                         provider,
                         sandbox_factory,
