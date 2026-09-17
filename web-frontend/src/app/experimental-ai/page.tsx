@@ -41,7 +41,9 @@ import { ActivityEntry, AssistantActivity } from './AssistantActivity';
 import { ChatExportMessage, downloadChatExport } from './chatExport';
 import {
   AiCapabilities,
+  AiHttpError,
   AiStaleTurnError,
+  DEFAULT_SESSION_RETENTION_SECONDS,
   LOCAL_AI_API_URL,
   PRODUCTION_AI_API_URL,
   ToolActivity,
@@ -49,6 +51,7 @@ import {
   createSession,
   getAiBaseUrl,
   getCapabilities,
+  getSessionStatus,
   isOfficialAiEndpoint,
   normalizeAiEndpoint,
   queueMessage,
@@ -68,6 +71,7 @@ interface ChatMessage extends ChatExportMessage {
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
 const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
+const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
 const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
 const SPEECH_LANGUAGES = [
   { value: '', label: 'Browser default' },
@@ -179,6 +183,16 @@ interface QueuedChatMessage {
   content: string;
 }
 
+interface StoredChatConversation {
+  sessionId: string;
+  endpoint: string;
+  expiresAt: number;
+  retentionSeconds: number;
+  messages: ChatMessage[];
+  syncedSchedule: string;
+  proposalDiff: string | null;
+}
+
 const DISABLED_IMAGE_CAPABILITY: AiCapabilities['image_attachments'] = {
   enabled: false,
   accepted_media_types: [],
@@ -210,6 +224,87 @@ function messageId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random()}`;
+}
+
+function isActivityEntry(value: unknown): value is ActivityEntry {
+  if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
+  if (value.kind === 'response' || value.kind === 'reasoning') {
+    return 'text' in value && typeof value.text === 'string';
+  }
+  if (value.kind === 'schedule-change') {
+    return 'before' in value && typeof value.before === 'string'
+      && 'after' in value && typeof value.after === 'string';
+  }
+  return value.kind === 'tool'
+    && 'name' in value && typeof value.name === 'string'
+    && 'arguments' in value && typeof value.arguments === 'string'
+    && 'result' in value && typeof value.result === 'string'
+    && 'ok' in value && typeof value.ok === 'boolean';
+}
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const message = value as Partial<ChatMessage>;
+  return typeof message.id === 'string'
+    && (message.role === 'user' || message.role === 'assistant')
+    && typeof message.content === 'string'
+    && (message.attachmentNames === undefined
+      || (Array.isArray(message.attachmentNames) && message.attachmentNames.every(name => typeof name === 'string')))
+    && (message.activity === undefined
+      || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
+    && (message.status === undefined || message.status === 'pending' || message.status === 'failed')
+    && (message.responseStartedAt === undefined || Number.isFinite(message.responseStartedAt))
+    && (message.responseCompletedAt === undefined || Number.isFinite(message.responseCompletedAt))
+    && (message.retry === undefined || (
+      typeof message.retry === 'object'
+      && message.retry !== null
+      && typeof message.retry.question === 'string'
+      && typeof message.retry.requiresAttachments === 'boolean'
+    ));
+}
+
+function readStoredConversation(): StoredChatConversation | null {
+  try {
+    const raw = window.sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY);
+    if (raw === null) return null;
+    const value = JSON.parse(raw) as Partial<StoredChatConversation>;
+    if (
+      typeof value.sessionId !== 'string'
+      || !value.sessionId
+      || typeof value.endpoint !== 'string'
+      || !(value.endpoint === '/ai' || normalizeAiEndpoint(value.endpoint))
+      || !Number.isFinite(value.expiresAt)
+      || !Number.isInteger(value.retentionSeconds)
+      || (value.retentionSeconds ?? 0) <= 0
+      || !Array.isArray(value.messages)
+      || !value.messages.every(isChatMessage)
+      || typeof value.syncedSchedule !== 'string'
+      || (value.proposalDiff !== null && typeof value.proposalDiff !== 'string')
+    ) return null;
+    return {
+      ...value,
+      endpoint: value.endpoint === '/ai' ? value.endpoint : normalizeAiEndpoint(value.endpoint),
+    } as StoredChatConversation;
+  } catch {
+    return null;
+  }
+}
+
+function retentionLabel(seconds: number): string {
+  if (seconds % 3600 === 0) return `${seconds / 3600} hours`;
+  return `${seconds.toLocaleString()} seconds`;
+}
+
+function formatSessionExpiration(timestamp: number): string {
+  return new Date(timestamp).toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  });
 }
 
 function formatResponseDuration(startedAt: number, completedAt: number): string {
@@ -313,6 +408,11 @@ export default function ExperimentalAiPage() {
   ]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
+  const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
+  const [conversationUnavailable, setConversationUnavailable] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isClientReady, setIsClientReady] = useState(false);
@@ -357,8 +457,10 @@ export default function ExperimentalAiPage() {
   const composerDragDepthRef = useRef(0);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
+  const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const checkedSessionRef = useRef<string | null>(null);
   hasMessagesRef.current = messages.length > 0;
-  useTabSwitchWarning(messages.length > 0);
+  useTabSwitchWarning(isStreaming || draft.trim().length > 0 || selectedAttachments.length > 0);
 
   useEffect(() => {
     // Reading the stored preferences here keeps the server-rendered markup stable.
@@ -379,6 +481,28 @@ export default function ExperimentalAiPage() {
       if (normalizedEndpoint) endpoint = normalizedEndpoint;
     } catch {
       // Unreadable storage keeps the configured default.
+    }
+    const storedConversation = readStoredConversation();
+    if (storedConversation !== null) {
+      endpoint = storedConversation.endpoint;
+      setMessages(storedConversation.messages.map(message => (
+        message.status === 'pending' ? { ...message, status: 'failed' as const } : message
+      )));
+      setProposalDiff(storedConversation.proposalDiff);
+      setSessionRetentionSeconds(storedConversation.retentionSeconds);
+      syncedScheduleRef.current = storedConversation.syncedSchedule;
+      sessionEndpointRef.current = storedConversation.endpoint;
+      if (storedConversation.expiresAt <= Date.now()) {
+        window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+        setConversationUnavailable(true);
+        setSessionNotice(
+          `This chat expired after ${retentionLabel(storedConversation.retentionSeconds)} of inactivity. Start a new chat to continue.`,
+        );
+      } else {
+        sessionIdRef.current = storedConversation.sessionId;
+        setActiveSessionId(storedConversation.sessionId);
+        setSessionExpiresAt(storedConversation.expiresAt);
+      }
     }
     const storedTokens = readStoredAuthTokens();
     const storedToken = storedTokens[endpoint] ?? null;
@@ -419,6 +543,9 @@ export default function ExperimentalAiPage() {
         setAuthRequired(capabilities.auth?.required ?? false);
         setImageCapability(capabilities.image_attachments);
         setDocumentCapability(capabilities.document_attachments);
+        setSessionRetentionSeconds(
+          capabilities.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS,
+        );
       })
       .catch((capabilityError: unknown) => {
         if (!capabilitiesController.signal.aborted) {
@@ -433,6 +560,94 @@ export default function ExperimentalAiPage() {
     return () => capabilitiesController.abort();
   }, [aiEndpoint, isClientReady]);
 
+  useEffect(() => {
+    if (!isClientReady) return;
+    if (conversationStorageTimerRef.current !== null) {
+      clearTimeout(conversationStorageTimerRef.current);
+    }
+    conversationStorageTimerRef.current = setTimeout(() => {
+      try {
+        if (activeSessionId === null || sessionExpiresAt === null) {
+          window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+          return;
+        }
+        const stored: StoredChatConversation = {
+          sessionId: activeSessionId,
+          endpoint: sessionEndpointRef.current ?? aiEndpoint,
+          expiresAt: sessionExpiresAt,
+          retentionSeconds: sessionRetentionSeconds,
+          messages,
+          syncedSchedule: syncedScheduleRef.current ?? scheduleYaml,
+          proposalDiff,
+        };
+        window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
+      } catch {
+        // The live conversation remains usable when tab storage is unavailable or full.
+      }
+    }, 200);
+  }, [
+    activeSessionId,
+    aiEndpoint,
+    isClientReady,
+    messages,
+    proposalDiff,
+    scheduleYaml,
+    sessionExpiresAt,
+    sessionRetentionSeconds,
+  ]);
+
+  useEffect(() => {
+    if (!isClientReady || activeSessionId === null || checkedSessionRef.current === activeSessionId) return;
+    checkedSessionRef.current = activeSessionId;
+    const endpoint = sessionEndpointRef.current ?? aiEndpoint;
+    getSessionStatus(activeSessionId, authToken, endpoint)
+      .then(expiresInSeconds => {
+        setSessionExpiresAt(Date.now() + expiresInSeconds * 1000);
+      })
+      .catch((statusError: unknown) => {
+        if (statusError instanceof AiHttpError && statusError.status === 404) {
+          sessionIdRef.current = null;
+          sessionEndpointRef.current = null;
+          syncedScheduleRef.current = null;
+          setActiveSessionId(null);
+          setSessionExpiresAt(null);
+          setProposalDiff(null);
+          setConversationUnavailable(true);
+          setSessionNotice('This chat is no longer available on the AI server. Start a new chat to continue.');
+          window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+        } else if (isAuthenticationError(statusError)) {
+          reportRequestError(statusError, 'The stored AI chat could not be checked.');
+        }
+      });
+  }, [activeSessionId, aiEndpoint, authToken, isClientReady]);
+
+  useEffect(() => {
+    if (activeSessionId === null || sessionExpiresAt === null) return;
+    const delay = sessionExpiresAt - Date.now();
+    if (delay <= 0) {
+      sessionIdRef.current = null;
+      setActiveSessionId(null);
+      setSessionExpiresAt(null);
+      setConversationUnavailable(true);
+      setSessionNotice(
+        `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
+      );
+      window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      sessionIdRef.current = null;
+      setActiveSessionId(null);
+      setSessionExpiresAt(null);
+      setConversationUnavailable(true);
+      setSessionNotice(
+        `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
+      );
+      window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+    }, delay);
+    return () => window.clearTimeout(timeout);
+  }, [activeSessionId, sessionExpiresAt, sessionRetentionSeconds]);
+
   useEffect(() => () => {
       abortControllerRef.current?.abort();
       speechRecognitionRef.current?.stop();
@@ -446,14 +661,15 @@ export default function ExperimentalAiPage() {
   }, [selectedAttachments]);
 
   useEffect(() => {
-    if (messages.length === 0) return;
+    const hasTransientInput = isStreaming || draft.trim().length > 0 || selectedAttachments.length > 0;
+    if (!hasTransientInput) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
-  }, [messages.length]);
+  }, [draft, isStreaming, selectedAttachments.length]);
 
   useEffect(() => {
     // Scroll events do not identify their source, so only user input may change the follow flag.
@@ -621,6 +837,48 @@ export default function ExperimentalAiPage() {
     setError(requestError instanceof Error ? requestError.message : fallback);
   };
 
+  const renewSessionExpiration = () => {
+    setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
+  };
+
+  const markConversationUnavailable = (notice: string) => {
+    sessionIdRef.current = null;
+    sessionEndpointRef.current = null;
+    syncedScheduleRef.current = null;
+    checkedSessionRef.current = null;
+    setActiveSessionId(null);
+    setSessionExpiresAt(null);
+    setProposalDiff(null);
+    setConversationUnavailable(true);
+    setSessionNotice(notice);
+    window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+  };
+
+  const startNewConversation = () => {
+    if (messages.length > 0 && !window.confirm('Start a new chat? The current transcript will be cleared.')) return;
+    selectedAttachments.forEach(attachment => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+    sessionIdRef.current = null;
+    sessionEndpointRef.current = null;
+    syncedScheduleRef.current = null;
+    sandboxScheduleRef.current = null;
+    checkedSessionRef.current = null;
+    queuedMessagesRef.current = [];
+    setActiveSessionId(null);
+    setSessionExpiresAt(null);
+    setMessages([]);
+    setDraft('');
+    setSelectedAttachments([]);
+    setQueuedMessages([]);
+    setProposalDiff(null);
+    setProposalNotice(null);
+    setConversationUnavailable(false);
+    setSessionNotice(null);
+    setError(null);
+    window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+  };
+
   const addAttachments = (files: File[]) => {
     if (files.length === 0) return;
 
@@ -702,7 +960,7 @@ export default function ExperimentalAiPage() {
     attachmentsForMessage: SelectedAttachment[],
     clearComposer: boolean,
   ) => {
-    if (!question || isStreaming || (authRequired && authToken === null)) return;
+    if (!question || isStreaming || conversationUnavailable || (authRequired && authToken === null)) return;
 
     const userMessage: ChatMessage = {
       id: messageId(),
@@ -744,11 +1002,16 @@ export default function ExperimentalAiPage() {
         sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint);
         sessionIdRef.current = sessionId;
         sessionEndpointRef.current = sessionEndpoint;
+        checkedSessionRef.current = sessionId;
+        setActiveSessionId(sessionId);
+        setConversationUnavailable(false);
+        setSessionNotice(null);
       } else if (syncedScheduleRef.current !== scheduleYaml) {
         // The schedule can change elsewhere in the app between questions.
         await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
       }
       syncedScheduleRef.current = scheduleYaml;
+      renewSessionExpiration();
       await streamMessage(
         sessionId,
         question,
@@ -888,7 +1151,9 @@ export default function ExperimentalAiPage() {
           }
           : message
       )));
-      if (!controller.signal.aborted && staleTurnMessage === null) {
+      if (streamError instanceof AiHttpError && streamError.status === 404) {
+        markConversationUnavailable('This chat expired or is no longer available. Start a new chat to continue.');
+      } else if (!controller.signal.aborted && staleTurnMessage === null) {
         reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {
@@ -922,6 +1187,7 @@ export default function ExperimentalAiPage() {
             authToken,
             sessionEndpointRef.current ?? aiEndpoint,
           );
+          renewSessionExpiration();
         } catch (queueError) {
           const responseFinishing = typeof queueError === 'object'
             && queueError !== null
@@ -999,7 +1265,8 @@ export default function ExperimentalAiPage() {
   const selectedImageCount = selectedAttachments.filter(attachment => attachment.kind === 'image').length;
   const selectedDocumentCount = selectedAttachments.length - selectedImageCount;
   const credentialsMissing = authRequired && authToken === null;
-  const attachmentPickerDisabled = isStreaming || credentialsMissing || (
+  const composerUnavailable = credentialsMissing || conversationUnavailable;
+  const attachmentPickerDisabled = isStreaming || composerUnavailable || (
     (!imageCapability.enabled || selectedImageCount >= imageCapability.max_files)
     && (!documentCapability.enabled || selectedDocumentCount >= documentCapability.max_files)
   );
@@ -1044,6 +1311,7 @@ export default function ExperimentalAiPage() {
       // One import call is one history entry, so undo reverts the whole proposal.
       loadFromYaml(yaml.load(approvedYaml));
       syncedScheduleRef.current = approvedYaml;
+      renewSessionExpiration();
       setProposalDiff(null);
       setProposalNotice('The proposed schedule was applied. Undo reverts it in one step.');
     } catch (approveError) {
@@ -1060,6 +1328,7 @@ export default function ExperimentalAiPage() {
     if (sessionId === null) return;
     try {
       await rejectProposal(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint);
+      renewSessionExpiration();
     } catch (rejectError) {
       if (isAuthenticationError(rejectError)) {
         reportRequestError(rejectError, 'The proposal could not be rejected.');
@@ -1104,6 +1373,14 @@ export default function ExperimentalAiPage() {
         <p className="mt-2 text-xs font-medium text-gray-500">
           Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
         </p>
+        <p className="mt-1 text-xs text-gray-500">
+          Chat sessions expire after {retentionLabel(sessionRetentionSeconds)} of inactivity. Each new message renews this period.
+        </p>
+        {sessionNotice && (
+          <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
+            {sessionNotice}
+          </p>
+        )}
         <div className="mt-3 max-w-2xl rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${
@@ -1222,6 +1499,15 @@ export default function ExperimentalAiPage() {
               >
                 Markdown
               </button>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={startNewConversation}
+                disabled={isStreaming}
+                className="font-medium text-red-700 underline underline-offset-2 hover:text-red-900 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Start new chat
+              </button>
             </div>
           )}
         </div>
@@ -1324,6 +1610,19 @@ export default function ExperimentalAiPage() {
             )}
           </article>
         ))}
+        {activeSessionId !== null && sessionExpiresAt !== null && (
+          <p className="pt-1 text-center text-[0.6875rem] text-gray-400">
+            Chat expires at{' '}
+            <time
+              dateTime={new Date(sessionExpiresAt).toISOString()}
+              aria-label="Chat expiration"
+              className="font-medium"
+            >
+              {formatSessionExpiration(sessionExpiresAt)}
+            </time>
+            {' '}· Each new message extends the chat for another {retentionLabel(sessionRetentionSeconds)}.
+          </p>
+        )}
       </section>
 
       {proposalDiff !== null && (
@@ -1481,7 +1780,7 @@ export default function ExperimentalAiPage() {
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            disabled={!isClientReady || credentialsMissing}
+            disabled={!isClientReady || composerUnavailable}
             rows={1}
             maxLength={8000}
             aria-label="Ask about the current schedule"
@@ -1513,7 +1812,7 @@ export default function ExperimentalAiPage() {
                 <button
                   type="button"
                   onClick={toggleDictation}
-                  disabled={!isClientReady || credentialsMissing || !speechSupported}
+                  disabled={!isClientReady || composerUnavailable || !speechSupported}
                   aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
                   aria-pressed={isListening}
                   title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
@@ -1527,7 +1826,7 @@ export default function ExperimentalAiPage() {
                   <select
                     value={speechLanguage}
                     onChange={event => setSpeechLanguage(event.target.value)}
-                    disabled={!isClientReady || credentialsMissing || !speechSupported || isListening}
+                    disabled={!isClientReady || composerUnavailable || !speechSupported || isListening}
                     aria-label="Dictation language"
                     title="Dictation language"
                     className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
@@ -1564,7 +1863,7 @@ export default function ExperimentalAiPage() {
             ) : (
               <button
                 type="submit"
-                disabled={!isClientReady || credentialsMissing || !draft.trim()}
+                disabled={!isClientReady || composerUnavailable || !draft.trim()}
                 aria-label="Send"
                 title="Send"
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"

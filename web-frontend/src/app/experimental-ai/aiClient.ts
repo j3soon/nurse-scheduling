@@ -47,6 +47,7 @@ export interface StreamCallbacks {
 
 export interface AiCapabilities {
   auth: AuthRequirement | null;
+  session_retention_seconds: number;
   image_attachments: {
     enabled: boolean;
     accepted_media_types: string[];
@@ -68,6 +69,10 @@ export interface MessageAttachments {
 
 interface SessionResponse {
   id: string;
+}
+
+interface SessionStatusResponse {
+  expires_in_seconds: number;
 }
 
 interface SsePayload {
@@ -98,6 +103,7 @@ export class AiStaleTurnError extends Error {
 
 export const PRODUCTION_AI_API_URL = 'https://api.nursescheduling.org/ai';
 export const LOCAL_AI_API_URL = 'http://localhost:8001';
+export const DEFAULT_SESSION_RETENTION_SECONDS = 48 * 60 * 60;
 
 export function getAiBaseUrl(): string {
   const configuredUrl = process.env.NEXT_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');
@@ -154,6 +160,7 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
 
   const body = await response.json() as Partial<AiCapabilities>;
   const auth = parseAuthRequirement(body.auth);
+  const sessionRetention = body.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS;
   const images = body.image_attachments;
   const documents = body.document_attachments;
   if (
@@ -171,10 +178,12 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
     || documents.max_files <= 0
     || !Number.isInteger(documents.max_bytes_per_file)
     || documents.max_bytes_per_file <= 0
+    || !Number.isInteger(sessionRetention)
+    || sessionRetention <= 0
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
-  return { ...body, auth } as AiCapabilities;
+  return { ...body, auth, session_retention_seconds: sessionRetention } as AiCapabilities;
 }
 
 export async function createSession(
@@ -195,6 +204,24 @@ export async function createSession(
     throw new Error('The AI backend returned an invalid session.');
   }
   return body.id;
+}
+
+export async function getSessionStatus(
+  sessionId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<number> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}`, {
+    credentials: 'include',
+    headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+
+  const body = await response.json() as Partial<SessionStatusResponse>;
+  if (!Number.isInteger(body.expires_in_seconds) || (body.expires_in_seconds ?? 0) <= 0) {
+    throw new Error('The AI backend returned an invalid session status.');
+  }
+  return body.expires_in_seconds as number;
 }
 
 function consumeEvent(block: string, callbacks: StreamCallbacks): void {

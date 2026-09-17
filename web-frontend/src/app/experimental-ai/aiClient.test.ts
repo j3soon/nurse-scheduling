@@ -26,6 +26,7 @@ import {
   createSession,
   getAiBaseUrl,
   getCapabilities,
+  getSessionStatus,
   isOfficialAiEndpoint,
   queueMessage,
   rejectProposal,
@@ -89,6 +90,7 @@ describe('AI client', () => {
 
     await expect(getCapabilities()).resolves.toEqual({
       auth: null,
+      session_retention_seconds: 172800,
       image_attachments: {
         enabled: true,
         accepted_media_types: ['image/png'],
@@ -102,6 +104,23 @@ describe('AI client', () => {
         max_bytes_per_file: 5000000,
       },
     });
+  });
+
+  it('checks a stored session without sending a keepalive request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ expires_in_seconds: 120 }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getSessionStatus('session/id', 'ai-client-token')).resolves.toBe(120);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid',
+      {
+        credentials: 'include',
+        headers: { Authorization: 'Bearer ai-client-token' },
+      },
+    );
   });
 
   it('reads the advertised AI authentication requirement', async () => {

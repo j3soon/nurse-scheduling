@@ -25,6 +25,7 @@ import ExperimentalAiPage from './page';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
+const mockGetSessionStatus = vi.hoisted(() => vi.fn());
 const mockStreamMessage = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
 const mockApproveProposal = vi.hoisted(() => vi.fn());
@@ -34,6 +35,11 @@ const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
 const MockAiStaleTurnError = vi.hoisted(() => class AiStaleTurnError extends Error {});
+const MockAiHttpError = vi.hoisted(() => class AiHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+});
 const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
   const trimmed = endpoint.trim().replace(/\/+$/, '');
   if (!trimmed) return '';
@@ -41,12 +47,15 @@ const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
 });
 
 vi.mock('./aiClient', () => ({
+  AiHttpError: MockAiHttpError,
   AiStaleTurnError: MockAiStaleTurnError,
+  DEFAULT_SESSION_RETENTION_SECONDS: 172800,
   LOCAL_AI_API_URL: 'http://localhost:8001',
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
+  getSessionStatus: mockGetSessionStatus,
   normalizeAiEndpoint: mockNormalizeAiEndpoint,
   isOfficialAiEndpoint: (endpoint: string) => (
     endpoint === '/ai' || mockNormalizeAiEndpoint(endpoint) === 'https://api.nursescheduling.org/ai'
@@ -86,6 +95,7 @@ describe('ExperimentalAiPage', () => {
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
     mockGetCapabilities.mockReset().mockResolvedValue({
+      session_retention_seconds: 172800,
       image_attachments: {
         enabled: false,
         accepted_media_types: ['image/jpeg', 'image/png', 'image/webp'],
@@ -99,6 +109,7 @@ describe('ExperimentalAiPage', () => {
         max_bytes_per_file: 5_000_000,
       },
     });
+    mockGetSessionStatus.mockReset().mockResolvedValue(172800);
     mockStreamMessage.mockReset().mockImplementation(async (
       _sessionId: string,
       _message: string,
@@ -115,6 +126,7 @@ describe('ExperimentalAiPage', () => {
     mockLoadFromYaml.mockReset();
     mockUseTabSwitchWarning.mockReset();
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   it('sends a question with the current schedule and renders streamed text', async () => {
@@ -142,9 +154,9 @@ describe('ExperimentalAiPage', () => {
     await user.click(sendButton);
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
-    const responseTime = document.querySelector('time');
+    const responseTime = screen.getByText(/· (?:<1s|\d+(?:\.\d)?s|\d+m \d+s)$/);
+    expect(responseTime.tagName).toBe('TIME');
     expect(responseTime).toHaveAttribute('dateTime');
-    expect(responseTime).toHaveTextContent(/· (?:<1s|\d+(?:\.\d)?s|\d+m \d+s)$/);
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',
@@ -155,7 +167,95 @@ describe('ExperimentalAiPage', () => {
       { images: [], documents: [] },
       '/ai',
     );
-    expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(true);
+    expect(mockUseTabSwitchWarning).toHaveBeenCalledWith(true);
+    expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(false);
+  });
+
+  it('restores the transcript and live session after navigating away', async () => {
+    const user = userEvent.setup();
+    const firstRender = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
+    await waitFor(() => expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).not.toBeNull());
+
+    firstRender.unmount();
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText('Who works Monday?')).toBeInTheDocument();
+    expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
+    expect(mockGetSessionStatus).toHaveBeenCalledWith('session-id', null, '/ai');
+    expect(mockCreateSession).toHaveBeenCalledOnce();
+  });
+
+  it('shows and renews the exact chat expiration time', async () => {
+    const now = Date.parse('2026-09-19T08:30:00Z');
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'First question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const firstExpiration = new Date(now + 172800 * 1000).toISOString();
+    await waitFor(() => expect(screen.getByLabelText('Chat expiration')).toHaveAttribute('dateTime', firstExpiration));
+    const expirationNotice = screen.getByLabelText('Chat expiration').closest('p');
+    expect(expirationNotice).toHaveTextContent(/^Chat expires at /);
+    expect(expirationNotice).toHaveTextContent(/Each new message extends the chat for another 48 hours/);
+    expect(screen.getByRole('region', { name: 'Chat messages' }).lastElementChild).toBe(expirationNotice);
+
+    const oneHourLater = now + 60 * 60 * 1000;
+    dateNow.mockReturnValue(oneHourLater);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Second question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const renewedExpiration = new Date(oneHourLater + 172800 * 1000).toISOString();
+    await waitFor(() => expect(screen.getByLabelText('Chat expiration')).toHaveAttribute('dateTime', renewedExpiration));
+  });
+
+  it('reports an expired stored chat and requires a new conversation', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'expired-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() - 1,
+      retentionSeconds: 172800,
+      messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
+      syncedSchedule: 'description: old schedule\n',
+      proposalDiff: null,
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText('Old question')).toBeInTheDocument();
+    expect(screen.getByText(/expired after 48 hours of inactivity/)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(mockGetSessionStatus).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
+  });
+
+  it('preserves the transcript when the stored server session is no longer available', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockGetSessionStatus.mockRejectedValue(new MockAiHttpError('Chat session not found.', 404));
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'missing-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'user-1', role: 'user', content: 'Preserve this transcript' }],
+      syncedSchedule: 'description: old schedule\n',
+      proposalDiff: null,
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText(/no longer available on the AI server/)).toBeInTheDocument();
+    expect(screen.getByText('Preserve this transcript')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+    expect(screen.queryByText('Preserve this transcript')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
   });
 
   it('starts with a single-line composer and grows with the draft', async () => {

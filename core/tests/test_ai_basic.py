@@ -555,14 +555,16 @@ def test_health_and_streamed_schedule_question() -> None:
     assert "untrusted data" in prompt[0]["content"]
 
 
-def test_existing_owner_cookie_is_not_reflected_in_create_response() -> None:
+def test_existing_owner_cookie_lifetime_is_refreshed() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     client.cookies.set(OWNER_COOKIE, "browser-supplied-owner")
 
     response = client.post("/sessions", json={"schedule_yaml": "description: test"})
 
     assert response.status_code == 201
-    assert OWNER_COOKIE not in response.headers.get("set-cookie", "")
+    set_cookie = response.headers["set-cookie"]
+    assert f"{OWNER_COOKIE}=browser-supplied-owner" in set_cookie
+    assert "Max-Age=172800" in set_cookie
 
 
 def test_capabilities_report_configured_attachment_limits() -> None:
@@ -596,8 +598,37 @@ def test_capabilities_report_configured_attachment_limits() -> None:
             "max_files": 3,
             "max_bytes_per_file": 4321,
         },
+        "session_retention_seconds": 172800,
         "auth": {"required": True, "scheme": "bearer"},
     }
+
+
+def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 100.0
+    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    client = AuthenticatedTestClient(
+        create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
+    )
+    session_id = create_session(client)
+
+    now = 105.0
+    first = client.get(f"/sessions/{session_id}")
+    now = 110.0
+    second = client.get(f"/sessions/{session_id}")
+    message = client.post(f"/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
+
+    assert first.json() == {"expires_in_seconds": 15}
+    assert second.json() == {"expires_in_seconds": 10}
+    assert message.status_code == 200
+    assert "Max-Age=20" in message.headers["set-cookie"]
+
+    now = 120.0
+    assert client.get(f"/sessions/{session_id}").json() == {"expires_in_seconds": 10}
+
+    now = 131.0
+    expired = client.get(f"/sessions/{session_id}")
+    assert expired.status_code == 404
+    assert expired.json()["detail"] == "Chat session not found."
 
 
 def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
@@ -1165,6 +1196,16 @@ def test_environment_configuration_defaults_to_three_provider_attempts(monkeypat
 
     assert settings.provider_max_attempts == 3
     assert settings.provider_retry_backoff_seconds == 1.0
+
+
+def test_environment_configuration_defaults_to_two_day_session_retention(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
+    monkeypatch.setenv("E2B_API_KEY", "e2b-key")
+    monkeypatch.delenv("AI_SESSION_TTL_SECONDS", raising=False)
+
+    assert AiSettings.from_env().session_ttl_seconds == 48 * 60 * 60
 
 
 def test_environment_configuration_rejects_unknown_attachment_mode(monkeypatch: pytest.MonkeyPatch) -> None:

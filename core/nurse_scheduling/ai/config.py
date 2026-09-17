@@ -136,7 +136,7 @@ class AiSettings:
     provider_timeout_seconds: float = 120.0
     provider_max_attempts: int = 3
     provider_retry_backoff_seconds: float = 1.0
-    session_ttl_seconds: int = 3600
+    session_ttl_seconds: int = 172_800
     history_postgres_url: str = ""
     history_retention_days: int = 30
     request_log_enabled: bool = True
@@ -211,7 +211,7 @@ class AiSettings:
             provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 120.0),
             provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
             provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),
-            session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 3600),
+            session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 172_800),
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
             history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),

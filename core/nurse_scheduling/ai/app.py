@@ -24,6 +24,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import sys
 import threading
 import time
@@ -160,6 +161,12 @@ class CreateSessionResponse(BaseModel):
     id: str
 
 
+class SessionStatusResponse(BaseModel):
+    """Remaining lifetime for one browser-owned chat session."""
+
+    expires_in_seconds: int
+
+
 class CreateSessionRequest(BaseModel):
     """The schedule snapshot owned by a new chat session."""
 
@@ -209,6 +216,7 @@ class CapabilitiesResponse(BaseModel):
 
     image_attachments: ImageAttachmentCapability
     document_attachments: DocumentAttachmentCapability
+    session_retention_seconds: int
     auth: dict[str, bool | str]
 
 
@@ -303,6 +311,12 @@ class SessionStore:
                 session.proposal_diff,
             )
 
+    def status(self, session_id: str, owner_token: str | None) -> int:
+        """Return the remaining lifetime without extending the session."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            return max(1, math.ceil(session.expires_at - time.monotonic()))
+
     def finish(
         self,
         session_id: str,
@@ -339,6 +353,7 @@ class SessionStore:
             session.accepting_steering = False
             session.steering_queue.clear()
             session.steering_ids.clear()
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
 
     def queue_steering(
@@ -385,6 +400,7 @@ class SessionStore:
             session.revision = schedule_revision(schedule_yaml)
             session.proposal_yaml = ""
             session.proposal_diff = ""
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
         """Return the pending proposal and the schedule it would replace, without adopting it."""
@@ -402,6 +418,7 @@ class SessionStore:
             session.schedule_yaml = approved
             session.revision = schedule_revision(approved)
             self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return approved
 
     def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> ChatSession:
@@ -432,6 +449,7 @@ class SessionStore:
             session.proposal_diff = ""
             if had_proposal:
                 self._append_history_event(session, history_event)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def abort(self, session_id: str) -> None:
         """Release a session without recording an incomplete response."""
@@ -696,6 +714,19 @@ def create_app(
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
 
+    def refresh_owner_cookie(response: Response, owner: str) -> None:
+        """Keep browser ownership available for the session's sliding lifetime."""
+        response.set_cookie(
+            OWNER_COOKIE,
+            owner,
+            httponly=True,
+            secure=settings.cookie_secure,
+            # Public deployments allow approved cross-site frontends. Browsers
+            # require Secure whenever SameSite=None is used.
+            samesite="none" if settings.cookie_secure else "strict",
+            max_age=settings.session_ttl_seconds,
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if history_log is not None and not await history_log.write("initialize"):
@@ -756,6 +787,7 @@ def create_app(
                 max_files=settings.max_document_files,
                 max_bytes_per_file=settings.max_document_bytes,
             ),
+            session_retention_seconds=settings.session_ttl_seconds,
             auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
         )
 
@@ -776,16 +808,7 @@ def create_app(
             raise HTTPException(status_code=413, detail="Schedule is too large.")
         if owner is None:
             owner = str(uuid4())
-            response.set_cookie(
-                OWNER_COOKIE,
-                owner,
-                httponly=True,
-                secure=settings.cookie_secure,
-                # Public deployments allow approved cross-site frontends. Browsers
-                # require Secure whenever SameSite=None is used.
-                samesite="none" if settings.cookie_secure else "strict",
-                max_age=settings.session_ttl_seconds,
-            )
+        refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
         logger.info(
             "Created AI session session_id=%s auth_credential_id=%s",
@@ -793,6 +816,18 @@ def create_app(
             http_request.state.auth_credential_id,
         )
         return CreateSessionResponse(id=session.id)
+
+    @app.get(
+        "/sessions/{session_id}",
+        response_model=SessionStatusResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def session_status(
+        session_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> SessionStatusResponse:
+        """Report whether a stored browser session remains available without extending it."""
+        return SessionStatusResponse(expires_in_seconds=store.status(session_id, owner))
 
     @app.post(
         "/sessions/{session_id}/messages/queue",
@@ -815,7 +850,9 @@ def create_app(
             json.dumps(_question_log_preview(message), ensure_ascii=False),
             http_request.state.auth_credential_id,
         )
-        return Response(status_code=status.HTTP_202_ACCEPTED)
+        response = Response(status_code=status.HTTP_202_ACCEPTED)
+        refresh_owner_cookie(response, owner)
+        return response
 
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
@@ -1009,12 +1046,14 @@ def create_app(
                 if history_log is not None:
                     await history_log.write("finish_turn", turn_id, "", "cancelled", None, None)
 
-        return StreamingResponse(
+        response = StreamingResponse(
             generate_events(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             background=BackgroundTask(abort_unstarted_stream),
         )
+        refresh_owner_cookie(response, owner)
+        return response
 
     @app.put(
         "/sessions/{session_id}/schedule",
@@ -1030,7 +1069,9 @@ def create_app(
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
         store.update_schedule(session_id, owner, request.schedule_yaml)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        refresh_owner_cookie(response, owner)
+        return response
 
     @app.post(
         "/sessions/{session_id}/proposal/approve",
@@ -1040,6 +1081,7 @@ def create_app(
     async def approve_proposal(
         session_id: str,
         request: ApproveProposalRequest,
+        response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
@@ -1055,7 +1097,9 @@ def create_app(
                 logger.error("Approved proposal failed revalidation session_id=%s", session_id)
                 store.discard_proposal(session_id, owner, PROPOSAL_INVALID_HISTORY)
                 raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
-        return ProposalResponse(schedule_yaml=store.adopt_proposal(session_id, owner, request.base_sha256))
+        schedule_yaml = store.adopt_proposal(session_id, owner, request.base_sha256)
+        refresh_owner_cookie(response, owner)
+        return ProposalResponse(schedule_yaml=schedule_yaml)
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",
@@ -1068,6 +1112,8 @@ def create_app(
     ) -> Response:
         """Drop the pending proposal at the user's request."""
         store.discard_proposal(session_id, owner)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        refresh_owner_cookie(response, owner)
+        return response
 
     return app
