@@ -34,11 +34,24 @@ export function getCoefficientForShiftType(
   return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? '';
 }
 
+// A group may reference an earlier group, which the backend flattens all the way
+// down before checking coefficient coverage and overlap. Expanding only one
+// level here would compare group IDs where the backend compares shift types.
 function getExpandedShiftTypeIdsById(shiftTypeData: { items: Item[]; groups: Group[] }): Map<string, readonly string[]> {
-  return new Map([
-    ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
-    ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
-  ]);
+  const expandedShiftTypeIdsById = new Map<string, readonly string[]>(
+    shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const)
+  );
+  for (const group of shiftTypeData.groups) {
+    const members = new Set<string>();
+    for (const member of group.members) {
+      // An unresolved member stands for itself while the schedule is being edited.
+      for (const shiftTypeId of expandedShiftTypeIdsById.get(member) ?? [member]) {
+        members.add(shiftTypeId);
+      }
+    }
+    expandedShiftTypeIdsById.set(group.id, [...members]);
+  }
+  return expandedShiftTypeIdsById;
 }
 
 export function getCoefficientShiftTypeIds(
@@ -55,7 +68,10 @@ export function getCoefficientShiftTypeIds(
       .filter(shiftType => selectedExpandedShiftTypeIds.has(shiftType.id))
       .map(shiftType => shiftType.id),
     ...shiftTypeData.groups
-      .filter(group => group.members.length > 0 && group.members.every(member => selectedExpandedShiftTypeIds.has(member)))
+      .filter(group => {
+        const members = expandedShiftTypeIdsById.get(group.id) ?? [];
+        return members.length > 0 && members.every(member => selectedExpandedShiftTypeIds.has(member));
+      })
       .map(group => group.id),
   ];
 }

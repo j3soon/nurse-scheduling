@@ -41,6 +41,27 @@ describe('countShiftTypeCoefficients', () => {
     expect(afterReselect).toEqual([['D', ''], ['N', 2], ['WORK', '']]);
   });
 
+  it('flattens a group that references another group', () => {
+    // Nested groups reach the editor through import and the assistant, and the
+    // backend flattens them before checking coverage and overlap.
+    const nested = {
+      items: [
+        { id: 'D', description: 'Day' },
+        { id: 'N', description: 'Night' },
+        { id: 'E', description: 'Evening' },
+      ],
+      groups: [
+        { id: 'WORK', members: ['D', 'N'], description: 'Working shifts' },
+        { id: 'ALL_WORK', members: ['WORK', 'E'], description: 'Every working shift' },
+      ],
+    };
+
+    expect(getCoefficientShiftTypeIds(['ALL_WORK'], nested)).toEqual(['D', 'N', 'E', 'WORK', 'ALL_WORK']);
+    expect(validateCoefficientPairs(['ALL_WORK'], [['WORK', 2], ['ALL_WORK', 3]], nested).overlapError).toBe(
+      'Shift type coefficients overlap: WORK, ALL_WORK include D'
+    );
+  });
+
   it('uses selected item coverage to include fully covered groups', () => {
     expect(getCoefficientShiftTypeIds(['D', 'N'], shiftTypeData)).toEqual(['D', 'N', 'WORK']);
   });
