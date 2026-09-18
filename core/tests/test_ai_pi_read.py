@@ -21,9 +21,12 @@
 
 import json
 import math
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
+from nurse_scheduling.ai.pi.mime import detect_supported_image_mime_type
 from nurse_scheduling.ai.pi.read import (
     READ_TOOL_DESCRIPTION,
     ReadArgumentError,
@@ -100,3 +103,79 @@ def test_pi_read_large_first_line_recommends_bounded_bash_fallback():
 def test_pi_read_rejects_an_offset_beyond_the_file():
     with pytest.raises(ReadArgumentError, match=r"Offset 3 is beyond end of file \(2 lines total\)"):
         render_read_result(b"one\ntwo", ReadInput("small.txt", offset=3))
+
+
+@pytest.mark.parametrize(
+    ("image_format", "media_type"),
+    [
+        ("PNG", "image/png"),
+        ("JPEG", "image/jpeg"),
+        ("GIF", "image/gif"),
+        ("WEBP", "image/webp"),
+        ("BMP", "image/bmp"),
+    ],
+)
+def test_pi_read_returns_supported_images_to_the_model(image_format: str, media_type: str):
+    output = BytesIO()
+    Image.new("RGB", (2, 3), "red").save(output, image_format)
+    content = output.getvalue()
+
+    result = render_read_result(content, ReadInput("attachment"))
+
+    assert detect_supported_image_mime_type(content) == media_type
+    assert result.image is not None
+    expected_type = "image/png" if media_type == "image/bmp" else media_type
+    assert result.image.media_type == expected_type
+    if media_type != "image/bmp":
+        assert result.image.data == content
+    assert expected_type in result.text
+
+
+def test_pi_read_resizes_large_images_to_the_upstream_dimension_limit():
+    output = BytesIO()
+    Image.new("RGB", (2_001, 10), "red").save(output, "PNG")
+
+    result = render_read_result(output.getvalue(), ReadInput("wide.png"))
+
+    assert "original 2001x10, displayed at 2000x10" in result.text
+    assert result.image is not None
+    with Image.open(BytesIO(result.image.data)) as resized:
+        assert resized.size == (2_000, 10)
+
+
+def test_pi_read_omits_invalid_data_detected_as_an_image():
+    broken_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRnot-an-image"
+
+    result = render_read_result(broken_png, ReadInput("broken.png"))
+
+    assert result.image is None
+    assert "could not be resized below the inline image size limit" in result.text
+
+
+def test_pi_image_detection_excludes_jpeg_ls_like_upstream():
+    assert detect_supported_image_mime_type(b"\xff\xd8\xff\xf7payload") is None
+
+
+def test_pi_image_detection_excludes_animated_png_like_upstream():
+    animated_png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 17 + b"\x00\x00\x00\x08acTL"
+
+    assert detect_supported_image_mime_type(animated_png_header) is None
+
+
+def test_pi_image_detection_rejects_an_invalid_bmp_header():
+    assert detect_supported_image_mime_type(b"BM" + b"\x00" * 40) is None
+
+
+def test_pi_read_applies_exif_orientation_before_resizing():
+    output = BytesIO()
+    image = Image.new("RGB", (10, 2_001), "red")
+    exif = image.getexif()
+    exif[274] = 6
+    image.save(output, "JPEG", exif=exif)
+
+    result = render_read_result(output.getvalue(), ReadInput("oriented.jpg"))
+
+    assert "original 2001x10, displayed at 2000x10" in result.text
+    assert result.image is not None
+    with Image.open(BytesIO(result.image.data)) as resized:
+        assert resized.size == (2_000, 10)

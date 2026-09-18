@@ -25,8 +25,6 @@ from typing import Literal, cast
 
 from ..server.auth import AuthCredential, normalize_auth_credentials, parse_auth_credentials
 
-AttachmentMode = Literal["none", "images"]
-DocumentAttachmentMode = Literal["none", "text"]
 SandboxBackendName = Literal["none", "e2b"]
 AI_AUTH_TOKEN_ENV_NAME = "AI_AUTH_TOKEN"
 AI_AUTH_TOKENS_ENV_NAME = "AI_AUTH_TOKENS"
@@ -99,22 +97,6 @@ def _read_bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean")
 
 
-def _read_attachment_mode() -> AttachmentMode:
-    """Read the enabled attachment capability."""
-    value = os.getenv("AI_ATTACHMENT_MODE", "images").strip().lower()
-    if value not in {"none", "images"}:
-        raise ValueError("AI_ATTACHMENT_MODE must be one of: none, images")
-    return cast(AttachmentMode, value)
-
-
-def _read_document_attachment_mode() -> DocumentAttachmentMode:
-    """Read the enabled document attachment capability."""
-    value = os.getenv("AI_DOCUMENT_ATTACHMENT_MODE", "text").strip().lower()
-    if value not in {"none", "text"}:
-        raise ValueError("AI_DOCUMENT_ATTACHMENT_MODE must be one of: none, text")
-    return cast(DocumentAttachmentMode, value)
-
-
 def _read_sandbox_backend() -> SandboxBackendName:
     """Read the optional disposable sandbox provider."""
     value = os.getenv("AI_SANDBOX_BACKEND", "none").strip().lower()
@@ -146,17 +128,8 @@ class AiSettings:
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
-    attachment_mode: AttachmentMode = "images"
-    max_image_files: int = 4
-    max_image_bytes: int = 5_000_000
-    document_attachment_mode: DocumentAttachmentMode = "text"
-    max_document_files: int = 4
-    max_document_bytes: int = 5_000_000
-    max_document_text_chars: int = 50_000
-    max_pdf_pages: int = 100
-    max_xlsx_sheets: int = 20
-    max_xlsx_cells: int = 100_000
-    max_xlsx_uncompressed_bytes: int = 50_000_000
+    max_attachment_files: int = 8
+    max_attachment_bytes: int = 5_000_000
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
@@ -220,17 +193,8 @@ class AiSettings:
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
-            attachment_mode=_read_attachment_mode(),
-            max_image_files=_read_positive_int("AI_MAX_IMAGE_FILES", 4),
-            max_image_bytes=_read_positive_int("AI_MAX_IMAGE_BYTES", 5_000_000),
-            document_attachment_mode=_read_document_attachment_mode(),
-            max_document_files=_read_positive_int("AI_MAX_DOCUMENT_FILES", 4),
-            max_document_bytes=_read_positive_int("AI_MAX_DOCUMENT_BYTES", 5_000_000),
-            max_document_text_chars=_read_positive_int("AI_MAX_DOCUMENT_TEXT_CHARS", 50_000),
-            max_pdf_pages=_read_positive_int("AI_MAX_PDF_PAGES", 100),
-            max_xlsx_sheets=_read_positive_int("AI_MAX_XLSX_SHEETS", 20),
-            max_xlsx_cells=_read_positive_int("AI_MAX_XLSX_CELLS", 100_000),
-            max_xlsx_uncompressed_bytes=_read_positive_int("AI_MAX_XLSX_UNCOMPRESSED_BYTES", 50_000_000),
+            max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", 8),
+            max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", 5_000_000),
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,

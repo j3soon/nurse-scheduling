@@ -7,6 +7,10 @@ directories such as `cases/real/` for cases derived from real user scenarios. Ev
 turn. Set the one-based `proposal_turn` when a later turn should discuss an earlier proposal without reproposing it.
 Every other turn is explicitly graded as producing no proposal.
 
+Use `attachments` to name deterministic binary fixtures built by `attachment_fixtures.py`. Attachments are sent only
+with the first turn, matching the frontend request lifecycle. Attachment cases should assert the answer and the tools
+that prove the sandbox inspected the file rather than relying on its declared media type.
+
 Use ordered `proposal_turns` when revisions should produce more than one proposal. The last listed proposal is graded
 by `expected_diff`. Use `turn_actions` to apply a trusted frontend `approve`, `reject`, or external `update` after a
 turn. An update supplies a shallow top-level `schedule_patch` and invalidates any pending proposal.

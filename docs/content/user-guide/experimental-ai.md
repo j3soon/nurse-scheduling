@@ -10,10 +10,10 @@ The hosted assistant is an API-key-gated beta. See
 to request access.
 
 This page answers questions about the schedule currently open in the browser.
-When enabled by the AI backend, a question can include PNG, JPEG, and WebP
-images or TXT, Markdown, CSV, PDF, and XLSX documents. The assistant can propose
-changes to the schedule, which apply only after you approve them. It cannot run
-optimization.
+A question can include files of any type when **Attach files** is available.
+The assistant can inspect common text, image, PDF, and spreadsheet formats in
+its temporary workspace. The assistant can propose changes to the schedule,
+which apply only after you approve them. It cannot run optimization.
 
 ## Review a proposed change
 
@@ -65,9 +65,8 @@ The blue development-version banner appears only in non-release builds.
 1. Finish editing or load the intended schedule.
 2. Open **Experimental AI**.
 3. Confirm the displayed people and date counts.
-4. If **Attach files** is available, optionally select supported images or
-   documents and confirm the displayed files. Remove an incorrect file with
-   its **×** button.
+4. If **Attach files** is available, optionally select files and confirm the
+   displayed names. Remove an incorrect file with its **×** button.
 5. Enter a question and select **Send**. Press <kbd>Enter</kbd> to send or
    <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line. Where browser speech
    recognition is available, select the microphone to dictate the question.
@@ -84,6 +83,8 @@ first response text.
 Assistant answers render Markdown, including headings, lists, links, code, and
 tables. Use the copy icon at the top-right of a code block to copy its contents.
 Raw HTML is ignored. Remote images written in an answer are not loaded.
+Use **HTML** under **Export chat** for a styled, standalone transcript, or
+**Markdown** for a plain-text transcript. Export runs in the browser.
 
 ## Ask how to use the app
 
@@ -98,22 +99,28 @@ the schedule currently open in the app, use **Upload** on **Save and Load**
 instead.
 
 The browser uploads one YAML snapshot when it creates the chat session. Later
-questions in that session use the same backend-owned snapshot. Reload the page
-to begin a new chat from the latest schedule.
+questions in that session use the same service-held snapshot. The current
+browser tab preserves the transcript when you switch pages or reload. A chat
+expires after 48 hours without a message. Each new message renews that period,
+and the page reports when a preserved chat has expired.
 
 ## Data and limitations
 
-The complete schedule YAML is sent to the configured AI backend and model
-provider. Attached images are also sent to that provider for the current
-question, as are the extracted contents and filenames of attached documents.
-PDF extraction reads embedded text and does not perform OCR. XLSX extraction
-includes cell values, formula text, and cached formula results when available.
-It does not recalculate formulas.
+The complete schedule YAML is sent to the configured AI service and placed in
+the assistant's temporary workspace. Relevant schedule content reaches the
+model when the assistant inspects it. Attached files are copied to that isolated
+workspace for the current question and are destroyed with it. The assistant can
+inspect spreadsheet cells, including formulas and last-saved values, or extract
+text and render selected PDF pages. Rendered pages and any images the assistant
+extracts may be sent to the model when it reads them. File support still depends
+on the inspection tools installed in the workspace, and the assistant does not
+execute attachments.
 
-Assume all AI chats and related data are logged and may be used to improve this
-product and the AI provider's product. The AI route does not currently
-anonymize schedules, chats, or attachments. Do not submit personal,
-confidential, regulated, or otherwise sensitive information. See the
+AI chats and related data may be logged, retained, and processed for the
+development, evaluation, and improvement of this product and the AI provider's
+products. The AI service does not currently anonymize schedules, chats, or
+attachments. Do not submit personal, confidential, regulated, or otherwise
+sensitive information. See the
 [privacy policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md)
 for details.
 

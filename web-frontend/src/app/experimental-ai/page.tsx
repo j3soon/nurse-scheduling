@@ -174,7 +174,7 @@ function persistAuthTokens(tokens: Record<string, string>): void {
 interface SelectedAttachment {
   id: string;
   file: File;
-  kind: 'image' | 'document';
+  kind: 'image' | 'file';
   previewUrl?: string;
 }
 
@@ -193,26 +193,10 @@ interface StoredChatConversation {
   proposalDiff: string | null;
 }
 
-const DISABLED_IMAGE_CAPABILITY: AiCapabilities['image_attachments'] = {
+const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
   enabled: false,
-  accepted_media_types: [],
   max_files: 1,
   max_bytes_per_file: 1,
-};
-
-const DISABLED_DOCUMENT_CAPABILITY: AiCapabilities['document_attachments'] = {
-  enabled: false,
-  accepted_extensions: [],
-  max_files: 1,
-  max_bytes_per_file: 1,
-};
-
-const DOCUMENT_MEDIA_TYPES: Record<string, string> = {
-  '.txt': 'text/plain',
-  '.md': 'text/markdown',
-  '.csv': 'text/csv',
-  '.pdf': 'application/pdf',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 };
 
 function fileExtension(filename: string): string {
@@ -431,8 +415,7 @@ export default function ExperimentalAiPage() {
   const [authRejected, setAuthRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
-  const [imageCapability, setImageCapability] = useState(DISABLED_IMAGE_CAPABILITY);
-  const [documentCapability, setDocumentCapability] = useState(DISABLED_DOCUMENT_CAPABILITY);
+  const [fileCapability, setFileCapability] = useState(DISABLED_FILE_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
@@ -544,8 +527,7 @@ export default function ExperimentalAiPage() {
       .then(capabilities => {
         setServerStatus('online');
         setAuthRequired(capabilities.auth?.required ?? false);
-        setImageCapability(capabilities.image_attachments);
-        setDocumentCapability(capabilities.document_attachments);
+        setFileCapability(capabilities.file_attachments);
         setSessionRetentionSeconds(
           capabilities.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS,
         );
@@ -824,8 +806,7 @@ export default function ExperimentalAiPage() {
     setRememberAuthToken(readStoredAuthTokens()[endpoint] !== undefined);
     setAuthRequired(false);
     setAuthRejected(false);
-    setImageCapability(DISABLED_IMAGE_CAPABILITY);
-    setDocumentCapability(DISABLED_DOCUMENT_CAPABILITY);
+    setFileCapability(DISABLED_FILE_CAPABILITY);
     setServerError(null);
     setCapabilitiesError(null);
     setIsEditingServer(false);
@@ -900,62 +881,30 @@ export default function ExperimentalAiPage() {
 
   const addAttachments = (files: File[]) => {
     if (files.length === 0) return;
-
-    const candidates = files.map(file => {
-      if (imageCapability.enabled && imageCapability.accepted_media_types.includes(file.type)) {
-        return { file, kind: 'image' as const };
-      }
-      const extension = fileExtension(file.name);
-      if (documentCapability.enabled && documentCapability.accepted_extensions.includes(extension)) {
-        const normalizedFile = new File([file], file.name, {
-          type: DOCUMENT_MEDIA_TYPES[extension] ?? 'text/plain',
-          lastModified: file.lastModified,
-        });
-        return { file: normalizedFile, kind: 'document' as const };
-      }
-      return null;
-    });
-    if (candidates.some(candidate => candidate === null)) {
-      setError('Attach only a file type enabled by the AI backend.');
+    if (!fileCapability.enabled) {
+      setError('File attachments are unavailable.');
       return;
     }
-    const attachments = candidates.filter(candidate => candidate !== null);
-    const selectedImageCount = selectedAttachments.filter(attachment => attachment.kind === 'image').length;
-    const selectedDocumentCount = selectedAttachments.length - selectedImageCount;
-    const imageCount = attachments.filter(attachment => attachment.kind === 'image').length;
-    const documentCount = attachments.length - imageCount;
-    if (selectedImageCount + imageCount > imageCapability.max_files) {
-      setError(`Attach at most ${imageCapability.max_files} images to one question.`);
+    if (selectedAttachments.length + files.length > fileCapability.max_files) {
+      setError(`Attach at most ${fileCapability.max_files} files to one question.`);
       return;
     }
-    if (selectedDocumentCount + documentCount > documentCapability.max_files) {
-      setError(`Attach at most ${documentCapability.max_files} documents to one question.`);
-      return;
-    }
-    if (attachments.some(attachment => (
-      attachment.kind === 'image' && attachment.file.size > imageCapability.max_bytes_per_file
-    ))) {
-      const maxMegabytes = (imageCapability.max_bytes_per_file / 1_000_000).toLocaleString(undefined, {
+    if (files.some(file => file.size > fileCapability.max_bytes_per_file)) {
+      const maxMegabytes = (fileCapability.max_bytes_per_file / 1_000_000).toLocaleString(undefined, {
         maximumFractionDigits: 1,
       });
-      setError(`Each image must be ${maxMegabytes} MB or smaller.`);
-      return;
-    }
-    if (attachments.some(attachment => (
-      attachment.kind === 'document' && attachment.file.size > documentCapability.max_bytes_per_file
-    ))) {
-      const maxKilobytes = Math.floor(documentCapability.max_bytes_per_file / 1000).toLocaleString();
-      setError(`Each document must be ${maxKilobytes} KB or smaller.`);
+      setError(`Each file must be ${maxMegabytes} MB or smaller.`);
       return;
     }
 
     setError(null);
     setSelectedAttachments(previous => [
       ...previous,
-      ...attachments.map(attachment => ({
-        ...attachment,
+      ...files.map(file => ({
+        file,
+        kind: file.type.startsWith('image/') ? 'image' as const : 'file' as const,
         id: messageId(),
-        ...(attachment.kind === 'image' ? { previewUrl: URL.createObjectURL(attachment.file) } : {}),
+        ...(file.type.startsWith('image/') ? { previewUrl: URL.createObjectURL(file) } : {}),
       })),
     ]);
   };
@@ -1137,12 +1086,7 @@ export default function ExperimentalAiPage() {
         controller.signal,
         authToken,
         {
-          images: attachmentsForMessage
-            .filter(attachment => attachment.kind === 'image')
-            .map(attachment => attachment.file),
-          documents: attachmentsForMessage
-            .filter(attachment => attachment.kind === 'document')
-            .map(attachment => attachment.file),
+          files: attachmentsForMessage.map(attachment => attachment.file),
         },
         sessionEndpoint,
       );
@@ -1281,14 +1225,12 @@ export default function ExperimentalAiPage() {
       setError('Speech recognition could not start in this browser.');
     }
   };
-  const selectedImageCount = selectedAttachments.filter(attachment => attachment.kind === 'image').length;
-  const selectedDocumentCount = selectedAttachments.length - selectedImageCount;
   const credentialsMissing = authRequired && authToken === null;
   const composerUnavailable = credentialsMissing || conversationUnavailable;
-  const attachmentPickerDisabled = isStreaming || composerUnavailable || (
-    (!imageCapability.enabled || selectedImageCount >= imageCapability.max_files)
-    && (!documentCapability.enabled || selectedDocumentCount >= documentCapability.max_files)
-  );
+  const attachmentPickerDisabled = isStreaming
+    || composerUnavailable
+    || !fileCapability.enabled
+    || selectedAttachments.length >= fileCapability.max_files;
   const isFileDrag = (event: DragEvent<HTMLElement>) => event.dataTransfer.types.includes('Files');
   const enterAttachmentDropZone = (event: DragEvent<HTMLFormElement>) => {
     if (attachmentPickerDisabled || !isFileDrag(event)) return;
@@ -1366,7 +1308,7 @@ export default function ExperimentalAiPage() {
           </span>
         </div>
         <p className="text-sm text-gray-600">
-          Ask questions about the schedule currently open in this browser, or request a change. You can attach supported images and documents when available. Proposed changes are applied only after you approve them.
+          Ask questions about the schedule currently open in this browser, or request a change. You can attach files for the assistant to inspect in its temporary workspace. Proposed changes are applied only after you approve them.
         </p>
         <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           This beta is API-key gated by default.{' '}
@@ -1378,7 +1320,7 @@ export default function ExperimentalAiPage() {
           >
             Request beta access
           </a>
-          . All AI chats are logged and are not currently anonymized. Chat data may be used for the development and improvement of our product and the AI provider&apos;s products.{' '}
+          . All AI chats are logged and are not currently anonymized. Chat data may be retained and processed for the development, evaluation, and improvement of this product and the AI provider&apos;s products.{' '}
           <a
             className="font-medium underline"
             href={GITHUB_PRIVACY_URL}
@@ -1765,7 +1707,7 @@ export default function ExperimentalAiPage() {
           </div>
         )}
         <div className="flex min-h-14 items-end gap-1 rounded-[1.75rem] border border-gray-300 bg-white p-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">
-          {(imageCapability.enabled || documentCapability.enabled) && (
+          {fileCapability.enabled && (
             <label
               title="Attach files"
               className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${
@@ -1776,10 +1718,6 @@ export default function ExperimentalAiPage() {
             >
               <input
                 type="file"
-                accept={[
-                  ...(imageCapability.enabled ? imageCapability.accepted_media_types : []),
-                  ...(documentCapability.enabled ? documentCapability.accepted_extensions : []),
-                ].join(',')}
                 multiple
                 disabled={attachmentPickerDisabled}
                 onChange={selectAttachments}

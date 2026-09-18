@@ -48,23 +48,15 @@ export interface StreamCallbacks {
 export interface AiCapabilities {
   auth: AuthRequirement | null;
   session_retention_seconds: number;
-  image_attachments: {
+  file_attachments: {
     enabled: boolean;
-    accepted_media_types: string[];
-    max_files: number;
-    max_bytes_per_file: number;
-  };
-  document_attachments: {
-    enabled: boolean;
-    accepted_extensions: string[];
     max_files: number;
     max_bytes_per_file: number;
   };
 }
 
 export interface MessageAttachments {
-  images?: File[];
-  documents?: File[];
+  files?: File[];
 }
 
 interface SessionResponse {
@@ -161,25 +153,15 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
   const body = await response.json() as Partial<AiCapabilities>;
   const auth = parseAuthRequirement(body.auth);
   const sessionRetention = body.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS;
-  const images = body.image_attachments;
-  const documents = body.document_attachments;
+  const files = body.file_attachments;
   if (
-    typeof images?.enabled !== 'boolean'
-    || !Array.isArray(images.accepted_media_types)
-    || !images.accepted_media_types.every(mediaType => typeof mediaType === 'string')
-    || !Number.isInteger(images.max_files)
-    || images.max_files <= 0
-    || !Number.isInteger(images.max_bytes_per_file)
-    || images.max_bytes_per_file <= 0
-    || typeof documents?.enabled !== 'boolean'
-    || !Array.isArray(documents.accepted_extensions)
-    || !documents.accepted_extensions.every(extension => typeof extension === 'string')
-    || !Number.isInteger(documents.max_files)
-    || documents.max_files <= 0
-    || !Number.isInteger(documents.max_bytes_per_file)
-    || documents.max_bytes_per_file <= 0
-    || !Number.isInteger(sessionRetention)
+    !Number.isInteger(sessionRetention)
     || sessionRetention <= 0
+    || files?.enabled !== true
+    || !Number.isInteger(files.max_files)
+    || files.max_files <= 0
+    || !Number.isInteger(files.max_bytes_per_file)
+    || files.max_bytes_per_file <= 0
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
@@ -289,15 +271,13 @@ export async function streamMessage(
   attachments: MessageAttachments = {},
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const images = attachments.images ?? [];
-  const documents = attachments.documents ?? [];
+  const files = attachments.files ?? [];
   let body: BodyInit;
   let headers: Record<string, string> | undefined;
-  if (images.length > 0 || documents.length > 0) {
+  if (files.length > 0) {
     const form = new FormData();
     form.append('message', message);
-    images.forEach(image => form.append('images', image, image.name));
-    documents.forEach(document => form.append('documents', document, document.name));
+    files.forEach(file => form.append('files', file, file.name));
     body = form;
   } else {
     headers = { 'Content-Type': 'application/json' };

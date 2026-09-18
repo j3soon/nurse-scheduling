@@ -5,10 +5,11 @@ assistant. Each assistant turn starts a fresh sandbox from the prebuilt
 template, hydrates `/workspace`, and destroys the sandbox after the turn.
 
 The template uses one vCPU and 512 MiB of memory. It runs as the unprivileged
-`user` account and provides Bash, Python with `ruamel.yaml`, ripgrep, sed, grep,
-and diff. Runtime code writes only under `/workspace`. The application hydrates
-task-sized schema documents under `/reference` separately so reference material
-stays synchronized with the backend.
+`user` account and provides Bash, ripgrep, sed, grep, diff, and Python with
+`ruamel.yaml`, `openpyxl`, `defusedxml`, Pillow, `pypdf`, and `pypdfium2`.
+Runtime code writes only under `/workspace`. The application hydrates task-sized
+schema documents and trusted attachment helpers under `/reference` so they stay
+synchronized with the backend.
 
 ## Build
 

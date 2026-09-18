@@ -1,0 +1,22 @@
+{
+  "id": "read-image-pptx",
+  "fixture": "new-schedule",
+  "question": "Inspect the image embedded in the attached presentation. What code does the image show?",
+  "expect_proposal": false,
+  "attachments": [
+    "image-pptx"
+  ],
+  "answer_contains": [
+    "SLIDE VISION 9531"
+  ],
+  "tool_usage": {
+    "required": [
+      "bash",
+      "read"
+    ]
+  },
+  "tags": [
+    "attachment"
+  ],
+  "note": "Regression for discovering and reading an image inside an OOXML presentation."
+}

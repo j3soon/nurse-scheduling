@@ -74,16 +74,9 @@ describe('AI client', () => {
 
   it('validates attachment capabilities', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      image_attachments: {
+      file_attachments: {
         enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 5000,
-      },
-      document_attachments: {
-        enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 3,
+        max_files: 5,
         max_bytes_per_file: 5000000,
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
@@ -91,16 +84,9 @@ describe('AI client', () => {
     await expect(getCapabilities()).resolves.toEqual({
       auth: null,
       session_retention_seconds: 172800,
-      image_attachments: {
+      file_attachments: {
         enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 5000,
-      },
-      document_attachments: {
-        enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 3,
+        max_files: 5,
         max_bytes_per_file: 5000000,
       },
     });
@@ -126,15 +112,8 @@ describe('AI client', () => {
   it('reads the advertised AI authentication requirement', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       auth: { required: true, scheme: 'Bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
+      file_attachments: {
+        enabled: true,
         max_files: 1,
         max_bytes_per_file: 1,
       },
@@ -248,7 +227,7 @@ describe('AI client', () => {
     )).rejects.toEqual(new AiStaleTurnError('The schedule changed.'));
   });
 
-  it('sends images as multipart form data', async () => {
+  it('sends arbitrary files as multipart form data', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'event: done\ndata: {"message_id":"message-id"}\n\n',
     ]));
@@ -261,7 +240,7 @@ describe('AI client', () => {
       { onDelta: vi.fn() },
       new AbortController().signal,
       null,
-      { images: [image] },
+      { files: [image] },
     );
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
@@ -269,31 +248,7 @@ describe('AI client', () => {
     expect(request.body).toBeInstanceOf(FormData);
     const form = request.body as FormData;
     expect(form.get('message')).toBe('What is shown?');
-    expect(form.getAll('images')).toEqual([image]);
-  });
-
-  it('sends text documents as multipart form data', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
-      'event: done\ndata: {"message_id":"message-id"}\n\n',
-    ]));
-    vi.stubGlobal('fetch', fetchMock);
-    const document = new File(['name,shift\nAlice,day\n'], 'staff.csv', { type: 'text/csv' });
-
-    await streamMessage(
-      'session-id',
-      'Check the file.',
-      { onDelta: vi.fn() },
-      new AbortController().signal,
-      null,
-      { documents: [document] },
-    );
-
-    const request = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(request.headers).toBeUndefined();
-    expect(request.body).toBeInstanceOf(FormData);
-    const form = request.body as FormData;
-    expect(form.get('message')).toBe('Check the file.');
-    expect(form.getAll('documents')).toEqual([document]);
+    expect(form.getAll('files')).toEqual([image]);
   });
 
   it('forwards tool use and a proposal to the caller', async () => {

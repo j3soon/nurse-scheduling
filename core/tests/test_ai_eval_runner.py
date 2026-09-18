@@ -42,7 +42,11 @@ from nurse_scheduling.ai.provider import (
 )
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import WORKSPACE_SCHEDULE, SandboxTurnMetrics
+from nurse_scheduling.ai.sandbox_agent import (
+    WORKSPACE_ATTACHMENT_MANIFEST,
+    WORKSPACE_SCHEDULE,
+    SandboxTurnMetrics,
+)
 from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
@@ -147,6 +151,25 @@ def test_a_correct_answer_passes_and_records_its_cost():
     assert run.tools == []
     assert not run.proposed
     assert run.seconds >= 0
+
+
+def test_attachment_case_hydrates_generated_file_and_manifest():
+    factory = _factory()
+    run = _run(
+        "read-second-xlsx-sheet",
+        ScriptedProvider(
+            [ToolCallRequest((ToolCall("call-1", BASH_TOOL, '{"command":"inspect workbook"}'),))],
+            [TextDelta("The code is NIGHT OWL 7429.")],
+        ),
+        factory,
+    )
+
+    assert run.passed
+    backend = factory.created[0]
+    manifest = json.loads(backend.files[WORKSPACE_ATTACHMENT_MANIFEST])
+    attachment = manifest["attachments"][0]
+    assert attachment["original_filename"] == "ward-notes.xlsx"
+    assert backend.files[attachment["path"]].startswith(b"PK")
 
 
 def test_provider_wait_time_is_recorded_per_inference_turn():

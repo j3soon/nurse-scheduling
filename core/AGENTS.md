@@ -39,10 +39,15 @@ test paths when a narrower suite is known to be sufficient.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
-- Keep optional AI features server-configured and report safe limits through
-  `/capabilities`. Treat schedules and attachments as untrusted provider input.
-- Bound and validate uploads before provider calls. Do not retain raw
-  attachments longer than their documented session behavior requires.
+- Keep AI feature limits server-configured and report them through
+  `/capabilities`. Attachments are always enabled. Treat schedules and
+  attachments as untrusted provider input.
+- Bound uploads before provider calls, place them only under fixed safe sandbox
+  paths, and never execute them. Do not retain raw attachments longer than
+  their documented turn behavior requires.
+- Keep bundled attachment helpers general and optional. Preserve meaningful
+  source data such as spreadsheet formulas and cached values, report truncation,
+  and let the agent write a focused sandbox parser when a helper is insufficient.
 - Keep canonical schedule invariants in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
@@ -65,12 +70,19 @@ test paths when a narrower suite is known to be sufficient.
 - Treat one provider pass as a smoke check. Before claiming a tuning improvement,
   repeat affected cases at least three times with four total jobs and compare
   pass rate, infrastructure failures, turns, and tokens with a recorded baseline.
+- For live AI evaluations, load provider and E2B credentials from the ignored
+  repository-root `docker/.env`, or `docker/.env.staging` if it does not exist,
+  in the evaluation process. Never print or commit credential values. Check
+  that the selected file and required values exist before starting. If absent,
+  report the missing configuration instead of running a known-to-fail evaluation.
+  Use four concurrent case jobs.
 - Pair ambiguous-language cases with exact-target controls so clarification
   guidance does not teach the agent to ask when the user already supplied a
   unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
   tune prompts directly against one held-out trajectory.
 - Expose only Pi's default `read`, `bash`, `edit`, and `write` model tools over
-  the disposable sandbox. Use `read` for bounded inspection, `edit` for unique
+  the disposable sandbox. Use `read` for bounded text and image inspection,
+  `edit` for unique
   exact-text replacements, and `write` only for a complete file rewrite. Put
   domain guidance in task-sized reference documents that return related schema
   shapes together instead of adding model-specific tools or fine-grained lookup

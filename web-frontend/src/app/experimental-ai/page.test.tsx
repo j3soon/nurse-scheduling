@@ -89,26 +89,21 @@ vi.mock('@/utils/unsavedEditingState', () => ({
   useTabSwitchWarning: mockUseTabSwitchWarning,
 }));
 
+const defaultCapabilities = {
+  session_retention_seconds: 172800,
+  file_attachments: {
+    enabled: true,
+    max_files: 8,
+    max_bytes_per_file: 5_000_000,
+  },
+};
+
 describe('ExperimentalAiPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
-    mockGetCapabilities.mockReset().mockResolvedValue({
-      session_retention_seconds: 172800,
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: ['image/jpeg', 'image/png', 'image/webp'],
-        max_files: 4,
-        max_bytes_per_file: 5_000_000,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 4,
-        max_bytes_per_file: 5_000_000,
-      },
-    });
+    mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
     mockGetSessionStatus.mockReset().mockResolvedValue(172800);
     mockStreamMessage.mockReset().mockImplementation(async (
       _sessionId: string,
@@ -164,7 +159,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { images: [], documents: [] },
+      { files: [] },
       '/ai',
     );
     expect(mockUseTabSwitchWarning).toHaveBeenCalledWith(true);
@@ -303,19 +298,8 @@ describe('ExperimentalAiPage', () => {
 
   it('reports a failed restored-session check and retries after credentials change', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     mockGetSessionStatus
       .mockRejectedValueOnce(new Error('Temporary session-status failure.'))
@@ -908,19 +892,8 @@ describe('ExperimentalAiPage', () => {
 
   it('requires the advertised AI token and uses a session-only credential', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -946,19 +919,8 @@ describe('ExperimentalAiPage', () => {
 
   it('remembers the AI token only when requested', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -980,19 +942,8 @@ describe('ExperimentalAiPage', () => {
       token: 'remembered-ai-token',
     }));
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -1010,19 +961,8 @@ describe('ExperimentalAiPage', () => {
 
   it('prompts for a replacement when the AI service rejects a token', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     mockCreateSession.mockRejectedValueOnce(Object.assign(new Error('Invalid credentials'), { status: 401 }));
     const user = userEvent.setup();
@@ -1040,21 +980,8 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByLabelText('Token for AI assistant')).toHaveValue('');
   });
 
-  it('previews and sends images when the backend enables them', async () => {
-    mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 4,
-        max_bytes_per_file: 5_000_000,
-      },
-    });
+  it('previews and sends image files', async () => {
+    mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const user = userEvent.setup();
@@ -1074,7 +1001,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { images: [image], documents: [] },
+      { files: [image] },
       '/ai',
     );
     expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
@@ -1083,20 +1010,7 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('adds attachments dropped onto the message composer', async () => {
-    mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-    });
+    mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:dropped-image');
     const image = new File(['png'], 'dropped.png', { type: 'image/png' });
     render(<ExperimentalAiPage />);
@@ -1114,61 +1028,39 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByAltText('Preview of dropped.png')).toBeInTheDocument();
   });
 
-  it('previews and sends text documents when the backend enables them', async () => {
+  it('accepts and sends an arbitrary file type', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
+      file_attachments: {
         enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
         max_files: 2,
         max_bytes_per_file: 5_000_000,
       },
     });
     const user = userEvent.setup();
-    const document = new File(['name,shift\nAlice,day\n'], 'staff.csv', { type: '' });
+    const document = new File(['custom bytes'], 'staff.custom', { type: 'application/x-custom' });
     render(<ExperimentalAiPage />);
 
     const input = await screen.findByLabelText('Attach files');
+    expect(input).not.toHaveAttribute('accept');
     await user.upload(input, document);
-    expect(screen.getByText('csv')).toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the CSV.');
+    expect(screen.getByText('custom')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the file.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',
-      'Check the CSV.',
+      'Check the file.',
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      {
-        images: [],
-        documents: [expect.objectContaining({ name: 'staff.csv', type: 'text/csv' })],
-      },
+      { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })] },
       '/ai',
     );
-    expect(screen.getByText('Attached: staff.csv')).toBeInTheDocument();
+    expect(screen.getByText('Attached: staff.custom')).toBeInTheDocument();
   });
 
-  it('normalizes PDF and XLSX media types before upload', async () => {
-    mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: true,
-        accepted_extensions: ['.pdf', '.xlsx'],
-        max_files: 2,
-        max_bytes_per_file: 5_000_000,
-      },
-    });
+  it('sends PDF and XLSX files without rewriting their media types', async () => {
+    mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     const user = userEvent.setup();
     const pdf = new File(['pdf'], 'notes.pdf', { type: '' });
     const workbook = new File(['xlsx'], 'coverage.xlsx', { type: '' });
@@ -1186,13 +1078,9 @@ describe('ExperimentalAiPage', () => {
       expect.any(AbortSignal),
       null,
       {
-        images: [],
-        documents: [
-          expect.objectContaining({ name: 'notes.pdf', type: 'application/pdf' }),
-          expect.objectContaining({
-            name: 'coverage.xlsx',
-            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          }),
+        files: [
+          expect.objectContaining({ name: 'notes.pdf', type: '' }),
+          expect.objectContaining({ name: 'coverage.xlsx', type: '' }),
         ],
       },
       '/ai',
@@ -1288,20 +1176,7 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('requires files to be reattached before retrying an attachment request', async () => {
-    mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-    });
+    mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     mockStreamMessage.mockRejectedValueOnce(new Error('The temporary AI sandbox failed.'));

@@ -71,6 +71,7 @@ from nurse_scheduling.ai.schema import (
 )
 from nurse_scheduling.loader import _load_yaml
 
+from .attachment_fixtures import load_attachment_fixtures
 from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -236,16 +237,17 @@ async def run_case(
     tool_batch_metrics: list[AgentToolBatchMetrics] = []
     reasoning = 0
     started = time.perf_counter()
+    case_attachments = load_attachment_fixtures(case.attachments)
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
         for turn_index, question in enumerate(case.user_turns):
+            attachments = case_attachments if turn_index == 0 else ()
             messages = build_provider_messages(
                 history,
                 text,
                 question,
-                [],
-                [],
+                attachments,
                 system_prompt=SANDBOX_SYSTEM_PROMPT,
                 pending_proposal=pending_proposal is not None,
             )
@@ -263,6 +265,7 @@ async def run_case(
                 tool_batch_metrics.append,
                 pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
                 pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
+                attachments=attachments,
             )
             async for event in agent_events:
                 if isinstance(event, AgentText):
@@ -911,6 +914,10 @@ def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repeti
         "fixtures_sha256": {
             fixture: hashlib.sha256(fixture_text(fixture).encode()).hexdigest()
             for fixture in sorted({case.fixture for case in cases})
+        },
+        "attachments_sha256": {
+            attachment.filename: hashlib.sha256(attachment.data).hexdigest()
+            for attachment in load_attachment_fixtures(sorted({name for case in cases for name in case.attachments}))
         },
     }
 

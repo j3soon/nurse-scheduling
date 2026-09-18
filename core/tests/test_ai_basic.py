@@ -66,8 +66,6 @@ from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule
 PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
-JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
-WEBP_BYTES = b"RIFF\x04\x00\x00\x00WEBP"
 AI_AUTH_TOKEN = "ai-shared-test-token"
 AI_AUTH_HEADERS = {"Authorization": f"Bearer {AI_AUTH_TOKEN}"}
 AI_AUTH_TOKENS = (
@@ -284,9 +282,7 @@ def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixtur
 
     assert response.status_code == 200
     output = caplog.text
-    assert (
-        f'AI request started session_id={session_id} question_chars=5 images=0 documents=0 question="Hello"' in output
-    )
+    assert f'AI request started session_id={session_id} question_chars=5 question="Hello" files=0' in output
 
 
 def test_question_previews_can_be_turned_off_without_silencing_the_logger(
@@ -584,12 +580,8 @@ def test_capabilities_report_configured_attachment_limits() -> None:
     client = AuthenticatedTestClient(
         create_test_app(
             settings=make_settings(
-                attachment_mode="images",
-                max_image_files=2,
-                max_image_bytes=1234,
-                document_attachment_mode="text",
-                max_document_files=3,
-                max_document_bytes=4321,
+                max_attachment_files=5,
+                max_attachment_bytes=4321,
             ),
             provider=FakeProvider(),
         )
@@ -599,16 +591,9 @@ def test_capabilities_report_configured_attachment_limits() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "image_attachments": {
+        "file_attachments": {
             "enabled": True,
-            "accepted_media_types": ["image/jpeg", "image/png", "image/webp"],
-            "max_files": 2,
-            "max_bytes_per_file": 1234,
-        },
-        "document_attachments": {
-            "enabled": True,
-            "accepted_extensions": [".txt", ".md", ".csv", ".pdf", ".xlsx"],
-            "max_files": 3,
+            "max_files": 5,
             "max_bytes_per_file": 4321,
         },
         "session_retention_seconds": 172800,
@@ -661,177 +646,70 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     assert session.expires_at == 125.0
 
 
-def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
-    provider = FakeProvider([["Image answer"], ["Follow-up answer"]])
-    client = AuthenticatedTestClient(
-        create_test_app(settings=make_settings(attachment_mode="images"), provider=provider)
-    )
-    session_id = create_session(client)
-
-    image_response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "What is shown?"},
-        files={"images": ("ward.png", PNG_BYTES, "image/png")},
-    )
-    follow_up_response = client.post(
-        f"/sessions/{session_id}/messages",
-        json={"message": "Summarize your answer."},
-    )
-
-    assert image_response.status_code == 200
-    assert follow_up_response.status_code == 200
-    image_content = provider.calls[0][-1]["content"]
-    assert image_content == [
-        {"type": "text", "text": "What is shown?"},
-        {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{base64.b64encode(PNG_BYTES).decode('ascii')}"},
-        },
-    ]
-    follow_up_prompt = json.dumps(provider.calls[1])
-    assert "Images were attached to this message" in follow_up_prompt
-    assert "data:image/png;base64" not in follow_up_prompt
-
-
-@pytest.mark.parametrize(
-    ("filename", "media_type", "data"),
-    [
-        ("ward.jpg", "image/jpeg", JPEG_BYTES),
-        ("ward-trailing-data.jpg", "image/jpeg", JPEG_BYTES + b"trailing metadata"),
-        ("ward.webp", "image/webp", WEBP_BYTES),
-    ],
-)
-def test_supported_image_signatures_are_sent_to_provider(filename: str, media_type: str, data: bytes) -> None:
-    provider = FakeProvider()
-    client = AuthenticatedTestClient(
-        create_test_app(settings=make_settings(attachment_mode="images"), provider=provider)
-    )
-    session_id = create_session(client)
-
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "What is shown?"},
-        files={"images": (filename, data, media_type)},
-    )
-
-    assert response.status_code == 200
-    content = provider.calls[0][-1]["content"]
-    assert isinstance(content, list)
-    assert content[1]["image_url"]["url"].startswith(f"data:{media_type};base64,")
-
-
-def test_documents_are_sent_to_provider_but_contents_are_not_retained() -> None:
-    provider = FakeProvider([["Document answer"], ["Follow-up answer"]])
-    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
-    session_id = create_session(client)
-
-    document_response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "Compare these files."},
-        files=[
-            ("documents", ("notes.md", b"# Private marker 8462", "text/markdown")),
-            ("documents", ("staff.csv", b"name,shift\nAlice,day\n", "text/csv")),
-        ],
-    )
-    follow_up_response = client.post(
-        f"/sessions/{session_id}/messages",
-        json={"message": "Summarize your answer."},
-    )
-
-    assert document_response.status_code == 200
-    assert follow_up_response.status_code == 200
-    document_content = provider.calls[0][-1]["content"]
-    assert isinstance(document_content, str)
-    assert document_content.startswith("Compare these files.")
-    assert '"filename": "notes.md"' in document_content
-    assert "Private marker 8462" in document_content
-    assert "Alice,day" in document_content
-    follow_up_prompt = json.dumps(provider.calls[1])
-    assert "Documents were attached" in follow_up_prompt
-    assert "notes.md" in follow_up_prompt
-    assert "Private marker 8462" not in follow_up_prompt
-    assert "Alice,day" not in follow_up_prompt
-
-
-@pytest.mark.parametrize(
-    ("filename", "media_type"),
-    [
-        ("notes.md", "text/plain"),
-        ("staff.csv", "application/csv"),
-        ("staff.csv", "application/vnd.ms-excel"),
-        ("staff.csv", "text/plain"),
-    ],
-)
-def test_text_documents_accept_each_advertised_media_type(filename: str, media_type: str) -> None:
+def test_legacy_attachment_fields_are_rejected() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
 
     response = client.post(
         f"/sessions/{session_id}/messages",
-        data={"message": "Read the file."},
-        files={"documents": (filename, b"Alice works Monday.", media_type)},
+        data={"message": "Question"},
+        files={"images": ("ward.png", PNG_BYTES, "image/png")},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Unexpected multipart field."
 
 
-def test_images_and_documents_share_one_provider_user_message() -> None:
-    provider = FakeProvider()
-    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
+def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
+    read_manifest = [
+        ToolCallRequest((ToolCall("call_0", READ_TOOL, json.dumps({"path": "/workspace/attachments/manifest.json"})),))
+    ]
+    provider = ScriptedToolProvider(read_manifest, [TextDelta("I inspected the custom file.")])
+    factory = FakeSandboxFactory()
+    client = AuthenticatedTestClient(
+        create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
+    )
     session_id = create_session(client)
 
     response = client.post(
         f"/sessions/{session_id}/messages",
-        data={"message": "Use both attachments."},
-        files=[
-            ("images", ("ward.png", PNG_BYTES, "image/png")),
-            ("documents", ("notes.txt", b"Alice works Monday.", "text/plain")),
-        ],
+        data={"message": "Inspect this custom file."},
+        files={"files": ("archive.custom", b"arbitrary bytes", "application/x-custom")},
     )
 
     assert response.status_code == 200
-    content = provider.calls[0][-1]["content"]
-    assert isinstance(content, list)
-    assert "Alice works Monday" in content[0]["text"]
-    assert content[1]["type"] == "image_url"
+    assert "I inspected the custom file." in response.text
+    backend = factory.created[0]
+    manifest = json.loads(backend.files["/workspace/attachments/manifest.json"])
+    uploaded = manifest["attachments"][0]
+    assert uploaded["original_filename"] == "archive.custom"
+    assert uploaded["media_type"] == "application/x-custom"
+    assert backend.files[uploaded["path"]] == b"arbitrary bytes"
+    assert "/workspace/attachments/manifest.json" in provider.calls[0][0]["content"]
 
 
 @pytest.mark.parametrize(
-    ("settings", "files", "expected_status", "expected_detail"),
+    ("settings", "files", "expected_detail"),
     [
         (
-            {"attachment_mode": "none"},
-            [("images", ("ward.png", PNG_BYTES, "image/png"))],
-            422,
-            "Image attachments are disabled.",
+            {"max_attachment_bytes": 3},
+            [("files", ("archive.custom", b"data", "application/x-custom"))],
+            "File attachment is too large.",
         ),
         (
-            {"attachment_mode": "images"},
-            [("images", ("ward.png", b"not an image", "image/png"))],
-            415,
-            "Image content does not match its type.",
-        ),
-        (
-            {"attachment_mode": "images", "max_image_bytes": 8},
-            [("images", ("ward.png", PNG_BYTES, "image/png"))],
-            413,
-            "Image attachment is too large.",
-        ),
-        (
-            {"attachment_mode": "images", "max_image_files": 1},
+            {"max_attachment_files": 2},
             [
-                ("images", ("first.png", PNG_BYTES, "image/png")),
-                ("images", ("second.png", PNG_BYTES, "image/png")),
+                ("files", ("one.custom", b"1", "application/x-custom")),
+                ("files", ("two.custom", b"2", "application/x-custom")),
+                ("files", ("three.custom", b"3", "application/x-custom")),
             ],
-            413,
-            "Too many image attachments.",
+            "Too many file attachments.",
         ),
     ],
 )
-def test_image_attachment_limits(
+def test_arbitrary_file_limits(
     settings: dict[str, object],
     files: list[tuple[str, tuple[str, bytes, str]]],
-    expected_status: int,
     expected_detail: str,
 ) -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
@@ -839,98 +717,11 @@ def test_image_attachment_limits(
 
     response = client.post(
         f"/sessions/{session_id}/messages",
-        data={"message": "Question"},
+        data={"message": "Inspect these files."},
         files=files,
     )
 
-    assert response.status_code == expected_status
-    assert response.json()["detail"] == expected_detail
-
-
-@pytest.mark.parametrize(
-    ("settings", "files", "expected_status", "expected_detail"),
-    [
-        (
-            {"document_attachment_mode": "none"},
-            [("documents", ("notes.txt", b"hello", "text/plain"))],
-            422,
-            "Document attachments are disabled.",
-        ),
-        (
-            {},
-            [("documents", ("notes.pdf", b"hello", "application/pdf"))],
-            415,
-            "PDF content does not match its filename.",
-        ),
-        (
-            {},
-            [("documents", ("notes.docx", b"hello", "application/octet-stream"))],
-            415,
-            "Unsupported document type.",
-        ),
-        (
-            {},
-            [("documents", ("notes.txt", b"hello", "image/png"))],
-            415,
-            "Document type does not match its filename.",
-        ),
-        (
-            {},
-            [("documents", ("notes.txt", b"\xff", "text/plain"))],
-            415,
-            "Text document attachment must be UTF-8.",
-        ),
-        (
-            {},
-            [("documents", ("notes.txt", b"hello\x00hidden", "text/plain"))],
-            415,
-            "Text document attachment must be UTF-8.",
-        ),
-        (
-            {},
-            [("documents", ("notes.pdf", b"%PDF-1.4", "text/plain"))],
-            415,
-            "Document type does not match its filename.",
-        ),
-        (
-            {},
-            [("documents", ("notes.xlsx", b"PK\x03\x04", "application/zip"))],
-            415,
-            "Document type does not match its filename.",
-        ),
-        (
-            {"max_document_bytes": 4},
-            [("documents", ("notes.txt", b"hello", "text/plain"))],
-            413,
-            "Document attachment is too large.",
-        ),
-        (
-            {"max_document_files": 1},
-            [
-                ("documents", ("first.txt", b"one", "text/plain")),
-                ("documents", ("second.txt", b"two", "text/plain")),
-            ],
-            413,
-            "Too many document attachments.",
-        ),
-    ],
-)
-def test_document_attachment_limits(
-    settings: dict[str, object],
-    files: list[tuple[str, tuple[str, bytes, str]]],
-    expected_status: int,
-    expected_detail: str,
-) -> None:
-    client = AuthenticatedTestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
-    session_id = create_session(client)
-
-    response = client.post(
-        f"/sessions/{session_id}/messages",
-        data={"message": "Question"},
-        files=files,
-    )
-
-    assert response.status_code == expected_status
+    assert response.status_code == 413
     assert response.json()["detail"] == expected_detail
 
 
@@ -1190,14 +981,18 @@ def test_environment_configuration_rejects_a_non_ascii_ai_auth_token() -> None:
         create_test_app(settings=make_settings(auth_token="long-enough-auth-token-密"), provider=FakeProvider())
 
 
-def test_environment_configuration_enables_images_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_configuration_reads_attachment_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
-    monkeypatch.delenv("AI_ATTACHMENT_MODE", raising=False)
-    monkeypatch.delenv("AI_DOCUMENT_ATTACHMENT_MODE", raising=False)
+    monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
+    monkeypatch.setenv("E2B_API_KEY", "e2b-key")
+    monkeypatch.setenv("AI_MAX_ATTACHMENT_FILES", "6")
+    monkeypatch.setenv("AI_MAX_ATTACHMENT_BYTES", "6000000")
 
-    assert AiSettings.from_env().attachment_mode == "images"
-    assert AiSettings.from_env().document_attachment_mode == "text"
+    settings = AiSettings.from_env()
+
+    assert settings.max_attachment_files == 6
+    assert settings.max_attachment_bytes == 6_000_000
 
 
 def test_environment_configuration_reads_provider_retry_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1236,46 +1031,6 @@ def test_environment_configuration_defaults_to_two_day_session_retention(monkeyp
     monkeypatch.delenv("AI_SESSION_TTL_SECONDS", raising=False)
 
     assert AiSettings.from_env().session_ttl_seconds == 48 * 60 * 60
-
-
-def test_environment_configuration_rejects_unknown_attachment_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
-    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
-    monkeypatch.setenv("AI_ATTACHMENT_MODE", "documents")
-
-    with pytest.raises(ValueError, match="AI_ATTACHMENT_MODE must be one of: none, images"):
-        AiSettings.from_env()
-
-
-def test_environment_configuration_rejects_unknown_document_attachment_mode(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
-    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
-    monkeypatch.setenv("AI_DOCUMENT_ATTACHMENT_MODE", "pdf")
-
-    with pytest.raises(ValueError, match="AI_DOCUMENT_ATTACHMENT_MODE must be one of: none, text"):
-        AiSettings.from_env()
-
-
-def test_environment_configuration_reads_document_extraction_limits(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
-    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
-    monkeypatch.setenv("AI_MAX_DOCUMENT_BYTES", "6000000")
-    monkeypatch.setenv("AI_MAX_DOCUMENT_TEXT_CHARS", "60000")
-    monkeypatch.setenv("AI_MAX_PDF_PAGES", "60")
-    monkeypatch.setenv("AI_MAX_XLSX_SHEETS", "6")
-    monkeypatch.setenv("AI_MAX_XLSX_CELLS", "6000")
-    monkeypatch.setenv("AI_MAX_XLSX_UNCOMPRESSED_BYTES", "60000000")
-
-    settings = AiSettings.from_env()
-
-    assert settings.max_document_bytes == 6_000_000
-    assert settings.max_document_text_chars == 60_000
-    assert settings.max_pdf_pages == 60
-    assert settings.max_xlsx_sheets == 6
-    assert settings.max_xlsx_cells == 6_000
-    assert settings.max_xlsx_uncompressed_bytes == 60_000_000
 
 
 def test_environment_configuration_requires_e2b_key_when_selected(monkeypatch: pytest.MonkeyPatch) -> None:

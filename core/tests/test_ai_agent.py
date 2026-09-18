@@ -36,7 +36,14 @@ from nurse_scheduling.ai.agent import (
 )
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
-from nurse_scheduling.ai.provider import ChatMessage, ReasoningDelta, TextDelta, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.provider import (
+    ChatMessage,
+    ReasoningDelta,
+    TextDelta,
+    ToolCall,
+    ToolCallRequest,
+    ToolResultImage,
+)
 
 QUESTION: list[ChatMessage] = [{"role": "user", "content": "Who works on the first day?"}]
 TOOLS = [
@@ -115,6 +122,29 @@ def test_a_tool_call_is_executed_and_returned_to_the_provider():
         "role": "tool",
         "tool_call_id": "call_0",
         "content": "command result",
+    }
+
+
+def test_an_image_tool_result_is_returned_as_multimodal_content():
+    provider = FakeProvider(_calls(), _text("I inspected the image."))
+    image = b"\x89PNG\r\n\x1a\nimage"
+
+    async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
+        return AgentToolOutcome("Read image.", True, ToolResultImage("image/png", image))
+
+    async def collect() -> None:
+        async for _event in run_tool_agent(provider, QUESTION, TOOLS, execute):
+            pass
+
+    asyncio.run(collect())
+
+    assert provider.requests[1][0][-1] == {
+        "role": "tool",
+        "tool_call_id": "call_0",
+        "content": [
+            {"type": "text", "text": "Read image."},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgppbWFnZQ=="}},
+        ],
     }
 
 
