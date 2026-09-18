@@ -252,6 +252,25 @@ class ChatSession:
     proposal_diff: str = ""
 
 
+SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
+
+
+def _text_bytes(value: object) -> int:
+    """Return the UTF-8 size of one chat content value, ignoring inline image data."""
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    if isinstance(value, list):
+        return sum(len(part.get("text", "").encode("utf-8")) for part in value if part.get("type") == "text")
+    return 0
+
+
+def _session_bytes(session: "ChatSession") -> int:
+    """Return the chat text one session retains."""
+    total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
+    total += sum(_text_bytes(message.get("content")) for message in session.history)
+    return total + sum(_text_bytes(text) for _message_id, text in session.steering_queue)
+
+
 @dataclass(frozen=True)
 class TurnCompletion:
     """Whether a completed turn and its optional proposal were retained."""
@@ -266,7 +285,39 @@ class SessionStore:
     def __init__(self, settings: AiSettings) -> None:
         self._settings = settings
         self._sessions: dict[str, ChatSession] = {}
+        self._retained_bytes = 0
+        self._session_bytes: dict[str, int] = {}
         self._lock = threading.RLock()
+
+    @property
+    def retained_bytes(self) -> int:
+        """Return the chat text retained across live sessions."""
+        with self._lock:
+            return self._retained_bytes
+
+    def _recount(self, session: ChatSession) -> None:
+        """Refresh one session's contribution to the retained total, under the caller's lock."""
+        previous = self._session_bytes.get(session.id, 0)
+        current = _session_bytes(session)
+        self._session_bytes[session.id] = current
+        self._retained_bytes += current - previous
+
+    def _forget(self, session_id: str) -> None:
+        """Drop one session's contribution to the retained total, under the caller's lock."""
+        self._retained_bytes -= self._session_bytes.pop(session_id, 0)
+
+    def _require_capacity(self, additional_bytes: int) -> None:
+        """Refuse text that would push retained chat state past the configured budget.
+
+        Checked where a client pushes new text. A turn already under way still stores its
+        answer, proposal, and history, which overshoots by at most the bytes one turn can
+        produce times `max_concurrent_requests`.
+
+        Raises:
+            HTTPException: With status 429 when the budget is exhausted.
+        """
+        if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
+            raise HTTPException(status_code=429, detail=SESSION_MEMORY_LIMIT_MESSAGE)
 
     def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
         """Create a session after pruning expired entries."""
@@ -274,6 +325,7 @@ class SessionStore:
             self._prune_expired()
             if len(self._sessions) >= self._settings.max_sessions:
                 raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
+            self._require_capacity(_text_bytes(schedule_yaml))
             session = ChatSession(
                 id=str(uuid4()),
                 owner_token=owner_token,
@@ -282,6 +334,7 @@ class SessionStore:
                 revision=schedule_revision(schedule_yaml),
             )
             self._sessions[session.id] = session
+            self._recount(session)
             return session
 
     def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str, str, str]:
@@ -323,6 +376,7 @@ class SessionStore:
                 session.accepting_steering = False
                 session.steering_queue.clear()
                 session.steering_ids.clear()
+                self._recount(session)
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
             session.history.extend(
                 turn_messages
@@ -339,6 +393,7 @@ class SessionStore:
             session.accepting_steering = False
             session.steering_queue.clear()
             session.steering_ids.clear()
+            self._recount(session)
             return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
 
     def queue_steering(
@@ -359,9 +414,11 @@ class SessionStore:
             # that makes a retried POST idempotent is never emptied mid-turn.
             if len(session.steering_ids) >= self._settings.max_history_messages:
                 raise HTTPException(status_code=429, detail="Too many messages are already queued.")
+            self._require_capacity(_text_bytes(message))
             session.steering_queue.append((message_id, message))
             session.steering_ids.add(message_id)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+            self._recount(session)
 
     def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]:
         """Drain queued messages and close the final race when a response is done."""
@@ -373,6 +430,7 @@ class SessionStore:
             session.steering_queue.clear()
             if close_if_empty and not queued:
                 session.accepting_steering = False
+            self._recount(session)
             return queued
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
@@ -381,10 +439,12 @@ class SessionStore:
             session = self._get_owned(session_id, owner_token)
             if session.schedule_yaml == schedule_yaml:
                 return
+            self._require_capacity(_text_bytes(schedule_yaml) - _text_bytes(session.schedule_yaml))
             session.schedule_yaml = schedule_yaml
             session.revision = schedule_revision(schedule_yaml)
             session.proposal_yaml = ""
             session.proposal_diff = ""
+            self._recount(session)
 
     def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
         """Return the pending proposal and the schedule it would replace, without adopting it."""
@@ -402,6 +462,7 @@ class SessionStore:
             session.schedule_yaml = approved
             session.revision = schedule_revision(approved)
             self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
+            self._recount(session)
             return approved
 
     def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> ChatSession:
@@ -432,6 +493,7 @@ class SessionStore:
             session.proposal_diff = ""
             if had_proposal:
                 self._append_history_event(session, history_event)
+            self._recount(session)
 
     def abort(self, session_id: str) -> None:
         """Release a session without recording an incomplete response."""
@@ -442,6 +504,7 @@ class SessionStore:
                 session.accepting_steering = False
                 session.steering_queue.clear()
                 session.steering_ids.clear()
+                self._recount(session)
 
     def _append_history_event(self, session: ChatSession, content: str) -> None:
         """Append one trusted application event within the caller's lock."""
@@ -460,6 +523,7 @@ class SessionStore:
         expired_ids = [session_id for session_id, session in self._sessions.items() if session.expires_at <= now]
         for session_id in expired_ids:
             del self._sessions[session_id]
+            self._forget(session_id)
 
 
 def _sse_event(event_type: str, data: dict[str, object]) -> str:

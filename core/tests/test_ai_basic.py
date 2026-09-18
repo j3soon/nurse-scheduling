@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
 
@@ -1743,6 +1744,29 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
     store.begin(session.id, "browser-owner")
     store.queue_steering(session.id, "browser-owner", "queued-0", "Keep going.")
     assert store.take_steering(session.id, False) == [("queued-0", "Keep going.")]
+
+
+def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
+    settings = make_settings(max_session_bytes=900, max_schedule_bytes=1000)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    first = store.create("browser-owner", "a" * 400)
+    second = store.create("browser-owner", "b" * 400)
+
+    assert store.retained_bytes == 800
+    with pytest.raises(HTTPException) as exc_info:
+        store.create("browser-owner", "c" * 400)
+    assert exc_info.value.status_code == 429
+
+    # Replacing a schedule with a smaller one returns its budget.
+    store.update_schedule(first.id, "browser-owner", "a" * 100)
+    assert store.retained_bytes == 500
+    store.create("browser-owner", "c" * 400)
+
+    # Expiry releases the budget along with the session.
+    store._sessions[second.id].expires_at = time.monotonic() - 1
+    store.create("browser-owner", "d" * 100)
+    assert store.retained_bytes == 600
 
 
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:
