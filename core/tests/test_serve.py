@@ -2066,6 +2066,27 @@ def test_input_and_timeout_validation():
         assert oversized.status_code == 413
 
 
+def test_declared_oversize_body_is_refused_before_the_upload_is_buffered():
+    # FastAPI resolves upload parameters before the route runs, so a route-level
+    # size check only fires once Starlette has spooled the whole body.
+    settings = _settings(max_yaml_bytes=1024)
+    with _client(start_background=False, settings=settings) as client:
+        refused = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * (1024 * 1024), "application/x-yaml")},
+        )
+        assert refused.status_code == 413
+        assert refused.json()["error"]["code"] == "request_too_large"
+
+        # A body the middleware admits still reaches the route's own limit.
+        oversized = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * 1025, "application/x-yaml")},
+        )
+        assert oversized.status_code == 413
+        assert oversized.json()["detail"] == "Scheduling YAML is too large"
+
+
 def test_file_input_uses_configured_limit_above_multipart_text_default():
     max_yaml_bytes = 1024 * 1024 + 1
     settings = _settings(max_yaml_bytes=max_yaml_bytes)
