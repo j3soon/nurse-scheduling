@@ -28,6 +28,7 @@ from ..loader import _load_yaml
 from .candidate import SCHEDULE_FILENAME
 
 MAX_SUMMARY_IDS = 20
+MAX_SUMMARY_ID_CHARS = 60
 _GROUPED_SECTIONS = ("people", "dates", "shiftTypes")
 
 
@@ -65,10 +66,23 @@ def _count(schedule: Any, name: str) -> int:
 
 def _group_ids(schedule: Any, name: str) -> str:
     return _bounded_ids(
-        str(group["id"])
+        _summary_id(str(group["id"]))
         for group in _as_list(_section(schedule, name).get("groups"))
         if isinstance(group, dict) and "id" in group
     )
+
+
+def _summary_id(value: str) -> str:
+    """Flatten one schedule-supplied ID before it reaches the system prompt.
+
+    Group IDs are user text with no shape the schema enforces, and this summary is part of
+    the system message. Collapsing whitespace and bounding the length keeps an ID from
+    adding lines that read as instructions.
+    """
+    collapsed = " ".join(value.split())
+    if len(collapsed) > MAX_SUMMARY_ID_CHARS:
+        return collapsed[: MAX_SUMMARY_ID_CHARS - 3] + "..."
+    return collapsed
 
 
 def _bounded_ids(values: Iterable[str]) -> str:
