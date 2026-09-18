@@ -2066,6 +2066,18 @@ def test_input_and_timeout_validation():
         assert oversized.status_code == 413
 
 
+def test_client_cookie_is_marked_secure_when_the_deployment_says_so():
+    # A TLS-terminating proxy forwards plain HTTP, so the request scheme alone
+    # would leave the cookie unmarked on an HTTPS deployment.
+    with _client(start_background=False, settings=_settings()) as client:
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        assert "secure" not in response.headers["set-cookie"].lower()
+
+    with _client(start_background=False, settings=_settings(cookie_secure=True)) as client:
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        assert "; Secure" in response.headers["set-cookie"]
+
+
 def test_declared_oversize_body_is_refused_before_the_upload_is_buffered():
     # FastAPI resolves upload parameters before the route runs, so a route-level
     # size check only fires once Starlette has spooled the whole body.

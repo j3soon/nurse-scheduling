@@ -210,6 +210,12 @@ class ServerSettings:
     """Namespace and schema version prepended to telemetry keys."""
     usage_metrics_retention_days: int = DEFAULT_USAGE_METRICS_RETENTION_DAYS
     """Retention period for every telemetry row."""
+    cookie_secure: bool = False
+    """Whether the client correlation cookie is always marked secure.
+
+    A deployment behind a TLS-terminating proxy sees plain HTTP, so it cannot infer this
+    from the request. Requests that arrive over HTTPS directly still get a secure cookie.
+    """
 
     def __post_init__(self) -> None:
         """Validate cross-field and direct-construction constraints.
@@ -322,6 +328,7 @@ class ServerSettings:
             auth_token=os.getenv(AUTH_TOKEN_ENV_NAME),
             auth_tokens=parse_auth_credentials(os.getenv(AUTH_TOKENS_ENV_NAME)),
             auth_required=_boolean(AUTH_REQUIRED_ENV_NAME, False),
+            cookie_secure=_boolean("API_COOKIE_SECURE", False),
             usage_metrics_enabled=_boolean("USAGE_METRICS_ENABLED", False),
             usage_metrics_key_prefix=os.getenv(
                 "USAGE_METRICS_KEY_PREFIX",
