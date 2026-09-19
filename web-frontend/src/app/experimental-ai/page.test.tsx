@@ -188,6 +188,31 @@ describe('ExperimentalAiPage', () => {
     expect(mockCreateSession).toHaveBeenCalledOnce();
   });
 
+  it('flushes a pending transcript write when the page unmounts', async () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<ExperimentalAiPage />);
+      const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+      fireEvent.change(composer, { target: { value: 'Who works Monday?' } });
+      await act(async () => {
+        fireEvent.submit(composer.closest('form')!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
+      view.unmount();
+
+      const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+      expect(stored.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: 'Who works Monday?' }),
+        expect.objectContaining({ role: 'assistant', content: 'Alice works Monday.' }),
+      ]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows and renews the exact chat expiration time', async () => {
     const now = Date.parse('2026-09-19T08:30:00Z');
     const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
@@ -233,6 +258,23 @@ describe('ExperimentalAiPage', () => {
     expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
   });
 
+  it('uses a singular retention label for a one-hour session', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'expired-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() - 1,
+      retentionSeconds: 3600,
+      messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
+      syncedSchedule: 'description: old schedule\n',
+      proposalDiff: null,
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText(/expired after 1 hour of inactivity/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 hours/)).not.toBeInTheDocument();
+  });
+
   it('preserves the transcript when the stored server session is no longer available', async () => {
     const user = userEvent.setup();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -256,6 +298,48 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     expect(screen.queryByText('Preserve this transcript')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
+  });
+
+  it('reports a failed restored-session check and retries after credentials change', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({
+      auth: { required: true, scheme: 'bearer' },
+      image_attachments: {
+        enabled: false,
+        accepted_media_types: [],
+        max_files: 1,
+        max_bytes_per_file: 1,
+      },
+      document_attachments: {
+        enabled: false,
+        accepted_extensions: [],
+        max_files: 1,
+        max_bytes_per_file: 1,
+      },
+    });
+    mockGetSessionStatus
+      .mockRejectedValueOnce(new Error('Temporary session-status failure.'))
+      .mockResolvedValueOnce(3600);
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'user-1', role: 'user', content: 'Stored question' }],
+      syncedSchedule: 'description: old schedule\n',
+      proposalDiff: null,
+    }));
+    const user = userEvent.setup();
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText('Temporary session-status failure.')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Enter token for AI assistant' }));
+    await user.type(screen.getByLabelText('Token for AI assistant'), 'replacement-token');
+    await user.click(screen.getByRole('button', { name: 'Save token for AI assistant' }));
+
+    await waitFor(() => expect(mockGetSessionStatus).toHaveBeenCalledTimes(2));
+    expect(mockGetSessionStatus).toHaveBeenLastCalledWith('restored-session', 'replacement-token', '/ai');
   });
 
   it('starts with a single-line composer and grows with the draft', async () => {
@@ -795,6 +879,31 @@ describe('ExperimentalAiPage', () => {
     await screen.findByRole('button', { name: 'Send' });
     await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+
+  it('discards queued questions when the active conversation expires', async () => {
+    const user = userEvent.setup();
+    let rejectStream: ((reason: Error) => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async () => {
+      await new Promise<void>((_resolve, reject) => {
+        rejectStream = reject;
+      });
+    });
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    await user.type(composer, 'First question.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Stop' });
+    await user.type(composer, 'Do not resend this.');
+    await user.keyboard('{Enter}');
+    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+
+    rejectStream?.(new MockAiHttpError('Chat session not found.', 404));
+
+    expect(await screen.findByText(/expired or is no longer available/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Messages to be submitted after next tool call')).not.toBeInTheDocument());
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
   });
 
   it('requires the advertised AI token and uses a session-only credential', async () => {

@@ -57,9 +57,10 @@ flowchart LR
 ```
 
 The browser receives an HTTP-only owner cookie and an unguessable session UUID.
-Active sessions expire after 48 hours without a message by default. Each new
-message renews that window. The browser can retain the conversation within its
-current tab and verify the session without extending its lifetime.
+Active sessions expire after 48 hours of inactivity by default. Sending or
+queueing a message, synchronizing a changed schedule, or deciding a proposal
+renews that window. The browser can retain the conversation within its current
+tab and verify the session without extending its lifetime.
 The backend stores the YAML snapshot and completed conversation turns. Each
 provider request includes the stored YAML, recent history, and current
 question. Enabled attachments are included only in the active provider
@@ -386,7 +387,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
-| `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Each new message renews it. |
+| `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
 | `AI_MAX_HISTORY_MESSAGES` | `20` | Conversation messages retained per session. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |

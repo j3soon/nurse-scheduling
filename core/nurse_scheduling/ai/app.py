@@ -33,7 +33,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -242,6 +242,16 @@ def schedule_revision(schedule_yaml: str) -> str:
     return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
 
 
+def owner_cookie_token(owner: str | None) -> str:
+    """Return a canonical browser owner token or replace an invalid value."""
+    if owner is not None:
+        try:
+            return str(UUID(owner))
+        except ValueError:
+            pass
+    return str(uuid4())
+
+
 @dataclass
 class ChatSession:
     """Process-local conversation state owned by one browser cookie."""
@@ -353,7 +363,6 @@ class SessionStore:
             session.accepting_steering = False
             session.steering_queue.clear()
             session.steering_ids.clear()
-            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
 
     def queue_steering(
@@ -716,9 +725,13 @@ def create_app(
 
     def refresh_owner_cookie(response: Response, owner: str) -> None:
         """Keep browser ownership available for the session's sliding lifetime."""
+        try:
+            canonical_owner = str(UUID(owner))
+        except ValueError:
+            return
         response.set_cookie(
             OWNER_COOKIE,
-            owner,
+            canonical_owner,
             httponly=True,
             secure=settings.cookie_secure,
             # Public deployments allow approved cross-site frontends. Browsers
@@ -806,8 +819,7 @@ def create_app(
         """Create a process-local chat session for the calling browser."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="Schedule is too large.")
-        if owner is None:
-            owner = str(uuid4())
+        owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
         logger.info(

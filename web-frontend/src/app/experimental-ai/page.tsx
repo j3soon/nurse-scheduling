@@ -291,7 +291,10 @@ function readStoredConversation(): StoredChatConversation | null {
 }
 
 function retentionLabel(seconds: number): string {
-  if (seconds % 3600 === 0) return `${seconds / 3600} hours`;
+  if (seconds % 3600 === 0) {
+    const hours = seconds / 3600;
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
   return `${seconds.toLocaleString()} seconds`;
 }
 
@@ -565,9 +568,13 @@ export default function ExperimentalAiPage() {
     if (conversationStorageTimerRef.current !== null) {
       clearTimeout(conversationStorageTimerRef.current);
     }
-    conversationStorageTimerRef.current = setTimeout(() => {
+    const persistConversation = () => {
       try {
-        if (activeSessionId === null || sessionExpiresAt === null) {
+        if (
+          activeSessionId === null
+          || sessionExpiresAt === null
+          || sessionIdRef.current !== activeSessionId
+        ) {
           window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
           return;
         }
@@ -584,7 +591,16 @@ export default function ExperimentalAiPage() {
       } catch {
         // The live conversation remains usable when tab storage is unavailable or full.
       }
-    }, 200);
+    };
+    const timer = setTimeout(persistConversation, 200);
+    conversationStorageTimerRef.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (conversationStorageTimerRef.current === timer) {
+        conversationStorageTimerRef.current = null;
+      }
+      persistConversation();
+    };
   }, [
     activeSessionId,
     aiEndpoint,
@@ -615,7 +631,8 @@ export default function ExperimentalAiPage() {
           setConversationUnavailable(true);
           setSessionNotice('This chat is no longer available on the AI server. Start a new chat to continue.');
           window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
-        } else if (isAuthenticationError(statusError)) {
+        } else {
+          checkedSessionRef.current = null;
           reportRequestError(statusError, 'The stored AI chat could not be checked.');
         }
       });
@@ -842,12 +859,14 @@ export default function ExperimentalAiPage() {
   };
 
   const markConversationUnavailable = (notice: string) => {
+    queuedMessagesRef.current = [];
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     syncedScheduleRef.current = null;
     checkedSessionRef.current = null;
     setActiveSessionId(null);
     setSessionExpiresAt(null);
+    setQueuedMessages([]);
     setProposalDiff(null);
     setConversationUnavailable(true);
     setSessionNotice(notice);

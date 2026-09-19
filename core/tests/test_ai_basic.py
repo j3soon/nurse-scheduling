@@ -555,7 +555,20 @@ def test_health_and_streamed_schedule_question() -> None:
     assert "untrusted data" in prompt[0]["content"]
 
 
-def test_existing_owner_cookie_lifetime_is_refreshed() -> None:
+def test_valid_owner_cookie_lifetime_is_refreshed() -> None:
+    client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+    owner = "b6d00cf8-1c7b-49b6-ab06-e162a54de489"
+    client.cookies.set(OWNER_COOKIE, owner)
+
+    response = client.post("/sessions", json={"schedule_yaml": "description: test"})
+
+    assert response.status_code == 201
+    set_cookie = response.headers["set-cookie"]
+    assert f"{OWNER_COOKIE}={owner}" in set_cookie
+    assert "Max-Age=172800" in set_cookie
+
+
+def test_invalid_owner_cookie_is_not_reflected() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     client.cookies.set(OWNER_COOKIE, "browser-supplied-owner")
 
@@ -563,7 +576,7 @@ def test_existing_owner_cookie_lifetime_is_refreshed() -> None:
 
     assert response.status_code == 201
     set_cookie = response.headers["set-cookie"]
-    assert f"{OWNER_COOKIE}=browser-supplied-owner" in set_cookie
+    assert "browser-supplied-owner" not in set_cookie
     assert "Max-Age=172800" in set_cookie
 
 
@@ -629,6 +642,23 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
     expired = client.get(f"/sessions/{session_id}")
     assert expired.status_code == 404
     assert expired.json()["detail"] == "Chat session not found."
+
+
+def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 100.0
+    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
+    store = app.state.session_store
+    owner = "b6d00cf8-1c7b-49b6-ab06-e162a54de489"
+    session = store.create(owner, schedule_yaml())
+
+    now = 105.0
+    _, _, revision, _, _ = store.begin(session.id, owner)
+    assert session.expires_at == 125.0
+
+    now = 115.0
+    assert store.finish(session.id, "Question", "Answer", base_revision=revision).turn_saved
+    assert session.expires_at == 125.0
 
 
 def test_image_is_sent_to_provider_but_not_retained_in_history() -> None:
