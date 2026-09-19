@@ -99,6 +99,12 @@ def _stage(metrics: RedisUsageMetrics, callback) -> None:
         transaction.execute()
 
 
+def _persist_all(redis_client, prefix: str = "test:usage") -> None:
+    """Remove expiry from all staged test keys so real-time never evicts them."""
+    for key in redis_client.scan_iter(f"{prefix}:*"):
+        redis_client.persist(key)
+
+
 def test_week_helpers_use_local_sunday_boundaries():
     local_timezone = timezone(timedelta(hours=8))
     before_sunday = datetime(2026, 8, 29, 15, 59, tzinfo=timezone.utc)
@@ -552,10 +558,11 @@ def test_reporter_catches_up_retained_completed_weeks(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    older = _job(datetime(2026, 8, 10, 12, tzinfo=timezone.utc), job_id="older")
-    newer = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc), job_id="newer")
+    older = _job(datetime(2027, 8, 9, 12, tzinfo=timezone.utc), job_id="older")
+    newer = _job(datetime(2027, 8, 23, 12, tzinfo=timezone.utc), job_id="newer")
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, older))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, newer))
+    _persist_all(redis_client)
     transport = _RecordingTransport()
     waits = []
 
@@ -572,10 +579,10 @@ def test_reporter_catches_up_retained_completed_weeks(redis_client):
         retry_delays=(),
         retry_wait=wait,
     )
-    now = datetime(2026, 8, 30, 10, tzinfo=timezone.utc)
+    now = datetime(2027, 8, 29, 10, tzinfo=timezone.utc)
 
     assert reporter.run_once(now) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-09", "2026-08-23"]
+    assert [report.week_id for report in transport.reports] == ["2027-08-08", "2027-08-22"]
     assert waits == [10 * 60]
     assert reporter.run_once(now) is True
 
@@ -587,36 +594,37 @@ def test_reporter_force_sends_latest_retained_week_without_completing_partial_we
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    older = _job(datetime(2026, 8, 10, 12, tzinfo=timezone.utc), job_id="older")
-    newer = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc), job_id="newer")
-    current = _job(datetime(2026, 8, 31, 12, tzinfo=timezone.utc), job_id="current")
+    older = _job(datetime(2027, 8, 9, 12, tzinfo=timezone.utc), job_id="older")
+    newer = _job(datetime(2027, 8, 23, 12, tzinfo=timezone.utc), job_id="newer")
+    current = _job(datetime(2027, 8, 30, 12, tzinfo=timezone.utc), job_id="current")
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, older))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, newer))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, current))
+    _persist_all(redis_client)
     transport = _RecordingTransport()
     reporter = UsageReporter(metrics, transport, retry_delays=(), minimum_interval_seconds=0)
-    now = datetime(2026, 9, 3, 10, tzinfo=timezone.utc)
+    now = datetime(2027, 9, 2, 10, tzinfo=timezone.utc)
 
     assert reporter.run_once(now) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-09", "2026-08-23"]
+    assert [report.week_id for report in transport.reports] == ["2027-08-08", "2027-08-22"]
 
     transport.reports.clear()
     assert reporter.run_once(now, force_latest=True) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-30"]
+    assert [report.week_id for report in transport.reports] == ["2027-08-29"]
     assert [entry.job_id for entry in transport.reports[0].entries] == ["current"]
-    assert transport.reports[0].starts_at == datetime(2026, 8, 30, tzinfo=timezone.utc)
-    assert transport.reports[0].ends_at == datetime(2026, 9, 6, tzinfo=timezone.utc)
-    assert redis_client.hget("test:usage:report:2026-08-09", "attempts") == b"1"
-    assert redis_client.hget("test:usage:report:2026-08-23", "attempts") == b"1"
-    partial_delivery = redis_client.hgetall("test:usage:report:2026-08-30")
+    assert transport.reports[0].starts_at == datetime(2027, 8, 29, tzinfo=timezone.utc)
+    assert transport.reports[0].ends_at == datetime(2027, 9, 5, tzinfo=timezone.utc)
+    assert redis_client.hget("test:usage:report:2027-08-08", "attempts") == b"1"
+    assert redis_client.hget("test:usage:report:2027-08-22", "attempts") == b"1"
+    partial_delivery = redis_client.hgetall("test:usage:report:2027-08-29")
     assert b"status" not in partial_delivery
-    assert partial_delivery[b"force_message_id"] == b"message-2026-08-30"
+    assert partial_delivery[b"force_message_id"] == b"message-2027-08-29"
 
     transport.reports.clear()
-    assert reporter.run_once(datetime(2026, 9, 6, 1, tzinfo=timezone.utc)) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-30"]
-    assert redis_client.hget("test:usage:report:2026-08-30", "status") == b"sent"
-    assert redis_client.hget("test:usage:report:2026-08-30", "attempts") == b"2"
+    assert reporter.run_once(datetime(2027, 9, 5, 1, tzinfo=timezone.utc)) is True
+    assert [report.week_id for report in transport.reports] == ["2027-08-29"]
+    assert redis_client.hget("test:usage:report:2027-08-29", "status") == b"sent"
+    assert redis_client.hget("test:usage:report:2027-08-29", "attempts") == b"2"
 
 
 def test_forced_report_bypasses_delivery_interval(redis_client):
