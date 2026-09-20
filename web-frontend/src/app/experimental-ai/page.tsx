@@ -444,6 +444,7 @@ export default function ExperimentalAiPage() {
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
   hasMessagesRef.current = messages.length > 0;
   useTabSwitchWarning(isStreaming || draft.trim().length > 0 || selectedAttachments.length > 0);
@@ -574,6 +575,7 @@ export default function ExperimentalAiPage() {
         // The live conversation remains usable when tab storage is unavailable or full.
       }
     };
+    persistConversationRef.current = persistConversation;
     const timer = setTimeout(persistConversation, 200);
     conversationStorageTimerRef.current = timer;
     return () => {
@@ -581,7 +583,6 @@ export default function ExperimentalAiPage() {
       if (conversationStorageTimerRef.current === timer) {
         conversationStorageTimerRef.current = null;
       }
-      persistConversation();
     };
   }, [
     activeSessionId,
@@ -593,6 +594,21 @@ export default function ExperimentalAiPage() {
     sessionExpiresAt,
     sessionRetentionSeconds,
   ]);
+
+  useEffect(() => {
+    const flushConversation = () => {
+      if (conversationStorageTimerRef.current !== null) {
+        clearTimeout(conversationStorageTimerRef.current);
+        conversationStorageTimerRef.current = null;
+      }
+      persistConversationRef.current?.();
+    };
+    window.addEventListener('pagehide', flushConversation);
+    return () => {
+      window.removeEventListener('pagehide', flushConversation);
+      flushConversation();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || checkedSessionRef.current === activeSessionId) return;

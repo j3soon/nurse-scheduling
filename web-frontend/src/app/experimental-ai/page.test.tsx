@@ -326,6 +326,37 @@ describe('ExperimentalAiPage', () => {
     expect(mockGetSessionStatus).toHaveBeenLastCalledWith('restored-session', 'replacement-token', '/ai');
   });
 
+  it('debounces streamed transcript writes and flushes the latest text on page hide', async () => {
+    const user = userEvent.setup();
+    let onDelta: ((text: string) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: { onDelta: (text: string) => void },
+    ) => {
+      onDelta = callbacks.onDelta;
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(onDelta).toBeDefined());
+    const writeConversation = vi.spyOn(Storage.prototype, 'setItem');
+
+    act(() => onDelta?.('First'));
+    act(() => onDelta?.(' second'));
+    expect(writeConversation).not.toHaveBeenCalled();
+
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.messages.at(-1).content).toBe('First second');
+    expect(writeConversation).toHaveBeenCalledTimes(1);
+    await act(async () => finishStream?.());
+  });
+
   it('starts with a single-line composer and grows with the draft', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
