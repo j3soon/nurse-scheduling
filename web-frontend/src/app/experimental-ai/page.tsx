@@ -24,6 +24,7 @@
 import Image from 'next/image';
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FiArrowDown, FiArrowUp, FiChevronDown, FiDownload, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
+import AppVersionText from '@/components/AppVersionText';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import {
@@ -32,9 +33,11 @@ import {
   FIREFOX_SPEECH_RECOGNITION_STATUS_URL,
   GITHUB_AI_BETA_ACCESS_URL,
   GITHUB_PRIVACY_URL,
+  GITHUB_TAGS_URL,
 } from '@/constants/urls';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
+import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 import { ActivityEntry, AssistantActivity } from './AssistantActivity';
@@ -1321,6 +1324,15 @@ export default function ExperimentalAiPage() {
           <PageDocumentationLink href={DOCUMENTATION_URLS.experimentalAi} label="Experimental AI" />
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
             Experimental
+          </span>
+          <span className="text-xs text-gray-400">
+            Frontend{' '}
+            <AppVersionText
+              version={CURRENT_APP_VERSION}
+              versionHref={GITHUB_TAGS_URL}
+              versionClassName="hover:text-gray-600"
+              commitClassName="hover:text-gray-600"
+            />
           </span>
         </div>
         <p className="text-sm text-gray-600">

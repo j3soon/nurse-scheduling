@@ -45,6 +45,7 @@ const messages: ChatExportMessage[] = [
 const metadata = {
   endpoint: 'https://ai.example.test/<unsafe>',
   exportedAt: new Date('2026-09-18T02:00:00Z'),
+  frontendVersion: 'v0.4.2-3-gabc1234',
 };
 
 describe('chat export', () => {
@@ -52,6 +53,7 @@ describe('chat export', () => {
     const output = buildMarkdownChatExport(messages, metadata);
 
     expect(output).toContain('# Schedule AI Chat');
+    expect(output).toContain('- Frontend version: v0.4.2-3-gabc1234');
     expect(output).toContain('Show <script>alert(1)</script> coverage.');
     expect(output).toContain('Attachments: ward.xlsx');
     expect(output).toContain('Response time: 1.25s');
@@ -71,6 +73,7 @@ describe('chat export', () => {
     expect(output).toContain('class="message assistant"');
     expect(output).toContain('Show &lt;script&gt;alert(1)&lt;/script&gt; coverage.');
     expect(output).toContain('https://ai.example.test/&lt;unsafe&gt;');
+    expect(output).toContain('Frontend version: v0.4.2-3-gabc1234');
     expect(output).not.toContain('<script>');
     expect(output).toContain('Coverage is <strong>complete</strong>.');
     expect(output).not.toContain('Coverage is **complete**.');

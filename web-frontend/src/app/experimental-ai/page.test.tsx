@@ -129,6 +129,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(screen.getByText('Current snapshot: 0 people, 0 dates. Captured when you send the first question.')).toBeInTheDocument();
+    expect(screen.getByText(/^Frontend /)).toHaveTextContent('Frontend unknown');
     expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
       'href',
       '/docs/user-guide/experimental-ai/',

@@ -23,6 +23,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CURRENT_APP_VERSION } from '@/utils/version';
 import type { ActivityEntry } from './AssistantActivity';
 
 export interface ChatExportMessage {
@@ -38,6 +39,7 @@ export interface ChatExportMessage {
 interface ChatExportMetadata {
   endpoint: string;
   exportedAt: Date;
+  frontendVersion: string;
 }
 
 export type ChatExportFormat = 'html' | 'markdown';
@@ -234,6 +236,7 @@ export function buildMarkdownChatExport(
     '# Schedule AI Chat',
     '',
     `- Exported: ${metadata.exportedAt.toISOString()}`,
+    `- Frontend version: ${metadata.frontendVersion}`,
     `- AI server: ${metadata.endpoint}`,
   ];
   messages.forEach(message => {
@@ -329,7 +332,7 @@ export function buildHtmlChatExport(
 <body>
   <main>
     <h1>Schedule AI Chat</h1>
-    <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
+    <p class="metadata">Exported ${escapeHtml(metadata.exportedAt.toISOString())}<br>Frontend version: ${escapeHtml(metadata.frontendVersion)}<br>AI server: ${escapeHtml(metadata.endpoint)}</p>
     <section class="chat" aria-label="Chat transcript">${renderedMessages}
     </section>
   </main>
@@ -344,7 +347,7 @@ export function downloadChatExport(
   endpoint: string,
   exportedAt = new Date(),
 ): void {
-  const metadata = { endpoint, exportedAt };
+  const metadata = { endpoint, exportedAt, frontendVersion: CURRENT_APP_VERSION };
   const content = format === 'html'
     ? buildHtmlChatExport(messages, metadata)
     : buildMarkdownChatExport(messages, metadata);
