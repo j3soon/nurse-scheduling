@@ -34,47 +34,11 @@ export function getCoefficientForShiftType(
   return coefficients.find(([id]) => id === shiftTypeId)?.[1] ?? '';
 }
 
-// A group may reference another group, which the backend flattens all the way
-// down before checking coefficient coverage and overlap. Expanding only one
-// level here would compare group IDs where the backend compares shift types.
-// Groups are reorderable and arrive from import unvalidated, so a group can be
-// listed before the one it references and can even reference itself. Expanding
-// on demand keeps the result independent of that order, and the in-progress set
-// stops a cycle from recursing forever.
 function getExpandedShiftTypeIdsById(shiftTypeData: { items: Item[]; groups: Group[] }): Map<string, readonly string[]> {
-  const memberIdsByGroupId = new Map(shiftTypeData.groups.map(group => [group.id, group.members] as const));
-  const expandedShiftTypeIdsById = new Map<string, readonly string[]>(
-    shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const)
-  );
-  const expanding = new Set<string>();
-
-  const expand = (id: string): readonly string[] => {
-    const alreadyExpanded = expandedShiftTypeIdsById.get(id);
-    if (alreadyExpanded !== undefined) {
-      return alreadyExpanded;
-    }
-    const memberIds = memberIdsByGroupId.get(id);
-    // An unresolved member, or one reached through a cycle, stands for itself.
-    if (memberIds === undefined || expanding.has(id)) {
-      return [id];
-    }
-    expanding.add(id);
-    const shiftTypeIds = new Set<string>();
-    for (const memberId of memberIds) {
-      for (const shiftTypeId of expand(memberId)) {
-        shiftTypeIds.add(shiftTypeId);
-      }
-    }
-    expanding.delete(id);
-    const expanded = [...shiftTypeIds];
-    expandedShiftTypeIdsById.set(id, expanded);
-    return expanded;
-  };
-
-  for (const group of shiftTypeData.groups) {
-    expand(group.id);
-  }
-  return expandedShiftTypeIdsById;
+  return new Map([
+    ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
+    ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
+  ]);
 }
 
 export function getCoefficientShiftTypeIds(
@@ -91,10 +55,7 @@ export function getCoefficientShiftTypeIds(
       .filter(shiftType => selectedExpandedShiftTypeIds.has(shiftType.id))
       .map(shiftType => shiftType.id),
     ...shiftTypeData.groups
-      .filter(group => {
-        const members = expandedShiftTypeIdsById.get(group.id) ?? [];
-        return members.length > 0 && members.every(member => selectedExpandedShiftTypeIds.has(member));
-      })
+      .filter(group => group.members.length > 0 && group.members.every(member => selectedExpandedShiftTypeIds.has(member)))
       .map(group => group.id),
   ];
 }
