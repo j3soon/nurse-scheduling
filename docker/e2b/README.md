@@ -25,9 +25,12 @@ set +a
 python docker/e2b/build_template.py
 ```
 
-The default alias is `nurse-scheduling-ai-sandbox`. Rebuild the template only
-when its Dockerfile or installed tools change. Normal sandbox launches reuse
-the prebuilt template and do not install packages.
+The default alias is `nurse-scheduling-ai-sandbox`. The AI server rebuilds and
+publishes the template once during each server startup when the E2B backend is
+selected. Startup fails if the build fails, so the server cannot accept AI work
+with an outdated template. Individual sandbox launches reuse the published
+template and do not install packages. The command above remains useful for
+publishing the template without starting the server.
 
 The E2B API key belongs only to the trusted application and build processes.
 Never copy it, provider credentials, or database credentials into the template

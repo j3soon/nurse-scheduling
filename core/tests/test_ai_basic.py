@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import logging
+import subprocess
 from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
 
@@ -166,6 +167,39 @@ def test_application_lifespan_runs_sandbox_cleanup_supervision():
         assert factory.starts == 1
 
     assert factory.stops == 1
+
+
+def test_e2b_template_is_built_before_ai_server_is_ready(monkeypatch):
+    calls = []
+    factory = FakeSandboxFactory()
+    monkeypatch.setattr("nurse_scheduling.ai.app.create_sandbox_factory", lambda _settings: factory)
+    monkeypatch.setattr("nurse_scheduling.ai.app.subprocess.run", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    settings = make_settings(sandbox_backend="e2b", e2b_api_key="test-e2b-key", e2b_template="test-template")
+    with AuthenticatedTestClient(create_ai_app(settings=settings, provider=FakeProvider())) as client:
+        assert client.get("/ready").status_code == 200
+
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args[0][1].endswith("/docker/e2b/build_template.py")
+    assert kwargs["check"] is True
+    assert kwargs["env"]["E2B_API_KEY"] == "test-e2b-key"
+    assert kwargs["env"]["E2B_TEMPLATE"] == "test-template"
+
+
+def test_e2b_template_build_failure_prevents_startup(monkeypatch):
+    monkeypatch.setattr("nurse_scheduling.ai.app.create_sandbox_factory", lambda _settings: FakeSandboxFactory())
+
+    def fail_build(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(1, "build_template.py")
+
+    monkeypatch.setattr("nurse_scheduling.ai.app.subprocess.run", fail_build)
+    settings = make_settings(sandbox_backend="e2b", e2b_api_key="test-e2b-key")
+    with (
+        pytest.raises(subprocess.CalledProcessError),
+        AuthenticatedTestClient(create_ai_app(settings=settings, provider=FakeProvider())),
+    ):
+        pass
 
 
 def test_ai_authentication_discovery_and_healthchecks_stay_public() -> None:

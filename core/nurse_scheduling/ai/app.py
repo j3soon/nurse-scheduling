@@ -24,12 +24,15 @@ import hashlib
 import json
 import logging
 import math
+import os
+import subprocess
 import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -592,6 +595,9 @@ def create_app(
     )
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
+        build_e2b_template = settings.sandbox_backend == "e2b"
+    else:
+        build_e2b_template = False
     store = SessionStore(settings)
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
@@ -616,6 +622,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if build_e2b_template:
+            build_script = Path(__file__).resolve().parents[3] / "docker/e2b/build_template.py"
+            build_env = {**os.environ, "E2B_API_KEY": settings.e2b_api_key, "E2B_TEMPLATE": settings.e2b_template}
+            await asyncio.to_thread(subprocess.run, [sys.executable, str(build_script)], check=True, env=build_env)
         if history_log is not None and not await history_log.write("initialize"):
             raise RuntimeError("AI history database initialization failed")
         maintenance = asyncio.create_task(history_log.maintain()) if history_log is not None else None
