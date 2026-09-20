@@ -195,7 +195,10 @@ and `.git` stays out of the build context and final image. Staging also sets
 `COMPOSE_PROJECT_NAME=nurse-scheduling-backend-staging`. This overrides the
 default `nurse-scheduling-backend` project name and gives staging its own
 containers, network, and `redis-data` volume. Production and staging can then
-run side by side on the same host.
+run side by side on the same host. Staging also publishes its E2B sandbox to
+`nurse-scheduling-ai-sandbox-staging`, leaving the production template alias
+independent. Existing ignored `.env.staging` files need the same
+`E2B_TEMPLATE` value when upgrading.
 
 Always pass `--env-file .env.staging` for every staging command, including
 `ps`, `logs`, and `down`. Without it, Docker Compose loads `.env` and targets
