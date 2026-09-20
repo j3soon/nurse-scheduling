@@ -96,6 +96,9 @@ test paths when a narrower suite is known to be sufficient.
 - Keep model-facing tool contracts and output behavior in pinned Pi ports under
   `ai/pi`. Keep E2B execution and service timeout policy in the thin sandbox
   adapter so upstream behavior remains identifiable and testable.
+- When changing `ai/pi`, compare with the exact upstream Pi revision cited in
+  the module header. Preserve model-facing wording and edge-case behavior, add
+  focused regression tests, and document intentional differences beside the port.
 - Retry a provider timeout only before any stream event reaches the caller.
   Once text, reasoning, usage, or a tool call is visible, surface the timeout
   rather than replaying the request and risking duplicate output or tool work.

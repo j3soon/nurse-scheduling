@@ -22,6 +22,7 @@
 # Pi's MIT license is in LICENSE.
 # This code is mostly AI generated.
 
+import math
 from dataclasses import dataclass
 from io import BytesIO
 
@@ -75,8 +76,6 @@ def process_image(content: bytes, media_type: str) -> ProcessedImage | ImageProc
             source = ImageOps.exif_transpose(opened)
             original_width, original_height = source.size
             hints: list[str] = []
-            if converted_from is not None and converted_from != normalized_type:
-                hints.append(f"[Image converted from {converted_from} to {normalized_type}.]")
 
             base64_bytes = ((len(normalized_data) + 2) // 3) * 4
             if (
@@ -84,12 +83,18 @@ def process_image(content: bytes, media_type: str) -> ProcessedImage | ImageProc
                 and original_height <= MAX_IMAGE_DIMENSION
                 and base64_bytes < MAX_IMAGE_BASE64_BYTES
             ):
+                # Pi reports the final encoding in the conversion hint. For
+                # an unresized image that is the normalized type.
+                if converted_from is not None and converted_from != normalized_type:
+                    hints.append(f"[Image converted from {converted_from} to {normalized_type}].")
                 return ProcessedImage(normalized_data, normalized_type, tuple(hints))
 
             resized = _resize_image(source, original_width, original_height)
             if resized is None:
                 return ImageProcessFailure(RESIZE_FAILURE)
             data, result_type, width, height = resized
+            if converted_from is not None and converted_from != result_type:
+                hints.append(f"[Image converted from {converted_from} to {result_type}].")
             scale = original_width / width
             hints.append(
                 f"[Image: original {original_width}x{original_height}, displayed at {width}x{height}. "
@@ -120,10 +125,11 @@ def _resize_image(
 ) -> tuple[bytes, str, int, int] | None:
     width, height = original_width, original_height
     if width > MAX_IMAGE_DIMENSION:
-        height = round(height * MAX_IMAGE_DIMENSION / width)
+        # Match Pi's Math.round: round halves up, unlike Python's banker's round.
+        height = math.floor(height * MAX_IMAGE_DIMENSION / width + 0.5)
         width = MAX_IMAGE_DIMENSION
     if height > MAX_IMAGE_DIMENSION:
-        width = round(width * MAX_IMAGE_DIMENSION / height)
+        width = math.floor(width * MAX_IMAGE_DIMENSION / height + 0.5)
         height = MAX_IMAGE_DIMENSION
 
     while True:
