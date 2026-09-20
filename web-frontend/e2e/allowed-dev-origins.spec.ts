@@ -104,11 +104,11 @@ function exitedWithin(processExited: Promise<number | null>, timeoutMs: number):
 }
 
 async function stopServer(server: ChildProcess, processExited: Promise<number | null>): Promise<void> {
-  if (server.exitCode !== null || server.signalCode !== null) return;
+  if (process.platform === 'win32' && (server.exitCode !== null || server.signalCode !== null)) return;
   killServerTree(server, 'SIGTERM');
-  if (await exitedWithin(processExited, SERVER_STOP_TIMEOUT_MS)) return;
-  killServerTree(server, 'SIGKILL');
   await exitedWithin(processExited, SERVER_STOP_TIMEOUT_MS);
+  // The Bun wrapper can exit while its Next.js child still owns the dev lock.
+  killServerTree(server, 'SIGKILL');
 }
 
 type DevServerFixtures = {
