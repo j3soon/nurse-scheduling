@@ -1769,6 +1769,51 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     assert store.retained_bytes == 600
 
 
+def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
+    # A turn grows a session without passing an admission check, so sessions
+    # admitted cheaply must not keep every answer they produce.
+    settings = make_settings(max_session_bytes=10_000, max_schedule_bytes=1000, max_history_messages=20)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    sessions = [store.create("browser-owner", "a" * 10) for _ in range(5)]
+
+    for _ in range(6):
+        for session in sessions:
+            store.begin(session.id, "browser-owner")
+            store.finish(session.id, "q" * 100, "A" * 5_000, None, base_revision=session.revision)
+
+    # Each session keeps its newest answer, so that floor is what remains.
+    assert store.retained_bytes <= settings.max_session_bytes + 5 * 5_000
+    for session in sessions:
+        history = store._sessions[session.id].history
+        assert history[-1]["content"] == "A" * 5_000
+        assert len(history) < 6 * 2
+
+
+def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
+    settings = make_settings(max_session_bytes=1000, max_schedule_bytes=1000)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "a" * 100)
+    store.begin(session.id, "browser-owner")
+    store.finish(
+        session.id,
+        "question",
+        "answer",
+        ("p" * 400, "d" * 100),
+        base_revision=session.revision,
+    )
+    retained_with_proposal = store.retained_bytes
+
+    # A browser holding a different revision cannot approve, which discards the proposal.
+    with pytest.raises(HTTPException) as exc_info:
+        store.peek_proposal(session.id, "browser-owner", "a" * 64)
+
+    assert exc_info.value.status_code == 409
+    assert store.retained_bytes == retained_with_proposal - 500
+    assert not store._sessions[session.id].proposal_yaml
+
+
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store

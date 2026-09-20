@@ -309,15 +309,33 @@ class SessionStore:
     def _require_capacity(self, additional_bytes: int) -> None:
         """Refuse text that would push retained chat state past the configured budget.
 
-        Checked where a client pushes new text. A turn already under way still stores its
-        answer, proposal, and history, which overshoots by at most the bytes one turn can
-        produce times `max_concurrent_requests`.
+        Checked where a client pushes new text. A completed turn is never refused here,
+        because its answer has already streamed to the user; `_trim_history_to_budget`
+        reclaims the space instead.
 
         Raises:
             HTTPException: With status 429 when the budget is exhausted.
         """
         if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
             raise HTTPException(status_code=429, detail=SESSION_MEMORY_LIMIT_MESSAGE)
+
+    def _trim_history_to_budget(self, session: ChatSession) -> None:
+        """Drop this session's oldest context until retained text fits the budget.
+
+        A turn grows a session without passing an admission check, so sessions admitted
+        cheaply would otherwise accumulate answers and proposals far past the budget and
+        hold them until they expire. Older context is the part a later turn needs least,
+        and the message cap already truncates from the same end.
+
+        Each live session keeps its newest message, because a follow-up question is about
+        the answer the user is reading. Retained text therefore settles at the budget plus
+        one message and any pending proposal per session, rather than growing with every
+        turn.
+        """
+        while self._retained_bytes > self._settings.max_session_bytes and len(session.history) > 1:
+            reclaimed = _text_bytes(session.history.pop(0).get("content"))
+            self._session_bytes[session.id] -= reclaimed
+            self._retained_bytes -= reclaimed
 
     def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
         """Create a session after pruning expired entries."""
@@ -394,6 +412,7 @@ class SessionStore:
             session.steering_queue.clear()
             session.steering_ids.clear()
             self._recount(session)
+            self._trim_history_to_budget(session)
             return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
 
     def queue_steering(
@@ -473,6 +492,7 @@ class SessionStore:
         if session.revision != base_sha256:
             session.proposal_yaml = ""
             session.proposal_diff = ""
+            self._recount(session)
             raise HTTPException(
                 status_code=409,
                 detail="The schedule changed after this proposal was created, so it was discarded.",
