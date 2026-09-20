@@ -146,6 +146,20 @@ For Linux only: to quickly set up all local environments (`core`, `web-frontend`
 
 For Docker-based development environment:
 
+The development images include GitHub CLI. GitHub authentication is optional.
+For read-only GitHub access, create a short-lived
+[fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+with access limited to this repository. Grant read-only repository permissions
+for Contents, Pull requests, Issues, and Actions, then export it on the host:
+
+```sh
+export GH_TOKEN=github_pat_your_token
+```
+
+The run commands below pass `GH_TOKEN` into the container when it is set. Do not
+put the token in the image, this repository, or a tracked environment file. Run
+`gh auth status` inside the container to verify access.
+
 CPU image:
 
 ```sh
@@ -163,6 +177,7 @@ mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
 # mount project files and Codex/Claude Code/OpenCode/Pi config
 docker run --rm -it --network=host \
+  -e GH_TOKEN \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
@@ -195,6 +210,7 @@ mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
 # mount project files and Codex/Claude Code/OpenCode/Pi config
 docker run --rm -it --gpus all --network=host \
+  -e GH_TOKEN \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
@@ -223,6 +239,7 @@ mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
 # mount project files and Codex/Claude Code/OpenCode/Pi config, and forward X11 display
 docker run --rm -it --network=host \
+  -e GH_TOKEN \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
