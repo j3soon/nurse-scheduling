@@ -27,6 +27,7 @@ import json
 import logging
 import subprocess
 from collections.abc import AsyncIterator, Sequence
+from pathlib import Path
 from unittest.mock import ANY
 
 import pytest
@@ -181,7 +182,10 @@ def test_e2b_template_is_built_before_ai_server_is_ready(monkeypatch):
 
     assert len(calls) == 1
     args, kwargs = calls[0]
-    assert args[0][1].endswith("/docker/e2b/build_template.py")
+    build_script = Path(args[0][1])
+    assert build_script.name == "build_template.py"
+    assert build_script.parent.name == "e2b"
+    assert build_script.parent.parent.name == "docker"
     assert kwargs["check"] is True
     assert kwargs["env"]["E2B_API_KEY"] == "test-e2b-key"
     assert kwargs["env"]["E2B_TEMPLATE"] == "test-template"
