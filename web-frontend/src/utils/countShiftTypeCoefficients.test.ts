@@ -41,6 +41,39 @@ describe('countShiftTypeCoefficients', () => {
     expect(afterReselect).toEqual([['D', ''], ['N', 2], ['WORK', '']]);
   });
 
+  it('flattens a nested group listed before the one it references', () => {
+    // Groups are reorderable, so a parent can precede its child.
+    const reordered = {
+      items: [
+        { id: 'D', description: 'Day' },
+        { id: 'N', description: 'Night' },
+        { id: 'E', description: 'Evening' },
+      ],
+      groups: [
+        { id: 'ALL_WORK', members: ['WORK', 'E'], description: 'Every working shift' },
+        { id: 'WORK', members: ['D', 'N'], description: 'Working shifts' },
+      ],
+    };
+
+    expect(getCoefficientShiftTypeIds(['ALL_WORK'], reordered)).toEqual(['D', 'N', 'E', 'ALL_WORK', 'WORK']);
+    // The message names the sources in listing order, which the reorder swaps.
+    expect(validateCoefficientPairs(['ALL_WORK'], [['WORK', 2], ['ALL_WORK', 3]], reordered).overlapError).toBe(
+      'Shift type coefficients overlap: ALL_WORK, WORK include D'
+    );
+  });
+
+  it('terminates on a group cycle that import can produce', () => {
+    const cyclic = {
+      items: [{ id: 'D', description: 'Day' }],
+      groups: [
+        { id: 'A', members: ['B', 'D'], description: 'First' },
+        { id: 'B', members: ['A'], description: 'Second' },
+      ],
+    };
+
+    expect(getCoefficientShiftTypeIds(['D'], cyclic)).toEqual(['D']);
+  });
+
   it('flattens a group that references another group', () => {
     // Nested groups reach the editor through import and the assistant, and the
     // backend flattens them before checking coverage and overlap.
