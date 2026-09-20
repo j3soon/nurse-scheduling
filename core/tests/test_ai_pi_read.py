@@ -24,8 +24,9 @@ import math
 from io import BytesIO
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageFile
 
+from nurse_scheduling.ai.pi import image_process
 from nurse_scheduling.ai.pi.mime import detect_supported_image_mime_type
 from nurse_scheduling.ai.pi.read import (
     READ_TOOL_DESCRIPTION,
@@ -141,6 +142,33 @@ def test_pi_read_resizes_large_images_to_the_upstream_dimension_limit():
     assert result.image is not None
     with Image.open(BytesIO(result.image.data)) as resized:
         assert resized.size == (2_000, 10)
+
+
+@pytest.mark.parametrize(
+    ("image_format", "media_type", "failure_message"),
+    [
+        ("PNG", "image/png", image_process.RESIZE_FAILURE),
+        ("BMP", "image/bmp", image_process.CONVERSION_FAILURE),
+    ],
+)
+def test_pi_read_rejects_oversized_source_before_decoding(
+    monkeypatch: pytest.MonkeyPatch,
+    image_format: str,
+    media_type: str,
+    failure_message: str,
+) -> None:
+    output = BytesIO()
+    Image.new("RGB", (2, 3), "red").save(output, image_format)
+    monkeypatch.setattr(image_process, "MAX_SOURCE_IMAGE_PIXELS", 5)
+
+    def fail_decode(_image: ImageFile.ImageFile) -> None:
+        pytest.fail("Oversized image was decoded")
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", fail_decode)
+
+    result = image_process.process_image(output.getvalue(), media_type)
+
+    assert result == image_process.ImageProcessFailure(failure_message)
 
 
 def test_pi_read_omits_invalid_data_detected_as_an_image():

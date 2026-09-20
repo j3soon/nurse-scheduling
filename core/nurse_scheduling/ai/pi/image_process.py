@@ -29,6 +29,7 @@ from io import BytesIO
 from PIL import Image, ImageOps
 
 MAX_IMAGE_DIMENSION = 2_000
+MAX_SOURCE_IMAGE_PIXELS = 16_000_000
 MAX_IMAGE_BASE64_BYTES = int(4.5 * 1_024 * 1_024)
 CONVERSION_FAILURE = "[Image omitted: could not be converted to a supported inline image format.]"
 RESIZE_FAILURE = "[Image omitted: could not be resized below the inline image size limit.]"
@@ -72,6 +73,9 @@ def process_image(content: bytes, media_type: str) -> ProcessedImage | ImageProc
 
     try:
         with Image.open(BytesIO(normalized_data)) as opened:
+            # Unlike Pi, reject oversized source images before Pillow decodes them.
+            if opened.width * opened.height > MAX_SOURCE_IMAGE_PIXELS:
+                return ImageProcessFailure(RESIZE_FAILURE)
             opened.load()
             source = ImageOps.exif_transpose(opened)
             original_width, original_height = source.size
@@ -109,6 +113,8 @@ def _convert_to_png(content: bytes) -> bytes | None:
     """Convert a provider-unsupported image to PNG as Pi does before resizing."""
     try:
         with Image.open(BytesIO(content)) as opened:
+            if opened.width * opened.height > MAX_SOURCE_IMAGE_PIXELS:
+                return None
             opened.load()
             source = ImageOps.exif_transpose(opened)
             output = BytesIO()
