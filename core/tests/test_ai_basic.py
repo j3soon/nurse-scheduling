@@ -1088,8 +1088,8 @@ def test_environment_configuration_defaults_to_a_fifteen_minute_sandbox_turn(
 
     settings = AiSettings.from_env()
     assert settings.sandbox_turn_timeout_seconds == 900
-    assert settings.agent_max_tool_rounds == 10
-    assert settings.agent_max_tool_calls == 20
+    assert settings.agent_max_tool_rounds == 100
+    assert settings.agent_max_tool_calls == 200
 
 
 def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytest.MonkeyPatch) -> None:
