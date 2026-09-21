@@ -368,13 +368,13 @@ class SessionStore:
         """Replace the schedule snapshot, which drops any proposal made against the old one."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             if session.schedule_yaml == schedule_yaml:
                 return
             session.schedule_yaml = schedule_yaml
             session.revision = schedule_revision(schedule_yaml)
             session.proposal_yaml = ""
             session.proposal_diff = ""
-            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
         """Return the pending proposal and the schedule it would replace, without adopting it."""

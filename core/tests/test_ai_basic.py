@@ -685,6 +685,22 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     assert session.expires_at == 125.0
 
 
+def test_unchanged_schedule_renews_session_with_owner_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 100.0
+    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
+    client = AuthenticatedTestClient(app)
+    schedule = schedule_yaml()
+    session_id = create_session(client, schedule)
+
+    now = 110.0
+    response = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": schedule})
+
+    assert response.status_code == 204
+    assert "Max-Age=20" in response.headers["set-cookie"]
+    assert app.state.session_store.status(session_id, client.cookies.get(OWNER_COOKIE)) == 20
+
+
 def test_legacy_attachment_fields_are_rejected() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
