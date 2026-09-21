@@ -290,6 +290,24 @@ def test_ai_cors_preflight_allows_the_authorization_header() -> None:
     assert "authorization" in allowed
 
 
+def test_ai_cors_preflight_allows_resuming_background_events() -> None:
+    client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
+
+    response = client.options(
+        "/sessions/example/events",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,last-event-id",
+        },
+    )
+
+    assert response.status_code == 200
+    allowed = response.headers["access-control-allow-headers"].lower()
+    assert "authorization" in allowed
+    assert "last-event-id" in allowed
+
+
 def test_ai_generated_api_docs_are_disabled() -> None:
     client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 

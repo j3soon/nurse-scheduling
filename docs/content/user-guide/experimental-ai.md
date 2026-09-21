@@ -25,6 +25,8 @@ you can continue chatting while it solves.
 - Ask it to **finish now** to request the best solution currently available.
 - A small status indicator remains above the message box while optimization is
   running.
+- A background assistant command also shows a running indicator there, even
+  when tool details are hidden.
 - When the run ends, the chat offers the result workbook as a download. The
   assistant receives the score and a copy of the workbook as an attachment. It
   can inspect relevant spreadsheet sections to answer questions about the result,

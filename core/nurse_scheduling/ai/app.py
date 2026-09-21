@@ -703,7 +703,7 @@ def create_app(
         allow_origin_regex=ORIGIN_REGEX,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
     )
     app.state.settings = settings
     app.state.auth_registry = auth_registry

@@ -473,6 +473,7 @@ export default function ExperimentalAiPage() {
   const composerDragDepthRef = useRef(0);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
+  const optimizationDownloadUrlRef = useRef<string | null>(null);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
@@ -725,6 +726,7 @@ export default function ExperimentalAiPage() {
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
+      if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
   }, []);
 
   useEffect(() => {
@@ -924,6 +926,8 @@ export default function ExperimentalAiPage() {
     selectedAttachments.forEach(attachment => {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     });
+    if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+    optimizationDownloadUrlRef.current = null;
     sessionEventsControllerRef.current?.abort();
     sessionEventsControllerRef.current = null;
     lastSessionEventIdRef.current = 0;
@@ -1435,13 +1439,14 @@ export default function ExperimentalAiPage() {
         sessionEndpointRef.current ?? aiEndpoint,
       );
       const downloadUrl = URL.createObjectURL(blob);
+      if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      optimizationDownloadUrlRef.current = downloadUrl;
       const link = document.createElement('a');
       link.href = downloadUrl;
       link.download = `optimized-schedule-${jobId.slice(-8)}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(downloadUrl);
     } catch (downloadError) {
       reportRequestError(downloadError, 'The optimized schedule could not be downloaded.');
     } finally {
@@ -1522,6 +1527,8 @@ export default function ExperimentalAiPage() {
     if (!attachmentPickerDisabled) addAttachments(Array.from(event.dataTransfer.files));
   };
   const serverLocked = sessionIdRef.current !== null || messages.length > 0;
+  const backgroundRunningTool = messages.find(message => message.id === backgroundAssistantIdRef.current)
+    ?.activity?.find(entry => entry.kind === 'tool' && entry.state === 'running');
 
   const applyProposal = async () => {
     const sessionId = sessionIdRef.current;
@@ -1960,6 +1967,12 @@ export default function ExperimentalAiPage() {
           >
             <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-violet-600" />
             <span>Optimizer running in the background · {activeOptimization.state}</span>
+          </div>
+        )}
+        {backgroundRunningTool?.kind === 'tool' && (
+          <div role="status" className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-blue-600" />
+            <span>Background tool running · {backgroundRunningTool.name}</span>
           </div>
         )}
         {queuedMessages.length > 0 && (

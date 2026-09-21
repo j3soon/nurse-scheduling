@@ -21,6 +21,7 @@
 
 import { expect, Page, test } from '@playwright/test';
 import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 
 interface CapturedRequests {
@@ -70,6 +71,10 @@ async function startCancelableAiBackend() {
       response.on('close', () => {
         if (!response.writableEnded) disconnected = true;
       });
+      return;
+    }
+    if (request.url === '/ai/sessions/cancel-session/stop' && request.method === 'POST') {
+      response.writeHead(200, headers).end();
       return;
     }
     response.writeHead(404, headers).end();
@@ -157,6 +162,19 @@ async function mockAiBackend(
       });
       return;
     }
+    if (request.url().endsWith('/sessions/browser-session/events')) {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: '' });
+      return;
+    }
+    if (request.url().endsWith('/sessions/browser-session') && request.method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: corsHeaders,
+        body: JSON.stringify({ expires_in_seconds: 172800 }),
+      });
+      return;
+    }
 
     captured.messageBody = request.postData() ?? '';
     captured.messageBodies.push(captured.messageBody);
@@ -233,10 +251,8 @@ test('authenticates AI session requests with an explicitly remembered token', as
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Authenticated response.')).toBeVisible();
-  expect(captured.authorizationHeaders).toEqual([
-    `Bearer ${authToken}`,
-    `Bearer ${authToken}`,
-  ]);
+  expect(captured.authorizationHeaders.length).toBeGreaterThanOrEqual(2);
+  expect(captured.authorizationHeaders.every(header => header === `Bearer ${authToken}`)).toBe(true);
   expect(await page.evaluate(() => localStorage.getItem('nurse-scheduling-ai-auth'))).toBe(
     JSON.stringify({ tokens: { '/ai': authToken } }),
   );
@@ -283,10 +299,39 @@ test('Stop aborts the active AI stream', async ({ page }) => {
 
     await expect.poll(backend.wasDisconnected).toBe(true);
     await expect(page.getByText('bash · interrupted')).toBeVisible();
-    await expect(page.getByText('This turn failed and was not saved to AI history.')).toBeVisible();
+    await expect(page.getByText('Stopped.')).toBeVisible();
   } finally {
     await backend.close();
   }
+});
+
+test('downloads a completed background optimization from chat', async ({ page }) => {
+  await mockAiBackend(page, ['Optimization started.']);
+  const workbookBytes = Buffer.from('browser-result-workbook');
+  await page.route('**/ai/sessions/browser-session/events', route => route.fulfill({
+    status: 200,
+    contentType: 'text/event-stream',
+    body: [
+      'id: 1\nevent: optimization\ndata: {"job_id":"opt-browser","state":"running","terminal":false,"downloadable":false}\n\n',
+      'id: 2\nevent: optimization\ndata: {"job_id":"opt-browser","state":"completed","terminal":true,"downloadable":true}\n\n',
+    ].join(''),
+  }));
+  await page.route('**/ai/sessions/browser-session/optimizations/opt-browser/xlsx', route => route.fulfill({
+    status: 200,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    body: workbookBytes,
+  }));
+
+  await page.goto('/experimental-ai');
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  const downloadButton = page.getByRole('button', { name: 'Download result' });
+  await expect(downloadButton).toBeVisible();
+  const downloadEvent = page.waitForEvent('download');
+  await downloadButton.click();
+  const download = await downloadEvent;
+  expect(download.suggestedFilename()).toBe('optimized-schedule--browser.xlsx');
+  expect(await readFile(await download.path())).toEqual(workbookBytes);
 });
 
 test('renders assistant Markdown with safe images and copyable code', async ({ page, context }) => {

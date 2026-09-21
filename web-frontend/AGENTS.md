@@ -77,6 +77,9 @@ endpoint and lock the endpoint after a conversation creates a session. A
 self-hosted build may set another default with `NEXT_PUBLIC_AI_API_URL`. When a
 capability-gated control is missing, inspect the capabilities request from the
 exact browser origin. A loopback-only browser check can miss CORS failures.
+Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
+preflight coverage. Keep object URLs for workbook downloads alive until the
+download is replaced or the page unmounts.
 
 To test specific source files from the repository root, run:
 

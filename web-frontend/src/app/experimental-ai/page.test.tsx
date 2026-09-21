@@ -372,6 +372,8 @@ describe('ExperimentalAiPage', () => {
     let backgroundCallbacks: {
       onTurnStart?: (messageId: string, trigger: string) => void;
       onDelta: (text: string) => void;
+      onToolStart?: (activity: { name: string; arguments: string }) => void;
+      onTool?: (activity: { name: string; arguments: string; result: string; ok: boolean }) => void;
       onOptimization?: (activity: {
         jobId: string;
         state: string;
@@ -409,11 +411,22 @@ describe('ExperimentalAiPage', () => {
         downloadable: true,
       });
       backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
+      backgroundCallbacks?.onToolStart?.({ name: 'bash', arguments: '{"command":"echo ready"}' });
+    });
+    expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();
+    expect(screen.getByText('bash · running')).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: 'Show tool activity' }));
+    expect(screen.getByText('Background tool running · bash')).toBeInTheDocument();
+    expect(screen.queryByText('bash · running')).not.toBeInTheDocument();
+
+    act(() => {
+      backgroundCallbacks?.onTool?.({ name: 'bash', arguments: '{"command":"echo ready"}', result: 'ready', ok: true });
       backgroundCallbacks?.onDelta('The optimizer returned score 23.');
       backgroundCallbacks?.onDone?.();
       backgroundCallbacks?.onEventId?.(4);
     });
 
+    expect(screen.queryByText('Background tool running · bash')).not.toBeInTheDocument();
     expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
     expect(screen.getByText('Optimization finished. Download the optimized schedule to review it.')).toBeInTheDocument();
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
@@ -428,7 +441,7 @@ describe('ExperimentalAiPage', () => {
     ));
     expect(createObjectUrl).toHaveBeenCalled();
     expect(clickDownload).toHaveBeenCalled();
-    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:optimizer-result');
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith('blob:optimizer-result');
     expect(screen.getByText('The optimizer returned score 23.')).toBeInTheDocument();
     expect(mockStreamSessionEvents).toHaveBeenCalledWith(
       'session-id',
@@ -446,6 +459,7 @@ describe('ExperimentalAiPage', () => {
       ]));
     });
     firstRender.unmount();
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:optimizer-result');
     render(<ExperimentalAiPage />);
     expect(await screen.findByRole('button', { name: 'Download result' })).toBeInTheDocument();
     expect(screen.getAllByText('The optimizer returned score 23.')).toHaveLength(1);
