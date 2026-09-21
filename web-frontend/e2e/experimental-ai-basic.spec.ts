@@ -47,17 +47,10 @@ async function startCancelableAiBackend() {
     }
     if (request.url === '/ai/capabilities') {
       response.writeHead(200, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify({
-        image_attachments: {
-          enabled: false,
-          accepted_media_types: ['image/png'],
-          max_files: 1,
-          max_bytes_per_file: 1000,
-        },
-        document_attachments: {
-          enabled: false,
-          accepted_extensions: ['.txt'],
-          max_files: 1,
-          max_bytes_per_file: 1000,
+        file_attachments: {
+          enabled: true,
+          max_files: 8,
+          max_bytes_per_file: 5_000_000,
         },
       }));
       return;
@@ -102,7 +95,6 @@ async function startCancelableAiBackend() {
 
 async function mockAiBackend(
   page: Page,
-  attachments: { images: boolean; documents: boolean },
   answerDeltas = ['The image and schedule ', 'were received.'],
   failFirstMessage = false,
   requiredAuthToken?: string,
@@ -135,16 +127,9 @@ async function mockAiBackend(
         headers: corsHeaders,
         body: JSON.stringify({
           ...(requiredAuthToken ? { auth: { required: true, scheme: 'bearer' } } : {}),
-          image_attachments: {
-            enabled: attachments.images,
-            accepted_media_types: ['image/jpeg', 'image/png', 'image/webp'],
-            max_files: 4,
-            max_bytes_per_file: 5_000_000,
-          },
-          document_attachments: {
-            enabled: attachments.documents,
-            accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-            max_files: 4,
+          file_attachments: {
+            enabled: true,
+            max_files: 8,
             max_bytes_per_file: 5_000_000,
           },
         }),
@@ -198,11 +183,11 @@ async function mockAiBackend(
 }
 
 test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
-  const captured = await mockAiBackend(page, { images: false, documents: false });
+  const captured = await mockAiBackend(page);
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who works first?');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   const composerBox = await page.locator('main form').boundingBox();
@@ -230,7 +215,6 @@ test('authenticates AI session requests with an explicitly remembered token', as
   const authToken = 'browser-ai-auth-token';
   const captured = await mockAiBackend(
     page,
-    { images: false, documents: false },
     ['Authenticated response.'],
     false,
     authToken,
@@ -246,7 +230,7 @@ test('authenticates AI session requests with an explicitly remembered token', as
 
   await expect(composer).toBeEnabled();
   await composer.fill('Use the protected service.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Authenticated response.')).toBeVisible();
   expect(captured.authorizationHeaders).toEqual([
@@ -261,14 +245,13 @@ test('authenticates AI session requests with an explicitly remembered token', as
 test('retries a failed text turn without hiding its provisional activity', async ({ page }) => {
   const captured = await mockAiBackend(
     page,
-    { images: false, documents: false },
     ['Recovered response.'],
     true,
   );
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who works first?');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
   await expect(page.getByText('This turn failed and was not saved to AI history.')).toBeVisible();
@@ -293,7 +276,7 @@ test('Stop aborts the active AI stream', async ({ page }) => {
   try {
     await page.goto('/experimental-ai');
     await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Wait for this command.');
-    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
 
     await expect(page.getByText('bash · running')).toBeVisible();
     await page.getByRole('button', { name: 'Stop' }).click();
@@ -310,7 +293,6 @@ test('renders assistant Markdown with safe images and copyable code', async ({ p
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await mockAiBackend(
     page,
-    { images: false, documents: false },
     [
       '## Coverage\n\n**Alice** works Monday.\n\n',
       '| Person | Shift |\n| --- | --- |\n| Alice | D |\n\n```yaml\npeople: []\n```\n\n![tracker](https://tracker.example/pixel.png)',
@@ -319,7 +301,7 @@ test('renders assistant Markdown with safe images and copyable code', async ({ p
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Summarize coverage.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByRole('heading', { level: 2, name: 'Coverage' })).toBeVisible();
   await expect(page.getByRole('table')).toContainText('Alice');
@@ -342,11 +324,11 @@ test('renders assistant Markdown with safe images and copyable code', async ({ p
 
 test('offers a shortcut when the reader scrolls away from the latest message', async ({ page }) => {
   const longAnswer = Array.from({ length: 80 }, (_, index) => `Coverage detail ${index + 1}`).join('\n');
-  await mockAiBackend(page, { images: false, documents: false }, [longAnswer]);
+  await mockAiBackend(page, [longAnswer]);
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Give detailed coverage.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   const messages = page.getByRole('region', { name: 'Chat messages' });
   const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
@@ -375,8 +357,8 @@ test('offers a shortcut when the reader scrolls away from the latest message', a
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(scrolledAwayY);
 });
 
-test('previews and sends an enabled image attachment', async ({ page }) => {
-  const captured = await mockAiBackend(page, { images: true, documents: false });
+test('previews and sends an image attachment', async ({ page }) => {
+  const captured = await mockAiBackend(page);
   const png = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64',
@@ -386,7 +368,7 @@ test('previews and sends an enabled image attachment', async ({ page }) => {
   await page.getByLabel('Attach files').setInputFiles({ name: 'ward.png', mimeType: 'image/png', buffer: png });
   await expect(page.getByAltText('Preview of ward.png')).toBeVisible();
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('What is shown?');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
   await expect(page.getByText('Attached: ward.png')).toBeVisible();
@@ -395,8 +377,8 @@ test('previews and sends an enabled image attachment', async ({ page }) => {
   expect(captured.messageBody).toContain('ward.png');
 });
 
-test('previews and sends enabled document attachments', async ({ page }) => {
-  const captured = await mockAiBackend(page, { images: false, documents: true });
+test('previews and sends arbitrary file attachments', async ({ page }) => {
+  const captured = await mockAiBackend(page);
 
   await page.goto('/experimental-ai');
   await page.getByLabel('Attach files').setInputFiles([
@@ -411,23 +393,23 @@ test('previews and sends enabled document attachments', async ({ page }) => {
       buffer: Buffer.from('%PDF-1.4 test'),
     },
     {
-      name: 'coverage.xlsx',
-      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      buffer: Buffer.from('xlsx test'),
+      name: 'coverage.custom',
+      mimeType: 'application/x-custom',
+      buffer: Buffer.from('custom test'),
     },
   ]);
   await expect(page.getByText('csv', { exact: true })).toBeVisible();
   await expect(page.getByText('pdf', { exact: true })).toBeVisible();
-  await expect(page.getByText('xlsx', { exact: true })).toBeVisible();
+  await expect(page.getByText('custom', { exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Check the documents.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
-  await expect(page.getByText('Attached: staff.csv, notes.pdf, coverage.xlsx')).toBeVisible();
+  await expect(page.getByText('Attached: staff.csv, notes.pdf, coverage.custom')).toBeVisible();
   expect(captured.messageContentType).toContain('multipart/form-data');
-  expect(captured.messageBody).toContain('name="documents"');
+  expect(captured.messageBody).toContain('name="files"');
   expect(captured.messageBody).toContain('staff.csv');
   expect(captured.messageBody).toContain('notes.pdf');
-  expect(captured.messageBody).toContain('coverage.xlsx');
+  expect(captured.messageBody).toContain('coverage.custom');
   expect(captured.messageBody).toContain('Alice,day');
 });

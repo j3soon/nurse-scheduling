@@ -1973,7 +1973,7 @@ export default function ShiftRequestsPage() {
                               return (
                                 <div key={index} className="text-sm text-blue-600">
                                   <span className="font-medium">H-{historyPosition}:</span>{' '}
-                                  <span className="text-blue-900">{shiftTypeId}</span>
+                                  <span className="text-blue-900">{shiftTypeId || '—'}</span>
                                   {shiftType?.description && (
                                     <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{shiftType.description}</div>
                                   )}

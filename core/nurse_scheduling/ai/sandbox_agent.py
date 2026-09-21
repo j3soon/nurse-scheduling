@@ -20,7 +20,9 @@
 # This code is mostly AI generated.
 
 import asyncio
+import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -54,9 +56,15 @@ logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
 WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
 WORKSPACE_PENDING_PROPOSAL = "/workspace/pending-proposal.yaml"
 WORKSPACE_PENDING_DIFF = "/workspace/pending-proposal.diff"
+WORKSPACE_ATTACHMENTS = "/workspace/attachments"
+WORKSPACE_ATTACHMENT_MANIFEST = f"{WORKSPACE_ATTACHMENTS}/manifest.json"
 REFERENCE_SCHEMAS = {group: f"/reference/{path.name}" for group, path in SCHEMA_REFERENCE_FILES.items()}
 REFERENCE_SCHEMAS["taiwan-holidays"] = f"/reference/{TAIWAN_HOLIDAYS_SOURCE.name}"
 REFERENCE_USER_GUIDE = "/reference/user-guide"
+ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
+REFERENCE_ATTACHMENT_TOOLS = {
+    f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in ("inspect_xlsx.py", "inspect_pdf.py")
+}
 
 SYSTEM_PROMPT_PATH = Path(__file__).with_name("prompts") / "sandbox-system.md"
 SANDBOX_SYSTEM_PROMPT = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").rstrip("\n")
@@ -75,6 +83,15 @@ class AgentScheduleChange:
     """A server-validated working copy safe to preview in the UI."""
 
     schedule_yaml: str
+
+
+@dataclass(frozen=True)
+class SandboxAttachment:
+    """One bounded untrusted upload copied into a disposable sandbox."""
+
+    filename: str
+    media_type: str
+    data: bytes
 
 
 @dataclass(frozen=True)
@@ -127,6 +144,7 @@ async def _measured_sandbox_turn(
     schedule_yaml: str,
     pending_proposal_yaml: str,
     pending_proposal_diff: str,
+    attachments: Sequence[SandboxAttachment],
 ) -> AsyncIterator[SandboxBackend]:
     """Create, hydrate, and measure a sandbox only when its first tool batch begins."""
     stack = AsyncExitStack()
@@ -138,6 +156,7 @@ async def _measured_sandbox_turn(
         schedule_yaml,
         pending_proposal_yaml,
         pending_proposal_diff,
+        attachments,
     )
     try:
         async with stack:
@@ -161,6 +180,7 @@ class _LazySandboxTurn:
         schedule_yaml: str,
         pending_proposal_yaml: str,
         pending_proposal_diff: str,
+        attachments: Sequence[SandboxAttachment],
     ) -> None:
         self._factory = factory
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
@@ -169,6 +189,7 @@ class _LazySandboxTurn:
         self._schedule_yaml = schedule_yaml
         self._pending_proposal_yaml = pending_proposal_yaml
         self._pending_proposal_diff = pending_proposal_diff
+        self._attachments = tuple(attachments)
         self._sandbox: SandboxBackend | None = None
         self._lifecycle_started: float | None = None
         self._cleanup_started: float | None = None
@@ -196,6 +217,7 @@ class _LazySandboxTurn:
             self._schedule_yaml,
             self._pending_proposal_yaml,
             self._pending_proposal_diff,
+            self._attachments,
         )
         return self._sandbox
 
@@ -268,6 +290,7 @@ async def run_sandbox_agent(
     pending_proposal_yaml: str = "",
     pending_proposal_diff: str = "",
     execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None = None,
+    attachments: Sequence[SandboxAttachment] = (),
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
@@ -280,8 +303,12 @@ async def run_sandbox_agent(
                 schedule_yaml,
                 pending_proposal_yaml,
                 pending_proposal_diff,
+                attachments,
             ) as sandbox:
-                sandbox_tools = SandboxPiTools(sandbox, limits.bash_command_timeout_seconds)
+                sandbox_tools = SandboxPiTools(
+                    sandbox,
+                    limits.bash_command_timeout_seconds,
+                )
                 candidate_tracker = _ScheduleCandidateTracker(
                     sandbox,
                     schedule_yaml,
@@ -372,6 +399,7 @@ async def hydrate_sandbox(
     schedule_yaml: str,
     pending_proposal_yaml: str = "",
     pending_proposal_diff: str = "",
+    attachments: Sequence[SandboxAttachment] = (),
 ) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
@@ -386,6 +414,28 @@ async def hydrate_sandbox(
         files[path] = reference
     for relative_path, reference in load_user_guide_references().items():
         files[f"{REFERENCE_USER_GUIDE}/{relative_path}"] = reference
+    for destination, source in REFERENCE_ATTACHMENT_TOOLS.items():
+        files[destination] = source.read_text(encoding="utf-8")
+    if attachments:
+        manifest = []
+        for index, attachment in enumerate(attachments, start=1):
+            safe_name = _safe_attachment_name(attachment.filename, index)
+            path = f"{WORKSPACE_ATTACHMENTS}/{safe_name}"
+            files[path] = attachment.data
+            manifest.append(
+                {
+                    "original_filename": attachment.filename,
+                    "path": path,
+                    "media_type": attachment.media_type,
+                    "bytes": len(attachment.data),
+                    "trusted": False,
+                }
+            )
+        files[WORKSPACE_ATTACHMENT_MANIFEST] = json.dumps(
+            {"attachments": manifest},
+            ensure_ascii=False,
+            indent=2,
+        )
     # One request, because hydration now precedes the first tool result rather than the turn.
     await sandbox.write_files(files)
     logger.info(
@@ -395,6 +445,15 @@ async def hydrate_sandbox(
         len(schedule_yaml.encode("utf-8")),
         time.perf_counter() - started,
     )
+
+
+def _safe_attachment_name(filename: str, index: int) -> str:
+    """Create a deterministic basename below the fixed attachment directory."""
+    basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", basename).strip("._")
+    if not sanitized:
+        sanitized = "attachment"
+    return f"{index:02d}-{sanitized[:120]}"
 
 
 async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> str:

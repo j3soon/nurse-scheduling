@@ -62,8 +62,7 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
         contentType: 'application/json',
         headers: corsHeaders,
         body: JSON.stringify({
-          image_attachments: { enabled: false, accepted_media_types: [], max_files: 4, max_bytes_per_file: 1 },
-          document_attachments: { enabled: false, accepted_extensions: [], max_files: 4, max_bytes_per_file: 1 },
+          file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5_000_000 },
         }),
       });
       return;
@@ -115,7 +114,7 @@ test('approves a proposed schedule and applies it as one undoable step', async (
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   const proposal = page.getByRole('region', { name: 'Proposed schedule change' });
   await expect(proposal).toBeVisible();
@@ -141,7 +140,7 @@ test('keeps the schedule when a proposal is rejected', async ({ page }) => {
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByRole('button', { name: 'Reject' }).click();
 
   await expect(page.getByRole('region', { name: 'Proposed schedule change' })).toBeHidden();
@@ -155,12 +154,12 @@ test('sends the applied schedule to the session before the next question', async
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByRole('button', { name: 'Approve' }).click();
   await expect(page.getByText('The proposed schedule was applied.')).toBeVisible();
 
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who is on shift?');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   // The approved schedule replaced the one the session was created with.
   await expect.poll(() => state.refreshed.length).toBe(1);
@@ -172,7 +171,7 @@ test('keeps reasoning and tool detail out of the way until asked for', async ({ 
 
   await page.goto('/experimental-ai');
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
-  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   const reasoning = page.getByText('The ward has one nurse, so I will add another.');
   await expect(page.getByText(/^Reasoning ·/)).toBeVisible();

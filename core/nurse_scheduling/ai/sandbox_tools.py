@@ -69,7 +69,11 @@ TOOL_NAMES = (READ_TOOL, BASH_TOOL, EDIT_TOOL, WRITE_TOOL)
 class SandboxPiTools:
     """Keep sandbox and application policy outside the Pi-derived behavior."""
 
-    def __init__(self, sandbox: SandboxBackend, command_timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        sandbox: SandboxBackend,
+        command_timeout_seconds: float,
+    ) -> None:
         if command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
         self._sandbox = sandbox
@@ -112,7 +116,7 @@ class SandboxPiTools:
             result = render_read_result(content, call)
         except ReadArgumentError as exc:
             return AgentToolOutcome(str(exc), False)
-        return AgentToolOutcome(result.text, True)
+        return AgentToolOutcome(result.text, True, result.image)
 
     async def _bash(self, arguments: str) -> AgentToolOutcome:
         try:

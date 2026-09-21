@@ -42,6 +42,8 @@ export interface OptimizationActivity {
 }
 
 export interface StreamCallbacks {
+  lastEventId?: number;
+  onEventId?: (id: number) => void;
   onTurnStart?: (messageId: string, trigger: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
@@ -58,15 +60,9 @@ export interface StreamCallbacks {
 
 export interface AiCapabilities {
   auth: AuthRequirement | null;
-  image_attachments: {
+  session_retention_seconds: number;
+  file_attachments: {
     enabled: boolean;
-    accepted_media_types: string[];
-    max_files: number;
-    max_bytes_per_file: number;
-  };
-  document_attachments: {
-    enabled: boolean;
-    accepted_extensions: string[];
     max_files: number;
     max_bytes_per_file: number;
   };
@@ -77,12 +73,15 @@ export interface AiCapabilities {
 }
 
 export interface MessageAttachments {
-  images?: File[];
-  documents?: File[];
+  files?: File[];
 }
 
 interface SessionResponse {
   id: string;
+}
+
+interface SessionStatusResponse {
+  expires_in_seconds: number;
 }
 
 interface SsePayload {
@@ -118,6 +117,7 @@ export class AiStaleTurnError extends Error {
 
 export const PRODUCTION_AI_API_URL = 'https://api.nursescheduling.org/ai';
 export const LOCAL_AI_API_URL = 'http://localhost:8001';
+export const DEFAULT_SESSION_RETENTION_SECONDS = 48 * 60 * 60;
 
 export function getAiBaseUrl(): string {
   const configuredUrl = process.env.NEXT_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');
@@ -174,31 +174,24 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
 
   const body = await response.json() as Partial<AiCapabilities>;
   const auth = parseAuthRequirement(body.auth);
-  const images = body.image_attachments;
-  const documents = body.document_attachments;
   const optimizer = body.optimizer ?? { enabled: false, max_runs_per_session: 1 };
+  const sessionRetention = body.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS;
+  const files = body.file_attachments;
   if (
-    typeof images?.enabled !== 'boolean'
-    || !Array.isArray(images.accepted_media_types)
-    || !images.accepted_media_types.every(mediaType => typeof mediaType === 'string')
-    || !Number.isInteger(images.max_files)
-    || images.max_files <= 0
-    || !Number.isInteger(images.max_bytes_per_file)
-    || images.max_bytes_per_file <= 0
-    || typeof documents?.enabled !== 'boolean'
-    || !Array.isArray(documents.accepted_extensions)
-    || !documents.accepted_extensions.every(extension => typeof extension === 'string')
-    || !Number.isInteger(documents.max_files)
-    || documents.max_files <= 0
-    || !Number.isInteger(documents.max_bytes_per_file)
-    || documents.max_bytes_per_file <= 0
+    !Number.isInteger(sessionRetention)
+    || sessionRetention <= 0
+    || files?.enabled !== true
+    || !Number.isInteger(files.max_files)
+    || files.max_files <= 0
+    || !Number.isInteger(files.max_bytes_per_file)
+    || files.max_bytes_per_file <= 0
     || typeof optimizer.enabled !== 'boolean'
     || !Number.isInteger(optimizer.max_runs_per_session)
     || optimizer.max_runs_per_session <= 0
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
-  return { ...body, auth, optimizer } as AiCapabilities;
+  return { ...body, auth, optimizer, session_retention_seconds: sessionRetention } as AiCapabilities;
 }
 
 export async function createSession(
@@ -221,8 +214,27 @@ export async function createSession(
   return body.id;
 }
 
+export async function getSessionStatus(
+  sessionId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<number> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}`, {
+    credentials: 'include',
+    headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+
+  const body = await response.json() as Partial<SessionStatusResponse>;
+  if (!Number.isInteger(body.expires_in_seconds) || (body.expires_in_seconds ?? 0) <= 0) {
+    throw new Error('The AI backend returned an invalid session status.');
+  }
+  return body.expires_in_seconds as number;
+}
+
 function consumeEvent(block: string, callbacks: StreamCallbacks): void {
   const lines = block.split('\n');
+  const eventId = Number(lines.find(line => line.startsWith('id:'))?.slice('id:'.length).trim());
   const eventType = lines.find(line => line.startsWith('event:'))?.slice('event:'.length).trim() ?? 'message';
   const rawData = lines
     .filter(line => line.startsWith('data:'))
@@ -297,6 +309,7 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     if (callbacks.onError) callbacks.onError(message);
     else throw new Error(message);
   }
+  if (Number.isSafeInteger(eventId) && eventId > 0) callbacks.onEventId?.(eventId);
 }
 
 export async function streamMessage(
@@ -308,15 +321,13 @@ export async function streamMessage(
   attachments: MessageAttachments = {},
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const images = attachments.images ?? [];
-  const documents = attachments.documents ?? [];
+  const files = attachments.files ?? [];
   let body: BodyInit;
   let headers: Record<string, string> | undefined;
-  if (images.length > 0 || documents.length > 0) {
+  if (files.length > 0) {
     const form = new FormData();
     form.append('message', message);
-    images.forEach(image => form.append('images', image, image.name));
-    documents.forEach(document => form.append('documents', document, document.name));
+    files.forEach(file => form.append('files', file, file.name));
     body = form;
   } else {
     headers = { 'Content-Type': 'application/json' };
@@ -368,7 +379,10 @@ export async function streamSessionEvents(
   const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/events`, {
     method: 'GET',
     credentials: 'include',
-    headers: authorizedHeaders(authToken),
+    headers: authorizedHeaders(
+      authToken,
+      callbacks.lastEventId ? { 'Last-Event-ID': String(callbacks.lastEventId) } : undefined,
+    ),
     signal,
   });
   if (!response.ok) throw await responseError(response);

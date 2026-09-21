@@ -22,6 +22,7 @@
 # This code is mostly AI generated.
 
 import json
+import re
 import unicodedata
 from dataclasses import dataclass
 from itertools import pairwise
@@ -378,7 +379,9 @@ def _line_spans(content: str) -> list[_LineSpan]:
 
 
 def _split_lines_with_endings(content: str) -> list[str]:
-    return content.splitlines(keepends=True)
+    # Match Pi's LF-only line regex, which differs from str.splitlines:
+    # splitlines also breaks on form feed, vertical tab, and other boundaries.
+    return re.findall(r"[^\n]*\n|[^\n]+", content)
 
 
 def _split_bom(content: str) -> tuple[str, str]:

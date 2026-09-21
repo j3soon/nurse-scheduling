@@ -32,6 +32,7 @@ from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.schedule_context import describe_schedule
 from nurse_scheduling.loader import _load_yaml
 
+from .ai_eval.attachment_fixtures import attachment_fixture_names
 from .ai_eval.grading import (
     EvalCaseError,
     RunOutcome,
@@ -687,6 +688,7 @@ def test_every_case_sits_in_a_category_directory():
         "basics/08-proposal-lifecycle",
         "basics/09-holdout",
         "basics/10-app-ui",
+        "basics/11-attachments",
     }
     assert all(
         not case.expect_proposal for case in cases if case.category.endswith(("00-summary", "01-reading", "06-refusal"))
@@ -696,6 +698,13 @@ def test_every_case_sits_in_a_category_directory():
         for case in cases
         if case.category.removeprefix("basics/").startswith(("02", "03", "04", "05"))
     )
+
+
+def test_every_attachment_fixture_name_is_known():
+    known = attachment_fixture_names()
+
+    for case in load_cases(CASES_PATH):
+        assert set(case.attachments) <= known, f"{case.id} names an unknown attachment fixture"
 
 
 def test_reading_questions_cannot_be_answered_from_the_prompt_summary():

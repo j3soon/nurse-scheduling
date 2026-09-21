@@ -27,6 +27,7 @@ import {
   downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
+  getSessionStatus,
   isOfficialAiEndpoint,
   queueMessage,
   rejectProposal,
@@ -76,50 +77,47 @@ describe('AI client', () => {
 
   it('validates attachment capabilities', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      image_attachments: {
+      file_attachments: {
         enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 5000,
-      },
-      document_attachments: {
-        enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 3,
+        max_files: 5,
         max_bytes_per_file: 5000000,
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
 
     await expect(getCapabilities()).resolves.toEqual({
       auth: null,
-      image_attachments: {
+      session_retention_seconds: 172800,
+      file_attachments: {
         enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 5000,
-      },
-      document_attachments: {
-        enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 3,
+        max_files: 5,
         max_bytes_per_file: 5000000,
       },
       optimizer: { enabled: false, max_runs_per_session: 1 },
     });
   });
 
+  it('checks a stored session without sending a keepalive request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ expires_in_seconds: 120 }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getSessionStatus('session/id', 'ai-client-token')).resolves.toBe(120);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid',
+      {
+        credentials: 'include',
+        headers: { Authorization: 'Bearer ai-client-token' },
+      },
+    );
+  });
+
   it('reads the advertised AI authentication requirement', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       auth: { required: true, scheme: 'Bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
+      file_attachments: {
+        enabled: true,
         max_files: 1,
         max_bytes_per_file: 1,
       },
@@ -233,7 +231,7 @@ describe('AI client', () => {
     )).rejects.toEqual(new AiStaleTurnError('The schedule changed.'));
   });
 
-  it('sends images as multipart form data', async () => {
+  it('sends arbitrary files as multipart form data', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'event: done\ndata: {"message_id":"message-id"}\n\n',
     ]));
@@ -246,7 +244,7 @@ describe('AI client', () => {
       { onDelta: vi.fn() },
       new AbortController().signal,
       null,
-      { images: [image] },
+      { files: [image] },
     );
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
@@ -254,31 +252,7 @@ describe('AI client', () => {
     expect(request.body).toBeInstanceOf(FormData);
     const form = request.body as FormData;
     expect(form.get('message')).toBe('What is shown?');
-    expect(form.getAll('images')).toEqual([image]);
-  });
-
-  it('sends text documents as multipart form data', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
-      'event: done\ndata: {"message_id":"message-id"}\n\n',
-    ]));
-    vi.stubGlobal('fetch', fetchMock);
-    const document = new File(['name,shift\nAlice,day\n'], 'staff.csv', { type: 'text/csv' });
-
-    await streamMessage(
-      'session-id',
-      'Check the file.',
-      { onDelta: vi.fn() },
-      new AbortController().signal,
-      null,
-      { documents: [document] },
-    );
-
-    const request = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(request.headers).toBeUndefined();
-    expect(request.body).toBeInstanceOf(FormData);
-    const form = request.body as FormData;
-    expect(form.get('message')).toBe('Check the file.');
-    expect(form.getAll('documents')).toEqual([document]);
+    expect(form.getAll('files')).toEqual([image]);
   });
 
   it('forwards tool use and a proposal to the caller', async () => {
@@ -337,6 +311,7 @@ describe('AI client', () => {
     const texts: string[] = [];
     const done = vi.fn();
     const optimizations = vi.fn();
+    const eventIds: number[] = [];
 
     await streamSessionEvents(
       'session/id',
@@ -345,6 +320,7 @@ describe('AI client', () => {
         onDelta: text => texts.push(text),
         onOptimization: optimizations,
         onDone: done,
+        onEventId: id => eventIds.push(id),
       },
       new AbortController().signal,
       'event-token',
@@ -353,6 +329,7 @@ describe('AI client', () => {
     expect(starts).toEqual(['background-1:optimizer']);
     expect(texts).toEqual(['Score 23.']);
     expect(done).toHaveBeenCalledOnce();
+    expect(eventIds).toEqual([1, 2, 3, 4]);
     expect(optimizations).toHaveBeenCalledWith({
       jobId: 'opt-1',
       state: 'running',
@@ -367,6 +344,23 @@ describe('AI client', () => {
         headers: { Authorization: 'Bearer event-token' },
         signal: expect.any(AbortSignal),
       },
+    );
+  });
+
+  it('resumes background events after the stored cursor', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamSessionEvents(
+      'session-id',
+      { lastEventId: 4, onDelta: vi.fn() },
+      new AbortController().signal,
+      null,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session-id/events',
+      expect.objectContaining({ headers: { 'Last-Event-ID': '4' } }),
     );
   });
 

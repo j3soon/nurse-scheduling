@@ -20,19 +20,18 @@
 # This code is mostly AI generated.
 
 import asyncio
-import base64
 import hashlib
 import json
 import logging
+import math
 import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from pathlib import PurePath
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,16 +39,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .config import AiSettings, validate_ai_auth_credentials
-from .documents import DocumentExtractionLimits, DocumentLimitError, InvalidDocumentError, extract_document_text
 from .history import ChatHistory, stop_maintenance
 from .optimizer import HttpOptimizerBackend, OptimizerBackend, OptimizerResultUnavailable, SessionOptimizer
 from .provider import (
-    ChatContent,
     ChatMessage,
     OpenAiCompatibleProvider,
     ProviderError,
@@ -62,6 +60,7 @@ from .sandbox_agent import (
     SANDBOX_SYSTEM_PROMPT,
     AgentScheduleChange,
     SandboxAgentLimits,
+    SandboxAttachment,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
@@ -96,14 +95,6 @@ ORIGIN_REGEX = (
     r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
     r"https://([a-zA-Z0-9-]+\.)?nursescheduling\.org)$"
 )
-SUPPORTED_IMAGE_MEDIA_TYPES = ("image/jpeg", "image/png", "image/webp")
-SUPPORTED_DOCUMENT_MEDIA_TYPES = {
-    ".txt": ("text/plain",),
-    ".md": ("text/markdown", "text/plain"),
-    ".csv": ("text/csv", "application/csv", "application/vnd.ms-excel", "text/plain"),
-    ".pdf": ("application/pdf",),
-    ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",),
-}
 logger = logging.getLogger("nurse_scheduling.ai")
 request_logger = logging.getLogger("nurse_scheduling.ai.requests")
 
@@ -161,6 +152,12 @@ class CreateSessionResponse(BaseModel):
     id: str
 
 
+class SessionStatusResponse(BaseModel):
+    """Remaining lifetime for one browser-owned chat session."""
+
+    expires_in_seconds: int
+
+
 class CreateSessionRequest(BaseModel):
     """The schedule snapshot owned by a new chat session."""
 
@@ -187,20 +184,10 @@ class HealthResponse(BaseModel):
     api_version: str = API_VERSION
 
 
-class ImageAttachmentCapability(BaseModel):
-    """Public limits for the optional image input feature."""
+class FileAttachmentCapability(BaseModel):
+    """Public limits for arbitrary files copied into the sandbox."""
 
     enabled: bool
-    accepted_media_types: tuple[str, ...]
-    max_files: int
-    max_bytes_per_file: int
-
-
-class DocumentAttachmentCapability(BaseModel):
-    """Public limits for documents converted to text by the backend."""
-
-    enabled: bool
-    accepted_extensions: tuple[str, ...]
     max_files: int
     max_bytes_per_file: int
 
@@ -215,32 +202,25 @@ class OptimizerCapability(BaseModel):
 class CapabilitiesResponse(BaseModel):
     """Enabled experimental features and their public limits."""
 
-    image_attachments: ImageAttachmentCapability
-    document_attachments: DocumentAttachmentCapability
     optimizer: OptimizerCapability
+    file_attachments: FileAttachmentCapability
+    session_retention_seconds: int
     auth: dict[str, bool | str]
-
-
-@dataclass(frozen=True)
-class ImageAttachment:
-    """One validated image kept only for the active provider request."""
-
-    media_type: str
-    data: bytes
-
-
-@dataclass(frozen=True)
-class DocumentAttachment:
-    """One validated document kept only for the active provider request."""
-
-    filename: str
-    media_type: str
-    text: str
 
 
 def schedule_revision(schedule_yaml: str) -> str:
     """Identify one exact schedule snapshot, so a stale proposal cannot be applied."""
     return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
+
+
+def owner_cookie_token(owner: str | None) -> str:
+    """Return a canonical browser owner token or replace an invalid value."""
+    if owner is not None:
+        try:
+            return str(UUID(owner))
+        except ValueError:
+            pass
+    return str(uuid4())
 
 
 @dataclass
@@ -335,6 +315,12 @@ class SessionStore:
         with self._lock:
             self._get_owned(session_id, owner_token)
 
+    def status(self, session_id: str, owner_token: str | None) -> int:
+        """Return the remaining lifetime without extending the session."""
+        with self._lock:
+            session = self._get_owned(session_id, owner_token)
+            return max(1, math.ceil(session.expires_at - time.monotonic()))
+
     def finish(
         self,
         session_id: str,
@@ -411,6 +397,7 @@ class SessionStore:
         """Replace the schedule snapshot, which drops any proposal made against the old one."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             if session.schedule_yaml == schedule_yaml:
                 return
             session.schedule_yaml = schedule_yaml
@@ -434,6 +421,7 @@ class SessionStore:
             session.schedule_yaml = approved
             session.revision = schedule_revision(approved)
             self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             return approved
 
     def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> ChatSession:
@@ -464,6 +452,7 @@ class SessionStore:
             session.proposal_diff = ""
             if had_proposal:
                 self._append_history_event(session, history_event)
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
     def abort(self, session_id: str) -> None:
         """Release a session without recording an incomplete response."""
@@ -548,89 +537,22 @@ def _sse_event(event_type: str, data: dict[str, object]) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
-# Upload MIME types are client-declared. Narrow signature checks avoid adding an image-decoder dependency.
-def _sniff_image_media_type(data: bytes) -> str | None:
-    """Sniff a supported media type from file signatures without decoding."""
-    if len(data) >= 24 and data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
-        return "image/png"
-    if len(data) >= 4 and data.startswith(b"\xff\xd8\xff") and b"\xff\xd9" in data[3:]:
-        return "image/jpeg"
-    if (
-        len(data) >= 12
-        and data.startswith(b"RIFF")
-        and data[8:12] == b"WEBP"
-        and int.from_bytes(data[4:8], "little") + 8 == len(data)
-    ):
-        return "image/webp"
-    return None
-
-
-async def _read_images(uploads: list[UploadFile], settings: AiSettings) -> list[ImageAttachment]:
-    """Read bounded image uploads and verify their declared and actual types."""
+async def _read_files(uploads: list[UploadFile], settings: AiSettings) -> list[SandboxAttachment]:
+    """Read arbitrary bounded files without interpreting or executing them."""
     if not uploads:
         return []
-    if settings.attachment_mode != "images":
-        raise HTTPException(status_code=422, detail="Image attachments are disabled.")
-    if len(uploads) > settings.max_image_files:
-        raise HTTPException(status_code=413, detail="Too many image attachments.")
+    if len(uploads) > settings.max_attachment_files:
+        raise HTTPException(status_code=413, detail="Too many file attachments.")
 
-    images: list[ImageAttachment] = []
-    for upload in uploads:
-        declared_type = (upload.content_type or "").lower()
-        if declared_type not in SUPPORTED_IMAGE_MEDIA_TYPES:
-            raise HTTPException(status_code=415, detail="Unsupported image type.")
-        data = await upload.read(settings.max_image_bytes + 1)
-        if len(data) > settings.max_image_bytes:
-            raise HTTPException(status_code=413, detail="Image attachment is too large.")
-        detected_type = _sniff_image_media_type(data)
-        if detected_type is None or detected_type != declared_type:
-            raise HTTPException(status_code=415, detail="Image content does not match its type.")
-        images.append(ImageAttachment(media_type=detected_type, data=data))
-    return images
-
-
-async def _read_documents(
-    uploads: list[UploadFile],
-    settings: AiSettings,
-    concurrency_limit: asyncio.Semaphore,
-) -> list[DocumentAttachment]:
-    """Read bounded documents, verify their types, and extract prompt text."""
-    if not uploads:
-        return []
-    if settings.document_attachment_mode != "text":
-        raise HTTPException(status_code=422, detail="Document attachments are disabled.")
-    if len(uploads) > settings.max_document_files:
-        raise HTTPException(status_code=413, detail="Too many document attachments.")
-
-    limits = DocumentExtractionLimits(
-        max_text_chars=settings.max_document_text_chars,
-        max_pdf_pages=settings.max_pdf_pages,
-        max_xlsx_sheets=settings.max_xlsx_sheets,
-        max_xlsx_cells=settings.max_xlsx_cells,
-        max_xlsx_uncompressed_bytes=settings.max_xlsx_uncompressed_bytes,
-    )
-    documents: list[DocumentAttachment] = []
-    for upload in uploads:
-        filename = upload.filename or ""
-        extension = PurePath(filename).suffix.lower()
-        accepted_types = SUPPORTED_DOCUMENT_MEDIA_TYPES.get(extension)
-        if accepted_types is None:
-            raise HTTPException(status_code=415, detail="Unsupported document type.")
-        declared_type = (upload.content_type or "").partition(";")[0].strip().lower()
-        if declared_type not in accepted_types:
-            raise HTTPException(status_code=415, detail="Document type does not match its filename.")
-        data = await upload.read(settings.max_document_bytes + 1)
-        if len(data) > settings.max_document_bytes:
-            raise HTTPException(status_code=413, detail="Document attachment is too large.")
-        try:
-            async with concurrency_limit:
-                text = await asyncio.to_thread(extract_document_text, filename, data, limits)
-        except DocumentLimitError as exc:
-            raise HTTPException(status_code=413, detail=str(exc)) from exc
-        except InvalidDocumentError as exc:
-            raise HTTPException(status_code=415, detail=str(exc)) from exc
-        documents.append(DocumentAttachment(filename=filename, media_type=declared_type, text=text))
-    return documents
+    attachments = []
+    for index, upload in enumerate(uploads, start=1):
+        data = await upload.read(settings.max_attachment_bytes + 1)
+        if len(data) > settings.max_attachment_bytes:
+            raise HTTPException(status_code=413, detail="File attachment is too large.")
+        filename = upload.filename or f"attachment-{index}"
+        declared_type = (upload.content_type or "application/octet-stream").partition(";")[0].strip().lower()
+        attachments.append(SandboxAttachment(filename, declared_type or "application/octet-stream", data))
+    return attachments
 
 
 def _validate_question(raw_message: object, settings: AiSettings) -> str:
@@ -652,9 +574,8 @@ def _validate_question(raw_message: object, settings: AiSettings) -> str:
 async def _parse_message_request(
     request: Request,
     settings: AiSettings,
-    concurrency_limit: asyncio.Semaphore,
-) -> tuple[str, list[ImageAttachment], list[DocumentAttachment]]:
-    """Accept the original JSON request or multipart input with attachments."""
+) -> tuple[str, list[SandboxAttachment]]:
+    """Accept a JSON question or multipart input with arbitrary files."""
     content_type = request.headers.get("content-type", "").lower()
     if content_type.startswith("application/json"):
         try:
@@ -663,18 +584,13 @@ async def _parse_message_request(
             raise HTTPException(status_code=422, detail="Request body is not valid JSON.") from exc
         if not isinstance(body, dict):
             raise HTTPException(status_code=422, detail="Request body must be an object.")
-        return _validate_question(body.get("message"), settings), [], []
+        return _validate_question(body.get("message"), settings), []
 
     if not content_type.startswith("multipart/form-data"):
         raise HTTPException(status_code=415, detail="Use JSON or multipart form data.")
 
     content_length = request.headers.get("content-length")
-    max_body_bytes = (
-        settings.max_image_files * settings.max_image_bytes
-        + settings.max_document_files * settings.max_document_bytes
-        + 100_000
-        + 65_536
-    )
+    max_body_bytes = settings.max_attachment_files * settings.max_attachment_bytes + 100_000 + 65_536
     if content_length is not None:
         try:
             if int(content_length) > max_body_bytes:
@@ -682,34 +598,34 @@ async def _parse_message_request(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid Content-Length header.") from None
 
-    async with request.form(
-        max_files=settings.max_image_files + settings.max_document_files,
-        max_fields=1,
-        max_part_size=100_000,
-    ) as form:
-        if any(key not in {"message", "images", "documents"} for key in form):
-            raise HTTPException(status_code=422, detail="Unexpected multipart field.")
-        message_values = form.getlist("message")
-        if len(message_values) != 1 or not isinstance(message_values[0], str):
-            raise HTTPException(status_code=422, detail="Multipart request requires one message field.")
-        image_values = form.getlist("images")
-        document_values = form.getlist("documents")
-        if any(not isinstance(value, UploadFile) for value in image_values):
-            raise HTTPException(status_code=422, detail="Images must be uploaded as files.")
-        if any(not isinstance(value, UploadFile) for value in document_values):
-            raise HTTPException(status_code=422, detail="Documents must be uploaded as files.")
-        question = _validate_question(message_values[0], settings)
-        images = await _read_images(image_values, settings)
-        documents = await _read_documents(document_values, settings, concurrency_limit)
-    return question, images, documents
+    try:
+        async with request.form(
+            max_files=settings.max_attachment_files,
+            max_fields=1,
+            max_part_size=100_000,
+        ) as form:
+            if any(key not in {"message", "files"} for key in form):
+                raise HTTPException(status_code=422, detail="Unexpected multipart field.")
+            message_values = form.getlist("message")
+            if len(message_values) != 1 or not isinstance(message_values[0], str):
+                raise HTTPException(status_code=422, detail="Multipart request requires one message field.")
+            file_values = form.getlist("files")
+            if any(not isinstance(value, UploadFile) for value in file_values):
+                raise HTTPException(status_code=422, detail="Attachments must be uploaded as files.")
+            question = _validate_question(message_values[0], settings)
+            files = await _read_files(file_values, settings)
+    except StarletteHTTPException as exc:
+        if exc.status_code == 400 and str(exc.detail).startswith("Too many files"):
+            raise HTTPException(status_code=413, detail="Too many file attachments.") from exc
+        raise
+    return question, files
 
 
 def build_provider_messages(
     history: list[ChatMessage],
     schedule_yaml: str,
     question: str,
-    images: list[ImageAttachment],
-    documents: list[DocumentAttachment],
+    attachments: Sequence[SandboxAttachment] = (),
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
     pending_proposal: bool = False,
@@ -721,30 +637,15 @@ def build_provider_messages(
             "\nA validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
             "files described above."
         )
-    text_content = question
-    if documents:
-        document_data = json.dumps(
-            [
-                {"filename": document.filename, "media_type": document.media_type, "content": document.text}
-                for document in documents
-            ],
-            ensure_ascii=False,
-        )
-        text_content = f"{question}\n\nAttached untrusted text documents as JSON data:\n{document_data}"
-    user_content: ChatContent = text_content
-    if images:
-        user_content = [{"type": "text", "text": text_content}]
-        user_content.extend(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{image.media_type};base64,{base64.b64encode(image.data).decode('ascii')}"},
-            }
-            for image in images
+    if attachments:
+        system_content += (
+            f"\nThis turn includes {len(attachments)} untrusted attached file(s). Read "
+            "/workspace/attachments/manifest.json before inspecting them."
         )
     return [
         ChatMessage(role="system", content=system_content),
         *history,
-        ChatMessage(role="user", content=user_content),
+        ChatMessage(role="user", content=question),
     ]
 
 
@@ -780,6 +681,23 @@ def create_app(
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
+
+    def refresh_owner_cookie(response: Response, owner: str) -> None:
+        """Keep browser ownership available for the session's sliding lifetime."""
+        try:
+            canonical_owner = str(UUID(owner))
+        except ValueError:
+            return
+        response.set_cookie(
+            OWNER_COOKIE,
+            canonical_owner,
+            httponly=True,
+            secure=settings.cookie_secure,
+            # Public deployments allow approved cross-site frontends. Browsers
+            # require Secure whenever SameSite=None is used.
+            samesite="none" if settings.cookie_secure else "strict",
+            max_age=settings.session_ttl_seconds,
+        )
 
     @asynccontextmanager
     async def track_active_turn(session_id: str) -> AsyncIterator[None]:
@@ -822,6 +740,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        prepare_sandbox = getattr(sandbox_factory, "prepare", None)
+        if prepare_sandbox is not None:
+            await prepare_sandbox()
         if history_log is not None and not await history_log.write("initialize"):
             raise RuntimeError("AI history database initialization failed")
         maintenance = asyncio.create_task(history_log.maintain()) if history_log is not None else None
@@ -872,22 +793,16 @@ def create_app(
     async def capabilities() -> CapabilitiesResponse:
         """Report optional features without exposing provider configuration."""
         return CapabilitiesResponse(
-            image_attachments=ImageAttachmentCapability(
-                enabled=settings.attachment_mode == "images",
-                accepted_media_types=SUPPORTED_IMAGE_MEDIA_TYPES,
-                max_files=settings.max_image_files,
-                max_bytes_per_file=settings.max_image_bytes,
-            ),
-            document_attachments=DocumentAttachmentCapability(
-                enabled=settings.document_attachment_mode == "text",
-                accepted_extensions=tuple(SUPPORTED_DOCUMENT_MEDIA_TYPES),
-                max_files=settings.max_document_files,
-                max_bytes_per_file=settings.max_document_bytes,
+            file_attachments=FileAttachmentCapability(
+                enabled=True,
+                max_files=settings.max_attachment_files,
+                max_bytes_per_file=settings.max_attachment_bytes,
             ),
             optimizer=OptimizerCapability(
                 enabled=session_optimizer is not None,
                 max_runs_per_session=settings.optimizer_max_runs_per_session,
             ),
+            session_retention_seconds=settings.session_ttl_seconds,
             auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
         )
 
@@ -924,7 +839,6 @@ def create_app(
                 history,
                 schedule_yaml,
                 question,
-                [],
                 [],
                 system_prompt=SANDBOX_SYSTEM_PROMPT,
                 pending_proposal=bool(proposal_yaml),
@@ -1061,18 +975,8 @@ def create_app(
         """Create a process-local chat session for the calling browser."""
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="Schedule is too large.")
-        if owner is None:
-            owner = str(uuid4())
-            response.set_cookie(
-                OWNER_COOKIE,
-                owner,
-                httponly=True,
-                secure=settings.cookie_secure,
-                # Public deployments allow approved cross-site frontends. Browsers
-                # require Secure whenever SameSite=None is used.
-                samesite="none" if settings.cookie_secure else "strict",
-                max_age=settings.session_ttl_seconds,
-            )
+        owner = owner_cookie_token(owner)
+        refresh_owner_cookie(response, owner)
         session = store.create(owner, request.schedule_yaml)
         logger.info(
             "Created AI session session_id=%s auth_credential_id=%s",
@@ -1147,6 +1051,18 @@ def create_app(
             headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
         )
 
+    @app.get(
+        "/sessions/{session_id}",
+        response_model=SessionStatusResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def session_status(
+        session_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> SessionStatusResponse:
+        """Report whether a stored browser session remains available without extending it."""
+        return SessionStatusResponse(expires_in_seconds=store.status(session_id, owner))
+
     @app.post(
         "/sessions/{session_id}/messages/queue",
         status_code=status.HTTP_202_ACCEPTED,
@@ -1168,7 +1084,9 @@ def create_app(
             json.dumps(_question_log_preview(message), ensure_ascii=False),
             http_request.state.auth_credential_id,
         )
-        return Response(status_code=status.HTTP_202_ACCEPTED)
+        response = Response(status_code=status.HTTP_202_ACCEPTED)
+        refresh_owner_cookie(response, owner)
+        return response
 
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
     async def stream_message(
@@ -1177,7 +1095,7 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
-        question, images, documents = await _parse_message_request(request, settings, concurrency_limit)
+        question, attachments = await _parse_message_request(request, settings)
         turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
         if turn_lock.locked():
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
@@ -1205,8 +1123,7 @@ def create_app(
                     request.state.auth_credential_id,
                     question,
                     settings.provider_model,
-                    len(images),
-                    len(documents),
+                    len(attachments),
                 )
                 if not logged:
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
@@ -1215,29 +1132,25 @@ def create_app(
                 release_turn()
                 raise
         request_logger.info(
-            "AI request started session_id=%s question_chars=%s images=%s documents=%s question=%s",
+            "AI request started session_id=%s question_chars=%s question=%s files=%s",
             session_id,
             len(question),
-            len(images),
-            len(documents),
             json.dumps(_question_log_preview(question), ensure_ascii=False),
+            len(attachments),
         )
         stream_started = threading.Event()
         messages = build_provider_messages(
             history,
             schedule_yaml,
             question,
-            images,
-            documents,
+            attachments,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
         )
         history_question = question
-        if images:
-            history_question = f"{question}\n[Images were attached to this message.]"
-        if documents:
-            filenames = json.dumps([document.filename for document in documents], ensure_ascii=False)
-            history_question = f"{history_question}\n[Documents were attached: {filenames}.]"
+        if attachments:
+            filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
+            history_question = f"{history_question}\n[Files were attached: {filenames}.]"
 
         async def generate_events():
             stream_started.set()
@@ -1270,6 +1183,7 @@ def create_app(
                         )
                         if session_optimizer is not None
                         else None,
+                        attachments=attachments,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):
@@ -1393,12 +1307,14 @@ def create_app(
                     await history_log.write("finish_turn", turn_id, "", "cancelled", None, None)
                 release_turn()
 
-        return StreamingResponse(
+        response = StreamingResponse(
             generate_events(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             background=BackgroundTask(abort_unstarted_stream),
         )
+        refresh_owner_cookie(response, owner)
+        return response
 
     @app.put(
         "/sessions/{session_id}/schedule",
@@ -1414,7 +1330,9 @@ def create_app(
         if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
         store.update_schedule(session_id, owner, request.schedule_yaml)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        refresh_owner_cookie(response, owner)
+        return response
 
     @app.post(
         "/sessions/{session_id}/proposal/approve",
@@ -1424,6 +1342,7 @@ def create_app(
     async def approve_proposal(
         session_id: str,
         request: ApproveProposalRequest,
+        response: Response,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
@@ -1439,7 +1358,9 @@ def create_app(
                 logger.error("Approved proposal failed revalidation session_id=%s", session_id)
                 store.discard_proposal(session_id, owner, PROPOSAL_INVALID_HISTORY)
                 raise HTTPException(status_code=409, detail="The proposed schedule is no longer valid.")
-        return ProposalResponse(schedule_yaml=store.adopt_proposal(session_id, owner, request.base_sha256))
+        schedule_yaml = store.adopt_proposal(session_id, owner, request.base_sha256)
+        refresh_owner_cookie(response, owner)
+        return ProposalResponse(schedule_yaml=schedule_yaml)
 
     @app.post(
         "/sessions/{session_id}/proposal/reject",
@@ -1452,6 +1373,8 @@ def create_app(
     ) -> Response:
         """Drop the pending proposal at the user's request."""
         store.discard_proposal(session_id, owner)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        refresh_owner_cookie(response, owner)
+        return response
 
     return app

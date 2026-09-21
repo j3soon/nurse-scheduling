@@ -18,6 +18,18 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 RUN git config --system --add safe.directory /app
 
+# Install GitHub CLI from its official apt repository.
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/* \
+    && gh --version
+
 # Optional solver support: install the GLPK command-line backend for PuLP.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     glpk-utils \
@@ -67,11 +79,11 @@ RUN echo 'alias claude-yolo="claude --allow-dangerously-skip-permissions --dange
 
 # Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/opencode/Dockerfile
 # Install OpenCode CLI
-# This remote metadata changes when the OpenCode latest release advances, which
+# This remote metadata changes when the npm latest tag advances, which
 # invalidates the install layer during normal Docker builds.
-ADD https://api.github.com/repos/anomalyco/opencode/releases/latest /tmp/opencode-latest-release.json
+ADD https://registry.npmjs.org/opencode-ai/latest /tmp/opencode-latest.json
 ENV PATH="/root/.opencode/bin:${PATH}"
-RUN curl -fsSL https://opencode.ai/install | bash
+RUN npm install -g opencode-ai@latest
 RUN opencode_version="$(opencode --version)" \
     && test -n "$opencode_version" \
     && echo "Installed OpenCode CLI: $opencode_version"

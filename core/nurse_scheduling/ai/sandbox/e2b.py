@@ -22,10 +22,14 @@
 import asyncio
 import logging
 import math
+import os
+import subprocess
+import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from enum import Enum
+from pathlib import Path
 from typing import Any, TypeVar
 
 from e2b import AsyncSandbox
@@ -179,6 +183,12 @@ class E2BSandboxFactory:
             control_request_timeout_seconds=settings.sandbox_control_request_timeout_seconds,
             reaper_interval_seconds=settings.sandbox_reaper_interval_seconds,
         )
+
+    async def prepare(self) -> None:
+        """Publish the configured template before the service accepts work."""
+        build_script = Path(__file__).resolve().parents[4] / "docker/e2b/build_template.py"
+        build_env = {**os.environ, "E2B_API_KEY": self._api_key, "E2B_TEMPLATE": self._template}
+        await asyncio.to_thread(subprocess.run, [sys.executable, str(build_script)], check=True, env=build_env)
 
     async def start_cleanup(self) -> None:
         """Start startup and periodic stale-sandbox reconciliation."""

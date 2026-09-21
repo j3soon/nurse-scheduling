@@ -37,11 +37,13 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.sandbox_agent import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
+    WORKSPACE_ATTACHMENT_MANIFEST,
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
     SandboxAgentLimits,
+    SandboxAttachment,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
     run_sandbox_agent,
@@ -100,6 +102,7 @@ def _collect(
     *,
     pending_proposal_yaml: str = "",
     pending_proposal_diff: str = "",
+    attachments: Sequence[SandboxAttachment] = (),
     **limit_overrides,
 ) -> list:
     async def collect() -> list:
@@ -113,6 +116,7 @@ def _collect(
                 _limits(**limit_overrides),
                 pending_proposal_yaml=pending_proposal_yaml,
                 pending_proposal_diff=pending_proposal_diff,
+                attachments=attachments,
             )
         ]
 
@@ -216,6 +220,34 @@ def test_hydration_uploads_every_reference_in_one_request():
     # by the user rather than absorbed before the turn starts.
     assert backend.write_files_calls == 1
     assert len(backend.files) > len(REFERENCE_SCHEMAS)
+
+
+def test_hydration_places_untrusted_attachments_under_safe_paths():
+    factory = FakeSandboxFactory()
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_ATTACHMENT_MANIFEST})),))],
+        [TextDelta("Inspected.")],
+    )
+
+    _collect(
+        provider,
+        factory,
+        attachments=(SandboxAttachment("../../staff data.bin", "application/octet-stream", b"payload"),),
+    )
+
+    backend = factory.created[0]
+    manifest = json.loads(backend.files[WORKSPACE_ATTACHMENT_MANIFEST])
+    attachment = manifest["attachments"][0]
+    assert attachment == {
+        "original_filename": "../../staff data.bin",
+        "path": "/workspace/attachments/01-staff_data.bin",
+        "media_type": "application/octet-stream",
+        "bytes": 7,
+        "trusted": False,
+    }
+    assert backend.files[attachment["path"]] == b"payload"
+    assert b"inspect_workbook" in backend.files["/reference/tools/inspect_xlsx.py"]
+    assert b"inspect_pdf" in backend.files["/reference/tools/inspect_pdf.py"]
 
 
 def test_reference_sources_are_read_from_disk_once_per_process():

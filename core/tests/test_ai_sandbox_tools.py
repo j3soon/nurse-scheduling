@@ -21,8 +21,10 @@
 
 import asyncio
 import re
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
@@ -53,6 +55,21 @@ def test_sandbox_read_resolves_relative_paths_and_formats_ranges_like_pi():
 
     assert outcome.text == "one\ntwo\n\n[1 more lines in file. Use offset=3 to continue.]"
     assert outcome.ok
+
+
+def test_sandbox_read_returns_an_image_result_for_the_provider():
+    output = BytesIO()
+    Image.new("RGB", (2, 3), "red").save(output, "PNG")
+    image = output.getvalue()
+    backend = FakeSandboxBackend("fake-1", initial_files={"/workspace/image.png": image})
+    tools = SandboxPiTools(backend, 10)
+
+    outcome = asyncio.run(tools.execute(READ_TOOL, '{"path":"image.png"}'))
+
+    assert outcome.ok
+    assert outcome.image is not None
+    assert outcome.image.media_type == "image/png"
+    assert outcome.image.data == image
 
 
 def test_sandbox_read_reports_a_missing_file_without_failing_the_sandbox():

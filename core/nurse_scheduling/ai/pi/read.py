@@ -1,4 +1,4 @@
-"""Python port of Pi's model-facing text-file read behavior."""
+"""Python port of Pi's model-facing text and image read behavior."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -26,7 +26,10 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from ..provider import ToolResultImage
 from .bash import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, UPSTREAM_COMMIT, format_size
+from .image_process import ImageProcessFailure, process_image
+from .mime import detect_supported_image_mime_type
 
 READ_TOOL = "read"
 READ_PROMPT_SNIPPET = "Read file contents"
@@ -35,9 +38,10 @@ UPSTREAM_SOURCE = (
     f"https://github.com/earendil-works/pi/blob/{UPSTREAM_COMMIT}/packages/coding-agent/src/core/tools/read.ts"
 )
 READ_TOOL_DESCRIPTION = (
-    "Read the contents of a text file. Output is truncated to "
+    "Read a text file or image. Text output is truncated to "
     f"{DEFAULT_MAX_LINES} lines or {DEFAULT_MAX_BYTES // 1_024}KB (whichever is hit first). "
-    "Use offset/limit for large files. When you need the full file, continue with offset until complete."
+    "Use offset/limit for large text files. When you need the full file, continue with offset until complete. "
+    "Supported images are returned visually."
 )
 
 
@@ -72,10 +76,11 @@ class HeadTruncationResult:
 
 @dataclass(frozen=True)
 class ReadResult:
-    """Pi-compatible model text and truncation metadata for a text file."""
+    """Pi-compatible model content and truncation metadata for one file."""
 
     text: str
     truncation: HeadTruncationResult | None = None
+    image: ToolResultImage | None = None
 
 
 def read_parameters() -> dict[str, Any]:
@@ -105,8 +110,15 @@ def parse_read_input(arguments: str) -> ReadInput:
     return ReadInput(parsed["path"], offset, limit)
 
 
-def render_read_result(content: bytes, call: ReadInput) -> ReadResult:
-    """Render one text file using Pi's offset, limit, and head truncation behavior."""
+def render_read_result(
+    content: bytes,
+    call: ReadInput,
+) -> ReadResult:
+    """Render one text file or return one supported image as Pi does."""
+    image_media_type = detect_supported_image_mime_type(content)
+    if image_media_type is not None:
+        return _render_image_result(content, image_media_type)
+
     text_content = content.decode("utf-8", errors="replace")
     all_lines = text_content.split("\n")
     total_file_lines = len(all_lines)
@@ -155,6 +167,17 @@ def render_read_result(content: bytes, call: ReadInput) -> ReadResult:
             f"{truncation.content}\n\n[{remaining} more lines in file. Use offset={next_offset} to continue.]"
         )
     return ReadResult(truncation.content)
+
+
+def _render_image_result(content: bytes, media_type: str) -> ReadResult:
+    """Return Pi's text note and optional provider image content."""
+    processed = process_image(content, media_type)
+    if isinstance(processed, ImageProcessFailure):
+        return ReadResult(f"Read image file [{media_type}]\n{processed.message}")
+    note = f"Read image file [{processed.media_type}]"
+    if processed.hints:
+        note += "\n" + "\n".join(processed.hints)
+    return ReadResult(note, image=ToolResultImage(processed.media_type, processed.data))
 
 
 def truncate_head(

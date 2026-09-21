@@ -10,20 +10,27 @@ Run commands from `web-frontend/`:
 - `bun run dev`
 - `bun run build`
 - `bun run lint -- --fix`
-- `bun run test:affected`: quietly reconcile dependencies and run tests
-  related to uncommitted `src/` changes with compact output; shared test config
-  and deleted source files trigger the compact full unit/component suite.
+- `bun run test:affected`: reconcile dependencies, lint the full frontend, and
+  run tests related to uncommitted `src/` changes with compact output. Shared
+  config and deleted source files trigger the full unit/component suite. An
+  unmatched source path fails instead of passing with zero tests.
 - `bun run test`: run the full unit/component suite.
 - `bun run test:e2e`: run Playwright integration tests.
-- `bun run test:e2e:affected`: run changed or explicitly provided E2E specs
-  with compact output and stop after the first failure.
+- `bun run test:e2e:affected`: lint the full frontend and run changed or
+  explicitly provided E2E specs with compact output on an isolated server.
+  Stop after the first failure.
 
 Use `bun run test:affected` for routine changes. Run the full unit/component
 and browser suites when checking the full app or broad shared behavior.
 Frontend unit/component tests use Vitest; browser integration tests use
 Playwright.
-`test:e2e:affected` does not infer browser coverage from changed `src/` files;
-pass relevant E2E spec paths explicitly when validating frontend behavior.
+Both affected commands accept `--base REF` to include committed branch changes
+since the merge base with `REF`, `--list` to inspect selection, and `--full` to
+run their whole suite. `test:e2e:affected` cannot infer browser coverage from
+changed app source or public assets. Without explicit spec paths or `--full`,
+it fails rather than silently skipping those changes. Every Playwright run
+builds the current checkout, launches its own server on an OS-selected port,
+and shuts it down afterwards. Existing local servers are never reused.
 New schedules contain no user-defined people, shift types, or groups. E2E tests
 that require populated entities must seed them explicitly.
 
