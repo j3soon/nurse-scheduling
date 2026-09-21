@@ -138,6 +138,7 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
         assert all(request.headers["authorization"] == "Bearer optimizer-token" for request in requests)
         assert "multipart/form-data" in requests[0].headers["content-type"]
         assert b"description: accepted\n" in requests[0].content
+        assert b'name="prettify"\r\n\r\ntrue' in requests[0].content
         assert b'name="timeout"' in requests[0].content
 
     asyncio.run(scenario())

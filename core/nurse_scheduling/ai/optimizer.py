@@ -96,7 +96,10 @@ class HttpOptimizerBackend:
         self._max_result_bytes = max_result_bytes
 
     async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
-        fields: dict[str, tuple[None, str]] = {"yaml_content": (None, schedule_yaml)}
+        fields: dict[str, tuple[None, str]] = {
+            "yaml_content": (None, schedule_yaml),
+            "prettify": (None, "true"),
+        }
         if timeout_seconds is not None:
             fields["timeout"] = (None, str(timeout_seconds))
         return await self._request_job("POST", "optimize", files=fields)
