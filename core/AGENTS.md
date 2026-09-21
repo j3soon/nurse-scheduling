@@ -10,8 +10,10 @@ Run commands from `core/`:
 - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `../README.md`.
 - `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
-- `../scripts/test_core_affected.sh`: run changed test files with compact
-  output, or the compact normal suite when core source/helper files change.
+- `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
+  pytest suites. AI source changes run all `test_ai_*.py` files. Other source,
+  helper, dependency, and deleted-file changes run the normal local suite,
+  excluding the optional PuLP CBC, cuOpt, and mixed progress suites.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.
@@ -23,7 +25,10 @@ Run commands from `core/`:
 
 After modifying core code, run Ruff and affected pytest suites before finishing.
 Prefer `../scripts/test_core_affected.sh` for routine validation. Pass explicit
-test paths when a narrower suite is known to be sufficient.
+test paths when a narrower suite is known to be sufficient. Use `--base REF` to
+include committed branch changes since the merge base with `REF`, `--list` to
+inspect selection without running checks, or `--full` for the normal local
+suite. Run optional solver and real-scenario suites explicitly when affected.
 
 ## Server Job Processes
 - `run_optimization_process` owns its optimization process tree through

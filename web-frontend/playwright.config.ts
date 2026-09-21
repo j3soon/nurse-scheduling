@@ -19,10 +19,19 @@
 
 // This test is mostly AI generated.
 
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 
-// Use 13000 for E2E coverage to avoid port conflict with the local dev server (3000).
-const e2ePort = process.env.E2E_COVERAGE === '1' ? 13000 : 3000;
+// Playwright reloads this config in test workers. Pass the chosen port to them
+// so browser baseURL stays aligned with the server started by the runner.
+const portEnvName = 'NURSE_SCHEDULING_PLAYWRIGHT_PORT';
+const e2ePort = Number(process.env[portEnvName] ?? execFileSync(
+  process.execPath,
+  [path.join(__dirname, 'scripts/choose-e2e-port.mjs')],
+  { encoding: 'utf8' },
+));
+process.env[portEnvName] = String(e2ePort);
 const e2eBaseURL = `http://127.0.0.1:${e2ePort}`;
 
 export default defineConfig({
@@ -51,7 +60,7 @@ export default defineConfig({
       NEXT_PUBLIC_AI_API_URL: '/ai',
     },
     url: e2eBaseURL,
-    reuseExistingServer: !process.env.CI && process.env.E2E_COVERAGE !== '1',
+    reuseExistingServer: false,
     timeout: 120000,
   },
 });
