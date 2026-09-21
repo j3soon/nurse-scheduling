@@ -28,6 +28,7 @@ import pytest
 from nurse_scheduling.ai.optimizer import (
     HttpOptimizerBackend,
     OptimizerArtifact,
+    OptimizerError,
     OptimizerJobPayload,
     OptimizerResultUnavailable,
     SessionOptimizer,
@@ -59,14 +60,35 @@ class FakeOptimizerBackend:
         self.finish_requests: list[str] = []
         self.closed = False
         self.deleted: list[str] = []
+        self.submit_gate: asyncio.Event | None = None
+        self.submit_entered = asyncio.Event()
+        self.submit_error = False
+        self.status_failures = 0
+        self.final_state = "completed"
+        self.finish_gate: asyncio.Event | None = None
 
     async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+        self.submit_entered.set()
+        if self.submit_gate is not None:
+            await self.submit_gate.wait()
+        if self.submit_error:
+            raise OptimizerError("The optimizer request failed.")
         self.submissions.append((schedule_yaml, timeout_seconds))
-        return OptimizerJobPayload(id="remote-1", state="running")
+        return OptimizerJobPayload(id=f"remote-{len(self.submissions)}", state="running")
 
     async def get(self, job_id: str) -> OptimizerJobPayload:
+        if self.status_failures > 0:
+            self.status_failures -= 1
+            raise OptimizerError("The optimizer request failed.")
         if not self.release.is_set():
             return OptimizerJobPayload(id=job_id, state="running")
+        if self.final_state != "completed":
+            return OptimizerJobPayload(
+                id=job_id,
+                state=self.final_state,
+                terminal=True,
+                error={"code": "solver_failed"},
+            )
         return OptimizerJobPayload(
             id=job_id,
             state="completed",
@@ -78,6 +100,8 @@ class FakeOptimizerBackend:
     async def finish_now(self, job_id: str) -> OptimizerJobPayload:
         self.finish_requests.append(job_id)
         self.release.set()
+        if self.finish_gate is not None:
+            await self.finish_gate.wait()
         return OptimizerJobPayload(id=job_id, state="running")
 
     async def result_artifact(self, _job: OptimizerJobPayload) -> OptimizerArtifact:
@@ -317,6 +341,263 @@ def test_completed_artifacts_are_evicted_to_bound_process_memory() -> None:
 
         with pytest.raises(OptimizerResultUnavailable):
             await optimizer.result_artifact("session-1", first_id)
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_absolute_result_links_are_not_followed_with_the_optimizer_token() -> None:
+    async def scenario() -> None:
+        requests: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, content=b"workbook")
+
+        backend = HttpOptimizerBackend(
+            "http://optimizer:8000",
+            "optimizer-token",
+            5,
+            1_000_000,
+            transport=httpx.MockTransport(handle),
+        )
+        for link in ("https://elsewhere.example/steal", "//elsewhere.example/steal", ""):
+            job = OptimizerJobPayload(id="remote-1", state="completed", terminal=True, links={"schedule": link})
+            with pytest.raises(OptimizerError):
+                await backend.result_artifact(job)
+        await backend.close()
+
+        assert requests == []
+
+    asyncio.run(scenario())
+
+
+def test_an_omitted_timeout_submits_the_advertised_default() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            return None
+
+        optimizer = SessionOptimizer(
+            backend,
+            poll_interval_seconds=0.001,
+            on_completion=on_completion,
+            default_timeout_seconds=420,
+        )
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+
+        assert backend.submissions[0][1] == 420
+        assert "Default: 420 seconds" in str(optimizer_tool_definition(420))
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_finished_run_without_a_workbook_hides_the_previous_result() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        completions = asyncio.Queue[None]()
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completions.put_nowait(None)
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        backend.release.set()
+        await asyncio.wait_for(completions.get(), timeout=1)
+        assert await optimizer.latest_result_artifact("session-1") is not None
+
+        backend.release.clear()
+        backend.final_state = "failed"
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert await optimizer.latest_result_artifact("session-1") is not None
+        backend.release.set()
+        await asyncio.wait_for(completions.get(), timeout=1)
+
+        assert await optimizer.latest_result_artifact("session-1") is None
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_finish_now_does_not_revive_a_job_that_already_completed() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.finish_gate = asyncio.Event()
+        completions = asyncio.Queue[None]()
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completions.put_nowait(None)
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        finishing = asyncio.create_task(optimizer.execute("session-1", "ignored", '{"action":"finish_now"}'))
+        await asyncio.wait_for(completions.get(), timeout=1)
+        backend.finish_gate.set()
+        assert (await asyncio.wait_for(finishing, timeout=1)).ok
+
+        status = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"status"}')
+        assert "completed" in status.text
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_brief_status_outage_does_not_end_a_running_job() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.status_failures = 5
+        completions: list[str] = []
+        completed = asyncio.Event()
+
+        async def on_completion(_session_id: str, prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completions.append(prompt)
+            completed.set()
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        backend.release.set()
+        await asyncio.wait_for(completed.wait(), timeout=1)
+
+        assert '"state": "completed"' in completions[0]
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_sustained_status_outage_reports_the_job_as_unreachable() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.status_failures = 2
+        completions: list[str] = []
+        completed = asyncio.Event()
+
+        async def on_completion(_session_id: str, prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completions.append(prompt)
+            completed.set()
+
+        optimizer = SessionOptimizer(
+            backend,
+            poll_interval_seconds=0.001,
+            on_completion=on_completion,
+            status_failure_grace_seconds=0,
+        )
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        await asyncio.wait_for(completed.wait(), timeout=1)
+
+        assert "optimizer_unreachable" in completions[0]
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_slow_submission_does_not_block_other_sessions() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.submit_gate = asyncio.Event()
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            return None
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        starting = asyncio.create_task(optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}'))
+        await asyncio.wait_for(backend.submit_entered.wait(), timeout=1)
+
+        assert await asyncio.wait_for(optimizer.latest_result_artifact("session-2"), timeout=1) is None
+        duplicate = await asyncio.wait_for(
+            optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}'),
+            timeout=1,
+        )
+        assert not duplicate.ok
+        assert "already being submitted" in duplicate.text
+
+        backend.submit_gate.set()
+        assert (await asyncio.wait_for(starting, timeout=1)).ok
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_cancelled_start_returns_the_reserved_run() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.submit_gate = asyncio.Event()
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            return None
+
+        optimizer = SessionOptimizer(
+            backend,
+            poll_interval_seconds=0.001,
+            on_completion=on_completion,
+            max_runs_per_session=1,
+        )
+        stopped = asyncio.create_task(optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}'))
+        await asyncio.wait_for(backend.submit_entered.wait(), timeout=1)
+        stopped.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stopped
+
+        backend.submit_gate.set()
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_rejected_submission_returns_the_reserved_run() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.submit_error = True
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            return None
+
+        optimizer = SessionOptimizer(
+            backend,
+            poll_interval_seconds=0.001,
+            on_completion=on_completion,
+            max_runs_per_session=1,
+        )
+        rejected = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        backend.submit_error = False
+        retried = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+
+        assert not rejected.ok
+        assert retried.ok
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_retired_session_releases_its_runs_and_retained_workbooks() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        completions = asyncio.Queue[None]()
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completions.put_nowait(None)
+
+        optimizer = SessionOptimizer(
+            backend,
+            poll_interval_seconds=0.001,
+            on_completion=on_completion,
+            max_runs_per_session=1,
+        )
+        started = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        backend.release.set()
+        await asyncio.wait_for(completions.get(), timeout=1)
+        job_id = started.text.split("job ", 1)[1].split(" ", 1)[0]
+        assert (await optimizer.result_artifact("session-1", job_id)).content == WORKBOOK_BYTES
+
+        optimizer.forget_session("session-1")
+
+        assert await optimizer.latest_result_artifact("session-1") is None
+        with pytest.raises(OptimizerResultUnavailable):
+            await optimizer.result_artifact("session-1", job_id)
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
         await optimizer.close()
 
     asyncio.run(scenario())

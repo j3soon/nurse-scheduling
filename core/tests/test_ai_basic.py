@@ -31,6 +31,7 @@ import time
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -742,6 +743,26 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
     expired = client.get(f"/sessions/{session_id}")
     assert expired.status_code == 404
     assert expired.json()["detail"] == "Chat session not found."
+
+
+def test_expiring_a_session_releases_its_turn_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 100.0
+    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+
+    active = client.post(f"/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
+    assert active.status_code == 200
+    assert session_id in app.state.turn_locks
+
+    now = 131.0
+    assert client.get(f"/sessions/{session_id}").status_code == 404
+    assert app.state.turn_locks == {}
+
+    unknown = client.post(f"/sessions/{uuid4()}/messages", json={"message": "No such chat."})
+    assert unknown.status_code == 404
+    assert app.state.turn_locks == {}
 
 
 def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:

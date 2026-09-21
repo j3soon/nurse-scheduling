@@ -27,7 +27,7 @@ import math
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Literal
@@ -255,6 +255,11 @@ class SessionStore:
         self._settings = settings
         self._sessions: dict[str, ChatSession] = {}
         self._lock = threading.RLock()
+        self._on_retire: Callable[[str], None] | None = None
+
+    def on_retire(self, callback: Callable[[str], None]) -> None:
+        """Register the cleanup that follows every dropped session."""
+        self._on_retire = callback
 
     def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
         """Create a session after pruning expired entries."""
@@ -480,6 +485,8 @@ class SessionStore:
         expired_ids = [session_id for session_id, session in self._sessions.items() if session.expires_at <= now]
         for session_id in expired_ids:
             del self._sessions[session_id]
+            if self._on_retire is not None:
+                self._on_retire(session_id)
 
 
 def _sse_event(event_type: str, data: dict[str, object]) -> str:
@@ -665,12 +672,20 @@ def create_app(
         poll_interval_seconds=settings.optimizer_poll_interval_seconds,
         on_completion=optimizer_completed,
         on_update=optimizer_updated,
+        default_timeout_seconds=settings.optimizer_default_timeout_seconds,
         max_sessions=settings.max_sessions,
         max_runs_per_session=settings.optimizer_max_runs_per_session,
         max_result_bytes=settings.optimizer_max_result_bytes,
         max_cached_result_bytes=settings.optimizer_result_cache_bytes,
         max_schedule_bytes=settings.max_schedule_bytes,
     )
+
+    def retire_session(session_id: str) -> None:
+        """Release everything keyed by a session once the store drops it."""
+        turn_locks.pop(session_id, None)
+        session_optimizer.forget_session(session_id)
+
+    store.on_retire(retire_session)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -707,6 +722,7 @@ def create_app(
     app.state.settings = settings
     app.state.auth_registry = auth_registry
     app.state.session_store = store
+    app.state.turn_locks = turn_locks
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
     app.state.session_optimizer = session_optimizer
@@ -869,6 +885,7 @@ def create_app(
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
         question, attachments = await _parse_message_request(request, settings)
+        store.require_owned(session_id, owner)
         turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
         if turn_lock.locked():
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
