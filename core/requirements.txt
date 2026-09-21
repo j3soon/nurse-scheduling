@@ -4,7 +4,9 @@ ruamel.yaml
 pydantic
 openpyxl # For XLSX input and output support
 defusedxml # For parsing untrusted XLSX XML safely
-pypdf # For extracting text from PDF attachments
+pypdf # For PDF text and embedded-image inspection
+pypdfium2 # For bounded PDF page rendering in the sandbox
+Pillow # For Pi-compatible image reads and PDF image extraction
 jinja2 # For prettifying output
 # For more solvers support
 pulp==3.3.2

@@ -35,7 +35,9 @@ from .provider import (
     ToolCall,
     ToolCallRequest,
     ToolCapableChatProvider,
+    ToolResultImage,
     assistant_tool_call_message,
+    tool_result_image_message,
     tool_result_message,
 )
 
@@ -107,6 +109,7 @@ class AgentToolOutcome:
 
     text: str
     ok: bool
+    image: ToolResultImage | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +185,7 @@ async def run_tool_agent(
         tool_calls += len(calls)
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope():
+            image_results: list[ChatMessage] = []
             parallel = len(calls) > 1 and all(call.name in parallel_tool_names for call in calls)
             if parallel:
                 for call in calls:
@@ -194,6 +198,8 @@ async def run_tool_agent(
                     _log_tool_outcome(call.name, outcome)
                     yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
                     conversation.append(tool_result_message(call.id, outcome.text))
+                    if outcome.image is not None:
+                        image_results.append(tool_result_image_message(call.id, outcome.image))
             else:
                 execution_seconds = 0.0
                 for call in calls:
@@ -204,6 +210,9 @@ async def run_tool_agent(
                     _log_tool_outcome(call.name, outcome)
                     yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
                     conversation.append(tool_result_message(call.id, outcome.text))
+                    if outcome.image is not None:
+                        image_results.append(tool_result_image_message(call.id, outcome.image))
+            conversation.extend(image_results)
             if observe_tool_batch is not None:
                 observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
         if take_steering is not None:
@@ -228,8 +237,9 @@ async def _execute_parallel_tool_calls(
 
 def _log_tool_outcome(name: str, outcome: AgentToolOutcome) -> None:
     logger.info(
-        "agent tool call name=%s ok=%s result_chars=%s",
+        "agent tool call name=%s ok=%s result_chars=%s image_bytes=%s",
         name,
         outcome.ok,
         len(outcome.text),
+        len(outcome.image.data) if outcome.image is not None else 0,
     )

@@ -57,8 +57,8 @@ test('reset followed by upload restores downstream pages, not just the YAML prev
   const yamlText = await page.locator('pre').textContent();
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/people');
   await expect(page.getByText('Restore Person', { exact: true })).toHaveCount(0);

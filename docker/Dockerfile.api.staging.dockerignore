@@ -1,6 +1,9 @@
 **
 !core/
 !core/**
+!docker/
+!docker/e2b/
+!docker/e2b/**
 !docs/
 !docs/content/
 !docs/content/user-guide/

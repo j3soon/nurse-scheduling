@@ -5,9 +5,9 @@ about one schedule snapshot. Its ASGI entry point is
 `nurse_scheduling.ai_serve:app`. It does not import the optimization server or
 use its Redis data.
 
-Image and document attachments are enabled by default and can be disabled
-independently. Supported documents are TXT, Markdown, CSV, PDF, and XLSX. The
-assistant reads and edits the schedule in a disposable sandbox and can propose a new
+File attachments are enabled by default. The frontend accepts arbitrary file
+types and copies them into the disposable sandbox without executing them. The
+assistant reads and edits the schedule in that sandbox and can propose a new
 schedule, which the browser applies only after the user approves it.
 Each user message gets one temporary shell backed by E2B Cloud. This version
 excludes retrieval and repository access.
@@ -57,17 +57,24 @@ flowchart LR
 ```
 
 The browser receives an HTTP-only owner cookie and an unguessable session UUID.
+Active sessions expire after 48 hours of inactivity by default. Sending or
+queueing a message, synchronizing a changed schedule, or deciding a proposal
+renews that window. The browser can retain the conversation within its current
+tab and verify the session without extending its lifetime.
 The backend stores the YAML snapshot and completed conversation turns. Each
-provider request includes the stored YAML, recent history, and current
-question. Enabled attachments are included only in the active provider
-request. **Images and document contents are not included in subsequent chat
-history.** This is intentional to avoid repeatedly consuming provider context
-tokens. History retains only attachment markers and document filenames.
+provider request includes a schedule summary, recent history, and the current
+question. The complete YAML stays in the sandbox until the model reads relevant
+content through a tool. Attachments are available only during the active turn. **Raw files
+and their contents are not included in subsequent chat history.** This is
+intentional to avoid retaining uploads or repeatedly consuming provider context
+tokens. History retains only attachment markers and filenames.
 Schedules and attachments are labeled as untrusted data in the system prompt.
 
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
-`/reference`, runs every command for that user message in the same sandbox,
+`/reference`. It writes uploads below `/workspace/attachments` and records safe
+paths, original names, media types, and sizes in `manifest.json`. It then runs
+every command for that user message in the same sandbox,
 reads the candidate, and destroys the sandbox. A later message always starts a
 new sandbox. Only conversation history, the canonical schedule revision, and a
 pending validated proposal remain in application state.
@@ -134,14 +141,20 @@ The runner needs the same provider settings the service uses:
 The launcher reads them from `docker/.env`, so the shortest form is:
 
 ```sh
-./scripts/run_ai_eval.sh
-./scripts/run_ai_eval.sh --full
+./scripts/run_ai_eval.sh --case clarify-night-request-scope
 ./scripts/run_ai_eval.sh --category 01-reading
+./scripts/run_ai_eval.sh --tuning         # default tuning set
+./scripts/run_ai_eval.sh --full           # every case
 ```
 
-The default run selects cases tagged `difficult` or `tuning`, keeping prompt
-tuning focused as the corpus grows. Pass `--full` to run every case. Explicit
-`--case`, `--category`, or `--tag` selectors bypass the default tag filter.
+An evaluation scope is required. `--tuning` selects cases tagged `difficult`
+or `tuning`, keeping prompt tuning focused as the corpus grows. Pass `--full`
+to run every case. Explicit `--case`, `--category`, or `--tag` selectors bypass
+the tuning tag filter and cannot be combined with `--tuning` or `--full`.
+Start with cases relevant to the changed behavior, including a contrasting
+control when ambiguity or scope is involved. Use `--repeat 3` on that selected
+set to assess reliability before a broad tuning or full run. A single selected
+pass is only a smoke check, not evidence of an improvement.
 Cases may use `user_turns` for a real multi-turn conversation and
 `intermediate_answer_contains` to verify that earlier turns ask a required
 question without producing a proposal.
@@ -268,7 +281,8 @@ cleaned while the AI service is offline.
 ## Agent capabilities
 
 The model receives Pi's four default coding tools: `read`, `bash`, `edit`, and
-`write`. `read` provides bounded text-file inspection with offsets. `edit`
+`write`. `read` provides bounded text-file inspection with offsets and returns
+supported images as multimodal tool results. `edit`
 applies one or more unique, non-overlapping exact-text replacements against the
 same original file snapshot. `write` creates or overwrites one complete file.
 `bash` remains available for searches, checks, and complex operations using
@@ -286,18 +300,22 @@ disposable, tool output is bounded, secrets and canonical storage stay outside
 it, and a trusted application validates every possible schedule change and the
 final candidate.
 
-The model-tool loop has no count-based tool-call limit. Per-command and complete
-agent-turn deadlines bound execution instead.
+Configured tool-round and tool-call limits bound the model-tool loop alongside
+per-command and complete agent-turn deadlines.
 
-The model-facing tool schemas and text behavior are Python ports pinned to Pi
+The model-facing tool schemas and read behavior are Python ports pinned to Pi
 commit [`e266507`](https://github.com/earendil-works/pi/tree/e266507b606b9552fa277252644054afd4384b11/packages/coding-agent/src/core/tools).
-Pi's image-read result is intentionally omitted because this service's tool
-result channel is text-only. Image attachments continue through the existing
-provider attachment path. The Nurse Scheduling adapter delegates file and
-command operations to `SandboxBackend` and enforces the configured command
-timeout ceiling. E2B returns completed stdout and stderr separately, so the
-adapter concatenates them and cannot reproduce Pi's live stream interleaving
-exactly.
+The read tool recognizes JPEG, PNG, GIF, WebP, and BMP files. Its multimodal
+result lets the model inspect an image extracted from another file. The sandbox
+also includes optional helpers: `inspect_xlsx.py` reads every worksheet by
+default and shows formulas alongside their last-saved cached values, while
+`inspect_pdf.py` extracts text by page and can render a selected page. The agent
+can write a focused parser in its sandbox when these helpers are insufficient.
+The Nurse Scheduling adapter delegates file and command operations to
+`SandboxBackend` and enforces the configured command timeout ceiling. E2B
+returns completed stdout and stderr separately, so the adapter concatenates
+them and cannot reproduce Pi's live
+stream interleaving exactly.
 
 ## Proposal lifecycle
 
@@ -373,8 +391,8 @@ response cannot prove that the original operation did not take effect.
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
 | `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `10` | Default and maximum deadline for one shell command. |
 | `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `900` | Deadline for the complete sandbox-backed user message. |
-| `AI_AGENT_MAX_TOOL_ROUNDS` | `10` | Maximum model tool-call rounds before the agent must answer from verified results. |
-| `AI_AGENT_MAX_TOOL_CALLS` | `20` | Maximum total tool calls in one sandbox-backed user message. |
+| `AI_AGENT_MAX_TOOL_ROUNDS` | `100` | Maximum model tool-call rounds before the agent must answer from verified results. |
+| `AI_AGENT_MAX_TOOL_CALLS` | `200` | Maximum total tool calls in one sandbox-backed user message. |
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
 | `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
 | `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
@@ -383,23 +401,17 @@ response cannot prove that the original operation did not take effect.
 | `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
-| `AI_SESSION_TTL_SECONDS` | `3600` | Idle session lifetime. |
+| `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
 | `AI_MAX_HISTORY_MESSAGES` | `20` | Conversation messages retained per session. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
-| `AI_ATTACHMENT_MODE` | `images` | Use `none` to disable image attachments. |
-| `AI_MAX_IMAGE_FILES` | `4` | Maximum images attached to one question. |
-| `AI_MAX_IMAGE_BYTES` | `5000000` | Maximum bytes per image. |
-| `AI_DOCUMENT_ATTACHMENT_MODE` | `text` | Use `none` to disable document-to-text ingestion. |
-| `AI_MAX_DOCUMENT_FILES` | `4` | Maximum documents attached to one question. |
-| `AI_MAX_DOCUMENT_BYTES` | `5000000` | Maximum upload bytes per document. |
-| `AI_MAX_DOCUMENT_TEXT_CHARS` | `50000` | Maximum extracted prompt characters per document. |
-| `AI_MAX_PDF_PAGES` | `100` | Maximum pages per PDF. |
-| `AI_MAX_XLSX_SHEETS` | `20` | Maximum worksheets per XLSX workbook. |
-| `AI_MAX_XLSX_CELLS` | `100000` | Maximum rectangular cell span across an XLSX workbook. |
-| `AI_MAX_XLSX_UNCOMPRESSED_BYTES` | `50000000` | Maximum total expanded XLSX archive bytes. |
+| `AI_MAX_ATTACHMENT_FILES` | `8` | Maximum files attached to one question. |
+| `AI_MAX_ATTACHMENT_BYTES` | `5000000` | Maximum bytes per attached file. |
+
+Attachments are always enabled. Every upload is copied unchanged into the
+disposable sandbox, where the agent can inspect it with Pi-compatible tools.
 
 `AI_AUTH_TOKENS` uses a JSON object such as
 `'{"institution-a":"first-key","person-b":"second-key"}'`. IDs may contain
@@ -570,10 +582,11 @@ FastAPI.
 | `GET /ready` | Required configuration accepted at startup. |
 | `GET /capabilities` | Enabled optional features and their public limits. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
+| `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
 | `POST /sessions/{id}/messages` | Stream one answer. Accepts JSON text or multipart text and attachments. |
 
-Multipart requests use one `message` field, repeated `images` file fields, and
-repeated `documents` file fields. Sessions are process-local. Use one AI
+Multipart requests use one `message` field and repeated `files` fields. Other
+attachment field names are rejected. Sessions are process-local. Use one AI
 backend instance until shared AI storage is added.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
@@ -620,18 +633,19 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   allowlist still limits which browser origins may make credentialed requests.
 - The owner cookie contains an opaque UUID, not the provider key. It is not a
   replacement for future account authentication.
-- The complete schedule is sent to the configured provider. Use an approved
-  provider and anonymize sensitive schedules when required.
-- Accepted images are signature-checked and bounded before they are sent to the
-  provider. Configure a matching request-body limit at the public reverse proxy.
-- Accepted documents are bounded and checked for a matching supported filename
-  extension, declared MIME type, and file signature where applicable. Text
-  files require UTF-8. PDF extraction reads embedded text without OCR and
-  rejects encrypted files. XLSX extraction disables external links, rejects
-  encrypted or oversized archives, and uses hardened XML parsing.
-- XLSX formulas are never evaluated. Extraction includes the formula text and
-  the cached result last saved by a spreadsheet application. A missing cached
-  result is marked as unavailable.
+- The complete schedule is sent to the AI service. Relevant content is sent to
+  the configured provider through model-facing tool results. Use approved
+  services and anonymize sensitive schedules when required.
+- Arbitrary uploads are bounded, assigned safe sandbox paths, and treated as
+  untrusted data. Configure a matching request-body limit at the public reverse
+  proxy. Never add attachment execution to the sandbox workflow.
+- The Pi-compatible `read` tool recognizes JPEG, PNG, GIF, WebP, and BMP content.
+  It normalizes and bounds images before returning them to the model as
+  multimodal tool results.
+- The XLSX helper disables external links and reports formulas with their
+  last-saved cached values. It does not recalculate formulas. The PDF inspector
+  reports text-extraction and page-limit gaps, and its optional page rendering
+  is bounded by a pixel budget. PDF helpers reject encrypted files.
 - Assistant answers use a safe Markdown renderer. Raw HTML is disabled and
   remote Markdown images are omitted to prevent third-party requests.
 - Provider HTTP errors return a searchable error ID to the browser. The backend
@@ -645,7 +659,7 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
 | --- | --- |
 | Send fails immediately | Start the AI backend and request `http://localhost:8001/health`. |
 | Provider unavailable | Check `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and provider availability. |
-| An attachment is rejected | Check its supported type and configured byte, text, page, sheet, and cell limits. Text documents must use UTF-8. Encrypted PDF and XLSX files are unsupported. |
+| An attachment is rejected | Check the configured file count, byte limit, and public reverse-proxy body limit. |
 | An answer stops early | Retry it. Cancelled and failed answers are not added to backend history. |
 
 For a provider HTTP failure, search the AI backend log using the error ID shown
@@ -657,12 +671,11 @@ origin logs. See Cloudflare's [520](https://developers.cloudflare.com/support/tr
 and [525](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-525/)
 guidance.
 
-### Capability-gated controls
+### Attachment capability discovery
 
-Optional controls stay hidden when the backend disables every attachment type
-or capability discovery fails. Image mode defaults to `images`, while document
-mode defaults to `text`. Confirm these were not changed to `none`, then compare
-the direct and browser-facing responses:
+The attachment control is available after capability discovery confirms the
+server's file count and byte limits. If it is missing, compare the direct and
+browser-facing responses:
 
 ```sh
 curl http://127.0.0.1:8001/capabilities
@@ -683,14 +696,16 @@ Run the focused checks inside the development container:
 ```sh
 cd /app/core
 ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
-  tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
+  tests/test_ai_basic.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
   tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py \
-  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py
-pytest -q tests/test_ai_basic.py tests/test_ai_documents.py tests/test_ai_provider.py \
+  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py \
+  tests/test_ai_attachment_tools.py
+pytest -q tests/test_ai_basic.py tests/test_ai_provider.py \
   tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
   tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py \
-  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py
+  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py \
+  tests/test_ai_attachment_tools.py
 
 cd /app/web-frontend
 bun run test -- \

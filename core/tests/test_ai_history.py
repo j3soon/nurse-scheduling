@@ -91,7 +91,7 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
     (start,) = recorded_history["starts"]
     (finish,) = recorded_history["finishes"]
     assert start[1] == session_id
-    assert start[3:] == ("Question", "test-model", 0, 0)
+    assert start[3:] == ("Question", "test-model", 0)
     assert finish == (
         start[0],
         "Partial answer",
@@ -174,15 +174,15 @@ def postgres_history(monkeypatch):
 def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
     history = postgres_history
     turn, session = str(uuid4()), str(uuid4())
-    history.start_turn(turn, session, "team-a", "What's next?", "model", 1, 2)
-    history.start_turn(turn, session, "team-a", "duplicate", "model", 1, 2)
+    history.start_turn(turn, session, "team-a", "What's next?", "model", 3)
+    history.start_turn(turn, session, "team-a", "duplicate", "model", 3)
     history.finish_turn(turn, "Answer", "completed", None, TokenUsage(1, 2, 3))
     history.finish_turn(turn, "Overwrite", "cancelled", None, None)
     restarted = ChatHistory("test")
     restarted.initialize()
     with restarted._connect() as connection:
         row = connection.execute(
-            "SELECT user_message, assistant_message, status, usage, finished_at FROM chat_turns"
+            "SELECT user_message, assistant_message, status, usage, finished_at, attachment_count FROM chat_turns"
         ).fetchone()
         assert row[:4] == (
             "What's next?",
@@ -197,17 +197,18 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
             },
         )
         assert row[4] is not None
+        assert row[5] == 3
         credential_id = connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone()
         assert credential_id == ("team-a",)
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (1,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (2,)
 
 
 def test_postgres_retention_preserves_recent_turns(postgres_history):
     history = postgres_history
     session = str(uuid4())
     old, recent = str(uuid4()), str(uuid4())
-    history.start_turn(old, session, None, "old", "model", 0, 0)
-    history.start_turn(recent, session, None, "recent", "model", 0, 0)
+    history.start_turn(old, session, None, "old", "model", 0)
+    history.start_turn(recent, session, None, "recent", "model", 0)
     with history._connect() as connection:
         connection.execute("UPDATE chat_turns SET started_at = now() - interval '31 days' WHERE id = %s", (old,))
         connection.execute("UPDATE chat_sessions SET created_at = now() - interval '31 days'")
@@ -225,7 +226,7 @@ def test_postgres_writes_survive_cancel_scope(postgres_history):
     import anyio
 
     turn, session = str(uuid4()), str(uuid4())
-    postgres_history.start_turn(turn, session, None, "question", "model", 0, 0)
+    postgres_history.start_turn(turn, session, None, "question", "model", 0)
 
     async def cancel_and_save():
         with anyio.CancelScope() as scope:

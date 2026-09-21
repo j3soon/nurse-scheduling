@@ -38,8 +38,8 @@ test('uploaded state can be undone and redone across route changes', async ({ pa
   const uploadYaml = `apiVersion: test\ndescription: upload undo redo state\ndates:\n  range:\n    startDate: 2026-05-01\n    endDate: 2026-05-01\n  groups: []\npeople:\n  items:\n    - id: P9\n      description: Uploaded nurse\n      history: []\n  groups: []\n  history: []\nshiftTypes:\n  items:\n    - id: ZX\n      description: Uploaded shift\n  groups: []\npreferences:\n  - type: at most one shift per day\nexport:\n  formatting: []\n`;
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/people');
   await expect(page.getByText('P9', { exact: true })).toHaveCount(0);

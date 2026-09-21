@@ -71,6 +71,7 @@ from nurse_scheduling.ai.schema import (
 )
 from nurse_scheduling.loader import _load_yaml
 
+from .attachment_fixtures import load_attachment_fixtures
 from .grading import EvalCase, RunOutcome, computed_values, grade, load_cases
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -236,16 +237,17 @@ async def run_case(
     tool_batch_metrics: list[AgentToolBatchMetrics] = []
     reasoning = 0
     started = time.perf_counter()
+    case_attachments = load_attachment_fixtures(case.attachments)
     try:
         if sandbox_factory is None:
             raise ValueError("sandbox_factory is required for AI evaluation")
         for turn_index, question in enumerate(case.user_turns):
+            attachments = case_attachments if turn_index == 0 else ()
             messages = build_provider_messages(
                 history,
                 text,
                 question,
-                [],
-                [],
+                attachments,
                 system_prompt=SANDBOX_SYSTEM_PROMPT,
                 pending_proposal=pending_proposal is not None,
             )
@@ -263,6 +265,7 @@ async def run_case(
                 tool_batch_metrics.append,
                 pending_proposal_yaml=pending_proposal.text if pending_proposal else "",
                 pending_proposal_diff=pending_proposal.diff if pending_proposal else "",
+                attachments=attachments,
             )
             async for event in agent_events:
                 if isinstance(event, AgentText):
@@ -797,6 +800,16 @@ def select(
     missing = sorted(set(ids) - {case.id for case in chosen})
     if missing:
         raise SystemExit(f"Unknown case ids: {', '.join(missing)}")
+    missing_categories = sorted(
+        {name for name in categories if not any(case.category.endswith(name) for case in cases)}
+    )
+    if missing_categories:
+        raise SystemExit(f"Unknown categories: {', '.join(missing_categories)}")
+    missing_tags = sorted(set(tags) - {tag for case in cases for tag in case.tags})
+    if missing_tags:
+        raise SystemExit(f"Unknown tags: {', '.join(missing_tags)}")
+    if not chosen:
+        raise SystemExit("No evaluation cases selected.")
     return chosen
 
 
@@ -837,13 +850,15 @@ async def run_all(
     return [run for _, run in sorted(indexed_runs)]
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the evaluation from the command line."""
-    parser = argparse.ArgumentParser(description="Run the experimental AI evaluation cases.")
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    """Require an explicit evaluation scope before any provider work."""
+    parser = argparse.ArgumentParser(prog="ai-eval", description="Run the experimental AI evaluation cases.")
     parser.add_argument("--case", action="append", default=[], help="run one case id, repeatable")
     parser.add_argument("--category", action="append", default=[], help="run one category directory, repeatable")
     parser.add_argument("--tag", action="append", default=[], help="run cases with one tag, repeatable")
-    parser.add_argument("--full", action="store_true", help="run the full suite instead of the default tuning set")
+    broad_scope = parser.add_mutually_exclusive_group()
+    broad_scope.add_argument("--tuning", action="store_true", help="run the default tuning set")
+    broad_scope.add_argument("--full", action="store_true", help="run every case")
     parser.add_argument("--repeat", type=int, default=1, help="run every selected case this many times")
     parser.add_argument("--baseline-report", type=Path, help="compare with a prior report directory or results.jsonl")
     parser.add_argument("--cases-dir", type=Path, default=CASES, help="directory holding the cases")
@@ -857,10 +872,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if arguments.jobs <= 0 or arguments.repeat <= 0:
         parser.error("--jobs and --repeat must be positive")
+    if any(not value.strip() for value in arguments.case + arguments.category + arguments.tag):
+        parser.error("case, category, and tag selectors must not be empty")
+    selected = bool(arguments.case or arguments.category or arguments.tag)
+    if selected and (arguments.tuning or arguments.full):
+        parser.error("--tuning and --full cannot be combined with case, category, or tag selectors")
+    if not selected and not (arguments.tuning or arguments.full):
+        parser.error("choose --case, --category, or --tag, or explicitly pass --tuning or --full")
+    return arguments
 
+
+def _selected_cases(argv: Sequence[str] | None) -> tuple[argparse.Namespace, list[EvalCase]]:
+    """Validate the CLI scope and resolve its cases without provider work."""
+    arguments = _parse_args(argv)
+    # --tuning opts into select's default tagged set when no filters are given.
     cases = select(
         load_cases(arguments.cases_dir), arguments.case, arguments.category, arguments.tag, full=arguments.full
     )
+    return arguments, cases
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the evaluation from the command line."""
+    arguments, cases = _selected_cases(argv)
     settings = AiSettings.from_env()
     sandbox_factory = create_sandbox_factory(settings)
     started = time.perf_counter()
@@ -911,6 +945,10 @@ def _evaluation_metadata(settings: AiSettings, cases: Sequence[EvalCase], repeti
         "fixtures_sha256": {
             fixture: hashlib.sha256(fixture_text(fixture).encode()).hexdigest()
             for fixture in sorted({case.fixture for case in cases})
+        },
+        "attachments_sha256": {
+            attachment.filename: hashlib.sha256(attachment.data).hexdigest()
+            for attachment in load_attachment_fixtures(sorted({name for case in cases for name in case.attachments}))
         },
     }
 

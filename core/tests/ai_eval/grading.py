@@ -101,6 +101,7 @@ class EvalCase:
     user_turns: tuple[str, ...] = ()
     intermediate_answer_contains: tuple[tuple[str | tuple[str, ...], ...], ...] = ()
     tags: tuple[str, ...] = ()
+    attachments: tuple[str, ...] = ()
     category: str = ""
     assertions: tuple[Assertion, ...] = ()
     expected_diff: tuple[ExpectedDiff, ...] = ()
@@ -224,6 +225,13 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
     raw_tags = entry.get("tags", [])
     if not isinstance(raw_tags, list) or not all(isinstance(tag, str) and tag for tag in raw_tags):
         raise EvalCaseError(f"{source} `tags` must be a list of strings.")
+    raw_attachments = entry.get("attachments", [])
+    if not isinstance(raw_attachments, list) or not all(
+        isinstance(attachment, str) and attachment for attachment in raw_attachments
+    ):
+        raise EvalCaseError(f"{source} `attachments` must be a list of fixture names.")
+    if len(raw_attachments) != len(set(raw_attachments)):
+        raise EvalCaseError(f"{source} repeats an attachment fixture.")
     assertions = tuple(_build_assertion(raw, source) for raw in entry.get("assert", []))
     expected_diff = tuple(_build_expected_diff(raw, source) for raw in entry.get("expected_diff", []))
     proposal_turn, proposal_turns = _proposal_turns(entry, len(raw_turns), source)
@@ -245,6 +253,7 @@ def _build_case(entry: dict[str, Any], source: str, category: str) -> EvalCase:
         user_turns=tuple(raw_turns),
         intermediate_answer_contains=intermediate,
         tags=tuple(raw_tags),
+        attachments=tuple(raw_attachments),
         category=category,
         assertions=assertions,
         expected_diff=expected_diff,

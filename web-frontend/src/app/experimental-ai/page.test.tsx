@@ -25,6 +25,7 @@ import ExperimentalAiPage from './page';
 
 const mockCreateSession = vi.hoisted(() => vi.fn());
 const mockGetCapabilities = vi.hoisted(() => vi.fn());
+const mockGetSessionStatus = vi.hoisted(() => vi.fn());
 const mockStreamMessage = vi.hoisted(() => vi.fn());
 const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
 const mockApproveProposal = vi.hoisted(() => vi.fn());
@@ -34,6 +35,11 @@ const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
 const mockUseTabSwitchWarning = vi.hoisted(() => vi.fn());
 const MockAiStaleTurnError = vi.hoisted(() => class AiStaleTurnError extends Error {});
+const MockAiHttpError = vi.hoisted(() => class AiHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+});
 const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
   const trimmed = endpoint.trim().replace(/\/+$/, '');
   if (!trimmed) return '';
@@ -41,12 +47,15 @@ const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
 });
 
 vi.mock('./aiClient', () => ({
+  AiHttpError: MockAiHttpError,
   AiStaleTurnError: MockAiStaleTurnError,
+  DEFAULT_SESSION_RETENTION_SECONDS: 172800,
   LOCAL_AI_API_URL: 'http://localhost:8001',
   PRODUCTION_AI_API_URL: 'https://api.nursescheduling.org/ai',
   createSession: mockCreateSession,
   getAiBaseUrl: () => '/ai',
   getCapabilities: mockGetCapabilities,
+  getSessionStatus: mockGetSessionStatus,
   normalizeAiEndpoint: mockNormalizeAiEndpoint,
   isOfficialAiEndpoint: (endpoint: string) => (
     endpoint === '/ai' || mockNormalizeAiEndpoint(endpoint) === 'https://api.nursescheduling.org/ai'
@@ -80,25 +89,22 @@ vi.mock('@/utils/unsavedEditingState', () => ({
   useTabSwitchWarning: mockUseTabSwitchWarning,
 }));
 
+const defaultCapabilities = {
+  session_retention_seconds: 172800,
+  file_attachments: {
+    enabled: true,
+    max_files: 8,
+    max_bytes_per_file: 5_000_000,
+  },
+};
+
 describe('ExperimentalAiPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockCreateSession.mockReset().mockResolvedValue('session-id');
-    mockGetCapabilities.mockReset().mockResolvedValue({
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: ['image/jpeg', 'image/png', 'image/webp'],
-        max_files: 4,
-        max_bytes_per_file: 5_000_000,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 4,
-        max_bytes_per_file: 5_000_000,
-      },
-    });
+    mockGetCapabilities.mockReset().mockResolvedValue(defaultCapabilities);
+    mockGetSessionStatus.mockReset().mockResolvedValue(172800);
     mockStreamMessage.mockReset().mockImplementation(async (
       _sessionId: string,
       _message: string,
@@ -115,6 +121,7 @@ describe('ExperimentalAiPage', () => {
     mockLoadFromYaml.mockReset();
     mockUseTabSwitchWarning.mockReset();
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   it('sends a question with the current schedule and renders streamed text', async () => {
@@ -122,6 +129,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(screen.getByText('Current snapshot: 0 people, 0 dates. Captured when you send the first question.')).toBeInTheDocument();
+    expect(screen.getByText(/^Frontend /)).toHaveTextContent('Frontend unknown');
     expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
       'href',
       '/docs/user-guide/experimental-ai/',
@@ -134,7 +142,7 @@ describe('ExperimentalAiPage', () => {
       'href',
       'https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md',
     );
-    expect(screen.getByText(/Assume all AI chats are logged/)).toBeInTheDocument();
+    expect(screen.getByText(/All AI chats are logged and are not currently anonymized/)).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
     const sendButton = screen.getByRole('button', { name: 'Send' });
     expect(sendButton).toHaveTextContent('');
@@ -142,9 +150,9 @@ describe('ExperimentalAiPage', () => {
     await user.click(sendButton);
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
-    const responseTime = document.querySelector('time');
+    const responseTime = screen.getByText(/· (?:<1s|\d+(?:\.\d)?s|\d+m \d+s)$/);
+    expect(responseTime.tagName).toBe('TIME');
     expect(responseTime).toHaveAttribute('dateTime');
-    expect(responseTime).toHaveTextContent(/· (?:<1s|\d+(?:\.\d)?s|\d+m \d+s)$/);
     expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai');
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',
@@ -152,10 +160,202 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { images: [], documents: [] },
+      { files: [] },
       '/ai',
     );
-    expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(true);
+    expect(mockUseTabSwitchWarning).toHaveBeenCalledWith(true);
+    expect(mockUseTabSwitchWarning).toHaveBeenLastCalledWith(false);
+  });
+
+  it('restores the transcript and live session after navigating away', async () => {
+    const user = userEvent.setup();
+    const firstRender = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
+    await waitFor(() => expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).not.toBeNull());
+
+    firstRender.unmount();
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText('Who works Monday?')).toBeInTheDocument();
+    expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
+    expect(mockGetSessionStatus).toHaveBeenCalledWith('session-id', null, '/ai');
+    expect(mockCreateSession).toHaveBeenCalledOnce();
+  });
+
+  it('flushes a pending transcript write when the page unmounts', async () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<ExperimentalAiPage />);
+      const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+      fireEvent.change(composer, { target: { value: 'Who works Monday?' } });
+      await act(async () => {
+        fireEvent.submit(composer.closest('form')!);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
+      view.unmount();
+
+      const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+      expect(stored.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: 'Who works Monday?' }),
+        expect.objectContaining({ role: 'assistant', content: 'Alice works Monday.' }),
+      ]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows and renews the exact chat expiration time', async () => {
+    const now = Date.parse('2026-09-19T08:30:00Z');
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'First question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const firstExpiration = new Date(now + 172800 * 1000).toISOString();
+    await waitFor(() => expect(screen.getByLabelText('Chat expiration')).toHaveAttribute('dateTime', firstExpiration));
+    const expirationNotice = screen.getByLabelText('Chat expiration').closest('p');
+    expect(expirationNotice).toHaveTextContent(/^Chat expires at /);
+    expect(expirationNotice).toHaveTextContent(/Each new message extends the chat for another 48 hours/);
+    expect(screen.getByRole('region', { name: 'Chat messages' }).lastElementChild).toBe(expirationNotice);
+
+    const oneHourLater = now + 60 * 60 * 1000;
+    dateNow.mockReturnValue(oneHourLater);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Second question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const renewedExpiration = new Date(oneHourLater + 172800 * 1000).toISOString();
+    await waitFor(() => expect(screen.getByLabelText('Chat expiration')).toHaveAttribute('dateTime', renewedExpiration));
+  });
+
+  it('reports an expired stored chat and requires a new conversation', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'expired-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() - 1,
+      retentionSeconds: 172800,
+      messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
+      syncedSchedule: 'description: old schedule\n',
+      proposalDiff: null,
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText('Old question')).toBeInTheDocument();
+    expect(screen.getByText(/expired after 48 hours of inactivity/)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(mockGetSessionStatus).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
+  });
+
+  it('uses a singular retention label for a one-hour session', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'expired-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() - 1,
+      retentionSeconds: 3600,
+      messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
+      syncedSchedule: 'description: old schedule\n',
+      proposalDiff: null,
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText(/expired after 1 hour of inactivity/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 hours/)).not.toBeInTheDocument();
+  });
+
+  it('preserves the transcript when the stored server session is no longer available', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockGetSessionStatus.mockRejectedValue(new MockAiHttpError('Chat session not found.', 404));
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'missing-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'user-1', role: 'user', content: 'Preserve this transcript' }],
+      syncedSchedule: 'description: old schedule\n',
+      proposalDiff: null,
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText(/no longer available on the AI server/)).toBeInTheDocument();
+    expect(screen.getByText('Preserve this transcript')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+    expect(screen.queryByText('Preserve this transcript')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
+  });
+
+  it('reports a failed restored-session check and retries after credentials change', async () => {
+    mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
+      auth: { required: true, scheme: 'bearer' },
+    });
+    mockGetSessionStatus
+      .mockRejectedValueOnce(new Error('Temporary session-status failure.'))
+      .mockResolvedValueOnce(3600);
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'user-1', role: 'user', content: 'Stored question' }],
+      syncedSchedule: 'description: old schedule\n',
+      proposalDiff: null,
+    }));
+    const user = userEvent.setup();
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText('Temporary session-status failure.')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Enter token for AI assistant' }));
+    await user.type(screen.getByLabelText('Token for AI assistant'), 'replacement-token');
+    await user.click(screen.getByRole('button', { name: 'Save token for AI assistant' }));
+
+    await waitFor(() => expect(mockGetSessionStatus).toHaveBeenCalledTimes(2));
+    expect(mockGetSessionStatus).toHaveBeenLastCalledWith('restored-session', 'replacement-token', '/ai');
+  });
+
+  it('debounces streamed transcript writes and flushes the latest text on page hide', async () => {
+    const user = userEvent.setup();
+    let onDelta: ((text: string) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: { onDelta: (text: string) => void },
+    ) => {
+      onDelta = callbacks.onDelta;
+      await new Promise<void>(resolve => {
+        finishStream = resolve;
+      });
+    });
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(onDelta).toBeDefined());
+    const writeConversation = vi.spyOn(Storage.prototype, 'setItem');
+
+    act(() => onDelta?.('First'));
+    act(() => onDelta?.(' second'));
+    expect(writeConversation).not.toHaveBeenCalled();
+
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.messages.at(-1).content).toBe('First second');
+    expect(writeConversation).toHaveBeenCalledTimes(1);
+    await act(async () => finishStream?.());
   });
 
   it('starts with a single-line composer and grows with the draft', async () => {
@@ -697,21 +897,35 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
+  it('discards queued questions when the active conversation expires', async () => {
+    const user = userEvent.setup();
+    let rejectStream: ((reason: Error) => void) | undefined;
+    mockStreamMessage.mockImplementationOnce(async () => {
+      await new Promise<void>((_resolve, reject) => {
+        rejectStream = reject;
+      });
+    });
+    render(<ExperimentalAiPage />);
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+
+    await user.type(composer, 'First question.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Stop' });
+    await user.type(composer, 'Do not resend this.');
+    await user.keyboard('{Enter}');
+    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+
+    rejectStream?.(new MockAiHttpError('Chat session not found.', 404));
+
+    expect(await screen.findByText(/expired or is no longer available/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Messages to be submitted after next tool call')).not.toBeInTheDocument());
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('requires the advertised AI token and uses a session-only credential', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -737,19 +951,8 @@ describe('ExperimentalAiPage', () => {
 
   it('remembers the AI token only when requested', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -771,19 +974,8 @@ describe('ExperimentalAiPage', () => {
       token: 'remembered-ai-token',
     }));
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -801,19 +993,8 @@ describe('ExperimentalAiPage', () => {
 
   it('prompts for a replacement when the AI service rejects a token', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
+      ...defaultCapabilities,
       auth: { required: true, scheme: 'bearer' },
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
     });
     mockCreateSession.mockRejectedValueOnce(Object.assign(new Error('Invalid credentials'), { status: 401 }));
     const user = userEvent.setup();
@@ -831,21 +1012,8 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByLabelText('Token for AI assistant')).toHaveValue('');
   });
 
-  it('previews and sends images when the backend enables them', async () => {
-    mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 4,
-        max_bytes_per_file: 5_000_000,
-      },
-    });
+  it('previews and sends image files', async () => {
+    mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const user = userEvent.setup();
@@ -865,7 +1033,7 @@ describe('ExperimentalAiPage', () => {
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      { images: [image], documents: [] },
+      { files: [image] },
       '/ai',
     );
     expect(screen.getByText('Attached: ward.png')).toBeInTheDocument();
@@ -874,20 +1042,7 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('adds attachments dropped onto the message composer', async () => {
-    mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-    });
+    mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:dropped-image');
     const image = new File(['png'], 'dropped.png', { type: 'image/png' });
     render(<ExperimentalAiPage />);
@@ -905,61 +1060,39 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByAltText('Preview of dropped.png')).toBeInTheDocument();
   });
 
-  it('previews and sends text documents when the backend enables them', async () => {
+  it('accepts and sends an arbitrary file type', async () => {
     mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
+      file_attachments: {
         enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
         max_files: 2,
         max_bytes_per_file: 5_000_000,
       },
     });
     const user = userEvent.setup();
-    const document = new File(['name,shift\nAlice,day\n'], 'staff.csv', { type: '' });
+    const document = new File(['custom bytes'], 'staff.custom', { type: 'application/x-custom' });
     render(<ExperimentalAiPage />);
 
     const input = await screen.findByLabelText('Attach files');
+    expect(input).not.toHaveAttribute('accept');
     await user.upload(input, document);
-    expect(screen.getByText('csv')).toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the CSV.');
+    expect(screen.getByText('custom')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the file.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(mockStreamMessage).toHaveBeenCalledWith(
       'session-id',
-      'Check the CSV.',
+      'Check the file.',
       expect.any(Object),
       expect.any(AbortSignal),
       null,
-      {
-        images: [],
-        documents: [expect.objectContaining({ name: 'staff.csv', type: 'text/csv' })],
-      },
+      { files: [expect.objectContaining({ name: 'staff.custom', type: 'application/x-custom' })] },
       '/ai',
     );
-    expect(screen.getByText('Attached: staff.csv')).toBeInTheDocument();
+    expect(screen.getByText('Attached: staff.custom')).toBeInTheDocument();
   });
 
-  it('normalizes PDF and XLSX media types before upload', async () => {
-    mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: false,
-        accepted_media_types: [],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: true,
-        accepted_extensions: ['.pdf', '.xlsx'],
-        max_files: 2,
-        max_bytes_per_file: 5_000_000,
-      },
-    });
+  it('sends PDF and XLSX files without rewriting their media types', async () => {
+    mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     const user = userEvent.setup();
     const pdf = new File(['pdf'], 'notes.pdf', { type: '' });
     const workbook = new File(['xlsx'], 'coverage.xlsx', { type: '' });
@@ -977,13 +1110,9 @@ describe('ExperimentalAiPage', () => {
       expect.any(AbortSignal),
       null,
       {
-        images: [],
-        documents: [
-          expect.objectContaining({ name: 'notes.pdf', type: 'application/pdf' }),
-          expect.objectContaining({
-            name: 'coverage.xlsx',
-            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          }),
+        files: [
+          expect.objectContaining({ name: 'notes.pdf', type: '' }),
+          expect.objectContaining({ name: 'coverage.xlsx', type: '' }),
         ],
       },
       '/ai',
@@ -1079,20 +1208,7 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('requires files to be reattached before retrying an attachment request', async () => {
-    mockGetCapabilities.mockResolvedValueOnce({
-      image_attachments: {
-        enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 2,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: false,
-        accepted_extensions: [],
-        max_files: 1,
-        max_bytes_per_file: 1,
-      },
-    });
+    mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     mockStreamMessage.mockRejectedValueOnce(new Error('The temporary AI sandbox failed.'));

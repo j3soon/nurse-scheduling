@@ -1,0 +1,21 @@
+{
+  "id": "read-second-xlsx-sheet",
+  "fixture": "new-schedule",
+  "question": "Inspect the attached workbook. What is the handover code on the Night assignment sheet?",
+  "expect_proposal": false,
+  "attachments": [
+    "multi-sheet-xlsx"
+  ],
+  "answer_contains": [
+    "NIGHT OWL 7429"
+  ],
+  "tool_usage": {
+    "required": [
+      "bash"
+    ]
+  },
+  "tags": [
+    "attachment"
+  ],
+  "note": "Regression for workbooks whose required value is not on the first sheet."
+}

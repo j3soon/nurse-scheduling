@@ -25,8 +25,6 @@ from typing import Literal, cast
 
 from ..server.auth import AuthCredential, normalize_auth_credentials, parse_auth_credentials
 
-AttachmentMode = Literal["none", "images"]
-DocumentAttachmentMode = Literal["none", "text"]
 SandboxBackendName = Literal["none", "e2b"]
 AI_AUTH_TOKEN_ENV_NAME = "AI_AUTH_TOKEN"
 AI_AUTH_TOKENS_ENV_NAME = "AI_AUTH_TOKENS"
@@ -99,22 +97,6 @@ def _read_bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean")
 
 
-def _read_attachment_mode() -> AttachmentMode:
-    """Read the enabled attachment capability."""
-    value = os.getenv("AI_ATTACHMENT_MODE", "images").strip().lower()
-    if value not in {"none", "images"}:
-        raise ValueError("AI_ATTACHMENT_MODE must be one of: none, images")
-    return cast(AttachmentMode, value)
-
-
-def _read_document_attachment_mode() -> DocumentAttachmentMode:
-    """Read the enabled document attachment capability."""
-    value = os.getenv("AI_DOCUMENT_ATTACHMENT_MODE", "text").strip().lower()
-    if value not in {"none", "text"}:
-        raise ValueError("AI_DOCUMENT_ATTACHMENT_MODE must be one of: none, text")
-    return cast(DocumentAttachmentMode, value)
-
-
 def _read_sandbox_backend() -> SandboxBackendName:
     """Read the optional disposable sandbox provider."""
     value = os.getenv("AI_SANDBOX_BACKEND", "none").strip().lower()
@@ -136,7 +118,7 @@ class AiSettings:
     provider_timeout_seconds: float = 120.0
     provider_max_attempts: int = 3
     provider_retry_backoff_seconds: float = 1.0
-    session_ttl_seconds: int = 3600
+    session_ttl_seconds: int = 172_800
     history_postgres_url: str = ""
     history_retention_days: int = 30
     request_log_enabled: bool = True
@@ -146,24 +128,15 @@ class AiSettings:
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
-    attachment_mode: AttachmentMode = "images"
-    max_image_files: int = 4
-    max_image_bytes: int = 5_000_000
-    document_attachment_mode: DocumentAttachmentMode = "text"
-    max_document_files: int = 4
-    max_document_bytes: int = 5_000_000
-    max_document_text_chars: int = 50_000
-    max_pdf_pages: int = 100
-    max_xlsx_sheets: int = 20
-    max_xlsx_cells: int = 100_000
-    max_xlsx_uncompressed_bytes: int = 50_000_000
+    max_attachment_files: int = 8
+    max_attachment_bytes: int = 5_000_000
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
     sandbox_command_timeout_seconds: float = 10.0
     sandbox_turn_timeout_seconds: float = 900.0
-    agent_max_tool_rounds: int = 10
-    agent_max_tool_calls: int = 20
+    agent_max_tool_rounds: int = 100
+    agent_max_tool_calls: int = 200
     sandbox_cleanup_timeout_seconds: float = 10.0
     sandbox_max_attempts: int = 3
     sandbox_retry_backoff_seconds: float = 0.5
@@ -211,7 +184,7 @@ class AiSettings:
             provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 120.0),
             provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
             provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),
-            session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 3600),
+            session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 172_800),
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
             history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
@@ -220,24 +193,15 @@ class AiSettings:
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
-            attachment_mode=_read_attachment_mode(),
-            max_image_files=_read_positive_int("AI_MAX_IMAGE_FILES", 4),
-            max_image_bytes=_read_positive_int("AI_MAX_IMAGE_BYTES", 5_000_000),
-            document_attachment_mode=_read_document_attachment_mode(),
-            max_document_files=_read_positive_int("AI_MAX_DOCUMENT_FILES", 4),
-            max_document_bytes=_read_positive_int("AI_MAX_DOCUMENT_BYTES", 5_000_000),
-            max_document_text_chars=_read_positive_int("AI_MAX_DOCUMENT_TEXT_CHARS", 50_000),
-            max_pdf_pages=_read_positive_int("AI_MAX_PDF_PAGES", 100),
-            max_xlsx_sheets=_read_positive_int("AI_MAX_XLSX_SHEETS", 20),
-            max_xlsx_cells=_read_positive_int("AI_MAX_XLSX_CELLS", 100_000),
-            max_xlsx_uncompressed_bytes=_read_positive_int("AI_MAX_XLSX_UNCOMPRESSED_BYTES", 50_000_000),
+            max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", 8),
+            max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", 5_000_000),
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,
             sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 10.0),
             sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 900.0),
-            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 10),
-            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 20),
+            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 100),
+            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 200),
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
             sandbox_max_attempts=_read_positive_int("AI_SANDBOX_MAX_ATTEMPTS", 3),
             sandbox_retry_backoff_seconds=_read_non_negative_float("AI_SANDBOX_RETRY_BACKOFF_SECONDS", 0.5),

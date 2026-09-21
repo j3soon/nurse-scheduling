@@ -85,8 +85,7 @@ class ChatHistory:
         credential_id: str | None,
         question: str,
         model: str,
-        image_count: int,
-        document_count: int,
+        attachment_count: int,
     ) -> None:
         """Atomically create a session and a uniquely identified turn."""
         with self._connect() as connection:
@@ -95,9 +94,9 @@ class ChatHistory:
                 (session_id, credential_id),
             )
             connection.execute(
-                "INSERT INTO chat_turns (id, session_id, user_message, model, image_count, document_count) "
-                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-                (turn_id, session_id, question, model, image_count, document_count),
+                "INSERT INTO chat_turns (id, session_id, user_message, model, attachment_count) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (turn_id, session_id, question, model, attachment_count),
             )
 
     def finish_turn(

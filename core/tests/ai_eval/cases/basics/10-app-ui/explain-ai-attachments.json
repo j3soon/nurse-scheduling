@@ -8,7 +8,7 @@
     "Attach files",
     ["image", "images"],
     ["spreadsheet", "XLSX", "document"],
-    ["backend enables", "backend supports", "available", "enabled by the backend"]
+    ["temporary workspace", "isolated workspace", "disposable sandbox"]
   ],
   "note": "The assistant should describe the attachment control and its capability gate without inspecting or changing the schedule."
 }
