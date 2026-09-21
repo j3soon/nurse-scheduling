@@ -32,6 +32,7 @@ cp -- "$script_dir/affected_test_common.sh" "$script_dir/test_core_affected.sh" 
   "$fixture_root/scripts/"
 for path in \
   core/nurse_scheduling/ai/pi/read.py \
+  core/nurse_scheduling/ai/prompts/sandbox-system.md \
   core/tests/test_ai_basic.py \
   core/tests/test_ai_provider.py \
   core/tests/test_scheduler.py \
@@ -61,6 +62,16 @@ output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'test: tests/test_ai_basic.py'
 assert_line "$output" 'test: tests/test_ai_provider.py'
 assert_no_line "$output" 'test: tests/test_scheduler.py'
+
+write_fixture core/nurse_scheduling/ai/pi/read.py
+printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/prompts/sandbox-system.md"
+output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
+assert_line "$output" 'test: tests/test_ai_basic.py'
+assert_line "$output" 'test: tests/test_ai_provider.py'
+assert_no_line "$output" 'test: tests/test_scheduler.py'
+write_fixture core/nurse_scheduling/ai/prompts/sandbox-system.md
+
+printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/pi/read.py"
 
 git -C "$fixture_root" add core/nurse_scheduling/ai/pi/read.py
 git -C "$fixture_root" commit -qm 'test: change AI fixture'
