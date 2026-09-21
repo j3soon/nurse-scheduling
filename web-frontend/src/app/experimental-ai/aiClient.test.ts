@@ -380,13 +380,17 @@ describe('AI client', () => {
   });
 
   it('downloads an optimizer result with authentication', async () => {
-    const workbook = new Blob(['workbook'], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    });
-    const fetchMock = vi.fn().mockResolvedValue(new Response(workbook, { status: 200 }));
+    // Build the body from text. A jsdom Blob is not always a body the runtime's
+    // Response accepts, which made this check fail on some platforms only.
+    const fetchMock = vi.fn().mockResolvedValue(new Response('workbook', {
+      status: 200,
+      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+    }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(downloadOptimization('session/id', 'opt/id', 'result-token')).resolves.toEqual(workbook);
+    const workbook = await downloadOptimization('session/id', 'opt/id', 'result-token');
+    expect(await workbook.text()).toBe('workbook');
+    expect(workbook.type).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/optimizations/opt%2Fid/xlsx',
