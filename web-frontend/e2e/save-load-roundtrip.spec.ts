@@ -83,8 +83,8 @@ test('save and load roundtrip restores seeded state after reset', async ({ page 
   await expect(page.getByTitle('Team Alpha', { exact: true })).toBeVisible();
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/people');
   await expect(page.getByText('Team Alpha')).toHaveCount(0);

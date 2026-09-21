@@ -172,7 +172,7 @@ test('renaming and deleting shift types keeps people history coherent in UI and 
 
   await page.goto('/shift-requests');
   await expect(currentHistory.getByText(/H-1:\s*N/)).toBeVisible();
-  await expect(currentHistory.getByText(/H-2:\s*$/)).toBeVisible();
+  await expect(currentHistory.getByText(/H-2:\s*—/)).toBeVisible();
   await expect(currentHistory.getByText(/H-3:\s*A/)).toBeVisible();
   await expect(currentHistory.getByText(/DX/)).toHaveCount(0);
 

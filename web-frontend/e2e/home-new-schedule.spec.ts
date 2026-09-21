@@ -32,10 +32,10 @@ test('new schedule resets the app to an empty state from the home page flow', as
   await disableModalDialogs(page);
 
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'New Schedule' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Schedule', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/people');
   await expect(page.getByRole('heading', { name: 'People Management' })).toBeVisible();
@@ -75,8 +75,8 @@ test('new schedule reset is undoable from downstream pages', async ({ page }) =>
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/people');
   await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
@@ -118,8 +118,8 @@ test('new schedule reset clears custom people history and export layout', async 
   await expect(page.locator('pre')).toContainText('Custom count');
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/save-and-load');
   const yamlPreview = page.locator('pre');

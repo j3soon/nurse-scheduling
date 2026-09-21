@@ -20,6 +20,7 @@
 # This code is mostly AI generated.
 
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -90,6 +91,14 @@ class ToolCall:
     id: str
     name: str
     arguments: str
+
+
+@dataclass(frozen=True)
+class ToolResultImage:
+    """One bounded image returned by a model-facing tool."""
+
+    media_type: str
+    data: bytes
 
 
 @dataclass(frozen=True)
@@ -184,6 +193,20 @@ def assistant_tool_call_message(calls: Sequence[ToolCall], content: str | None =
 def tool_result_message(call_id: str, result: str) -> ChatMessage:
     """Return one tool result for the assistant turn that requested it."""
     return ChatMessage(role="tool", tool_call_id=call_id, content=result)
+
+
+def tool_result_image_message(call_id: str, image: ToolResultImage) -> ChatMessage:
+    """Pass a tool image through a user message after all tool replies."""
+    return ChatMessage(
+        role="user",
+        content=[
+            {"type": "text", "text": f"Image returned by tool call {call_id}."},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{image.media_type};base64,{base64.b64encode(image.data).decode('ascii')}"},
+            },
+        ],
+    )
 
 
 class ProviderError(RuntimeError):

@@ -133,6 +133,23 @@ def test_pi_edit_fuzzy_match_preserves_unchanged_lines_from_the_original():
     assert normalize_for_fuzzy_match("quote “yes” — ok\u00a0") == 'quote "yes" - ok'
 
 
+@pytest.mark.parametrize(
+    "content, call, expected",
+    [
+        ("a b \f\nc\nd", EditInput("file.txt", (EditReplacement("c \nd", "CD"),)), "a b \f\nCD"),
+        ("x\ny\vw\nz", EditInput("file.txt", (EditReplacement("w \nz", "WZ"),)), "x\ny\vWZ"),
+        ("m\nn\u2028o\np", EditInput("file.txt", (EditReplacement("o \np", "OP"),)), "m\nn\u2028OP"),
+    ],
+)
+def test_pi_edit_line_splitting_matches_pi_lf_only_semantics(content, call, expected):
+    # Pi splits lines on LF only; Python's str.splitlines also breaks
+    # on form feed, vertical tab, and U+2028, which changed the line
+    # counts used by unchanged-line preservation.
+    edited = apply_edit(content.encode(), call)
+
+    assert edited == expected
+
+
 def test_pi_edit_rejects_missing_duplicate_empty_overlapping_and_unchanged_text():
     with pytest.raises(EditApplyError, match="Could not find the exact text"):
         apply_edit(b"one", EditInput("file.txt", (EditReplacement("missing", "new"),)))

@@ -104,11 +104,11 @@ function exitedWithin(processExited: Promise<number | null>, timeoutMs: number):
 }
 
 async function stopServer(server: ChildProcess, processExited: Promise<number | null>): Promise<void> {
-  if (server.exitCode !== null || server.signalCode !== null) return;
+  if (process.platform === 'win32' && (server.exitCode !== null || server.signalCode !== null)) return;
   killServerTree(server, 'SIGTERM');
-  if (await exitedWithin(processExited, SERVER_STOP_TIMEOUT_MS)) return;
-  killServerTree(server, 'SIGKILL');
   await exitedWithin(processExited, SERVER_STOP_TIMEOUT_MS);
+  // The Bun wrapper can exit while its Next.js child still owns the dev lock.
+  killServerTree(server, 'SIGKILL');
 }
 
 type DevServerFixtures = {
@@ -168,16 +168,9 @@ test('hydrates through a non-loopback development origin', async ({ page, devSer
       'Access-Control-Allow-Origin': `http://${host}:${port}`,
     },
     body: JSON.stringify({
-      image_attachments: {
+      file_attachments: {
         enabled: true,
-        accepted_media_types: ['image/png'],
-        max_files: 1,
-        max_bytes_per_file: 1000,
-      },
-      document_attachments: {
-        enabled: true,
-        accepted_extensions: ['.txt', '.md', '.csv', '.pdf', '.xlsx'],
-        max_files: 1,
+        max_files: 8,
         max_bytes_per_file: 5000000,
       },
     }),
