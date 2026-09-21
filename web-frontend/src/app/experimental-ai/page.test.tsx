@@ -97,7 +97,6 @@ vi.mock('@/utils/unsavedEditingState', () => ({
 
 const defaultCapabilities = {
   session_retention_seconds: 172800,
-  optimizer: { enabled: false, max_runs_per_session: 5 },
   file_attachments: {
     enabled: true,
     max_files: 8,

@@ -66,10 +66,6 @@ export interface AiCapabilities {
     max_files: number;
     max_bytes_per_file: number;
   };
-  optimizer: {
-    enabled: boolean;
-    max_runs_per_session: number;
-  };
 }
 
 export interface MessageAttachments {
@@ -174,7 +170,6 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
 
   const body = await response.json() as Partial<AiCapabilities>;
   const auth = parseAuthRequirement(body.auth);
-  const optimizer = body.optimizer ?? { enabled: false, max_runs_per_session: 1 };
   const sessionRetention = body.session_retention_seconds ?? DEFAULT_SESSION_RETENTION_SECONDS;
   const files = body.file_attachments;
   if (
@@ -185,13 +180,10 @@ export async function getCapabilities(signal?: AbortSignal, endpoint = getAiBase
     || files.max_files <= 0
     || !Number.isInteger(files.max_bytes_per_file)
     || files.max_bytes_per_file <= 0
-    || typeof optimizer.enabled !== 'boolean'
-    || !Number.isInteger(optimizer.max_runs_per_session)
-    || optimizer.max_runs_per_session <= 0
   ) {
     throw new Error('The AI backend returned invalid capabilities.');
   }
-  return { ...body, auth, optimizer, session_retention_seconds: sessionRetention } as AiCapabilities;
+  return { ...body, auth, session_retention_seconds: sessionRetention } as AiCapabilities;
 }
 
 export async function createSession(

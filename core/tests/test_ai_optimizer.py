@@ -31,7 +31,15 @@ from nurse_scheduling.ai.optimizer import (
     OptimizerJobPayload,
     OptimizerResultUnavailable,
     SessionOptimizer,
+    optimizer_tool_definition,
 )
+
+
+def test_tool_description_explains_the_default_timeout() -> None:
+    function = optimizer_tool_definition()["function"]
+
+    assert "normally 300 seconds" in function["description"]
+    assert "normally 300 seconds" in function["parameters"]["properties"]["timeout_seconds"]["description"]
 
 
 class FakeOptimizerBackend:

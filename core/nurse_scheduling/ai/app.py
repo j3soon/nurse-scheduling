@@ -193,17 +193,9 @@ class FileAttachmentCapability(BaseModel):
     max_bytes_per_file: int
 
 
-class OptimizerCapability(BaseModel):
-    """Whether this deployment can run optimization for the assistant."""
-
-    enabled: bool
-    max_runs_per_session: int
-
-
 class CapabilitiesResponse(BaseModel):
     """Enabled experimental features and their public limits."""
 
-    optimizer: OptimizerCapability
     file_attachments: FileAttachmentCapability
     session_retention_seconds: int
     auth: dict[str, bool | str]
@@ -634,7 +626,7 @@ def create_app(
             if task is not None and active_turn_tasks.get(session_id) is task:
                 del active_turn_tasks[session_id]
 
-    if optimizer_backend is None and settings.optimizer_base_url:
+    if optimizer_backend is None:
         optimizer_backend = HttpOptimizerBackend(
             settings.optimizer_base_url,
             settings.optimizer_auth_token,
@@ -661,18 +653,14 @@ def create_app(
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
         event_broker.publish(session_id, "optimization", update)
 
-    session_optimizer = (
-        SessionOptimizer(
-            optimizer_backend,
-            poll_interval_seconds=settings.optimizer_poll_interval_seconds,
-            on_completion=optimizer_completed,
-            on_update=optimizer_updated,
-            max_sessions=settings.max_sessions,
-            max_runs_per_session=settings.optimizer_max_runs_per_session,
-            max_cached_result_bytes=settings.optimizer_result_cache_bytes,
-        )
-        if optimizer_backend is not None
-        else None
+    session_optimizer = SessionOptimizer(
+        optimizer_backend,
+        poll_interval_seconds=settings.optimizer_poll_interval_seconds,
+        on_completion=optimizer_completed,
+        on_update=optimizer_updated,
+        max_sessions=settings.max_sessions,
+        max_runs_per_session=settings.optimizer_max_runs_per_session,
+        max_cached_result_bytes=settings.optimizer_result_cache_bytes,
     )
 
     @asynccontextmanager
@@ -687,8 +675,7 @@ def create_app(
             async with managed_sandbox_factory(sandbox_factory):
                 yield
         finally:
-            if session_optimizer is not None:
-                await session_optimizer.close()
+            await session_optimizer.close()
             if maintenance is not None:
                 await stop_maintenance(maintenance)
 
@@ -734,10 +721,6 @@ def create_app(
                 enabled=True,
                 max_files=settings.max_attachment_files,
                 max_bytes_per_file=settings.max_attachment_bytes,
-            ),
-            optimizer=OptimizerCapability(
-                enabled=session_optimizer is not None,
-                max_runs_per_session=settings.optimizer_max_runs_per_session,
             ),
             session_retention_seconds=settings.session_ttl_seconds,
             auth={"required": auth_registry.enabled, "scheme": AUTH_SCHEME},
@@ -822,8 +805,6 @@ def create_app(
     ) -> Response:
         """Download a completed optimizer result without exposing optimizer credentials."""
         store.require_owned(session_id, owner)
-        if session_optimizer is None:
-            raise HTTPException(status_code=404, detail="Optimizer result not found.")
         try:
             artifact = await session_optimizer.result_artifact(session_id, job_id)
         except OptimizerResultUnavailable as exc:
@@ -963,9 +944,7 @@ def create_app(
                             lambda current_yaml, arguments: session_optimizer.execute(
                                 session_id, current_yaml, arguments
                             )
-                        )
-                        if session_optimizer is not None
-                        else None,
+                        ),
                         attachments=attachments,
                     )
                     async for event in agent_events:

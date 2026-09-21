@@ -184,7 +184,7 @@ class SessionOptimizer:
         on_completion: CompletionCallback,
         on_update: UpdateCallback | None = None,
         max_sessions: int = 1000,
-        max_runs_per_session: int = 5,
+        max_runs_per_session: int = 50,
         max_cached_result_bytes: int = 100_000_000,
     ) -> None:
         self._backend = backend
@@ -424,7 +424,8 @@ def optimizer_tool_definition() -> dict[str, Any]:
             "name": OPTIMIZER_TOOL,
             "description": (
                 "Start the scheduling optimizer on the current working YAML, inspect its background status, or ask "
-                "a running optimizer to finish with its best available solution. Start returns immediately."
+                "a running optimizer to finish with its best available solution. Start returns immediately. "
+                "Without timeout_seconds, the optimizer uses its deployment default, normally 300 seconds."
             ),
             "parameters": {
                 "type": "object",
@@ -433,7 +434,7 @@ def optimizer_tool_definition() -> dict[str, Any]:
                     "timeout_seconds": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional optimizer time limit for a new run.",
+                        "description": "Optional optimizer time limit in seconds. Omit for the backend default, normally 300 seconds.",
                     },
                 },
                 "required": ["action"],

@@ -45,9 +45,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
-- Keep AI feature limits server-configured and report them through
-  `/capabilities`. Attachments are always enabled. Treat schedules and
-  attachments as untrusted provider input.
+- Keep attachment limits server-configured and report them through
+  `/capabilities`. Attachments and the optimizer tool are always offered.
+  Treat schedules and attachments as untrusted provider input.
 - Bound uploads before provider calls, place them only under fixed safe sandbox
   paths, and never execute them. Do not retain raw attachments longer than
   their documented turn behavior requires.
@@ -98,8 +98,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
   tune prompts directly against one held-out trajectory.
 - Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
-  the disposable sandbox. The server-side `optimizer` lifecycle tool may also
-  be offered when configured. Keep optimizer execution and credentials outside
+  the disposable sandbox. Always offer the server-side `optimizer` lifecycle
+  tool. Keep optimizer execution and credentials outside
   the sandbox. Use `read` for bounded text and image inspection, `edit` for unique
   exact-text replacements, and `write` only for a complete file rewrite. Put
   domain guidance in task-sized reference documents that return related schema

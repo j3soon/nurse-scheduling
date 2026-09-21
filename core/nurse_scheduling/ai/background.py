@@ -170,7 +170,7 @@ async def run_background_turn(
     history_log: ChatHistory | None,
     provider: ToolCapableChatProvider,
     sandbox_factory: SandboxFactory,
-    session_optimizer: SessionOptimizer | None,
+    session_optimizer: SessionOptimizer,
 ) -> None:
     """Wake an idle agent after a background optimizer job reaches a terminal state."""
     turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
@@ -226,9 +226,7 @@ async def run_background_turn(
                     pending_proposal_diff=proposal_diff,
                     execute_optimizer=(
                         lambda current_yaml, arguments: session_optimizer.execute(session_id, current_yaml, arguments)
-                    )
-                    if session_optimizer is not None
-                    else None,
+                    ),
                 )
                 async for event in agent_events:
                     if isinstance(event, AgentText):

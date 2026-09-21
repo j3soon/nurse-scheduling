@@ -92,7 +92,6 @@ describe('AI client', () => {
         max_files: 5,
         max_bytes_per_file: 5000000,
       },
-      optimizer: { enabled: false, max_runs_per_session: 1 },
     });
   });
 

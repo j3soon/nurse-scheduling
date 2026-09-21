@@ -72,7 +72,7 @@ intentional to avoid retaining uploads or repeatedly consuming provider context
 tokens. History retains only attachment markers and filenames.
 Schedules and attachments are labeled as untrusted data in the system prompt.
 
-When configured, the server-side `optimizer` tool submits the current sandbox
+The server-side `optimizer` tool submits the current sandbox
 working copy to the existing optimizer API. It returns immediately and keeps
 the remote credential and job ID outside the sandbox. A process-local monitor
 waits for terminal status, retains a size-bounded output workbook for an
@@ -399,11 +399,11 @@ response cannot prove that the original operation did not take effect.
 | `AI_PROVIDER_TIMEOUT_SECONDS` | `120` | Provider request timeout. |
 | `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
 | `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
-| `AI_OPTIMIZER_BASE_URL` | Unset (`http://api:8000` in Docker Compose) | Optimizer API base URL. Leave unset to disable the assistant optimizer tool. |
+| `AI_OPTIMIZER_BASE_URL` | `http://localhost:8000` (`http://api:8000` in Docker Compose) | Optimizer API base URL. An unavailable API produces a tool error without disabling chat. |
 | `AI_OPTIMIZER_AUTH_TOKEN` | Unset (defaults to `API_AUTH_TOKEN` in Docker Compose) | Server-side optimizer API bearer token. Set it explicitly when the API uses identified keys. |
 | `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |
 | `AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS` | `30` | Timeout for one optimizer API request or result download. |
-| `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | `5` | Maximum background optimizer runs one chat session may start. |
+| `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | `50` | Maximum background optimizer runs one chat session may start. |
 | `AI_OPTIMIZER_MAX_RESULT_BYTES` | `10000000` | Maximum workbook bytes retained for one result download. |
 | `AI_OPTIMIZER_RESULT_CACHE_BYTES` | `100000000` | Maximum total optimizer workbook bytes retained by one AI process. Oldest results are evicted first. |
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
@@ -467,9 +467,10 @@ docker exec -it -w /app nurse-scheduling-dev \
   ./scripts/start_frontend.sh --hostname 0.0.0.0
 ```
 
-The normal optimization backend is optional. Without
-`AI_OPTIMIZER_BASE_URL`, chat remains available and the optimizer tool is not
-advertised to the model or browser.
+The optimizer tool is always available to the model. Native runs use
+`http://localhost:8000` by default, while Docker Compose uses `http://api:8000`.
+If that API is unavailable, the tool reports a request error and chat remains
+available.
 
 ## Run with Docker Compose
 
@@ -602,7 +603,7 @@ FastAPI.
 | --- | --- |
 | `GET /health` | Process and service identity check. |
 | `GET /ready` | Required configuration accepted at startup. |
-| `GET /capabilities` | Enabled optional features and their public limits. |
+| `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
 | `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
 | `POST /sessions/{id}/messages` | Stream one answer. Accepts JSON text or multipart text and attachments. |

@@ -535,11 +535,14 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
 
         app = create_test_app(settings=make_settings(), provider=WaitingProvider())
         transport = httpx.ASGITransport(app=app)
-        async with app.router.lifespan_context(app), httpx.AsyncClient(
-            transport=transport,
-            base_url="http://testserver",
-            headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
-        ) as client:
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
             session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
             turn = asyncio.create_task(
                 client.post(f"/sessions/{session_id}/messages", json={"message": "Keep working"})
@@ -684,7 +687,6 @@ def test_capabilities_report_configured_attachment_limits() -> None:
             "max_files": 5,
             "max_bytes_per_file": 4321,
         },
-        "optimizer": {"enabled": False, "max_runs_per_session": 5},
         "session_retention_seconds": 172800,
         "auth": {"required": True, "scheme": "bearer"},
     }
@@ -1160,6 +1162,28 @@ def test_environment_configuration_reads_optimizer_connection(monkeypatch: pytes
     assert settings.optimizer_result_cache_bytes == 80_000_000
 
 
+def test_optimizer_defaults_are_always_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_OPTIMIZER_BASE_URL", "")
+    monkeypatch.delenv("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", raising=False)
+
+    settings = AiSettings.from_env()
+
+    assert settings.optimizer_base_url == "http://localhost:8000"
+    assert settings.optimizer_max_runs_per_session == 50
+
+
+def test_optimizer_tool_is_offered_without_an_availability_capability() -> None:
+    provider = FakeProvider()
+    with AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider)) as client:
+        session_id = create_session(client)
+        response = client.post(f"/sessions/{session_id}/messages", json={"message": "What can you do?"})
+
+    assert response.status_code == 200
+    assert any(tool["function"]["name"] == OPTIMIZER_TOOL for tool in provider.offered_tools)
+
+
 def test_environment_configuration_requires_e2b_key_when_selected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
@@ -1313,10 +1337,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion() -> None:
 
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, schedule_yaml())
-        assert client.get("/capabilities").json()["optimizer"] == {
-            "enabled": True,
-            "max_runs_per_session": 5,
-        }
+        assert "optimizer" not in client.get("/capabilities").json()
         started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize this schedule."})
         follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
 
@@ -1865,7 +1886,7 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "2 people, 2 shift types, 2 preferences" in normalized_prompt
     assert "Group ids: people PEOPLE" in normalized_prompt
     assert "Dates run from 2026-01-01 to 2026-01-02" in normalized_prompt
-    assert "Your tools are `read`, `bash`, `edit`, and `write`" in normalized_prompt
+    assert "Your tools are `read`, `bash`, `edit`, `write`, and the server-side `optimizer`" in normalized_prompt
     assert "Prefer `read` for files and images" in normalized_prompt
     assert "`edit` for unique exact-text replacements" in normalized_prompt
     assert "`write` only for new files or complete rewrites" in normalized_prompt
@@ -1882,7 +1903,7 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
     assert "Update, rename, and remove only existing entities" in normalized_prompt
     assert "This sandbox cannot run the optimizer" in normalized_prompt
     assert "Do not access unrelated files, credentials, or the network" in normalized_prompt
-    assert "When an `optimizer` tool is available" in normalized_prompt
+    assert "Use `optimizer` to start optimization" in normalized_prompt
     assert "Do not poll repeatedly" in normalized_prompt
     summary = system_prompt.split("Current schedule summary:\n")[1]
     assert len(summary) < len(schedule) / 2

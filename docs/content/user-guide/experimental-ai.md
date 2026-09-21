@@ -13,8 +13,8 @@ This page answers questions about the schedule currently open in the browser.
 A question can include files of any type when **Attach files** is available.
 The assistant can inspect common text, image, PDF, and spreadsheet formats in
 its temporary workspace. The assistant can propose changes to the schedule,
-which apply only after you approve them. When the AI backend enables
-optimization, the assistant can also run the optimizer and review its result.
+which apply only after you approve them. The assistant can also run the
+optimizer and review its result.
 
 ## Ask the assistant to optimize
 
@@ -33,8 +33,9 @@ you can continue chatting while it solves.
   changed YAML still requires your approval before it replaces the schedule in
   the browser.
 
-The backend limits one chat to five optimizer runs by default. A deployment may
-advertise a different limit.
+The optimizer runs for up to 300 seconds (five minutes) by default. Ask the
+assistant for a different timeout when needed. A deployment may set another
+default. One chat may start 50 optimizer runs by default.
 
 Each run records the exact YAML revision it used. If the browser schedule
 changes before the result returns, the assistant can distinguish that older
