@@ -28,7 +28,7 @@ import logging
 import subprocess
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
-from unittest.mock import ANY
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -172,9 +172,11 @@ def test_application_lifespan_runs_sandbox_cleanup_supervision():
 
 def test_e2b_template_is_built_before_ai_server_is_ready(monkeypatch):
     calls = []
-    factory = FakeSandboxFactory()
-    monkeypatch.setattr("nurse_scheduling.ai.app.create_sandbox_factory", lambda _settings: factory)
-    monkeypatch.setattr("nurse_scheduling.ai.app.subprocess.run", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.E2BSandboxFactory.start_cleanup", AsyncMock())
+    monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.E2BSandboxFactory.stop_cleanup", AsyncMock())
+    monkeypatch.setattr(
+        "nurse_scheduling.ai.sandbox.e2b.subprocess.run", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
 
     settings = make_settings(sandbox_backend="e2b", e2b_api_key="test-e2b-key", e2b_template="test-template")
     with AuthenticatedTestClient(create_ai_app(settings=settings, provider=FakeProvider())) as client:
@@ -192,12 +194,13 @@ def test_e2b_template_is_built_before_ai_server_is_ready(monkeypatch):
 
 
 def test_e2b_template_build_failure_prevents_startup(monkeypatch):
-    monkeypatch.setattr("nurse_scheduling.ai.app.create_sandbox_factory", lambda _settings: FakeSandboxFactory())
+    monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.E2BSandboxFactory.start_cleanup", AsyncMock())
+    monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.E2BSandboxFactory.stop_cleanup", AsyncMock())
 
     def fail_build(*_args, **_kwargs):
         raise subprocess.CalledProcessError(1, "build_template.py")
 
-    monkeypatch.setattr("nurse_scheduling.ai.app.subprocess.run", fail_build)
+    monkeypatch.setattr("nurse_scheduling.ai.sandbox.e2b.subprocess.run", fail_build)
     settings = make_settings(sandbox_backend="e2b", e2b_api_key="test-e2b-key")
     with (
         pytest.raises(subprocess.CalledProcessError),
