@@ -128,8 +128,8 @@ The assistant runs inside the existing Nurse Scheduling app and can explain
 which page and visible control to use for a task. For example, ask how to add a
 person, upload schedule YAML, configure a rule, or start optimization. It can
 guide you through those controls, but it cannot navigate, click, or upload for
-you. It can run optimization only when the configured AI backend advertises
-that capability.
+you. It can always start optimization itself. An unavailable optimizer API
+reports a tool error instead.
 
 Files attached with **Attach files** belong to the next chat message. To replace
 the schedule currently open in the app, use **Upload** on **Save and Load**

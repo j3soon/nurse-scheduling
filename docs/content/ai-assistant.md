@@ -409,6 +409,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_OPTIMIZER_AUTH_TOKEN` | Unset (defaults to `API_AUTH_TOKEN` in Docker Compose) | Server-side optimizer API bearer token. Set it explicitly when the API uses identified keys. |
 | `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |
 | `AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS` | `30` | Timeout for one optimizer API request or result download. |
+| `AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS` | `300` | Optimizer time limit sent when the assistant omits one. Docker Compose derives it from `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`. |
 | `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | `50` | Maximum background optimizer runs one chat session may start. |
 | `AI_OPTIMIZER_MAX_RESULT_BYTES` | `10000000` | Maximum workbook bytes retained for one result download. |
 | `AI_OPTIMIZER_RESULT_CACHE_BYTES` | `100000000` | Maximum total optimizer workbook bytes retained by one AI process. Oldest results are evicted first. |
