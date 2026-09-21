@@ -32,7 +32,7 @@ from pathlib import Path
 from .agent import AgentEvent, AgentProposal, AgentToolBatchMetrics, AgentToolOutcome, AgentToolUse, run_tool_agent
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
-from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition
+from .optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT, optimizer_tool_definition
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import (
@@ -104,6 +104,7 @@ class SandboxAgentLimits:
     bash_command_timeout_seconds: float
     max_tool_rounds: int
     max_tool_calls: int
+    optimizer_default_timeout_seconds: int = 300
 
     @classmethod
     def from_settings(cls, settings: AiSettings) -> "SandboxAgentLimits":
@@ -115,6 +116,7 @@ class SandboxAgentLimits:
             bash_command_timeout_seconds=settings.sandbox_command_timeout_seconds,
             max_tool_rounds=settings.agent_max_tool_rounds,
             max_tool_calls=settings.agent_max_tool_calls,
+            optimizer_default_timeout_seconds=settings.optimizer_default_timeout_seconds,
         )
 
 
@@ -145,6 +147,7 @@ async def _measured_sandbox_turn(
     pending_proposal_yaml: str,
     pending_proposal_diff: str,
     attachments: Sequence[SandboxAttachment],
+    optimizer_result: bytes | None,
 ) -> AsyncIterator[SandboxBackend]:
     """Create, hydrate, and measure a sandbox only when its first tool batch begins."""
     stack = AsyncExitStack()
@@ -157,6 +160,7 @@ async def _measured_sandbox_turn(
         pending_proposal_yaml,
         pending_proposal_diff,
         attachments,
+        optimizer_result,
     )
     try:
         async with stack:
@@ -181,6 +185,7 @@ class _LazySandboxTurn:
         pending_proposal_yaml: str,
         pending_proposal_diff: str,
         attachments: Sequence[SandboxAttachment],
+        optimizer_result: bytes | None,
     ) -> None:
         self._factory = factory
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
@@ -190,6 +195,7 @@ class _LazySandboxTurn:
         self._pending_proposal_yaml = pending_proposal_yaml
         self._pending_proposal_diff = pending_proposal_diff
         self._attachments = tuple(attachments)
+        self._optimizer_result = optimizer_result
         self._sandbox: SandboxBackend | None = None
         self._lifecycle_started: float | None = None
         self._cleanup_started: float | None = None
@@ -218,6 +224,7 @@ class _LazySandboxTurn:
             self._pending_proposal_yaml,
             self._pending_proposal_diff,
             self._attachments,
+            self._optimizer_result,
         )
         return self._sandbox
 
@@ -291,6 +298,7 @@ async def run_sandbox_agent(
     pending_proposal_diff: str = "",
     execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None = None,
     attachments: Sequence[SandboxAttachment] = (),
+    optimizer_result: bytes | None = None,
 ) -> AsyncIterator[AgentEvent | AgentScheduleChange]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox turn."""
     metrics = metrics or SandboxTurnMetrics()
@@ -304,6 +312,7 @@ async def run_sandbox_agent(
                 pending_proposal_yaml,
                 pending_proposal_diff,
                 attachments,
+                optimizer_result,
             ) as sandbox:
                 sandbox_tools = SandboxPiTools(
                     sandbox,
@@ -342,7 +351,11 @@ async def run_sandbox_agent(
                     messages,
                     [
                         *sandbox_tools.definitions,
-                        *([optimizer_tool_definition()] if execute_optimizer is not None else []),
+                        *(
+                            [optimizer_tool_definition(limits.optimizer_default_timeout_seconds)]
+                            if execute_optimizer is not None
+                            else []
+                        ),
                     ],
                     execute_command,
                     activity_batch=sandbox.activity_batch,
@@ -400,6 +413,7 @@ async def hydrate_sandbox(
     pending_proposal_yaml: str = "",
     pending_proposal_diff: str = "",
     attachments: Sequence[SandboxAttachment] = (),
+    optimizer_result: bytes | None = None,
 ) -> None:
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
@@ -436,6 +450,8 @@ async def hydrate_sandbox(
             ensure_ascii=False,
             indent=2,
         )
+    if optimizer_result is not None:
+        files[WORKSPACE_OPTIMIZER_RESULT] = optimizer_result
     # One request, because hydration now precedes the first tool result rather than the turn.
     await sandbox.write_files(files)
     logger.info(

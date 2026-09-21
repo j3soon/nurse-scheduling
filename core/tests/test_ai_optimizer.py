@@ -43,8 +43,10 @@ WORKBOOK_BYTES = optimizer_workbook_bytes()
 def test_tool_description_explains_the_default_timeout() -> None:
     function = optimizer_tool_definition()["function"]
 
-    assert "normally 300 seconds" in function["description"]
-    assert "normally 300 seconds" in function["parameters"]["properties"]["timeout_seconds"]["description"]
+    assert "configured default" in function["description"]
+    assert "Default: 300 seconds" in function["parameters"]["properties"]["timeout_seconds"]["description"]
+    configured = optimizer_tool_definition(420)["function"]
+    assert "Default: 420 seconds" in configured["parameters"]["properties"]["timeout_seconds"]["description"]
 
 
 class FakeOptimizerBackend:
@@ -181,7 +183,7 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
 
         assert completions[0][0] == "session-1"
         assert '"score": 17' in completions[0][1]
-        assert "/workspace/attachments/manifest.json" in completions[0][1]
+        assert "/workspace/optimizer-results/optimized-schedule.xlsx" in completions[0][1]
         assert repr(WORKBOOK_BYTES) not in completions[0][1]
         assert completions[0][2] is not None
         assert completions[0][2].content == WORKBOOK_BYTES

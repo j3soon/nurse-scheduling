@@ -122,6 +122,7 @@ class AiSettings:
     optimizer_auth_token: str = ""
     optimizer_poll_interval_seconds: float = 1.0
     optimizer_request_timeout_seconds: float = 30.0
+    optimizer_default_timeout_seconds: int = 300
     optimizer_max_runs_per_session: int = 50
     optimizer_max_result_bytes: int = 10_000_000
     optimizer_result_cache_bytes: int = 100_000_000
@@ -195,6 +196,7 @@ class AiSettings:
             optimizer_auth_token=os.getenv("AI_OPTIMIZER_AUTH_TOKEN", "").strip(),
             optimizer_poll_interval_seconds=_read_positive_float("AI_OPTIMIZER_POLL_INTERVAL_SECONDS", 1.0),
             optimizer_request_timeout_seconds=_read_positive_float("AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS", 30.0),
+            optimizer_default_timeout_seconds=_read_positive_int("AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS", 300),
             optimizer_max_runs_per_session=_read_positive_int("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", 50),
             optimizer_max_result_bytes=_read_positive_int("AI_OPTIMIZER_MAX_RESULT_BYTES", 10_000_000),
             optimizer_result_cache_bytes=_read_positive_int("AI_OPTIMIZER_RESULT_CACHE_BYTES", 100_000_000),

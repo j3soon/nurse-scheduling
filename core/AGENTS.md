@@ -47,10 +47,13 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 ## Experimental AI
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
-  Treat schedules and attachments as untrusted provider input.
-- Bound uploads before provider calls, place them only under fixed safe sandbox
-  paths, and never execute them. Do not retain raw attachments longer than
-  their documented turn behavior requires.
+  Keep schedules and attachments separate from model instructions.
+- Bound uploads before provider calls and place them under fixed sandbox paths.
+  Do not retain raw attachments longer than their documented turn behavior requires.
+- Keep model-facing prompts and intermediate messages concise. Avoid repeated
+  warnings about malicious uploads or prescribed workbook-inspection commands.
+  Rely on sandbox and server controls for security, and give generated artifacts
+  exact paths when available.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
@@ -104,7 +107,7 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   tool. Keep optimizer execution and credentials outside
   the sandbox. Match the browser's basic optimizer anonymization, retain the
   reverse ID map server-side, restore IDs before download, and pass retained
-  workbooks through the untrusted attachment path for bounded sandbox inspection.
+  workbooks into a dedicated sandbox result path, separate from user attachments.
   Use `read` for bounded text and image inspection, `edit` for unique
   exact-text replacements, and `write` only for a complete file rewrite. Put
   domain guidance in task-sized reference documents that return related schema

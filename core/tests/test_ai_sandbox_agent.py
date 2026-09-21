@@ -26,7 +26,7 @@ from collections.abc import AsyncIterator, Sequence
 import pytest
 
 from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolOutcome, AgentToolStart, AgentToolUse
-from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL
+from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
@@ -103,6 +103,7 @@ def _collect(
     pending_proposal_yaml: str = "",
     pending_proposal_diff: str = "",
     attachments: Sequence[SandboxAttachment] = (),
+    optimizer_result: bytes | None = None,
     **limit_overrides,
 ) -> list:
     async def collect() -> list:
@@ -117,6 +118,7 @@ def _collect(
                 pending_proposal_yaml=pending_proposal_yaml,
                 pending_proposal_diff=pending_proposal_diff,
                 attachments=attachments,
+                optimizer_result=optimizer_result,
             )
         ]
 
@@ -179,7 +181,7 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
                 factory,
                 schedule_yaml(),
                 MESSAGES,
-                _limits(),
+                _limits(optimizer_default_timeout_seconds=420),
                 execute_optimizer=execute_optimizer,
             )
         ]
@@ -188,6 +190,11 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
 
     assert received == [(schedule_yaml(), '{"action": "start", "timeout_seconds": 30}')]
     assert OPTIMIZER_TOOL in [tool["function"]["name"] for tool in provider.requests[0][1]]
+    optimizer_tool = next(tool for tool in provider.requests[0][1] if tool["function"]["name"] == OPTIMIZER_TOOL)
+    assert (
+        "Default: 420 seconds"
+        in optimizer_tool["function"]["parameters"]["properties"]["timeout_seconds"]["description"]
+    )
     assert next(event for event in events if isinstance(event, AgentToolUse)).ok
 
 
@@ -248,6 +255,20 @@ def test_hydration_places_untrusted_attachments_under_safe_paths():
     assert backend.files[attachment["path"]] == b"payload"
     assert b"inspect_workbook" in backend.files["/reference/tools/inspect_xlsx.py"]
     assert b"inspect_pdf" in backend.files["/reference/tools/inspect_pdf.py"]
+
+
+def test_hydration_keeps_optimizer_result_outside_user_attachments():
+    factory = FakeSandboxFactory()
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call-1", READ_TOOL, json.dumps({"path": WORKSPACE_OPTIMIZER_RESULT})),))],
+        [TextDelta("Inspected.")],
+    )
+
+    _collect(provider, factory, optimizer_result=b"workbook")
+
+    backend = factory.created[0]
+    assert backend.files[WORKSPACE_OPTIMIZER_RESULT] == b"workbook"
+    assert WORKSPACE_ATTACHMENT_MANIFEST not in backend.files
 
 
 def test_reference_sources_are_read_from_disk_once_per_process():

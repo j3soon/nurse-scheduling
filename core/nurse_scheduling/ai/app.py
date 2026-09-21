@@ -51,7 +51,6 @@ from .background import (
     STALE_TURN_ERROR,
     SessionEventBroker,
     build_provider_messages,
-    optimizer_result_attachment,
     run_background_turn,
 )
 from .config import AiSettings, validate_ai_auth_credentials
@@ -914,17 +913,14 @@ def create_app(
         )
         stream_started = threading.Event()
         latest_artifact = await session_optimizer.latest_result_artifact(session_id)
-        turn_attachments = [*attachments]
-        if latest_artifact is not None:
-            turn_attachments.append(optimizer_result_attachment(latest_artifact))
         messages = build_provider_messages(
             history,
             schedule_yaml,
             question,
-            turn_attachments,
+            attachments,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
-            optimizer_result_attached=latest_artifact is not None,
+            optimizer_result_available=latest_artifact is not None,
         )
         history_question = question
         if attachments:
@@ -960,7 +956,8 @@ def create_app(
                                 session_id, current_yaml, arguments
                             )
                         ),
-                        attachments=turn_attachments,
+                        attachments=attachments,
+                        optimizer_result=latest_artifact.content if latest_artifact is not None else None,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):

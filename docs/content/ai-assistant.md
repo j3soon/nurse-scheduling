@@ -70,7 +70,7 @@ content through a tool. Attachments are available only during the active turn. *
 and their contents are not included in subsequent chat history.** This is
 intentional to avoid retaining uploads or repeatedly consuming provider context
 tokens. History retains only attachment markers and filenames.
-Schedules and attachments are labeled as untrusted data in the system prompt.
+The prompt gives the agent workspace paths for schedules and attachments.
 
 The server-side `optimizer` tool submits a copy of the current sandbox working
 YAML to the existing optimizer API. It replaces person IDs and removes
@@ -80,10 +80,10 @@ the remote credential and job ID outside the sandbox. A process-local monitor
 waits for terminal status, restores person IDs in the output workbook, retains
 the size-bounded workbook for an authenticated browser download, deletes the
 remote optimizer job, and starts a new assistant turn with result metadata.
-The restored workbook is copied into that turn's `/workspace/attachments/`
-directory with a manifest entry. The latest retained workbook is also copied
-into later chat turns. The model inspects it with the existing bounded XLSX
-helper. The browser keeps a separate replayable session event stream open for
+The restored workbook is copied to
+`/workspace/optimizer-results/optimized-schedule.xlsx` in that turn and later
+chat turns while retained. It is separate from user attachments. The browser
+keeps a separate replayable session event stream open for
 optimizer status and background turns.
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
