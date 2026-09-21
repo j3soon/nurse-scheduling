@@ -727,7 +727,7 @@ describe('ExperimentalAiPage', () => {
     await user.type(draft, 'Also compare P3.');
     await user.click(queueButton);
 
-    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
     expect(activeSignal.aborted).toBe(false);
     expect(mockQueueMessage).toHaveBeenCalledTimes(2);
     const firstQueuedId = mockQueueMessage.mock.calls[0][1] as string;
@@ -737,7 +737,8 @@ describe('ExperimentalAiPage', () => {
       callbacks?.onSteering?.(secondQueuedId, 'Also compare P3.');
     });
 
-    expect(screen.queryByText('Messages to be submitted after next tool call')).not.toBeInTheDocument();
+    expect(screen.queryByText('Queued for steering')).not.toBeInTheDocument();
+    expect(screen.getByText('Steering…')).toBeInTheDocument();
     expect(screen.getByText('Focus on P2 instead.')).toBeInTheDocument();
     expect(screen.getByText('Also compare P3.')).toBeInTheDocument();
     const messageCards = screen.getByLabelText('Chat messages').querySelectorAll('article');
@@ -1042,7 +1043,7 @@ describe('ExperimentalAiPage', () => {
     await user.keyboard('{Enter}');
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
     expect(composer).toHaveValue('');
-    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
     expect(mockQueueMessage).toHaveBeenCalledWith(
       'session-id',
       expect.any(String),
@@ -1073,12 +1074,12 @@ describe('ExperimentalAiPage', () => {
     await screen.findByRole('button', { name: 'Stop' });
     await user.type(composer, 'Do not resend this.');
     await user.keyboard('{Enter}');
-    expect(screen.getByText('Messages to be submitted after next tool call')).toBeInTheDocument();
+    expect(screen.getByText('Queued for steering')).toBeInTheDocument();
 
     rejectStream?.(new MockAiHttpError('Chat session not found.', 404));
 
     expect(await screen.findByText(/expired or is no longer available/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText('Messages to be submitted after next tool call')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('Queued for steering')).not.toBeInTheDocument());
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
   });
 

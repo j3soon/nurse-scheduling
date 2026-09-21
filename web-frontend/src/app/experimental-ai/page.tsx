@@ -444,6 +444,7 @@ export default function ExperimentalAiPage() {
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
+  const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [firefoxVersion, setFirefoxVersion] = useState<number | null>(null);
   const [isListening, setIsListening] = useState(false);
@@ -1204,7 +1205,10 @@ export default function ExperimentalAiPage() {
         question,
         {
           onDelta: text => {
-            if (text) activeAssistantHasOutput = true;
+            if (text) {
+              activeAssistantHasOutput = true;
+              setSteeringAssistantId(null);
+            }
             setMessages(previous => previous.map(message => (
               message.id === activeAssistantId
                 ? {
@@ -1216,7 +1220,10 @@ export default function ExperimentalAiPage() {
             )));
           },
           onReasoning: text => {
-            if (text) activeAssistantHasOutput = true;
+            if (text) {
+              activeAssistantHasOutput = true;
+              setSteeringAssistantId(null);
+            }
             setMessages(previous => previous.map(message => {
               if (message.id !== activeAssistantId) return message;
               const activity = message.activity ?? [];
@@ -1230,6 +1237,7 @@ export default function ExperimentalAiPage() {
           },
           onToolStart: activity => {
             activeAssistantHasOutput = true;
+            setSteeringAssistantId(null);
             setMessages(previous => previous.map(message => (
               message.id === activeAssistantId
                 ? {
@@ -1269,6 +1277,7 @@ export default function ExperimentalAiPage() {
                 },
               ]);
               activeAssistantId = nextAssistantId;
+              setSteeringAssistantId(nextAssistantId);
               activeAssistantHasOutput = false;
             } else {
               const pendingAssistantId = activeAssistantId;
@@ -1281,6 +1290,7 @@ export default function ExperimentalAiPage() {
                   ...previous.slice(pendingIndex),
                 ];
               });
+              setSteeringAssistantId(pendingAssistantId);
             }
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
@@ -1349,6 +1359,7 @@ export default function ExperimentalAiPage() {
         reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {
+      setSteeringAssistantId(null);
       abortControllerRef.current = null;
       setIsStopping(false);
       setIsStreaming(backgroundTurnActiveRef.current);
@@ -1806,7 +1817,7 @@ export default function ExperimentalAiPage() {
               />
             )}
             {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
-              <ThinkingIndicator />
+              steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
             ) : message.role !== 'assistant' ? (
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
             ) : null}
@@ -1976,11 +1987,11 @@ export default function ExperimentalAiPage() {
           </div>
         )}
         {queuedMessages.length > 0 && (
-          <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-            <p className="font-medium">Messages to be submitted after next tool call</p>
+          <div className="rounded-r-md border-l-2 border-gray-400 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+            <p className="font-semibold uppercase tracking-wide text-gray-500">Queued for steering</p>
             <div className="mt-1 space-y-1">
               {queuedMessages.map(message => (
-                <p key={message.id} className="truncate">{message.content}</p>
+                <p key={message.id} className="truncate">· {message.content}</p>
               ))}
             </div>
           </div>
