@@ -125,7 +125,12 @@ class AiSettings:
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
     max_session_bytes: int = 256 * 1024 * 1024
-    """Total chat text retained across live sessions, which bounds this process's memory."""
+    """Chat text budget across live sessions, enforced where a client pushes new text.
+
+    A completed turn is trimmed rather than refused, so retained text settles at this
+    budget plus the newest message and any pending proposal of each live session. Size
+    the process above that floor, not at this value.
+    """
     max_history_messages: int = 20
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000

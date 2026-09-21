@@ -1666,8 +1666,9 @@ def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
             store.begin(session.id, "browser-owner")
             store.finish(session.id, "q" * 100, "A" * 5_000, None, base_revision=session.revision)
 
-    # Each session keeps its newest answer, so that floor is what remains.
-    assert store.retained_bytes <= settings.max_session_bytes + 5 * 5_000
+    # Each session keeps its schedule and its newest answer, so that floor is what
+    # remains, independently of how many turns ran.
+    assert store.retained_bytes == 5 * (10 + 5_000)
     for session in sessions:
         history = store._sessions[session.id].history
         assert history[-1]["content"] == "A" * 5_000
@@ -1696,6 +1697,23 @@ def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
     assert exc_info.value.status_code == 409
     assert store.retained_bytes == retained_with_proposal - 500
     assert not store._sessions[session.id].proposal_yaml
+
+
+def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
+    settings = make_settings(max_session_bytes=1000, max_schedule_bytes=1000)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "a" * 100)
+    store.begin(session.id, "browser-owner")
+    store.finish(session.id, "q", "a", ("p" * 600, "d" * 100), base_revision=session.revision)
+
+    # The larger schedule alone exceeds the budget, but it also drops the proposal.
+    store.update_schedule(session.id, "browser-owner", "b" * 300)
+
+    assert store._sessions[session.id].schedule_yaml == "b" * 300
+    assert not store._sessions[session.id].proposal_yaml
+    # The new schedule and the two one-character turn messages are all that remain.
+    assert store.retained_bytes == 302
 
 
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:

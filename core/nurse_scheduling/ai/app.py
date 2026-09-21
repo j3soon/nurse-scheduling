@@ -445,7 +445,16 @@ class SessionStore:
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
             if session.schedule_yaml == schedule_yaml:
                 return
-            self._require_capacity(_text_bytes(schedule_yaml) - _text_bytes(session.schedule_yaml))
+            # The replacement also drops the proposal made against the old schedule, so an
+            # update that frees more than it adds is never refused.
+            additional_bytes = (
+                _text_bytes(schedule_yaml)
+                - _text_bytes(session.schedule_yaml)
+                - _text_bytes(session.proposal_yaml)
+                - _text_bytes(session.proposal_diff)
+            )
+            if additional_bytes > 0:
+                self._require_capacity(additional_bytes)
             session.schedule_yaml = schedule_yaml
             session.revision = schedule_revision(schedule_yaml)
             session.proposal_yaml = ""
