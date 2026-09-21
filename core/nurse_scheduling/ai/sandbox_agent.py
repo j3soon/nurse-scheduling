@@ -87,7 +87,7 @@ class AgentScheduleChange:
 
 @dataclass(frozen=True)
 class SandboxAttachment:
-    """One bounded untrusted upload copied into a disposable sandbox."""
+    """One bounded untrusted file copied into a disposable sandbox."""
 
     filename: str
     media_type: str

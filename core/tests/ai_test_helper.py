@@ -22,6 +22,7 @@
 from io import BytesIO
 from typing import Any
 
+from openpyxl import Workbook
 from ruamel.yaml import YAML
 
 from nurse_scheduling.loader import _load_yaml
@@ -78,3 +79,20 @@ def schedule_yaml(payload: dict | None = None) -> str:
 def parse_schedule(text: str) -> Any:
     """Parse a schedule the way the service does."""
     return _load_yaml(text.encode("utf-8"))
+
+
+def optimizer_workbook_bytes(people_ids: tuple[str, ...] = ("P1", "P2")) -> bytes:
+    """Make a small valid optimizer workbook with people starting in row three."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Schedule"
+    sheet.cell(1, 1, "Schedule")
+    sheet.cell(2, 1, "Person")
+    sheet.cell(2, 2, "2026-01-01")
+    for row_number, person_id in enumerate(people_ids, start=3):
+        sheet.cell(row_number, 1, person_id)
+        sheet.cell(row_number, 2, "D")
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()

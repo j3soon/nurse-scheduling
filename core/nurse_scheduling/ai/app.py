@@ -51,11 +51,18 @@ from .background import (
     STALE_TURN_ERROR,
     SessionEventBroker,
     build_provider_messages,
+    optimizer_result_attachment,
     run_background_turn,
 )
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
-from .optimizer import HttpOptimizerBackend, OptimizerBackend, OptimizerResultUnavailable, SessionOptimizer
+from .optimizer import (
+    HttpOptimizerBackend,
+    OptimizerArtifact,
+    OptimizerBackend,
+    OptimizerResultUnavailable,
+    SessionOptimizer,
+)
 from .provider import (
     ChatMessage,
     OpenAiCompatibleProvider,
@@ -634,10 +641,11 @@ def create_app(
             settings.optimizer_max_result_bytes,
         )
 
-    async def optimizer_completed(session_id: str, prompt: str) -> None:
+    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
         await run_background_turn(
             session_id,
             prompt,
+            artifact,
             settings=settings,
             store=store,
             event_broker=event_broker,
@@ -660,7 +668,9 @@ def create_app(
         on_update=optimizer_updated,
         max_sessions=settings.max_sessions,
         max_runs_per_session=settings.optimizer_max_runs_per_session,
+        max_result_bytes=settings.optimizer_max_result_bytes,
         max_cached_result_bytes=settings.optimizer_result_cache_bytes,
+        max_schedule_bytes=settings.max_schedule_bytes,
     )
 
     @asynccontextmanager
@@ -903,13 +913,18 @@ def create_app(
             len(attachments),
         )
         stream_started = threading.Event()
+        latest_artifact = await session_optimizer.latest_result_artifact(session_id)
+        turn_attachments = [*attachments]
+        if latest_artifact is not None:
+            turn_attachments.append(optimizer_result_attachment(latest_artifact))
         messages = build_provider_messages(
             history,
             schedule_yaml,
             question,
-            attachments,
+            turn_attachments,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
+            optimizer_result_attached=latest_artifact is not None,
         )
         history_question = question
         if attachments:
@@ -945,7 +960,7 @@ def create_app(
                                 session_id, current_yaml, arguments
                             )
                         ),
-                        attachments=attachments,
+                        attachments=turn_attachments,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):

@@ -26,8 +26,9 @@ you can continue chatting while it solves.
 - A small status indicator remains above the message box while optimization is
   running.
 - When the run ends, the chat offers the result workbook as a download. The
-  assistant receives the score and other result metadata, but does not read the
-  workbook.
+  assistant receives the score and a copy of the workbook as an attachment. It
+  can inspect relevant spreadsheet sections to answer questions about the result,
+  including in later chat turns while the result remains available.
 - The assistant wakes automatically and replies in a new turn.
 - The assistant may propose a YAML change and run the optimizer again. The
   changed YAML still requires your approval before it replaces the schedule in
@@ -36,6 +37,11 @@ you can continue chatting while it solves.
 The optimizer runs for up to 300 seconds (five minutes) by default. Ask the
 assistant for a different timeout when needed. A deployment may set another
 default. One chat may start 50 optimizer runs by default.
+
+Before submission to the optimizer, the AI service applies the same basic
+anonymization as **Optimize and Export**: it replaces person IDs and removes
+description fields. It restores person IDs in the downloaded workbook. Dates,
+shifts, groups, and rules can still reveal sensitive information.
 
 Each run records the exact YAML revision it used. If the browser schedule
 changes before the result returns, the assistant can distinguish that older
@@ -147,8 +153,10 @@ execute attachments.
 
 AI chats and related data may be logged, retained, and processed for the
 development, evaluation, and improvement of this product and the AI provider's
-products. The AI service does not currently anonymize schedules, chats, or
-attachments. Do not submit personal, confidential, regulated, or otherwise
+products. The AI model still receives the original schedule when it reads it.
+Chats and attachments are not anonymized, and the basic optimizer anonymization
+does not make a sensitive schedule safe to submit. Do not submit personal,
+confidential, regulated, or otherwise
 sensitive information. See the
 [privacy policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md)
 for details.

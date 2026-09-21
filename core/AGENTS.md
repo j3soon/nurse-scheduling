@@ -54,6 +54,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+- Sandbox allocation is lazy. Tests that verify attachment hydration must make
+  the agent call a tool, since a text-only turn never creates a sandbox.
 - Keep canonical schedule invariants in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
@@ -100,7 +102,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
   the disposable sandbox. Always offer the server-side `optimizer` lifecycle
   tool. Keep optimizer execution and credentials outside
-  the sandbox. Use `read` for bounded text and image inspection, `edit` for unique
+  the sandbox. Match the browser's basic optimizer anonymization, retain the
+  reverse ID map server-side, restore IDs before download, and pass retained
+  workbooks through the untrusted attachment path for bounded sandbox inspection.
+  Use `read` for bounded text and image inspection, `edit` for unique
   exact-text replacements, and `write` only for a complete file rewrite. Put
   domain guidance in task-sized reference documents that return related schema
   shapes together instead of adding model-specific tools or fine-grained lookup

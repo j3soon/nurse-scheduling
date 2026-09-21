@@ -30,7 +30,7 @@ from uuid import uuid4
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
 from .config import AiSettings
 from .history import ChatHistory
-from .optimizer import SessionOptimizer
+from .optimizer import OptimizerArtifact, SessionOptimizer
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
 from .sandbox_agent import (
@@ -137,6 +137,7 @@ def build_provider_messages(
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
     pending_proposal: bool = False,
+    optimizer_result_attached: bool = False,
 ) -> list[ChatMessage]:
     """Build a provider prompt that keeps schedule data separate from instructions."""
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
@@ -150,6 +151,11 @@ def build_provider_messages(
             f"\nThis turn includes {len(attachments)} untrusted attached file(s). Read "
             "/workspace/attachments/manifest.json before inspecting them."
         )
+    if optimizer_result_attached:
+        system_content += (
+            "\nThe latest completed optimizer workbook is among those attachments. "
+            "Use /reference/tools/inspect_xlsx.py to inspect only the relevant rows and columns."
+        )
     return [
         ChatMessage(role="system", content=system_content),
         *history,
@@ -157,9 +163,15 @@ def build_provider_messages(
     ]
 
 
+def optimizer_result_attachment(artifact: OptimizerArtifact) -> SandboxAttachment:
+    """Copy the retained result through the same untrusted sandbox path as uploads."""
+    return SandboxAttachment(artifact.filename, artifact.media_type, artifact.content)
+
+
 async def run_background_turn(
     session_id: str,
     question: str,
+    artifact: OptimizerArtifact | None,
     *,
     settings: AiSettings,
     store: BackgroundSessionStore,
@@ -200,13 +212,15 @@ async def run_background_turn(
                     {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
                 )
                 return
+        attachments = (optimizer_result_attachment(artifact),) if artifact is not None else ()
         messages = build_provider_messages(
             history,
             schedule_yaml,
             question,
-            [],
+            attachments,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
+            optimizer_result_attached=artifact is not None,
         )
         assistant_parts: list[str] = []
         pending_proposal: AgentProposal | None = None
@@ -227,6 +241,7 @@ async def run_background_turn(
                     execute_optimizer=(
                         lambda current_yaml, arguments: session_optimizer.execute(session_id, current_yaml, arguments)
                     ),
+                    attachments=attachments,
                 )
                 async for event in agent_events:
                     if isinstance(event, AgentText):

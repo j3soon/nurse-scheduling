@@ -72,13 +72,19 @@ intentional to avoid retaining uploads or repeatedly consuming provider context
 tokens. History retains only attachment markers and filenames.
 Schedules and attachments are labeled as untrusted data in the system prompt.
 
-The server-side `optimizer` tool submits the current sandbox
-working copy to the existing optimizer API. It returns immediately and keeps
+The server-side `optimizer` tool submits a copy of the current sandbox working
+YAML to the existing optimizer API. It replaces person IDs and removes
+descriptions as the browser's Optimize and Export flow does, while retaining the
+reverse ID mapping server-side. It returns immediately and keeps
 the remote credential and job ID outside the sandbox. A process-local monitor
-waits for terminal status, retains a size-bounded output workbook for an
-authenticated browser download, deletes the remote optimizer job, and starts a
-new assistant turn with result metadata only. The browser keeps a separate
-replayable session event stream open for optimizer status and background turns.
+waits for terminal status, restores person IDs in the output workbook, retains
+the size-bounded workbook for an authenticated browser download, deletes the
+remote optimizer job, and starts a new assistant turn with result metadata.
+The restored workbook is copied into that turn's `/workspace/attachments/`
+directory with a manifest entry. The latest retained workbook is also copied
+into later chat turns. The model inspects it with the existing bounded XLSX
+helper. The browser keeps a separate replayable session event stream open for
+optimizer status and background turns.
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
 background assistant turn. It does not cancel the independent optimizer run.
