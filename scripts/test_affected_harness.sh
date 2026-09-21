@@ -3,7 +3,6 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd "$script_dir/.." && pwd)"
 fixture_root="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_root"' EXIT
 
@@ -45,8 +44,8 @@ for path in \
 done
 
 git -C "$fixture_root" init -q
-git -C "$fixture_root" config user.name "$(git -C "$repo_root" config user.name)"
-git -C "$fixture_root" config user.email "$(git -C "$repo_root" config user.email)"
+git -C "$fixture_root" config user.name 'Affected Test Fixture'
+git -C "$fixture_root" config user.email 'affected-test-fixture@example.invalid'
 git -C "$fixture_root" add .
 git -C "$fixture_root" commit -qm 'test: seed affected-test fixture'
 
@@ -174,7 +173,12 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'for arg in "$@"; do' \
   '  case "$arg" in' \
-  '    --outputFile.json=*) printf "{\"numTotalTests\":0}\n" > "${arg#--outputFile.json=}" ;;' \
+  '    --outputFile.json=*)' \
+  '      if [[ ${MOCK_VITEST_ALL_SKIPPED:-} == 1 ]]; then' \
+  '        printf "{\"numTotalTests\":2,\"numPassedTests\":0}\n" > "${arg#--outputFile.json=}"' \
+  '      else' \
+  '        printf "{\"numTotalTests\":0,\"numPassedTests\":0}\n" > "${arg#--outputFile.json=}"' \
+  '      fi ;;' \
   '  esac' \
   'done' \
   'echo "No test files found, exiting with code 0"' \
@@ -200,7 +204,18 @@ if [[ $status -ne 2 ]]; then
   exit 1
 fi
 assert_line "$output" 'mock bun: run lint'
-assert_line "$output" 'No related Vitest tests found. Pass test paths explicitly or use --full.'
+assert_line "$output" 'No related Vitest tests passed. Pass test paths explicitly or use --full.'
+
+set +e
+output="$(MOCK_VITEST_ALL_SKIPPED=1 PATH="$fixture_root/bin:$PATH" \
+  "$fixture_root/scripts/test_frontend_affected.sh" web-frontend/src/app/page.tsx 2>&1)"
+status=$?
+set -e
+if [[ $status -ne 2 ]]; then
+  printf 'Expected all-skipped related tests to fail with 2, got %d\n' "$status" >&2
+  exit 1
+fi
+assert_line "$output" 'No related Vitest tests passed. Pass test paths explicitly or use --full.'
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \

@@ -90,8 +90,8 @@ if ((vitest_status != 0)); then
 fi
 if ! node -e '
   const report = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-  process.exit(report.numTotalTests > 0 ? 0 : 1);
+  process.exit(report.numPassedTests > 0 ? 0 : 1);
 ' "$report_file"; then
-  echo "No related Vitest tests found. Pass test paths explicitly or use --full." >&2
+  echo "No related Vitest tests passed. Pass test paths explicitly or use --full." >&2
   exit 2
 fi
