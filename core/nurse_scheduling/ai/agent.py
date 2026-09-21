@@ -37,6 +37,7 @@ from .provider import (
     ToolCapableChatProvider,
     ToolResultImage,
     assistant_tool_call_message,
+    tool_result_image_message,
     tool_result_message,
 )
 
@@ -175,7 +176,7 @@ async def run_tool_agent(
                 )
                 yield AgentToolStart(call.name, call.arguments)
                 yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
-                conversation.append(tool_result_message(call.id, outcome.text, outcome.image))
+                conversation.append(tool_result_message(call.id, outcome.text))
             final_answer_only = True
             continue
 
@@ -184,6 +185,7 @@ async def run_tool_agent(
         tool_calls += len(calls)
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope():
+            image_results: list[ChatMessage] = []
             parallel = len(calls) > 1 and all(call.name in parallel_tool_names for call in calls)
             if parallel:
                 for call in calls:
@@ -195,7 +197,9 @@ async def run_tool_agent(
                 for call, outcome in completed:
                     _log_tool_outcome(call.name, outcome)
                     yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
-                    conversation.append(tool_result_message(call.id, outcome.text, outcome.image))
+                    conversation.append(tool_result_message(call.id, outcome.text))
+                    if outcome.image is not None:
+                        image_results.append(tool_result_image_message(call.id, outcome.image))
             else:
                 execution_seconds = 0.0
                 for call in calls:
@@ -205,7 +209,10 @@ async def run_tool_agent(
                     execution_seconds += time.perf_counter() - started
                     _log_tool_outcome(call.name, outcome)
                     yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
-                    conversation.append(tool_result_message(call.id, outcome.text, outcome.image))
+                    conversation.append(tool_result_message(call.id, outcome.text))
+                    if outcome.image is not None:
+                        image_results.append(tool_result_image_message(call.id, outcome.image))
+            conversation.extend(image_results)
             if observe_tool_batch is not None:
                 observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
         if take_steering is not None:

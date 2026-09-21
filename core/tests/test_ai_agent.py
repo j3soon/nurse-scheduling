@@ -138,14 +138,36 @@ def test_an_image_tool_result_is_returned_as_multimodal_content():
 
     asyncio.run(collect())
 
-    assert provider.requests[1][0][-1] == {
+    assert provider.requests[1][0][-2] == {
         "role": "tool",
         "tool_call_id": "call_0",
+        "content": "Read image.",
+    }
+    assert provider.requests[1][0][-1] == {
+        "role": "user",
         "content": [
-            {"type": "text", "text": "Read image."},
+            {"type": "text", "text": "Image returned by tool call call_0."},
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgppbWFnZQ=="}},
         ],
     }
+
+
+def test_image_tool_results_follow_all_tool_replies():
+    provider = FakeProvider(_calls(2), _text("Done."))
+
+    async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
+        return AgentToolOutcome("Read image.", True, ToolResultImage("image/png", b"image"))
+
+    async def collect() -> None:
+        async for _event in run_tool_agent(provider, QUESTION, TOOLS, execute):
+            pass
+
+    asyncio.run(collect())
+
+    replies = provider.requests[1][0][-4:]
+    assert [reply["role"] for reply in replies] == ["tool", "tool", "user", "user"]
+    assert [reply["tool_call_id"] for reply in replies[:2]] == ["call_0", "call_1"]
+    assert all(reply["content"][1]["type"] == "image_url" for reply in replies[2:])
 
 
 def test_all_queued_steering_is_injected_after_the_next_tool_batch():
