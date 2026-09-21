@@ -80,6 +80,13 @@ exact browser origin. A loopback-only browser check can miss CORS failures.
 Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
 preflight coverage. Keep object URLs for workbook downloads alive until the
 download is replaced or the page unmounts.
+For AI chat issues involving the deployed service, test the real browser UI
+against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,
+select that URL in the AI server control, and use `AI_AUTH_TOKEN` from the
+ignored `../docker/.env.staging` when available. Never print or persist the
+token in test output or browser storage. Seed a small valid schedule for
+optimizer flows, then follow the visible chat and session events through the
+terminal response. Mocked component tests alone cannot verify this path.
 
 To test specific source files from the repository root, run:
 

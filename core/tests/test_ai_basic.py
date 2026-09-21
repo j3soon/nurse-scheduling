@@ -1343,7 +1343,25 @@ def rename_call() -> list[object]:
     return [ToolCallRequest((ToolCall("call_0", BASH_TOOL, arguments),))]
 
 
-def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion() -> None:
+@pytest.mark.parametrize("history_enabled", [False, True], ids=["without-history", "with-history"])
+def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatch, history_enabled: bool) -> None:
+    history_starts: list[tuple[str, str, str | None, str, str, int]] = []
+    if history_enabled:
+        monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
+        monkeypatch.setattr(ChatHistory, "finish_turn", lambda *_args: None)
+
+        def record_start(
+            _self: ChatHistory,
+            turn_id: str,
+            session_id: str,
+            credential_id: str | None,
+            question: str,
+            model: str,
+            attachment_count: int,
+        ) -> None:
+            history_starts.append((turn_id, session_id, credential_id, question, model, attachment_count))
+
+        monkeypatch.setattr(ChatHistory, "start_turn", record_start)
     optimizer_call = [ToolCallRequest((ToolCall("optimizer-call", OPTIMIZER_TOOL, json.dumps({"action": "start"})),))]
     provider = ScriptedToolProvider(
         optimizer_call,
@@ -1380,6 +1398,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion() -> None:
         settings=make_settings(
             max_schedule_bytes=SCHEDULE_BYTE_LIMIT,
             optimizer_poll_interval_seconds=0.001,
+            history_postgres_url="test" if history_enabled else "",
         ),
         provider=provider,
         sandbox_factory=factory,
@@ -1422,6 +1441,10 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion() -> None:
         assert events[1].data["state"] == "completed"
         assert events[1].data["downloadable"] is True
         assert events[5].data == {"text": "The optimizer returned score 23."}
+        if history_enabled:
+            assert len(history_starts) == 3
+            assert history_starts[-1][1] == session_id
+            assert history_starts[-1][4:] == ("test-model", 0)
         assert '"score": 23' in str(provider.calls[3][-1]["content"])
         assert "/workspace/optimizer-results/optimized-schedule.xlsx" in str(provider.calls[3][-1]["content"])
         background_sandbox = next(

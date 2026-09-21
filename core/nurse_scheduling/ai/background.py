@@ -183,16 +183,19 @@ async def run_background_turn(
         turn_id = str(uuid4())
         event_broker.publish(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
         if history_log is not None:
-            logged = await history_log.write(
-                "start_turn",
-                turn_id,
-                session_id,
-                None,
-                question,
-                settings.provider_model,
-                0,
-                0,
-            )
+            try:
+                logged = await history_log.write(
+                    "start_turn",
+                    turn_id,
+                    session_id,
+                    None,
+                    question,
+                    settings.provider_model,
+                    0,
+                )
+            except Exception:
+                logger.exception("Background AI history start failed session_id=%s", session_id)
+                logged = False
             if not logged:
                 store.abort(session_id)
                 event_broker.publish(
