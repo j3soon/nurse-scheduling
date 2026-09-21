@@ -141,14 +141,20 @@ The runner needs the same provider settings the service uses:
 The launcher reads them from `docker/.env`, so the shortest form is:
 
 ```sh
-./scripts/run_ai_eval.sh
-./scripts/run_ai_eval.sh --full
+./scripts/run_ai_eval.sh --case clarify-night-request-scope
 ./scripts/run_ai_eval.sh --category 01-reading
+./scripts/run_ai_eval.sh --tuning         # default tuning set
+./scripts/run_ai_eval.sh --full           # every case
 ```
 
-The default run selects cases tagged `difficult` or `tuning`, keeping prompt
-tuning focused as the corpus grows. Pass `--full` to run every case. Explicit
-`--case`, `--category`, or `--tag` selectors bypass the default tag filter.
+An evaluation scope is required. `--tuning` selects cases tagged `difficult`
+or `tuning`, keeping prompt tuning focused as the corpus grows. Pass `--full`
+to run every case. Explicit `--case`, `--category`, or `--tag` selectors bypass
+the tuning tag filter and cannot be combined with `--tuning` or `--full`.
+Start with cases relevant to the changed behavior, including a contrasting
+control when ambiguity or scope is involved. Use `--repeat 3` on that selected
+set to assess reliability before a broad tuning or full run. A single selected
+pass is only a smoke check, not evidence of an improvement.
 Cases may use `user_turns` for a real multi-turn conversation and
 `intermediate_answer_contains` to verify that earlier turns ask a required
 question without producing a proposal.

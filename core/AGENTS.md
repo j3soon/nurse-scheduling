@@ -73,9 +73,20 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   evaluation run, not from one trajectory. A repeated recoverable failure costs
   more than the case that exposed it, and a bounded tool should clamp an
   over-large request rather than refuse it.
+- For AI behavior changes, run deterministic affected pytest checks first. Then
+  smoke-test the smallest relevant live evaluation set with repeatable
+  `./scripts/run_ai_eval.sh --case CASE_ID` selectors from the repository root.
+  Include a contrasting control for ambiguity or scope changes. Expand to a
+  category or tag only when the changed behavior spans it or a selected case
+  reveals a neighboring risk. A bare evaluation command exits without running
+  cases. Use `--tuning` to opt into the default tuning set.
 - Treat one provider pass as a smoke check. Before claiming a tuning improvement,
   repeat affected cases at least three times with four total jobs and compare
   pass rate, infrastructure failures, turns, and tokens with a recorded baseline.
+  Reserve `--tuning` for broad changes or final tuning confirmation.
+  Use `--full` only when explicitly requested, for release-level confirmation,
+  or when cross-cutting behavior could affect cases outside the tuning set.
+  Otherwise report the selected cases and that the wider evaluation was not run.
 - For live AI evaluations, load provider and E2B credentials from the ignored
   repository-root `docker/.env`, or `docker/.env.staging` if it does not exist,
   in the evaluation process. Never print or commit credential values. Check

@@ -58,8 +58,11 @@ from .ai_eval.runner import (
     CASES,
     DEFAULT_CASE_JOBS,
     CaseRun,
+    _parse_args,
     _reference_digests,
+    _selected_cases,
     default_output_dir,
+    main,
     run_all,
     run_case,
     select,
@@ -72,6 +75,71 @@ CASE_BY_ID = {case.id: case for case in load_cases(CASES)}
 
 def test_ai_eval_defaults_to_four_concurrent_cases():
     assert DEFAULT_CASE_JOBS == 4
+
+
+@pytest.mark.parametrize("argv", [[], ["--repeat", "3"], ["--jobs", "4"]])
+def test_eval_cli_requires_explicit_scope_before_provider_work(argv, capsys):
+    with pytest.raises(SystemExit) as error:
+        main(argv)
+
+    assert error.value.code == 2
+    assert "choose --case, --category, or --tag" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--full", "--case", "people-add"],
+        ["--tuning", "--category", "03-structure"],
+        ["--tuning", "--full"],
+    ],
+)
+def test_eval_cli_rejects_broad_scope_combined_with_another_scope(argv):
+    with pytest.raises(SystemExit) as error:
+        _parse_args(argv)
+
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("selector", ["--case", "--category", "--tag"])
+def test_eval_cli_rejects_empty_selector(selector):
+    with pytest.raises(SystemExit) as error:
+        _parse_args([selector, ""])
+
+    assert error.value.code == 2
+
+
+def test_eval_cli_accepts_selected_tuning_and_full_scopes():
+    assert _parse_args(["--case", "people-add", "--case", "people-group-members"]).case == [
+        "people-add",
+        "people-group-members",
+    ]
+    assert _parse_args(["--category", "01-reading"]).category == ["01-reading"]
+    assert _parse_args(["--tag", "holdout"]).tag == ["holdout"]
+    assert _parse_args(["--tuning"]).tuning
+    assert _parse_args(["--full"]).full
+
+
+def test_eval_cli_resolves_explicit_scopes_before_provider_work():
+    _, selected = _selected_cases(["--case", "clarify-night-request-scope"])
+    _, tuning = _selected_cases(["--tuning"])
+    _, full = _selected_cases(["--full"])
+
+    assert [case.id for case in selected] == ["clarify-night-request-scope"]
+    assert 1 < len(tuning) < len(full)
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["--case", "no-such-case"], "Unknown case ids"),
+        (["--category", "no-such-category"], "Unknown categories"),
+        (["--tag", "no-such-tag"], "Unknown tags"),
+    ],
+)
+def test_eval_cli_rejects_unknown_scope_before_provider_work(argv, message):
+    with pytest.raises(SystemExit, match=message):
+        main(argv)
 
 
 def settings(**overrides: object) -> AiSettings:
