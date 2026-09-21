@@ -468,8 +468,27 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     expect(await screen.findByRole('button', { name: 'Download result' })).toBeInTheDocument();
     expect(screen.getAllByText('The optimizer returned score 23.')).toHaveLength(1);
-    expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2);
-    expect(mockStreamSessionEvents.mock.calls[1][1].lastEventId).toBe(4);
+    expect(mockStreamSessionEvents.mock.calls.at(-1)?.[1].lastEventId).toBe(4);
+  });
+
+  it('reopens the background event stream after it disconnects', async () => {
+    const user = userEvent.setup();
+    mockStreamSessionEvents
+      .mockImplementationOnce(async (_sessionId: string, callbacks: { onEventId?: (id: number) => void }) => {
+        callbacks.onEventId?.(7);
+        throw new Error('network down');
+      })
+      .mockImplementation(() => new Promise(() => undefined));
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    expect(await screen.findByText('network down')).toBeInTheDocument();
+
+    await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    expect(mockStreamSessionEvents.mock.calls[1][0]).toBe('session-id');
+    expect(mockStreamSessionEvents.mock.calls[1][1].lastEventId).toBe(7);
   });
 
   it('stops a background assistant turn through the session endpoint', async () => {

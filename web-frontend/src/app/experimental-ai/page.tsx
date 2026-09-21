@@ -81,6 +81,8 @@ const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
 const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
 const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
+const SESSION_EVENTS_RETRY_MS = 1000;
+const SESSION_EVENTS_MAX_RETRY_MS = 30000;
 const SPEECH_LANGUAGES = [
   { value: '', label: 'Browser default' },
   { value: 'en-US', label: 'English (United States)' },
@@ -461,6 +463,9 @@ export default function ExperimentalAiPage() {
   const authTokensRef = useRef<Record<string, string>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionEventsControllerRef = useRef<AbortController | null>(null);
+  const sessionEventsRetryRef = useRef(0);
+  const sessionEventsTimerRef = useRef<number | null>(null);
+  const [sessionEventsAttempt, setSessionEventsAttempt] = useState(0);
   const lastSessionEventIdRef = useRef(0);
   const backgroundAssistantIdRef = useRef<string | null>(null);
   const backgroundTurnActiveRef = useRef(false);
@@ -723,6 +728,7 @@ export default function ExperimentalAiPage() {
   useEffect(() => () => {
       abortControllerRef.current?.abort();
       sessionEventsControllerRef.current?.abort();
+      if (sessionEventsTimerRef.current !== null) window.clearTimeout(sessionEventsTimerRef.current);
       speechRecognitionRef.current?.stop();
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -908,6 +914,7 @@ export default function ExperimentalAiPage() {
     sessionEventsControllerRef.current?.abort();
     sessionEventsControllerRef.current = null;
     lastSessionEventIdRef.current = 0;
+    sessionEventsRetryRef.current = 0;
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     syncedScheduleRef.current = null;
@@ -932,6 +939,7 @@ export default function ExperimentalAiPage() {
     sessionEventsControllerRef.current?.abort();
     sessionEventsControllerRef.current = null;
     lastSessionEventIdRef.current = 0;
+    sessionEventsRetryRef.current = 0;
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     syncedScheduleRef.current = null;
@@ -999,8 +1007,28 @@ export default function ExperimentalAiPage() {
 
   const startBackgroundEventStream = useCallback((sessionId: string, endpoint: string) => {
     sessionEventsControllerRef.current?.abort();
+    if (sessionEventsTimerRef.current !== null) {
+      window.clearTimeout(sessionEventsTimerRef.current);
+      sessionEventsTimerRef.current = null;
+    }
     const controller = new AbortController();
     sessionEventsControllerRef.current = controller;
+    // The stream ends on any network or proxy interruption. Release the controller so
+    // the effect can open a replacement, otherwise later background work is never seen.
+    const openedAt = Date.now();
+    const reconnect = () => {
+      if (sessionEventsControllerRef.current !== controller) return;
+      sessionEventsControllerRef.current = null;
+      if (controller.signal.aborted) return;
+      // Back off only for repeated rapid failures, not for a stream that held for a while.
+      if (Date.now() - openedAt >= SESSION_EVENTS_MAX_RETRY_MS) sessionEventsRetryRef.current = 0;
+      const delay = Math.min(SESSION_EVENTS_MAX_RETRY_MS, SESSION_EVENTS_RETRY_MS * 2 ** sessionEventsRetryRef.current);
+      sessionEventsRetryRef.current += 1;
+      sessionEventsTimerRef.current = window.setTimeout(() => {
+        sessionEventsTimerRef.current = null;
+        setSessionEventsAttempt(attempt => attempt + 1);
+      }, delay);
+    };
     const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage) => {
       const activeId = backgroundAssistantIdRef.current;
       if (activeId === null) return;
@@ -1010,10 +1038,15 @@ export default function ExperimentalAiPage() {
       sessionId,
       {
         lastEventId: lastSessionEventIdRef.current,
-        onEventId: id => { lastSessionEventIdRef.current = id; },
+        onEventId: id => {
+          lastSessionEventIdRef.current = id;
+          sessionEventsRetryRef.current = 0;
+        },
         onTurnStart: messageId => {
           backgroundAssistantIdRef.current = messageId;
           backgroundTurnActiveRef.current = true;
+          // The server renews the session when it starts this turn.
+          setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
           sandboxScheduleRef.current = scheduleYamlRef.current;
           setIsStreaming(true);
           setMessages(previous => previous.some(message => message.id === messageId) ? previous : [
@@ -1128,19 +1161,39 @@ export default function ExperimentalAiPage() {
       controller.signal,
       authToken,
       endpoint,
-    ).catch(streamError => {
-      if (!controller.signal.aborted) {
+    ).then(reconnect, (streamError: unknown) => {
+      if (controller.signal.aborted) {
+        reconnect();
+        return;
+      }
+      // Report the first failure of a disconnected streak only, since reconnection
+      // attempts continue in the background.
+      if (sessionEventsRetryRef.current === 0) {
         reportRequestError(streamError, 'The background AI event stream disconnected.');
       }
+      // Rejected credentials cannot succeed until the token changes, which restarts
+      // this stream through the effect below.
+      if (streamError instanceof AiHttpError && (streamError.status === 401 || streamError.status === 403)) {
+        if (sessionEventsControllerRef.current === controller) sessionEventsControllerRef.current = null;
+        return;
+      }
+      reconnect();
     });
-  }, [authToken, reportRequestError]);
+  }, [authToken, reportRequestError, sessionRetentionSeconds]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
     if (sessionEventsControllerRef.current === null) {
       startBackgroundEventStream(activeSessionId, sessionEndpointRef.current ?? aiEndpoint);
     }
-  }, [activeSessionId, aiEndpoint, conversationUnavailable, isClientReady, startBackgroundEventStream]);
+  }, [
+    activeSessionId,
+    aiEndpoint,
+    conversationUnavailable,
+    isClientReady,
+    sessionEventsAttempt,
+    startBackgroundEventStream,
+  ]);
 
   const sendRequest = async (
     question: string,
