@@ -213,6 +213,7 @@ interface StoredChatConversation {
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
   backgroundAssistantId?: string | null;
+  trimmedHistoryCount?: number;
 }
 
 const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
@@ -290,6 +291,8 @@ function readStoredConversation(): StoredChatConversation | null {
       || !value.messages.every(isChatMessage)
       || (value.sessionEventId !== undefined
         && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
+      || (value.trimmedHistoryCount !== undefined
+        && (!Number.isSafeInteger(value.trimmedHistoryCount) || value.trimmedHistoryCount < 0))
       || (value.activeOptimization !== undefined && value.activeOptimization !== null && (
         typeof value.activeOptimization.jobId !== 'string'
         || typeof value.activeOptimization.state !== 'string'
@@ -572,6 +575,9 @@ export default function ExperimentalAiPage() {
       )));
       setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
+      // The trim lasts as long as the conversation, but the event announcing it sits
+      // behind the stored cursor and never replays, so restore the warning directly.
+      setTrimmedHistoryCount(storedConversation.trimmedHistoryCount ?? 0);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
       setActiveOptimization(storedConversation.activeOptimization
         ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
@@ -671,6 +677,7 @@ export default function ExperimentalAiPage() {
           sessionEventId: lastSessionEventIdRef.current,
           activeOptimization,
           backgroundAssistantId: backgroundAssistantIdRef.current,
+          trimmedHistoryCount,
         };
         window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
       } catch {
@@ -696,6 +703,7 @@ export default function ExperimentalAiPage() {
     scheduleYaml,
     sessionExpiresAt,
     sessionRetentionSeconds,
+    trimmedHistoryCount,
   ]);
 
   useEffect(() => {
@@ -1002,6 +1010,8 @@ export default function ExperimentalAiPage() {
     setDraft('');
     setSelectedAttachments([]);
     setQueuedMessages([]);
+    // A new chat sends its whole history again.
+    setTrimmedHistoryCount(0);
     setActiveOptimization(null);
     setProposalDiff(null);
     setProposalNotice(null);

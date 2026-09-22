@@ -635,6 +635,31 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText(/no longer sent to the assistant/)).toBeInTheDocument();
   });
 
+  it('keeps the trim warning across a reload and drops it with a new chat', async () => {
+    const user = userEvent.setup();
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'answer-1', role: 'assistant', content: 'Earlier answer.' }],
+      syncedSchedule: 'description: current schedule\n',
+      proposalDiff: null,
+      sessionEventId: 9,
+      trimmedHistoryCount: 3,
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    // The event announcing the trim is behind the stored cursor, so it never replays.
+    expect(await screen.findByText(/3 oldest messages are/)).toBeInTheDocument();
+
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await user.click(screen.getByRole('button', { name: 'Start new chat' }));
+
+    expect(screen.queryByText(/no longer sent to the assistant/)).not.toBeInTheDocument();
+  });
+
   it('bounds the persisted optimizer progress history during a long run', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
