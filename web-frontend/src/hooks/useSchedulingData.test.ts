@@ -2669,6 +2669,18 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('keeps the generated export layout stable across renders', () => {
+    const { result, rerender } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    const generated = result.current.effectiveExportData;
+    rerender();
+
+    // Consumers derive schedule YAML from this, so a new object per render would
+    // rebuild that YAML on every keystroke and every streamed chat token.
+    expect(result.current.exportData).toBeUndefined();
+    expect(result.current.effectiveExportData).toBe(generated);
+  });
+
   it('logs and no-ops when duplicate preference or export indexes are invalid', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
