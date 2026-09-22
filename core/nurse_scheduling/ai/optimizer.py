@@ -39,6 +39,7 @@ from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule,
 OPTIMIZER_TOOL = "optimizer"
 WORKSPACE_OPTIMIZER_RESULT = "/workspace/optimizer-results/optimized-schedule.xlsx"
 TERMINAL_STATES = frozenset({"completed", "cancelled", "failed"})
+MAX_REJECTION_DETAIL_CHARS = 300
 logger = logging.getLogger("nurse_scheduling.ai.optimizer")
 
 
@@ -158,6 +159,8 @@ class HttpOptimizerBackend:
             response = await self._client.request(method, urljoin(self._base_url, path), **kwargs)
             response.raise_for_status()
             return OptimizerJobPayload.model_validate(response.json())
+        except httpx.HTTPStatusError as exc:
+            raise OptimizerError(_rejection_reason(exc.response)) from exc
         except httpx.HTTPError as exc:
             raise OptimizerError("The optimizer request failed.") from exc
         except (ValueError, ValidationError) as exc:
@@ -329,7 +332,7 @@ class SessionOptimizer:
         except OptimizerError as exc:
             logger.warning("Optimizer submission failed: %s", exc)
             self._release_reservation(session_id, reservation)
-            return AgentToolOutcome("The optimizer could not accept the schedule.", False)
+            return AgentToolOutcome(f"The optimizer could not accept the schedule. {exc}", False)
         except BaseException:
             # A stopped turn cancels this call, and keeping the reservation would leave
             # the session unable to start another run.
@@ -403,7 +406,7 @@ class SessionOptimizer:
             payload = await self._backend.finish_now(job.remote_id)
         except OptimizerError as exc:
             logger.warning("Optimizer finish-now request failed job_id=%s error=%s", job.id, exc)
-            return AgentToolOutcome("The optimizer did not accept the finish-now request.", False)
+            return AgentToolOutcome(f"The optimizer did not accept the finish-now request. {exc}", False)
         async with self._lock:
             # Polling can reach a terminal state while this request is in flight. Keeping
             # the older snapshot would block the session from ever starting another run.
@@ -587,6 +590,19 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
             },
         },
     }
+
+
+def _rejection_reason(response: httpx.Response) -> str:
+    """Relay a first-party optimizer rejection so the model can correct a retryable request."""
+    if response.status_code >= 500:
+        return "The optimizer request failed."
+    try:
+        detail = response.json().get("detail")
+    except ValueError:
+        detail = None
+    if not isinstance(detail, str) or not detail.strip():
+        return f"The optimizer rejected the request with status {response.status_code}."
+    return f"The optimizer rejected the request: {detail.strip()[:MAX_REJECTION_DETAIL_CHARS]}"
 
 
 def _is_trusted_http_host(host: str | None) -> bool:

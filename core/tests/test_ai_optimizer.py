@@ -188,6 +188,48 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
     asyncio.run(scenario())
 
 
+def test_a_rejected_request_tells_the_model_what_the_optimizer_refused() -> None:
+    async def scenario() -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/finish-now"):
+                return httpx.Response(500, json={"detail": "Job store unavailable"})
+            return httpx.Response(400, json={"detail": "Optimization timeout must be between 1 and 3600 seconds"})
+
+        backend = HttpOptimizerBackend(
+            "http://api:8000",
+            "optimizer-token",
+            5,
+            1_000_000,
+            transport=httpx.MockTransport(handle),
+        )
+
+        with pytest.raises(OptimizerError, match="between 1 and 3600 seconds"):
+            await backend.submit("description: rejected\n", 100_000)
+        with pytest.raises(OptimizerError, match="^The optimizer request failed.$"):
+            await backend.finish_now("remote-1")
+        await backend.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_rejected_submission_reports_the_reason_to_the_model() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.submit_error = True
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            return None
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        rejected = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+
+        assert not rejected.ok
+        assert "The optimizer request failed." in rejected.text
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
 def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
     async def scenario() -> None:
         backend = FakeOptimizerBackend()
