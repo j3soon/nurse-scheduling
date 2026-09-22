@@ -24,17 +24,13 @@ from nurse_scheduling.ai.schedule_context import describe_schedule
 from .ai_test_helper import base_schedule_payload, schedule_yaml
 
 
-def test_describe_schedule_reports_shape_without_item_contents():
+def test_describe_schedule_requires_reading_the_working_copy():
     payload = base_schedule_payload()
     payload["people"]["items"][0]["description"] = "private marker"
 
     summary = describe_schedule(schedule_yaml(payload))
 
-    assert "2 people, 2 shift types, 2 preferences" in summary
-    assert "Dates run from 2026-01-01 to 2026-01-02" in summary
-    assert "Group ids: people PEOPLE" in summary
+    assert summary == "schedule.yaml is available at /workspace/schedule.yaml. Read it for schedule facts."
+    assert "2026-01-01" not in summary
+    assert "PEOPLE" not in summary
     assert "private marker" not in summary
-
-
-def test_describe_schedule_reports_a_file_that_does_not_parse():
-    assert describe_schedule("people: [unclosed\n") == "schedule.yaml is 1 lines and does not currently parse."

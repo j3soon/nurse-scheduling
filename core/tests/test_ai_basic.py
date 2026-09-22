@@ -696,10 +696,10 @@ def test_health_and_streamed_schedule_question() -> None:
     ]
     prompt = provider.calls[0]
     assert prompt[-1] == {"role": "user", "content": "Who works Monday?"}
-    # The schedule itself is read with a tool, so only its shape is sent.
+    # Schedule facts require a tool read.
     system_prompt = " ".join(prompt[0]["content"].split())
     assert "Alice" not in system_prompt
-    assert "schedule.yaml is 2 lines" in system_prompt
+    assert "schedule.yaml is available at /workspace/schedule.yaml" in system_prompt
     assert "/workspace/optimizer-results/optimized-schedule.xlsx" in system_prompt
 
 
@@ -2037,7 +2037,7 @@ def test_approval_allows_a_schedule_the_user_had_not_finished() -> None:
     assert "description: Head" in approved.json()["schedule_yaml"]
 
 
-def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
+def test_the_prompt_points_to_the_schedule_without_disclosing_its_facts() -> None:
     provider = FakeProvider()
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider)
@@ -2049,9 +2049,10 @@ def test_the_prompt_summarizes_the_schedule_instead_of_sending_it() -> None:
 
     system_prompt = provider.calls[0][0]["content"]
     normalized_prompt = " ".join(system_prompt.split())
-    assert "2 people, 2 shift types, 2 preferences" in normalized_prompt
-    assert "Group ids: people PEOPLE" in normalized_prompt
-    assert "Dates run from 2026-01-01 to 2026-01-02" in normalized_prompt
+    assert "schedule.yaml is available at /workspace/schedule.yaml" in normalized_prompt
+    assert "2 people" not in normalized_prompt
+    assert "PEOPLE" not in normalized_prompt
+    assert "2026-01-01" not in normalized_prompt
     assert "Your tools are `read`, `bash`, `edit`, `write`, and the server-side `optimizer`" in normalized_prompt
     assert "Prefer `read` for files and images" in normalized_prompt
     assert "`edit` for unique exact-text replacements" in normalized_prompt
