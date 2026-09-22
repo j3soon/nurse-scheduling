@@ -164,6 +164,11 @@ cd docker
 docker compose -f compose.backend.yml up -d --build
 ```
 
+BuildKit caches the dependency install layer across source changes and reuses
+downloaded packages when the requirements change. Unpinned packages are resolved
+again only when the install layer is invalidated. The pip cache stays out of the
+runtime image.
+
 The API derives one deployment ID from its container and server-launch
 identity and shares it across all Uvicorn workers. The one-shot public
 diagnostic is opt-in and does not start with the normal deployment command.
@@ -191,7 +196,8 @@ The staging environment selects `Dockerfile.api.staging`, which copies the
 current repository's `core/` directory into the image instead of cloning
 GitHub. The host derives the app version before the build, and the Dockerfile
 writes it to `.app-version` in the image. Linked Git worktrees are supported
-and `.git` stays out of the build context and final image. Staging also sets
+and `.git` stays out of the build context and final image. Staging shares the
+BuildKit pip cache with production and sets
 `COMPOSE_PROJECT_NAME=nurse-scheduling-backend-staging`. This overrides the
 default `nurse-scheduling-backend` project name and gives staging its own
 containers, network, and `redis-data` volume. Production and staging can then

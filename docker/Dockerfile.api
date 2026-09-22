@@ -26,15 +26,18 @@ RUN useradd -m -u 1000 user \
     && mkdir -p /reports /app/nurse-scheduling \
     && chown user:user /reports /app/nurse-scheduling
 
+WORKDIR /app/nurse-scheduling/core
+
+COPY --chown=user:user --from=source /app/nurse-scheduling/core/requirements.txt ./requirements.txt
+
+RUN --mount=type=cache,id=api-pip,target=/root/.cache/pip,sharing=locked \
+    pip install -r requirements.txt
+
 COPY --chown=user:user --from=source /app/nurse-scheduling/core/ /app/nurse-scheduling/core/
 COPY --chown=user:user --from=source /app/nurse-scheduling/docker/e2b/ /app/nurse-scheduling/docker/e2b/
 COPY --chown=user:user --from=source /app/nurse-scheduling/docs/content/user-guide/ /app/nurse-scheduling/docs/content/user-guide/
 COPY --chown=user:user --from=source /app/nurse-scheduling/web-frontend/src/utils/taiwanHolidays.ts /app/nurse-scheduling/web-frontend/src/utils/taiwanHolidays.ts
 COPY --chown=user:user --from=source /app/nurse-scheduling/.app-version /app/nurse-scheduling/.app-version
-
-WORKDIR /app/nurse-scheduling/core
-
-RUN pip install --no-cache-dir -r requirements.txt
 
 USER user
 
