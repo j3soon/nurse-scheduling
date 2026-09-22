@@ -84,7 +84,8 @@ The restored workbook is copied to
 `/workspace/optimizer-results/optimized-schedule.xlsx` in that turn and later
 chat turns while retained. It is separate from user attachments. The browser
 keeps a separate replayable session event stream open for
-optimizer status and background turns.
+optimizer status and background turns. It retains the latest 1,000 background
+turn events and 100 optimizer progress updates per session for reconnects.
 Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
 background assistant turn. It does not cancel the independent optimizer run.
@@ -430,7 +431,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
-| `AI_MAX_HISTORY_MESSAGES` | `20` | Conversation messages retained per session. |
+| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |

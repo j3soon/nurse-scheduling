@@ -92,8 +92,14 @@ class SessionEvent:
 class SessionEventBroker:
     """Process-local replay for background turns and independent optimizer progress."""
 
-    def __init__(self, max_events_per_session: int = 200, max_sessions: int = 1000) -> None:
+    def __init__(
+        self,
+        max_events_per_session: int = 1000,
+        max_sessions: int = 1000,
+        max_progress_events_per_session: int = 100,
+    ) -> None:
         self._max_events_per_session = max_events_per_session
+        self._max_progress_events_per_session = max_progress_events_per_session
         self._max_sessions = max_sessions
         self._events: dict[str, list[SessionEvent]] = {}
         self._progress_events: dict[str, list[SessionEvent]] = {}
@@ -113,7 +119,12 @@ class SessionEventBroker:
         event_id = self._last_ids.get(session_id, 0) + 1
         self._last_ids[session_id] = event_id
         events.append(SessionEvent(event_id, event_type, data))
-        del events[: -self._max_events_per_session]
+        limit = (
+            self._max_progress_events_per_session
+            if event_type == "optimization_progress"
+            else self._max_events_per_session
+        )
+        del events[:-limit]
         self._signals.setdefault(session_id, asyncio.Event()).set()
 
     def forget_session(self, session_id: str) -> None:

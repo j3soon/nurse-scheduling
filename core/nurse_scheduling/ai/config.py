@@ -132,7 +132,7 @@ class AiSettings:
     request_log_enabled: bool = True
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
-    max_history_messages: int = 20
+    max_history_messages: int = 1000
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
@@ -205,7 +205,7 @@ class AiSettings:
             history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
-            max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 20),
+            max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 1000),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),

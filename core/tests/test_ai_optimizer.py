@@ -238,7 +238,7 @@ def test_http_backend_resumes_optimizer_progress_with_its_server_side_token() ->
 
 
 def test_optimizer_progress_replay_does_not_displace_background_turn_events() -> None:
-    broker = SessionEventBroker(max_events_per_session=2)
+    broker = SessionEventBroker(max_events_per_session=2, max_progress_events_per_session=2)
     broker.publish("session-1", "turn_start", {"message_id": "turn-1"})
     for score in (1, 2, 3):
         broker.publish("session-1", "optimization_progress", {"score": score})
@@ -251,6 +251,21 @@ def test_optimizer_progress_replay_does_not_displace_background_turn_events() ->
         (4, "optimization_progress"),
         (5, "done"),
     ]
+
+
+def test_background_and_progress_replay_have_separate_default_limits() -> None:
+    broker = SessionEventBroker()
+    for index in range(1001):
+        broker.publish("session-1", "text_delta", {"index": index})
+    for index in range(101):
+        broker.publish("session-1", "optimization_progress", {"index": index})
+
+    events = broker.events_after("session-1")
+    assert len(events) == 1100
+    assert events[0].data["index"] == 1
+    assert events[999].data["index"] == 1000
+    assert events[1000].data["index"] == 1
+    assert events[-1].data["index"] == 100
 
 
 def test_a_rejected_request_tells_the_model_what_the_optimizer_refused() -> None:

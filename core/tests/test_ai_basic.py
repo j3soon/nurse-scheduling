@@ -1317,6 +1317,14 @@ def test_optimizer_defaults_are_always_configured(monkeypatch: pytest.MonkeyPatc
     assert settings.optimizer_max_runs_per_session == 50
 
 
+def test_chat_history_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_MAX_HISTORY_MESSAGES", raising=False)
+
+    assert AiSettings.from_env().max_history_messages == 1000
+
+
 def test_optimizer_tool_is_offered_without_an_availability_capability() -> None:
     provider = FakeProvider()
     with AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider)) as client:
