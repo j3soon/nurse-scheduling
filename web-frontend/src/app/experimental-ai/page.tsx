@@ -465,6 +465,7 @@ export default function ExperimentalAiPage() {
   const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
   const [conversationUnavailable, setConversationUnavailable] = useState(false);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  const [trimmedHistoryCount, setTrimmedHistoryCount] = useState(0);
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -1268,6 +1269,7 @@ export default function ExperimentalAiPage() {
           setIsStreaming(false);
           setError(message);
         },
+        onHistoryTrimmed: setTrimmedHistoryCount,
         onError: failBackgroundTurn,
       },
       controller.signal,
@@ -1476,6 +1478,7 @@ export default function ExperimentalAiPage() {
             )));
           },
           onProposal: diff => setProposalDiff(diff),
+          onHistoryTrimmed: setTrimmedHistoryCount,
         },
         controller.signal,
         authToken,
@@ -1795,6 +1798,12 @@ export default function ExperimentalAiPage() {
         <p className="mt-1 text-xs text-gray-500">
           Chat sessions expire after {retentionLabel(sessionRetentionSeconds)} of inactivity. Each new message renews this period.
         </p>
+        {trimmedHistoryCount > 0 && (
+          <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
+            This conversation is long, so the {trimmedHistoryCount === 1 ? 'oldest message is' : `${trimmedHistoryCount} oldest messages are`}
+            {' '}no longer sent to the assistant. The full transcript stays on this page.
+          </p>
+        )}
         {sessionNotice && (
           <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
             {sessionNotice}

@@ -298,6 +298,27 @@ describe('AI client', () => {
     expect(diffs).toEqual(['- people.items[0].id']);
   });
 
+  it('reports a trimmed prompt history and ignores a meaningless count', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: history_trimmed\ndata: {"dropped":0}\n\n',
+      'id: 2\nevent: history_trimmed\ndata: {"dropped":"many"}\n\n',
+      'id: 3\nevent: history_trimmed\ndata: {"dropped":6}\n\n',
+      'id: 4\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const trimmed = vi.fn();
+
+    await streamSessionEvents(
+      'session/id',
+      { onDelta: () => {}, onHistoryTrimmed: trimmed },
+      new AbortController().signal,
+      null,
+    );
+
+    expect(trimmed).toHaveBeenCalledTimes(1);
+    expect(trimmed).toHaveBeenCalledWith(6);
+  });
+
   it('streams optimizer-triggered turns with authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: optimization\ndata: {"job_id":"opt-1","state":"running","terminal":false,"downloadable":false}\n\n',

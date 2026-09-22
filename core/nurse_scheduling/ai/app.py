@@ -51,6 +51,7 @@ from .background import (
     STALE_TURN_ERROR,
     SessionEventBroker,
     build_provider_messages,
+    recent_history,
     run_background_turn,
 )
 from .config import AiSettings, validate_ai_auth_credentials
@@ -960,8 +961,10 @@ def create_app(
         )
         stream_started = threading.Event()
         latest_artifact = await session_optimizer.latest_result_artifact(session_id)
+        retained_history = recent_history(history, settings.max_history_chars)
+        dropped_history = len(history) - len(retained_history)
         messages = build_provider_messages(
-            history,
+            retained_history,
             schedule_yaml,
             question,
             attachments,
@@ -991,6 +994,8 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
+                if dropped_history:
+                    yield _sse_event("history_trimmed", {"dropped": dropped_history})
                 if stopped_before_stream:
                     raise asyncio.CancelledError
                 async with concurrency_limit:

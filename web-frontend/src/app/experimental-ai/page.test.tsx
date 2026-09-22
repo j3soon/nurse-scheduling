@@ -613,6 +613,28 @@ describe('ExperimentalAiPage', () => {
     )).toBeInTheDocument();
   });
 
+  it('warns once the assistant stops receiving the oldest messages', async () => {
+    const user = userEvent.setup();
+    let backgroundCallbacks: { onHistoryTrimmed?: (dropped: number) => void } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    expect(screen.queryByText(/no longer sent to the assistant/)).not.toBeInTheDocument();
+
+    act(() => backgroundCallbacks?.onHistoryTrimmed?.(4));
+
+    expect(screen.getByText(/4 oldest messages are/)).toBeInTheDocument();
+    expect(screen.getByText(/no longer sent to the assistant/)).toBeInTheDocument();
+  });
+
   it('bounds the persisted optimizer progress history during a long run', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {

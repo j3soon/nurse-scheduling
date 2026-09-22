@@ -63,6 +63,7 @@ export interface StreamCallbacks {
   onDone?: (messageId?: string) => void;
   onStopped?: (messageId?: string) => void;
   onStale?: (message: string) => void;
+  onHistoryTrimmed?: (dropped: number) => void;
   onError?: (message: string) => void;
 }
 
@@ -104,6 +105,7 @@ interface SsePayload {
   terminal?: unknown;
   downloadable?: unknown;
   progress?: unknown;
+  dropped?: unknown;
 }
 
 export class AiHttpError extends Error {
@@ -328,6 +330,11 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
     if (callbacks.onStale) callbacks.onStale(message);
     else throw new AiStaleTurnError(message);
+  } else if (eventType === 'history_trimmed') {
+    const dropped = payload.dropped;
+    if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
+      callbacks.onHistoryTrimmed?.(dropped);
+    }
   } else if (eventType === 'error') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
     if (callbacks.onError) callbacks.onError(message);

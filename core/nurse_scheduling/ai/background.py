@@ -161,7 +161,7 @@ class SessionEventBroker:
                 yield None
 
 
-def _recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessage]:
+def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessage]:
     """Keep the newest retained messages that fit the prompt budget, oldest first.
 
     Retention bounds how much of a conversation the session holds, not how much a
@@ -203,7 +203,7 @@ def build_provider_messages(
         system_content += f"\nOptimization result: {WORKSPACE_OPTIMIZER_RESULT}."
     return [
         ChatMessage(role="system", content=system_content),
-        *_recent_history(history, max_history_chars),
+        *recent_history(history, max_history_chars),
         ChatMessage(role="user", content=question),
     ]
 
@@ -255,8 +255,15 @@ async def run_background_turn(
                     {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
                 )
                 return
+        retained_history = recent_history(history, settings.max_history_chars)
+        if len(retained_history) < len(history):
+            event_broker.publish(
+                session_id,
+                "history_trimmed",
+                {"dropped": len(history) - len(retained_history)},
+            )
         messages = build_provider_messages(
-            history,
+            retained_history,
             schedule_yaml,
             question,
             system_prompt=SANDBOX_SYSTEM_PROMPT,

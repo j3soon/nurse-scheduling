@@ -1326,6 +1326,27 @@ def test_chat_history_default(monkeypatch: pytest.MonkeyPatch) -> None:
     assert AiSettings.from_env().max_history_messages == 1000
 
 
+def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
+    provider = FakeProvider([["First answer."], ["Second answer."], ["Third answer."]])
+    settings = make_settings(max_history_chars=120)
+    client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider))
+    session_id = create_session(client)
+
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 100})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 100})
+    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 100})
+
+    assert [event for event, _ in parse_sse(first.text) if event == "history_trimmed"] == []
+    trimmed = [payload for event, payload in parse_sse(third.text) if event == "history_trimmed"]
+    assert len(trimmed) == 1
+    assert trimmed[0]["dropped"] > 0
+    # The oldest exchange is dropped from the prompt while the newest survives.
+    latest_prompt = json.dumps(provider.calls[-1])
+    assert "A" * 100 not in latest_prompt
+    assert "C" * 100 in latest_prompt
+    assert second.status_code == 200
+
+
 def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
