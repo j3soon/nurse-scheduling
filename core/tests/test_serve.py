@@ -1954,8 +1954,8 @@ def test_worker_recovers_after_presence_lease_expires(monkeypatch):
     class ControllerWithRenewalOutage:
         def __init__(self, delegate):
             self.delegate = delegate
-            self.registration_count = 0
             self.renewal_outage = threading.Event()
+            self.outage_observed = threading.Event()
             self.recovered = threading.Event()
 
         def __getattr__(self, name):
@@ -1963,14 +1963,13 @@ def test_worker_recovers_after_presence_lease_expires(monkeypatch):
 
         def register_worker(self, worker_id):
             registered = self.delegate.register_worker(worker_id)
-            if registered:
-                self.registration_count += 1
-                if self.registration_count > 1:
-                    self.recovered.set()
+            if registered and self.outage_observed.is_set():
+                self.recovered.set()
             return registered
 
         def renew_worker(self, lease):
             if self.renewal_outage.is_set():
+                self.outage_observed.set()
                 raise ConnectionError("simulated heartbeat outage")
             return self.delegate.renew_worker(lease)
 
@@ -1988,6 +1987,7 @@ def test_worker_recovers_after_presence_lease_expires(monkeypatch):
     try:
         assert process_started.wait(timeout=2)
         worker_controller.renewal_outage.set()
+        assert worker_controller.outage_observed.wait(timeout=2)
         assert worker_controller.recovered.wait(timeout=2)
         assert _wait_for_worker_ready(worker)
         failed = controller.get_job(created.id)

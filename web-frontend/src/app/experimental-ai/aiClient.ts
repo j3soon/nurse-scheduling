@@ -24,6 +24,7 @@ import {
   parseAuthRequirement,
   type AuthRequirement,
 } from '@/utils/backendAuth';
+import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 
 export interface ToolActivity {
   name: string;
@@ -34,7 +35,22 @@ export interface ToolActivity {
 
 export type ToolStartActivity = Pick<ToolActivity, 'name' | 'arguments'>;
 
+export interface OptimizationActivity {
+  jobId: string;
+  state: string;
+  terminal: boolean;
+  downloadable: boolean;
+}
+
+export interface OptimizationProgressActivity {
+  jobId: string;
+  point: OptimizationProgressPoint;
+}
+
 export interface StreamCallbacks {
+  lastEventId?: number;
+  onEventId?: (id: number) => void;
+  onTurnStart?: (messageId: string, trigger: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
@@ -42,7 +58,13 @@ export interface StreamCallbacks {
   onSteering?: (messageId: string, message: string) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
   onProposal?: (diff: string) => void;
-  onDone?: () => void;
+  onOptimization?: (activity: OptimizationActivity) => void;
+  onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
+  onDone?: (messageId?: string) => void;
+  onStopped?: (messageId?: string) => void;
+  onStale?: (message: string) => void;
+  onHistoryTrimmed?: (dropped: number) => void;
+  onError?: (message: string) => void;
 }
 
 export interface AiCapabilities {
@@ -77,6 +99,13 @@ interface SsePayload {
   ok?: unknown;
   schedule_yaml?: unknown;
   message_id?: unknown;
+  trigger?: unknown;
+  job_id?: unknown;
+  state?: unknown;
+  terminal?: unknown;
+  downloadable?: unknown;
+  progress?: unknown;
+  dropped?: unknown;
 }
 
 export class AiHttpError extends Error {
@@ -208,6 +237,7 @@ export async function getSessionStatus(
 
 function consumeEvent(block: string, callbacks: StreamCallbacks): void {
   const lines = block.split('\n');
+  const eventId = Number(lines.find(line => line.startsWith('id:'))?.slice('id:'.length).trim());
   const eventType = lines.find(line => line.startsWith('event:'))?.slice('event:'.length).trim() ?? 'message';
   const rawData = lines
     .filter(line => line.startsWith('data:'))
@@ -222,7 +252,16 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     throw new Error('The AI backend returned an invalid stream.');
   }
 
-  if (eventType === 'delta' && typeof payload.text === 'string') {
+  // Acknowledge before dispatching, so a handler that throws cannot make a
+  // replayed stream repeat the same event after every reconnect.
+  if (Number.isSafeInteger(eventId) && eventId > 0) callbacks.onEventId?.(eventId);
+
+  if (eventType === 'turn_start' && typeof payload.message_id === 'string') {
+    callbacks.onTurnStart?.(
+      payload.message_id,
+      typeof payload.trigger === 'string' ? payload.trigger : 'background work',
+    );
+  } else if (eventType === 'delta' && typeof payload.text === 'string') {
     callbacks.onDelta(payload.text);
   } else if (eventType === 'reasoning' && typeof payload.text === 'string') {
     callbacks.onReasoning?.(payload.text);
@@ -251,14 +290,55 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     callbacks.onScheduleChange?.(payload.schedule_yaml);
   } else if (eventType === 'proposal' && typeof payload.diff === 'string') {
     callbacks.onProposal?.(payload.diff);
+  } else if (
+    eventType === 'optimization'
+    && typeof payload.job_id === 'string'
+    && typeof payload.state === 'string'
+    && typeof payload.terminal === 'boolean'
+    && typeof payload.downloadable === 'boolean'
+  ) {
+    callbacks.onOptimization?.({
+      jobId: payload.job_id,
+      state: payload.state,
+      terminal: payload.terminal,
+      downloadable: payload.downloadable,
+    });
+  } else if (eventType === 'optimization_progress' && typeof payload.job_id === 'string') {
+    const point = payload.progress as Record<string, unknown> | null | undefined;
+    if (
+      typeof point === 'object' && point !== null
+      && typeof point.currentBestScore === 'number' && Number.isFinite(point.currentBestScore)
+      && typeof point.elapsedSeconds === 'number' && Number.isFinite(point.elapsedSeconds)
+      && point.elapsedSeconds >= 0
+    ) {
+      callbacks.onOptimizationProgress?.({
+        jobId: payload.job_id,
+        point: {
+          currentBestScore: point.currentBestScore,
+          elapsedSeconds: point.elapsedSeconds,
+          commentCount: typeof point.commentCount === 'number' ? point.commentCount : null,
+          solutionIndex: typeof point.solutionIndex === 'number' ? point.solutionIndex : null,
+          source: typeof point.source === 'string' ? point.source : undefined,
+        },
+      });
+    }
   } else if (eventType === 'done') {
-    callbacks.onDone?.();
+    callbacks.onDone?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
+  } else if (eventType === 'stopped') {
+    callbacks.onStopped?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
   } else if (eventType === 'stale') {
-    throw new AiStaleTurnError(
-      typeof payload.message === 'string' ? payload.message : 'The AI response became stale.',
-    );
+    const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
+    if (callbacks.onStale) callbacks.onStale(message);
+    else throw new AiStaleTurnError(message);
+  } else if (eventType === 'history_trimmed') {
+    const dropped = payload.dropped;
+    if (typeof dropped === 'number' && Number.isInteger(dropped) && dropped > 0) {
+      callbacks.onHistoryTrimmed?.(dropped);
+    }
   } else if (eventType === 'error') {
-    throw new Error(typeof payload.message === 'string' ? payload.message : 'The AI response failed.');
+    const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
+    if (callbacks.onError) callbacks.onError(message);
+    else throw new Error(message);
   }
 }
 
@@ -292,6 +372,10 @@ export async function streamMessage(
     signal,
   });
   if (!response.ok) throw await responseError(response);
+  await consumeStream(response, callbacks);
+}
+
+async function consumeStream(response: Response, callbacks: StreamCallbacks): Promise<void> {
   if (!response.body) throw new Error('The AI backend returned an empty stream.');
 
   const reader = response.body.getReader();
@@ -315,6 +399,26 @@ export async function streamMessage(
   if (buffer.trim()) consumeEvent(buffer, callbacks);
 }
 
+export async function streamSessionEvents(
+  sessionId: string,
+  callbacks: StreamCallbacks,
+  signal: AbortSignal,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/events`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: authorizedHeaders(
+      authToken,
+      callbacks.lastEventId ? { 'Last-Event-ID': String(callbacks.lastEventId) } : undefined,
+    ),
+    signal,
+  });
+  if (!response.ok) throw await responseError(response);
+  await consumeStream(response, callbacks);
+}
+
 export async function queueMessage(
   sessionId: string,
   messageId: string,
@@ -329,6 +433,37 @@ export async function queueMessage(
     body: JSON.stringify({ message_id: messageId, message }),
   });
   if (!response.ok) throw await responseError(response);
+}
+
+export async function stopSession(
+  sessionId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/stop`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+}
+
+export async function downloadOptimization(
+  sessionId: string,
+  jobId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<Blob> {
+  const response = await fetch(
+    `${endpoint}/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/xlsx`,
+    {
+      method: 'GET',
+      credentials: 'include',
+      headers: authorizedHeaders(authToken),
+    },
+  );
+  if (!response.ok) throw await responseError(response);
+  return response.blob();
 }
 
 export async function scheduleRevision(scheduleYaml: string): Promise<string> {

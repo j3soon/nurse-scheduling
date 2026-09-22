@@ -22,7 +22,10 @@ fi
 
 setup_python_project() {
   local project_dir="$1"
-  local req_file="$project_dir/requirements.txt"
+  # Development setups install the optional file, which also pulls in the
+  # minimal runtime requirements that deployment images use.
+  local req_name="${2:-requirements.txt}"
+  local req_file="$project_dir/$req_name"
 
   if [[ ! -d "$project_dir" ]]; then
     echo "Error: project directory not found: $project_dir"
@@ -45,7 +48,7 @@ setup_python_project() {
     source .venv/bin/activate
 
     echo "Installing dependencies from $req_file ..."
-    uv pip install -r requirements.txt
+    uv pip install -r "$req_name"
   )
 }
 
@@ -61,7 +64,7 @@ bun install
 
 echo
 echo "==> Setting up core"
-setup_python_project "$CORE_DIR"
+setup_python_project "$CORE_DIR" requirements-optional.txt
 
 echo
 echo "==> Setting up docs"

@@ -24,6 +24,7 @@ import {
   PRODUCTION_AI_API_URL,
   approveProposal,
   createSession,
+  downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
   getSessionStatus,
@@ -32,6 +33,8 @@ import {
   rejectProposal,
   scheduleRevision,
   streamMessage,
+  streamSessionEvents,
+  stopSession,
   updateSessionSchedule,
 } from './aiClient';
 
@@ -293,6 +296,163 @@ describe('AI client', () => {
     expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
     expect(texts).toEqual(['Renamed P1.']);
     expect(diffs).toEqual(['- people.items[0].id']);
+  });
+
+  it('reports a trimmed prompt history and ignores a meaningless count', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: history_trimmed\ndata: {"dropped":0}\n\n',
+      'id: 2\nevent: history_trimmed\ndata: {"dropped":"many"}\n\n',
+      'id: 3\nevent: history_trimmed\ndata: {"dropped":6}\n\n',
+      'id: 4\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const trimmed = vi.fn();
+
+    await streamSessionEvents(
+      'session/id',
+      { onDelta: () => {}, onHistoryTrimmed: trimmed },
+      new AbortController().signal,
+      null,
+    );
+
+    expect(trimmed).toHaveBeenCalledTimes(1);
+    expect(trimmed).toHaveBeenCalledWith(6);
+  });
+
+  it('streams optimizer-triggered turns with authentication', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
+      'id: 1\nevent: optimization\ndata: {"job_id":"opt-1","state":"running","terminal":false,"downloadable":false}\n\n',
+      'id: 2\nevent: optimization_progress\ndata: {"job_id":"opt-1","progress":{"currentBestScore":23,"elapsedSeconds":2,"source":"solver"}}\n\n',
+      'id: 3\nevent: turn_start\ndata: {"message_id":"background-1","trigger":"optimizer"}\n\n',
+      'id: 4\nevent: delta\ndata: {"text":"Score 23."}\n\n',
+      'id: 5\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const starts: string[] = [];
+    const texts: string[] = [];
+    const done = vi.fn();
+    const optimizations = vi.fn();
+    const progress = vi.fn();
+    const eventIds: number[] = [];
+
+    await streamSessionEvents(
+      'session/id',
+      {
+        onTurnStart: (messageId, trigger) => starts.push(`${messageId}:${trigger}`),
+        onDelta: text => texts.push(text),
+        onOptimization: optimizations,
+        onOptimizationProgress: progress,
+        onDone: done,
+        onEventId: id => eventIds.push(id),
+      },
+      new AbortController().signal,
+      'event-token',
+    );
+
+    expect(starts).toEqual(['background-1:optimizer']);
+    expect(texts).toEqual(['Score 23.']);
+    expect(done).toHaveBeenCalledWith('background-1');
+    expect(eventIds).toEqual([1, 2, 3, 4, 5]);
+    expect(optimizations).toHaveBeenCalledWith({
+      jobId: 'opt-1',
+      state: 'running',
+      terminal: false,
+      downloadable: false,
+    });
+    expect(progress).toHaveBeenCalledWith({
+      jobId: 'opt-1',
+      point: {
+        currentBestScore: 23,
+        elapsedSeconds: 2,
+        source: 'solver',
+        solutionIndex: null,
+        commentCount: null,
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/events',
+      {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Authorization: 'Bearer event-token' },
+        signal: expect.any(AbortSignal),
+      },
+    );
+  });
+
+  it('acknowledges a stale background turn instead of replaying it forever', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 7\nevent: delta\ndata: {"text":"Obsolete"}\n\n',
+      'id: 8\nevent: stale\ndata: {"message":"The schedule changed."}\n\n',
+    ])));
+    const stale = vi.fn();
+    const eventIds: number[] = [];
+
+    await streamSessionEvents(
+      'session-id',
+      { onDelta: vi.fn(), onStale: stale, onEventId: id => eventIds.push(id) },
+      new AbortController().signal,
+      null,
+    );
+
+    expect(stale).toHaveBeenCalledWith('The schedule changed.');
+    expect(eventIds).toEqual([7, 8]);
+  });
+
+  it('resumes background events after the stored cursor', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamedResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamSessionEvents(
+      'session-id',
+      { lastEventId: 4, onDelta: vi.fn() },
+      new AbortController().signal,
+      null,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session-id/events',
+      expect.objectContaining({ headers: { 'Last-Event-ID': '4' } }),
+    );
+  });
+
+  it('stops a session turn with authentication', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await stopSession('session/id', 'result-token');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/stop',
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Authorization: 'Bearer result-token' },
+      },
+    );
+  });
+
+  it('downloads an optimizer result with authentication', async () => {
+    // Build the body from text. A jsdom Blob is not always a body the runtime's
+    // Response accepts, which made this check fail on some platforms only.
+    const fetchMock = vi.fn().mockResolvedValue(new Response('workbook', {
+      status: 200,
+      headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const workbook = await downloadOptimization('session/id', 'opt/id', 'result-token');
+    expect(await workbook.text()).toBe('workbook');
+    expect(workbook.type).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nursescheduling.org/ai/sessions/session%2Fid/optimizations/opt%2Fid/xlsx',
+      {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Authorization: 'Bearer result-token' },
+      },
+    );
   });
 
   it('queues a steering message without cancelling the active stream', async () => {

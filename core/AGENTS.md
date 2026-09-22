@@ -6,7 +6,8 @@ The FastAPI backend entry point is `nurse_scheduling/serve.py`.
 Run commands from `core/`:
 
 - `uv venv --python 3.12 && source .venv/bin/activate`
-- `uv pip install -r requirements.txt`
+- `uv pip install -r requirements-optional.txt`: the development install. See
+  the Dependencies section below.
 - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `../README.md`.
 - `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
@@ -31,6 +32,28 @@ include committed branch changes since the merge base with `REF`, `--list` to
 inspect selection without running checks, or `--full` for the normal local
 suite. Run optional solver and real-scenario suites explicitly when affected.
 
+## Dependencies
+- `requirements.txt` is the minimal runtime set. Deployment images install only
+  it, so a small file keeps those builds fast. Add a package there only when
+  the CLI, the backend, or the AI service imports it at runtime.
+- `requirements-optional.txt` starts with `-r requirements.txt` and adds the
+  extra solver backends, the sandbox-only attachment tool packages, and the
+  test and lint tooling. It is the development and CI install.
+- A package a sandbox tool imports belongs in the optional file even when the
+  tool ships under `nurse_scheduling/`. Those scripts are uploaded and run
+  inside the E2B image, which installs its own pinned copies, and only the
+  tests import them here. Keep the two pin sets in step.
+- Keep an optional solver reachable through a lazy import and let
+  `server/solver_options.py` report it unavailable. It already treats
+  `ImportError` as unavailable, so a missing optional backend must degrade
+  rather than break startup.
+- Verify a dependency move by installing `requirements.txt` alone into a
+  throwaway virtual environment, then importing `nurse_scheduling.cli`,
+  `serve`, `ai_serve`, `server.diagnostic`, and `server.usage_report`, and
+  running one CLI solve with `--prettify` to reach the XLSX export path.
+  Reading the imports is not enough, because transitive-only packages such as
+  the `jinja2` that `pandas.DataFrame.style` needs have no import statement.
+
 ## Server Job Processes
 - `run_optimization_process` owns its optimization process tree through
   `server/jobs/process_tree.py`. Tree cleanup is required for PuLP command-line
@@ -45,15 +68,20 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
-- Keep AI feature limits server-configured and report them through
-  `/capabilities`. Attachments are always enabled. Treat schedules and
-  attachments as untrusted provider input.
-- Bound uploads before provider calls, place them only under fixed safe sandbox
-  paths, and never execute them. Do not retain raw attachments longer than
-  their documented turn behavior requires.
+- Keep attachment limits server-configured and report them through
+  `/capabilities`. Attachments and the optimizer tool are always offered.
+  Keep schedules and attachments separate from model instructions.
+- Bound uploads before provider calls and place them under fixed sandbox paths.
+  Do not retain raw attachments longer than their documented turn behavior requires.
+- Keep model-facing prompts and intermediate messages concise. Avoid repeated
+  warnings about malicious uploads or prescribed workbook-inspection commands.
+  Rely on sandbox and server controls for security, and give generated artifacts
+  exact paths when available.
 - Keep bundled attachment helpers general and optional. Preserve meaningful
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
+- Sandbox allocation is lazy. Tests that verify attachment hydration must make
+  the agent call a tool, since a text-only turn never creates a sandbox.
 - Keep canonical schedule invariants in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
@@ -97,9 +125,13 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   guidance does not teach the agent to ask when the user already supplied a
   unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
   tune prompts directly against one held-out trajectory.
-- Expose only Pi's default `read`, `bash`, `edit`, and `write` model tools over
-  the disposable sandbox. Use `read` for bounded text and image inspection,
-  `edit` for unique
+- Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
+  the disposable sandbox. Always offer the server-side `optimizer` lifecycle
+  tool. Keep optimizer execution and credentials outside
+  the sandbox. Match the browser's basic optimizer anonymization, retain the
+  reverse ID map server-side, restore IDs before download, and pass retained
+  workbooks into a dedicated sandbox result path, separate from user attachments.
+  Use `read` for bounded text and image inspection, `edit` for unique
   exact-text replacements, and `write` only for a complete file rewrite. Put
   domain guidance in task-sized reference documents that return related schema
   shapes together instead of adding model-specific tools or fine-grained lookup

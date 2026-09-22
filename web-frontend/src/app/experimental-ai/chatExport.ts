@@ -27,7 +27,7 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 import type { ActivityEntry } from './AssistantActivity';
 
 export interface ChatExportMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'optimizer';
   content: string;
   attachmentNames?: string[];
   activity?: ActivityEntry[];
@@ -240,8 +240,8 @@ export function buildMarkdownChatExport(
     `- AI server: ${metadata.endpoint}`,
   ];
   messages.forEach(message => {
-    lines.push('', `## ${message.role === 'user' ? 'You' : 'Assistant'}`);
-    if (message.role === 'user') {
+    lines.push('', `## ${message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}`);
+    if (message.role !== 'assistant') {
       lines.push('', message.content || '[No message text]');
     } else {
       assistantTimeline(message).forEach(entry => {
@@ -268,7 +268,7 @@ export function buildHtmlChatExport(
       : `<div class="content">${escapeHtml(message.content || '[No message text]')}</div>`;
     return `
       <article class="message ${message.role}">
-        <div class="label">${message.role === 'user' ? 'You' : 'Assistant'}</div>
+        <div class="label">${message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}</div>
         ${timeline}
         ${renderHtmlMessageDetails(message)}
       </article>`;
@@ -289,9 +289,10 @@ export function buildHtmlChatExport(
     .message { box-sizing: border-box; width: fit-content; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
     .user { align-self: flex-end; background: #2563eb; color: white; }
     .assistant { align-self: flex-start; border: 1px solid #e5e7eb; background: white; }
+    .optimizer { align-self: flex-start; border: 1px solid #a7f3d0; background: #ecfdf5; color: #022c22; }
     .label { margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .025em; text-transform: uppercase; opacity: .7; }
     .content { overflow-wrap: anywhere; line-height: 1.5rem; }
-    .user .content { white-space: pre-wrap; }
+    .user .content, .optimizer .content { white-space: pre-wrap; }
     .content > :first-child { margin-top: 0; }
     .content > :last-child { margin-bottom: 0; }
     .content h1, .content h2 { margin: 16px 0 8px; line-height: 1.25; font-weight: 600; }

@@ -37,10 +37,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     glpk-utils \
     && rm -rf /var/lib/apt/lists/*
 
-COPY core/requirements.txt /tmp/requirements.txt
+COPY core/requirements.txt core/requirements-optional.txt /tmp/
 # highspy 1.12.0 has no CPython 3.14 wheel, so omit PuLP/HiGHS from this image.
-RUN sed -i '/^highspy==/d' /tmp/requirements.txt \
-    && pip3 install --no-cache-dir -r /tmp/requirements.txt
+RUN sed -i '/^highspy==/d' /tmp/requirements-optional.txt \
+    && pip3 install --no-cache-dir -r /tmp/requirements-optional.txt
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install | bash
