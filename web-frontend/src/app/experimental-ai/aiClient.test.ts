@@ -346,6 +346,25 @@ describe('AI client', () => {
     );
   });
 
+  it('acknowledges a stale background turn instead of replaying it forever', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 7\nevent: delta\ndata: {"text":"Obsolete"}\n\n',
+      'id: 8\nevent: stale\ndata: {"message":"The schedule changed."}\n\n',
+    ])));
+    const stale = vi.fn();
+    const eventIds: number[] = [];
+
+    await streamSessionEvents(
+      'session-id',
+      { onDelta: vi.fn(), onStale: stale, onEventId: id => eventIds.push(id) },
+      new AbortController().signal,
+      null,
+    );
+
+    expect(stale).toHaveBeenCalledWith('The schedule changed.');
+    expect(eventIds).toEqual([7, 8]);
+  });
+
   it('resumes background events after the stored cursor', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([]));
     vi.stubGlobal('fetch', fetchMock);

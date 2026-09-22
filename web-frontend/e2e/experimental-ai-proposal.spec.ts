@@ -79,6 +79,12 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       });
       return;
     }
+    if (request.url().endsWith('/events')) {
+      // The real session event stream carries background turns only, never the
+      // foreground answer below.
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: '' });
+      return;
+    }
     if (request.url().endsWith('/schedule')) {
       state.refreshed.push((request.postDataJSON() as { schedule_yaml: string }).schedule_yaml);
       await route.fulfill({ status: 204, headers: corsHeaders });

@@ -491,6 +491,62 @@ describe('ExperimentalAiPage', () => {
     expect(mockStreamSessionEvents.mock.calls[1][1].lastEventId).toBe(7);
   });
 
+  it('renders a replayed background turn that lost its start event', async () => {
+    const user = userEvent.setup();
+    let backgroundCallbacks: {
+      onDelta: (text: string) => void;
+      onDone?: () => void;
+    } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+
+    // The bounded replay buffer dropped turn_start before this reconnect.
+    act(() => {
+      backgroundCallbacks?.onDelta('The optimizer returned score 23.');
+      backgroundCallbacks?.onDone?.();
+    });
+
+    expect(screen.getByText('The optimizer returned score 23.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
+  it('ends a stale background turn instead of leaving it pending', async () => {
+    const user = userEvent.setup();
+    let backgroundCallbacks: {
+      onTurnStart?: (messageId: string, trigger: string) => void;
+      onDelta: (text: string) => void;
+      onStale?: (message: string) => void;
+    } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+
+    act(() => {
+      backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
+      backgroundCallbacks?.onStale?.('The schedule changed while this response was generated.');
+    });
+
+    expect(screen.getByText('The schedule changed while this response was generated.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
   it('stops a background assistant turn through the session endpoint', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {

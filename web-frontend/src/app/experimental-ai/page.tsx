@@ -1029,10 +1029,46 @@ export default function ExperimentalAiPage() {
         setSessionEventsAttempt(attempt => attempt + 1);
       }, delay);
     };
+    const beginBackgroundMessage = (assistantId: string) => {
+      backgroundAssistantIdRef.current = assistantId;
+      backgroundTurnActiveRef.current = true;
+      // The server renews the session when it starts this turn.
+      setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
+      sandboxScheduleRef.current = scheduleYamlRef.current;
+      setIsStreaming(true);
+      setMessages(previous => previous.some(message => message.id === assistantId) ? previous : [
+        ...previous,
+        {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          status: 'pending',
+          responseStartedAt: Date.now(),
+        },
+      ]);
+    };
+    // A reconnect replays only retained events, so a long turn can lose its own
+    // turn_start. Adopt the remaining output instead of discarding the answer.
+    const resumeBackgroundMessage = () => {
+      if (backgroundAssistantIdRef.current === null) beginBackgroundMessage(messageId());
+    };
     const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage) => {
       const activeId = backgroundAssistantIdRef.current;
       if (activeId === null) return;
       setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
+    };
+    const failBackgroundTurn = (message: string) => {
+      updateBackgroundMessage(entry => ({
+        ...entry,
+        content: entry.content || message,
+        status: 'failed',
+        responseCompletedAt: Date.now(),
+        activity: interruptRunningTools(entry.activity ?? []),
+      }));
+      backgroundAssistantIdRef.current = null;
+      backgroundTurnActiveRef.current = false;
+      setIsStreaming(false);
+      setError(message);
     };
     void streamSessionEvents(
       sessionId,
@@ -1042,49 +1078,45 @@ export default function ExperimentalAiPage() {
           lastSessionEventIdRef.current = id;
           sessionEventsRetryRef.current = 0;
         },
-        onTurnStart: messageId => {
-          backgroundAssistantIdRef.current = messageId;
-          backgroundTurnActiveRef.current = true;
-          // The server renews the session when it starts this turn.
-          setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
-          sandboxScheduleRef.current = scheduleYamlRef.current;
-          setIsStreaming(true);
-          setMessages(previous => previous.some(message => message.id === messageId) ? previous : [
-            ...previous,
-            {
-              id: messageId,
-              role: 'assistant',
-              content: '',
-              status: 'pending',
-              responseStartedAt: Date.now(),
-            },
-          ]);
+        onTurnStart: beginBackgroundMessage,
+        onDelta: text => {
+          resumeBackgroundMessage();
+          updateBackgroundMessage(message => ({
+            ...message,
+            content: message.content + text,
+            activity: appendResponseActivity(message.activity ?? [], text),
+          }));
         },
-        onDelta: text => updateBackgroundMessage(message => ({
-          ...message,
-          content: message.content + text,
-          activity: appendResponseActivity(message.activity ?? [], text),
-        })),
-        onReasoning: text => updateBackgroundMessage(message => {
-          const activity = message.activity ?? [];
-          const last = activity[activity.length - 1];
-          if (last?.kind === 'reasoning') {
-            return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
-          }
-          return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
-        }),
-        onToolStart: activity => updateBackgroundMessage(message => ({
-          ...message,
-          activity: [
-            ...(message.activity ?? []),
-            { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
-          ],
-        })),
-        onTool: activity => updateBackgroundMessage(message => ({
-          ...message,
-          activity: finishToolActivity(message.activity ?? [], activity),
-        })),
+        onReasoning: text => {
+          resumeBackgroundMessage();
+          updateBackgroundMessage(message => {
+            const activity = message.activity ?? [];
+            const last = activity[activity.length - 1];
+            if (last?.kind === 'reasoning') {
+              return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
+            }
+            return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
+          });
+        },
+        onToolStart: activity => {
+          resumeBackgroundMessage();
+          updateBackgroundMessage(message => ({
+            ...message,
+            activity: [
+              ...(message.activity ?? []),
+              { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
+            ],
+          }));
+        },
+        onTool: activity => {
+          resumeBackgroundMessage();
+          updateBackgroundMessage(message => ({
+            ...message,
+            activity: finishToolActivity(message.activity ?? [], activity),
+          }));
+        },
         onScheduleChange: candidate => {
+          resumeBackgroundMessage();
           const before = sandboxScheduleRef.current ?? scheduleYamlRef.current;
           sandboxScheduleRef.current = candidate;
           updateBackgroundMessage(message => ({
@@ -1144,19 +1176,8 @@ export default function ExperimentalAiPage() {
           setIsStreaming(false);
           setIsStopping(false);
         },
-        onError: message => {
-          updateBackgroundMessage(entry => ({
-            ...entry,
-            content: entry.content || message,
-            status: 'failed',
-            responseCompletedAt: Date.now(),
-            activity: interruptRunningTools(entry.activity ?? []),
-          }));
-          backgroundAssistantIdRef.current = null;
-          backgroundTurnActiveRef.current = false;
-          setIsStreaming(false);
-          setError(message);
-        },
+        onStale: failBackgroundTurn,
+        onError: failBackgroundTurn,
       },
       controller.signal,
       authToken,

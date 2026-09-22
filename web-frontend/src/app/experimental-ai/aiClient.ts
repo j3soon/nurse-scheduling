@@ -55,6 +55,7 @@ export interface StreamCallbacks {
   onOptimization?: (activity: OptimizationActivity) => void;
   onDone?: () => void;
   onStopped?: () => void;
+  onStale?: (message: string) => void;
   onError?: (message: string) => void;
 }
 
@@ -241,6 +242,10 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     throw new Error('The AI backend returned an invalid stream.');
   }
 
+  // Acknowledge before dispatching, so a handler that throws cannot make a
+  // replayed stream repeat the same event after every reconnect.
+  if (Number.isSafeInteger(eventId) && eventId > 0) callbacks.onEventId?.(eventId);
+
   if (eventType === 'turn_start' && typeof payload.message_id === 'string') {
     callbacks.onTurnStart?.(
       payload.message_id,
@@ -293,15 +298,14 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
   } else if (eventType === 'stopped') {
     callbacks.onStopped?.();
   } else if (eventType === 'stale') {
-    throw new AiStaleTurnError(
-      typeof payload.message === 'string' ? payload.message : 'The AI response became stale.',
-    );
+    const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
+    if (callbacks.onStale) callbacks.onStale(message);
+    else throw new AiStaleTurnError(message);
   } else if (eventType === 'error') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response failed.';
     if (callbacks.onError) callbacks.onError(message);
     else throw new Error(message);
   }
-  if (Number.isSafeInteger(eventId) && eventId > 0) callbacks.onEventId?.(eventId);
 }
 
 export async function streamMessage(
