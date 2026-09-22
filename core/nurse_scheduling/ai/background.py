@@ -20,6 +20,7 @@
 # This code is mostly AI generated.
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -28,7 +29,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
-from .config import AiSettings
+from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
 from .history import ChatHistory
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT, OptimizerArtifact, SessionOptimizer
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
@@ -160,6 +161,24 @@ class SessionEventBroker:
                 yield None
 
 
+def _recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessage]:
+    """Keep the newest retained messages that fit the prompt budget, oldest first.
+
+    Retention bounds how much of a conversation the session holds, not how much a
+    provider can accept. A long session would otherwise grow every later prompt past
+    the model context window and fail the request outright.
+    """
+    kept: list[ChatMessage] = []
+    remaining = max_chars
+    for message in reversed(history):
+        remaining -= len(json.dumps(message, ensure_ascii=False))
+        if remaining < 0:
+            break
+        kept.append(message)
+    kept.reverse()
+    return kept
+
+
 def build_provider_messages(
     history: list[ChatMessage],
     schedule_yaml: str,
@@ -169,6 +188,7 @@ def build_provider_messages(
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
     pending_proposal: bool = False,
     optimizer_result_available: bool = False,
+    max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
 ) -> list[ChatMessage]:
     """Build a provider prompt that keeps schedule data separate from instructions."""
     system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
@@ -183,7 +203,7 @@ def build_provider_messages(
         system_content += f"\nOptimization result: {WORKSPACE_OPTIMIZER_RESULT}."
     return [
         ChatMessage(role="system", content=system_content),
-        *history,
+        *_recent_history(history, max_history_chars),
         ChatMessage(role="user", content=question),
     ]
 
@@ -242,6 +262,7 @@ async def run_background_turn(
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=artifact is not None,
+            max_history_chars=settings.max_history_chars,
         )
         assistant_parts: list[str] = []
         pending_proposal: AgentProposal | None = None

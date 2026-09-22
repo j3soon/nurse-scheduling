@@ -968,6 +968,7 @@ def create_app(
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=latest_artifact is not None,
+            max_history_chars=settings.max_history_chars,
         )
         history_question = question
         if attachments:

@@ -52,6 +52,7 @@ from nurse_scheduling.ai.app import (
     request_logger,
 )
 from nurse_scheduling.ai.app import create_app as create_ai_app
+from nurse_scheduling.ai.background import build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
@@ -1323,6 +1324,37 @@ def test_chat_history_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_MAX_HISTORY_MESSAGES", raising=False)
 
     assert AiSettings.from_env().max_history_messages == 1000
+
+
+def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_MAX_HISTORY_CHARS", raising=False)
+
+    assert AiSettings.from_env().max_history_chars == 200_000
+
+
+def test_a_long_history_is_trimmed_to_the_newest_messages_that_fit_the_prompt() -> None:
+    history = [ChatMessage(role="user", content=f"{index:03d} {'x' * 200}") for index in range(50)]
+
+    messages = build_provider_messages(history, "description: schedule\n", "Latest question.", max_history_chars=1000)
+
+    assert messages[0]["role"] == "system"
+    assert messages[-1]["content"] == "Latest question."
+    retained = messages[1:-1]
+    assert 0 < len(retained) < len(history)
+    # The newest messages survive so the model keeps the most relevant context.
+    assert retained[-1]["content"] == history[-1]["content"]
+    assert retained[0]["content"] == history[len(history) - len(retained)]["content"]
+    assert sum(len(json.dumps(message, ensure_ascii=False)) for message in retained) <= 1000
+
+
+def test_a_short_history_reaches_the_prompt_unchanged() -> None:
+    history = [ChatMessage(role="user", content="Who works Monday?"), ChatMessage(role="assistant", content="Alice.")]
+
+    messages = build_provider_messages(history, "description: schedule\n", "And Tuesday?")
+
+    assert messages[1:-1] == history
 
 
 def test_optimizer_tool_is_offered_without_an_availability_capability() -> None:

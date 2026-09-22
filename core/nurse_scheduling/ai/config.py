@@ -29,6 +29,8 @@ SandboxBackendName = Literal["none", "e2b"]
 AI_AUTH_TOKEN_ENV_NAME = "AI_AUTH_TOKEN"
 AI_AUTH_TOKENS_ENV_NAME = "AI_AUTH_TOKENS"
 AI_AUTH_REQUIRED_ENV_NAME = "AI_AUTH_REQUIRED"
+DEFAULT_MAX_HISTORY_CHARS = 200_000
+"""Prompt budget for retained history, well inside the context window of a supported model."""
 
 
 def validate_ai_auth_credentials(
@@ -133,6 +135,7 @@ class AiSettings:
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
     max_history_messages: int = 1000
+    max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
@@ -206,6 +209,7 @@ class AiSettings:
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
             max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 1000),
+            max_history_chars=_read_positive_int("AI_MAX_HISTORY_CHARS", DEFAULT_MAX_HISTORY_CHARS),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
