@@ -58,6 +58,7 @@ class FakeOptimizerBackend:
         self.result_bytes = result_bytes
         self.release = asyncio.Event()
         self.finish_requests: list[str] = []
+        self.cancel_requests: list[str] = []
         self.closed = False
         self.deleted: list[str] = []
         self.submit_gate: asyncio.Event | None = None
@@ -66,6 +67,9 @@ class FakeOptimizerBackend:
         self.status_failures = 0
         self.final_state = "completed"
         self.finish_gate: asyncio.Event | None = None
+        self.result_gate: asyncio.Event | None = None
+        self.result_entered = asyncio.Event()
+        self.deleted_event = asyncio.Event()
 
     async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
         self.submit_entered.set()
@@ -104,7 +108,14 @@ class FakeOptimizerBackend:
             await self.finish_gate.wait()
         return OptimizerJobPayload(id=job_id, state="running")
 
+    async def cancel(self, job_id: str) -> OptimizerJobPayload:
+        self.cancel_requests.append(job_id)
+        return OptimizerJobPayload(id=job_id, state="cancelled", terminal=True)
+
     async def result_artifact(self, _job: OptimizerJobPayload) -> OptimizerArtifact:
+        self.result_entered.set()
+        if self.result_gate is not None:
+            await self.result_gate.wait()
         return OptimizerArtifact(
             self.result_bytes,
             "optimized-schedule.xlsx",
@@ -116,6 +127,7 @@ class FakeOptimizerBackend:
 
     async def delete(self, job_id: str) -> None:
         self.deleted.append(job_id)
+        self.deleted_event.set()
 
 
 def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token() -> None:
@@ -140,6 +152,7 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
 
         submitted = await backend.submit("description: accepted\n", 30)
         finished = await backend.finish_now(submitted.id)
+        cancelled = await backend.cancel(submitted.id)
         artifact = await backend.result_artifact(
             OptimizerJobPayload(
                 id=submitted.id,
@@ -152,10 +165,12 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
         await backend.close()
 
         assert finished.state == "running"
+        assert cancelled.state == "running"
         assert artifact.content == b"workbook"
         assert [request.url.path for request in requests] == [
             "/optimize",
             "/optimize/remote-1/finish-now",
+            "/optimize/remote-1/cancel",
             "/optimize/remote-1/xlsx",
             "/optimize/remote-1",
         ]
@@ -445,6 +460,73 @@ def test_finish_now_does_not_revive_a_job_that_already_completed() -> None:
     asyncio.run(scenario())
 
 
+def test_finish_now_waits_for_workbook_before_terminal_update() -> None:
+    class TerminalFinishBackend(FakeOptimizerBackend):
+        async def finish_now(self, job_id: str) -> OptimizerJobPayload:
+            self.release.set()
+            return OptimizerJobPayload(id=job_id, state="completed", terminal=True)
+
+    async def scenario() -> None:
+        backend = TerminalFinishBackend()
+        backend.result_gate = asyncio.Event()
+        updates: list[dict[str, object]] = []
+        completed = asyncio.Event()
+
+        async def on_update(_session_id: str, update: dict[str, object]) -> None:
+            updates.append(update)
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completed.set()
+
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
+        )
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        assert (await optimizer.execute("session-1", "ignored", '{"action":"finish_now"}')).ok
+        await asyncio.wait_for(backend.result_entered.wait(), timeout=1)
+        assert not [update for update in updates if update["terminal"]]
+
+        backend.result_gate.set()
+        await asyncio.wait_for(completed.wait(), timeout=1)
+        assert [update["downloadable"] for update in updates if update["terminal"]] == [True]
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_immediately_completed_submission_waits_for_workbook_before_terminal_update() -> None:
+    class ImmediateBackend(FakeOptimizerBackend):
+        async def submit(self, schedule_yaml: str, timeout_seconds: int | None) -> OptimizerJobPayload:
+            self.submissions.append((schedule_yaml, timeout_seconds))
+            return OptimizerJobPayload(id="remote-1", state="completed", terminal=True)
+
+    async def scenario() -> None:
+        backend = ImmediateBackend()
+        backend.result_gate = asyncio.Event()
+        updates: list[dict[str, object]] = []
+        completed = asyncio.Event()
+
+        async def on_update(_session_id: str, update: dict[str, object]) -> None:
+            updates.append(update)
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completed.set()
+
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
+        )
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        await asyncio.wait_for(backend.result_entered.wait(), timeout=1)
+        assert not updates
+
+        backend.result_gate.set()
+        await asyncio.wait_for(completed.wait(), timeout=1)
+        assert [update["downloadable"] for update in updates if update["terminal"]] == [True]
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
 def test_a_brief_status_outage_does_not_end_a_running_job() -> None:
     async def scenario() -> None:
         backend = FakeOptimizerBackend()
@@ -598,6 +680,105 @@ def test_a_retired_session_releases_its_runs_and_retained_workbooks() -> None:
         with pytest.raises(OptimizerResultUnavailable):
             await optimizer.result_artifact("session-1", job_id)
         assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_retirement_during_submission_does_not_restore_session_state() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.submit_gate = asyncio.Event()
+        completions: list[str] = []
+        updates: list[dict[str, object]] = []
+
+        async def on_completion(session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completions.append(session_id)
+
+        async def on_update(_session_id: str, update: dict[str, object]) -> None:
+            updates.append(update)
+
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
+        )
+        starting = asyncio.create_task(optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}'))
+        await asyncio.wait_for(backend.submit_entered.wait(), timeout=1)
+        optimizer.forget_session("session-1")
+        backend.submit_gate.set()
+        assert not (await asyncio.wait_for(starting, timeout=1)).ok
+        await asyncio.wait_for(backend.deleted_event.wait(), timeout=1)
+
+        assert await optimizer.latest_result_artifact("session-1") is None
+        assert optimizer._cached_artifact_bytes == 0
+        assert backend.cancel_requests == ["remote-1"]
+        assert not completions and not updates
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_retirement_cancels_a_running_remote_job() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        completions: list[str] = []
+
+        async def on_completion(session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completions.append(session_id)
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        optimizer.forget_session("session-1")
+        await asyncio.wait_for(backend.deleted_event.wait(), timeout=1)
+
+        assert backend.cancel_requests == ["remote-1"]
+        assert not completions
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_retirement_during_result_download_does_not_retain_or_announce_it() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        backend.result_gate = asyncio.Event()
+        completions: list[str] = []
+
+        async def on_completion(session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completions.append(session_id)
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        assert (await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')).ok
+        backend.release.set()
+        await asyncio.wait_for(backend.result_entered.wait(), timeout=1)
+        optimizer.forget_session("session-1")
+        backend.result_gate.set()
+        await asyncio.wait_for(backend.deleted_event.wait(), timeout=1)
+
+        assert await optimizer.latest_result_artifact("session-1") is None
+        assert optimizer._cached_artifact_bytes == 0
+        assert not completions
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_session_limit_preserves_a_live_sessions_completed_result() -> None:
+    async def scenario() -> None:
+        backend = FakeOptimizerBackend()
+        completed = asyncio.Event()
+
+        async def on_completion(_session_id: str, _prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            completed.set()
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion, max_sessions=1)
+        started = await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        backend.release.set()
+        await asyncio.wait_for(completed.wait(), timeout=1)
+        blocked = await optimizer.execute("session-2", TEST_SCHEDULE, '{"action":"start"}')
+        job_id = started.text.split("job ", 1)[1].split(" ", 1)[0]
+
+        assert not blocked.ok
+        assert (await optimizer.result_artifact("session-1", job_id)).content == WORKBOOK_BYTES
         await optimizer.close()
 
     asyncio.run(scenario())

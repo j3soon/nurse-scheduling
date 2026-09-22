@@ -1344,6 +1344,9 @@ class BackgroundTestOptimizer:
         self.release.set()
         return OptimizerJobPayload(id=job_id, state="running")
 
+    async def cancel(self, job_id: str) -> OptimizerJobPayload:
+        return OptimizerJobPayload(id=job_id, state="cancelled", terminal=True)
+
     async def result_artifact(self, _job: OptimizerJobPayload) -> OptimizerArtifact:
         return OptimizerArtifact(
             optimizer_workbook_bytes(),

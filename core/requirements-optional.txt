@@ -9,8 +9,8 @@ highspy==1.12.0
 pyscipopt==6.2.1
 # For the sandbox attachment tools, which run inside the E2B image and are
 # exercised by the core tests. The server itself never imports them.
-pypdf # For PDF text and embedded-image inspection
-pypdfium2 # For bounded PDF page rendering in the sandbox
+pypdf==6.19.0 # For PDF text and embedded-image inspection
+pypdfium2==5.13.0 # For bounded PDF page rendering in the sandbox
 # For CI
 pytest
 pytest-cov

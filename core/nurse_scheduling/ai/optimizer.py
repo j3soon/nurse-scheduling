@@ -71,6 +71,8 @@ class OptimizerBackend(Protocol):
 
     async def finish_now(self, job_id: str) -> OptimizerJobPayload: ...
 
+    async def cancel(self, job_id: str) -> OptimizerJobPayload: ...
+
     async def result_artifact(self, job: OptimizerJobPayload) -> "OptimizerArtifact": ...
 
     async def delete(self, job_id: str) -> None: ...
@@ -109,6 +111,9 @@ class HttpOptimizerBackend:
 
     async def finish_now(self, job_id: str) -> OptimizerJobPayload:
         return await self._request_job("POST", f"optimize/{job_id}/finish-now")
+
+    async def cancel(self, job_id: str) -> OptimizerJobPayload:
+        return await self._request_job("POST", f"optimize/{job_id}/cancel")
 
     async def result_artifact(self, job: OptimizerJobPayload) -> "OptimizerArtifact":
         schedule_link = job.links.get("schedule")
@@ -211,7 +216,7 @@ class SessionOptimizer:
         self._max_schedule_bytes = max_schedule_bytes
         self._jobs: dict[str, SessionOptimization] = {}
         self._latest_by_session: dict[str, str] = {}
-        self._starting: set[str] = set()
+        self._starting: dict[str, object] = {}
         self._run_counts: dict[str, int] = {}
         self._artifact_order: list[str] = []
         self._cached_artifact_bytes = 0
@@ -274,7 +279,10 @@ class SessionOptimizer:
         The AI session store calls this synchronously while retiring a session, so it
         only rebinds state that the lock-holding coroutines never mutate across an await.
         """
-        self._starting.discard(session_id)
+        self._starting.pop(session_id, None)
+        for job in self._jobs.values():
+            if job.session_id == session_id and not _is_terminal(job.payload):
+                self._start_task(self._cancel_retired(job))
         self._discard_session(session_id)
 
     async def _start(self, session_id: str, schedule_yaml: str, timeout_seconds: int | None) -> AgentToolOutcome:
@@ -283,7 +291,12 @@ class SessionOptimizer:
         except ValueError as exc:
             return AgentToolOutcome(f"The optimizer requires a valid frontend schedule. {exc}", False)
         async with self._lock:
-            self._prune_terminal_sessions(session_id)
+            if (
+                session_id not in self._latest_by_session
+                and session_id not in self._starting
+                and len(set(self._latest_by_session) | set(self._starting)) >= self._max_sessions
+            ):
+                return AgentToolOutcome("The optimizer session limit has been reached.", False)
             if self._run_counts.get(session_id, 0) >= self._max_runs_per_session:
                 return AgentToolOutcome(
                     f"This chat session has reached its limit of {self._max_runs_per_session} optimizer runs.",
@@ -299,7 +312,8 @@ class SessionOptimizer:
                 )
             # Reserve the run, then submit without the shared lock. Remote submission
             # would otherwise serialize starts, retention, and downloads across sessions.
-            self._starting.add(session_id)
+            reservation = object()
+            self._starting[session_id] = reservation
             self._run_counts[session_id] = self._run_counts.get(session_id, 0) + 1
         try:
             payload = await self._backend.submit(
@@ -308,15 +322,17 @@ class SessionOptimizer:
             )
         except OptimizerError as exc:
             logger.warning("Optimizer submission failed: %s", exc)
-            self._release_reservation(session_id)
+            self._release_reservation(session_id, reservation)
             return AgentToolOutcome("The optimizer could not accept the schedule.", False)
         except BaseException:
             # A stopped turn cancels this call, and keeping the reservation would leave
             # the session unable to start another run.
-            self._release_reservation(session_id)
+            self._release_reservation(session_id, reservation)
             raise
         async with self._lock:
-            self._starting.discard(session_id)
+            retired = self._starting.get(session_id) is not reservation
+            if not retired:
+                self._starting.pop(session_id)
             job = SessionOptimization(
                 id=f"opt_{uuid4().hex}",
                 session_id=session_id,
@@ -326,13 +342,19 @@ class SessionOptimizer:
                 original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
                 people_count=prepared.people_count,
             )
-            self._jobs[job.id] = job
-            self._latest_by_session[session_id] = job.id
+            if not retired:
+                self._jobs[job.id] = job
+                self._latest_by_session[session_id] = job.id
             if _is_terminal(payload):
                 self._start_task(self._complete(job))
             else:
                 self._start_task(self._monitor(job))
-        await self._notify_update(job)
+        if retired:
+            if not _is_terminal(payload):
+                self._start_task(self._cancel_retired(job))
+            return AgentToolOutcome("This chat session expired while the optimizer job was starting.", False)
+        if not _is_terminal(job.payload):
+            await self._notify_update(job)
         return AgentToolOutcome(
             f"Started optimizer job {job.id} in the background for schedule SHA-256 {job.source_sha256}. "
             "The assistant will be woken when it finishes. The user can keep chatting meanwhile.",
@@ -344,6 +366,16 @@ class SessionOptimizer:
         if job is None:
             return AgentToolOutcome("No optimizer job has been started in this chat session.", False)
         return AgentToolOutcome(_job_summary(job), True)
+
+    async def _cancel_retired(self, job: SessionOptimization) -> None:
+        try:
+            payload = await self._backend.cancel(job.remote_id)
+        except OptimizerError as exc:
+            logger.warning("Optimizer cancellation failed job_id=%s error=%s", job.id, exc)
+            return
+        async with self._lock:
+            if not _is_terminal(job.payload):
+                job.payload = payload
 
     async def _finish_now(self, session_id: str) -> AgentToolOutcome:
         job = self._latest(session_id)
@@ -359,9 +391,10 @@ class SessionOptimizer:
         async with self._lock:
             # Polling can reach a terminal state while this request is in flight. Keeping
             # the older snapshot would block the session from ever starting another run.
-            if not _is_terminal(job.payload):
+            if self._jobs.get(job.id) is job and not _is_terminal(job.payload):
                 job.payload = payload
-        await self._notify_update(job)
+        if not _is_terminal(job.payload):
+            await self._notify_update(job)
         return AgentToolOutcome(
             f"Asked optimizer job {job.id} to finish with its best available result. Current state: {job.payload.state}.",
             True,
@@ -384,20 +417,24 @@ class SessionOptimizer:
                     logger.warning("Optimizer status check failed job_id=%s error=%s", job.id, exc)
                 if now - unreachable_since >= self._status_failure_grace_seconds:
                     logger.warning("Optimizer became unreachable job_id=%s error=%s", job.id, exc)
-                    job.payload = OptimizerJobPayload(
-                        id=job.remote_id,
-                        state="failed",
-                        terminal=True,
-                        error={"code": "optimizer_unreachable", "message": str(exc)},
-                    )
+                    async with self._lock:
+                        if not _is_terminal(job.payload):
+                            job.payload = OptimizerJobPayload(
+                                id=job.remote_id,
+                                state="failed",
+                                terminal=True,
+                                error={"code": "optimizer_unreachable", "message": str(exc)},
+                            )
                 continue
             unreachable_since = None
-            job.payload = payload
+            async with self._lock:
+                if not _is_terminal(job.payload):
+                    job.payload = payload
         await self._complete(job)
 
     async def _complete(self, job: SessionOptimization) -> None:
         artifact_error: str | None = None
-        if job.payload.state == "completed":
+        if self._jobs.get(job.id) is job and job.payload.state == "completed":
             try:
                 artifact = await self._backend.result_artifact(job.payload)
                 restored_content = await asyncio.to_thread(
@@ -417,6 +454,8 @@ class SessionOptimizer:
             await self._backend.delete(job.remote_id)
         except OptimizerError as exc:
             logger.warning("Optimizer cleanup failed job_id=%s error=%s", job.id, exc)
+        if self._jobs.get(job.id) is not job:
+            return
         result_data = {
             "job_id": job.id,
             "state": job.payload.state,
@@ -432,10 +471,14 @@ class SessionOptimizer:
             f"Optimizer job finished. Result workbook: {result_path}.\n"
             f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
         )
+        if self._jobs.get(job.id) is not job:
+            return
         await self._on_completion(job.session_id, prompt, job.artifact)
 
     async def _retain_artifact(self, job: SessionOptimization, artifact: OptimizerArtifact) -> None:
         async with self._lock:
+            if self._jobs.get(job.id) is not job:
+                return
             while self._artifact_order and (
                 self._cached_artifact_bytes + len(artifact.content) > self._max_cached_result_bytes
             ):
@@ -450,7 +493,7 @@ class SessionOptimizer:
                 self._cached_artifact_bytes += len(artifact.content)
 
     async def _notify_update(self, job: SessionOptimization) -> None:
-        if self._on_update is None:
+        if self._on_update is None or self._jobs.get(job.id) is not job:
             return
         await self._on_update(
             job.session_id,
@@ -468,13 +511,15 @@ class SessionOptimizer:
         job_id = self._latest_by_session.get(session_id)
         return self._jobs.get(job_id) if job_id is not None else None
 
-    def _release_reservation(self, session_id: str) -> None:
+    def _release_reservation(self, session_id: str, reservation: object) -> None:
         """Return the run reserved for a submission that never produced a job.
 
         Rebinding this bookkeeping never spans an await, so it stays consistent for the
         lock holders and remains available while a cancelled call unwinds.
         """
-        self._starting.discard(session_id)
+        if self._starting.get(session_id) is not reservation:
+            return
+        self._starting.pop(session_id)
         remaining = self._run_counts.get(session_id, 1) - 1
         if remaining > 0:
             self._run_counts[session_id] = remaining
@@ -490,24 +535,6 @@ class SessionOptimizer:
             if job.artifact is not None:
                 self._cached_artifact_bytes -= len(job.artifact.content)
                 self._artifact_order.remove(job_id)
-
-    def _prune_terminal_sessions(self, incoming_session_id: str) -> None:
-        # Retired chat sessions release their runs through forget_session, so this
-        # bound is only reached when live sessions alone exhaust it.
-        if incoming_session_id in self._latest_by_session:
-            return
-        while len(self._latest_by_session) >= self._max_sessions:
-            expired = next(
-                (
-                    session_id
-                    for session_id, job_id in self._latest_by_session.items()
-                    if session_id not in self._starting and _is_terminal(self._jobs[job_id].payload)
-                ),
-                None,
-            )
-            if expired is None:
-                return
-            self._discard_session(expired)
 
     def _start_task(self, coroutine: Awaitable[None]) -> None:
         task = asyncio.create_task(coroutine)
