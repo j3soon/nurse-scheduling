@@ -431,6 +431,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
+| `AI_MAX_SESSION_BYTES` | `268435456` | Chat text budget across live sessions. New sessions, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest messages, so size the process above this budget plus the newest message and any pending proposal of each session. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
