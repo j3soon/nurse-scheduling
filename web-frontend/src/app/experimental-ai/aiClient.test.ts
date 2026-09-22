@@ -330,7 +330,7 @@ describe('AI client', () => {
 
     expect(starts).toEqual(['background-1:optimizer']);
     expect(texts).toEqual(['Score 23.']);
-    expect(done).toHaveBeenCalledOnce();
+    expect(done).toHaveBeenCalledWith('background-1');
     expect(eventIds).toEqual([1, 2, 3, 4, 5]);
     expect(optimizations).toHaveBeenCalledWith({
       jobId: 'opt-1',

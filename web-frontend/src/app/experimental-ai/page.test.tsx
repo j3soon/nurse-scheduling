@@ -556,11 +556,53 @@ describe('ExperimentalAiPage', () => {
 
     act(() => {
       backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer');
+      backgroundCallbacks?.onDelta('Obsolete partial answer.');
       backgroundCallbacks?.onStale?.('The schedule changed while this response was generated.');
     });
 
-    expect(screen.getByText('The schedule changed while this response was generated.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('The schedule changed while this response was generated.');
+    expect(screen.queryByText('Obsolete partial answer.')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
+  it.each(['done', 'stopped'] as const)('reconciles a replayed %s event with a restored background message', async event => {
+    let backgroundCallbacks: {
+      onDelta: (text: string) => void;
+      onDone?: (messageId?: string) => void;
+      onStopped?: (messageId?: string) => void;
+    } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Completed answer.', status: 'pending' }],
+      syncedSchedule: 'description: current schedule\n',
+      proposalDiff: null,
+      sessionEventId: 4,
+    }));
+
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(backgroundCallbacks).toBeDefined());
+    act(() => {
+      if (event === 'done') backgroundCallbacks?.onDone?.('optimizer-turn');
+      else backgroundCallbacks?.onStopped?.('optimizer-turn');
+    });
+    act(() => window.dispatchEvent(new Event('pagehide')));
+
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.messages[0]).toEqual(expect.objectContaining({
+      id: 'optimizer-turn',
+      content: 'Completed answer.',
+      responseCompletedAt: expect.any(Number),
+    }));
+    expect(stored.messages[0].status).toBeUndefined();
   });
 
   it('stops a background assistant turn through the session endpoint', async () => {

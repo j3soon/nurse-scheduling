@@ -692,9 +692,10 @@ def _rejection_reason(response: httpx.Response) -> str:
     if response.status_code >= 500:
         return "The optimizer request failed."
     try:
-        detail = response.json().get("detail")
+        body = response.json()
     except ValueError:
-        detail = None
+        body = None
+    detail = body.get("detail") if isinstance(body, dict) else None
     if not isinstance(detail, str) or not detail.strip():
         return f"The optimizer rejected the request with status {response.status_code}."
     return f"The optimizer rejected the request: {detail.strip()[:MAX_REJECTION_DETAIL_CHARS]}"

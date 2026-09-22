@@ -60,8 +60,8 @@ export interface StreamCallbacks {
   onProposal?: (diff: string) => void;
   onOptimization?: (activity: OptimizationActivity) => void;
   onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
-  onDone?: () => void;
-  onStopped?: () => void;
+  onDone?: (messageId?: string) => void;
+  onStopped?: (messageId?: string) => void;
   onStale?: (message: string) => void;
   onError?: (message: string) => void;
 }
@@ -321,9 +321,9 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       });
     }
   } else if (eventType === 'done') {
-    callbacks.onDone?.();
+    callbacks.onDone?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
   } else if (eventType === 'stopped') {
-    callbacks.onStopped?.();
+    callbacks.onStopped?.(typeof payload.message_id === 'string' ? payload.message_id : undefined);
   } else if (eventType === 'stale') {
     const message = typeof payload.message === 'string' ? payload.message : 'The AI response became stale.';
     if (callbacks.onStale) callbacks.onStale(message);

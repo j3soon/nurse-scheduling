@@ -1088,9 +1088,9 @@ export default function ExperimentalAiPage() {
     const resumeBackgroundMessage = () => {
       if (backgroundAssistantIdRef.current === null) beginBackgroundMessage(messageId());
     };
-    const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage) => {
-      const activeId = backgroundAssistantIdRef.current;
-      if (activeId === null) return;
+    const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
+      const activeId = backgroundAssistantIdRef.current ?? messageId;
+      if (activeId === undefined) return;
       setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
     };
     const failBackgroundTurn = (message: string) => {
@@ -1207,17 +1207,17 @@ export default function ExperimentalAiPage() {
             };
           });
         },
-        onDone: () => {
+        onDone: messageId => {
           updateBackgroundMessage(message => ({
             ...message,
             status: undefined,
             responseCompletedAt: Date.now(),
-          }));
+          }), messageId);
           backgroundAssistantIdRef.current = null;
           backgroundTurnActiveRef.current = false;
           setIsStreaming(false);
         },
-        onStopped: () => {
+        onStopped: messageId => {
           updateBackgroundMessage(message => ({
             ...message,
             content: message.content || 'Stopped.',
@@ -1226,13 +1226,25 @@ export default function ExperimentalAiPage() {
             activity: message.content
               ? interruptRunningTools(message.activity ?? [])
               : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
-          }));
+          }), messageId);
           backgroundAssistantIdRef.current = null;
           backgroundTurnActiveRef.current = false;
           setIsStreaming(false);
           setIsStopping(false);
         },
-        onStale: failBackgroundTurn,
+        onStale: message => {
+          updateBackgroundMessage(entry => ({
+            ...entry,
+            content: message,
+            status: 'failed',
+            responseCompletedAt: Date.now(),
+            activity: [{ kind: 'response', text: message }],
+          }));
+          backgroundAssistantIdRef.current = null;
+          backgroundTurnActiveRef.current = false;
+          setIsStreaming(false);
+          setError(message);
+        },
         onError: failBackgroundTurn,
       },
       controller.signal,

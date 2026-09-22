@@ -277,6 +277,23 @@ def test_a_rejected_request_tells_the_model_what_the_optimizer_refused() -> None
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("body", [[], "rejected", 42, None])
+def test_a_non_object_rejection_keeps_the_optimizer_error_path(body: object) -> None:
+    async def scenario() -> None:
+        backend = HttpOptimizerBackend(
+            "http://api:8000",
+            "optimizer-token",
+            5,
+            1_000_000,
+            transport=httpx.MockTransport(lambda _request: httpx.Response(400, json=body)),
+        )
+        with pytest.raises(OptimizerError, match="rejected the request with status 400"):
+            await backend.submit("description: rejected\n", 30)
+        await backend.close()
+
+    asyncio.run(scenario())
+
+
 def test_a_rejected_submission_reports_the_reason_to_the_model() -> None:
     async def scenario() -> None:
         backend = FakeOptimizerBackend()
