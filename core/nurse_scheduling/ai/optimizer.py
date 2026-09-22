@@ -351,13 +351,17 @@ class SessionOptimizer:
             if not retired:
                 self._jobs[job.id] = job
                 self._latest_by_session[session_id] = job.id
-            if _is_terminal(payload):
+            if retired:
+                if _is_terminal(payload):
+                    self._start_task(self._delete_retired(job))
+                else:
+                    self._start_task(self._monitor(job))
+                    self._start_task(self._cancel_retired(job))
+            elif _is_terminal(payload):
                 self._start_task(self._complete(job))
             else:
                 self._start_task(self._monitor(job))
         if retired:
-            if not _is_terminal(payload):
-                self._start_task(self._cancel_retired(job))
             return AgentToolOutcome("This chat session expired while the optimizer job was starting.", False)
         if not _is_terminal(job.payload):
             await self._notify_update(job)
@@ -382,6 +386,12 @@ class SessionOptimizer:
         async with self._lock:
             if not _is_terminal(job.payload):
                 job.payload = payload
+
+    async def _delete_retired(self, job: SessionOptimization) -> None:
+        try:
+            await self._backend.delete(job.remote_id)
+        except OptimizerError as exc:
+            logger.warning("Optimizer cleanup failed job_id=%s error=%s", job.id, exc)
 
     async def _finish_now(self, session_id: str) -> AgentToolOutcome:
         job = self._latest(session_id)
@@ -408,6 +418,7 @@ class SessionOptimizer:
 
     async def _monitor(self, job: SessionOptimization) -> None:
         unreachable_since: float | None = None
+        outage_reported = False
         while not _is_terminal(job.payload):
             await asyncio.sleep(self._poll_interval_seconds)
             try:
@@ -415,28 +426,29 @@ class SessionOptimizer:
             except asyncio.CancelledError:
                 raise
             except OptimizerError as exc:
-                # Give up only after a sustained outage. A remote run keeps going after a
-                # short status failure, and reporting it as finished abandons its result.
+                # A status outage does not prove the remote job ended. Keep polling
+                # live sessions until the optimizer reports a terminal state.
                 now = asyncio.get_running_loop().time()
                 if unreachable_since is None:
                     unreachable_since = now
                     logger.warning("Optimizer status check failed job_id=%s error=%s", job.id, exc)
-                if now - unreachable_since >= self._status_failure_grace_seconds:
-                    logger.warning("Optimizer became unreachable job_id=%s error=%s", job.id, exc)
-                    async with self._lock:
-                        if not _is_terminal(job.payload):
-                            job.payload = OptimizerJobPayload(
-                                id=job.remote_id,
-                                state="failed",
-                                terminal=True,
-                                error={"code": "optimizer_unreachable", "message": str(exc)},
-                            )
+                if not outage_reported and now - unreachable_since >= self._status_failure_grace_seconds:
+                    logger.warning("Optimizer remains unreachable; retrying job_id=%s error=%s", job.id, exc)
+                    outage_reported = True
+                if self._jobs.get(job.id) is not job and outage_reported:
+                    # The retired session has no result to preserve. Stop a cleanup
+                    # monitor that cannot reach the remote optimizer.
+                    return
                 continue
             unreachable_since = None
+            outage_reported = False
             async with self._lock:
                 if not _is_terminal(job.payload):
                     job.payload = payload
-        await self._complete(job)
+        if self._jobs.get(job.id) is job:
+            await self._complete(job)
+        else:
+            await self._delete_retired(job)
 
     async def _complete(self, job: SessionOptimization) -> None:
         artifact_error: str | None = None
