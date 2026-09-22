@@ -330,6 +330,15 @@ async def run_sandbox_agent(
                     pending_schedule_change = None
                     if name == OPTIMIZER_TOOL and execute_optimizer is not None:
                         try:
+                            optimizer_arguments = json.loads(arguments or "{}")
+                        except json.JSONDecodeError:
+                            optimizer_arguments = None
+                        if isinstance(optimizer_arguments, dict) and optimizer_arguments.get("action") in {
+                            "status",
+                            "finish_now",
+                        }:
+                            return await execute_optimizer("", arguments)
+                        try:
                             current_schedule = (await sandbox.read_file(WORKSPACE_SCHEDULE)).decode("utf-8")
                         except (SandboxFileNotFoundError, UnicodeDecodeError):
                             return AgentToolOutcome("The current working schedule is unavailable or invalid.", False)

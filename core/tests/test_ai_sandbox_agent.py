@@ -25,7 +25,14 @@ from collections.abc import AsyncIterator, Sequence
 
 import pytest
 
-from nurse_scheduling.ai.agent import AgentProposal, AgentText, AgentToolOutcome, AgentToolStart, AgentToolUse
+from nurse_scheduling.ai.agent import (
+    AgentEvent,
+    AgentProposal,
+    AgentText,
+    AgentToolOutcome,
+    AgentToolStart,
+    AgentToolUse,
+)
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.edit import EDIT_TOOL
@@ -235,6 +242,50 @@ def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> No
         asyncio.run(collect())
 
     assert submitted == []
+
+
+@pytest.mark.parametrize("action", ["status", "finish_now"])
+def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: str) -> None:
+    arguments = json.dumps({"action": action})
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (
+                    ToolCall(
+                        "write-invalid",
+                        WRITE_TOOL,
+                        json.dumps({"path": "schedule.yaml", "content": "people: [unclosed"}),
+                    ),
+                )
+            )
+        ],
+        [ToolCallRequest((ToolCall("control-job", OPTIMIZER_TOOL, arguments),))],
+        [TextDelta("The job control completed.")],
+    )
+    controls: list[tuple[str, str]] = []
+    events: list[AgentEvent | AgentScheduleChange] = []
+
+    async def execute_optimizer(current_schedule: str, received_arguments: str) -> AgentToolOutcome:
+        controls.append((current_schedule, received_arguments))
+        return AgentToolOutcome("Existing job updated.", True)
+
+    async def collect() -> None:
+        async for event in run_sandbox_agent(
+            provider,
+            FakeSandboxFactory(),
+            schedule_yaml(),
+            MESSAGES,
+            _limits(),
+            execute_optimizer=execute_optimizer,
+        ):
+            events.append(event)
+
+    with pytest.raises(SandboxCandidateError):
+        asyncio.run(collect())
+
+    assert controls == [("", arguments)]
+    control_result = next(event for event in events if isinstance(event, AgentToolUse) and event.name == OPTIMIZER_TOOL)
+    assert control_result.ok
 
 
 def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
