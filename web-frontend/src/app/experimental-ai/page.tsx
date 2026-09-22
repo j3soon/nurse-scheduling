@@ -1135,6 +1135,7 @@ export default function ExperimentalAiPage() {
       backgroundAssistantIdRef.current = null;
       backgroundTurnActiveRef.current = false;
       setIsStreaming(false);
+      setIsStopping(false);
       setError(message);
     };
     void streamSessionEvents(
@@ -1250,6 +1251,7 @@ export default function ExperimentalAiPage() {
           backgroundAssistantIdRef.current = null;
           backgroundTurnActiveRef.current = false;
           setIsStreaming(false);
+          setIsStopping(false);
         },
         onStopped: messageId => {
           updateBackgroundMessage(message => ({
@@ -1277,6 +1279,7 @@ export default function ExperimentalAiPage() {
           backgroundAssistantIdRef.current = null;
           backgroundTurnActiveRef.current = false;
           setIsStreaming(false);
+          setIsStopping(false);
           setError(message);
         },
         onHistoryTrimmed: setTrimmedHistoryCount,
@@ -1611,9 +1614,13 @@ export default function ExperimentalAiPage() {
       setIsStopping(false);
       return;
     }
+    // The request only asks the server to stop. The turn keeps running until a terminal
+    // event reports it ended, so every one of those clears the pending state instead.
     void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
-      .catch(stopError => reportRequestError(stopError, 'The AI response could not be stopped.'))
-      .finally(() => setIsStopping(false));
+      .catch(stopError => {
+        reportRequestError(stopError, 'The AI response could not be stopped.');
+        setIsStopping(false);
+      });
   };
 
   const downloadOptimizationResult = async (jobId: string) => {

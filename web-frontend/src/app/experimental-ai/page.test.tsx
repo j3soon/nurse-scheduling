@@ -775,6 +775,77 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
+  it.each(['done', 'stale', 'error'] as const)(
+    'keeps Stop pending until a background turn reports %s',
+    async outcome => {
+      const user = userEvent.setup();
+      let backgroundCallbacks: {
+        onTurnStart?: (messageId: string, trigger: string) => void;
+        onDelta: (text: string) => void;
+        onDone?: (messageId?: string) => void;
+        onStale?: (message: string) => void;
+        onError?: (message: string) => void;
+      } | undefined;
+      mockStreamSessionEvents.mockImplementation(async (
+        _sessionId: string,
+        callbacks: typeof backgroundCallbacks,
+      ) => {
+        backgroundCallbacks = callbacks;
+      });
+      render(<ExperimentalAiPage />);
+
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await screen.findByText('Alice works Monday.');
+      act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer'));
+
+      await user.click(screen.getByRole('button', { name: 'Stop' }));
+      expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
+      // The request is accepted well before the turn ends, so the control stays pending.
+      await act(async () => {});
+      expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+
+      act(() => {
+        if (outcome === 'done') backgroundCallbacks?.onDone?.('optimizer-turn');
+        else if (outcome === 'stale') backgroundCallbacks?.onStale?.('This chat became stale.');
+        else backgroundCallbacks?.onError?.('The AI response failed.');
+      });
+
+      expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+
+      // A turn that ended any other way must not leave the next one unable to stop.
+      act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn-2', 'optimizer'));
+      expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    },
+  );
+
+  it('re-enables Stop when the stop request itself fails', async () => {
+    const user = userEvent.setup();
+    mockStopSession.mockRejectedValue(new Error('network down'));
+    let backgroundCallbacks: {
+      onTurnStart?: (messageId: string, trigger: string) => void;
+      onDelta: (text: string) => void;
+    } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    act(() => backgroundCallbacks?.onTurnStart?.('optimizer-turn', 'optimizer'));
+
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    await act(async () => {});
+
+    // The turn is still running, so the user has to be able to ask again.
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+  });
+
   it('starts with a single-line composer and grows with the draft', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
