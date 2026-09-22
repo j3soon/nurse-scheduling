@@ -212,6 +212,7 @@ interface StoredChatConversation {
   proposalDiff: string | null;
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
+  backgroundAssistantId?: string | null;
 }
 
 const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
@@ -304,6 +305,8 @@ function readStoredConversation(): StoredChatConversation | null {
       ))
       || typeof value.syncedSchedule !== 'string'
       || (value.proposalDiff !== null && typeof value.proposalDiff !== 'string')
+      || (value.backgroundAssistantId !== undefined && value.backgroundAssistantId !== null
+        && typeof value.backgroundAssistantId !== 'string')
     ) return null;
     return {
       ...value,
@@ -558,8 +561,13 @@ export default function ExperimentalAiPage() {
     const storedConversation = readStoredConversation();
     if (storedConversation !== null) {
       endpoint = storedConversation.endpoint;
+      // Replayed events reconcile onto the unfinished background message by ID, so
+      // restore it before the stream opens. Its tools stopped with the old page.
+      backgroundAssistantIdRef.current = storedConversation.backgroundAssistantId ?? null;
       setMessages(storedConversation.messages.map(message => (
-        message.status === 'pending' ? { ...message, status: 'failed' as const } : message
+        message.status === 'pending'
+          ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
+          : message
       )));
       setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
@@ -661,6 +669,7 @@ export default function ExperimentalAiPage() {
           proposalDiff,
           sessionEventId: lastSessionEventIdRef.current,
           activeOptimization,
+          backgroundAssistantId: backgroundAssistantIdRef.current,
         };
         window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
       } catch {
@@ -1076,21 +1085,28 @@ export default function ExperimentalAiPage() {
       setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
       sandboxScheduleRef.current = scheduleYamlRef.current;
       setIsStreaming(true);
-      setMessages(previous => previous.some(message => message.id === assistantId) ? previous : [
-        ...previous,
-        {
-          id: assistantId,
-          role: 'assistant',
-          content: '',
-          status: 'pending',
-          responseStartedAt: Date.now(),
-        },
-      ]);
+      setMessages(previous => previous.some(message => message.id === assistantId)
+        // A restored or reconnected turn resumes its own message, so clear the
+        // interrupted state rather than stacking a second response beside it.
+        ? previous.map(message => message.id === assistantId
+          ? { ...message, status: 'pending' as const, responseCompletedAt: undefined }
+          : message)
+        : [
+          ...previous,
+          {
+            id: assistantId,
+            role: 'assistant',
+            content: '',
+            status: 'pending',
+            responseStartedAt: Date.now(),
+          },
+        ]);
     };
     // A reconnect replays only retained events, so a long turn can lose its own
     // turn_start. Adopt the remaining output instead of discarding the answer.
     const resumeBackgroundMessage = () => {
-      if (backgroundAssistantIdRef.current === null) beginBackgroundMessage(messageId());
+      if (backgroundTurnActiveRef.current) return;
+      beginBackgroundMessage(backgroundAssistantIdRef.current ?? messageId());
     };
     const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
       const activeId = backgroundAssistantIdRef.current ?? messageId;

@@ -654,6 +654,44 @@ describe('ExperimentalAiPage', () => {
     expect(points.at(-1)).toEqual({ currentBestScore: 1199, elapsedSeconds: 1199 });
   });
 
+  it('continues a restored background message when replay resumes without a turn start', async () => {
+    let backgroundCallbacks: {
+      onDelta: (text: string) => void;
+      onDone?: (messageId?: string) => void;
+    } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
+      syncedSchedule: 'description: current schedule\n',
+      proposalDiff: null,
+      sessionEventId: 4,
+      backgroundAssistantId: 'optimizer-turn',
+    }));
+
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(backgroundCallbacks).toBeDefined());
+    act(() => backgroundCallbacks?.onDelta?.('answer.'));
+    act(() => backgroundCallbacks?.onDone?.('optimizer-turn'));
+    act(() => window.dispatchEvent(new Event('pagehide')));
+
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.messages).toHaveLength(1);
+    expect(stored.messages[0]).toEqual(expect.objectContaining({
+      id: 'optimizer-turn',
+      content: 'Partial answer.',
+    }));
+    expect(stored.messages[0].status).toBeUndefined();
+  });
+
   it('stops a background assistant turn through the session endpoint', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
