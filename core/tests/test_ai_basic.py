@@ -584,6 +584,42 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
     assert not session_active
 
 
+def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def exercise() -> tuple[int, bool, int]:
+        waiting_for_artifact = asyncio.Event()
+        release_artifact = asyncio.Event()
+        provider = FakeProvider()
+        app = create_test_app(settings=make_settings(), provider=provider)
+
+        async def delayed_artifact(_session_id: str) -> None:
+            waiting_for_artifact.set()
+            await release_artifact.wait()
+
+        monkeypatch.setattr(app.state.session_optimizer, "latest_result_artifact", delayed_artifact)
+        transport = httpx.ASGITransport(app=app)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Stop now"}))
+            await asyncio.wait_for(waiting_for_artifact.wait(), timeout=1)
+            stopped = await client.post(f"/sessions/{session_id}/stop")
+            release_artifact.set()
+            await asyncio.gather(turn, return_exceptions=True)
+            return stopped.status_code, app.state.session_store._sessions[session_id].active, len(provider.calls)
+
+    status_code, session_active, provider_calls = asyncio.run(exercise())
+
+    assert status_code == 202
+    assert not session_active
+    assert provider_calls == 0
+
+
 def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) -> None:
     saved = []
     monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)

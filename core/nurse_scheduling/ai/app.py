@@ -319,6 +319,11 @@ class SessionStore:
         with self._lock:
             self._get_owned(session_id, owner_token)
 
+    def has_active_turn(self, session_id: str, owner_token: str | None) -> bool:
+        """Check whether Stop has a reserved turn to cancel."""
+        with self._lock:
+            return self._get_owned(session_id, owner_token).active
+
     def status(self, session_id: str, owner_token: str | None) -> int:
         """Return the remaining lifetime without extending the session."""
         with self._lock:
@@ -607,6 +612,7 @@ def create_app(
     event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
     turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
+    pending_turn_stops: set[str] = set()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
@@ -683,6 +689,7 @@ def create_app(
     def retire_session(session_id: str) -> None:
         """Release everything keyed by a session once the store drops it."""
         turn_locks.pop(session_id, None)
+        pending_turn_stops.discard(session_id)
         session_optimizer.forget_session(session_id)
 
     store.on_retire(retire_session)
@@ -817,6 +824,8 @@ def create_app(
         task = active_turn_tasks.get(session_id)
         if task is not None and not task.done():
             task.cancel()
+        elif store.has_active_turn(session_id, owner):
+            pending_turn_stops.add(session_id)
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.get(
@@ -901,6 +910,7 @@ def create_app(
         try:
             history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
         except BaseException:
+            pending_turn_stops.discard(session_id)
             release_turn()
             raise
         turn_id = str(uuid4())
@@ -919,6 +929,7 @@ def create_app(
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
             except BaseException:
                 store.abort(session_id)
+                pending_turn_stops.discard(session_id)
                 release_turn()
                 raise
         request_logger.info(
@@ -949,6 +960,8 @@ def create_app(
             current_task = asyncio.current_task()
             if current_task is not None:
                 active_turn_tasks[session_id] = current_task
+            stopped_before_stream = session_id in pending_turn_stops
+            pending_turn_stops.discard(session_id)
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
             completed = False
@@ -958,6 +971,8 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
+                if stopped_before_stream:
+                    raise asyncio.CancelledError
                 async with concurrency_limit:
                     agent_events = run_sandbox_agent(
                         provider,
@@ -1076,6 +1091,7 @@ def create_app(
                 logger.exception("Unexpected AI stream failure")
                 yield _sse_event("error", {"message": "The AI response failed unexpectedly."})
             finally:
+                pending_turn_stops.discard(session_id)
                 if current_task is not None and active_turn_tasks.get(session_id) is current_task:
                     del active_turn_tasks[session_id]
                 if not completed:
@@ -1094,6 +1110,7 @@ def create_app(
         async def abort_unstarted_stream() -> None:
             if not stream_started.is_set():
                 store.abort(session_id)
+                pending_turn_stops.discard(session_id)
                 if history_log is not None:
                     await history_log.write("finish_turn", turn_id, "", "cancelled", None, None)
                 release_turn()
