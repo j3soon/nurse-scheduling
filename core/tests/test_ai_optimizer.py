@@ -237,6 +237,43 @@ def test_http_backend_resumes_optimizer_progress_with_its_server_side_token() ->
     asyncio.run(scenario())
 
 
+def test_http_backend_replays_an_optimizer_event_cut_off_before_its_delimiter() -> None:
+    async def scenario() -> None:
+        requests: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    200,
+                    text=(
+                        'id: 1\nevent: job.progressed\ndata: {"currentBestScore": 12, "elapsedSeconds": 1}\n\n'
+                        'id: 2\nevent: job.progressed\ndata: {"currentBestScore": 9, "elapsedSeconds": 2}\n'
+                    ),
+                )
+            return httpx.Response(
+                200,
+                text=(
+                    'id: 2\nevent: job.progressed\ndata: {"currentBestScore": 9, "elapsedSeconds": 2}\n\n'
+                    'id: 3\nevent: job.state_changed\ndata: {"state": "completed", "terminal": true}\n\n'
+                ),
+            )
+
+        backend = HttpOptimizerBackend(
+            "http://api:8000", "optimizer-token", 5, 1_000_000, transport=httpx.MockTransport(handle)
+        )
+        points = [point async for point in backend.progress_events("remote-1")]
+        await backend.close()
+
+        assert points == [
+            {"currentBestScore": 12, "elapsedSeconds": 1, "solutionIndex": None, "commentCount": None},
+            {"currentBestScore": 9, "elapsedSeconds": 2, "solutionIndex": None, "commentCount": None},
+        ]
+        assert requests[1].headers["last-event-id"] == "1"
+
+    asyncio.run(scenario())
+
+
 def test_optimizer_progress_replay_does_not_displace_background_turn_events() -> None:
     broker = SessionEventBroker(max_events_per_session=2, max_progress_events_per_session=2)
     broker.publish("session-1", "turn_start", {"message_id": "turn-1"})

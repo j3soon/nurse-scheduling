@@ -130,15 +130,20 @@ class HttpOptimizerBackend:
                     response.raise_for_status()
                     event_type = ""
                     data_lines: list[str] = []
+                    # Hold the ID until the blank delimiter completes the event. A stream that
+                    # drops after the ID would otherwise resume past an event never handled.
+                    pending_cursor: str | None = None
                     async for line in response.aiter_lines():
                         if line:
                             if line.startswith("event:"):
                                 event_type = line[6:].strip()
                             elif line.startswith("id:"):
-                                cursor = line[3:].strip()
+                                pending_cursor = line[3:].strip()
                             elif line.startswith("data:"):
                                 data_lines.append(line[5:].lstrip())
                             continue
+                        if pending_cursor is not None:
+                            cursor = pending_cursor
                         if data_lines:
                             try:
                                 payload = json.loads("\n".join(data_lines))
@@ -153,6 +158,7 @@ class HttpOptimizerBackend:
                                     return
                         event_type = ""
                         data_lines = []
+                        pending_cursor = None
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in {404, 410}:
                     return
