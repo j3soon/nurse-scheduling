@@ -605,6 +605,14 @@ describe('ExperimentalAiPage', () => {
     expect(stored.messages[0].status).toBeUndefined();
   });
 
+  it('warns that the chat is stored unencrypted in this browser', async () => {
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText(
+      /This chat is also stored unencrypted in this browser until it expires or you start a new chat\./,
+    )).toBeInTheDocument();
+  });
+
   it('bounds the persisted optimizer progress history during a long run', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {

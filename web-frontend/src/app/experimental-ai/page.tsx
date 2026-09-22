@@ -1778,7 +1778,7 @@ export default function ExperimentalAiPage() {
           >
             Request beta access
           </a>
-          . All AI chats are logged and are not currently anonymized. Chat data may be retained and processed for the development, evaluation, and improvement of this product and the AI provider&apos;s products.{' '}
+          . All AI chats are logged and are not currently anonymized. Chat data may be retained and processed for the development, evaluation, and improvement of this product and the AI provider&apos;s products. This chat is also stored unencrypted in this browser until it expires or you start a new chat.{' '}
           <a
             className="font-medium underline"
             href={GITHUB_PRIVACY_URL}
