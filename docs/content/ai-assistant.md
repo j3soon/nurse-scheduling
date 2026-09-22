@@ -452,7 +452,7 @@ may coexist during migration.
 Build the existing all-in-one development image from the repository root:
 
 ```sh
-docker build -f docker/Dockerfile -t nurse-scheduling:dev .
+docker build -f docker/Dockerfile.dev -t nurse-scheduling:dev .
 docker run --rm -it \
   --name nurse-scheduling-dev \
   --network=host \

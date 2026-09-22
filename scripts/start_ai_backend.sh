@@ -18,7 +18,7 @@ if [[ -x "${CORE_DIR}/.venv/bin/python" && -f "${CORE_DIR}/.venv/bin/activate" ]
 fi
 
 if ! command -v uvicorn >/dev/null 2>&1; then
-  echo "Error: 'uvicorn' is not installed. Rebuild docker/Dockerfile or run scripts/setup_env.sh." >&2
+  echo "Error: 'uvicorn' is not installed. Rebuild docker/Dockerfile.dev or run scripts/setup_env.sh." >&2
   exit 1
 fi
 

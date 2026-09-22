@@ -124,7 +124,7 @@ If the default image does not exist, build it with the repository's existing
 development Dockerfile:
 
 ```sh
-docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
+docker build -f docker/Dockerfile.dev -t j3soon/nurse-scheduling:dev .
 ```
 
 The primary score uses elapsed time to the fixed top objective threshold of
