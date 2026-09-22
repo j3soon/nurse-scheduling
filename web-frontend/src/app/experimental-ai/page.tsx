@@ -575,9 +575,6 @@ export default function ExperimentalAiPage() {
       )));
       setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
-      // The trim lasts as long as the conversation, but the event announcing it sits
-      // behind the stored cursor and never replays, so restore the warning directly.
-      setTrimmedHistoryCount(storedConversation.trimmedHistoryCount ?? 0);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
       setActiveOptimization(storedConversation.activeOptimization
         ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
@@ -594,6 +591,10 @@ export default function ExperimentalAiPage() {
         sessionIdRef.current = storedConversation.sessionId;
         setActiveSessionId(storedConversation.sessionId);
         setSessionExpiresAt(storedConversation.expiresAt);
+        // The trim lasts as long as the conversation, but the event announcing it sits
+        // behind the stored cursor and never replays, so restore the warning directly.
+        // An expired chat sends nothing at all, so it keeps the transcript without it.
+        setTrimmedHistoryCount(storedConversation.trimmedHistoryCount ?? 0);
       }
     }
     const storedTokens = readStoredAuthTokens();

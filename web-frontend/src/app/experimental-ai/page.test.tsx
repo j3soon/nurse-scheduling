@@ -660,6 +660,26 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByText(/no longer sent to the assistant/)).not.toBeInTheDocument();
   });
 
+  it('drops the trim warning when the restored conversation has expired', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() - 1_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'answer-1', role: 'assistant', content: 'Earlier answer.' }],
+      syncedSchedule: 'description: current schedule\n',
+      proposalDiff: null,
+      sessionEventId: 9,
+      trimmedHistoryCount: 3,
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText(/This chat expired after 48 hours of inactivity/)).toBeInTheDocument();
+    // An expired chat sends nothing, so a warning about what it omits would mislead.
+    expect(screen.queryByText(/no longer sent to the assistant/)).not.toBeInTheDocument();
+  });
+
   it('bounds the persisted optimizer progress history during a long run', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
