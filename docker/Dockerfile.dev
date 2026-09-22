@@ -35,8 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     glpk-utils \
     && rm -rf /var/lib/apt/lists/*
 
-COPY core/requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+COPY core/requirements.txt core/requirements-optional.txt /tmp/
+RUN pip3 install --no-cache-dir -r /tmp/requirements-optional.txt
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install | bash

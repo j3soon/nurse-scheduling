@@ -10,7 +10,7 @@ mkdir -p "$repository_root/artifacts"
 if ! docker image inspect "$image_name" >/dev/null 2>&1; then
   echo "Docker image '$image_name' does not exist." >&2
   echo "Build the existing development image or set BENCHMARK_IMAGE to a compatible local image:" >&2
-  echo "  docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev ." >&2
+  echo "  docker build -f docker/Dockerfile.dev -t j3soon/nurse-scheduling:dev ." >&2
   exit 1
 fi
 

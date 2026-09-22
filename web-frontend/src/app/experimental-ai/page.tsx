@@ -22,10 +22,11 @@
 'use client';
 
 import Image from 'next/image';
-import { ChangeEvent, DragEvent, FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FiArrowDown, FiArrowUp, FiChevronDown, FiDownload, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import AppVersionText from '@/components/AppVersionText';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
+import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import {
   DOCUMENTATION_URLS,
@@ -48,10 +49,12 @@ import {
   AiStaleTurnError,
   DEFAULT_SESSION_RETENTION_SECONDS,
   LOCAL_AI_API_URL,
+  OptimizationActivity,
   PRODUCTION_AI_API_URL,
   ToolActivity,
   approveProposal,
   createSession,
+  downloadOptimization,
   getAiBaseUrl,
   getCapabilities,
   getSessionStatus,
@@ -60,6 +63,8 @@ import {
   queueMessage,
   rejectProposal,
   streamMessage,
+  streamSessionEvents,
+  stopSession,
   updateSessionSchedule,
 } from './aiClient';
 
@@ -69,6 +74,11 @@ interface ChatMessage extends ChatExportMessage {
     question: string;
     requiresAttachments: boolean;
   };
+  optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
+}
+
+interface ActiveOptimization extends OptimizationActivity {
+  points: OptimizationProgressPoint[];
 }
 
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
@@ -76,6 +86,12 @@ const AI_AUTH_STORAGE_KEY = 'nurse-scheduling-ai-auth';
 const AI_SERVER_STORAGE_KEY = 'nurse-scheduling-ai-server';
 const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
 const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
+const SESSION_EVENTS_RETRY_MS = 1000;
+const SESSION_EVENTS_MAX_RETRY_MS = 30000;
+// A solver can emit a progress event per incumbent solution, and the whole series is
+// persisted with the conversation. Halving the oldest points keeps the sparkline shape
+// while bounding the array and the tab storage a long run consumes.
+const OPTIMIZATION_PROGRESS_POINT_LIMIT = 500;
 const SPEECH_LANGUAGES = [
   { value: '', label: 'Browser default' },
   { value: 'en-US', label: 'English (United States)' },
@@ -194,6 +210,10 @@ interface StoredChatConversation {
   messages: ChatMessage[];
   syncedSchedule: string;
   proposalDiff: string | null;
+  sessionEventId?: number;
+  activeOptimization?: ActiveOptimization | null;
+  backgroundAssistantId?: string | null;
+  trimmedHistoryCount?: number;
 }
 
 const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
@@ -233,7 +253,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
   if (typeof value !== 'object' || value === null) return false;
   const message = value as Partial<ChatMessage>;
   return typeof message.id === 'string'
-    && (message.role === 'user' || message.role === 'assistant')
+    && (message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
     && typeof message.content === 'string'
     && (message.attachmentNames === undefined
       || (Array.isArray(message.attachmentNames) && message.attachmentNames.every(name => typeof name === 'string')))
@@ -247,6 +267,10 @@ function isChatMessage(value: unknown): value is ChatMessage {
       && message.retry !== null
       && typeof message.retry.question === 'string'
       && typeof message.retry.requiresAttachments === 'boolean'
+    ))
+    && (message.optimizerJob === undefined || (message.optimizerJob !== null
+      && typeof message.optimizerJob.jobId === 'string'
+      && typeof message.optimizerJob.downloadable === 'boolean'
     ));
 }
 
@@ -265,8 +289,27 @@ function readStoredConversation(): StoredChatConversation | null {
       || (value.retentionSeconds ?? 0) <= 0
       || !Array.isArray(value.messages)
       || !value.messages.every(isChatMessage)
+      || (value.sessionEventId !== undefined
+        && (!Number.isSafeInteger(value.sessionEventId) || value.sessionEventId < 0))
+      || (value.trimmedHistoryCount !== undefined
+        && (!Number.isSafeInteger(value.trimmedHistoryCount) || value.trimmedHistoryCount < 0))
+      || (value.activeOptimization !== undefined && value.activeOptimization !== null && (
+        typeof value.activeOptimization.jobId !== 'string'
+        || typeof value.activeOptimization.state !== 'string'
+        || typeof value.activeOptimization.terminal !== 'boolean'
+        || typeof value.activeOptimization.downloadable !== 'boolean'
+        || (value.activeOptimization.points !== undefined && (
+          !Array.isArray(value.activeOptimization.points)
+          || !value.activeOptimization.points.every(point => (
+            typeof point.currentBestScore === 'number' && Number.isFinite(point.currentBestScore)
+            && typeof point.elapsedSeconds === 'number' && Number.isFinite(point.elapsedSeconds)
+          ))
+        ))
+      ))
       || typeof value.syncedSchedule !== 'string'
       || (value.proposalDiff !== null && typeof value.proposalDiff !== 'string')
+      || (value.backgroundAssistantId !== undefined && value.backgroundAssistantId !== null
+        && typeof value.backgroundAssistantId !== 'string')
     ) return null;
     return {
       ...value,
@@ -349,6 +392,28 @@ function appendResponseActivity(entries: ActivityEntry[], text: string): Activit
   return [...entries, { kind: 'response', text }];
 }
 
+function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[] }) {
+  const firstTime = points[0].elapsedSeconds;
+  const lastTime = points[points.length - 1].elapsedSeconds;
+  let minimum = points[0].currentBestScore;
+  let maximum = minimum;
+  for (const point of points) {
+    minimum = Math.min(minimum, point.currentBestScore);
+    maximum = Math.max(maximum, point.currentBestScore);
+  }
+  const path = points.map((point, index) => {
+    const x = lastTime === firstTime ? 2 + index * 108 / Math.max(points.length - 1, 1)
+      : 2 + (point.elapsedSeconds - firstTime) * 108 / (lastTime - firstTime);
+    const y = maximum === minimum ? 14 : 26 - (point.currentBestScore - minimum) * 24 / (maximum - minimum);
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg role="img" aria-label="Optimization score trend" viewBox="0 0 112 28" className="h-7 w-28 shrink-0">
+      <polyline points={path} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function ThinkingIndicator() {
   return (
     <span role="status" aria-label="Thinking" className="inline-flex items-center gap-2 text-gray-600">
@@ -374,7 +439,7 @@ export default function ExperimentalAiPage() {
     peopleData,
     shiftTypeData,
     preferences,
-    exportData,
+    effectiveExportData,
     filterAutoGeneratedState,
     loadFromYaml,
   } = useSchedulingData();
@@ -385,12 +450,12 @@ export default function ExperimentalAiPage() {
     people: peopleData,
     shiftTypes: shiftTypeData,
     preferences,
-    ...(exportData ? { export: exportData } : {}),
+    export: effectiveExportData,
   })), [
     apiVersionData,
     dateData,
     descriptionData,
-    exportData,
+    effectiveExportData,
     filterAutoGeneratedState,
     peopleData,
     preferences,
@@ -403,8 +468,12 @@ export default function ExperimentalAiPage() {
   const [sessionRetentionSeconds, setSessionRetentionSeconds] = useState(DEFAULT_SESSION_RETENTION_SECONDS);
   const [conversationUnavailable, setConversationUnavailable] = useState(false);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  const [trimmedHistoryCount, setTrimmedHistoryCount] = useState(0);
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
+  const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
+  const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
   const [serverStatus, setServerStatus] = useState<AiServerStatus>('checking');
@@ -422,6 +491,7 @@ export default function ExperimentalAiPage() {
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
+  const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [firefoxVersion, setFirefoxVersion] = useState<number | null>(null);
   const [isListening, setIsListening] = useState(false);
@@ -437,6 +507,14 @@ export default function ExperimentalAiPage() {
   const sessionEndpointRef = useRef<string | null>(null);
   const authTokensRef = useRef<Record<string, string>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
+  const sessionEventsControllerRef = useRef<AbortController | null>(null);
+  const sessionEventsRetryRef = useRef(0);
+  const sessionEventsTimerRef = useRef<number | null>(null);
+  const [sessionEventsAttempt, setSessionEventsAttempt] = useState(0);
+  const lastSessionEventIdRef = useRef(0);
+  const backgroundAssistantIdRef = useRef<string | null>(null);
+  const backgroundTurnActiveRef = useRef(false);
+  const scheduleYamlRef = useRef(scheduleYaml);
   const sandboxScheduleRef = useRef<string | null>(null);
   const selectedAttachmentsRef = useRef<SelectedAttachment[]>([]);
   const followPageBottomRef = useRef(true);
@@ -446,10 +524,22 @@ export default function ExperimentalAiPage() {
   const composerDragDepthRef = useRef(0);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
+  const optimizationDownloadUrlRef = useRef<string | null>(null);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
+  const reportRequestError = useCallback((requestError: unknown, fallback: string) => {
+    if (isAuthenticationError(requestError)) {
+      setAuthRequired(true);
+      setAuthRejected(true);
+      setIsEditingAuthToken(true);
+      setError('AI credentials were rejected. Enter the current AI token and try again.');
+      return;
+    }
+    setError(requestError instanceof Error ? requestError.message : fallback);
+  }, []);
   hasMessagesRef.current = messages.length > 0;
+  scheduleYamlRef.current = scheduleYaml;
   useTabSwitchWarning(isStreaming || draft.trim().length > 0 || selectedAttachments.length > 0);
 
   useEffect(() => {
@@ -475,11 +565,20 @@ export default function ExperimentalAiPage() {
     const storedConversation = readStoredConversation();
     if (storedConversation !== null) {
       endpoint = storedConversation.endpoint;
+      // Replayed events reconcile onto the unfinished background message by ID, so
+      // restore it before the stream opens. Its tools stopped with the old page.
+      backgroundAssistantIdRef.current = storedConversation.backgroundAssistantId ?? null;
       setMessages(storedConversation.messages.map(message => (
-        message.status === 'pending' ? { ...message, status: 'failed' as const } : message
+        message.status === 'pending'
+          ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
+          : message
       )));
       setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
+      lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
+      setActiveOptimization(storedConversation.activeOptimization
+        ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
+        : null);
       syncedScheduleRef.current = storedConversation.syncedSchedule;
       sessionEndpointRef.current = storedConversation.endpoint;
       if (storedConversation.expiresAt <= Date.now()) {
@@ -492,6 +591,10 @@ export default function ExperimentalAiPage() {
         sessionIdRef.current = storedConversation.sessionId;
         setActiveSessionId(storedConversation.sessionId);
         setSessionExpiresAt(storedConversation.expiresAt);
+        // The trim lasts as long as the conversation, but the event announcing it sits
+        // behind the stored cursor and never replays, so restore the warning directly.
+        // An expired chat sends nothing at all, so it keeps the transcript without it.
+        setTrimmedHistoryCount(storedConversation.trimmedHistoryCount ?? 0);
       }
     }
     const storedTokens = readStoredAuthTokens();
@@ -572,6 +675,10 @@ export default function ExperimentalAiPage() {
           messages,
           syncedSchedule: syncedScheduleRef.current ?? scheduleYaml,
           proposalDiff,
+          sessionEventId: lastSessionEventIdRef.current,
+          activeOptimization,
+          backgroundAssistantId: backgroundAssistantIdRef.current,
+          trimmedHistoryCount,
         };
         window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
       } catch {
@@ -589,6 +696,7 @@ export default function ExperimentalAiPage() {
     };
   }, [
     activeSessionId,
+    activeOptimization,
     aiEndpoint,
     isClientReady,
     messages,
@@ -596,6 +704,7 @@ export default function ExperimentalAiPage() {
     scheduleYaml,
     sessionExpiresAt,
     sessionRetentionSeconds,
+    trimmedHistoryCount,
   ]);
 
   useEffect(() => {
@@ -623,12 +732,15 @@ export default function ExperimentalAiPage() {
       })
       .catch((statusError: unknown) => {
         if (statusError instanceof AiHttpError && statusError.status === 404) {
+          sessionEventsControllerRef.current?.abort();
+          sessionEventsControllerRef.current = null;
           sessionIdRef.current = null;
           sessionEndpointRef.current = null;
           syncedScheduleRef.current = null;
           setActiveSessionId(null);
           setSessionExpiresAt(null);
           setProposalDiff(null);
+          setActiveOptimization(null);
           setConversationUnavailable(true);
           setSessionNotice('This chat is no longer available on the AI server. Start a new chat to continue.');
           window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
@@ -637,15 +749,18 @@ export default function ExperimentalAiPage() {
           reportRequestError(statusError, 'The stored AI chat could not be checked.');
         }
       });
-  }, [activeSessionId, aiEndpoint, authToken, isClientReady]);
+  }, [activeSessionId, aiEndpoint, authToken, isClientReady, reportRequestError]);
 
   useEffect(() => {
     if (activeSessionId === null || sessionExpiresAt === null) return;
     const delay = sessionExpiresAt - Date.now();
     if (delay <= 0) {
+      sessionEventsControllerRef.current?.abort();
+      sessionEventsControllerRef.current = null;
       sessionIdRef.current = null;
       setActiveSessionId(null);
       setSessionExpiresAt(null);
+      setActiveOptimization(null);
       setConversationUnavailable(true);
       setSessionNotice(
         `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
@@ -654,9 +769,12 @@ export default function ExperimentalAiPage() {
       return;
     }
     const timeout = window.setTimeout(() => {
+      sessionEventsControllerRef.current?.abort();
+      sessionEventsControllerRef.current = null;
       sessionIdRef.current = null;
       setActiveSessionId(null);
       setSessionExpiresAt(null);
+      setActiveOptimization(null);
       setConversationUnavailable(true);
       setSessionNotice(
         `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
@@ -668,10 +786,13 @@ export default function ExperimentalAiPage() {
 
   useEffect(() => () => {
       abortControllerRef.current?.abort();
+      sessionEventsControllerRef.current?.abort();
+      if (sessionEventsTimerRef.current !== null) window.clearTimeout(sessionEventsTimerRef.current);
       speechRecognitionRef.current?.stop();
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
+      if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
   }, []);
 
   useEffect(() => {
@@ -843,23 +964,16 @@ export default function ExperimentalAiPage() {
     });
   };
 
-  const reportRequestError = (requestError: unknown, fallback: string) => {
-    if (isAuthenticationError(requestError)) {
-      setAuthRequired(true);
-      setAuthRejected(true);
-      setIsEditingAuthToken(true);
-      setError('AI credentials were rejected. Enter the current AI token and try again.');
-      return;
-    }
-    setError(requestError instanceof Error ? requestError.message : fallback);
-  };
-
   const renewSessionExpiration = () => {
     setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
   };
 
   const markConversationUnavailable = (notice: string) => {
     queuedMessagesRef.current = [];
+    sessionEventsControllerRef.current?.abort();
+    sessionEventsControllerRef.current = null;
+    lastSessionEventIdRef.current = 0;
+    sessionEventsRetryRef.current = 0;
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     syncedScheduleRef.current = null;
@@ -867,6 +981,7 @@ export default function ExperimentalAiPage() {
     setActiveSessionId(null);
     setSessionExpiresAt(null);
     setQueuedMessages([]);
+    setActiveOptimization(null);
     setProposalDiff(null);
     setConversationUnavailable(true);
     setSessionNotice(notice);
@@ -878,6 +993,12 @@ export default function ExperimentalAiPage() {
     selectedAttachments.forEach(attachment => {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     });
+    if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+    optimizationDownloadUrlRef.current = null;
+    sessionEventsControllerRef.current?.abort();
+    sessionEventsControllerRef.current = null;
+    lastSessionEventIdRef.current = 0;
+    sessionEventsRetryRef.current = 0;
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     syncedScheduleRef.current = null;
@@ -890,6 +1011,9 @@ export default function ExperimentalAiPage() {
     setDraft('');
     setSelectedAttachments([]);
     setQueuedMessages([]);
+    // A new chat sends its whole history again.
+    setTrimmedHistoryCount(0);
+    setActiveOptimization(null);
     setProposalDiff(null);
     setProposalNotice(null);
     setConversationUnavailable(false);
@@ -942,6 +1066,263 @@ export default function ExperimentalAiPage() {
     });
   };
 
+  const startBackgroundEventStream = useCallback((sessionId: string, endpoint: string) => {
+    sessionEventsControllerRef.current?.abort();
+    if (sessionEventsTimerRef.current !== null) {
+      window.clearTimeout(sessionEventsTimerRef.current);
+      sessionEventsTimerRef.current = null;
+    }
+    const controller = new AbortController();
+    sessionEventsControllerRef.current = controller;
+    // The stream ends on any network or proxy interruption. Release the controller so
+    // the effect can open a replacement, otherwise later background work is never seen.
+    const openedAt = Date.now();
+    const reconnect = () => {
+      if (sessionEventsControllerRef.current !== controller) return;
+      sessionEventsControllerRef.current = null;
+      if (controller.signal.aborted) return;
+      // Back off only for repeated rapid failures, not for a stream that held for a while.
+      if (Date.now() - openedAt >= SESSION_EVENTS_MAX_RETRY_MS) sessionEventsRetryRef.current = 0;
+      const delay = Math.min(SESSION_EVENTS_MAX_RETRY_MS, SESSION_EVENTS_RETRY_MS * 2 ** sessionEventsRetryRef.current);
+      sessionEventsRetryRef.current += 1;
+      sessionEventsTimerRef.current = window.setTimeout(() => {
+        sessionEventsTimerRef.current = null;
+        setSessionEventsAttempt(attempt => attempt + 1);
+      }, delay);
+    };
+    const beginBackgroundMessage = (assistantId: string) => {
+      backgroundAssistantIdRef.current = assistantId;
+      backgroundTurnActiveRef.current = true;
+      // The server renews the session when it starts this turn.
+      setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
+      sandboxScheduleRef.current = scheduleYamlRef.current;
+      setIsStreaming(true);
+      setMessages(previous => previous.some(message => message.id === assistantId)
+        // A restored or reconnected turn resumes its own message, so clear the
+        // interrupted state rather than stacking a second response beside it.
+        ? previous.map(message => message.id === assistantId
+          ? { ...message, status: 'pending' as const, responseCompletedAt: undefined }
+          : message)
+        : [
+          ...previous,
+          {
+            id: assistantId,
+            role: 'assistant',
+            content: '',
+            status: 'pending',
+            responseStartedAt: Date.now(),
+          },
+        ]);
+    };
+    // A reconnect replays only retained events, so a long turn can lose its own
+    // turn_start. Adopt the remaining output instead of discarding the answer.
+    const resumeBackgroundMessage = () => {
+      if (backgroundTurnActiveRef.current) return;
+      beginBackgroundMessage(backgroundAssistantIdRef.current ?? messageId());
+    };
+    const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
+      const activeId = backgroundAssistantIdRef.current ?? messageId;
+      if (activeId === undefined) return;
+      setMessages(previous => previous.map(message => message.id === activeId ? update(message) : message));
+    };
+    const failBackgroundTurn = (message: string) => {
+      updateBackgroundMessage(entry => ({
+        ...entry,
+        content: entry.content || message,
+        status: 'failed',
+        responseCompletedAt: Date.now(),
+        activity: interruptRunningTools(entry.activity ?? []),
+      }));
+      backgroundAssistantIdRef.current = null;
+      backgroundTurnActiveRef.current = false;
+      setIsStreaming(false);
+      setIsStopping(false);
+      setError(message);
+    };
+    void streamSessionEvents(
+      sessionId,
+      {
+        lastEventId: lastSessionEventIdRef.current,
+        onEventId: id => {
+          lastSessionEventIdRef.current = id;
+          sessionEventsRetryRef.current = 0;
+        },
+        onTurnStart: beginBackgroundMessage,
+        onDelta: text => {
+          resumeBackgroundMessage();
+          updateBackgroundMessage(message => ({
+            ...message,
+            content: message.content + text,
+            activity: appendResponseActivity(message.activity ?? [], text),
+          }));
+        },
+        onReasoning: text => {
+          resumeBackgroundMessage();
+          updateBackgroundMessage(message => {
+            const activity = message.activity ?? [];
+            const last = activity[activity.length - 1];
+            if (last?.kind === 'reasoning') {
+              return { ...message, activity: [...activity.slice(0, -1), { ...last, text: last.text + text }] };
+            }
+            return { ...message, activity: [...activity, { kind: 'reasoning', text }] };
+          });
+        },
+        onToolStart: activity => {
+          resumeBackgroundMessage();
+          updateBackgroundMessage(message => ({
+            ...message,
+            activity: [
+              ...(message.activity ?? []),
+              { kind: 'tool' as const, ...activity, result: '', ok: true, state: 'running' as const },
+            ],
+          }));
+        },
+        onTool: activity => {
+          resumeBackgroundMessage();
+          updateBackgroundMessage(message => ({
+            ...message,
+            activity: finishToolActivity(message.activity ?? [], activity),
+          }));
+        },
+        onScheduleChange: candidate => {
+          resumeBackgroundMessage();
+          const before = sandboxScheduleRef.current ?? scheduleYamlRef.current;
+          sandboxScheduleRef.current = candidate;
+          updateBackgroundMessage(message => ({
+            ...message,
+            activity: [
+              ...(message.activity ?? []),
+              { kind: 'schedule-change' as const, before, after: candidate },
+            ],
+          }));
+        },
+        onProposal: diff => setProposalDiff(diff),
+        onOptimization: activity => {
+          if (!activity.terminal) {
+            setActiveOptimization(current => ({
+              ...activity,
+              points: current?.jobId === activity.jobId ? current.points : [],
+            }));
+            return;
+          }
+          setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
+          const content = activity.state === 'completed'
+            ? activity.downloadable
+              ? 'Optimization finished. Download the optimized schedule to review it.'
+              : 'Optimization finished, but no result workbook is available to download.'
+            : `Optimization ended with status: ${activity.state}.`;
+          setMessages(previous => previous.some(message => message.id === `optimizer-${activity.jobId}`)
+            ? previous
+            : [
+              ...previous,
+              {
+                id: `optimizer-${activity.jobId}`,
+                role: 'optimizer',
+                content,
+                optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
+              },
+            ]);
+        },
+        onOptimizationProgress: ({ jobId, point }) => {
+          setActiveOptimization(current => {
+            if (current !== null && current.jobId !== jobId) return current;
+            const previous = current?.points ?? [];
+            const last = previous.at(-1);
+            if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
+              return current;
+            }
+            const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
+              ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
+              : previous;
+            return {
+              jobId,
+              state: current?.state ?? 'running',
+              terminal: false,
+              downloadable: false,
+              points: [...retained, point],
+            };
+          });
+        },
+        onDone: messageId => {
+          updateBackgroundMessage(message => ({
+            ...message,
+            status: undefined,
+            responseCompletedAt: Date.now(),
+          }), messageId);
+          backgroundAssistantIdRef.current = null;
+          backgroundTurnActiveRef.current = false;
+          setIsStreaming(false);
+          setIsStopping(false);
+        },
+        onStopped: messageId => {
+          updateBackgroundMessage(message => ({
+            ...message,
+            content: message.content || 'Stopped.',
+            status: undefined,
+            responseCompletedAt: Date.now(),
+            activity: message.content
+              ? interruptRunningTools(message.activity ?? [])
+              : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
+          }), messageId);
+          backgroundAssistantIdRef.current = null;
+          backgroundTurnActiveRef.current = false;
+          setIsStreaming(false);
+          setIsStopping(false);
+        },
+        onStale: message => {
+          updateBackgroundMessage(entry => ({
+            ...entry,
+            content: message,
+            status: 'failed',
+            responseCompletedAt: Date.now(),
+            activity: [{ kind: 'response', text: message }],
+          }));
+          backgroundAssistantIdRef.current = null;
+          backgroundTurnActiveRef.current = false;
+          setIsStreaming(false);
+          setIsStopping(false);
+          setError(message);
+        },
+        onHistoryTrimmed: setTrimmedHistoryCount,
+        onError: failBackgroundTurn,
+      },
+      controller.signal,
+      authToken,
+      endpoint,
+    ).then(reconnect, (streamError: unknown) => {
+      if (controller.signal.aborted) {
+        reconnect();
+        return;
+      }
+      // Report the first failure of a disconnected streak only, since reconnection
+      // attempts continue in the background.
+      if (sessionEventsRetryRef.current === 0) {
+        reportRequestError(streamError, 'The background AI event stream disconnected.');
+      }
+      // Rejected credentials cannot succeed until the token changes, which restarts
+      // this stream through the effect below.
+      if (streamError instanceof AiHttpError && (streamError.status === 401 || streamError.status === 403)) {
+        if (sessionEventsControllerRef.current === controller) sessionEventsControllerRef.current = null;
+        return;
+      }
+      reconnect();
+    });
+  }, [authToken, reportRequestError, sessionRetentionSeconds]);
+
+  useEffect(() => {
+    if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
+    if (sessionEventsControllerRef.current === null) {
+      startBackgroundEventStream(activeSessionId, sessionEndpointRef.current ?? aiEndpoint);
+    }
+  }, [
+    activeSessionId,
+    aiEndpoint,
+    conversationUnavailable,
+    isClientReady,
+    sessionEventsAttempt,
+    startBackgroundEventStream,
+  ]);
+
   const sendRequest = async (
     question: string,
     attachmentsForMessage: SelectedAttachment[],
@@ -989,6 +1370,7 @@ export default function ExperimentalAiPage() {
         sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint);
         sessionIdRef.current = sessionId;
         sessionEndpointRef.current = sessionEndpoint;
+        startBackgroundEventStream(sessionId, sessionEndpoint);
         checkedSessionRef.current = sessionId;
         setActiveSessionId(sessionId);
         setConversationUnavailable(false);
@@ -1004,7 +1386,10 @@ export default function ExperimentalAiPage() {
         question,
         {
           onDelta: text => {
-            if (text) activeAssistantHasOutput = true;
+            if (text) {
+              activeAssistantHasOutput = true;
+              setSteeringAssistantId(null);
+            }
             setMessages(previous => previous.map(message => (
               message.id === activeAssistantId
                 ? {
@@ -1016,7 +1401,10 @@ export default function ExperimentalAiPage() {
             )));
           },
           onReasoning: text => {
-            if (text) activeAssistantHasOutput = true;
+            if (text) {
+              activeAssistantHasOutput = true;
+              setSteeringAssistantId(null);
+            }
             setMessages(previous => previous.map(message => {
               if (message.id !== activeAssistantId) return message;
               const activity = message.activity ?? [];
@@ -1030,6 +1418,7 @@ export default function ExperimentalAiPage() {
           },
           onToolStart: activity => {
             activeAssistantHasOutput = true;
+            setSteeringAssistantId(null);
             setMessages(previous => previous.map(message => (
               message.id === activeAssistantId
                 ? {
@@ -1069,6 +1458,7 @@ export default function ExperimentalAiPage() {
                 },
               ]);
               activeAssistantId = nextAssistantId;
+              setSteeringAssistantId(nextAssistantId);
               activeAssistantHasOutput = false;
             } else {
               const pendingAssistantId = activeAssistantId;
@@ -1081,6 +1471,7 @@ export default function ExperimentalAiPage() {
                   ...previous.slice(pendingIndex),
                 ];
               });
+              setSteeringAssistantId(pendingAssistantId);
             }
             activeQuestion = queuedMessage;
             activeQuestionRequiresAttachments = false;
@@ -1101,6 +1492,7 @@ export default function ExperimentalAiPage() {
             )));
           },
           onProposal: diff => setProposalDiff(diff),
+          onHistoryTrimmed: setTrimmedHistoryCount,
         },
         controller.signal,
         authToken,
@@ -1116,31 +1508,43 @@ export default function ExperimentalAiPage() {
       )));
     } catch (streamError) {
       const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
-      setMessages(previous => previous.map(message => (
-        message.id === activeAssistantId
-          ? {
+      setMessages(previous => previous.map(message => {
+        if (message.id !== activeAssistantId) return message;
+        if (controller.signal.aborted) {
+          return {
             ...message,
-            content: staleTurnMessage ?? message.content,
-            status: 'failed',
+            content: message.content || 'Stopped.',
+            status: undefined,
             responseCompletedAt: Date.now(),
-            activity: staleTurnMessage === null
+            activity: message.content
               ? interruptRunningTools(message.activity ?? [])
-              : [{ kind: 'response' as const, text: staleTurnMessage }],
-            retry: {
-              question: activeQuestion,
-              requiresAttachments: activeQuestionRequiresAttachments,
-            },
-          }
-          : message
-      )));
+              : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
+          };
+        }
+        return {
+          ...message,
+          content: staleTurnMessage ?? message.content,
+          status: 'failed',
+          responseCompletedAt: Date.now(),
+          activity: staleTurnMessage === null
+            ? interruptRunningTools(message.activity ?? [])
+            : [{ kind: 'response' as const, text: staleTurnMessage }],
+          retry: {
+            question: activeQuestion,
+            requiresAttachments: activeQuestionRequiresAttachments,
+          },
+        };
+      }));
       if (streamError instanceof AiHttpError && streamError.status === 404) {
         markConversationUnavailable('This chat expired or is no longer available. Start a new chat to continue.');
       } else if (!controller.signal.aborted && staleTurnMessage === null) {
         reportRequestError(streamError, 'The AI request failed.');
       }
     } finally {
+      setSteeringAssistantId(null);
       abortControllerRef.current = null;
-      setIsStreaming(false);
+      setIsStopping(false);
+      setIsStreaming(backgroundTurnActiveRef.current);
       const nextMessage = queuedMessagesRef.current[0];
       if (nextMessage) {
         queuedMessagesRef.current = queuedMessagesRef.current.slice(1);
@@ -1200,7 +1604,52 @@ export default function ExperimentalAiPage() {
     setError(null);
   };
 
-  const stop = () => abortControllerRef.current?.abort();
+  const stop = () => {
+    if (isStopping) return;
+    setIsStopping(true);
+    queuedMessagesRef.current = [];
+    setQueuedMessages([]);
+    abortControllerRef.current?.abort();
+    const sessionId = sessionIdRef.current;
+    if (sessionId === null) {
+      setIsStopping(false);
+      return;
+    }
+    // The request only asks the server to stop. The turn keeps running until a terminal
+    // event reports it ended, so every one of those clears the pending state instead.
+    void stopSession(sessionId, authToken, sessionEndpointRef.current ?? aiEndpoint)
+      .catch(stopError => {
+        reportRequestError(stopError, 'The AI response could not be stopped.');
+        setIsStopping(false);
+      });
+  };
+
+  const downloadOptimizationResult = async (jobId: string) => {
+    const sessionId = sessionIdRef.current;
+    if (sessionId === null || downloadingOptimizationId !== null) return;
+    setDownloadingOptimizationId(jobId);
+    try {
+      const blob = await downloadOptimization(
+        sessionId,
+        jobId,
+        authToken,
+        sessionEndpointRef.current ?? aiEndpoint,
+      );
+      const downloadUrl = URL.createObjectURL(blob);
+      if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      optimizationDownloadUrlRef.current = downloadUrl;
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `optimized-schedule-${jobId.slice(-8)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (downloadError) {
+      reportRequestError(downloadError, 'The optimized schedule could not be downloaded.');
+    } finally {
+      setDownloadingOptimizationId(null);
+    }
+  };
   const toggleDictation = () => {
     if (isListening) {
       speechRecognitionRef.current?.stop();
@@ -1275,6 +1724,8 @@ export default function ExperimentalAiPage() {
     if (!attachmentPickerDisabled) addAttachments(Array.from(event.dataTransfer.files));
   };
   const serverLocked = sessionIdRef.current !== null || messages.length > 0;
+  const backgroundRunningTool = messages.find(message => message.id === backgroundAssistantIdRef.current)
+    ?.activity?.find(entry => entry.kind === 'tool' && entry.state === 'running');
 
   const applyProposal = async () => {
     const sessionId = sessionIdRef.current;
@@ -1348,7 +1799,7 @@ export default function ExperimentalAiPage() {
           >
             Request beta access
           </a>
-          . All AI chats are logged and are not currently anonymized. Chat data may be retained and processed for the development, evaluation, and improvement of this product and the AI provider&apos;s products.{' '}
+          . All AI chats are logged and are not currently anonymized. Chat data may be retained and processed for the development, evaluation, and improvement of this product and the AI provider&apos;s products. This chat is also stored unencrypted in this browser until it expires or you start a new chat.{' '}
           <a
             className="font-medium underline"
             href={GITHUB_PRIVACY_URL}
@@ -1365,6 +1816,12 @@ export default function ExperimentalAiPage() {
         <p className="mt-1 text-xs text-gray-500">
           Chat sessions expire after {retentionLabel(sessionRetentionSeconds)} of inactivity. Each new message renews this period.
         </p>
+        {trimmedHistoryCount > 0 && (
+          <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
+            This conversation is long, so the {trimmedHistoryCount === 1 ? 'oldest message is' : `${trimmedHistoryCount} oldest messages are`}
+            {' '}no longer sent to the assistant. The full transcript stays on this page.
+          </p>
+        )}
         {sessionNotice && (
           <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
             {sessionNotice}
@@ -1536,11 +1993,13 @@ export default function ExperimentalAiPage() {
             className={`max-w-[85%] rounded-xl px-4 py-3 ${
               message.role === 'user'
                 ? 'ml-auto bg-blue-600 text-white'
-                : 'mr-auto border border-gray-200 bg-white text-gray-900'
+                : message.role === 'optimizer'
+                  ? 'mr-auto border border-emerald-200 bg-emerald-50 text-emerald-950'
+                  : 'mr-auto border border-gray-200 bg-white text-gray-900'
             }`}
           >
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">
-              {message.role === 'user' ? 'You' : 'Assistant'}
+              {message.role === 'user' ? 'You' : message.role === 'optimizer' ? 'Optimizer' : 'Assistant'}
             </p>
             {message.activity && (
               <AssistantActivity
@@ -1550,10 +2009,21 @@ export default function ExperimentalAiPage() {
               />
             )}
             {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
-              <ThinkingIndicator />
-            ) : message.role === 'user' ? (
+              steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
+            ) : message.role !== 'assistant' ? (
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
             ) : null}
+            {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
+              <button
+                type="button"
+                onClick={() => void downloadOptimizationResult(message.optimizerJob?.jobId ?? '')}
+                disabled={downloadingOptimizationId !== null}
+                className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
+              >
+                <FiDownload aria-hidden="true" className="h-4 w-4" />
+                {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
+              </button>
+            )}
             {message.attachmentNames && message.attachmentNames.length > 0 && (
               <p className="mt-2 text-xs opacity-80">
                 Attached: {message.attachmentNames.join(', ')}
@@ -1693,12 +2163,37 @@ export default function ExperimentalAiPage() {
             <FiArrowDown aria-hidden="true" className="h-4 w-4" />
           </button>
         )}
+        {activeOptimization !== null && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900"
+          >
+            <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-violet-600" />
+            <span>Optimizer running in the background · {activeOptimization.state}</span>
+            {activeOptimization.points.length > 0 && (
+              <div className="ml-auto flex items-center gap-2 text-violet-800">
+                <span className="font-semibold tabular-nums">
+                  Score {new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(
+                    activeOptimization.points.at(-1)!.currentBestScore
+                  )}
+                </span>
+                {activeOptimization.points.length > 1 && <OptimizationSparkline points={activeOptimization.points} />}
+              </div>
+            )}
+          </div>
+        )}
+        {backgroundRunningTool?.kind === 'tool' && (
+          <div role="status" className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-blue-600" />
+            <span>Background tool running · {backgroundRunningTool.name}</span>
+          </div>
+        )}
         {queuedMessages.length > 0 && (
-          <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-            <p className="font-medium">Messages to be submitted after next tool call</p>
+          <div className="rounded-r-md border-l-2 border-gray-400 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+            <p className="font-semibold uppercase tracking-wide text-gray-500">Queued for steering</p>
             <div className="mt-1 space-y-1">
               {queuedMessages.map(message => (
-                <p key={message.id} className="truncate">{message.content}</p>
+                <p key={message.id} className="truncate">· {message.content}</p>
               ))}
             </div>
           </div>
@@ -1838,9 +2333,10 @@ export default function ExperimentalAiPage() {
                 <button
                   type="button"
                   onClick={stop}
+                  disabled={isStopping}
                   aria-label="Stop"
                   title="Stop"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-white transition-colors hover:bg-gray-900"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-white transition-colors hover:bg-gray-900 disabled:cursor-wait disabled:bg-gray-500"
                 >
                   <FiSquare aria-hidden="true" className="h-4 w-4 fill-current" />
                 </button>

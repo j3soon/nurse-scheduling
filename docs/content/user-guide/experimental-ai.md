@@ -13,7 +13,41 @@ This page answers questions about the schedule currently open in the browser.
 A question can include files of any type when **Attach files** is available.
 The assistant can inspect common text, image, PDF, and spreadsheet formats in
 its temporary workspace. The assistant can propose changes to the schedule,
-which apply only after you approve them. It cannot run optimization.
+which apply only after you approve them. The assistant can also run the
+optimizer and review its result.
+
+## Ask the assistant to optimize
+
+Ask the assistant to optimize the current schedule and describe the result or
+improve a specific outcome. The assistant starts the run in the background, so
+you can continue chatting while it solves.
+
+- Ask it to **finish now** to request the best solution currently available.
+- A small status indicator remains above the message box while optimization is
+  running.
+- A background assistant command also shows a running indicator there, even
+  when tool details are hidden.
+- When the run ends, the chat offers the result workbook as a download. The
+  assistant receives the score and a copy of the workbook in its workspace. It
+  can inspect relevant spreadsheet sections to answer questions about the result,
+  including in later chat turns while the result remains available.
+- The assistant wakes automatically and replies in a new turn.
+- The assistant may propose a YAML change and run the optimizer again. The
+  changed YAML still requires your approval before it replaces the schedule in
+  the browser.
+
+The optimizer runs for up to 300 seconds (five minutes) by default. Ask the
+assistant for a different timeout when needed. A deployment may set another
+default. One chat may start 50 optimizer runs by default.
+
+Before submission to the optimizer, the AI service applies the same basic
+anonymization as **Optimize and Export**: it replaces person IDs and removes
+description fields. It restores person IDs in the downloaded workbook. Dates,
+shifts, groups, and rules can still reveal sensitive information.
+
+Each run records the exact YAML revision it used. If the browser schedule
+changes before the result returns, the assistant can distinguish that older
+result from the current accepted schedule.
 
 ## Review a proposed change
 
@@ -41,7 +75,9 @@ until you select one.
   is a preview only. The current schedule still changes only after you approve
   the final proposal.
 - A row marked `failed` means that step changed nothing. This is the usual
-  reason an answer arrives without a proposal.
+reason an answer arrives without a proposal.
+- The `optimizer` tool shows whether the assistant started, checked, or asked
+  the current optimization to finish.
 
 Long output is revealed a portion at a time with **Show more**. Clear
 **Show reasoning** or **Show tool activity** near the top of the page to hide
@@ -91,8 +127,9 @@ Use **HTML** under **Export chat** for a styled, standalone transcript, or
 The assistant runs inside the existing Nurse Scheduling app and can explain
 which page and visible control to use for a task. For example, ask how to add a
 person, upload schedule YAML, configure a rule, or start optimization. It can
-guide you through those controls, but it cannot navigate, click, upload, or run
-optimization for you.
+guide you through those controls, but it cannot navigate, click, or upload for
+you. It can always start optimization itself. An unavailable optimizer API
+reports a tool error instead.
 
 Files attached with **Attach files** belong to the next chat message. To replace
 the schedule currently open in the app, use **Upload** on **Save and Load**
@@ -118,8 +155,10 @@ execute attachments.
 
 AI chats and related data may be logged, retained, and processed for the
 development, evaluation, and improvement of this product and the AI provider's
-products. The AI service does not currently anonymize schedules, chats, or
-attachments. Do not submit personal, confidential, regulated, or otherwise
+products. The AI model still receives the original schedule when it reads it.
+Chats and attachments are not anonymized, and the basic optimizer anonymization
+does not make a sensitive schedule safe to submit. Do not submit personal,
+confidential, regulated, or otherwise
 sensitive information. See the
 [privacy policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md)
 for details.

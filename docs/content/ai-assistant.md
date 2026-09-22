@@ -51,8 +51,10 @@ flowchart LR
     Session -->|OpenAI-compatible chat request| Provider[Model provider]
     Provider -->|streamed deltas and tool calls| Session
     Session -->|one fresh turn| Sandbox[E2B Cloud sandbox<br/>shell working copy]
+    Session -->|background job with YAML snapshot| Optimizer[Optimizer API<br/>durable job]
+    Optimizer -->|status, score, and output workbook| Session
     Sandbox -->|candidate schedule| Validation[Trusted server validation<br/>and structural diff]
-    Session -->|SSE text, reasoning, tool, validated change, and proposal events| Browser
+    Session -->|SSE text, tool, optimization status, and proposal events| Browser
     Browser -->|approve with base revision| Session
 ```
 
@@ -68,7 +70,25 @@ content through a tool. Attachments are available only during the active turn. *
 and their contents are not included in subsequent chat history.** This is
 intentional to avoid retaining uploads or repeatedly consuming provider context
 tokens. History retains only attachment markers and filenames.
-Schedules and attachments are labeled as untrusted data in the system prompt.
+The prompt gives the agent workspace paths for schedules and attachments.
+
+The server-side `optimizer` tool submits a copy of the current sandbox working
+YAML to the existing optimizer API. It replaces person IDs and removes
+descriptions as the browser's Optimize and Export flow does, while retaining the
+reverse ID mapping server-side. It returns immediately and keeps
+the remote credential and job ID outside the sandbox. A process-local monitor
+waits for terminal status, restores person IDs in the output workbook, retains
+the size-bounded workbook for an authenticated browser download, deletes the
+remote optimizer job, and starts a new assistant turn with result metadata.
+The restored workbook is copied to
+`/workspace/optimizer-results/optimized-schedule.xlsx` in that turn and later
+chat turns while retained. It is separate from user attachments. The browser
+keeps a separate replayable session event stream open for
+optimizer status and background turns. It retains the latest 1,000 background
+turn events and 100 optimizer progress updates per session for reconnects.
+Foreground chat and optimization can proceed at the same time. Assistant turns
+remain serialized per session. The Stop control cancels either a foreground or
+background assistant turn. It does not cancel the independent optimizer run.
 
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
@@ -383,16 +403,24 @@ response cannot prove that the original operation did not take effect.
 | `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for durable chat logging. Compose sets its internal URL directly. |
 | `AI_HISTORY_RETENTION_DAYS` | `30` | Positive number of days to retain chat text and metadata. |
 | `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
-| `AI_PROVIDER_TIMEOUT_SECONDS` | `120` | Provider request timeout. |
+| `AI_PROVIDER_TIMEOUT_SECONDS` | `180` | Provider request timeout. |
 | `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
 | `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
+| `AI_OPTIMIZER_BASE_URL` | `http://localhost:8000` (`http://api:8000` in Docker Compose) | Optimizer API base URL. Use HTTPS for a credentialed remote endpoint. An unavailable API produces a tool error without disabling chat. |
+| `AI_OPTIMIZER_AUTH_TOKEN` | Unset (defaults to `API_AUTH_TOKEN` in Docker Compose) | Server-side optimizer API bearer token. Set it explicitly when the API uses identified keys. |
+| `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |
+| `AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS` | `30` | Timeout for one optimizer API request or result download. |
+| `AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS` | `300` | Optimizer time limit sent when the assistant omits one. Docker Compose derives it from `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`. |
+| `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | `50` | Maximum background optimizer runs one chat session may start. |
+| `AI_OPTIMIZER_MAX_RESULT_BYTES` | `10000000` | Maximum workbook bytes retained for one result download. |
+| `AI_OPTIMIZER_RESULT_CACHE_BYTES` | `100000000` | Maximum total optimizer workbook bytes retained by one AI process. Oldest results are evicted first. |
 | `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
 | `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
 | `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
-| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `10` | Default and maximum deadline for one shell command. |
-| `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `900` | Deadline for the complete sandbox-backed user message. |
-| `AI_AGENT_MAX_TOOL_ROUNDS` | `100` | Maximum model tool-call rounds before the agent must answer from verified results. |
-| `AI_AGENT_MAX_TOOL_CALLS` | `200` | Maximum total tool calls in one sandbox-backed user message. |
+| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `30` | Default and maximum deadline for one shell command. |
+| `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `3600` | Deadline for the complete sandbox-backed user message. |
+| `AI_AGENT_MAX_TOOL_ROUNDS` | `200` | Maximum model tool-call rounds before the agent must answer from verified results. |
+| `AI_AGENT_MAX_TOOL_CALLS` | `400` | Maximum total tool calls in one sandbox-backed user message. |
 | `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
 | `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
 | `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
@@ -403,7 +431,8 @@ response cannot prove that the original operation did not take effect.
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
-| `AI_MAX_HISTORY_MESSAGES` | `20` | Conversation messages retained per session. |
+| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. |
+| `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
 | `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
@@ -425,7 +454,7 @@ may coexist during migration.
 Build the existing all-in-one development image from the repository root:
 
 ```sh
-docker build -f docker/Dockerfile -t nurse-scheduling:dev .
+docker build -f docker/Dockerfile.dev -t nurse-scheduling:dev .
 docker run --rm -it \
   --name nurse-scheduling-dev \
   --network=host \
@@ -447,7 +476,10 @@ docker exec -it -w /app nurse-scheduling-dev \
   ./scripts/start_frontend.sh --hostname 0.0.0.0
 ```
 
-The normal optimization backend is optional for this chat flow.
+The optimizer tool is always available to the model. Native runs use
+`http://localhost:8000` by default, while Docker Compose uses `http://api:8000`.
+If that API is unavailable, the tool reports a request error and chat remains
+available.
 
 ## Run with Docker Compose
 
@@ -580,7 +612,7 @@ FastAPI.
 | --- | --- |
 | `GET /health` | Process and service identity check. |
 | `GET /ready` | Required configuration accepted at startup. |
-| `GET /capabilities` | Enabled optional features and their public limits. |
+| `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
 | `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
 | `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
 | `POST /sessions/{id}/messages` | Stream one answer. Accepts JSON text or multipart text and attachments. |

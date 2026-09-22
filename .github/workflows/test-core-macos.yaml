@@ -26,7 +26,7 @@ jobs:
         run: brew install glpk
       - name: Install dependencies
         working-directory: core
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements-optional.txt
       - name: Test with pytest and collect coverage
         working-directory: core
         run: >-

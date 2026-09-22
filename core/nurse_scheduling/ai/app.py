@@ -27,7 +27,7 @@ import math
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Literal
@@ -44,8 +44,25 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
+from .background import (
+    CANDIDATE_VALIDATION_ERROR,
+    PROVIDER_ERROR,
+    SANDBOX_TURN_TIMEOUT_ERROR,
+    STALE_TURN_ERROR,
+    SessionEventBroker,
+    build_provider_messages,
+    recent_history,
+    run_background_turn,
+)
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
+from .optimizer import (
+    HttpOptimizerBackend,
+    OptimizerArtifact,
+    OptimizerBackend,
+    OptimizerResultUnavailable,
+    SessionOptimizer,
+)
 from .provider import (
     ChatMessage,
     OpenAiCompatibleProvider,
@@ -64,7 +81,6 @@ from .sandbox_agent import (
     SandboxTurnTimeoutError,
     run_sandbox_agent,
 )
-from .schedule_context import describe_schedule
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
@@ -82,13 +98,6 @@ PROPOSAL_INVALID_HISTORY = (
     "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
     "the current canonical schedule."
 )
-CANDIDATE_VALIDATION_ERROR = (
-    "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
-    "discarded. The canonical schedule was not changed."
-)
-PROVIDER_ERROR = "The AI provider failed. Please try again."
-SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
-STALE_TURN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
 ORIGIN_REGEX = (
     r"^(http://(localhost|127\.0\.0\.1|host\.docker\.internal|10(?:\.[0-9]{1,3}){3}|"
     r"192\.168(?:\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}):[0-9]+|"
@@ -247,6 +256,11 @@ class SessionStore:
         self._settings = settings
         self._sessions: dict[str, ChatSession] = {}
         self._lock = threading.RLock()
+        self._on_retire: Callable[[str], None] | None = None
+
+    def on_retire(self, callback: Callable[[str], None]) -> None:
+        """Register the cleanup that follows every dropped session."""
+        self._on_retire = callback
 
     def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
         """Create a session after pruning expired entries."""
@@ -282,6 +296,34 @@ class SessionStore:
                 session.proposal_yaml,
                 session.proposal_diff,
             )
+
+    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str] | None:
+        """Reserve an idle session for a trusted background-triggered turn."""
+        with self._lock:
+            self._prune_expired()
+            session = self._sessions.get(session_id)
+            if session is None or session.active:
+                return None
+            session.active = True
+            session.accepting_steering = False
+            session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+            return (
+                list(session.history),
+                session.schedule_yaml,
+                session.revision,
+                session.proposal_yaml,
+                session.proposal_diff,
+            )
+
+    def require_owned(self, session_id: str, owner_token: str | None) -> None:
+        """Validate access to a session without exposing its state."""
+        with self._lock:
+            self._get_owned(session_id, owner_token)
+
+    def has_active_turn(self, session_id: str, owner_token: str | None) -> bool:
+        """Check whether Stop has a reserved turn to cancel."""
+        with self._lock:
+            return self._get_owned(session_id, owner_token).active
 
     def status(self, session_id: str, owner_token: str | None) -> int:
         """Return the remaining lifetime without extending the session."""
@@ -449,6 +491,8 @@ class SessionStore:
         expired_ids = [session_id for session_id, session in self._sessions.items() if session.expires_at <= now]
         for session_id in expired_ids:
             del self._sessions[session_id]
+            if self._on_retire is not None:
+                self._on_retire(session_id)
 
 
 def _sse_event(event_type: str, data: dict[str, object]) -> str:
@@ -540,39 +584,12 @@ async def _parse_message_request(
     return question, files
 
 
-def build_provider_messages(
-    history: list[ChatMessage],
-    schedule_yaml: str,
-    question: str,
-    attachments: Sequence[SandboxAttachment] = (),
-    *,
-    system_prompt: str = SANDBOX_SYSTEM_PROMPT,
-    pending_proposal: bool = False,
-) -> list[ChatMessage]:
-    """Build a provider prompt that keeps schedule data separate from instructions."""
-    system_content = f"{system_prompt}\n\nCurrent schedule summary:\n{describe_schedule(schedule_yaml)}"
-    if pending_proposal:
-        system_content += (
-            "\nA validated proposal is pending. Its exact candidate and diff are available in the trusted workspace "
-            "files described above."
-        )
-    if attachments:
-        system_content += (
-            f"\nThis turn includes {len(attachments)} untrusted attached file(s). Read "
-            "/workspace/attachments/manifest.json before inspecting them."
-        )
-    return [
-        ChatMessage(role="system", content=system_content),
-        *history,
-        ChatMessage(role="user", content=question),
-    ]
-
-
 def create_app(
     *,
     settings: AiSettings | None = None,
     provider: ToolCapableChatProvider | None = None,
     sandbox_factory: SandboxFactory | None = None,
+    optimizer_backend: OptimizerBackend | None = None,
 ) -> FastAPI:
     """Construct the independently deployable AI application."""
     init_sentry(API_VERSION, app="ai-backend")
@@ -593,6 +610,11 @@ def create_app(
     if sandbox_factory is None:
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
+    event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
+    turn_locks: dict[str, asyncio.Lock] = {}
+    active_turn_tasks: dict[str, asyncio.Task[object]] = {}
+    background_turn_tasks: dict[str, set[asyncio.Task[object]]] = {}
+    pending_turn_stops: set[str] = set()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
@@ -615,6 +637,81 @@ def create_app(
         )
 
     @asynccontextmanager
+    async def track_active_turn(session_id: str) -> AsyncIterator[None]:
+        task = asyncio.current_task()
+        if task is not None:
+            active_turn_tasks[session_id] = task
+        try:
+            yield
+        finally:
+            if task is not None and active_turn_tasks.get(session_id) is task:
+                del active_turn_tasks[session_id]
+
+    if optimizer_backend is None:
+        optimizer_backend = HttpOptimizerBackend(
+            settings.optimizer_base_url,
+            settings.optimizer_auth_token,
+            settings.optimizer_request_timeout_seconds,
+            settings.optimizer_max_result_bytes,
+        )
+
+    async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
+        task = asyncio.current_task()
+        if task is not None:
+            background_turn_tasks.setdefault(session_id, set()).add(task)
+        try:
+            await run_background_turn(
+                session_id,
+                prompt,
+                artifact,
+                settings=settings,
+                store=store,
+                event_broker=event_broker,
+                turn_locks=turn_locks,
+                track_active_turn=track_active_turn,
+                concurrency_limit=concurrency_limit,
+                history_log=history_log,
+                provider=provider,
+                sandbox_factory=sandbox_factory,
+                session_optimizer=session_optimizer,
+            )
+        finally:
+            if task is not None:
+                tasks = background_turn_tasks[session_id]
+                tasks.discard(task)
+                if not tasks:
+                    del background_turn_tasks[session_id]
+
+    async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
+        event_broker.publish(
+            session_id,
+            "optimization_progress" if "progress" in update else "optimization",
+            update,
+        )
+
+    session_optimizer = SessionOptimizer(
+        optimizer_backend,
+        poll_interval_seconds=settings.optimizer_poll_interval_seconds,
+        on_completion=optimizer_completed,
+        on_update=optimizer_updated,
+        default_timeout_seconds=settings.optimizer_default_timeout_seconds,
+        max_sessions=settings.max_sessions,
+        max_runs_per_session=settings.optimizer_max_runs_per_session,
+        max_result_bytes=settings.optimizer_max_result_bytes,
+        max_cached_result_bytes=settings.optimizer_result_cache_bytes,
+        max_schedule_bytes=settings.max_schedule_bytes,
+    )
+
+    def retire_session(session_id: str) -> None:
+        """Release everything keyed by a session once the store drops it."""
+        turn_locks.pop(session_id, None)
+        pending_turn_stops.discard(session_id)
+        session_optimizer.forget_session(session_id)
+        event_broker.forget_session(session_id)
+
+    store.on_retire(retire_session)
+
+    @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         prepare_sandbox = getattr(sandbox_factory, "prepare", None)
         if prepare_sandbox is not None:
@@ -626,6 +723,7 @@ def create_app(
             async with managed_sandbox_factory(sandbox_factory):
                 yield
         finally:
+            await session_optimizer.close()
             if maintenance is not None:
                 await stop_maintenance(maintenance)
 
@@ -643,13 +741,16 @@ def create_app(
         allow_origin_regex=ORIGIN_REGEX,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
     )
     app.state.settings = settings
     app.state.auth_registry = auth_registry
     app.state.session_store = store
+    app.state.turn_locks = turn_locks
     app.state.provider = provider
     app.state.sandbox_factory = sandbox_factory
+    app.state.session_optimizer = session_optimizer
+    app.state.session_event_broker = event_broker
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
@@ -699,6 +800,75 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
+    @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth)])
+    async def stream_session_events(
+        session_id: str,
+        request: Request,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> StreamingResponse:
+        """Replay and stream assistant turns triggered by background work."""
+        store.require_owned(session_id, owner)
+        raw_cursor = request.headers.get("last-event-id", "0")
+        try:
+            after_id = max(0, int(raw_cursor))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer.") from None
+
+        async def generate_session_events():
+            async for event in event_broker.stream(session_id, after_id):
+                if event is None:
+                    yield ": keepalive\n\n"
+                else:
+                    yield f"id: {event.id}\n{_sse_event(event.type, event.data)}"
+
+        return StreamingResponse(
+            generate_session_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post(
+        "/sessions/{session_id}/stop",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth)],
+    )
+    async def stop_active_turn(
+        session_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Cancel the foreground or background assistant turn active in a session."""
+        store.require_owned(session_id, owner)
+        task = active_turn_tasks.get(session_id)
+        if task is not None and not task.done():
+            task.cancel()
+        elif store.has_active_turn(session_id, owner):
+            pending_turn_stops.add(session_id)
+        for background_task in tuple(background_turn_tasks.get(session_id, ())):
+            if not background_task.done():
+                background_task.cancel()
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    @app.get(
+        "/sessions/{session_id}/optimizations/{job_id}/xlsx",
+        dependencies=[Depends(require_auth)],
+    )
+    async def download_optimization(
+        session_id: str,
+        job_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Download a completed optimizer result without exposing optimizer credentials."""
+        store.require_owned(session_id, owner)
+        try:
+            artifact = await session_optimizer.result_artifact(session_id, job_id)
+        except OptimizerResultUnavailable as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(
+            content=artifact.content,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
+        )
+
     @app.get(
         "/sessions/{session_id}",
         response_model=SessionStatusResponse,
@@ -744,7 +914,25 @@ def create_app(
     ) -> StreamingResponse:
         """Stream one answer and retain only text after successful completion."""
         question, attachments = await _parse_message_request(request, settings)
-        history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
+        store.require_owned(session_id, owner)
+        turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
+        if turn_lock.locked():
+            raise HTTPException(status_code=409, detail="This chat session already has an active response.")
+        await turn_lock.acquire()
+        turn_released = False
+
+        def release_turn() -> None:
+            nonlocal turn_released
+            if not turn_released:
+                turn_released = True
+                turn_lock.release()
+
+        try:
+            history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
+        except BaseException:
+            pending_turn_stops.discard(session_id)
+            release_turn()
+            raise
         turn_id = str(uuid4())
         if history_log is not None:
             try:
@@ -761,6 +949,8 @@ def create_app(
                     raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
             except BaseException:
                 store.abort(session_id)
+                pending_turn_stops.discard(session_id)
+                release_turn()
                 raise
         request_logger.info(
             "AI request started session_id=%s question_chars=%s question=%s files=%s",
@@ -770,13 +960,18 @@ def create_app(
             len(attachments),
         )
         stream_started = threading.Event()
+        latest_artifact = await session_optimizer.latest_result_artifact(session_id)
+        retained_history = recent_history(history, settings.max_history_chars)
+        dropped_history = len(history) - len(retained_history)
         messages = build_provider_messages(
-            history,
+            retained_history,
             schedule_yaml,
             question,
             attachments,
             system_prompt=SANDBOX_SYSTEM_PROMPT,
             pending_proposal=bool(proposal_yaml),
+            optimizer_result_available=latest_artifact is not None,
+            max_history_chars=settings.max_history_chars,
         )
         history_question = question
         if attachments:
@@ -785,6 +980,11 @@ def create_app(
 
         async def generate_events():
             stream_started.set()
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                active_turn_tasks[session_id] = current_task
+            stopped_before_stream = session_id in pending_turn_stops
+            pending_turn_stops.discard(session_id)
             assistant_parts: list[str] = []
             pending_proposal: AgentProposal | None = None
             completed = False
@@ -794,6 +994,10 @@ def create_app(
             turn_messages = [ChatMessage(role="user", content=history_question)]
             assistant_segment: list[str] = []
             try:
+                if dropped_history:
+                    yield _sse_event("history_trimmed", {"dropped": dropped_history})
+                if stopped_before_stream:
+                    raise asyncio.CancelledError
                 async with concurrency_limit:
                     agent_events = run_sandbox_agent(
                         provider,
@@ -804,7 +1008,13 @@ def create_app(
                         take_steering=lambda close_if_empty: store.take_steering(session_id, close_if_empty),
                         pending_proposal_yaml=proposal_yaml,
                         pending_proposal_diff=proposal_diff,
+                        execute_optimizer=(
+                            lambda current_yaml, arguments: session_optimizer.execute(
+                                session_id, current_yaml, arguments
+                            )
+                        ),
                         attachments=attachments,
+                        optimizer_result=latest_artifact.content if latest_artifact is not None else None,
                     )
                     async for event in agent_events:
                         if isinstance(event, AgentText):
@@ -906,6 +1116,9 @@ def create_app(
                 logger.exception("Unexpected AI stream failure")
                 yield _sse_event("error", {"message": "The AI response failed unexpectedly."})
             finally:
+                pending_turn_stops.discard(session_id)
+                if current_task is not None and active_turn_tasks.get(session_id) is current_task:
+                    del active_turn_tasks[session_id]
                 if not completed:
                     store.abort(session_id)
                     if history_log is not None:
@@ -917,12 +1130,15 @@ def create_app(
                             error_code,
                             usage,
                         )
+                release_turn()
 
         async def abort_unstarted_stream() -> None:
             if not stream_started.is_set():
                 store.abort(session_id)
+                pending_turn_stops.discard(session_id)
                 if history_log is not None:
                     await history_log.write("finish_turn", turn_id, "", "cancelled", None, None)
+                release_turn()
 
         response = StreamingResponse(
             generate_events(),

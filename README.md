@@ -134,6 +134,11 @@ uv pip install -r requirements.txt
 fastapi dev nurse_scheduling\serve.py
 ```
 
+`core/requirements.txt` holds only what the CLI and the backend need at
+runtime, which keeps the deployment image small. Install
+`core/requirements-optional.txt` instead to add the experimental solver
+backends and the test and lint tooling.
+
 ### Linux Development and Docker
 
 The commands below are Linux-focused reference material for setup, testing, and Docker.
@@ -164,7 +169,7 @@ CPU image:
 
 ```sh
 # build image
-docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
+docker build -f docker/Dockerfile.dev -t j3soon/nurse-scheduling:dev .
 ```
 
 ```sh
@@ -194,7 +199,7 @@ GPU image with cuOpt support:
 
 ```sh
 # build image with cuOpt support
-docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
+docker build -f docker/Dockerfile.dev.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 ```
 
 The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
@@ -291,7 +296,7 @@ bun run test:e2e
 bun run test:e2e:ui
 ```
 
-When using the repository `docker/Dockerfile`, Chromium is preinstalled in the image at
+When using the repository `docker/Dockerfile.dev`, Chromium is preinstalled in the image at
 build time using the frontend's locked Playwright version. If you rebuild the
 image after Playwright version changes, `bun run test:e2e` and
 `bun run test:e2e:ui` should not require rerunning `bunx playwright install chromium`
@@ -407,8 +412,8 @@ cd core
 uv venv --python 3.12
 # activate virtual environment
 source .venv/bin/activate
-# install dependencies
-uv pip install -r requirements.txt
+# install dependencies, including the optional solvers and test tooling
+uv pip install -r requirements-optional.txt
 # run the CPU solver, OR-Tools | CP-SAT is the default
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 # for example:

@@ -29,6 +29,8 @@ SandboxBackendName = Literal["none", "e2b"]
 AI_AUTH_TOKEN_ENV_NAME = "AI_AUTH_TOKEN"
 AI_AUTH_TOKENS_ENV_NAME = "AI_AUTH_TOKENS"
 AI_AUTH_REQUIRED_ENV_NAME = "AI_AUTH_REQUIRED"
+DEFAULT_MAX_HISTORY_CHARS = 200_000
+"""Prompt budget for retained history, well inside the context window of a supported model."""
 
 
 def validate_ai_auth_credentials(
@@ -115,16 +117,25 @@ class AiSettings:
     auth_token: str | None = None
     auth_tokens: tuple[AuthCredential, ...] = ()
     auth_required: bool = False
-    provider_timeout_seconds: float = 120.0
+    provider_timeout_seconds: float = 180.0
     provider_max_attempts: int = 3
     provider_retry_backoff_seconds: float = 1.0
+    optimizer_base_url: str = "http://localhost:8000"
+    optimizer_auth_token: str = ""
+    optimizer_poll_interval_seconds: float = 1.0
+    optimizer_request_timeout_seconds: float = 30.0
+    optimizer_default_timeout_seconds: int = 300
+    optimizer_max_runs_per_session: int = 50
+    optimizer_max_result_bytes: int = 10_000_000
+    optimizer_result_cache_bytes: int = 100_000_000
     session_ttl_seconds: int = 172_800
     history_postgres_url: str = ""
     history_retention_days: int = 30
     request_log_enabled: bool = True
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
-    max_history_messages: int = 20
+    max_history_messages: int = 1000
+    max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS
     max_message_chars: int = 8000
     max_schedule_bytes: int = 1_000_000
     max_concurrent_requests: int = 4
@@ -133,10 +144,10 @@ class AiSettings:
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
-    sandbox_command_timeout_seconds: float = 10.0
-    sandbox_turn_timeout_seconds: float = 900.0
-    agent_max_tool_rounds: int = 100
-    agent_max_tool_calls: int = 200
+    sandbox_command_timeout_seconds: float = 30.0
+    sandbox_turn_timeout_seconds: float = 3600.0
+    agent_max_tool_rounds: int = 200
+    agent_max_tool_calls: int = 400
     sandbox_cleanup_timeout_seconds: float = 10.0
     sandbox_max_attempts: int = 3
     sandbox_retry_backoff_seconds: float = 0.5
@@ -181,15 +192,24 @@ class AiSettings:
             auth_token=auth_token,
             auth_tokens=auth_tokens,
             auth_required=_read_bool(AI_AUTH_REQUIRED_ENV_NAME, False),
-            provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 120.0),
+            provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 180.0),
             provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
             provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),
+            optimizer_base_url=os.getenv("AI_OPTIMIZER_BASE_URL", "").strip().rstrip("/") or "http://localhost:8000",
+            optimizer_auth_token=os.getenv("AI_OPTIMIZER_AUTH_TOKEN", "").strip(),
+            optimizer_poll_interval_seconds=_read_positive_float("AI_OPTIMIZER_POLL_INTERVAL_SECONDS", 1.0),
+            optimizer_request_timeout_seconds=_read_positive_float("AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS", 30.0),
+            optimizer_default_timeout_seconds=_read_positive_int("AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS", 300),
+            optimizer_max_runs_per_session=_read_positive_int("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", 50),
+            optimizer_max_result_bytes=_read_positive_int("AI_OPTIMIZER_MAX_RESULT_BYTES", 10_000_000),
+            optimizer_result_cache_bytes=_read_positive_int("AI_OPTIMIZER_RESULT_CACHE_BYTES", 100_000_000),
             session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 172_800),
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
             history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
-            max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 20),
+            max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 1000),
+            max_history_chars=_read_positive_int("AI_MAX_HISTORY_CHARS", DEFAULT_MAX_HISTORY_CHARS),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
             max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
@@ -198,10 +218,10 @@ class AiSettings:
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,
-            sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 10.0),
-            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 900.0),
-            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 100),
-            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 200),
+            sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30.0),
+            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 3600.0),
+            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 200),
+            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 400),
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
             sandbox_max_attempts=_read_positive_int("AI_SANDBOX_MAX_ATTEMPTS", 3),
             sandbox_retry_backoff_seconds=_read_non_negative_float("AI_SANDBOX_RETRY_BACKOFF_SECONDS", 0.5),

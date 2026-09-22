@@ -726,10 +726,7 @@ def test_reading_questions_cannot_be_answered_from_the_prompt_summary():
             for value in case.answer_contains
         ]
         in_summary = [options for options in expected if any(o in summaries[case.fixture] for o in options)]
-        if case.category.endswith("00-summary"):
-            assert len(in_summary) == len(expected), f"{case.id} is not answerable from the summary"
-        else:
-            assert len(in_summary) < len(expected), f"{case.id} is answerable from the summary alone"
+        assert len(in_summary) < len(expected), f"{case.id} is answerable from the summary alone"
 
 
 def test_every_membership_check_also_pins_the_collection_size():
