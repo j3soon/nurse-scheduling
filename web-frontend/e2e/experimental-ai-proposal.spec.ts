@@ -43,6 +43,9 @@ preferences: []
 
 async function mockProposingBackend(page: Page): Promise<{ approvals: number; refreshed: string[] }> {
   const state = { approvals: 0, refreshed: [] as string[] };
+  const baseURL = test.info().project.use.baseURL;
+  if (!baseURL) throw new Error('Playwright baseURL is required for the AI backend mock.');
+  const allowedOrigin = new URL(baseURL).origin;
 
   await page.route('**/ai/**', async route => {
     const request = route.request();
@@ -50,7 +53,7 @@ async function mockProposingBackend(page: Page): Promise<{ approvals: number; re
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-      'Access-Control-Allow-Origin': request.headers()['origin'] ?? 'http://127.0.0.1:3000',
+      'Access-Control-Allow-Origin': allowedOrigin,
     };
     if (request.method() === 'OPTIONS') {
       await route.fulfill({ status: 204, headers: corsHeaders });

@@ -32,16 +32,25 @@ interface CapturedRequests {
   authorizationHeaders: string[];
 }
 
+function frontendOrigin(): string {
+  const baseURL = test.info().project.use.baseURL;
+  if (!baseURL) throw new Error('Playwright baseURL is required for the AI backend mock.');
+  return new URL(baseURL).origin;
+}
+
 async function startCancelableAiBackend() {
   let disconnected = false;
+  const allowedOrigin = frontendOrigin();
   const server = createServer((request, response) => {
     request.resume();
-    const headers = {
-      'Access-Control-Allow-Credentials': 'true',
+    const headers: Record<string, string> = {
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Origin': request.headers.origin ?? '*',
     };
+    if (request.headers.origin === allowedOrigin) {
+      headers['Access-Control-Allow-Credentials'] = 'true';
+      headers['Access-Control-Allow-Origin'] = allowedOrigin;
+    }
     if (request.method === 'OPTIONS') {
       response.writeHead(204, headers).end();
       return;
@@ -111,15 +120,15 @@ async function mockAiBackend(
     messageContentType: '',
     authorizationHeaders: [] as string[],
   };
+  const allowedOrigin = frontendOrigin();
 
   await page.route('**/ai/**', async route => {
     const request = route.request();
-    const frontendOrigin = request.headers()['origin'] ?? 'http://127.0.0.1:3000';
     const corsHeaders = {
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Origin': frontendOrigin,
+      'Access-Control-Allow-Origin': allowedOrigin,
     };
     if (request.method() === 'OPTIONS') {
       await route.fulfill({ status: 204, headers: corsHeaders });
@@ -284,6 +293,11 @@ test('retries a failed text turn without hiding its provisional activity', async
 
 test('Stop aborts the active AI stream', async ({ page }) => {
   const backend = await startCancelableAiBackend();
+  for (const origin of ['null', 'https://untrusted.example']) {
+    const response = await fetch(`${backend.origin}/ai/capabilities`, { headers: { Origin: origin } });
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+    expect(response.headers.get('access-control-allow-credentials')).toBeNull();
+  }
   await page.route('**/ai/**', route => {
     const requestUrl = new URL(route.request().url());
     return route.continue({ url: `${backend.origin}${requestUrl.pathname}${requestUrl.search}` });
