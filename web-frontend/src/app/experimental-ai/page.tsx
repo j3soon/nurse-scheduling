@@ -88,6 +88,10 @@ const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
 const FIREFOX_ON_DEVICE_SPEECH_VERSION = 157;
 const SESSION_EVENTS_RETRY_MS = 1000;
 const SESSION_EVENTS_MAX_RETRY_MS = 30000;
+// A solver can emit a progress event per incumbent solution, and the whole series is
+// persisted with the conversation. Halving the oldest points keeps the sparkline shape
+// while bounding the array and the tab storage a long run consumes.
+const OPTIMIZATION_PROGRESS_POINT_LIMIT = 500;
 const SPEECH_LANGUAGES = [
   { value: '', label: 'Browser default' },
   { value: 'en-US', label: 'English (United States)' },
@@ -1198,12 +1202,15 @@ export default function ExperimentalAiPage() {
             if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
               return current;
             }
+            const retained = previous.length >= OPTIMIZATION_PROGRESS_POINT_LIMIT
+              ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
+              : previous;
             return {
               jobId,
               state: current?.state ?? 'running',
               terminal: false,
               downloadable: false,
-              points: [...previous, point],
+              points: [...retained, point],
             };
           });
         },

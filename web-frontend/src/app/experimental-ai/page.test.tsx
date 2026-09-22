@@ -605,6 +605,55 @@ describe('ExperimentalAiPage', () => {
     expect(stored.messages[0].status).toBeUndefined();
   });
 
+  it('bounds the persisted optimizer progress history during a long run', async () => {
+    const user = userEvent.setup();
+    let backgroundCallbacks: {
+      onOptimization?: (activity: {
+        jobId: string;
+        state: string;
+        terminal: boolean;
+        downloadable: boolean;
+      }) => void;
+      onOptimizationProgress?: (activity: {
+        jobId: string;
+        point: { currentBestScore: number; elapsedSeconds: number };
+      }) => void;
+    } | undefined;
+    mockStreamSessionEvents.mockImplementation(async (
+      _sessionId: string,
+      callbacks: typeof backgroundCallbacks,
+    ) => {
+      backgroundCallbacks = callbacks;
+    });
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+
+    act(() => {
+      backgroundCallbacks?.onOptimization?.({
+        jobId: 'opt-long-run',
+        state: 'running',
+        terminal: false,
+        downloadable: false,
+      });
+      for (let index = 0; index < 1200; index += 1) {
+        backgroundCallbacks?.onOptimizationProgress?.({
+          jobId: 'opt-long-run', point: { currentBestScore: index, elapsedSeconds: index },
+        });
+      }
+    });
+    act(() => window.dispatchEvent(new Event('pagehide')));
+
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    const points = stored.activeOptimization.points;
+    expect(points.length).toBeLessThanOrEqual(500);
+    // Decimation keeps the run's endpoints so the sparkline still spans the whole run.
+    expect(points[0]).toEqual({ currentBestScore: 0, elapsedSeconds: 0 });
+    expect(points.at(-1)).toEqual({ currentBestScore: 1199, elapsedSeconds: 1199 });
+  });
+
   it('stops a background assistant turn through the session endpoint', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: {
