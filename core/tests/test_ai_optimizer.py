@@ -305,6 +305,27 @@ def test_background_and_progress_replay_have_separate_default_limits() -> None:
     assert events[-1].data["index"] == 100
 
 
+def test_retiring_a_session_ends_its_open_event_stream() -> None:
+    async def scenario() -> None:
+        broker = SessionEventBroker()
+        received: list[str | None] = []
+
+        async def consume() -> None:
+            async for event in broker.stream("session-1", 0):
+                received.append(event.type if event is not None else None)
+
+        reader = asyncio.create_task(consume())
+        broker.publish("session-1", "turn_start", {"message_id": "turn-1"})
+        await asyncio.sleep(0)
+        broker.forget_session("session-1")
+        await asyncio.wait_for(reader, timeout=1)
+
+        assert received == ["turn_start"]
+        assert "session-1" not in broker._signals
+
+    asyncio.run(scenario())
+
+
 def test_a_rejected_request_tells_the_model_what_the_optimizer_refused() -> None:
     async def scenario() -> None:
         def handle(request: httpx.Request) -> httpx.Response:

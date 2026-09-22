@@ -131,7 +131,11 @@ class SessionEventBroker:
         self._events.pop(session_id, None)
         self._progress_events.pop(session_id, None)
         self._last_ids.pop(session_id, None)
-        self._signals.pop(session_id, None)
+        # Wake an open stream so it observes the dropped signal and ends, instead of
+        # recreating the entry this pop removes and waiting on a retired session.
+        signal = self._signals.pop(session_id, None)
+        if signal is not None:
+            signal.set()
 
     def events_after(self, session_id: str, after_id: int = 0) -> tuple[SessionEvent, ...]:
         """Return retained events after a cursor for replay and diagnostics."""
@@ -139,6 +143,7 @@ class SessionEventBroker:
         return tuple(sorted((event for event in retained if event.id > after_id), key=lambda event: event.id))
 
     async def stream(self, session_id: str, after_id: int) -> AsyncIterator[SessionEvent | None]:
+        signal = self._signals.setdefault(session_id, asyncio.Event())
         while True:
             pending = self.events_after(session_id, after_id)
             if pending:
@@ -146,7 +151,8 @@ class SessionEventBroker:
                     after_id = event.id
                     yield event
                 continue
-            signal = self._signals.setdefault(session_id, asyncio.Event())
+            if self._signals.get(session_id) is not signal:
+                return
             signal.clear()
             try:
                 await asyncio.wait_for(signal.wait(), timeout=15)
