@@ -6,7 +6,8 @@ The FastAPI backend entry point is `nurse_scheduling/serve.py`.
 Run commands from `core/`:
 
 - `uv venv --python 3.12 && source .venv/bin/activate`
-- `uv pip install -r requirements.txt`
+- `uv pip install -r requirements-optional.txt`: the development install. See
+  the Dependencies section below.
 - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `../README.md`.
 - `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
@@ -30,6 +31,28 @@ test paths when a narrower suite is known to be sufficient. Use `--base REF` to
 include committed branch changes since the merge base with `REF`, `--list` to
 inspect selection without running checks, or `--full` for the normal local
 suite. Run optional solver and real-scenario suites explicitly when affected.
+
+## Dependencies
+- `requirements.txt` is the minimal runtime set. Deployment images install only
+  it, so a small file keeps those builds fast. Add a package there only when
+  the CLI, the backend, or the AI service imports it at runtime.
+- `requirements-optional.txt` starts with `-r requirements.txt` and adds the
+  extra solver backends, the sandbox-only attachment tool packages, and the
+  test and lint tooling. It is the development and CI install.
+- A package a sandbox tool imports belongs in the optional file even when the
+  tool ships under `nurse_scheduling/`. Those scripts are uploaded and run
+  inside the E2B image, which installs its own pinned copies, and only the
+  tests import them here. Keep the two pin sets in step.
+- Keep an optional solver reachable through a lazy import and let
+  `server/solver_options.py` report it unavailable. It already treats
+  `ImportError` as unavailable, so a missing optional backend must degrade
+  rather than break startup.
+- Verify a dependency move by installing `requirements.txt` alone into a
+  throwaway virtual environment, then importing `nurse_scheduling.cli`,
+  `serve`, `ai_serve`, `server.diagnostic`, and `server.usage_report`, and
+  running one CLI solve with `--prettify` to reach the XLSX export path.
+  Reading the imports is not enough, because transitive-only packages such as
+  the `jinja2` that `pandas.DataFrame.style` needs have no import statement.
 
 ## Server Job Processes
 - `run_optimization_process` owns its optimization process tree through

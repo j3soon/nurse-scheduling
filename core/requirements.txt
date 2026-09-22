@@ -1,23 +1,16 @@
+# Runtime dependencies for the CLI, the backend, and the AI service.
+# Deployment images install only this file. Optional solvers and development
+# tooling live in requirements-optional.txt.
 ortools==9.15.6755
 pandas
 ruamel.yaml
 pydantic
 openpyxl # For XLSX input and output support
 defusedxml # For parsing untrusted XLSX XML safely
-pypdf # For PDF text and embedded-image inspection
-pypdfium2 # For bounded PDF page rendering in the sandbox
-Pillow # For Pi-compatible image reads and PDF image extraction
+Pillow # For Pi-compatible image reads
 jinja2 # For prettifying output
-# For more solvers support
+# PuLP is pure Python with a bundled CBC binary, so it stays in the minimal set.
 pulp==3.3.2
-# Keep this aligned with the HiGHS ABI bundled by OR-Tools 9.15.
-highspy==1.12.0
-pyscipopt==6.2.1
-# For CI
-pytest
-pytest-cov
-fakeredis
-ruff
 # For web backend
 fastapi[standard]
 httpx

@@ -134,6 +134,11 @@ uv pip install -r requirements.txt
 fastapi dev nurse_scheduling\serve.py
 ```
 
+`core/requirements.txt` holds only what the CLI and the backend need at
+runtime, which keeps the deployment image small. Install
+`core/requirements-optional.txt` instead to add the experimental solver
+backends and the test and lint tooling.
+
 ### Linux Development and Docker
 
 The commands below are Linux-focused reference material for setup, testing, and Docker.
@@ -407,8 +412,8 @@ cd core
 uv venv --python 3.12
 # activate virtual environment
 source .venv/bin/activate
-# install dependencies
-uv pip install -r requirements.txt
+# install dependencies, including the optional solvers and test tooling
+uv pip install -r requirements-optional.txt
 # run the CPU solver, OR-Tools | CP-SAT is the default
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 # for example:

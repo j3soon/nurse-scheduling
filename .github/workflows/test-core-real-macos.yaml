@@ -24,7 +24,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         working-directory: core
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements-optional.txt
       - name: Test real-world scenario until OR-Tools clears critical violations
         working-directory: core
         run: pytest tests/real/schedule_ortools_cp_sat.py

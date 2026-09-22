@@ -28,7 +28,7 @@ elif [[ "$run_full_suite" == false ]]; then
       nurse_scheduling/ai/* | nurse_scheduling/ai_serve.py)
         ai_changed=true
         ;;
-      nurse_scheduling/* | tests/* | requirements.txt | pyproject.toml)
+      nurse_scheduling/* | tests/* | requirements*.txt | pyproject.toml)
         run_full_suite=true
         ;;
       AGENTS.md | *.md | .gitignore)

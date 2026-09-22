@@ -90,6 +90,11 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Cross-Module Requirements
 - When renaming or deleting frontend people, dates, or shift types, sync all references, including preferences and export layout entries.
+- When adding, moving, or removing a dependency, update every installer in the
+  same commit: the `docker/` images, the GitHub workflows, `scripts/setup_env.sh`,
+  the affected-test selection in `scripts/`, and the `README.md` and `docs/`
+  install commands. Grep for the file name rather than the package name, since
+  an installer usually names only the requirements file.
 
 ## Pull Requests
 - Include scope and rationale, linked issues when applicable, test/lint evidence, and screenshots for frontend UI changes.
