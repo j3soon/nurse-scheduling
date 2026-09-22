@@ -143,7 +143,7 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
             return httpx.Response(202, json={"id": "remote-1", "state": "running"})
 
         backend = HttpOptimizerBackend(
-            "http://optimizer:8000",
+            "http://api:8000",
             "optimizer-token",
             5,
             1_000_000,
@@ -370,7 +370,7 @@ def test_absolute_result_links_are_not_followed_with_the_optimizer_token() -> No
             return httpx.Response(200, content=b"workbook")
 
         backend = HttpOptimizerBackend(
-            "http://optimizer:8000",
+            "http://api:8000",
             "optimizer-token",
             5,
             1_000_000,
@@ -385,6 +385,12 @@ def test_absolute_result_links_are_not_followed_with_the_optimizer_token() -> No
         assert requests == []
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("base_url", ["http://optimizer.example:8000", "http://192.0.2.10:8000", "ftp://api:8000"])
+def test_credentialed_optimizer_requires_https_outside_local_endpoints(base_url: str) -> None:
+    with pytest.raises(ValueError, match="must use HTTPS"):
+        HttpOptimizerBackend(base_url, "optimizer-token", 5, 1_000_000)
 
 
 def test_an_omitted_timeout_submits_the_advertised_default() -> None:

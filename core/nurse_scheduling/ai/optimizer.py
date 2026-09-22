@@ -21,6 +21,7 @@
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -92,6 +93,11 @@ class HttpOptimizerBackend:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        endpoint = urlsplit(base_url)
+        if auth_token and not (
+            endpoint.scheme == "https" or (endpoint.scheme == "http" and _is_trusted_http_host(endpoint.hostname))
+        ):
+            raise ValueError("A credentialed optimizer endpoint must use HTTPS outside loopback or Docker Compose.")
         headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
         self._base_url = f"{base_url.rstrip('/')}/"
         self._client = httpx.AsyncClient(headers=headers, timeout=request_timeout_seconds, transport=transport)
@@ -569,6 +575,18 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
             },
         },
     }
+
+
+def _is_trusted_http_host(host: str | None) -> bool:
+    """Allow cleartext credentials only on loopback or the Compose service name."""
+    if host in {"localhost", "api"}:
+        return True
+    if host is None:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _is_relative_link(link: str) -> bool:
