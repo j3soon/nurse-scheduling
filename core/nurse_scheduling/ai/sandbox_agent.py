@@ -333,6 +333,11 @@ async def run_sandbox_agent(
                             current_schedule = (await sandbox.read_file(WORKSPACE_SCHEDULE)).decode("utf-8")
                         except (SandboxFileNotFoundError, UnicodeDecodeError):
                             return AgentToolOutcome("The current working schedule is unavailable or invalid.", False)
+                        review = review_schedule_candidate(schedule_yaml, current_schedule, limits.max_schedule_bytes)
+                        if not review.outcome.ok:
+                            return AgentToolOutcome(
+                                f"Trusted schedule check before optimizer:\n{review.outcome.text}", False
+                            )
                         return await execute_optimizer(current_schedule, arguments)
                     outcome = await sandbox_tools.execute(name, arguments)
                     if name == READ_TOOL:

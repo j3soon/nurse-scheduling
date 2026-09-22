@@ -198,6 +198,45 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
     assert next(event for event in events if isinstance(event, AgentToolUse)).ok
 
 
+def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> None:
+    provider = ScriptedProvider(
+        [
+            ToolCallRequest(
+                (
+                    ToolCall(
+                        "write-invalid",
+                        WRITE_TOOL,
+                        json.dumps({"path": "schedule.yaml", "content": "people: [unclosed"}),
+                    ),
+                )
+            )
+        ],
+        [ToolCallRequest((ToolCall("start-optimizer", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [TextDelta("No run was submitted.")],
+    )
+    submitted: list[str] = []
+
+    async def execute_optimizer(current_schedule: str, _arguments: str) -> AgentToolOutcome:
+        submitted.append(current_schedule)
+        return AgentToolOutcome("Started in the background.", True)
+
+    async def collect() -> None:
+        async for _event in run_sandbox_agent(
+            provider,
+            FakeSandboxFactory(),
+            schedule_yaml(),
+            MESSAGES,
+            _limits(),
+            execute_optimizer=execute_optimizer,
+        ):
+            pass
+
+    with pytest.raises(SandboxCandidateError):
+        asyncio.run(collect())
+
+    assert submitted == []
+
+
 def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
 
