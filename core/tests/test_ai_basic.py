@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import subprocess
 import threading
 import time
@@ -1417,6 +1418,33 @@ def test_environment_configuration_defaults_to_extended_sandbox_turn_limits(
     assert settings.sandbox_turn_timeout_seconds == 3600
     assert settings.agent_max_tool_rounds == 200
     assert settings.agent_max_tool_calls == 400
+
+
+def test_backend_proxy_read_timeout_outlasts_every_default_turn_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A proxy timeout at or below the turn deadline drops the connection before the turn reports its own timeout."""
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", raising=False)
+    docker_dir = Path(__file__).resolve().parents[2] / "docker"
+    turn_deadlines = {"AiSettings.from_env": AiSettings.from_env().sandbox_turn_timeout_seconds}
+    for name in (
+        "compose.backend.yml",
+        "compose.backend.memory.yml",
+        ".env.example",
+        ".env.gpu.example",
+        ".env.staging.example",
+    ):
+        # Matches both `AI_SANDBOX_TURN_TIMEOUT_SECONDS=N` and `${AI_SANDBOX_TURN_TIMEOUT_SECONDS:-N}`.
+        values = re.findall(r"AI_SANDBOX_TURN_TIMEOUT_SECONDS(?:=|:-)(\d+)", (docker_dir / name).read_text("utf-8"))
+        assert values, f"{name} no longer sets a default AI_SANDBOX_TURN_TIMEOUT_SECONDS"
+        turn_deadlines[name] = max(float(value) for value in values)
+
+    proxy_timeouts = re.findall(r"proxy_read_timeout\s+(\S+);", (docker_dir / "nginx.backend.conf").read_text("utf-8"))
+
+    assert proxy_timeouts
+    for proxy_timeout in proxy_timeouts:
+        assert re.fullmatch(r"\d+s", proxy_timeout), f"expected whole seconds, got {proxy_timeout}"
+        assert int(proxy_timeout[:-1]) > max(turn_deadlines.values()), turn_deadlines
 
 
 def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytest.MonkeyPatch) -> None:
