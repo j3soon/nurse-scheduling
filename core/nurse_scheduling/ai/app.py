@@ -612,6 +612,7 @@ def create_app(
     event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
     turn_locks: dict[str, asyncio.Lock] = {}
     active_turn_tasks: dict[str, asyncio.Task[object]] = {}
+    background_turn_tasks: dict[str, set[asyncio.Task[object]]] = {}
     pending_turn_stops: set[str] = set()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
@@ -654,21 +655,31 @@ def create_app(
         )
 
     async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
-        await run_background_turn(
-            session_id,
-            prompt,
-            artifact,
-            settings=settings,
-            store=store,
-            event_broker=event_broker,
-            turn_locks=turn_locks,
-            track_active_turn=track_active_turn,
-            concurrency_limit=concurrency_limit,
-            history_log=history_log,
-            provider=provider,
-            sandbox_factory=sandbox_factory,
-            session_optimizer=session_optimizer,
-        )
+        task = asyncio.current_task()
+        if task is not None:
+            background_turn_tasks.setdefault(session_id, set()).add(task)
+        try:
+            await run_background_turn(
+                session_id,
+                prompt,
+                artifact,
+                settings=settings,
+                store=store,
+                event_broker=event_broker,
+                turn_locks=turn_locks,
+                track_active_turn=track_active_turn,
+                concurrency_limit=concurrency_limit,
+                history_log=history_log,
+                provider=provider,
+                sandbox_factory=sandbox_factory,
+                session_optimizer=session_optimizer,
+            )
+        finally:
+            if task is not None:
+                tasks = background_turn_tasks[session_id]
+                tasks.discard(task)
+                if not tasks:
+                    del background_turn_tasks[session_id]
 
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
         event_broker.publish(session_id, "optimization", update)
@@ -826,6 +837,9 @@ def create_app(
             task.cancel()
         elif store.has_active_turn(session_id, owner):
             pending_turn_stops.add(session_id)
+        for background_task in tuple(background_turn_tasks.get(session_id, ())):
+            if not background_task.done():
+                background_task.cancel()
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.get(

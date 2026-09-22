@@ -584,6 +584,66 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
     assert not session_active
 
 
+def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
+    async def exercise() -> tuple[int, bool, int, bool]:
+        foreground_started = asyncio.Event()
+        foreground_cancelled = asyncio.Event()
+
+        class WaitingProvider:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def stream_events(self, _messages, tools=None):
+                self.calls += 1
+                foreground_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    foreground_cancelled.set()
+                    raise
+                yield TextDelta("unreachable")
+
+        provider = WaitingProvider()
+        app = create_test_app(settings=make_settings(), provider=provider)
+        transport = httpx.ASGITransport(app=app)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+                headers={"Authorization": f"Bearer {AI_AUTH_TOKEN}"},
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            foreground = asyncio.create_task(
+                client.post(f"/sessions/{session_id}/messages", json={"message": "Keep working"})
+            )
+            await asyncio.wait_for(foreground_started.wait(), timeout=1)
+            background = asyncio.create_task(
+                app.state.session_optimizer._on_completion(session_id, "Optimizer finished", None)
+            )
+            await asyncio.sleep(0)
+
+            stopped = await client.post(f"/sessions/{session_id}/stop")
+            await asyncio.wait_for(foreground_cancelled.wait(), timeout=1)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(background, timeout=1)
+            await asyncio.gather(foreground, return_exceptions=True)
+            return (
+                stopped.status_code,
+                app.state.session_store._sessions[session_id].active,
+                provider.calls,
+                app.state.turn_locks[session_id].locked(),
+            )
+
+    status_code, session_active, provider_calls, lock_held = asyncio.run(exercise())
+
+    assert status_code == 202
+    assert not session_active
+    assert provider_calls == 1
+    assert not lock_held
+
+
 def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     async def exercise() -> tuple[int, bool, int]:
         waiting_for_artifact = asyncio.Event()
