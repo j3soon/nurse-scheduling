@@ -90,6 +90,22 @@ describe('chat export', () => {
     expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z">');
   });
 
+  it('exports optimizer messages as their own labeled and styled block', () => {
+    const optimizerMessage: ChatExportMessage = {
+      role: 'optimizer',
+      content: 'Optimization finished. Download the optimized schedule to review it.',
+    };
+
+    const markdown = buildMarkdownChatExport([optimizerMessage], metadata);
+    const html = buildHtmlChatExport([optimizerMessage], metadata);
+
+    expect(markdown).toContain('## Optimizer');
+    expect(markdown).toContain('Optimization finished. Download the optimized schedule to review it.');
+    expect(html).toContain('class="message optimizer"');
+    expect(html).toContain('<div class="label">Optimizer</div>');
+    expect(html).toContain('.optimizer { align-self: flex-start;');
+  });
+
   it('places activity separators only at response boundaries', () => {
     const output = buildHtmlChatExport([
       {

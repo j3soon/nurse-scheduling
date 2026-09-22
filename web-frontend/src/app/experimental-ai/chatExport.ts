@@ -289,9 +289,10 @@ export function buildHtmlChatExport(
     .message { box-sizing: border-box; width: fit-content; max-width: 85%; padding: 12px 16px; border-radius: 12px; }
     .user { align-self: flex-end; background: #2563eb; color: white; }
     .assistant { align-self: flex-start; border: 1px solid #e5e7eb; background: white; }
+    .optimizer { align-self: flex-start; border: 1px solid #a7f3d0; background: #ecfdf5; color: #022c22; }
     .label { margin-bottom: 4px; font-size: 12px; font-weight: 600; letter-spacing: .025em; text-transform: uppercase; opacity: .7; }
     .content { overflow-wrap: anywhere; line-height: 1.5rem; }
-    .user .content { white-space: pre-wrap; }
+    .user .content, .optimizer .content { white-space: pre-wrap; }
     .content > :first-child { margin-top: 0; }
     .content > :last-child { margin-bottom: 0; }
     .content h1, .content h2 { margin: 16px 0 8px; line-height: 1.25; font-weight: 600; }
