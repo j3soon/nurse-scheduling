@@ -24,7 +24,8 @@ import hashlib
 import ipaddress
 import json
 import logging
-from collections.abc import Awaitable, Callable
+import math
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlsplit
@@ -71,6 +72,8 @@ class OptimizerBackend(Protocol):
 
     async def get(self, job_id: str) -> OptimizerJobPayload: ...
 
+    def progress_events(self, job_id: str) -> AsyncIterator[dict[str, Any]]: ...
+
     async def finish_now(self, job_id: str) -> OptimizerJobPayload: ...
 
     async def cancel(self, job_id: str) -> OptimizerJobPayload: ...
@@ -115,6 +118,48 @@ class HttpOptimizerBackend:
 
     async def get(self, job_id: str) -> OptimizerJobPayload:
         return await self._request_job("GET", f"optimize/{job_id}")
+
+    async def progress_events(self, job_id: str) -> AsyncIterator[dict[str, Any]]:
+        """Resume the optimizer event stream without exposing its credential."""
+        cursor: str | None = None
+        url = urljoin(self._base_url, f"optimize/{job_id}/events")
+        while True:
+            headers = {"Last-Event-ID": cursor} if cursor is not None else None
+            try:
+                async with self._client.stream("GET", url, headers=headers) as response:
+                    response.raise_for_status()
+                    event_type = ""
+                    data_lines: list[str] = []
+                    async for line in response.aiter_lines():
+                        if line:
+                            if line.startswith("event:"):
+                                event_type = line[6:].strip()
+                            elif line.startswith("id:"):
+                                cursor = line[3:].strip()
+                            elif line.startswith("data:"):
+                                data_lines.append(line[5:].lstrip())
+                            continue
+                        if data_lines:
+                            try:
+                                payload = json.loads("\n".join(data_lines))
+                            except ValueError:
+                                payload = None
+                            if isinstance(payload, dict):
+                                if event_type == "job.progressed":
+                                    progress = _progress_payload(payload)
+                                    if progress is not None:
+                                        yield progress
+                                elif event_type == "job.state_changed" and payload.get("terminal") is True:
+                                    return
+                        event_type = ""
+                        data_lines = []
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in {404, 410}:
+                    return
+                logger.warning("Optimizer progress stream failed job_id=%s status=%s", job_id, exc.response.status_code)
+            except httpx.HTTPError as exc:
+                logger.warning("Optimizer progress stream disconnected job_id=%s error=%s", job_id, exc)
+            await asyncio.sleep(1)
 
     async def finish_now(self, job_id: str) -> OptimizerJobPayload:
         return await self._request_job("POST", f"optimize/{job_id}/finish-now")
@@ -179,6 +224,7 @@ class SessionOptimization:
     original_id_by_anonymized_id: dict[str, str]
     people_count: int
     artifact: "OptimizerArtifact | None" = None
+    progress_task: asyncio.Task[None] | None = None
 
 
 @dataclass(frozen=True)
@@ -291,6 +337,8 @@ class SessionOptimizer:
         self._starting.pop(session_id, None)
         for job in self._jobs.values():
             if job.session_id == session_id and not _is_terminal(job.payload):
+                if job.progress_task is not None:
+                    job.progress_task.cancel()
                 self._start_task(self._cancel_retired(job))
         self._discard_session(session_id)
 
@@ -363,6 +411,7 @@ class SessionOptimizer:
             elif _is_terminal(payload):
                 self._start_task(self._complete(job))
             else:
+                job.progress_task = self._start_task(self._relay_progress(job))
                 self._start_task(self._monitor(job))
         if retired:
             return AgentToolOutcome("This chat session expired while the optimizer job was starting.", False)
@@ -448,10 +497,30 @@ class SessionOptimizer:
             async with self._lock:
                 if not _is_terminal(job.payload):
                     job.payload = payload
+        if job.progress_task is not None:
+            try:
+                await asyncio.wait_for(job.progress_task, timeout=1)
+            except TimeoutError:
+                job.progress_task.cancel()
+            except asyncio.CancelledError:
+                if self._jobs.get(job.id) is job:
+                    raise
         if self._jobs.get(job.id) is job:
             await self._complete(job)
         else:
             await self._delete_retired(job)
+
+    async def _relay_progress(self, job: SessionOptimization) -> None:
+        try:
+            async for progress in self._backend.progress_events(job.remote_id):
+                if self._jobs.get(job.id) is not job:
+                    return
+                if self._on_update is not None:
+                    await self._on_update(job.session_id, {"job_id": job.id, "progress": progress})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Optimizer progress relay failed job_id=%s", job.id)
 
     async def _complete(self, job: SessionOptimization) -> None:
         artifact_error: str | None = None
@@ -557,10 +626,11 @@ class SessionOptimizer:
                 self._cached_artifact_bytes -= len(job.artifact.content)
                 self._artifact_order.remove(job_id)
 
-    def _start_task(self, coroutine: Awaitable[None]) -> None:
+    def _start_task(self, coroutine: Awaitable[None]) -> asyncio.Task[None]:
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
 
 def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, Any]:
@@ -590,6 +660,31 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
             },
         },
     }
+
+
+def _progress_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Keep only finite chart data from a first-party optimizer event."""
+    score = payload.get("currentBestScore")
+    elapsed = payload.get("elapsedSeconds")
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not math.isfinite(score)
+        or isinstance(elapsed, bool)
+        or not isinstance(elapsed, (int, float))
+        or not math.isfinite(elapsed)
+        or elapsed < 0
+    ):
+        return None
+    progress: dict[str, Any] = {"currentBestScore": score, "elapsedSeconds": elapsed}
+    source = payload.get("source")
+    if isinstance(source, str):
+        progress["source"] = source
+    for name in ("solutionIndex", "commentCount"):
+        value = payload.get(name)
+        if value is None or (isinstance(value, int) and not isinstance(value, bool)):
+            progress[name] = value
+    return progress
 
 
 def _rejection_reason(response: httpx.Response) -> str:

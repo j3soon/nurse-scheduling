@@ -24,6 +24,7 @@ import {
   parseAuthRequirement,
   type AuthRequirement,
 } from '@/utils/backendAuth';
+import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 
 export interface ToolActivity {
   name: string;
@@ -41,6 +42,11 @@ export interface OptimizationActivity {
   downloadable: boolean;
 }
 
+export interface OptimizationProgressActivity {
+  jobId: string;
+  point: OptimizationProgressPoint;
+}
+
 export interface StreamCallbacks {
   lastEventId?: number;
   onEventId?: (id: number) => void;
@@ -53,6 +59,7 @@ export interface StreamCallbacks {
   onScheduleChange?: (scheduleYaml: string) => void;
   onProposal?: (diff: string) => void;
   onOptimization?: (activity: OptimizationActivity) => void;
+  onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
   onDone?: () => void;
   onStopped?: () => void;
   onStale?: (message: string) => void;
@@ -96,6 +103,7 @@ interface SsePayload {
   state?: unknown;
   terminal?: unknown;
   downloadable?: unknown;
+  progress?: unknown;
 }
 
 export class AiHttpError extends Error {
@@ -293,6 +301,25 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
       terminal: payload.terminal,
       downloadable: payload.downloadable,
     });
+  } else if (eventType === 'optimization_progress' && typeof payload.job_id === 'string') {
+    const point = payload.progress as Record<string, unknown> | null | undefined;
+    if (
+      typeof point === 'object' && point !== null
+      && typeof point.currentBestScore === 'number' && Number.isFinite(point.currentBestScore)
+      && typeof point.elapsedSeconds === 'number' && Number.isFinite(point.elapsedSeconds)
+      && point.elapsedSeconds >= 0
+    ) {
+      callbacks.onOptimizationProgress?.({
+        jobId: payload.job_id,
+        point: {
+          currentBestScore: point.currentBestScore,
+          elapsedSeconds: point.elapsedSeconds,
+          commentCount: typeof point.commentCount === 'number' ? point.commentCount : null,
+          solutionIndex: typeof point.solutionIndex === 'number' ? point.solutionIndex : null,
+          source: typeof point.source === 'string' ? point.source : undefined,
+        },
+      });
+    }
   } else if (eventType === 'done') {
     callbacks.onDone?.();
   } else if (eventType === 'stopped') {

@@ -385,6 +385,10 @@ describe('ExperimentalAiPage', () => {
         terminal: boolean;
         downloadable: boolean;
       }) => void;
+      onOptimizationProgress?: (activity: {
+        jobId: string;
+        point: { currentBestScore: number; elapsedSeconds: number };
+      }) => void;
       onDone?: () => void;
       onEventId?: (id: number) => void;
     } | undefined;
@@ -407,6 +411,17 @@ describe('ExperimentalAiPage', () => {
       downloadable: false,
     }));
     expect(screen.getByRole('status')).toHaveTextContent('Optimizer running in the background · running');
+
+    act(() => {
+      backgroundCallbacks?.onOptimizationProgress?.({
+        jobId: 'opt-result-1', point: { currentBestScore: 12, elapsedSeconds: 1 },
+      });
+      backgroundCallbacks?.onOptimizationProgress?.({
+        jobId: 'opt-result-1', point: { currentBestScore: 23, elapsedSeconds: 2 },
+      });
+    });
+    expect(screen.getByText('Score 23')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Optimization score trend' })).toBeInTheDocument();
 
     act(() => {
       backgroundCallbacks?.onOptimization?.({
@@ -433,6 +448,7 @@ describe('ExperimentalAiPage', () => {
 
     expect(screen.queryByText('Background tool running · bash')).not.toBeInTheDocument();
     expect(screen.queryByText(/Optimizer running in the background/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Optimization score trend' })).not.toBeInTheDocument();
     expect(screen.getByText('Optimization finished. Download the optimized schedule to review it.')).toBeInTheDocument();
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);

@@ -90,28 +90,42 @@ class SessionEvent:
 
 
 class SessionEventBroker:
-    """Process-local replay and notification for background assistant turns."""
+    """Process-local replay for background turns and independent optimizer progress."""
 
     def __init__(self, max_events_per_session: int = 200, max_sessions: int = 1000) -> None:
         self._max_events_per_session = max_events_per_session
         self._max_sessions = max_sessions
         self._events: dict[str, list[SessionEvent]] = {}
+        self._progress_events: dict[str, list[SessionEvent]] = {}
+        self._last_ids: dict[str, int] = {}
         self._signals: dict[str, asyncio.Event] = {}
 
     def publish(self, session_id: str, event_type: str, data: dict[str, object]) -> None:
         if session_id not in self._events and len(self._events) >= self._max_sessions:
             oldest_session_id = next(iter(self._events))
-            self._events.pop(oldest_session_id, None)
-            self._signals.pop(oldest_session_id, None)
-        events = self._events.setdefault(session_id, [])
-        event_id = events[-1].id + 1 if events else 1
+            self.forget_session(oldest_session_id)
+        self._events.setdefault(session_id, [])
+        events = (
+            self._progress_events.setdefault(session_id, [])
+            if event_type == "optimization_progress"
+            else self._events[session_id]
+        )
+        event_id = self._last_ids.get(session_id, 0) + 1
+        self._last_ids[session_id] = event_id
         events.append(SessionEvent(event_id, event_type, data))
         del events[: -self._max_events_per_session]
         self._signals.setdefault(session_id, asyncio.Event()).set()
 
+    def forget_session(self, session_id: str) -> None:
+        self._events.pop(session_id, None)
+        self._progress_events.pop(session_id, None)
+        self._last_ids.pop(session_id, None)
+        self._signals.pop(session_id, None)
+
     def events_after(self, session_id: str, after_id: int = 0) -> tuple[SessionEvent, ...]:
         """Return retained events after a cursor for replay and diagnostics."""
-        return tuple(event for event in self._events.get(session_id, ()) if event.id > after_id)
+        retained = (*self._events.get(session_id, ()), *self._progress_events.get(session_id, ()))
+        return tuple(sorted((event for event in retained if event.id > after_id), key=lambda event: event.id))
 
     async def stream(self, session_id: str, after_id: int) -> AsyncIterator[SessionEvent | None]:
         while True:

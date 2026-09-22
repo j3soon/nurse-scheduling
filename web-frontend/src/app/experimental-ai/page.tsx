@@ -26,6 +26,7 @@ import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useLayoutEff
 import { FiArrowDown, FiArrowUp, FiChevronDown, FiDownload, FiMic, FiPlus, FiSquare } from 'react-icons/fi';
 import AppVersionText from '@/components/AppVersionText';
 import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
+import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import {
   DOCUMENTATION_URLS,
@@ -74,6 +75,10 @@ interface ChatMessage extends ChatExportMessage {
     requiresAttachments: boolean;
   };
   optimizerJob?: Pick<OptimizationActivity, 'jobId' | 'downloadable'>;
+}
+
+interface ActiveOptimization extends OptimizationActivity {
+  points: OptimizationProgressPoint[];
 }
 
 const AI_STORAGE_KEY = 'nurse-scheduling-ai-data';
@@ -202,7 +207,7 @@ interface StoredChatConversation {
   syncedSchedule: string;
   proposalDiff: string | null;
   sessionEventId?: number;
-  activeOptimization?: OptimizationActivity | null;
+  activeOptimization?: ActiveOptimization | null;
 }
 
 const DISABLED_FILE_CAPABILITY: AiCapabilities['file_attachments'] = {
@@ -285,6 +290,13 @@ function readStoredConversation(): StoredChatConversation | null {
         || typeof value.activeOptimization.state !== 'string'
         || typeof value.activeOptimization.terminal !== 'boolean'
         || typeof value.activeOptimization.downloadable !== 'boolean'
+        || (value.activeOptimization.points !== undefined && (
+          !Array.isArray(value.activeOptimization.points)
+          || !value.activeOptimization.points.every(point => (
+            typeof point.currentBestScore === 'number' && Number.isFinite(point.currentBestScore)
+            && typeof point.elapsedSeconds === 'number' && Number.isFinite(point.elapsedSeconds)
+          ))
+        ))
       ))
       || typeof value.syncedSchedule !== 'string'
       || (value.proposalDiff !== null && typeof value.proposalDiff !== 'string')
@@ -370,6 +382,28 @@ function appendResponseActivity(entries: ActivityEntry[], text: string): Activit
   return [...entries, { kind: 'response', text }];
 }
 
+function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[] }) {
+  const firstTime = points[0].elapsedSeconds;
+  const lastTime = points[points.length - 1].elapsedSeconds;
+  let minimum = points[0].currentBestScore;
+  let maximum = minimum;
+  for (const point of points) {
+    minimum = Math.min(minimum, point.currentBestScore);
+    maximum = Math.max(maximum, point.currentBestScore);
+  }
+  const path = points.map((point, index) => {
+    const x = lastTime === firstTime ? 2 + index * 108 / Math.max(points.length - 1, 1)
+      : 2 + (point.elapsedSeconds - firstTime) * 108 / (lastTime - firstTime);
+    const y = maximum === minimum ? 14 : 26 - (point.currentBestScore - minimum) * 24 / (maximum - minimum);
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg role="img" aria-label="Optimization score trend" viewBox="0 0 112 28" className="h-7 w-28 shrink-0">
+      <polyline points={path} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function ThinkingIndicator() {
   return (
     <span role="status" aria-label="Thinking" className="inline-flex items-center gap-2 text-gray-600">
@@ -427,7 +461,7 @@ export default function ExperimentalAiPage() {
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
-  const [activeOptimization, setActiveOptimization] = useState<OptimizationActivity | null>(null);
+  const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
@@ -526,7 +560,9 @@ export default function ExperimentalAiPage() {
       setProposalDiff(storedConversation.proposalDiff);
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
-      setActiveOptimization(storedConversation.activeOptimization ?? null);
+      setActiveOptimization(storedConversation.activeOptimization
+        ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
+        : null);
       syncedScheduleRef.current = storedConversation.syncedSchedule;
       sessionEndpointRef.current = storedConversation.endpoint;
       if (storedConversation.expiresAt <= Date.now()) {
@@ -1130,7 +1166,10 @@ export default function ExperimentalAiPage() {
         onProposal: diff => setProposalDiff(diff),
         onOptimization: activity => {
           if (!activity.terminal) {
-            setActiveOptimization(activity);
+            setActiveOptimization(current => ({
+              ...activity,
+              points: current?.jobId === activity.jobId ? current.points : [],
+            }));
             return;
           }
           setActiveOptimization(current => current?.jobId === activity.jobId ? null : current);
@@ -1150,6 +1189,23 @@ export default function ExperimentalAiPage() {
                 optimizerJob: { jobId: activity.jobId, downloadable: activity.downloadable },
               },
             ]);
+        },
+        onOptimizationProgress: ({ jobId, point }) => {
+          setActiveOptimization(current => {
+            if (current !== null && current.jobId !== jobId) return current;
+            const previous = current?.points ?? [];
+            const last = previous.at(-1);
+            if (last?.elapsedSeconds === point.elapsedSeconds && last.currentBestScore === point.currentBestScore) {
+              return current;
+            }
+            return {
+              jobId,
+              state: current?.state ?? 'running',
+              terminal: false,
+              downloadable: false,
+              points: [...previous, point],
+            };
+          });
         },
         onDone: () => {
           updateBackgroundMessage(message => ({
@@ -2048,10 +2104,20 @@ export default function ExperimentalAiPage() {
         {activeOptimization !== null && (
           <div
             role="status"
-            className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900"
+            className="flex flex-wrap items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900"
           >
             <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-violet-600" />
             <span>Optimizer running in the background · {activeOptimization.state}</span>
+            {activeOptimization.points.length > 0 && (
+              <div className="ml-auto flex items-center gap-2 text-violet-800">
+                <span className="font-semibold tabular-nums">
+                  Score {new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(
+                    activeOptimization.points.at(-1)!.currentBestScore
+                  )}
+                </span>
+                {activeOptimization.points.length > 1 && <OptimizationSparkline points={activeOptimization.points} />}
+              </div>
+            )}
           </div>
         )}
         {backgroundRunningTool?.kind === 'tool' && (

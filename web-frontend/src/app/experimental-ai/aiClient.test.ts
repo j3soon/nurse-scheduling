@@ -301,15 +301,17 @@ describe('AI client', () => {
   it('streams optimizer-triggered turns with authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamedResponse([
       'id: 1\nevent: optimization\ndata: {"job_id":"opt-1","state":"running","terminal":false,"downloadable":false}\n\n',
-      'id: 2\nevent: turn_start\ndata: {"message_id":"background-1","trigger":"optimizer"}\n\n',
-      'id: 3\nevent: delta\ndata: {"text":"Score 23."}\n\n',
-      'id: 4\nevent: done\ndata: {"message_id":"background-1"}\n\n',
+      'id: 2\nevent: optimization_progress\ndata: {"job_id":"opt-1","progress":{"currentBestScore":23,"elapsedSeconds":2,"source":"solver"}}\n\n',
+      'id: 3\nevent: turn_start\ndata: {"message_id":"background-1","trigger":"optimizer"}\n\n',
+      'id: 4\nevent: delta\ndata: {"text":"Score 23."}\n\n',
+      'id: 5\nevent: done\ndata: {"message_id":"background-1"}\n\n',
     ]));
     vi.stubGlobal('fetch', fetchMock);
     const starts: string[] = [];
     const texts: string[] = [];
     const done = vi.fn();
     const optimizations = vi.fn();
+    const progress = vi.fn();
     const eventIds: number[] = [];
 
     await streamSessionEvents(
@@ -318,6 +320,7 @@ describe('AI client', () => {
         onTurnStart: (messageId, trigger) => starts.push(`${messageId}:${trigger}`),
         onDelta: text => texts.push(text),
         onOptimization: optimizations,
+        onOptimizationProgress: progress,
         onDone: done,
         onEventId: id => eventIds.push(id),
       },
@@ -328,12 +331,22 @@ describe('AI client', () => {
     expect(starts).toEqual(['background-1:optimizer']);
     expect(texts).toEqual(['Score 23.']);
     expect(done).toHaveBeenCalledOnce();
-    expect(eventIds).toEqual([1, 2, 3, 4]);
+    expect(eventIds).toEqual([1, 2, 3, 4, 5]);
     expect(optimizations).toHaveBeenCalledWith({
       jobId: 'opt-1',
       state: 'running',
       terminal: false,
       downloadable: false,
+    });
+    expect(progress).toHaveBeenCalledWith({
+      jobId: 'opt-1',
+      point: {
+        currentBestScore: 23,
+        elapsedSeconds: 2,
+        source: 'solver',
+        solutionIndex: null,
+        commentCount: null,
+      },
     });
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.nursescheduling.org/ai/sessions/session%2Fid/events',

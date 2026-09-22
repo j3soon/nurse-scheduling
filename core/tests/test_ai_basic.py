@@ -1436,6 +1436,11 @@ class BackgroundTestOptimizer:
             result={"outcome": "feasible", "score": 23},
         )
 
+    async def progress_events(self, _job_id: str) -> AsyncIterator[dict[str, object]]:
+        yield {"currentBestScore": 23, "elapsedSeconds": 2}
+        while not self.release.is_set():
+            await asyncio.sleep(0.001)
+
     async def finish_now(self, job_id: str) -> OptimizerJobPayload:
         self.release.set()
         return OptimizerJobPayload(id=job_id, state="running")
@@ -1549,6 +1554,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
 
         assert [event.type for event in events] == [
             "optimization",
+            "optimization_progress",
             "optimization",
             "turn_start",
             "tool_start",
@@ -1558,9 +1564,10 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         ]
         assert events[0].data["state"] == "running"
         assert events[0].data["terminal"] is False
-        assert events[1].data["state"] == "completed"
-        assert events[1].data["downloadable"] is True
-        assert events[5].data == {"text": "The optimizer returned score 23."}
+        assert events[1].data["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2}
+        assert events[2].data["state"] == "completed"
+        assert events[2].data["downloadable"] is True
+        assert events[6].data == {"text": "The optimizer returned score 23."}
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id

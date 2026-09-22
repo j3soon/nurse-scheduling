@@ -21,10 +21,12 @@
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
 
+from nurse_scheduling.ai.background import SessionEventBroker
 from nurse_scheduling.ai.optimizer import (
     HttpOptimizerBackend,
     OptimizerArtifact,
@@ -106,6 +108,10 @@ class FakeOptimizerBackend:
             links={"schedule": f"/optimize/{job_id}/xlsx"},
         )
 
+    async def progress_events(self, job_id: str) -> AsyncIterator[dict[str, object]]:
+        if False:
+            yield {"job_id": job_id}
+
     async def finish_now(self, job_id: str) -> OptimizerJobPayload:
         self.finish_requests.append(job_id)
         self.release.set()
@@ -186,6 +192,65 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
         assert b'name="timeout"' in requests[0].content
 
     asyncio.run(scenario())
+
+
+def test_http_backend_resumes_optimizer_progress_with_its_server_side_token() -> None:
+    async def scenario() -> None:
+        requests: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    200,
+                    text='id: 1\nevent: job.progressed\ndata: {"currentBestScore": 12, "elapsedSeconds": 1}\n\n',
+                )
+            return httpx.Response(
+                200,
+                text=(
+                    'id: 2\nevent: job.progressed\ndata: {"currentBestScore": 18, "elapsedSeconds": 2, '
+                    '"source": "solver", "solutionIndex": 2, "commentCount": 1}\n\n'
+                    'id: 3\nevent: job.state_changed\ndata: {"state": "completed", "terminal": true}\n\n'
+                ),
+            )
+
+        backend = HttpOptimizerBackend(
+            "http://api:8000", "optimizer-token", 5, 1_000_000, transport=httpx.MockTransport(handle)
+        )
+        points = [point async for point in backend.progress_events("remote-1")]
+        await backend.close()
+
+        assert points == [
+            {"currentBestScore": 12, "elapsedSeconds": 1, "solutionIndex": None, "commentCount": None},
+            {
+                "currentBestScore": 18,
+                "elapsedSeconds": 2,
+                "source": "solver",
+                "solutionIndex": 2,
+                "commentCount": 1,
+            },
+        ]
+        assert requests[0].headers["authorization"] == "Bearer optimizer-token"
+        assert "last-event-id" not in requests[0].headers
+        assert requests[1].headers["last-event-id"] == "1"
+
+    asyncio.run(scenario())
+
+
+def test_optimizer_progress_replay_does_not_displace_background_turn_events() -> None:
+    broker = SessionEventBroker(max_events_per_session=2)
+    broker.publish("session-1", "turn_start", {"message_id": "turn-1"})
+    for score in (1, 2, 3):
+        broker.publish("session-1", "optimization_progress", {"score": score})
+    broker.publish("session-1", "done", {"message_id": "turn-1"})
+
+    events = broker.events_after("session-1")
+    assert [(event.id, event.type) for event in events] == [
+        (1, "turn_start"),
+        (3, "optimization_progress"),
+        (4, "optimization_progress"),
+        (5, "done"),
+    ]
 
 
 def test_a_rejected_request_tells_the_model_what_the_optimizer_refused() -> None:
@@ -287,6 +352,44 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
         assert "limit of 1" in limited.text
         await optimizer.close()
         assert backend.closed
+
+    asyncio.run(scenario())
+
+
+def test_progress_reaches_browser_updates_without_entering_the_agent_prompt() -> None:
+    class ProgressBackend(FakeOptimizerBackend):
+        async def progress_events(self, job_id: str) -> AsyncIterator[dict[str, object]]:
+            yield {"currentBestScore": 23, "elapsedSeconds": 2, "source": "solver"}
+            await self.release.wait()
+
+    async def scenario() -> None:
+        backend = ProgressBackend()
+        updates: list[dict[str, object]] = []
+        prompts: list[str] = []
+        progress_seen = asyncio.Event()
+        completed = asyncio.Event()
+
+        async def on_update(_session_id: str, update: dict[str, object]) -> None:
+            updates.append(update)
+            if "progress" in update:
+                progress_seen.set()
+
+        async def on_completion(_session_id: str, prompt: str, _artifact: OptimizerArtifact | None) -> None:
+            prompts.append(prompt)
+            completed.set()
+
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
+        )
+        await optimizer.execute("session-1", TEST_SCHEDULE, '{"action":"start"}')
+        await asyncio.wait_for(progress_seen.wait(), timeout=1)
+        assert updates[1]["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2, "source": "solver"}
+        assert not prompts
+
+        backend.release.set()
+        await asyncio.wait_for(completed.wait(), timeout=2)
+        assert "currentBestScore" not in prompts[0]
+        await optimizer.close()
 
     asyncio.run(scenario())
 

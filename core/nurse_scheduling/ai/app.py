@@ -682,7 +682,11 @@ def create_app(
                     del background_turn_tasks[session_id]
 
     async def optimizer_updated(session_id: str, update: dict[str, object]) -> None:
-        event_broker.publish(session_id, "optimization", update)
+        event_broker.publish(
+            session_id,
+            "optimization_progress" if "progress" in update else "optimization",
+            update,
+        )
 
     session_optimizer = SessionOptimizer(
         optimizer_backend,
@@ -702,6 +706,7 @@ def create_app(
         turn_locks.pop(session_id, None)
         pending_turn_stops.discard(session_id)
         session_optimizer.forget_session(session_id)
+        event_broker.forget_session(session_id)
 
     store.on_retire(retire_session)
 
