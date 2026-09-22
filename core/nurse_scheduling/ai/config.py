@@ -115,7 +115,7 @@ class AiSettings:
     auth_token: str | None = None
     auth_tokens: tuple[AuthCredential, ...] = ()
     auth_required: bool = False
-    provider_timeout_seconds: float = 120.0
+    provider_timeout_seconds: float = 180.0
     provider_max_attempts: int = 3
     provider_retry_backoff_seconds: float = 1.0
     optimizer_base_url: str = "http://localhost:8000"
@@ -141,10 +141,10 @@ class AiSettings:
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
-    sandbox_command_timeout_seconds: float = 10.0
-    sandbox_turn_timeout_seconds: float = 900.0
-    agent_max_tool_rounds: int = 100
-    agent_max_tool_calls: int = 200
+    sandbox_command_timeout_seconds: float = 30.0
+    sandbox_turn_timeout_seconds: float = 3600.0
+    agent_max_tool_rounds: int = 200
+    agent_max_tool_calls: int = 400
     sandbox_cleanup_timeout_seconds: float = 10.0
     sandbox_max_attempts: int = 3
     sandbox_retry_backoff_seconds: float = 0.5
@@ -189,7 +189,7 @@ class AiSettings:
             auth_token=auth_token,
             auth_tokens=auth_tokens,
             auth_required=_read_bool(AI_AUTH_REQUIRED_ENV_NAME, False),
-            provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 120.0),
+            provider_timeout_seconds=_read_positive_float("AI_PROVIDER_TIMEOUT_SECONDS", 180.0),
             provider_max_attempts=_read_positive_int("AI_PROVIDER_MAX_ATTEMPTS", 3),
             provider_retry_backoff_seconds=_read_non_negative_float("AI_PROVIDER_RETRY_BACKOFF_SECONDS", 1.0),
             optimizer_base_url=os.getenv("AI_OPTIMIZER_BASE_URL", "").strip().rstrip("/") or "http://localhost:8000",
@@ -214,10 +214,10 @@ class AiSettings:
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,
-            sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 10.0),
-            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 900.0),
-            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 100),
-            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 200),
+            sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 30.0),
+            sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 3600.0),
+            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 200),
+            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 400),
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
             sandbox_max_attempts=_read_positive_int("AI_SANDBOX_MAX_ATTEMPTS", 3),
             sandbox_retry_backoff_seconds=_read_non_negative_float("AI_SANDBOX_RETRY_BACKOFF_SECONDS", 0.5),

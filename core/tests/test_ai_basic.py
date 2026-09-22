@@ -1345,19 +1345,25 @@ def test_environment_configuration_requires_e2b_key_when_selected(monkeypatch: p
         AiSettings.from_env()
 
 
-def test_environment_configuration_defaults_to_a_fifteen_minute_sandbox_turn(
+def test_environment_configuration_defaults_to_extended_sandbox_turn_limits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
     monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
     monkeypatch.setenv("AI_SANDBOX_BACKEND", "e2b")
     monkeypatch.setenv("E2B_API_KEY", "e2b-key")
+    monkeypatch.delenv("AI_PROVIDER_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("AI_AGENT_MAX_TOOL_ROUNDS", raising=False)
+    monkeypatch.delenv("AI_AGENT_MAX_TOOL_CALLS", raising=False)
 
     settings = AiSettings.from_env()
-    assert settings.sandbox_turn_timeout_seconds == 900
-    assert settings.agent_max_tool_rounds == 100
-    assert settings.agent_max_tool_calls == 200
+    assert settings.provider_timeout_seconds == 180
+    assert settings.sandbox_command_timeout_seconds == 30
+    assert settings.sandbox_turn_timeout_seconds == 3600
+    assert settings.agent_max_tool_rounds == 200
+    assert settings.agent_max_tool_calls == 400
 
 
 def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytest.MonkeyPatch) -> None:
