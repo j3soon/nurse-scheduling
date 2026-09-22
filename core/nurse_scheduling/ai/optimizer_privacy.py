@@ -119,7 +119,9 @@ def prepare_optimizer_schedule(schedule_yaml: str, max_schedule_bytes: int) -> P
     payload = _load_yaml(schedule_yaml.encode("utf-8"))
     people = payload["people"]
     items = people["items"]
-    used_ids = {group["id"] for group in people["groups"]}
+    # Optional sections are absent from a valid schedule that never declares them.
+    groups = people.get("groups", [])
+    used_ids = {group["id"] for group in groups}
     anonymized_id_by_original_id: dict[str, str] = {}
     original_id_by_anonymized_id: dict[str, str] = {}
     next_index = 1
@@ -135,7 +137,7 @@ def prepare_optimizer_schedule(schedule_yaml: str, max_schedule_bytes: int) -> P
         item["id"] = anonymized_id
         next_index += 1
 
-    for group in people["groups"]:
+    for group in groups:
         group["members"] = _map_references(group["members"], anonymized_id_by_original_id)
     for preference in payload["preferences"]:
         kind = preference["type"]

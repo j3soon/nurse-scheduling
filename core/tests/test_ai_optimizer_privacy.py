@@ -104,3 +104,17 @@ def test_optimizer_workbook_restores_ids_before_download_and_attachment() -> Non
 def test_optimizer_workbook_rejects_invalid_result() -> None:
     with pytest.raises(OptimizerResultError, match="not an XLSX"):
         restore_people_ids(b"not a workbook", {"P1": "Alice"}, 1)
+
+
+def test_optimizer_submission_accepts_a_schedule_without_people_groups() -> None:
+    payload = base_schedule_payload()
+    payload["people"]["items"] = [{"id": "Alice", "description": "", "history": []}]
+    del payload["people"]["groups"]
+    payload["preferences"][1]["person"] = ["Alice"]
+
+    prepared = prepare_optimizer_schedule(schedule_yaml(payload), 1_000_000)
+    outbound = parse_schedule(prepared.submission_yaml)
+
+    assert prepared.original_id_by_anonymized_id == {"P1": "Alice"}
+    assert [person["id"] for person in outbound["people"]["items"]] == ["P1"]
+    assert outbound["preferences"][1]["person"] == ["P1"]
