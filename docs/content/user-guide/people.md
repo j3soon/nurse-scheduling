@@ -16,10 +16,11 @@ are reused in staffing and preference rules.
 
 ## Add people
 
-- Keep at least one person. The starter people are sufficient for an initial
-  test.
-- For a real schedule, double-click starter IDs to replace them with the actual
-  roster. Select **Add Person** for additional entries.
+- Keep at least one person. Select **Add Person** to create one, or upload a
+  roster.
+- For a real schedule, upload the full roster, or double-click an ID to edit it
+  and replace it with the actual one. Select **Add Person** for additional
+  entries.
 - Optional: add descriptions or drag rows to control workbook order.
 
 Deleting or renaming a person updates references in preferences and export

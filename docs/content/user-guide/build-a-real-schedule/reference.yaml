@@ -7,9 +7,53 @@
 #   shift-requests-strong.csv  concrete person-date requests, weight 11000000000
 #   shift-requests-moderate.csv  concrete person-date requests, weight 11000000
 #
-# Everything below is created through the UI, in the order listed, so the
-# app's normalized YAML matches the bundled example. Weights of -inf / inf
-# are entered with the -inf / inf controls (or +/- infinity buttons).
+# The date range (November 1-30, 2025) is set on the Dates page and the 87
+# people are imported from people.txt. Everything below is created through
+# the UI, in the order listed, so the app's normalized YAML matches the
+# bundled example. Weights of -inf / inf are entered with the -inf / inf
+# controls (or +/- infinity buttons).
+shiftTypes:
+  # Eleven shift types, created on the Shift Types page before the groups.
+  items:
+    - id: D
+      description: 8~4(5), Any
+    - id: D+
+      description: 8~4(5), Senior
+    - id: E
+      description: 4~12(5), Any
+    - id: E+
+      description: 4~12(5), Senior
+    - id: N
+      description: 12~8(4), Any
+    - id: N+
+      description: 12~8(4), Senior
+    - id: A
+      description: ADM
+    - id: D~
+      description: 新人不算人力
+    - id: E~
+      description: 新人不算人力
+    - id: N~
+      description: 新人不算人力
+    - id: K
+      description: 上課
+  # Five shift-type groups, created after the items above.
+  groups:
+    - id: Day
+      members: [D, D+, A, D~, K]
+      description: includes special day shifts
+    - id: Day (w/o A, D~, K)
+      members: [D, D+]
+      description: excludes special day shifts
+    - id: Evening
+      members: [E, E+, E~]
+      description: ''
+    - id: Night
+      members: [N, N+, N~]
+      description: ''
+    - id: Student Shifts
+      members: [D~, E~, N~]
+      description: includes D~, E~, N~
 peopleGroups:
   - id: Day People w/o A
     description: ''

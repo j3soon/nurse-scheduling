@@ -1,25 +1,22 @@
 # Build a Real Schedule
 
 This guide rebuilds the bundled, anonymized 87-person ward schedule for
-November 2025 entirely through the running web UI. It is validated
-end-to-end: after the steps below, **Save and Load → Download** produces a YAML
-file that matches the bundled example
-(`large-ward-with-87-people-2025-11.yaml`), except for the `appVersion` stamp,
-the top-level `description`, and two group-date requests that the UI stores as
-single-date pairs (see [Validate the result](#validate-the-result)).
+November 2025 entirely through the running web UI, starting from an empty
+schedule. It is validated end-to-end: after the steps below, **Save and Load →
+Download** produces a YAML file that matches the bundled example
+(`large-ward-with-87-people-2025-11.yaml`), except for the `appVersion` stamp
+and two group-date requests that the UI stores as single-date pairs (see
+[Validate the result](#validate-the-result)).
 
 People are anonymized as `P1` through `P87`. Group descriptions keep the
 original ward's mix of English and Chinese labels.
 
 ## Data files
 
-The companion files in the `build-a-real-schedule/` directory make
-the large, repetitive parts of the schedule importable in one action instead of
-hundreds of cell edits:
+The companion files in the `build-a-real-schedule/` directory make the large,
+repetitive parts of the schedule importable in one action instead of hundreds
+of cell edits:
 
-- [`starter.yaml`](build-a-real-schedule/starter.yaml): a minimal starter with the
-  November 2025 date range, the 11 shift types and 5 shift-type groups, and the
-  default *at most one shift per day* preference.
 - [`people.txt`](build-a-real-schedule/people.txt): the 87 person IDs.
 - [`people-history.csv`](build-a-real-schedule/people-history.csv): previous-shift
   history for every person.
@@ -28,24 +25,48 @@ hundreds of cell edits:
 - [`shift-requests-moderate.csv`](build-a-real-schedule/shift-requests-moderate.csv):
   concrete person-date requests at weight `11000000` (90 cells).
 - [`reference.yaml`](build-a-real-schedule/reference.yaml): the exact values for the
-  groups and rules that the app does not bulk-import. Create these in the UI, in
-  the listed order, so the normalized YAML matches the bundled example.
+  shift types, groups, and rules that the app does not bulk-import. Create these
+  in the UI, in the listed order, so the normalized YAML matches the bundled
+  example.
 
-## 1. Load the starter
+The November 1–30 date range is entered on the Dates page in step 1; it is not
+imported from a file.
 
-1. On the app home page, select **New Schedule**, then **Reset Data**, and
-   confirm.
-2. Open **Save and Load** and select **Upload**.
-3. Choose `starter.yaml`.
+## 1. Start from empty and set the dates
 
-Because the starter omits `appVersion`, the app shows a version notice such as
-*“The loaded file does not contain app version information … Do you want to
-continue loading the file?”* Select **OK**. The starter sets the date range,
-shift types, shift-type groups, and the default one-shift-per-day preference.
+1. On the app home page, select **New Schedule**, then **Create empty schedule**,
+   and confirm. The new schedule already includes the default *at most one shift
+   per day* preference.
+2. Open **Dates** and select **Set Date Range**.
+3. Set the start date to `2025-11-01` and the end date to `2025-11-30` (30 days
+   selected).
+4. Leave **Import Taiwan holidays into date groups** unchecked; the ward defines
+   its own `WORKDAY` and `FREEDAY` groups in step 5.
+5. Select **Update**.
 
-![Starter YAML loaded with the November range and shift types](../assets/images/user-guide/build-a-real-schedule/build-real-starter.png)
+The app creates one date item per day (`01`–`30`) and the automatic groups
+`ALL`, `WEEKDAY`, `WEEKEND`, and the weekday names.
 
-## 2. Add the 87 people
+![November 1–30 range with the automatic date groups](../assets/images/user-guide/build-a-real-schedule/build-real-dates-range.png)
+
+## 2. Create the shift types
+
+Create the 11 shift types listed under `shiftTypes.items` in `reference.yaml`,
+in that order: `D`, `D+`, `E`, `E+`, `N`, `N+`, `A`, `D~`, `E~`, `N~`, and `K`.
+Open **Shift Types**, select **Add Shift Type**, enter the ID and description,
+and select **Add**. Repeat for each shift type.
+
+The automatic `OFF` shift type and `ALL` group are always present and cannot be
+edited or deleted.
+
+Then create the 5 shift-type groups listed under `shiftTypes.groups` in
+`reference.yaml`, in that order: `Day`, `Day (w/o A, D~, K)`, `Evening`,
+`Night`, and `Student Shifts`. Select **Add Group**, enter the ID and
+description, select the member shift types, and select **Add**.
+
+![Eleven shift types and five shift-type groups with their members](../assets/images/user-guide/build-a-real-schedule/build-real-shift-types.png)
+
+## 3. Add the 87 people
 
 1. Open **People** and select **Upload People**.
 2. Choose `people.txt`.
@@ -55,7 +76,7 @@ The upload adds all 87 people (`P1`–`P87`). Each appears under the automatic
 
 ![Roster of P1 through P87 under the automatic ALL group](../assets/images/user-guide/build-a-real-schedule/build-real-people.png)
 
-## 3. Add previous-shift history
+## 4. Add previous-shift history
 
 1. Open **Shift Requests** and select **Quick Add Preference**.
 2. Select **Upload People History (shorthand)** and choose `people-history.csv`.
@@ -65,10 +86,10 @@ columns so succession rules can reach back before November 1.
 
 ![Previous-shift history for the ward roster](../assets/images/user-guide/build-a-real-schedule/build-real-history.png)
 
-## 4. Create the date groups
+## 5. Create the date groups
 
-The starter already defines the November 1–30 date range. Create the five ward
-date groups listed under `dateGroups` in `reference.yaml`:
+The November 1–30 range is already set. Create the five ward date groups listed
+under `dateGroups` in `reference.yaml`:
 
 | ID | Members |
 | --- | --- |
@@ -84,7 +105,7 @@ Keep the creation order from `reference.yaml`.
 
 ![Five ward date groups above the automatic calendar groups](../assets/images/user-guide/build-a-real-schedule/build-real-date-groups.png)
 
-## 5. Create the people groups
+## 6. Create the people groups
 
 Create the 13 ward people groups listed under `peopleGroups` in
 `reference.yaml`, in that order: `Day People w/o A`, `Day People`,
@@ -98,7 +119,7 @@ the member people from `reference.yaml`. Groups may overlap; the automatic
 
 ![Thirteen ward people groups with their member chips](../assets/images/user-guide/build-a-real-schedule/build-real-people-groups.png)
 
-## 6. Import the concrete requests
+## 7. Import the concrete requests
 
 The two CSVs hold every request for a specific person on a specific date.
 Because a CSV upload applies one weight to every non-empty cell, the cells are
@@ -113,7 +134,7 @@ split by weight into two uploads.
 Each row is one person; the columns line up with the displayed dates. Blank
 cells are ignored, so the two uploads do not conflict.
 
-## 7. Add the group and person requests
+## 8. Add the group and person requests
 
 Create the 33 shift requests listed under `shiftRequests` in `reference.yaml`
 with **Quick Add Preference**. These are the requests the CSVs do not cover:
@@ -130,7 +151,7 @@ Red cells show discouraged or forbidden work.
 
 ![Group rows filled with requests across the date-group columns](../assets/images/user-guide/build-a-real-schedule/build-real-requests.png)
 
-## 8. Add the staffing requirements
+## 9. Add the staffing requirements
 
 Create the 8 shift-type requirements listed under `requirements` in
 `reference.yaml`. Open **Shift Type Requirements** and select **Add
@@ -143,7 +164,7 @@ Requirement** for each:
 
 ![Eight staffing requirements for the ward](../assets/images/user-guide/build-a-real-schedule/build-real-requirements.png)
 
-## 9. Add the succession rules
+## 10. Add the succession rules
 
 Create the 14 shift-type successions listed under `successions` in
 `reference.yaml`. Open **Shift Type Successions** and add each pattern for
@@ -153,7 +174,7 @@ people `ALL` on dates `ALL`. These forbid sequences such as *Day then Night*
 
 ![Fourteen succession rules applied to everyone](../assets/images/user-guide/build-a-real-schedule/build-real-successions.png)
 
-## 10. Add the workload counts
+## 11. Add the workload counts
 
 Create the 3 shift counts listed under `shiftCounts` in `reference.yaml`. Open
 **Shift Counts** and add each, counting `OFF` with the expression `|x - T|^2`
@@ -169,13 +190,13 @@ at weight `-1000`:
 
 1. Open **Save and Load** and select **Download**.
 2. Compare the downloaded YAML to the bundled example. The `apiVersion`,
-   `dates`, `people`, and `shiftTypes` sections match, and every preference
-   matches once you group requests by person, shift type, and weight.
+   `description`, `dates`, `people`, and `shiftTypes` sections match, and every
+   preference matches once you group requests by person, shift type, and
+   weight.
 
-The download differs from the bundled example only in three ways, all expected:
+The download differs from the bundled example only in two ways, both expected:
 
 - `appVersion` is stamped with the running app version.
-- The top-level `description` is whatever the starter set.
 - Two group-date requests (*Day People → Evening* and *Evening People → Day*,
   each on `Before 4` and `After 4`) are stored as two single-date requests
   instead of one multi-date request. The app merges concrete date items

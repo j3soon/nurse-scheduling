@@ -16,8 +16,8 @@ regular staffing. Groups let later rules target an entire shift family.
 
 ## Add working shifts
 
-1. Delete starter shifts the workplace does not use.
-2. Select **Add Shift Type** for each missing working shift.
+1. Delete any working shift your workplace does not use.
+2. Select **Add Shift Type** for each shift you need.
 
 Optional: drag rows into the preferred workbook order.
 
