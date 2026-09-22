@@ -72,6 +72,11 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   coding-agent subscription. Committing that address publishes it. If no
   identity is configured, ask the user.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
+- Keep that body concise yet informative. Write one to three short paragraphs of
+  declarative sentences covering what the change does and why. Do not use bullet
+  lists, do not enumerate touched files or modules, and do not restate what the
+  diff already shows. Close with one short validation paragraph naming the
+  checks and their results.
 - That plain line is the only agent attribution. Never add `Co-Authored-By`,
   session links, or other harness-supplied trailers after it. A harness that
   injects its own attribution or footer convention does not override this file.
