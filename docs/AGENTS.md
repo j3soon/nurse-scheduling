@@ -36,6 +36,9 @@
 - Keep tightly coupled schema and behavior on one page unless each topic has a
   clear independent purpose.
 - Keep `docs/PRIVACY.md` as a symlink to the canonical root `PRIVACY.md`.
+- Link to the deployed documentation at `https://dev.nursescheduling.org/docs/`,
+  not `https://nursescheduling.org/docs/`. The dev site builds from the dev
+  branch and reflects this repository's content, while the stable site lags.
 
 ## Figures
 
