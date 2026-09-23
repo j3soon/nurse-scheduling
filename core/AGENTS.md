@@ -202,8 +202,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   signal change the response a caller sees.
 - Record the address a request connected from as a tag rather than overriding
   Sentry's own attribution, so a caller claiming another address stays visible.
-  `tag_client_address` does this for every request and depends on
-  `FORWARDED_ALLOW_IPS` naming the deployment's trusted proxies.
+  `tag_client_address` does this for every request. Compose treats its local
+  service containers as trusted and tells Uvicorn to accept forwarded headers
+  from them. NGINX must replace public `X-Forwarded-For` with Cloudflare's
+  `CF-Connecting-IP`, so a caller cannot choose the API's client address.
 - Count repeats in `server/suspicion.py`, keyed by signal and a salted address
   digest. Counting is advisory, so a storage failure must leave a report
   unescalated rather than drop it or change the response. Keep the salt private.

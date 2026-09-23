@@ -356,26 +356,20 @@ because a stale tab names one job and a mistyped token names none. Changing `API
 every stream token already handed out, so expect `forged_stream_token` from real
 clients until the longest outstanding one expires.
 
-Every event carries a `client.address` tag holding the address its request
-connected from. Sentry's own attribution is left alone, and it infers the
-address from the leftmost `X-Forwarded-For` entry, which the caller supplies.
-Uvicorn resolves the address from the proxy chain it trusts instead, so a caller
-claiming a different one shows up as a disagreement between the tag and the
-reported address. A peer that is not an address, such as a Unix socket, is not
-tagged.
+Every event carries a `client.address` tag holding the address Uvicorn resolved
+for its request. Sentry's own attribution is left alone. In Compose, NGINX
+replaces `X-Forwarded-For` with Cloudflare's single `CF-Connecting-IP` value,
+and Uvicorn trusts that forwarded header. Both the tag and Sentry therefore
+receive the same public client address. The original caller-supplied forwarding
+chain is intentionally discarded, so Compose no longer reports a claimed
+address disagreement.
 
-The tag depends on `FORWARDED_ALLOW_IPS`, because Uvicorn's peer is NGINX rather
-than the caller. Compose pins NGINX's address on the `api` network and
-`cloudflared`'s address on the `tunnel` network, then trusts only those two
-addresses. NGINX appends its direct peer to `X-Forwarded-For`, so an AI container
-calling NGINX cannot replace its own address with a claimed one. The API ignores
-forwarding headers on a direct call from AI.
-
-Cloudflare appends the connecting address to whatever `X-Forwarded-For` a caller
-sent, so the header arriving at the origin ends with the real address and may
-begin with a claimed one. Uvicorn reads it from right to left and takes the
-first entry outside the trusted addresses, which is why the tag holds the caller's
-real address while Sentry, reading the leftmost entry, reports the claimed one.
+Docker assigns all network addresses. This trust model assumes local service
+containers are not hostile, because Uvicorn accepts forwarded headers from
+any peer. Keep the API and AI ports unpublished and route public traffic only
+through Cloudflare Tunnel and NGINX. [Cloudflare recommends `CF-Connecting-IP`](https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip)
+for the original visitor address because it has one consistent address rather
+than the variable-length `X-Forwarded-For` chain.
 
 ## Storage and Scaling
 
@@ -438,7 +432,6 @@ All server settings are read once when the application is constructed.
 | `SUSPICION_COUNTER_ENABLED` | `true` | Count repeats of one signal from one address and escalate them. |
 | `SUSPICION_WINDOW_SECONDS` | `300` | Length of the window over which repeats are counted. |
 | `SUSPICION_ESCALATE_COUNT` | `5` | Repeats within a window that make a signal an error. |
-| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Trust `X-Forwarded-For` from these peers, read by Uvicorn. Compose trusts only its pinned NGINX and cloudflared addresses. |
 | `DISABLE_SENTRY` | unset | Disable error reporting for all Python services when set to a non-empty value. |
 | `SENTRY_DSN` | shared development project | Select the Python services' shared Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |
 | `SENTRY_ENVIRONMENT` | `development` | Set the Sentry environment for all Python services. The `app` tag separates backend, usage reporter, and diagnostic events. |

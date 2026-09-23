@@ -2,7 +2,7 @@
 
 This deployment scaffold publishes the FastAPI backend through Cloudflare
 Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
-`cloudflared` connects outbound from the VM to the API container.
+`cloudflared` forwards requests to NGINX on a Docker network.
 
 ## Cloudflare Tunnel
 
@@ -99,23 +99,21 @@ and is not published on a host port. See
 [durable chat logging](../docs/content/ai-assistant.md#durable-chat-logging) for
 retention and failure behavior.
 
-The deployment separates container traffic by purpose. Cloudflared shares only
-the `tunnel` network with NGINX. NGINX reaches the optimization and AI services
-through their separate `api` and `ai` networks. The optimization services join
-the `redis` network, while the AI service joins the `postgres` network. A
-service name resolves only on networks shared by both containers. The optional
-inspection UIs join only the network for the datastore they inspect.
+Cloudflared and NGINX share `tunnel`. NGINX and the API share `api`, which AI
+also uses to call the optimizer. NGINX and AI share `ai` for public AI routes.
+The diagnostic service joins `tunnel`. The API joins `redis`, while AI joins
+`postgres`. The optional inspection UIs join only the network for the
+datastore they inspect. Docker allocates network addresses, so production and
+staging can run on one host without configured subnets.
 
-The `api` and `tunnel` networks pin NGINX and cloudflared addresses so the API
-can trust forwarded headers only from those proxies. If either subnet overlaps
-another network on the host, set `API_NETWORK_SUBNET`, `TUNNEL_NETWORK_SUBNET`,
-`API_NETWORK_DYNAMIC_RANGE`, `TUNNEL_NETWORK_DYNAMIC_RANGE`, `NGINX_API_IP`,
-`CLOUDFLARED_TUNNEL_IP`, and `FORWARDED_ALLOW_IPS` together in `docker/.env`.
-The dynamic ranges must be inside their respective subnets and exclude the pinned
-proxy addresses. Update an existing `.env` that still trusts broad private ranges
-before restarting. The staging example uses separate subnets so both deployments
-can run on one host. Existing deployments must recreate the `api` and `tunnel`
-networks when adopting these subnet settings.
+Remove obsolete `*_NETWORK_SUBNET`, `*_NETWORK_DYNAMIC_RANGE`,
+`*_NETWORK_GATEWAY`, `NGINX_API_IP`, `CLOUDFLARED_TUNNEL_IP`, and
+`FORWARDED_ALLOW_IPS` settings from existing env files. Keep the Cloudflare
+Tunnel hostname service at `http://nginx:8080`. NGINX replaces public
+`X-Forwarded-For` with Cloudflare's [`CF-Connecting-IP`](https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip).
+Uvicorn accepts that header from any local container, so this setup assumes
+sibling containers are
+trusted. Do not publish the API or AI ports directly to the internet.
 
 For local inspection, start the loopback-only pgAdmin UI and open
 `http://127.0.0.1:5050`:
