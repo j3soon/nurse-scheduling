@@ -200,8 +200,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   a scanner cannot have. Missing routes and unauthenticated probes stay
   unreported. Add new signals to `classify_suspicious_request`, and never let a
   signal change the response a caller sees.
-- Record the address a request connected from as a tag rather than overriding
-  Sentry's own attribution, so a caller claiming another address stays visible.
+- Record the resolved client address as a tag rather than overriding Sentry's
+  own attribution.
   `tag_client_address` does this for every request. Compose treats its local
   service containers as trusted and tells Uvicorn to accept forwarded headers
   from them. NGINX must replace public `X-Forwarded-For` with Cloudflare's

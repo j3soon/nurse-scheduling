@@ -2,7 +2,8 @@
 
 # Backend Containers and Networks
 
-Both backend Compose variants connect services by name on five private networks.
+The production backend Compose variant uses five private networks, while the
+memory variant uses four. Both connect services by name.
 Docker assigns their addresses. Only the optional inspection UIs publish ports,
 and those bind to host loopback. The frontend is deployed separately.
 

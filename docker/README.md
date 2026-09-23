@@ -106,6 +106,20 @@ The diagnostic service joins `tunnel`. The API joins `redis`, while AI joins
 datastore they inspect. Docker allocates network addresses, so production and
 staging can run on one host without configured subnets.
 
+For an existing deployment, inspect its project networks with
+`docker network inspect` and check for the `com.docker.compose.config-hash`
+label. Compose may reuse an older network without that label and retain its
+fixed subnet. If a network lacks the label, recreate the affected project from
+the `docker/` directory:
+
+```sh
+docker compose -f compose.backend.yml down
+docker compose -f compose.backend.yml up -d --build
+```
+
+Use the same Compose file and `--env-file` as the deployment, so these commands
+target the correct project. Omit `-v` from `down` to preserve named volumes.
+
 Remove obsolete `*_NETWORK_SUBNET`, `*_NETWORK_DYNAMIC_RANGE`,
 `*_NETWORK_GATEWAY`, `NGINX_API_IP`, `CLOUDFLARED_TUNNEL_IP`, and
 `FORWARDED_ALLOW_IPS` settings from existing env files. Keep the Cloudflare
