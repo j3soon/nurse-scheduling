@@ -315,7 +315,7 @@ contract are sent to Sentry, because a scanner cannot produce them:
 
 | Signal | Meaning | Level |
 | --- | --- | --- |
-| `forged_stream_token` | An event-stream token failed verification and had not merely expired, so it was constructed rather than issued. Error when it was unexpired and of the minted shape, warning otherwise. | error |
+| `forged_stream_token` | An event-stream token failed verification and had not merely expired, so it was constructed rather than issued. Error when it was unexpired and of the minted shape, warning otherwise. | error/warning |
 | `yaml_expansion_bomb` | Submitted data expands or nests past what the server reads, so it was refused. | error |
 | `yaml_aliases_used` | Accepted data used a YAML alias, which nothing this project produces does. | warning |
 | `yaml_unparseable` | Accepted data is not valid YAML, which a client that serializes its own data does not submit. | warning |
@@ -346,8 +346,8 @@ derived from bearer keys and the deployment ID when authentication is enabled.
 Authenticated Redis deployments share counters across worker processes. Open
 deployments use a random salt per process, so their counters are process-local
 even with Redis. They can reach the threshold later.
-Counting is advisory. During a Redis failure each process uses local fallback
-counts, so escalation reflects only the requests that process saw.
+Counting is advisory. A Redis failure leaves a report unescalated and does not
+suppress it based on incomplete counts.
 
 A stale browser tab can produce `job_id_probe` after its job is deleted or
 expires, and a mistyped token produces `rejected_bearer_token`, so both are

@@ -23,6 +23,7 @@ import os
 import re
 import sys
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote_plus
 
 from fastapi import Request
 from fastapi.encoders import jsonable_encoder
@@ -77,10 +78,6 @@ def init_sentry(app_version: str, *, app: str = "backend") -> None:
     sentry_sdk.set_tag("app", app)
 
 
-STREAM_TOKEN_QUERY = re.compile(r"(?i)(^|&)token=[^&]*")
-"""Query parameter carrying a job's stream credential."""
-
-
 def _redact_stream_token(event: dict, _hint: dict) -> dict:
     """Remove a stream credential from a reported query string.
 
@@ -90,7 +87,11 @@ def _redact_stream_token(event: dict, _hint: dict) -> dict:
     """
     request = event.get("request")
     if isinstance(request, dict) and isinstance(request.get("query_string"), str):
-        request["query_string"] = STREAM_TOKEN_QUERY.sub(r"\1token=[Filtered]", request["query_string"])
+        parts = []
+        for parameter in request["query_string"].split("&"):
+            name, separator, _value = parameter.partition("=")
+            parts.append(f"{name}=[Filtered]" if separator and unquote_plus(name).lower() == "token" else parameter)
+        request["query_string"] = "&".join(parts)
     return event
 
 

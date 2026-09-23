@@ -19,12 +19,15 @@
 
 # This test is mostly AI generated.
 
+import asyncio
 import sys
+import threading
 import time
 import types
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -36,6 +39,7 @@ from nurse_scheduling.server.config import ServerSettings
 from nurse_scheduling.server.jobs.models import OptimizationOutcome, OptimizationResult, StoredArtifact
 from nurse_scheduling.server.jobs.runner import RunOutput
 from nurse_scheduling.server.stores.memory import MemoryJobStore
+from nurse_scheduling.server.suspicion import RedisSuspicionTracker
 
 AUTH_TOKEN = "test-token-of-sufficient-length"
 ISSUED_JOB_ID = "job_0123456789abcdef0123456789abcdef"
@@ -114,6 +118,33 @@ def _signals(captured) -> list[tuple[str, str]]:
         for event in captured.events
         if "suspicious_request" in event["scope"].contexts
     ]
+
+
+def test_async_reporting_runs_off_the_request_event_loop(monkeypatch):
+    reported_threads = []
+    monkeypatch.setattr(
+        "nurse_scheduling.server.app.capture_invalid_request",
+        lambda *_args: reported_threads.append(threading.get_ident()),
+    )
+    monkeypatch.setattr(
+        "nurse_scheduling.server.api.optimize.report_suspicious_request",
+        lambda *_args: reported_threads.append(threading.get_ident()),
+    )
+    app = _app()
+
+    async def make_requests():
+        event_loop_thread = threading.get_ident()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+            missing = await client.get(f"/optimize/{ISSUED_JOB_ID}")
+            malformed = await client.post("/optimize", data={"yaml_content": "%YAML 1.3\n---\na: 1\n"})
+            invalid = await client.post("/optimize", data={"yaml_content": "apiVersion: alpha", "timeout": "nope"})
+        return event_loop_thread, missing, malformed, invalid
+
+    event_loop_thread, missing, malformed, invalid = asyncio.run(make_requests())
+
+    assert (missing.status_code, malformed.status_code, invalid.status_code) == (404, 202, 422)
+    assert len(reported_threads) == 3
+    assert all(thread != event_loop_thread for thread in reported_threads)
 
 
 # Signals worth reporting: each one requires knowledge of this API's contract.
@@ -477,6 +508,23 @@ def test_a_failing_tracker_leaves_the_response_alone(captured):
     assert response.json() == {"error": {"code": "job_not_found", "message": "Job was not found"}}
 
 
+def test_redis_outage_does_not_escalate_or_suppress_reports(captured):
+    class FailingRedis:
+        def pipeline(self, transaction=False):
+            raise ConnectionError("redis unavailable")
+
+    app = _app(suspicion_escalate_count=3)
+    app.state.suspicion_tracker = RedisSuspicionTracker(
+        FailingRedis(), salt="salt", window_seconds=300, escalate_count=3
+    )
+    client = TestClient(app, client=("203.0.113.7", 40000))
+
+    for index in range(5):
+        assert client.get(f"/optimize/job_{index:032x}").status_code == 404
+
+    assert _signals(captured) == [("job_id_probe", "warning")] * 5
+
+
 def test_a_failing_address_tag_leaves_the_response_alone(monkeypatch, captured):
     """The tag runs on every request, so its failure must not fail an ordinary one."""
 
@@ -632,6 +680,19 @@ def test_cancelling_another_browsers_job_is_reported(captured):
     response = client.post(f"/optimize/{job_id}/cancel")
 
     assert response.status_code == 202
+    assert _signals(captured) == [("foreign_job_access", "warning")]
+
+
+@pytest.mark.parametrize("method,suffix", [("delete", ""), ("post", "/finish-now")])
+def test_failed_control_of_another_browsers_job_is_reported(captured, method, suffix):
+    client = _client()
+    job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
+    captured.events.clear()
+    client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
+
+    response = getattr(client, method)(f"/optimize/{job_id}{suffix}")
+
+    assert response.status_code == 409
     assert _signals(captured) == [("foreign_job_access", "warning")]
 
 

@@ -29,6 +29,7 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import capture_invalid_request, init_sentry, tag_client_address
@@ -267,7 +268,7 @@ def create_app(
         else:
             status_code = 500
         if status_code < 500:
-            capture_invalid_request(request, status_code, str(exc), exc.code)
+            await run_in_threadpool(capture_invalid_request, request, status_code, str(exc), exc.code)
         else:
             server_logger.exception(
                 "[server:request] unexpected application error method=%s path=%s",
@@ -285,7 +286,7 @@ def create_app(
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
         """Capture request-schema failures before using FastAPI's response format."""
-        capture_invalid_request(request, 422, exc.errors())
+        await run_in_threadpool(capture_invalid_request, request, 422, exc.errors())
         return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(StarletteHTTPException)
@@ -294,7 +295,7 @@ def create_app(
         if request.url.path == "/optimize" and _is_form_parser_size_error(exc):
             exc = StarletteHTTPException(status_code=413, detail="Scheduling YAML is too large")
         if 400 <= exc.status_code < 500:
-            capture_invalid_request(request, exc.status_code, exc.detail)
+            await run_in_threadpool(capture_invalid_request, request, exc.status_code, exc.detail)
         return await http_exception_handler(request, exc)
 
     @app.middleware("http")

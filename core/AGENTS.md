@@ -205,9 +205,8 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   `tag_client_address` does this for every request and depends on
   `FORWARDED_ALLOW_IPS` naming the deployment's trusted proxies.
 - Count repeats in `server/suspicion.py`, keyed by signal and a salted address
-  digest. Counting is advisory, so a storage failure must not drop a report or
-  change the response. A Redis failure falls back to process-local counts.
-  Keep the salt private.
+  digest. Counting is advisory, so a storage failure must leave a report
+  unescalated rather than drop it or change the response. Keep the salt private.
   The deployment ID is public and cannot serve as a salt by itself.
 
 ## Input Limits

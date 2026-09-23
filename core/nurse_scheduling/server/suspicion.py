@@ -166,24 +166,12 @@ class RedisSuspicionTracker:
         self._salt = salt
         self._window_seconds = window_seconds
         self._clock = clock
-        self._fallback = MemorySuspicionTracker(
-            salt=salt,
-            window_seconds=window_seconds,
-            escalate_count=escalate_count,
-            clock=clock,
-        )
-        """Counts within this process while Redis is unavailable.
-
-        A report is capped by its count, so losing the count during an outage would remove
-        the cap at the moment the error budget matters most.
-        """
 
     def record(self, signal: str, address: str, subject: str | None = None) -> SuspicionCount:
         """Record one occurrence and return what this address has done in this window.
 
-        Falls back to counting within this process when Redis is unavailable, which counts
-        only what this process saw but keeps a count rather than none. Counting is advisory,
-        so a failure must neither change the response nor lose the report it would escalate.
+        Returns an unknown count when Redis is unavailable. Counting is advisory, so a
+        storage outage must not promote or suppress a report based on incomplete state.
 
         Distinct subjects are counted approximately, which is exact at the small counts a
         threshold compares against and only loses precision far above one.
@@ -208,7 +196,7 @@ class RedisSuspicionTracker:
                 new_subject=bool(results[2]) if subject is not None else False,
             )
         except Exception:  # noqa: BLE001
-            return self._fallback.record(signal, address, subject)
+            return SuspicionCount()
 
 
 def create_suspicion_tracker(settings: "ServerSettings", *, salt: str) -> SuspicionTracker | None:

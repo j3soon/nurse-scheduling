@@ -83,7 +83,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Pi and Claude Code must use their own active harness and model names. If the
   active model is unclear, verify it before committing. Never substitute a
   shortened family name such as `GPT-5`.
-- Close the commit body with a short validation paragraph naming checks and results.
+- Put a short validation paragraph naming checks and results before the final
+  attribution line.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
 - Do not cite timestamp-named files or directories under the ignored `artifacts/` directory in commit messages. Record durable evaluation evidence with case names, pass rates, and configuration instead.
 - After creating or rewriting a commit, inspect its stored message with

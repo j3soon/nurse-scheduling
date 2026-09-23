@@ -194,9 +194,9 @@ async def create_job(
     # This project's own data is plain and always parses, so neither shape comes from it.
     # The job is queued by now, so reporting must not be able to fail the response for it.
     if expansion is None:
-        report_suspicious_request(request, "yaml_unparseable", "warning")
+        await run_in_threadpool(report_suspicious_request, request, "yaml_unparseable", "warning")
     elif expansion.aliases:
-        report_suspicious_request(request, "yaml_aliases_used", "warning")
+        await run_in_threadpool(report_suspicious_request, request, "yaml_aliases_used", "warning")
     response.headers["Location"] = f"/optimize/{job.id}"
     response.headers["Retry-After"] = "1"
     return JobResponse.from_job(job, _events_token(request, job.id))
@@ -268,16 +268,16 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
 @router.post("/optimize/{job_id}/cancel", status_code=202, response_model=JobResponse)
 def cancel_job(request: Request, job_id: str):
     """Cancel a queued job or request cancellation of a running job."""
+    _report_foreign_job_access(request, _controller(request).get_job(job_id))
     job = _controller(request).cancel_job(job_id)
-    _report_foreign_job_access(request, job)
     return JobResponse.from_job(job, _events_token(request, job_id))
 
 
 @router.post("/optimize/{job_id}/finish-now", status_code=202, response_model=JobResponse)
 def finish_job_now(request: Request, job_id: str):
     """Ask a supported running solver to return its current result."""
+    _report_foreign_job_access(request, _controller(request).get_job(job_id))
     job = _controller(request).request_early_completion(job_id)
-    _report_foreign_job_access(request, job)
     return JobResponse.from_job(job, _events_token(request, job_id))
 
 
@@ -285,8 +285,8 @@ def finish_job_now(request: Request, job_id: str):
 def download_xlsx(request: Request, job_id: str):
     """Download the XLSX artifact produced by a completed job."""
     job = _controller(request).get_job(job_id)
-    artifact = _controller(request).get_artifact(job_id, job.artifact_name or "schedule.xlsx")
     _report_foreign_job_access(request, job)
+    artifact = _controller(request).get_artifact(job_id, job.artifact_name or "schedule.xlsx")
     headers = {"Content-Disposition": f'attachment; filename="{artifact.name}"'}
     return StreamingResponse(BytesIO(artifact.content), media_type=artifact.media_type, headers=headers)
 
@@ -295,6 +295,6 @@ def download_xlsx(request: Request, job_id: str):
 def delete_job(request: Request, job_id: str):
     """Delete a terminal job and all associated retained data."""
     job = _controller(request).get_job(job_id)
-    _controller(request).delete_job(job_id)
     _report_foreign_job_access(request, job)
+    _controller(request).delete_job(job_id)
     return Response(status_code=204)

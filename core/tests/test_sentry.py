@@ -239,6 +239,12 @@ def test_init_sentry_accepts_service_tag(monkeypatch):
     assert tags == [("app", "ai-backend")]
 
 
+def test_stream_token_redaction_decodes_parameter_names():
+    event = {"request": {"query_string": "x=1&%74oken=live-secret&TOKEN=second-secret&x=2"}}
+
+    assert _redact_stream_token(event, {})["request"]["query_string"] == ("x=1&%74oken=[Filtered]&TOKEN=[Filtered]&x=2")
+
+
 def test_init_sentry_keeps_shared_development_defaults(monkeypatch):
     init_calls = []
     fake_sentry_sdk = types.SimpleNamespace(

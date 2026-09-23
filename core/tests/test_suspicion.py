@@ -120,7 +120,7 @@ def test_open_workers_do_not_derive_a_salt_from_the_public_deployment_id():
     assert suspicion_salt(settings, "public-deployment-id") != suspicion_salt(settings, "public-deployment-id")
 
 
-def test_redis_counting_failure_keeps_counting_in_this_process():
+def test_redis_counting_failure_leaves_reports_unescalated():
     import redis
 
     class FailingRedis:
@@ -135,11 +135,9 @@ def test_redis_counting_failure_keeps_counting_in_this_process():
         clock=FakeClock(),
     )
 
-    # Counting is advisory, so an unavailable Redis must not lose the report it would escalate.
-    counts = [tracker.record("job_id_probe", "203.0.113.7", "job_a").occurrences for _ in range(3)]
+    counts = [tracker.record("job_id_probe", "203.0.113.7", "job_a") for _ in range(3)]
 
-    # A report is capped by its count, so an outage must not leave it uncounted.
-    assert counts == [1, 2, 3]
+    assert all(count.occurrences == 0 and count.distinct_subjects == 0 for count in counts)
 
 
 @pytest.mark.parametrize("enabled", [True, False])
