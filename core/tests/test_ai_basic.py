@@ -1636,7 +1636,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[1].data["progress"] == {"currentBestScore": 23, "elapsedSeconds": 2}
         assert events[2].data["state"] == "completed"
         assert events[2].data["downloadable"] is True
-        assert events[6].data == {"text": "The optimizer returned score 23."}
+        assert events[6].data == {"text": "The optimizer returned score 23.", "turn_id": events[3].data["message_id"]}
         if history_enabled:
             assert len(history_starts) == 3
             assert history_starts[-1][1] == session_id

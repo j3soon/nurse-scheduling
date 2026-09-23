@@ -80,6 +80,11 @@ exact browser origin. A loopback-only browser check can miss CORS failures.
 Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
 preflight coverage. Keep object URLs for workbook downloads alive until the
 download is replaced or the page unmounts.
+AI operation state belongs to `ChatLifecycle`. Finish only the operation that
+owns a callback and derive busy/Stop state from its phases. Scope stream callbacks
+to their connection, and scope other async completions to their conversation.
+Replayable events carry turn identity and advance the cursor only after a complete
+SSE frame. Test overlapping foreground completion and background replay explicitly.
 For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,
 select that URL in the AI server control, and use `AI_AUTH_TOKEN` from the

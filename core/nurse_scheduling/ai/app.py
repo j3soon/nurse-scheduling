@@ -399,6 +399,7 @@ class SessionStore:
         if not session.proposal_yaml:
             raise HTTPException(status_code=404, detail="No proposal is waiting for approval.")
         if session.revision != base_sha256:
+            session.version += 1
             session.proposal_yaml = ""
             session.proposal_diff = ""
             raise HTTPException(

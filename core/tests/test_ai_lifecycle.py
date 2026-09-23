@@ -1,4 +1,4 @@
-"""Replayable events and agent turns triggered by background work."""
+"""Adversarial admission, cancellation and session snapshot orderings."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -26,7 +26,9 @@ import pytest
 from fastapi import HTTPException
 
 from nurse_scheduling.ai.app import SessionStore
-from nurse_scheduling.ai.lifecycle import SessionTurns
+from nurse_scheduling.ai.history import ChatHistory
+from nurse_scheduling.ai.lifecycle import SessionTurns, TurnEvents
+from nurse_scheduling.ai.provider import ProviderError
 
 from .ai_test_helper import schedule_yaml
 from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_settings
@@ -215,3 +217,115 @@ def test_schedule_round_trip_invalidates_an_in_flight_snapshot():
     store.update_schedule(session.id, "owner", original)
     assert not store.finish(session.id, "question", "answer", snapshot=turn).turn_saved
     assert session.history == []
+
+
+@pytest.mark.parametrize("decision", ["reject", "stale-approval"])
+def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
+    store = SessionStore(make_settings())
+    session = store.create("owner", schedule_yaml())
+    first = store.begin(session.id, "owner")
+    proposal = (schedule_yaml() + "\n", "proposal diff")
+    assert store.finish(session.id, "Edit", "Proposal", proposal, snapshot=first).proposal_saved
+    revising = store.begin(session.id, "owner")
+    if decision == "reject":
+        store.discard_proposal(session.id, "owner")
+    else:
+        with pytest.raises(HTTPException) as stale:
+            store.adopt_proposal(session.id, "owner", "0" * 64)
+        assert stale.value.status_code == 409
+    assert not store.finish(session.id, "Revise", "Revised", proposal, snapshot=revising).turn_saved
+    assert session.proposal_yaml == ""
+
+
+@pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
+def test_stop_during_audit_start_waits_for_audit_then_releases_the_session(monkeypatch, background):
+    async def exercise():
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        records = []
+
+        async def write(_self, operation, *args):
+            if operation == "start_turn":
+                entered.set()
+                await release.wait()
+            records.append((operation, args))
+            return True
+
+        monkeypatch.setattr(ChatHistory, "write", write)
+        provider = FakeProvider()
+        app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=provider)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
+        ) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            if background:
+                running = asyncio.create_task(app.state.session_optimizer._on_completion(session_id, "Review", None))
+            else:
+                running = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Ask"}))
+            await entered.wait()
+            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            assert app.state.turns.busy(session_id)
+            release.set()
+            await asyncio.wait_for(asyncio.gather(running, return_exceptions=True), timeout=1)
+            assert not app.state.turns.busy(session_id)
+            assert not app.state.session_store._sessions[session_id].active
+            assert provider.calls == []
+            assert [operation for operation, _ in records] == ["start_turn", "finish_turn"]
+            assert records[-1][1][2] == "cancelled"
+
+    asyncio.run(exercise())
+
+
+def test_terminal_background_event_is_published_only_after_audit_cleanup(monkeypatch):
+    async def exercise():
+        finalizing = asyncio.Event()
+        release = asyncio.Event()
+
+        async def write(_self, operation, *_args):
+            if operation == "finish_turn":
+                finalizing.set()
+                await release.wait()
+            return True
+
+        monkeypatch.setattr(ChatHistory, "write", write)
+        app = create_test_app(
+            settings=make_settings(history_postgres_url="test"),
+            provider=FakeProvider([[ProviderError("private failure")]]),
+        )
+        session = app.state.session_store.create("owner", schedule_yaml())
+        running = asyncio.create_task(app.state.session_optimizer._on_completion(session.id, "Review", None))
+        await finalizing.wait()
+        assert app.state.turns.busy(session.id)
+        assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == ["turn_start"]
+        app.state.turns.stop(session.id)
+        release.set()
+        await running
+        assert not app.state.turns.busy(session.id)
+        assert [event.type for event in app.state.session_event_broker.events_after(session.id)] == [
+            "turn_start",
+            "error",
+        ]
+
+    asyncio.run(exercise())
+
+
+def test_terminal_foreground_event_never_blocks_cleanup_on_a_full_reader_queue():
+    async def exercise():
+        turns = SessionTurns()
+        events = TurnEvents()
+
+        async def run(_turn):
+            for _ in range(64):
+                await events.emit("delta", {"text": "output"})
+            await events.emit("done", {"message_id": "turn"})
+
+        turn = turns.start("session", run)
+        await asyncio.wait_for(turn.wait(), timeout=1)
+        assert not turns.busy("session")
+        received = [event async for event in events.stream(turn)]
+        assert len(received) == 65
+        assert received[-1] == ("done", {"message_id": "turn"})
+        await turns.close()
+
+    asyncio.run(exercise())

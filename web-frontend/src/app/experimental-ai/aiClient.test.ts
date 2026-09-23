@@ -416,6 +416,36 @@ describe('AI client', () => {
     );
   });
 
+  it('deduplicates replay and identifies a turn without its retained start event', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 4\nevent: delta\ndata: {"text":"old","turn_id":"old-turn"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"new","turn_id":"new-turn"}\n\n',
+      'id: 5\nevent: delta\ndata: {"text":"duplicate","turn_id":"new-turn"}\n\n',
+    ])));
+    const delta = vi.fn();
+    const context = vi.fn();
+    const cursor = vi.fn();
+    await streamSessionEvents('session', {
+      lastEventId: 4, onDelta: delta, onTurnContext: context, onEventId: cursor,
+    }, new AbortController().signal, null);
+    expect(delta).toHaveBeenCalledExactlyOnceWith('new');
+    expect(context).toHaveBeenCalledExactlyOnceWith('new-turn');
+    expect(cursor).toHaveBeenCalledExactlyOnceWith(5);
+  });
+
+  it('does not acknowledge a replayable event before receiving its delimiter', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      'id: 6\r\nevent: delta\r\ndata: {"text":"complete"}\r',
+      '\n\r\n',
+      'id: 7\nevent: delta\ndata: {"text":"replay me"}\n',
+    ])));
+    const delta = vi.fn();
+    const cursor = vi.fn();
+    await streamSessionEvents('session', { onDelta: delta, onEventId: cursor }, new AbortController().signal, null);
+    expect(delta).toHaveBeenCalledExactlyOnceWith('complete');
+    expect(cursor).toHaveBeenCalledExactlyOnceWith(6);
+  });
+
   it('stops a session turn with authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);

@@ -1,4 +1,4 @@
-"""Replayable events and agent turns triggered by background work."""
+"""Event-loop-owned turn admission, cancellation and bounded streaming output."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -132,8 +132,13 @@ class TurnEvents:
 
     def __init__(self) -> None:
         self._queue: asyncio.Queue[tuple[str, dict[str, object]]] = asyncio.Queue(maxsize=64)
+        self._terminal: tuple[str, dict[str, object]] | None = None
 
     async def emit(self, event_type: str, data: dict[str, object]) -> None:
+        # Finalization must never depend on an HTTP reader that may have left.
+        if event_type in {"done", "stopped", "stale", "error"}:
+            self._terminal = event_type, data
+            return
         await self._queue.put((event_type, data))
 
     async def stream(self, turn: Turn) -> AsyncIterator[tuple[str, dict[str, object]]]:
@@ -142,6 +147,8 @@ class TurnEvents:
                 yield self._queue.get_nowait()
                 continue
             if turn.done.done():
+                if self._terminal is not None:
+                    yield self._terminal
                 # Stop is a normal terminal outcome for the streaming transport.
                 if not turn.task.cancelled():
                     turn.task.result()

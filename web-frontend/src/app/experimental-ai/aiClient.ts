@@ -51,6 +51,7 @@ export interface StreamCallbacks {
   lastEventId?: number;
   onEventId?: (id: number) => void;
   onTurnStart?: (messageId: string, trigger: string) => void;
+  onTurnContext?: (messageId: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
@@ -99,6 +100,7 @@ interface SsePayload {
   ok?: unknown;
   schedule_yaml?: unknown;
   message_id?: unknown;
+  turn_id?: unknown;
   trigger?: unknown;
   job_id?: unknown;
   state?: unknown;
@@ -244,6 +246,7 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     .map(line => line.slice('data:'.length).trimStart())
     .join('\n');
   if (!rawData) return;
+  if (Number.isSafeInteger(eventId) && eventId > 0 && eventId <= (callbacks.lastEventId ?? 0)) return;
 
   let payload: SsePayload;
   try {
@@ -254,7 +257,11 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
 
   // Acknowledge before dispatching, so a handler that throws cannot make a
   // replayed stream repeat the same event after every reconnect.
-  if (Number.isSafeInteger(eventId) && eventId > 0) callbacks.onEventId?.(eventId);
+  if (Number.isSafeInteger(eventId) && eventId > 0) {
+    callbacks.lastEventId = eventId;
+    callbacks.onEventId?.(eventId);
+  }
+  if (typeof payload.turn_id === 'string') callbacks.onTurnContext?.(payload.turn_id);
 
   if (eventType === 'turn_start' && typeof payload.message_id === 'string') {
     callbacks.onTurnStart?.(
@@ -375,28 +382,35 @@ export async function streamMessage(
   await consumeStream(response, callbacks);
 }
 
-async function consumeStream(response: Response, callbacks: StreamCallbacks): Promise<void> {
+async function consumeStream(response: Response, callbacks: StreamCallbacks, replayable = false): Promise<void> {
   if (!response.body) throw new Error('The AI backend returned an empty stream.');
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  const streamCallbacks = { ...callbacks };
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n');
 
-    let boundary = buffer.indexOf('\n\n');
-    while (boundary >= 0) {
-      consumeEvent(buffer.slice(0, boundary), callbacks);
-      buffer = buffer.slice(boundary + 2);
-      boundary = buffer.indexOf('\n\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        consumeEvent(buffer.slice(0, boundary), streamCallbacks);
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+      }
+
+      if (done) break;
     }
-
-    if (done) break;
+    // A replay cursor only advances over complete frames. The next connection
+    // must replay an event whose delimiter was lost in transit.
+    if (!replayable && buffer.trim()) consumeEvent(buffer, streamCallbacks);
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
-
-  if (buffer.trim()) consumeEvent(buffer, callbacks);
 }
 
 export async function streamSessionEvents(
@@ -416,7 +430,7 @@ export async function streamSessionEvents(
     signal,
   });
   if (!response.ok) throw await responseError(response);
-  await consumeStream(response, callbacks);
+  await consumeStream(response, callbacks, true);
 }
 
 export async function queueMessage(

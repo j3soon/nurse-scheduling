@@ -43,7 +43,8 @@ from nurse_scheduling.ai.agent import (
     AgentToolStart,
     AgentToolUse,
 )
-from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY, build_provider_messages
+from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY
+from nurse_scheduling.ai.background import build_provider_messages
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.provider import (
     ChatMessage,

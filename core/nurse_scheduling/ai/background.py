@@ -252,6 +252,17 @@ async def run_turn(
     outcome = "cancelled"
     error_code = None
     usage = None
+    publish = emit
+    terminal_event: tuple[str, dict[str, object]] | None = None
+
+    async def emit(event_type: str, data: dict[str, object]) -> None:
+        nonlocal terminal_event
+        # Every replayable fragment identifies its turn, even after turn_start expires.
+        data = {**data, "turn_id": turn.id} if background else data
+        if event_type in {"done", "stopped", "stale", "error"}:
+            terminal_event = event_type, data
+        else:
+            await publish(event_type, data)
 
     async def write_history(operation: str, *args) -> bool:
         # asyncio cancellation and ASGI cancel scopes both wait for the audit write.
@@ -392,3 +403,5 @@ async def run_turn(
             store.abort(session_id, snapshot)
         if logged:
             await write_history("finish_turn", turn.id, "".join(assistant_parts), outcome, error_code, usage)
+        if terminal_event is not None:
+            await publish(*terminal_event)

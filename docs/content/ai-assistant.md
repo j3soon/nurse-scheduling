@@ -90,6 +90,37 @@ Foreground chat and optimization can proceed at the same time. Assistant turns
 remain serialized per session. The Stop control cancels either a foreground or
 background assistant turn. It does not cancel the independent optimizer run.
 
+### Lifecycle ownership
+
+Session state changes run synchronously on the service event loop. `SessionTurns`
+admits one assistant turn per session, rejects overlapping foreground requests,
+and queues optimizer follow-ups. Both triggers use the same `run_turn` lifecycle.
+The queue retains ownership through sandbox and audit cleanup. Stop is an
+idempotent cancellation of currently admitted turns, including queued follow-ups.
+Disconnect cancels the foreground turn only. Shutdown drains turns before closing
+the sandbox factory and optimizer transport.
+
+A `TurnSnapshot` authorizes a single conversation commit. Identity and a monotonic
+conversation version prevent an old completion from overwriting newer work,
+including a schedule that was changed and then restored. Approval still revalidates
+the candidate against the frontend schedule rules.
+
+Optimizer submissions have revocable session owners reserved before preparation.
+The optimizer service retains ownership of in-flight remote requests after a turn
+is cancelled, so late responses can be cleaned up. Each accepted job owns its
+progress reader, polling, artifact restoration, and remote deletion. Terminal
+status cannot be overwritten by a late control response. Transport failure before
+a remote identifier is returned remains an uncertain remote outcome, bounded by
+the optimizer's own job retention and timeout policies.
+
+The browser's `ChatLifecycle` tracks identified foreground and background
+operations. Busy and Stop controls derive from those operations. Conversation
+reset revokes outstanding callbacks, and a replaced stream cannot advance the
+current replay cursor or apply a proposal. Background events carry `turn_id`, so
+replay can recover the correct message even when `turn_start` has aged out.
+Only complete SSE frames advance `Last-Event-ID`. Older servers without `turn_id`
+retain the existing best-effort replay fallback.
+
 Sandbox and conversation state are separate. The backend copies the current
 schedule to `/workspace/schedule.yaml` and searchable schema documentation to
 `/reference`. It writes uploads below `/workspace/attachments` and records safe
