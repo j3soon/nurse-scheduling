@@ -50,7 +50,7 @@ nav = [
         { "Backend Server" = "developer-guide/backend-server.md" },
         { "AI Assistant Backend" = "developer-guide/ai-assistant.md" },
         { "Solvers" = "developer-guide/solvers.md" },
-        { "Design" = "developer-guide/design.md" },
+        { "Design Rationale" = "developer-guide/design-rationale.md" },
       ] },
     ]
   },

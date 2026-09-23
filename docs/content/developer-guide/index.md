@@ -27,7 +27,7 @@ environment, Sentry, usage reporting, and diagnostics.
 - [Backend server](backend-server.md)
 - [Experimental AI assistant backend](ai-assistant.md)
 - [Solver behavior](solvers.md)
-- [System design](design.md)
+- [Design rationale](design-rationale.md)
 
 ## Timeline
 

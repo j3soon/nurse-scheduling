@@ -43,7 +43,7 @@
 
 [[redirects]]
   from = "/docs/design/*"
-  to = "/docs/developer-guide/design/:splat"
+  to = "/docs/developer-guide/design-rationale/:splat"
   status = 301
 
 [[redirects]]
