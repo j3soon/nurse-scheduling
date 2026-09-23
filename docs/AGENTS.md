@@ -39,6 +39,11 @@
 - Link to the deployed documentation at `https://dev.nursescheduling.org/docs/`,
   not `https://nursescheduling.org/docs/`. The dev site builds from the dev
   branch and reflects this repository's content, while the stable site lags.
+- Keep page file paths in step with the navigation hierarchy: a page inside a
+  nav group lives in that group's directory, and a top-level nav page lives at
+  the docs root. When a page changes group, move the file, its `zensical.toml`
+  nav entry, and every inbound link together, and add a `netlify.toml`
+  redirect from the old deployed path to the new one.
 
 ## Figures
 
@@ -54,11 +59,12 @@
 
 ## Reproduce pages
 
-- The pages under `developer-guide/reproduce/` are symlinks to the repository
-  READMEs: root `README.md`, `core/README.md`, `web-frontend/README.md`,
-  `docs/README.md`, and `docker/README.md`. Keep these links, the `zensical.toml`
-  Developer Guide nav, and the README headings in step so anchors keep
-  resolving.
+- The setup and run pages are symlinks to the repository READMEs:
+  `developer-guide/reproduce/setup.md` links to the root `README.md`, `core.md`
+  to `core/README.md`, `frontend.md` to `web-frontend/README.md`, `docs.md` to
+  `docs/README.md`, and `developer-guide/backend-deployment.md` to
+  `docker/README.md`. Keep these links, the `zensical.toml` Developer Guide
+  nav, and the README headings in step so anchors keep resolving.
 - Symlinked READMEs must not use relative Markdown links or images. Zensical
   resolves them from the symlink location, so use absolute URLs there.
 - Windows checkouts may materialize the symlinks as plain text files, which

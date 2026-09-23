@@ -22,3 +22,31 @@
   # See web-frontend/README.md#hosting-on-netlify. Keep SENTRY_AUTH_TOKEN out of this file.
   NODE_VERSION = "25"
   PYTHON_VERSION = "3.12"
+
+# Redirect docs pages that moved into the nav hierarchy to their new paths.
+# Keep in step with zensical.toml and docs/AGENTS.md path rules.
+
+[[redirects]]
+  from = "/docs/backend-server/*"
+  to = "/docs/developer-guide/backend-server/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/ai-assistant/*"
+  to = "/docs/developer-guide/ai-assistant/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/solvers/*"
+  to = "/docs/developer-guide/solvers/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/design/*"
+  to = "/docs/developer-guide/design/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/developer-guide/reproduce/deploy/*"
+  to = "/docs/developer-guide/backend-deployment/:splat"
+  status = 301

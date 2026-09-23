@@ -34,7 +34,7 @@ The main solver paths are:
 - `pulp/cuopt`, labeled **PuLP | cuOpt**, is the experimental GPU solver. It
   requires the NVIDIA cuOpt runtime and a supported GPU.
 
-See the [solver reference](https://dev.nursescheduling.org/docs/solvers/) for the
+See the [solver reference](https://dev.nursescheduling.org/docs/developer-guide/solvers/) for the
 full experimental solver matrix, platform requirements, runtime capabilities,
 and test coverage.
 
@@ -395,8 +395,8 @@ Use `compose.backend.memory.yml` in the same command when running the
 process-local optimization backend. The AI service itself remains process-local
 in both variants and listens on port `8001` inside the Compose network. Durable
 chat logging, pgAdmin inspection, and deployment details are described in the
-[AI assistant backend guide](https://dev.nursescheduling.org/docs/ai-assistant/)
-and the [deployment guide](https://dev.nursescheduling.org/docs/developer-guide/reproduce/deploy/).
+[AI assistant backend guide](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/)
+and the [deployment guide](https://dev.nursescheduling.org/docs/developer-guide/backend-deployment/).
 
 ### AI backend configuration
 

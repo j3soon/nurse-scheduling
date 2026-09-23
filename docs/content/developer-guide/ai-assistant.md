@@ -12,7 +12,7 @@ schedule, which the browser applies only after the user approves it.
 Each user message gets one temporary shell backed by E2B Cloud. This version
 excludes retrieval and repository access. Run the service locally, in the
 development container, or with Docker Compose using the commands in the [Core
-README](developer-guide/reproduce/core.md#ai-backend).
+README](reproduce/core.md#ai-backend).
 
 ## Architecture
 
@@ -396,7 +396,7 @@ response cannot prove that the original operation did not take effect.
 ## Configuration
 
 The service settings and their defaults are documented in the [Core
-README](developer-guide/reproduce/core.md#ai-backend-configuration). Deployment values are set
+README](reproduce/core.md#ai-backend-configuration). Deployment values are set
 in the `docker/.env` file, whose tracked template `docker/.env.example`
 documents the deployment subset and is the source of truth for it.
 

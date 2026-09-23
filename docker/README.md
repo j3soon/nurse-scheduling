@@ -108,7 +108,7 @@ disabled, although setting either one still enables bearer authentication.
 Both Compose variants enable AI chat logging through a fixed private PostgreSQL
 service connection. The database uses the persistent `postgres-ai-data` volume
 and is not published on a host port. See
-[durable chat logging](https://dev.nursescheduling.org/docs/ai-assistant/#durable-chat-logging) for
+[durable chat logging](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#durable-chat-logging) for
 retention and failure behavior.
 
 The deployment separates container traffic by purpose. Cloudflared shares only
@@ -125,7 +125,7 @@ For local inspection, start the loopback-only pgAdmin UI and open
 docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
 ```
 
-See [inspect chat history with pgAdmin](https://dev.nursescheduling.org/docs/ai-assistant/#inspect-chat-history-with-pgadmin)
+See [inspect chat history with pgAdmin](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#inspect-chat-history-with-pgadmin)
 for login, remote SSH forwarding, connection, and query instructions.
 
 NGINX removes the `/ai` prefix before forwarding requests to this
@@ -246,7 +246,7 @@ docker compose -f compose.backend.yml --profile inspection run --rm --service-po
 ```
 
 Open `http://127.0.0.1:5540`. See
-[inspect Redis with RedisInsight](https://dev.nursescheduling.org/docs/backend-server/#inspect-redis-with-redisinsight)
+[inspect Redis with RedisInsight](https://dev.nursescheduling.org/docs/developer-guide/backend-server/#inspect-redis-with-redisinsight)
 for remote access, key prefixes, and data-safety guidance.
 
 The backend publishes its accepted run options at `GET /optimize/options`.
@@ -254,7 +254,7 @@ The frontend uses this response for solver choices, timeout limits,
 running-job controls, and the prettify default. Configure the response with:
 
 - `OPTIMIZE_SOLVERS`, a comma-separated allowlist of selectors from the
-  [solver reference](https://dev.nursescheduling.org/docs/solvers/)
+  [solver reference](https://dev.nursescheduling.org/docs/developer-guide/solvers/)
 - `OPTIMIZE_DEFAULT_SOLVER`
 - `OPTIMIZE_MIN_TIMEOUT_SECONDS`
 - `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`

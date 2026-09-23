@@ -134,7 +134,7 @@ checkpointing it outside the child process.
 ## HTTP API
 
 Start and verify a local server with the commands in the [Core
-README](developer-guide/reproduce/core.md#web-backend). Interactive OpenAPI documentation is
+README](reproduce/core.md#web-backend). Interactive OpenAPI documentation is
 available at `$API_URL/docs`, with the schema at `$API_URL/openapi.json`.
 
 | Method | Path | Purpose |
@@ -306,7 +306,7 @@ uvicorn nurse_scheduling.serve:app \
 
 All server settings are read once when the application is constructed. Local
 defaults, behavior, and validation rules are documented in the [Core
-README](developer-guide/reproduce/core.md#backend-configuration). Deployment values are set in
+README](reproduce/core.md#backend-configuration). Deployment values are set in
 the `docker/.env` file, whose tracked template `docker/.env.example` documents
 the deployment subset and is the source of truth for it.
 
@@ -345,5 +345,5 @@ RedisInsight inspector.
 ## Tests
 
 Run the server test commands from `core/`, documented in the [Core
-README](developer-guide/reproduce/core.md#tests). Redis integration coverage needs a local
+README](reproduce/core.md#tests). Redis integration coverage needs a local
 Redis instance selected with `JOB_REDIS_TEST_URL`.

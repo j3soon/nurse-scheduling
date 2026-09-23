@@ -11,18 +11,26 @@ built documentation stays self-contained:
 - [Core](reproduce/core.md): CLI, backend, AI backend, configuration, and tests.
 - [Web frontend](reproduce/frontend.md): development, tests, builds, and Netlify hosting.
 - [Documentation site](reproduce/docs.md): preview and build the documentation.
-- [Deployment](reproduce/deploy.md): publish the backend through Docker Compose and Cloudflare Tunnel.
 
 All deployed services read the gitignored `docker/.env` file. The tracked
 `docker/.env.example` documents every deployment variable and is the source of
 truth for it. Local development needs no environment variables.
 
+## Backend Deployment
+
+Publish the backend with Docker Compose and Cloudflare Tunnel. The
+[backend deployment guide](backend-deployment.md) covers the tunnel, services,
+environment, Sentry, usage reporting, and diagnostics.
+
 ## Architecture
 
-- [Backend server](../backend-server.md)
-- [Experimental AI assistant backend](../ai-assistant.md)
-- [Solver behavior](../solvers.md)
-- [System design](../design.md)
+- [Backend server](backend-server.md)
+- [Experimental AI assistant backend](ai-assistant.md)
+- [Solver behavior](solvers.md)
+- [System design](design.md)
+
+## Timeline
+
 - [Project timeline](../timeline.md)
 
 For product use, start with the [User Guide](../user-guide/get-started.md).
@@ -45,4 +53,4 @@ for the exact variable table, UI location, scope, sensitivity settings,
 token procedure, and missing-token behavior. Backend Docker deployments
 configure `SENTRY_BACKEND_DSN` and `SENTRY_ENVIRONMENT` in the selected
 `docker/.env` file. Follow the [deployment Sentry
-instructions](reproduce/deploy.md#sentry).
+instructions](backend-deployment.md#sentry).
