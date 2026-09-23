@@ -10,7 +10,10 @@
 Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Workflow
-- Linux setup: run `./scripts/setup_env.sh`.
+- Agents often run inside a development container with tools and dependencies
+  already installed. Check the available toolchain before creating virtual
+  environments or running host setup. For a fresh Linux host, run
+  `./scripts/setup_env.sh`.
 - Keep edits scoped to the requested module. Preserve existing patterns.
 - Run affected tests and lint checks before finishing.
 - Avoid trailing spaces. End files with a newline.
