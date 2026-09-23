@@ -2235,19 +2235,19 @@ def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None
     assert store.begin(session.id, "browser-owner")[-1] == 2
 
 
-def test_history_message_cap_keeps_complete_exchanges() -> None:
-    app = create_test_app(settings=make_settings(max_history_messages=3), provider=FakeProvider())
+@pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])
+def test_history_message_cap_keeps_complete_exchanges(message_cap: int) -> None:
+    app = create_test_app(settings=make_settings(max_history_messages=message_cap), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", "description: test")
 
     for question in ("first question", "second question"):
         store.begin(session.id, "browser-owner")
         store.finish(session.id, question, f"answer to {question}", base_revision=session.revision)
-
-    assert session.history == [
-        ChatMessage(role="user", content="second question"),
-        ChatMessage(role="assistant", content="answer to second question"),
-    ]
+        assert session.history == [
+            ChatMessage(role="user", content=question),
+            ChatMessage(role="assistant", content=f"answer to {question}"),
+        ]
     assert session.dropped_history_messages == 2
 
 

@@ -358,7 +358,7 @@ class SessionStore:
 
     def _cap_history(self, session: ChatSession) -> None:
         """Limit retained messages without leaving an assistant reply at the front."""
-        overflow = max(0, len(session.history) - self._settings.max_history_messages)
+        overflow = max(0, len(session.history) - max(2, self._settings.max_history_messages))
         if overflow:
             while overflow < len(session.history) and session.history[overflow]["role"] != "user":
                 overflow += 1

@@ -432,7 +432,7 @@ response cannot prove that the original operation did not take effect.
 | `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
 | `AI_MAX_SESSION_BYTES` | `268435456` | Chat text budget across live sessions. New sessions, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn and any pending proposal of each session. |
-| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. |
+| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
