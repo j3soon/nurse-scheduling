@@ -109,8 +109,10 @@ inspection UIs join only the network for the datastore they inspect.
 The `api` and `tunnel` networks pin NGINX and cloudflared addresses so the API
 can trust forwarded headers only from those proxies. If either subnet overlaps
 another network on the host, set `API_NETWORK_SUBNET`, `TUNNEL_NETWORK_SUBNET`,
-`NGINX_API_IP`, `CLOUDFLARED_TUNNEL_IP`, and `FORWARDED_ALLOW_IPS` together in
-`docker/.env`. Update an existing `.env` that still trusts broad private ranges
+`API_NETWORK_DYNAMIC_RANGE`, `TUNNEL_NETWORK_DYNAMIC_RANGE`, `NGINX_API_IP`,
+`CLOUDFLARED_TUNNEL_IP`, and `FORWARDED_ALLOW_IPS` together in `docker/.env`.
+The dynamic ranges must be inside their respective subnets and exclude the pinned
+proxy addresses. Update an existing `.env` that still trusts broad private ranges
 before restarting. The staging example uses separate subnets so both deployments
 can run on one host. Existing deployments must recreate the `api` and `tunnel`
 networks when adopting these subnet settings.

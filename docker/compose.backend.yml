@@ -310,10 +310,12 @@ networks:
     ipam:
       config:
         - subnet: "${TUNNEL_NETWORK_SUBNET:-192.168.251.0/28}"
+          ip_range: "${TUNNEL_NETWORK_DYNAMIC_RANGE:-192.168.251.8/29}"
   api:
     ipam:
       config:
         - subnet: "${API_NETWORK_SUBNET:-192.168.250.0/28}"
+          ip_range: "${API_NETWORK_DYNAMIC_RANGE:-192.168.250.8/29}"
   ai:
   redis:
   postgres:
