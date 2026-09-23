@@ -110,15 +110,24 @@ For an existing deployment, inspect its project networks with
 `docker network inspect` and check for the `com.docker.compose.config-hash`
 label. Compose may reuse an older network without that label and retain its
 fixed subnet. If a network lacks the label, recreate the affected project from
-the `docker/` directory:
+the `docker/` directory. For production:
 
 ```sh
-docker compose -f compose.backend.yml down
-docker compose -f compose.backend.yml up -d --build
+docker compose --env-file .env -f compose.backend.yml down
+docker compose --env-file .env -f compose.backend.yml up -d --build
 ```
 
-Use the same Compose file and `--env-file` as the deployment, so these commands
-target the correct project. Omit `-v` from `down` to preserve named volumes.
+For staging:
+
+```sh
+docker compose --env-file .env.staging -f compose.backend.yml down
+APP_VERSION="$(git -C .. describe --tags --always --dirty)" \
+  docker compose --env-file .env.staging -f compose.backend.yml up -d --build
+```
+
+Use `compose.backend.memory.yml` instead when that is the deployed variant.
+Keep the deployment's project name and environment file, and omit `-v` from
+`down` to preserve named volumes.
 
 Remove obsolete `*_NETWORK_SUBNET`, `*_NETWORK_DYNAMIC_RANGE`,
 `*_NETWORK_GATEWAY`, `NGINX_API_IP`, `CLOUDFLARED_TUNNEL_IP`, and
