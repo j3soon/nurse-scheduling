@@ -4,6 +4,18 @@ This deployment scaffold publishes the FastAPI backend through Cloudflare
 Tunnel for `api.nursescheduling.org`. Cloudflare terminates public HTTPS, while
 `cloudflared` connects outbound from the VM to the API container.
 
+## Environment
+
+The deployment reads the ignored `docker/.env` file. The tracked
+`docker/.env.example` documents every variable and is the source of truth.
+Variables that must be set before the first start:
+
+- `CLOUDFLARE_TUNNEL_TOKEN`: the token of the Cloudflare Tunnel from the dashboard.
+- `API_AUTH_TOKEN` or `API_AUTH_TOKENS`: the deployment images require at least one backend key.
+- `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and `E2B_API_KEY`: the AI service starts with both Compose variants and fails startup without its provider and sandbox settings. Set `AI_AUTH_TOKEN` or `AI_AUTH_TOKENS` for a credentialed AI service.
+
+Notable optional variables: `SENTRY_BACKEND_DSN` (an unset DSN keeps the shared development project), `SENTRY_ENVIRONMENT`, `DISABLE_SENTRY`, `DIAGNOSTIC_TARGET_URL` and the other `DIAGNOSTIC_*` values, `USAGE_REPORT_TRANSPORT` with the Mailgun values, and the `OPTIMIZE_*` allowlist. Local development needs no environment variables.
+
 ## Cloudflare Tunnel
 
 - Create a [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/setup/).
@@ -96,7 +108,7 @@ disabled, although setting either one still enables bearer authentication.
 Both Compose variants enable AI chat logging through a fixed private PostgreSQL
 service connection. The database uses the persistent `postgres-ai-data` volume
 and is not published on a host port. See
-[durable chat logging](../docs/content/ai-assistant.md#durable-chat-logging) for
+[durable chat logging](https://nursescheduling.org/docs/ai-assistant/#durable-chat-logging) for
 retention and failure behavior.
 
 The deployment separates container traffic by purpose. Cloudflared shares only
@@ -113,7 +125,7 @@ For local inspection, start the loopback-only pgAdmin UI and open
 docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
 ```
 
-See [inspect chat history with pgAdmin](../docs/content/ai-assistant.md#inspect-chat-history-with-pgadmin)
+See [inspect chat history with pgAdmin](https://nursescheduling.org/docs/ai-assistant/#inspect-chat-history-with-pgadmin)
 for login, remote SSH forwarding, connection, and query instructions.
 
 NGINX removes the `/ai` prefix before forwarding requests to this
@@ -143,7 +155,7 @@ remaining filterable through their `app` tags.
 `SENTRY_AUTH_TOKEN` is not needed by the running backend because the SDK sends
 events through the DSN. Do not add a frontend DSN or Sentry auth token to this
 backend environment file. Configure them in the frontend build environment as
-described in the [developer guide](../docs/content/developer-guide/index.md#sentry).
+described in the [developer guide](https://nursescheduling.org/docs/developer-guide/index/#sentry).
 
 An unset DSN retains the repository's existing shared Sentry project. Running
 outside Docker uses the `development` environment. Set `DISABLE_SENTRY=1` in
@@ -234,7 +246,7 @@ docker compose -f compose.backend.yml --profile inspection run --rm --service-po
 ```
 
 Open `http://127.0.0.1:5540`. See
-[inspect Redis with RedisInsight](../docs/content/backend-server.md#inspect-redis-with-redisinsight)
+[inspect Redis with RedisInsight](https://nursescheduling.org/docs/backend-server/#inspect-redis-with-redisinsight)
 for remote access, key prefixes, and data-safety guidance.
 
 The backend publishes its accepted run options at `GET /optimize/options`.
@@ -248,6 +260,9 @@ running-job controls, and the prettify default. Configure the response with:
 - `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`
 - `OPTIMIZE_MAX_TIMEOUT_SECONDS`
 - `OPTIMIZE_DEFAULT_PRETTIFY`
+
+See the [Core README backend configuration](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md#backend-configuration)
+for defaults and validation of these and the other server settings.
 
 The safe default exposes only `ortools/cp-sat`. In an existing GPU-capable
 backend environment, copy the GPU settings template and set its tunnel token:
