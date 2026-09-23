@@ -29,9 +29,10 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ..sentry import capture_invalid_request, init_sentry
+from ..sentry import capture_invalid_request, init_sentry, tag_client_address
 from .api.optimize import events_router as optimize_events_router
 from .api.optimize import router as optimize_router
 from .auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_auth_dependency
@@ -56,6 +57,7 @@ from .request_limits import MULTIPART_OVERHEAD_BYTES, MaxBodySizeMiddleware
 from .runtime_identity import get_deployment_id
 from .solver_options import validate_solver_availability
 from .stores.memory import MemoryJobStore
+from .suspicion import create_suspicion_tracker, suspicion_salt
 
 TITLE = "Nurse Scheduling API"
 SERVICE_NAME = "nurse-scheduling-api"
@@ -202,6 +204,7 @@ def create_app(
         unexpected_error_formatter=_format_unexpected_error,
     )
     maintenance = JobMaintenance(controller, interval_seconds=settings.maintenance_interval_seconds)
+    suspicion_tracker = create_suspicion_tracker(settings, salt=suspicion_salt(settings, deployment_id))
     init_sentry(app_version)
 
     @asynccontextmanager
@@ -250,6 +253,7 @@ def create_app(
     app.state.instance_id = instance_id
     app.state.started_at = started_at
     app.state.runtime_identity = runtime_identity
+    app.state.suspicion_tracker = suspicion_tracker
 
     @app.exception_handler(ServerApplicationError)
     async def application_error_handler(request: Request, exc: ServerApplicationError):
@@ -264,7 +268,7 @@ def create_app(
         else:
             status_code = 500
         if status_code < 500:
-            capture_invalid_request(request, status_code, str(exc))
+            await run_in_threadpool(capture_invalid_request, request, status_code, str(exc), exc.code)
         else:
             server_logger.exception(
                 "[server:request] unexpected application error method=%s path=%s",
@@ -282,7 +286,7 @@ def create_app(
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
         """Capture request-schema failures before using FastAPI's response format."""
-        capture_invalid_request(request, 422, exc.errors())
+        await run_in_threadpool(capture_invalid_request, request, 422, exc.errors())
         return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(StarletteHTTPException)
@@ -291,8 +295,14 @@ def create_app(
         if request.url.path == "/optimize" and _is_form_parser_size_error(exc):
             exc = StarletteHTTPException(status_code=413, detail="Scheduling YAML is too large")
         if 400 <= exc.status_code < 500:
-            capture_invalid_request(request, exc.status_code, exc.detail)
+            await run_in_threadpool(capture_invalid_request, request, exc.status_code, exc.detail)
         return await http_exception_handler(request, exc)
+
+    @app.middleware("http")
+    async def tag_sentry_client_address(request: Request, call_next):
+        """Record the connection address on every request's events."""
+        tag_client_address(request)
+        return await call_next(request)
 
     # Added before CORS so the CORS layer stays outermost and still decorates a
     # rejected oversize request.

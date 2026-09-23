@@ -65,8 +65,8 @@ class ScheduleValidationResult:
 def validate_frontend_schedule_yaml(schedule_yaml: str, max_bytes: int) -> ScheduleValidationResult:
     """Validate one schedule against the shapes the web frontend can edit.
 
-    Parsing bounds live in the shared loader, which rejects aliases, deep
-    nesting, and oversized node counts before any model is built.
+    Parsing bounds live in the shared loader. The frontend entry point also
+    rejects aliases before building a model.
     """
     content = schedule_yaml.encode("utf-8")
     if len(content) > max_bytes:

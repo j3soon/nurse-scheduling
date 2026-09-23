@@ -109,6 +109,8 @@ services:
       JOB_BACKEND: redis
       JOB_REDIS_URL: redis://redis:6379/0
       JOB_REDIS_KEY_PREFIX: nurse_scheduling:jobs:v0
+      # Trust nginx as the TCP peer and cloudflared in the forwarded chain.
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-192.168.250.2,192.168.251.2}"
       OPTIMIZE_SOLVERS: "${OPTIMIZE_SOLVERS:-ortools/cp-sat}"
       OPTIMIZE_DEFAULT_SOLVER: "${OPTIMIZE_DEFAULT_SOLVER:-ortools/cp-sat}"
       OPTIMIZE_MIN_TIMEOUT_SECONDS: "${OPTIMIZE_MIN_TIMEOUT_SECONDS:-1}"
@@ -119,6 +121,9 @@ services:
       # without a token. Serving it open needs a deliberate API_AUTH_REQUIRED=false.
       API_AUTH_REQUIRED: "${API_AUTH_REQUIRED:-true}"
       API_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
+      SUSPICION_COUNTER_ENABLED: "${SUSPICION_COUNTER_ENABLED:-true}"
+      SUSPICION_WINDOW_SECONDS: "${SUSPICION_WINDOW_SECONDS:-300}"
+      SUSPICION_ESCALATE_COUNT: "${SUSPICION_ESCALATE_COUNT:-5}"
       API_AUTH_TOKENS: "${API_AUTH_TOKENS:-}"
       # The proxy terminates TLS, so the service cannot infer this from the request.
       API_COOKIE_SECURE: "${API_COOKIE_SECURE:-true}"
@@ -216,9 +221,10 @@ services:
     image: nginx:1.29-alpine
     restart: unless-stopped
     networks:
-      - tunnel
-      - api
-      - ai
+      tunnel:
+      api:
+        ipv4_address: "${NGINX_API_IP:-192.168.250.2}"
+      ai:
     depends_on:
       api:
         condition: service_healthy
@@ -238,7 +244,8 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     networks:
-      - tunnel
+      tunnel:
+        ipv4_address: "${CLOUDFLARED_TUNNEL_IP:-192.168.251.2}"
     depends_on:
       nginx:
         condition: service_healthy
@@ -300,7 +307,13 @@ services:
 
 networks:
   tunnel:
+    ipam:
+      config:
+        - subnet: "${TUNNEL_NETWORK_SUBNET:-192.168.251.0/28}"
   api:
+    ipam:
+      config:
+        - subnet: "${API_NETWORK_SUBNET:-192.168.250.0/28}"
   ai:
   redis:
   postgres:

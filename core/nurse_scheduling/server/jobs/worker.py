@@ -22,9 +22,10 @@ import threading
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from ...sentry import capture_optimize_exception
+from ...sentry import capture_optimize_exception, report_outage_recovery
 from ..config import DEFAULT_TIMEOUT_GRACE_SECONDS
 from ..errors import JobNotFoundError
+from ..retry import DEFAULT_OUTAGE_MAX_DELAY_SECONDS, RepeatedFailure
 from ..solver_capabilities import solver_supports_finish_now
 from .controller import JobController
 from .models import Job, JobFailure, JobState, WorkerLease
@@ -64,7 +65,20 @@ class JobWorker:
         self._worker_id = worker_id
         """Stable identity recorded on jobs claimed by this worker."""
         self._claim_poll_seconds = claim_poll_seconds
-        """Delay between claim attempts and after recoverable loop errors."""
+        """Delay between attempts to claim a queued job."""
+        outage_max_delay = max(claim_poll_seconds, DEFAULT_OUTAGE_MAX_DELAY_SECONDS)
+        self._claim_failures = RepeatedFailure(
+            base_delay_seconds=claim_poll_seconds, max_delay_seconds=outage_max_delay
+        )
+        """Quiets and slows claim attempts while the store is unavailable."""
+        self._renew_failures = RepeatedFailure(
+            base_delay_seconds=claim_poll_seconds, max_delay_seconds=outage_max_delay
+        )
+        """Quiets lease renewal while the store is unavailable."""
+        self._recover_failures = RepeatedFailure(
+            base_delay_seconds=claim_poll_seconds, max_delay_seconds=outage_max_delay
+        )
+        """Quiets lease recovery while the store is unavailable."""
         self._worker_lease_seconds = worker_lease_seconds
         """Maximum time this worker remains live without a successful heartbeat."""
         self._worker_heartbeat_seconds = worker_lease_seconds / 3
@@ -223,12 +237,22 @@ class JobWorker:
     def _renew_worker_lease(self, lease: WorkerLease) -> WorkerLease | None:
         """Renew once, retaining the current lease through a brief store outage."""
         try:
-            return self._controller.renew_worker(lease)
+            renewed = self._controller.renew_worker(lease)
         except Exception:
-            server_logger.exception("[server:worker] failed to renew worker_id=%s", self._worker_id)
+            if self._renew_failures.report():
+                server_logger.exception("[server:worker] failed to renew worker_id=%s", self._worker_id)
             if datetime.now(timezone.utc) < lease.expires_at:
                 return lease
             return None
+        ended_failures = self._renew_failures.recovered()
+        if ended_failures:
+            server_logger.warning(
+                "[server:worker] resumed renewing after %d failures worker_id=%s",
+                ended_failures,
+                self._worker_id,
+            )
+            report_outage_recovery("worker.renew", ended_failures)
+        return renewed
 
     def _recover_worker_lease(self, lease: WorkerLease) -> WorkerLease | None:
         """Reconcile an uncertain renewal before replacing a lost lease."""
@@ -248,18 +272,27 @@ class JobWorker:
         server_logger.error("[server:worker] worker lease expired worker_id=%s", self._worker_id)
         while not self._stop.is_set():
             if not self._claim_loop_is_alive():
+                self._recover_failures.recovered()
                 self._unregister_stopped_worker()
                 return None
+            waiting_for_job = False
             try:
                 self._controller.expire_worker_claims()
-                if not self._executing.is_set():
+                if self._executing.is_set():
+                    waiting_for_job = True
+                else:
                     recovered_lease = self._controller.register_worker(self._worker_id)
                     if recovered_lease is not None:
+                        ended_failures = self._recover_failures.recovered()
+                        if ended_failures:
+                            report_outage_recovery("worker.recover", ended_failures)
                         server_logger.info("[server:worker] worker lease recovered worker_id=%s", self._worker_id)
                         return recovered_lease
             except Exception:
-                server_logger.exception("[server:worker] failed to recover worker_id=%s", self._worker_id)
-            self._stop.wait(self._claim_poll_seconds)
+                if self._recover_failures.report():
+                    server_logger.exception("[server:worker] failed to recover worker_id=%s", self._worker_id)
+            delay = self._claim_poll_seconds if waiting_for_job else self._recover_failures.delay_seconds()
+            self._stop.wait(delay)
         return None
 
     def _run(self) -> None:
@@ -278,9 +311,18 @@ class JobWorker:
             try:
                 job = self._controller.claim_next_job(lease)
             except Exception:
-                server_logger.exception("[server:worker] failed to claim job worker_id=%s", self._worker_id)
-                self._stop.wait(self._claim_poll_seconds)
+                if self._claim_failures.report():
+                    server_logger.exception("[server:worker] failed to claim job worker_id=%s", self._worker_id)
+                self._stop.wait(self._claim_failures.delay_seconds())
                 continue
+            ended_failures = self._claim_failures.recovered()
+            if ended_failures:
+                server_logger.warning(
+                    "[server:worker] resumed claiming after %d failures worker_id=%s",
+                    ended_failures,
+                    self._worker_id,
+                )
+                report_outage_recovery("worker.claim", ended_failures)
             if job is None:
                 self._stop.wait(self._claim_poll_seconds)
                 continue

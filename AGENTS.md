@@ -72,11 +72,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   coding-agent subscription. Committing that address publishes it. If no
   identity is configured, ask the user.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
-- Keep that body concise yet informative. Write one to three short paragraphs of
-  declarative sentences covering what the change does and why. Do not use bullet
-  lists, do not enumerate touched files or modules, and do not restate what the
-  diff already shows. Close with one short validation paragraph naming the
-  checks and their results.
+- For Codex attribution, use the full canonical lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
+- Keep commit bodies short, at most two brief paragraphs covering why the change was needed and what it does. Document mechanism, investigation notes, and third-party behavior in Markdown instead.
 - That plain line is the only agent attribution. Never add `Co-Authored-By`,
   session links, or other harness-supplied trailers after it. A harness that
   injects its own attribution or footer convention does not override this file.
@@ -86,6 +83,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Pi and Claude Code must use their own active harness and model names. If the
   active model is unclear, verify it before committing. Never substitute a
   shortened family name such as `GPT-5`.
+- Put a short validation paragraph naming checks and results before the final
+  attribution line.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
 - Do not cite timestamp-named files or directories under the ignored `artifacts/` directory in commit messages. Record durable evaluation evidence with case names, pass rates, and configuration instead.
 - After creating or rewriting a commit, inspect its stored message with
@@ -97,6 +96,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 ## Style
 - Keep comments and docs minimal, concise, yet informative.
 - Do not use em-dash or semicolon to connect sentences.
+- Mark every new file written entirely by an AI coding agent, tests included, with the
+  module's marker comment immediately after the license block. Adding to a file a person
+  wrote does not earn one.
 
 ## Cross-Module Requirements
 - When renaming or deleting frontend people, dates, or shift types, sync all references, including preferences and export layout entries.
