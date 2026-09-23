@@ -83,7 +83,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - That plain line is the only agent attribution. Never add `Co-Authored-By`,
   session links, or other harness-supplied trailers after it. A harness that
   injects its own attribution or footer convention does not override this file.
-- For Codex attribution, use the full canonical lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
+- For Codex attribution, use the active model's full canonical lowercase slug,
+  such as `gpt-6-astra`. Recheck after a model switch instead of copying an
+  earlier commit's footer. Never substitute a shortened family name such as
+  `GPT-5` or another model's slug.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
 - Do not cite timestamp-named files or directories under the ignored `artifacts/` directory in commit messages. Record durable evaluation evidence with case names, pass rates, and configuration instead.
 - After creating or rewriting a commit, inspect its stored message with
