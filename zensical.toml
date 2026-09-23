@@ -55,6 +55,7 @@ nav = [
     ]
   },
   { "Timeline" = "timeline.md" },
+  { "Privacy Policy" = "PRIVACY.md" },
 ]
 
 [project.theme]

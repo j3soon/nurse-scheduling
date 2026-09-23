@@ -140,29 +140,3 @@ questions in that session use the same service-held snapshot. The current
 browser tab preserves the transcript when you switch pages or reload. A chat
 expires after 48 hours without a message. Each new message renews that period,
 and the page reports when a preserved chat has expired.
-
-## Data and limitations
-
-The complete schedule YAML is sent to the configured AI service and placed in
-the assistant's temporary workspace. Relevant schedule content reaches the
-model when the assistant inspects it. Attached files are copied to that isolated
-workspace for the current question and are destroyed with it. The assistant can
-inspect spreadsheet cells, including formulas and last-saved values, or extract
-text and render selected PDF pages. Rendered pages and any images the assistant
-extracts may be sent to the model when it reads them. File support still depends
-on the inspection tools installed in the workspace, and the assistant does not
-execute attachments.
-
-AI chats and related data may be logged, retained, and processed for the
-development, evaluation, and improvement of this product and the AI provider's
-products. The AI model still receives the original schedule when it reads it.
-Chats and attachments are not anonymized, and the basic optimizer anonymization
-does not make a sensitive schedule safe to submit. Do not submit personal,
-confidential, regulated, or otherwise
-sensitive information. See the
-[privacy policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md)
-for details.
-
-Chat sessions use unguessable identifiers but do not have account
-authentication yet. Model answers may be incorrect, so verify them against the
-schedule.
