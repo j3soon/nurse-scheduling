@@ -36,6 +36,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -1325,6 +1326,23 @@ def test_chat_history_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_MAX_HISTORY_MESSAGES", raising=False)
 
     assert AiSettings.from_env().max_history_messages == 1000
+
+
+def test_compose_exposes_the_ai_session_byte_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_MAX_SESSION_BYTES", raising=False)
+    default = AiSettings.from_env().max_session_bytes
+    docker_dir = Path(__file__).resolve().parents[2] / "docker"
+
+    for name in ("compose.backend.yml", "compose.backend.memory.yml"):
+        compose = yaml.safe_load((docker_dir / name).read_text("utf-8"))
+        ai_environment = compose["services"]["ai"]["environment"]
+        assert ai_environment["AI_MAX_SESSION_BYTES"] == f"${{AI_MAX_SESSION_BYTES:-{default}}}", name
+
+    for name in (".env.example", ".env.gpu.example", ".env.staging.example"):
+        contents = (docker_dir / name).read_text("utf-8")
+        assert re.search(rf"(?m)^AI_MAX_SESSION_BYTES={default}$", contents), name
 
 
 def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
