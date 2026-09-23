@@ -3,13 +3,9 @@
 The FastAPI backend entry point is `nurse_scheduling/serve.py`.
 
 ## Setup And Commands
-Run commands from `core/`:
+Run commands from `core/`. Basic install, CLI, backend, AI backend, and test
+commands are documented in `README.md`.
 
-- `uv venv --python 3.12 && source .venv/bin/activate`
-- `uv pip install -r requirements-optional.txt`: the development install. See
-  the Dependencies section below.
-- `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `../README.md`.
-- `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
 - `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
   pytest suites. AI code, bundled guidance, and AI test helper changes run all

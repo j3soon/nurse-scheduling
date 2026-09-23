@@ -4,18 +4,14 @@ The app uses the Next.js App Router. Shared code lives under `src/components/`,
 `src/hooks/`, `src/utils/`, and `src/types/`.
 
 ## Commands
-Run commands from `web-frontend/`:
+Run commands from `web-frontend/`. Basic dev, build, lint, unit, and E2E
+commands are documented in `README.md`.
 
 - `bun install --frozen-lockfile`
-- `bun run dev`
-- `bun run build`
-- `bun run lint -- --fix`
 - `bun run test:affected`: reconcile dependencies, lint the full frontend, and
   run tests related to uncommitted `src/` changes with compact output. Shared
   config and deleted source files trigger the full unit/component suite. An
   unmatched source path fails instead of passing with zero tests.
-- `bun run test`: run the full unit/component suite.
-- `bun run test:e2e`: run Playwright integration tests.
 - `bun run test:e2e:affected`: lint the full frontend and run changed or
   explicitly provided E2E specs with compact output on an isolated server.
   Stop after the first failure.

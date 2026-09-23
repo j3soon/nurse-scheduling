@@ -35,7 +35,7 @@ Two hosted optimization servers are provided as free, shared, best-effort servic
 
 ## Privacy Notice
 
-The hosted application anonymizes individual people IDs and removes descriptions by default before sending a schedule for optimization. A schedule without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](PRIVACY.md) for details.
+The hosted application anonymizes individual people IDs and removes descriptions by default before sending a schedule for optimization. A schedule without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for details.
 
 ## AI Beta Access
 
@@ -43,7 +43,7 @@ During the evaluation period, the hosted AI assistant is gated by an API key by 
 
 To request access for experimentation, email [admin@nursescheduling.org](mailto:admin@nursescheduling.org) from your institution email address. Include your institution's name and a short description of how you plan to evaluate the assistant.
 
-Before requesting or using access, review [Privacy and Data Handling](PRIVACY.md). Do not submit personal, confidential, regulated, or otherwise sensitive information.
+Before requesting or using access, review [Privacy and Data Handling](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md). Do not submit personal, confidential, regulated, or otherwise sensitive information.
 
 ## Support
 
@@ -69,49 +69,40 @@ git clone https://github.com/j3soon/nurse-scheduling.git
 cd nurse-scheduling
 ```
 
-#### Linux (bash/zsh)
-
-Start frontend:
-
-```sh
-cd web-frontend
-bun install
-bun run dev
-```
-
-In a new terminal, start backend:
+On Linux, set up all local environments (`core`, `web-frontend`, and `docs`) in
+one go:
 
 ```sh
-cd core
-uv venv --python 3.12
-source .venv/bin/activate
-uv pip install -r requirements.txt
-fastapi dev nurse_scheduling/serve.py
+./scripts/setup_env.sh
 ```
 
-#### macOS (bash/zsh)
-
-> macOS support is experimental.
-
-Start frontend:
+Then start the backend and the frontend in separate terminals:
 
 ```sh
-cd web-frontend
-bun install
-bun run dev
+./scripts/start_backend.sh
+./scripts/start_frontend.sh
 ```
 
-In a new terminal, start backend:
+Open `http://localhost:3000`.
 
-```sh
-cd core
-uv venv --python 3.12
-source .venv/bin/activate
-uv pip install -r requirements.txt
-fastapi dev nurse_scheduling/serve.py
-```
+On other platforms, install the environments manually with the commands in
+[core/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md)
+and
+[web-frontend/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/README.md),
+then use the same start scripts.
 
-#### Windows (PowerShell)
+Module and deployment guides:
+
+- Core (CLI, backend, AI backend, configuration, tests): [core/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md)
+- Web frontend (development, tests, builds, Netlify hosting): [web-frontend/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/README.md)
+- Documentation site (preview and build): [docs/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/README.md)
+- Backend deployment (Docker Compose, tunnel, Sentry, reports): [docker/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/docker/README.md)
+
+Local development needs no environment variables. The AI backend reads
+`docker/.env` (copied from the tracked `docker/.env.example`) for its provider
+and sandbox settings.
+
+### Windows (PowerShell)
 
 > Windows OS support is experimental.
 
@@ -134,22 +125,10 @@ uv pip install -r requirements.txt
 fastapi dev nurse_scheduling\serve.py
 ```
 
-`core/requirements.txt` holds only what the CLI and the backend need at
-runtime, which keeps the deployment image small. Install
-`core/requirements-optional.txt` instead to add the experimental solver
-backends and the test and lint tooling.
+### Development container
 
-### Linux Development and Docker
-
-The commands below are Linux-focused reference material for setup, testing, and Docker.
-
-For Linux only: to quickly set up all local environments (`core`, `web-frontend`, and `docs`) in one go, run:
-
-```sh
-./scripts/setup_env.sh
-```
-
-For Docker-based development environment:
+The commands below are Linux-focused reference material for the Docker-based
+development environment.
 
 The development images include GitHub CLI. GitHub authentication is optional.
 For read-only GitHub access, create a short-lived
@@ -228,9 +207,13 @@ docker run --rm -it --gpus all --network=host \
   j3soon/nurse-scheduling:dev-cuopt
 ```
 
-After entering a container, use the [Core](#core) commands to run the CLI or
-the [Web Backend](#web-backend) commands to start a server. Use the GPU image
+After entering a container, use the [Core](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md)
+commands to run the CLI or start a server. Use the GPU image
 for `pulp/cuopt`.
+
+To run the experimental AI backend in the container, add
+`--env-file docker/.env` to `docker run` and see the AI backend section of the
+[Core README](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md).
 
 or with X11 forwarding for running Playwright interactive mode in the container:
 
@@ -261,419 +244,11 @@ docker run --rm -it --network=host \
 
 > May need to run `rm -rf .next` in `web-frontend` to clear the Next.js cache when switching between host and Docker environments.
 
-### Web Frontend
-
-The commands below are tested on Linux only.
-
-```sh
-cd web-frontend
-bun install
-bun run dev
-```
-
-Run frontend unit/component tests:
-
-```sh
-cd web-frontend
-bun run test
-```
-
-Run frontend coverage:
-
-```sh
-cd web-frontend
-bun run test:coverage
-```
-
-Run frontend browser integration tests:
-
-```sh
-cd web-frontend
-bunx playwright install-deps chromium
-bunx playwright install chromium
-bun run test:e2e
-# or in interactive UI mode:
-bun run test:e2e:ui
-```
-
-When using the repository `docker/Dockerfile.dev`, Chromium is preinstalled in the image at
-build time using the frontend's locked Playwright version. If you rebuild the
-image after Playwright version changes, `bun run test:e2e` and
-`bun run test:e2e:ui` should not require rerunning `bunx playwright install chromium`
-inside each new `docker run --rm` container.
-
-In GitHub Actions, frontend browser integration tests run after frontend unit/coverage tests. The workflow uploads Playwright reports as build artifacts so failed CI runs keep browser traces and reports for debugging.
-
-Generate a separate browser-flow coverage report from Playwright:
-
-```sh
-cd web-frontend
-bun run test:e2e:coverage
-bun run coverage:e2e:report
-```
-
-This writes a separate report under `web-frontend/coverage-e2e/` and does not replace the main Vitest coverage report under `web-frontend/coverage/`.
-
-For building static site, run:
-
-```sh
-cd web-frontend
-bun run build
-```
-
-#### Hosting on Netlify
-
-The root [`netlify.toml`](netlify.toml) builds the static frontend into
-`web-frontend/out` and publishes the documentation under `/docs`. After linking
-the repository to a Netlify project, open **Project configuration → Environment
-variables** and configure these variables with the **Builds** scope:
-
-| Variable | Value | Sensitive |
-| --- | --- | --- |
-| `NEXT_PUBLIC_SENTRY_DSN` | Public DSN for the frontend Sentry project. | No |
-| `SENTRY_ENVIRONMENT` | `production` for the production deploy context. Use a distinct value such as `staging` for branch deploys. | No |
-| `SENTRY_PROJECT` | Slug of the frontend Sentry project. | No |
-| `SENTRY_AUTH_TOKEN` | Sentry organization auth token allowed to create releases and upload source maps for the frontend project. | Yes |
-
-Mark `SENTRY_AUTH_TOKEN` as **Contains secret values** in Netlify. Never prefix
-it with `NEXT_PUBLIC_`, put it in `netlify.toml`, or commit it to an environment
-file. The Next.js Sentry build plugin reads it only while building, then uploads
-the release and source maps. Without it, the site still builds and browser
-events still reach Sentry through `NEXT_PUBLIC_SENTRY_DSN`, but production stack
-traces may remain minified.
-
-To create the token:
-
-1. Follow Sentry's [auth-token instructions](https://docs.sentry.io/account/auth-tokens/)
-   to create an organization token through an internal integration.
-2. Grant `org:ci` for release and source-map operations. Ensure the integration can access the
-   team that owns `SENTRY_PROJECT`.
-3. Copy the generated token into Netlify as `SENTRY_AUTH_TOKEN`, select the
-   **Builds** scope, and mark it as **Contains secret values**.
-
-Trigger a new deploy after changing any build environment variable. Configure
-different `SENTRY_ENVIRONMENT` values per Netlify deploy context when production
-and branch deploys share the same frontend Sentry project.
-
-For linting, run:
-
-```sh
-cd web-frontend
-bun run lint -- --fix
-```
-
-> `bun` can be replaced directly with `npm` for the basic Next.js workflow, but the documented project scripts assume Bun.
-
-### Experimental AI Chat
-
-The experimental chat answers questions about the schedule currently open in
-the frontend. Arbitrary file attachments are copied into a disposable sandbox
-for inspection. The chat runs as a separate backend process and sends the
-schedule and model-visible inputs to an OpenAI-compatible
-provider.
-
-Create a local configuration file. The real `docker/.env` file is ignored by Git:
-
-```sh
-cp docker/.env.example docker/.env
-# Review and update the AI values. Set AI_AUTH_REQUIRED=false and leave
-# AI_AUTH_TOKEN and AI_AUTH_TOKENS empty only for intentional local no-auth use.
-```
-
-Start the AI backend and frontend in separate terminals:
-
-```sh
-./scripts/start_ai_backend.sh
-./scripts/start_frontend.sh --hostname 0.0.0.0
-```
-
-Open `http://localhost:3000/experimental-ai`, select **Change**, then select
-**Use localhost**. The local AI backend listens on `http://localhost:8001`.
-The page otherwise uses `https://api.nursescheduling.org/ai` by default. See the
-[AI assistant backend guide](https://nursescheduling.org/docs/ai-assistant/)
-for container commands, configuration, security notes, and focused tests.
-
-### Core
-
-The main solver paths are:
-
-- `ortools/cp-sat`, labeled **OR-Tools | CP-SAT**, is the recommended CPU
-  solver and the default.
-- `pulp/cuopt`, labeled **PuLP | cuOpt**, is the experimental GPU solver. It
-  requires the NVIDIA cuOpt runtime and a supported GPU.
-
-See the [solver reference](https://nursescheduling.org/docs/solvers/) for the
-full experimental solver matrix, platform requirements, runtime capabilities,
-and test coverage.
-
-```sh
-cd core
-# create virtual environment
-uv venv --python 3.12
-# activate virtual environment
-source .venv/bin/activate
-# install dependencies, including the optional solvers and test tooling
-uv pip install -r requirements-optional.txt
-# run the CPU solver, OR-Tools | CP-SAT is the default
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
-# for example:
-python -m nurse_scheduling.cli tests/testcases/basics/01_1nurse_1shift_1day.yaml
-# run the GPU solver, PuLP | cuOpt
-python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver pulp/cuopt
-# run CLI with prettify and verbose
-python -m nurse_scheduling.cli <input_file_path> [output_xlsx_path] --verbose --prettify
-# record solver progress as JSON Lines for later plotting
-python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --verbose --prettify --timeout 180 --progress-output progress.jsonl
-```
-
-Run tests:
-
-```sh
-cd core
-# run the normal core test suite
-pytest --log-cli-level=INFO
-# run focused OR-Tools | CP-SAT tests
-pytest --log-cli-level=INFO \
-  tests/test_solver_ortools_cp_sat.py \
-  tests/test_schedule_ortools_cp_sat.py
-# run focused PuLP | cuOpt tests in the GPU environment
-pytest --log-cli-level=INFO \
-  tests/test_solver_pulp_cuopt.py \
-  tests/test_schedule_pulp_cuopt.py
-# run Python lint checks for core
-ruff check nurse_scheduling tests
-# auto-fix lint issues when possible
-ruff check --fix nurse_scheduling tests
-# apply consistent formatting
-ruff format nurse_scheduling tests
-```
-
-Generate coverage report:
-
-```sh
-cd core
-# terminal summary
-pytest --cov=nurse_scheduling
-# HTML report for local inspection
-pytest --cov=nurse_scheduling --cov-report=html
-# open report at:
-# htmlcov/index.html
-```
-
-For more debugging output when a test fails:
-
-```sh
-cd core
-pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py
-pytest --log-cli-level=INFO tests/test_schedule_ortools_cp_sat.py
-pytest --log-cli-level=INFO tests/test_solver_pulp_cuopt.py
-pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
-```
-
-Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
-
-The checks under `core/tests/real/` intentionally omit pytest's `test_` filename prefix so they are not included in the
-normal core suite. They solve larger real-world scenarios with fixed optimization budgets and run in the separate
-`test-core-real.yaml` GitHub Actions workflow.
-
-Note: The frontend now has Vitest coverage plus Playwright browser integration tests. The root GitHub Actions badge currently still points at the core workflow.
-
-### Web Backend
-
-The commands below are tested on Linux only.
-
-```sh
-cd core/nurse_scheduling
-# development mode
-fastapi dev serve.py
-
-cd ..
-# run curl (needs to be run after the server is running)
-./tests/test_serve_curl.sh
-# run serve tests (don't need to be run after the server is running)
-python tests/test_serve.py
-# or
-pytest tests/test_serve.py --log-cli-level=INFO
-```
-
-By default, the server exposes only **OR-Tools | CP-SAT** and keeps job state
-in process-local memory:
-
-```sh
-cd core
-JOB_BACKEND=memory \
-OPTIMIZE_SOLVERS=ortools/cp-sat \
-OPTIMIZE_DEFAULT_SOLVER=ortools/cp-sat \
-uvicorn nurse_scheduling.serve:app --no-access-log
-```
-
-To expose a GPU-only **PuLP | cuOpt** server, run this command in the cuOpt
-environment or GPU development container:
-
-```sh
-cd core
-JOB_BACKEND=memory \
-OPTIMIZE_SOLVERS=pulp/cuopt \
-OPTIMIZE_DEFAULT_SOLVER=pulp/cuopt \
-uvicorn nurse_scheduling.serve:app --no-access-log
-```
-
-For multiple Uvicorn workers or multiple backend machines, use Redis-backed job state. Redis stores job metadata,
-queued job IDs, YAML inputs, XLSX artifacts, and replayable optimization events. Each backend process still runs at
-most one optimization job locally, so `--workers 3` allows up to three simultaneous jobs across those worker processes.
-
-```sh
-cd core
-JOB_BACKEND=redis \
-JOB_REDIS_URL=redis://localhost:6379/0 \
-JOB_REDIS_KEY_PREFIX=nurse_scheduling:jobs:v0 \
-uvicorn nurse_scheduling.serve:app --workers 3 --no-access-log
-```
-
-The optional `JOB_WORKER_LEASE_SECONDS` setting defaults to 90 seconds. Keep it
-long enough to tolerate brief Redis interruptions. Every worker renews its
-presence lease every third of that interval, including while idle.
-
-Replayable event history is capped at 1,000 events per job. Set
-`JOB_MAX_EVENTS_PER_JOB` to choose a different positive limit.
-
-The backend is the source of truth for the optimization controls shown by the
-frontend. `GET /optimize/options` returns the allowed solvers, integer timeout
-range, running-job controls, and prettify default. Configure them with:
-
-```sh
-export OPTIMIZE_SOLVERS=ortools/cp-sat,pulp/cuopt
-export OPTIMIZE_DEFAULT_SOLVER=ortools/cp-sat
-export OPTIMIZE_MIN_TIMEOUT_SECONDS=1
-export OPTIMIZE_DEFAULT_TIMEOUT_SECONDS=300
-export OPTIMIZE_MAX_TIMEOUT_SECONDS=3600
-export OPTIMIZE_DEFAULT_PRETTIFY=true
-```
-
-The server is unauthenticated by default, which suits local development. Set
-the legacy `API_AUTH_TOKEN` or a JSON object such as
-`API_AUTH_TOKENS='{"institution-a":"key"}'` to require a bearer key on every
-application route except `/info` and `/ready`:
-
-```sh
-cd core
-API_AUTH_TOKEN="$(openssl rand -base64 32)" \
-uvicorn nurse_scheduling.serve:app --no-access-log
-```
-
-`GET /info` reports `auth.required` so the frontend can prompt for a key.
-The generated `/openapi.json`, `/docs`, and `/redoc` routes are disabled while
-authentication is configured.
-The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployed backend
-refuses to start without a configured key. Serving one without authentication
-requires `API_AUTH_REQUIRED=false`.
-
-Only advertise solvers available on that machine. The server validates the
-configured runtimes at startup.
-
-Without Docker, install and start Redis with your operating system package manager.
-
-Ubuntu/Debian:
-
-```sh
-sudo apt-get update
-sudo apt-get install redis-server
-redis-server --daemonize yes
-redis-cli ping
-```
-
-macOS with Homebrew:
-
-```sh
-brew install redis
-brew services start redis
-redis-cli ping
-```
-
-Run the Redis backend tests against a local Redis database:
-
-```sh
-cd core
-JOB_REDIS_TEST_URL=redis://localhost:6379/15 pytest --log-cli-level=INFO tests/test_optimize_job_backends.py
-```
-
-For Docker Compose deployment, `docker/compose.backend.yml` starts a Redis
-service and configures the backend to use it:
-
-```sh
-cd docker
-docker compose -f compose.backend.yml up -d --build
-```
-
-#### Inspect Redis Data
-
-The Compose deployment uses Redis database `0` and the key prefix
-`nurse_scheduling:jobs:v0`. Open `redis-cli` from the Redis container:
-
-```sh
-docker compose -f compose.backend.yml exec redis redis-cli -n 0
-```
-
-Useful inspection commands include:
-
-```text
-DBSIZE
-SCAN 0 MATCH nurse_scheduling:jobs:v0:* COUNT 100
-ZRANGE nurse_scheduling:jobs:v0:jobs 0 -1 WITHSCORES
-ZRANGE nurse_scheduling:jobs:v0:queue 0 -1 WITHSCORES
-SMEMBERS nurse_scheduling:jobs:v0:pending
-ZRANGE nurse_scheduling:jobs:v0:workers:leases 0 -1 WITHSCORES
-HGETALL nurse_scheduling:jobs:v0:workers:tokens
-HGETALL nurse_scheduling:jobs:v0:workers:active
-GET nurse_scheduling:jobs:v0:job:<job-id>
-GET nurse_scheduling:jobs:v0:job:<job-id>:input
-XRANGE nurse_scheduling:jobs:v0:job:<job-id>:events - + COUNT 20
-HGETALL nurse_scheduling:jobs:v0:job:<job-id>:artifact_metadata
-```
-
-Use `SCAN` instead of `KEYS *` on a busy database. Job artifacts are binary and
-are better inspected through the API download endpoint.
-
-To run one backend worker with process-local memory and no Redis service, use
-the pre-Redis deployment configuration:
-
-```sh
-cd docker
-docker compose -f compose.backend.memory.yml up -d --build
-```
-
-The bundled Redis service persists an AOF with `appendfsync everysec` and keeps
-an RDB fallback after six hours when at least one write has occurred. This
-limits the usual abrupt-failure exposure to approximately the latest second,
-while an RDB-only recovery can be up to six hours behind. Redis installed
-outside the bundled Compose deployment keeps its system persistence policy.
-
-### Documentation
-
-The commands below are tested on Linux only.
-
-```sh
-# create virtual environment
-uv venv --python 3.12 docs/.venv
-# activate virtual environment
-source docs/.venv/bin/activate
-# install dependencies
-uv pip install -r docs/requirements.txt
-# preview documentation on the port used by local page-help links
-zensical serve
-```
-
-For building static site, run:
-
-```sh
-zensical build --clean --strict
-```
-
 ## Acknowledgments
 
 This project would not have been possible without the contributors in [CONTRIBUTORS.md](https://github.com/j3soon/nurse-scheduling/blob/dev/CONTRIBUTORS.md).
 
-See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for the free services this project relies on.
+See [ACKNOWLEDGMENTS.md](https://github.com/j3soon/nurse-scheduling/blob/dev/ACKNOWLEDGMENTS.md) for the free services this project relies on.
 
 ## License
 
@@ -681,7 +256,7 @@ This project is licensed under the [AGPL-3.0 License](https://github.com/j3soon/
 
 ## References
 
-- [Nurse rostering - Timefold](https://timefold.ai/docs/timefold-solver/latest/use-cases-and-examples/nurse-rostering/nurse-rostering.html)
+- [Nurse rostering - Timefold](https://timefold.ai/docs/timefold-solver/latest/use-cases-and-examples/nurse-rostering.html)
 - [A nurse scheduling problem - OR-Tools](https://developers.google.com/optimization/scheduling/employee_scheduling#a_nurse_scheduling_problem)
 - Haspeslagh et al., 2010, [First International Nurse Rostering Competition 2010](https://nrpcompetition.kuleuven-kulak.be/wp-content/uploads/2020/06/nrpcompetition_description.pdf) [[website](https://nrpcompetition.kuleuven-kulak.be/)]
 - Ceschia et al., 2015, [Second International Nurse Rostering Competition (INRC-II) --- Problem Description and Rules ---](https://arxiv.org/abs/1501.04177) [[website](https://mobiz.vives.be/inrc2/)]
