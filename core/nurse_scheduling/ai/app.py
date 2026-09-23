@@ -356,6 +356,13 @@ class SessionStore:
             - len(recent_history(session.history, self._settings.max_history_chars))
         )
 
+    def _cap_history(self, session: ChatSession) -> None:
+        """Limit retained messages and count those removed from the oldest end."""
+        overflow = max(0, len(session.history) - self._settings.max_history_messages)
+        if overflow:
+            del session.history[:overflow]
+            session.dropped_history_messages += overflow
+
     def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
         """Create a session after pruning expired entries."""
         with self._lock:
@@ -457,9 +464,7 @@ class SessionStore:
                 ChatMessage(role="assistant", content=assistant_message),
             )
             session.history.extend(completed_turn)
-            removed_by_message_cap = max(0, len(session.history) - self._settings.max_history_messages)
-            session.history = session.history[-self._settings.max_history_messages :]
-            session.dropped_history_messages += removed_by_message_cap
+            self._cap_history(session)
             proposal_saved = proposal is not None
             if proposal_saved:
                 session.proposal_yaml, session.proposal_diff = proposal
@@ -606,7 +611,7 @@ class SessionStore:
     def _append_history_event(self, session: ChatSession, content: str) -> None:
         """Append one trusted application event within the caller's lock."""
         session.history.append(ChatMessage(role="user", content=content))
-        session.history = session.history[-self._settings.max_history_messages :]
+        self._cap_history(session)
 
     def _get_owned(self, session_id: str, owner_token: str | None) -> ChatSession:
         self._prune_expired()

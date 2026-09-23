@@ -2222,6 +2222,19 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     assert store.retained_bytes == 600
 
 
+def test_proposal_history_event_counts_a_message_removed_by_the_cap() -> None:
+    app = create_test_app(settings=make_settings(max_history_messages=2), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "description: test")
+    store.begin(session.id, "browser-owner")
+    store.finish(session.id, "question", "answer", ("proposal", "diff"), base_revision=session.revision)
+
+    store.discard_proposal(session.id, "browser-owner")
+
+    assert [message["role"] for message in store._sessions[session.id].history] == ["assistant", "user"]
+    assert store.begin(session.id, "browser-owner")[-1] == 1
+
+
 def test_steering_adjusts_retained_bytes_without_a_full_recount() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
