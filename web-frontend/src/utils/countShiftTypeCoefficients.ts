@@ -35,10 +35,27 @@ export function getCoefficientForShiftType(
 }
 
 function getExpandedShiftTypeIdsById(shiftTypeData: { items: Item[]; groups: Group[] }): Map<string, readonly string[]> {
-  return new Map([
-    ...shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]] as const),
-    ...shiftTypeData.groups.map(group => [group.id, [...new Set(group.members)]] as const),
-  ]);
+  const expanded = new Map<string, readonly string[]>(
+    shiftTypeData.items.map(shiftType => [shiftType.id, [shiftType.id]])
+  );
+  const groupsById = new Map(shiftTypeData.groups.map(group => [group.id, group]));
+  const visiting = new Set<string>();
+
+  function expand(id: string): readonly string[] {
+    const cached = expanded.get(id);
+    if (cached) return cached;
+    const group = groupsById.get(id);
+    if (!group || visiting.has(id)) return [];
+
+    visiting.add(id);
+    const members = [...new Set(group.members.flatMap(member => expand(member)))];
+    visiting.delete(id);
+    expanded.set(id, members);
+    return members;
+  }
+
+  shiftTypeData.groups.forEach(group => expand(group.id));
+  return expanded;
 }
 
 export function getCoefficientShiftTypeIds(
@@ -55,7 +72,10 @@ export function getCoefficientShiftTypeIds(
       .filter(shiftType => selectedExpandedShiftTypeIds.has(shiftType.id))
       .map(shiftType => shiftType.id),
     ...shiftTypeData.groups
-      .filter(group => group.members.length > 0 && group.members.every(member => selectedExpandedShiftTypeIds.has(member)))
+      .filter(group => {
+        const members = expandedShiftTypeIdsById.get(group.id) ?? [];
+        return members.length > 0 && members.every(member => selectedExpandedShiftTypeIds.has(member));
+      })
       .map(group => group.id),
   ];
 }

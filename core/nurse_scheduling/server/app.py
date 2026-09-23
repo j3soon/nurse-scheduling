@@ -52,6 +52,7 @@ from .jobs.models import StoreLimits
 from .jobs.runner import OptimizationRunner
 from .jobs.worker import JobWorker
 from .maintenance import JobMaintenance
+from .request_limits import MULTIPART_OVERHEAD_BYTES, MaxBodySizeMiddleware
 from .runtime_identity import get_deployment_id
 from .solver_options import validate_solver_availability
 from .stores.memory import MemoryJobStore
@@ -293,6 +294,12 @@ def create_app(
             capture_invalid_request(request, exc.status_code, exc.detail)
         return await http_exception_handler(request, exc)
 
+    # Added before CORS so the CORS layer stays outermost and still decorates a
+    # rejected oversize request.
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        max_bytes=settings.max_yaml_bytes + MULTIPART_OVERHEAD_BYTES,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,

@@ -194,6 +194,11 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 
 ## Testing
 - Normal tests live under `tests/`.
+- Derive a fixture timestamp from the current clock whenever the code under test
+  compares it against real time, such as a Redis `EXPIREAT` or a retention
+  window. A hardcoded date passes until that instant arrives and then fails for
+  a reason the assertion does not name. `tests/test_usage_metrics.py` shifts its
+  whole timeline onto the current reporting week for this reason.
 - Resolve input selectors and input-derived invariants in
   `NurseSchedulingData.compiled_schedule`. Scheduler, preference, and export
   phases should consume that representation instead of reparsing YAML fields.

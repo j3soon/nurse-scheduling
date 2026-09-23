@@ -2066,6 +2066,39 @@ def test_input_and_timeout_validation():
         assert oversized.status_code == 413
 
 
+def test_client_cookie_is_marked_secure_when_the_deployment_says_so():
+    # A TLS-terminating proxy forwards plain HTTP, so the request scheme alone
+    # would leave the cookie unmarked on an HTTPS deployment.
+    with _client(start_background=False, settings=_settings()) as client:
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        assert "secure" not in response.headers["set-cookie"].lower()
+
+    with _client(start_background=False, settings=_settings(cookie_secure=True)) as client:
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        assert "; Secure" in response.headers["set-cookie"]
+
+
+def test_declared_oversize_body_is_refused_before_the_upload_is_buffered():
+    # FastAPI resolves upload parameters before the route runs, so a route-level
+    # size check only fires once Starlette has spooled the whole body.
+    settings = _settings(max_yaml_bytes=1024)
+    with _client(start_background=False, settings=settings) as client:
+        refused = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * (1024 * 1024), "application/x-yaml")},
+        )
+        assert refused.status_code == 413
+        assert refused.json()["error"]["code"] == "request_too_large"
+
+        # A body the middleware admits still reaches the route's own limit.
+        oversized = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * 1025, "application/x-yaml")},
+        )
+        assert oversized.status_code == 413
+        assert oversized.json()["detail"] == "Scheduling YAML is too large"
+
+
 def test_file_input_uses_configured_limit_above_multipart_text_default():
     max_yaml_bytes = 1024 * 1024 + 1
     settings = _settings(max_yaml_bytes=max_yaml_bytes)

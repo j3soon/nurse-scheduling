@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import subprocess
 import threading
 import time
@@ -35,6 +36,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -871,7 +873,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     session = store.create(owner, schedule_yaml())
 
     now = 105.0
-    _, _, revision, _, _ = store.begin(session.id, owner)
+    _, _, revision, _, _, _ = store.begin(session.id, owner)
     assert session.expires_at == 125.0
 
     now = 115.0
@@ -1326,25 +1328,69 @@ def test_chat_history_default(monkeypatch: pytest.MonkeyPatch) -> None:
     assert AiSettings.from_env().max_history_messages == 1000
 
 
+def test_compose_exposes_the_ai_session_byte_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_MAX_SESSION_BYTES", raising=False)
+    default = AiSettings.from_env().max_session_bytes
+    docker_dir = Path(__file__).resolve().parents[2] / "docker"
+
+    for name in ("compose.backend.yml", "compose.backend.memory.yml"):
+        compose = yaml.safe_load((docker_dir / name).read_text("utf-8"))
+        ai_environment = compose["services"]["ai"]["environment"]
+        assert ai_environment["AI_MAX_SESSION_BYTES"] == f"${{AI_MAX_SESSION_BYTES:-{default}}}", name
+
+    for name in (".env.example", ".env.gpu.example", ".env.staging.example"):
+        contents = (docker_dir / name).read_text("utf-8")
+        assert re.search(rf"(?m)^AI_MAX_SESSION_BYTES={default}$", contents), name
+
+
 def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     provider = FakeProvider([["First answer."], ["Second answer."], ["Third answer."]])
-    settings = make_settings(max_history_chars=120)
+    settings = make_settings(max_history_chars=140, max_history_messages=100, max_session_bytes=1_000_000)
     client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider))
     session_id = create_session(client)
 
-    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 100})
-    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 100})
-    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 100})
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 50})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 50})
+    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 50})
 
     assert [event for event, _ in parse_sse(first.text) if event == "history_trimmed"] == []
+    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [2]
     trimmed = [payload for event, payload in parse_sse(third.text) if event == "history_trimmed"]
-    assert len(trimmed) == 1
-    assert trimmed[0]["dropped"] > 0
+    assert [payload["dropped"] for payload in trimmed] == [2, 4]
     # The oldest exchange is dropped from the prompt while the newest survives.
     latest_prompt = json.dumps(provider.calls[-1])
-    assert "A" * 100 not in latest_prompt
-    assert "C" * 100 in latest_prompt
+    assert "A" * 50 not in latest_prompt
+    assert "C" * 50 in latest_prompt
     assert second.status_code == 200
+
+
+def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
+    provider = FakeProvider([["X" * 20], ["Y" * 20], ["Z" * 20]])
+    settings = make_settings(max_session_bytes=65, max_history_chars=10_000)
+    app = create_test_app(settings=settings, provider=provider)
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 10})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 10})
+    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 10})
+
+    assert [payload for event, payload in parse_sse(first.text) if event == "history_trimmed"] == []
+    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [2]
+    assert [payload["dropped"] for event, payload in parse_sse(third.text) if event == "history_trimmed"] == [
+        2,
+        4,
+    ]
+    history = app.state.session_store._sessions[session_id].history
+    assert [(message["role"], message["content"]) for message in history] == [
+        ("user", "C" * 10),
+        ("assistant", "Z" * 20),
+    ]
+    latest_prompt = json.dumps(provider.calls[-1])
+    assert "B" * 10 in latest_prompt
+    assert "A" * 10 not in latest_prompt
 
 
 def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1417,6 +1463,33 @@ def test_environment_configuration_defaults_to_extended_sandbox_turn_limits(
     assert settings.sandbox_turn_timeout_seconds == 3600
     assert settings.agent_max_tool_rounds == 200
     assert settings.agent_max_tool_calls == 400
+
+
+def test_backend_proxy_read_timeout_outlasts_every_default_turn_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A proxy timeout at or below the turn deadline drops the connection before the turn reports its own timeout."""
+    monkeypatch.setenv("AI_PROVIDER_API_KEY", "test-token")
+    monkeypatch.setenv("AI_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.delenv("AI_SANDBOX_TURN_TIMEOUT_SECONDS", raising=False)
+    docker_dir = Path(__file__).resolve().parents[2] / "docker"
+    turn_deadlines = {"AiSettings.from_env": AiSettings.from_env().sandbox_turn_timeout_seconds}
+    for name in (
+        "compose.backend.yml",
+        "compose.backend.memory.yml",
+        ".env.example",
+        ".env.gpu.example",
+        ".env.staging.example",
+    ):
+        # Matches both `AI_SANDBOX_TURN_TIMEOUT_SECONDS=N` and `${AI_SANDBOX_TURN_TIMEOUT_SECONDS:-N}`.
+        values = re.findall(r"AI_SANDBOX_TURN_TIMEOUT_SECONDS(?:=|:-)(\d+)", (docker_dir / name).read_text("utf-8"))
+        assert values, f"{name} no longer sets a default AI_SANDBOX_TURN_TIMEOUT_SECONDS"
+        turn_deadlines[name] = max(float(value) for value in values)
+
+    proxy_timeouts = re.findall(r"proxy_read_timeout\s+(\S+);", (docker_dir / "nginx.backend.conf").read_text("utf-8"))
+
+    assert proxy_timeouts
+    for proxy_timeout in proxy_timeouts:
+        assert re.fullmatch(r"\d+s", proxy_timeout), f"expected whole seconds, got {proxy_timeout}"
+        assert int(proxy_timeout[:-1]) > max(turn_deadlines.values()), turn_deadlines
 
 
 def test_environment_configuration_reads_e2b_sandbox_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2001,7 +2074,7 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     owner = client.cookies[OWNER_COOKIE]
     broken_payload = base_schedule_payload()
     broken_payload["preferences"][1]["person"] = ["P9"]
-    _, _, base_revision, _, _ = store.begin(session_id, owner)
+    _, _, base_revision, _, _, _ = store.begin(session_id, owner)
     assert store.finish(
         session_id,
         "Break it",
@@ -2041,7 +2114,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     first_proposal = original.replace("description: ''", "description: First", 1)
     stale_proposal = original.replace("description: ''", "description: Stale", 1)
     session = store.create("browser-owner", original)
-    _, _, original_revision, _, _ = store.begin(session.id, "browser-owner")
+    _, _, original_revision, _, _, _ = store.begin(session.id, "browser-owner")
     assert store.finish(
         session.id,
         "First edit",
@@ -2049,7 +2122,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         (first_proposal, "first diff"),
         base_revision=original_revision,
     ).proposal_saved
-    _, _, active_turn_revision, _, _ = store.begin(session.id, "browser-owner")
+    _, _, active_turn_revision, _, _, _ = store.begin(session.id, "browser-owner")
 
     store.adopt_proposal(session.id, "browser-owner", original_revision)
     completion = store.finish(
@@ -2075,7 +2148,7 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", schedule_yaml())
-    _, _, revision, _, _ = store.begin(session.id, "browser-owner")
+    _, _, revision, _, _, _ = store.begin(session.id, "browser-owner")
 
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
@@ -2124,6 +2197,138 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
     store.begin(session.id, "browser-owner")
     store.queue_steering(session.id, "browser-owner", "queued-0", "Keep going.")
     assert store.take_steering(session.id, False) == [("queued-0", "Keep going.")]
+
+
+def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
+    settings = make_settings(max_session_bytes=900, max_schedule_bytes=1000)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    first = store.create("browser-owner", "a" * 400)
+    second = store.create("browser-owner", "b" * 400)
+
+    assert store.retained_bytes == 800
+    with pytest.raises(HTTPException) as exc_info:
+        store.create("browser-owner", "c" * 400)
+    assert exc_info.value.status_code == 429
+
+    # Replacing a schedule with a smaller one returns its budget.
+    store.update_schedule(first.id, "browser-owner", "a" * 100)
+    assert store.retained_bytes == 500
+    store.create("browser-owner", "c" * 400)
+
+    # Expiry releases the budget along with the session.
+    store._sessions[second.id].expires_at = time.monotonic() - 1
+    store.create("browser-owner", "d" * 100)
+    assert store.retained_bytes == 600
+
+
+def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None:
+    app = create_test_app(settings=make_settings(max_history_messages=2), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "description: test")
+    store.begin(session.id, "browser-owner")
+    store.finish(session.id, "question", "answer", ("proposal", "diff"), base_revision=session.revision)
+
+    store.discard_proposal(session.id, "browser-owner")
+
+    assert [message["role"] for message in store._sessions[session.id].history] == ["user"]
+    assert store.begin(session.id, "browser-owner")[-1] == 2
+
+
+@pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])
+def test_history_message_cap_keeps_complete_exchanges(message_cap: int) -> None:
+    app = create_test_app(settings=make_settings(max_history_messages=message_cap), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "description: test")
+
+    for question in ("first question", "second question"):
+        store.begin(session.id, "browser-owner")
+        store.finish(session.id, question, f"answer to {question}", base_revision=session.revision)
+        assert session.history == [
+            ChatMessage(role="user", content=question),
+            ChatMessage(role="assistant", content=f"answer to {question}"),
+        ]
+    assert session.dropped_history_messages == 2
+
+
+def test_steering_adjusts_retained_bytes_without_a_full_recount() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "a" * 100)
+    store.begin(session.id, "browser-owner")
+
+    store.queue_steering(session.id, "browser-owner", "queued-1", "é" * 10)
+    # A retried POST reuses its ID and must not be charged twice.
+    store.queue_steering(session.id, "browser-owner", "queued-1", "é" * 10)
+    store.queue_steering(session.id, "browser-owner", "queued-2", "ok")
+    assert store.retained_bytes == 100 + 20 + 2
+
+    assert len(store.take_steering(session.id, False)) == 2
+    assert store.retained_bytes == 100
+
+
+def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
+    # A turn grows a session without passing an admission check, so sessions
+    # admitted cheaply must not keep every answer they produce.
+    settings = make_settings(max_session_bytes=10_000, max_schedule_bytes=1000, max_history_messages=20)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    sessions = [store.create("browser-owner", "a" * 10) for _ in range(5)]
+
+    for _ in range(6):
+        for session in sessions:
+            store.begin(session.id, "browser-owner")
+            store.finish(session.id, "q" * 100, "A" * 5_000, None, base_revision=session.revision)
+
+    # Each session keeps its schedule and its newest question and answer, so that floor is what
+    # remains, independently of how many turns ran.
+    assert store.retained_bytes == 5 * (10 + 100 + 5_000)
+    for session in sessions:
+        history = store._sessions[session.id].history
+        assert history[-2]["content"] == "q" * 100
+        assert history[-1]["content"] == "A" * 5_000
+        assert len(history) == 2
+
+
+def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:
+    settings = make_settings(max_session_bytes=1000, max_schedule_bytes=1000)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "a" * 100)
+    store.begin(session.id, "browser-owner")
+    store.finish(
+        session.id,
+        "question",
+        "answer",
+        ("p" * 400, "d" * 100),
+        base_revision=session.revision,
+    )
+    retained_with_proposal = store.retained_bytes
+
+    # A browser holding a different revision cannot approve, which discards the proposal.
+    with pytest.raises(HTTPException) as exc_info:
+        store.peek_proposal(session.id, "browser-owner", "a" * 64)
+
+    assert exc_info.value.status_code == 409
+    assert store.retained_bytes == retained_with_proposal - 500
+    assert not store._sessions[session.id].proposal_yaml
+
+
+def test_replacing_a_schedule_credits_the_proposal_it_drops() -> None:
+    settings = make_settings(max_session_bytes=1000, max_schedule_bytes=1000)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "a" * 100)
+    store.begin(session.id, "browser-owner")
+    store.finish(session.id, "q", "a", ("p" * 600, "d" * 100), base_revision=session.revision)
+
+    # The larger schedule alone exceeds the budget, but it also drops the proposal.
+    store.update_schedule(session.id, "browser-owner", "b" * 300)
+
+    assert store._sessions[session.id].schedule_yaml == "b" * 300
+    assert not store._sessions[session.id].proposal_yaml
+    # The new schedule and the two one-character turn messages are all that remain.
+    assert store.retained_bytes == 302
 
 
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:

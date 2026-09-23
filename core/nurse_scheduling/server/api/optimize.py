@@ -114,7 +114,9 @@ def _client_id(request: Request, response: Response) -> str:
             max_age=CLIENT_ID_COOKIE_MAX_AGE_SECONDS,
             httponly=True,
             samesite="lax",
-            secure=request.url.scheme == "https",
+            # A TLS-terminating proxy forwards plain HTTP, so the scheme alone cannot
+            # tell whether the browser reached this deployment over HTTPS.
+            secure=_settings(request).cookie_secure or request.url.scheme == "https",
             path="/",
         )
     return client_id
