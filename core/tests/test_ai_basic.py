@@ -1347,22 +1347,22 @@ def test_compose_exposes_the_ai_session_byte_budget(monkeypatch: pytest.MonkeyPa
 
 def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     provider = FakeProvider([["First answer."], ["Second answer."], ["Third answer."]])
-    settings = make_settings(max_history_chars=120)
+    settings = make_settings(max_history_chars=140, max_history_messages=100, max_session_bytes=1_000_000)
     client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider))
     session_id = create_session(client)
 
-    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 100})
-    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 100})
-    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 100})
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 50})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 50})
+    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 50})
 
     assert [event for event, _ in parse_sse(first.text) if event == "history_trimmed"] == []
+    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [2]
     trimmed = [payload for event, payload in parse_sse(third.text) if event == "history_trimmed"]
-    assert len(trimmed) == 1
-    assert trimmed[0]["dropped"] > 0
+    assert [payload["dropped"] for payload in trimmed] == [2, 4]
     # The oldest exchange is dropped from the prompt while the newest survives.
     latest_prompt = json.dumps(provider.calls[-1])
-    assert "A" * 100 not in latest_prompt
-    assert "C" * 100 in latest_prompt
+    assert "A" * 50 not in latest_prompt
+    assert "C" * 50 in latest_prompt
     assert second.status_code == 200
 
 

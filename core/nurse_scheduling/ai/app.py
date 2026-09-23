@@ -458,7 +458,6 @@ class SessionStore:
                 session.steering_ids.clear()
                 self._recount(session)
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
-            previously_dropped = session.dropped_history_messages
             completed_turn = turn_messages or (
                 ChatMessage(role="user", content=user_message),
                 ChatMessage(role="assistant", content=assistant_message),
@@ -477,11 +476,7 @@ class SessionStore:
             return TurnCompletion(
                 turn_saved=True,
                 proposal_saved=proposal_saved,
-                history_trimmed_count=(
-                    self._effective_trimmed_count(session)
-                    if session.dropped_history_messages > previously_dropped
-                    else 0
-                ),
+                history_trimmed_count=self._effective_trimmed_count(session),
             )
 
     def queue_steering(
