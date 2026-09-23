@@ -45,8 +45,7 @@ are released only by insertion pressure."""
 DIGEST_LENGTH = 16
 """Characters of the salted address digest kept in a counter key."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 0.25
-"""Longest a count may block. Counting runs inline on the event loop, so a degraded Redis
-must cost a bounded pause rather than stall every request the process is serving."""
+"""Longest a count may block a reporting worker during a Redis outage."""
 
 
 def address_digest(salt: str, address: str) -> str:

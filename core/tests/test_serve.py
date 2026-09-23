@@ -612,6 +612,45 @@ def test_a_claim_poll_interval_above_the_default_retry_cap_starts():
     assert app.state.job_worker._claim_failures.delay_seconds() == 6.0
 
 
+def test_lease_recovery_polling_resumes_while_an_owned_job_finishes(monkeypatch):
+    lease = WorkerLease("worker", "old-token", datetime.now(timezone.utc) - timedelta(seconds=1))
+    recovered = WorkerLease("worker", "new-token", datetime.now(timezone.utc) + timedelta(seconds=60))
+
+    class Controller:
+        def renew_worker(self, _lease):
+            return None
+
+        def expire_worker_claims(self):
+            return []
+
+        def register_worker(self, _worker_id):
+            return recovered
+
+    worker = JobWorker(
+        Controller(), SuccessfulRunner(), worker_id="worker", claim_poll_seconds=0.1, worker_lease_seconds=60
+    )
+    worker._executing.set()
+    monkeypatch.setattr(worker, "_claim_loop_is_alive", lambda: True)
+    for _ in range(5):
+        worker._recover_failures.report()
+
+    waits = []
+
+    class StopAfterJob:
+        def is_set(self):
+            return False
+
+        def wait(self, delay):
+            waits.append(delay)
+            worker._executing.clear()
+            return False
+
+    worker._stop = StopAfterJob()
+
+    assert worker._recover_worker_lease(lease) == recovered
+    assert waits == [0.1]
+
+
 def test_runtime_deployment_identity_is_shared_within_one_server_launch(monkeypatch):
     supervisor = type("Supervisor", (), {"pid": 123})()
     monkeypatch.setattr("nurse_scheduling.server.runtime_identity.parent_process", lambda: supervisor)

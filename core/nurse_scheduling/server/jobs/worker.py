@@ -275,9 +275,12 @@ class JobWorker:
                 self._recover_failures.recovered()
                 self._unregister_stopped_worker()
                 return None
+            waiting_for_job = False
             try:
                 self._controller.expire_worker_claims()
-                if not self._executing.is_set():
+                if self._executing.is_set():
+                    waiting_for_job = True
+                else:
                     recovered_lease = self._controller.register_worker(self._worker_id)
                     if recovered_lease is not None:
                         ended_failures = self._recover_failures.recovered()
@@ -288,7 +291,8 @@ class JobWorker:
             except Exception:
                 if self._recover_failures.report():
                     server_logger.exception("[server:worker] failed to recover worker_id=%s", self._worker_id)
-            self._stop.wait(self._recover_failures.delay_seconds())
+            delay = self._claim_poll_seconds if waiting_for_job else self._recover_failures.delay_seconds()
+            self._stop.wait(delay)
         return None
 
     def _run(self) -> None:
