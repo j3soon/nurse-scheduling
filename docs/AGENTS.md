@@ -49,6 +49,19 @@
   simple declaration cannot produce a clear result.
 - Use text or tables below a figure for detail.
 
+## Reproduce pages
+
+- The pages under `developer-guide/reproduce/` are symlinks to the repository
+  READMEs: root `README.md`, `core/README.md`, `web-frontend/README.md`,
+  `docs/README.md`, and `docker/README.md`. Keep these links, the `zensical.toml`
+  Developer Guide nav, and the README headings in step so anchors keep
+  resolving.
+- Symlinked READMEs must not use relative Markdown links or images. Zensical
+  resolves them from the symlink location, so use absolute URLs there.
+- Windows checkouts may materialize the symlinks as plain text files, which
+  breaks local Zensical serving on that machine. Netlify builds are
+  unaffected.
+
 ## Validation
 
 - Do not load JavaScript from `polyfill.io`. Prefer a checked-in asset or the

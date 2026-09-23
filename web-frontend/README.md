@@ -83,7 +83,7 @@ variables** and configure these variables with the **Builds** scope:
 | Variable | Value | Sensitive |
 | --- | --- | --- |
 | `NEXT_PUBLIC_SENTRY_DSN` | Public DSN for the frontend Sentry project. | No |
-| `SENTRY_ENVIRONMENT` | `production` for the production deploy context. Use a distinct value such as `staging` for branch deploys. | No |
+| `SENTRY_ENVIRONMENT` | `production` for the production deploy context. Embedded as `NEXT_PUBLIC_SENTRY_ENVIRONMENT`. Use a distinct value such as `staging` for branch deploys. | No |
 | `SENTRY_PROJECT` | Slug of the frontend Sentry project. | No |
 | `SENTRY_AUTH_TOKEN` | Sentry organization auth token allowed to create releases and upload source maps for the frontend project. | Yes |
 

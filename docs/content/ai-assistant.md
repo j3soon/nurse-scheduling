@@ -10,37 +10,9 @@ types and copies them into the disposable sandbox without executing them. The
 assistant reads and edits the schedule in that sandbox and can propose a new
 schedule, which the browser applies only after the user approves it.
 Each user message gets one temporary shell backed by E2B Cloud. This version
-excludes retrieval and repository access.
-
-## Run locally
-
-Copy the shared secret-free template from the `docker/` directory:
-
-```sh
-cp docker/.env.example docker/.env
-```
-
-Review the AI assistant block in `docker/.env`. Set the provider URL, API key,
-model, and other settings for your environment. For an authenticated service,
-also set one or more AI keys. To serve locally without auth, explicitly set
-`AI_AUTH_REQUIRED=false` and leave `AI_AUTH_TOKEN` and `AI_AUTH_TOKENS` empty.
-Then start the service:
-
-```sh
-./scripts/start_ai_backend.sh
-curl http://localhost:8001/health
-```
-
-The launcher reads `docker/.env` automatically. Set `AI_ENV_FILE` to load
-another path. Port `8001` avoids the normal backend on `8000`. Use another port
-for a local documentation server when both services run at the same time. The
-documented local Zensical port is `8003`.
-
-The frontend uses `https://api.nursescheduling.org/ai` by default. Its server
-control can select `http://localhost:8001` or a custom URL, and locks that
-selection after a conversation starts. Set `NEXT_PUBLIC_AI_API_URL` before
-building the frontend to provide a different deployment default. Remembered
-credentials are stored unencrypted per endpoint only when the user opts in.
+excludes retrieval and repository access. Run the service locally, in the
+development container, or with Docker Compose using the commands in the [Core
+README](developer-guide/reproduce/core.md#ai-backend).
 
 ## Architecture
 
@@ -423,52 +395,10 @@ response cannot prove that the original operation did not take effect.
 
 ## Configuration
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `AI_AUTH_TOKEN` | Unset | Shared bearer token. Setting it protects every AI session route. Use at least 16 ASCII characters. |
-| `AI_AUTH_TOKENS` | Unset | JSON object mapping administrative IDs to bearer keys. |
-| `AI_AUTH_REQUIRED` | `false` (`true` in Docker) | Fail startup unless at least one key of 16 or more ASCII characters is configured. |
-| `AI_PROVIDER_BASE_URL` | Required | OpenAI-compatible API base URL. |
-| `AI_PROVIDER_API_KEY` | Required | Provider bearer token. Never commit it. |
-| `AI_PROVIDER_MODEL` | `local-model` | Model value sent to chat completions. |
-| `AI_HISTORY_POSTGRES_URL` | Unset | PostgreSQL connection string for durable chat logging. Compose sets its internal URL directly. |
-| `AI_HISTORY_RETENTION_DAYS` | `30` | Positive number of days to retain chat text and metadata. |
-| `AI_REQUEST_LOG_ENABLED` | `true` | Log a question preview for each incoming message, which records chat text. |
-| `AI_PROVIDER_TIMEOUT_SECONDS` | `180` | Provider request timeout. |
-| `AI_PROVIDER_MAX_ATTEMPTS` | `3` | Total attempts for a provider request that times out before streaming begins. |
-| `AI_PROVIDER_RETRY_BACKOFF_SECONDS` | `1` | Initial pre-stream timeout retry delay. The delay doubles after each failed attempt. |
-| `AI_OPTIMIZER_BASE_URL` | `http://localhost:8000` (`http://api:8000` in Docker Compose) | Optimizer API base URL. Use HTTPS for a credentialed remote endpoint. An unavailable API produces a tool error without disabling chat. |
-| `AI_OPTIMIZER_AUTH_TOKEN` | Unset (defaults to `API_AUTH_TOKEN` in Docker Compose) | Server-side optimizer API bearer token. Set it explicitly when the API uses identified keys. |
-| `AI_OPTIMIZER_POLL_INTERVAL_SECONDS` | `1` | Delay between background optimizer status checks. |
-| `AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS` | `30` | Timeout for one optimizer API request or result download. |
-| `AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS` | `300` | Optimizer time limit sent when the assistant omits one. Docker Compose derives it from `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS`. |
-| `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | `50` | Maximum background optimizer runs one chat session may start. |
-| `AI_OPTIMIZER_MAX_RESULT_BYTES` | `10000000` | Maximum workbook bytes retained for one result download. |
-| `AI_OPTIMIZER_RESULT_CACHE_BYTES` | `100000000` | Maximum total optimizer workbook bytes retained by one AI process. Oldest results are evicted first. |
-| `AI_SANDBOX_BACKEND` | Required | Sandbox provider. Currently `e2b`. |
-| `E2B_API_KEY` | Required for E2B | E2B Cloud credential used only by the trusted application. |
-| `E2B_TEMPLATE` | `nurse-scheduling-ai-sandbox` | Prebuilt E2B template alias. |
-| `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` | `30` | Default and maximum deadline for one shell command. |
-| `AI_SANDBOX_TURN_TIMEOUT_SECONDS` | `3600` | Deadline for the complete sandbox-backed user message. |
-| `AI_AGENT_MAX_TOOL_ROUNDS` | `200` | Maximum model tool-call rounds before the agent must answer from verified results. |
-| `AI_AGENT_MAX_TOOL_CALLS` | `400` | Maximum total tool calls in one sandbox-backed user message. |
-| `AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS` | `10` | Deadline for destroying a sandbox. |
-| `AI_SANDBOX_MAX_ATTEMPTS` | `3` | Total attempts for replay-safe E2B requests. |
-| `AI_SANDBOX_RETRY_BACKOFF_SECONDS` | `0.5` | Initial E2B retry delay, doubled after each failure. |
-| `AI_SANDBOX_PAUSE_REQUEST_TIMEOUT_SECONDS` | `5` | Deadline for the cancellable background pause request. |
-| `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Deadline for each foreground auto-resume attempt and the E2B request timeout for destruction. |
-| `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
-| `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
-| `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
-| `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
-| `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
-| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. |
-| `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
-| `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
-| `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |
-| `AI_MAX_CONCURRENT_REQUESTS` | `4` | Maximum simultaneous provider streams. |
-| `AI_MAX_ATTACHMENT_FILES` | `8` | Maximum files attached to one question. |
-| `AI_MAX_ATTACHMENT_BYTES` | `5000000` | Maximum bytes per attached file. |
+The service settings and their defaults are documented in the [Core
+README](developer-guide/reproduce/core.md#ai-backend-configuration). Deployment values are set
+in the `docker/.env` file, whose tracked template `docker/.env.example`
+documents the deployment subset and is the source of truth for it.
 
 Attachments are always enabled. Every upload is copied unchanged into the
 disposable sandbox, where the agent can inspect it with Pi-compatible tools.
@@ -480,52 +410,7 @@ session logs, while clients send only the key and never receive the ID. Remove a
 pair and restart the service to revoke it. The legacy and identified settings
 may coexist during migration.
 
-## Run in the development container
-
-Build the existing all-in-one development image from the repository root:
-
-```sh
-docker build -f docker/Dockerfile.dev -t nurse-scheduling:dev .
-docker run --rm -it \
-  --name nurse-scheduling-dev \
-  --network=host \
-  --env-file docker/.env \
-  -v "$(pwd):/app" \
-  nurse-scheduling:dev
-```
-
-Start the AI backend inside the container:
-
-```sh
-./scripts/start_ai_backend.sh
-```
-
-Start the frontend from another host terminal:
-
-```sh
-docker exec -it -w /app nurse-scheduling-dev \
-  ./scripts/start_frontend.sh --hostname 0.0.0.0
-```
-
-The optimizer tool is always available to the model. Native runs use
-`http://localhost:8000` by default, while Docker Compose uses `http://api:8000`.
-If that API is unavailable, the tool reports a request error and chat remains
-available.
-
-## Run with Docker Compose
-
-Both backend Compose variants start the AI service by default. Configure the AI
-assistant block in `docker/.env`, then run from the `docker/` directory:
-
-```sh
-docker compose -f compose.backend.yml up -d --build
-```
-
-Use `compose.backend.memory.yml` in the same command when running the
-process-local optimization backend. The AI service itself remains process-local
-in both variants and listens on port `8001` inside the Compose network.
-
-### Durable chat logging
+## Durable chat logging
 
 Both Compose variants include PostgreSQL with the `postgres-ai-data` volume and
 no published database port. As with Redis, the private service connection is
@@ -564,7 +449,7 @@ Retention runs on startup and hourly, deleting turns older than
 and their retention separately. Active sessions, schedules, and proposals remain
 in memory, so stored history does not enable resuming a chat after restart.
 
-### Inspect chat history with pgAdmin
+## Inspect chat history with pgAdmin
 
 The optional pgAdmin service listens only on the backend host's loopback
 interface. Start it from `docker/` with the same Compose file and environment
@@ -607,15 +492,6 @@ the PostgreSQL service and its `postgres-ai-data` volume remain intact.
 
 Use `compose.backend.memory.yml` in these commands for the process-local backend
 variant. For staging, also pass its `--env-file .env.staging` option.
-
-Run PostgreSQL integration checks against a test database whose role can create
-schemas. Each test creates and removes its own temporary schema:
-
-```sh
-cd core
-AI_HISTORY_TEST_POSTGRES_URL=postgresql:///ai_history_test \
-  .venv/bin/pytest -q tests/test_ai_history.py
-```
 
 ## Production path proxy
 
@@ -715,67 +591,3 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   logs the upstream response body under that ID after redacting common
   credential forms.
 - A failed or cancelled answer is not added to conversation history.
-
-## Troubleshoot local development
-
-| Problem | What to check |
-| --- | --- |
-| Send fails immediately | Start the AI backend and request `http://localhost:8001/health`. |
-| Provider unavailable | Check `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and provider availability. |
-| An attachment is rejected | Check the configured file count, byte limit, and public reverse-proxy body limit. |
-| An answer stops early | Retry it. Cancelled and failed answers are not added to backend history. |
-
-For a provider HTTP failure, search the AI backend log using the error ID shown
-in the browser. If the logged response is a Cloudflare `520`, inspect the
-provider origin for an empty, malformed, or abruptly closed response. A `525`
-means Cloudflare could not complete TLS with the provider origin. Correlate the
-logged timestamp and Cloudflare Ray ID with the provider proxy, tunnel, and
-origin logs. See Cloudflare's [520](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-520/)
-and [525](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-525/)
-guidance.
-
-### Attachment capability discovery
-
-The attachment control is available after capability discovery confirms the
-server's file count and byte limits. If it is missing, compare the direct and
-browser-facing responses:
-
-```sh
-curl http://127.0.0.1:8001/capabilities
-curl https://api.nursescheduling.org/ai/capabilities
-```
-
-Use the endpoint shown by the frontend's AI server control for the
-browser-facing check. If local capability discovery fails, check that port
-`8001` is reachable and accepts the frontend origin. For production, check
-`/ai/capabilities` through NGINX. When developing in a container, also
-test the container address used by the browser. A loopback-only test can miss a
-CORS failure or incomplete hydration.
-
-## Validate
-
-Run the focused checks inside the development container:
-
-```sh
-cd /app/core
-ruff check nurse_scheduling/ai nurse_scheduling/ai_serve.py \
-  tests/test_ai_basic.py tests/test_ai_provider.py \
-  tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
-  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py \
-  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py \
-  tests/test_ai_attachment_tools.py
-pytest -q tests/test_ai_basic.py tests/test_ai_provider.py \
-  tests/test_ai_sandbox.py tests/test_ai_sandbox_e2b.py \
-  tests/test_ai_sandbox_agent.py tests/test_ai_pi_bash.py tests/test_ai_pi_edit.py \
-  tests/test_ai_pi_read.py tests/test_ai_pi_write.py tests/test_ai_sandbox_tools.py \
-  tests/test_ai_attachment_tools.py
-
-cd /app/web-frontend
-bun run test -- \
-  src/app/experimental-ai/AssistantMarkdown.test.tsx \
-  src/app/experimental-ai/aiClient.test.ts \
-  src/app/experimental-ai/page.test.tsx \
-  src/components/Navigation.test.tsx
-bun run build
-bun run test:e2e:affected -- e2e/experimental-ai-basic.spec.ts
-```

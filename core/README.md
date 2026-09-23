@@ -273,10 +273,10 @@ All server settings are read once when the application is constructed.
 | `OPTIMIZE_MIN_TIMEOUT_SECONDS` | `1` | Set the smallest accepted timeout. |
 | `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS` | `300` | Set the timeout used when a request omits one. |
 | `OPTIMIZE_MAX_TIMEOUT_SECONDS` | `3600` | Limit the timeout accepted from a request. |
-| `OPTIMIZE_DEFAULT_PRETTIFY` | `true` | Set prettification when a request omits one. |
+| `OPTIMIZE_DEFAULT_PRETTIFY` | `true` | Set prettification when a request omits it. |
 | `OPTIMIZE_TIMEOUT_GRACE_SECONDS` | `90` | Set the process grace added to the requested timeout before forced termination. |
 | `CLAIMED_PERFORMANCE_SCORE` | unset | Publish the server's self-claimed normalized performance score. |
-| `CLAIMED_PERFORMANCE_APP_VERSION` | unset | Record the app version used for the claimed-performance benchmark. |
+| `CLAIMED_PERFORMANCE_APP_VERSION` | unset | Record the app version used by the claimed-performance benchmark. |
 | `CLAIMED_PERFORMANCE_MEASURED_AT` | unset | Record the benchmark report time as an ISO 8601 date and time with a timezone. |
 | `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
 | `API_AUTH_TOKENS` | unset | Require one of the bearer keys in this JSON object mapping administrative IDs to keys. |

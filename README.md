@@ -69,8 +69,8 @@ git clone https://github.com/j3soon/nurse-scheduling.git
 cd nurse-scheduling
 ```
 
-On Linux, set up all local environments (`core`, `web-frontend`, and `docs`) in
-one go:
+On Linux and macOS (bash), set up all local environments (`core`,
+`web-frontend`, and `docs`) in one go:
 
 ```sh
 ./scripts/setup_env.sh
@@ -85,11 +85,12 @@ Then start the backend and the frontend in separate terminals:
 
 Open `http://localhost:3000`.
 
-On other platforms, install the environments manually with the commands in
+On Windows, use WSL and the same commands, or install the environments
+manually with the commands in
 [core/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md)
 and
 [web-frontend/README.md](https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/README.md),
-then use the same start scripts.
+then use the same start scripts (WSL) or the PowerShell block below.
 
 Module and deployment guides:
 
@@ -256,7 +257,7 @@ This project is licensed under the [AGPL-3.0 License](https://github.com/j3soon/
 
 ## References
 
-- [Nurse rostering - Timefold](https://timefold.ai/docs/timefold-solver/latest/use-cases-and-examples/nurse-rostering.html)
+- [Nurse rostering - Timefold](https://timefold.ai/docs/timefold-solver/latest/use-cases-and-examples/nurse-rostering/nurse-rostering.html)
 - [A nurse scheduling problem - OR-Tools](https://developers.google.com/optimization/scheduling/employee_scheduling#a_nurse_scheduling_problem)
 - Haspeslagh et al., 2010, [First International Nurse Rostering Competition 2010](https://nrpcompetition.kuleuven-kulak.be/wp-content/uploads/2020/06/nrpcompetition_description.pdf) [[website](https://nrpcompetition.kuleuven-kulak.be/)]
 - Ceschia et al., 2015, [Second International Nurse Rostering Competition (INRC-II) --- Problem Description and Rules ---](https://arxiv.org/abs/1501.04177) [[website](https://mobiz.vives.be/inrc2/)]

@@ -7,30 +7,6 @@ resulting XLSX artifact.
 This page covers only the HTTP server and its job infrastructure. The CLI,
 scheduling model, solver implementations, and frontend are out of scope.
 
-## Run Locally
-
-After installing the core dependencies, start the development server from the
-repository root:
-
-```sh
-./scripts/start_backend.sh
-```
-
-Verify the process and its dependencies:
-
-```sh
-export API_URL="${API_URL:-http://localhost:8000}"
-
-curl "$API_URL/ready"
-curl "$API_URL/info"
-```
-
-`/ready` returns a minimal readiness result. `/info` also includes the API and
-application versions plus current worker status and activities.
-
-Interactive OpenAPI documentation is available at `$API_URL/docs`, with the
-schema at `$API_URL/openapi.json`.
-
 ## Architecture
 
 ```mermaid
@@ -156,6 +132,10 @@ checkpointing it outside the child process.
 ```
 
 ## HTTP API
+
+Start and verify a local server with the commands in the [Core
+README](developer-guide/reproduce/core.md#web-backend). Interactive OpenAPI documentation is
+available at `$API_URL/docs`, with the schema at `$API_URL/openapi.json`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -324,60 +304,11 @@ uvicorn nurse_scheduling.serve:app \
 
 ## Configuration
 
-All server settings are read once when the application is constructed.
-
-| Environment variable | Default | Purpose |
-| --- | --- | --- |
-| `JOB_BACKEND` | `memory` | Select `memory` or `redis` storage. |
-| `JOB_REDIS_URL` | `redis://localhost:6379/0` | Set the Redis connection URL. |
-| `JOB_REDIS_KEY_PREFIX` | `nurse_scheduling:jobs:v0` | Namespace and schema version for Redis keys. |
-| `JOB_MAX_PENDING` | `32` | Limit queued, running, and cancelling jobs. |
-| `JOB_MAX_RETAINED` | `128` | Limit all retained jobs, including terminal jobs. |
-| `JOB_RETENTION_SECONDS` | `86400` | Retain terminal jobs for this duration. |
-| `JOB_MAX_EVENTS_PER_JOB` | `1000` | Limit replayable events retained per job. |
-| `JOB_CLAIM_POLL_SECONDS` | `1` | Set the delay between attempts to claim work. |
-| `JOB_WORKER_LEASE_SECONDS` | `90` | Set how long a worker remains online without renewal. |
-| `JOB_MAINTENANCE_INTERVAL_SECONDS` | `30` | Set the delay between maintenance passes. |
-| `JOB_SSE_KEEPALIVE_SECONDS` | `10` | Set the maximum SSE wait before a keepalive. |
-| `OPTIMIZE_MAX_YAML_BYTES` | `2097152` | Limit the submitted YAML size. |
-| `OPTIMIZE_SOLVERS` | `ortools/cp-sat` | Set the ordered comma-separated solver allowlist. |
-| `OPTIMIZE_DEFAULT_SOLVER` | `ortools/cp-sat` | Set the solver used when a request omits one. |
-| `OPTIMIZE_MIN_TIMEOUT_SECONDS` | `1` | Set the smallest accepted timeout. |
-| `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS` | `300` | Set the timeout used when a request omits one. |
-| `OPTIMIZE_MAX_TIMEOUT_SECONDS` | `3600` | Limit the timeout accepted from a request. |
-| `OPTIMIZE_DEFAULT_PRETTIFY` | `true` | Set prettification when a request omits it. |
-| `OPTIMIZE_TIMEOUT_GRACE_SECONDS` | `90` | Set the process grace added to the requested timeout before forced termination. |
-| `CLAIMED_PERFORMANCE_SCORE` | unset | Publish the server's self-claimed normalized performance score. |
-| `CLAIMED_PERFORMANCE_APP_VERSION` | unset | Record the app version used by the claimed-performance benchmark. |
-| `CLAIMED_PERFORMANCE_MEASURED_AT` | unset | Record the benchmark report time as an ISO 8601 date and time with a timezone. |
-| `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
-| `API_AUTH_TOKENS` | unset | Require one of the bearer keys in this JSON object mapping administrative IDs to keys. |
-| `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty legacy and identified key set a startup failure. Set in the deployment images. |
-| `DISABLE_SENTRY` | unset | Disable error reporting for all Python services when set to a non-empty value. |
-| `SENTRY_DSN` | shared development project | Select the Python services' shared Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |
-| `SENTRY_ENVIRONMENT` | `development` | Set the Sentry environment for all Python services. The `app` tag separates backend, usage reporter, and diagnostic events. |
-| `SENTRY_RELEASE` | derived from the app version | Override the release reported to Sentry. |
-
-Numeric values must be positive. `JOB_MAX_RETAINED` must be at least
-`JOB_MAX_PENDING`. The default solver must be advertised, and the timeout
-default must remain within the configured minimum and maximum.
-
-Both key settings are optional and unset by default, so a locally run server
-needs no credentials. Setting either one turns on authentication for that
-deployment. Use at least 16 characters per key. When
-`API_AUTH_REQUIRED=true`, the backend rejects a shorter key. When it is
-`false`, a shorter key is accepted with a warning for local testing.
-
-The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployment that
-publishes the backend refuses to start without a key. Serving one without
-authentication requires `API_AUTH_REQUIRED=false`. See
-[Authentication](#authentication).
-
-The three `CLAIMED_PERFORMANCE_*` values are optional, but they must be set
-together. A complete compute benchmark writes them to
-`claimed-performance.env` beside its report. The API publishes the result at
-`GET /info` as `claimed_performance`. The frontend displays it as
-`Claimed performance` when that backend is selected.
+All server settings are read once when the application is constructed. Local
+defaults, behavior, and validation rules are documented in the [Core
+README](developer-guide/reproduce/core.md#backend-configuration). Deployment values are set in
+the `docker/.env` file, whose tracked template `docker/.env.example` documents
+the deployment subset and is the source of truth for it.
 
 ## Inspect Redis with RedisInsight
 
@@ -413,17 +344,6 @@ RedisInsight inspector.
 
 ## Tests
 
-Run the primary server tests from `core/`:
-
-```sh
-pytest --log-cli-level=INFO tests/test_serve.py
-pytest --log-cli-level=INFO tests/test_optimize_job_backends.py
-```
-
-To include Redis integration coverage, start a local Redis instance and use a
-dedicated database:
-
-```sh
-JOB_REDIS_TEST_URL=redis://localhost:6379/15 \
-pytest --log-cli-level=INFO tests/test_optimize_job_backends.py
-```
+Run the server test commands from `core/`, documented in the [Core
+README](developer-guide/reproduce/core.md#tests). Redis integration coverage needs a local
+Redis instance selected with `JOB_REDIS_TEST_URL`.

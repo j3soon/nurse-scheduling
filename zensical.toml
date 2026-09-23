@@ -39,6 +39,13 @@ nav = [
   {
     "Developer Guide" = [
       { "Overview" = "developer-guide/index.md" },
+      { "Reproduce" = [
+        { "Setup and run" = "developer-guide/reproduce/setup.md" },
+        { "Core" = "developer-guide/reproduce/core.md" },
+        { "Web frontend" = "developer-guide/reproduce/frontend.md" },
+        { "Documentation site" = "developer-guide/reproduce/docs.md" },
+        { "Deployment" = "developer-guide/reproduce/deploy.md" },
+      ] },
       { "Backend Server" = "backend-server.md" },
       { "AI Assistant Backend" = "ai-assistant.md" },
       { "Solvers" = "solvers.md" },

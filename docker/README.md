@@ -155,7 +155,7 @@ remaining filterable through their `app` tags.
 `SENTRY_AUTH_TOKEN` is not needed by the running backend because the SDK sends
 events through the DSN. Do not add a frontend DSN or Sentry auth token to this
 backend environment file. Configure them in the frontend build environment as
-described in the [developer guide](https://nursescheduling.org/docs/developer-guide/index/#sentry).
+described in the [developer guide](https://nursescheduling.org/docs/developer-guide/#sentry).
 
 An unset DSN retains the repository's existing shared Sentry project. Running
 outside Docker uses the `development` environment. Set `DISABLE_SENTRY=1` in

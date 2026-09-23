@@ -2,7 +2,23 @@
 
 Use these pages to develop, operate, or extend Nurse Scheduling.
 
-- [Repository setup and development workflow](https://github.com/j3soon/nurse-scheduling#how-to-run)
+## Reproduce
+
+The setup and run pages are the repository READMEs, linked into the site so the
+built documentation stays self-contained:
+
+- [Setup and run](reproduce/setup.md): prerequisites, quick start, Windows, and the development container.
+- [Core](reproduce/core.md): CLI, backend, AI backend, configuration, and tests.
+- [Web frontend](reproduce/frontend.md): development, tests, builds, and Netlify hosting.
+- [Documentation site](reproduce/docs.md): preview and build the documentation.
+- [Deployment](reproduce/deploy.md): publish the backend through Docker Compose and Cloudflare Tunnel.
+
+All deployed services read the gitignored `docker/.env` file. The tracked
+`docker/.env.example` documents every deployment variable and is the source of
+truth for it. Local development needs no environment variables.
+
+## Architecture
+
 - [Backend server](../backend-server.md)
 - [Experimental AI assistant backend](../ai-assistant.md)
 - [Solver behavior](../solvers.md)
@@ -24,24 +40,9 @@ multiple servers for the same component in its project and distinguish
 production from staging with environments.
 
 Configure the static frontend in its build provider. For Netlify, follow the
-[repository hosting instructions](https://github.com/j3soon/nurse-scheduling#hosting-on-netlify)
-for the exact UI location, scope, sensitivity settings, and missing-token
-behavior:
-
-| Variable | Purpose |
-| --- | --- |
-| `NEXT_PUBLIC_SENTRY_DSN` | Public DSN embedded in the browser build. |
-| `SENTRY_ENVIRONMENT` | Environment embedded as `NEXT_PUBLIC_SENTRY_ENVIRONMENT`. |
-| `SENTRY_PROJECT` | Frontend project slug used for source-map uploads. |
-| `SENTRY_AUTH_TOKEN` | Secret build credential used for release and source-map uploads. |
-
-`SENTRY_AUTH_TOKEN` is sensitive. Follow Sentry's
-[auth-token instructions](https://docs.sentry.io/account/auth-tokens/) to create
-an organization token through an internal integration. Grant `org:ci` and ensure the integration can access the team that owns the
-frontend project. Store the token as a protected build-provider secret and do
-not expose it with a `NEXT_PUBLIC_` prefix. The running frontend and backend SDKs
-send events with their public DSNs and do not need this token.
-
-Backend Docker deployments configure `SENTRY_BACKEND_DSN` and
-`SENTRY_ENVIRONMENT` in the selected `docker/.env` file. See the
-[backend deployment instructions](https://github.com/j3soon/nurse-scheduling/blob/dev/docker/README.md#sentry).
+[frontend hosting instructions](reproduce/frontend.md#hosting-on-netlify)
+for the exact variable table, UI location, scope, sensitivity settings,
+token procedure, and missing-token behavior. Backend Docker deployments
+configure `SENTRY_BACKEND_DSN` and `SENTRY_ENVIRONMENT` in the selected
+`docker/.env` file. Follow the [deployment Sentry
+instructions](reproduce/deploy.md#sentry).
