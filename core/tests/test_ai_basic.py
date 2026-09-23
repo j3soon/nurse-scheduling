@@ -872,7 +872,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     session = store.create(owner, schedule_yaml())
 
     now = 105.0
-    _, _, revision, _, _ = store.begin(session.id, owner)
+    _, _, revision, _, _, _ = store.begin(session.id, owner)
     assert session.expires_at == 125.0
 
     now = 115.0
@@ -1346,6 +1346,33 @@ def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     assert "A" * 100 not in latest_prompt
     assert "C" * 100 in latest_prompt
     assert second.status_code == 200
+
+
+def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
+    provider = FakeProvider([["X" * 20], ["Y" * 20], ["Z" * 20]])
+    settings = make_settings(max_session_bytes=65, max_history_chars=10_000)
+    app = create_test_app(settings=settings, provider=provider)
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+
+    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 10})
+    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 10})
+    third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 10})
+
+    assert [payload for event, payload in parse_sse(first.text) if event == "history_trimmed"] == []
+    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [2]
+    assert [payload["dropped"] for event, payload in parse_sse(third.text) if event == "history_trimmed"] == [
+        2,
+        4,
+    ]
+    history = app.state.session_store._sessions[session_id].history
+    assert [(message["role"], message["content"]) for message in history] == [
+        ("user", "C" * 10),
+        ("assistant", "Z" * 20),
+    ]
+    latest_prompt = json.dumps(provider.calls[-1])
+    assert "B" * 10 in latest_prompt
+    assert "A" * 10 not in latest_prompt
 
 
 def test_history_prompt_budget_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2029,7 +2056,7 @@ def test_a_proposal_that_fails_revalidation_never_becomes_the_session_schedule()
     owner = client.cookies[OWNER_COOKIE]
     broken_payload = base_schedule_payload()
     broken_payload["preferences"][1]["person"] = ["P9"]
-    _, _, base_revision, _, _ = store.begin(session_id, owner)
+    _, _, base_revision, _, _, _ = store.begin(session_id, owner)
     assert store.finish(
         session_id,
         "Break it",
@@ -2069,7 +2096,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
     first_proposal = original.replace("description: ''", "description: First", 1)
     stale_proposal = original.replace("description: ''", "description: Stale", 1)
     session = store.create("browser-owner", original)
-    _, _, original_revision, _, _ = store.begin(session.id, "browser-owner")
+    _, _, original_revision, _, _, _ = store.begin(session.id, "browser-owner")
     assert store.finish(
         session.id,
         "First edit",
@@ -2077,7 +2104,7 @@ def test_active_turn_cannot_save_a_proposal_after_another_proposal_is_approved()
         (first_proposal, "first diff"),
         base_revision=original_revision,
     ).proposal_saved
-    _, _, active_turn_revision, _, _ = store.begin(session.id, "browser-owner")
+    _, _, active_turn_revision, _, _, _ = store.begin(session.id, "browser-owner")
 
     store.adopt_proposal(session.id, "browser-owner", original_revision)
     completion = store.finish(
@@ -2103,7 +2130,7 @@ def test_session_store_queues_steering_once_and_retains_it_with_the_turn() -> No
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", schedule_yaml())
-    _, _, revision, _, _ = store.begin(session.id, "browser-owner")
+    _, _, revision, _, _, _ = store.begin(session.id, "browser-owner")
 
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
@@ -2206,13 +2233,14 @@ def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
             store.begin(session.id, "browser-owner")
             store.finish(session.id, "q" * 100, "A" * 5_000, None, base_revision=session.revision)
 
-    # Each session keeps its schedule and its newest answer, so that floor is what
+    # Each session keeps its schedule and its newest question and answer, so that floor is what
     # remains, independently of how many turns ran.
-    assert store.retained_bytes == 5 * (10 + 5_000)
+    assert store.retained_bytes == 5 * (10 + 100 + 5_000)
     for session in sessions:
         history = store._sessions[session.id].history
+        assert history[-2]["content"] == "q" * 100
         assert history[-1]["content"] == "A" * 5_000
-        assert len(history) < 6 * 2
+        assert len(history) == 2
 
 
 def test_discarding_a_stale_proposal_returns_its_share_of_the_budget() -> None:

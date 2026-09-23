@@ -233,6 +233,7 @@ class ChatSession:
     schedule_yaml: str
     revision: str
     history: list[ChatMessage] = field(default_factory=list)
+    dropped_history_messages: int = 0
     active: bool = False
     accepting_steering: bool = False
     steering_queue: list[tuple[str, str]] = field(default_factory=list)
@@ -266,6 +267,7 @@ class TurnCompletion:
 
     turn_saved: bool
     proposal_saved: bool
+    history_trimmed_count: int = 0
 
 
 class SessionStore:
@@ -322,7 +324,7 @@ class SessionStore:
         if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
             raise HTTPException(status_code=429, detail=SESSION_MEMORY_LIMIT_MESSAGE)
 
-    def _trim_history_to_budget(self, session: ChatSession) -> None:
+    def _trim_history_to_budget(self, session: ChatSession, protected_messages: int) -> None:
         """Drop this session's oldest context until retained text fits the budget.
 
         A turn grows a session without passing an admission check, so sessions admitted
@@ -330,13 +332,29 @@ class SessionStore:
         hold them until they expire. Older context is the part a later turn needs least,
         and the message cap already truncates from the same end.
 
-        Each live session keeps its newest message, because a follow-up question is about
-        the answer the user is reading. Retained text therefore settles at the budget plus
-        one message and any pending proposal per session, rather than growing with every
-        turn.
+        Keep the entire completed turn so its answer still has the question and any
+        steering that produced it. Retained text therefore settles at the budget plus
+        one turn and any pending proposal per session.
         """
-        while self._retained_bytes > self._settings.max_session_bytes and len(session.history) > 1:
-            self._charge(session, -_text_bytes(session.history.pop(0).get("content")))
+        while self._retained_bytes > self._settings.max_session_bytes:
+            oldest_answer = next(
+                (index for index, message in enumerate(session.history) if message["role"] == "assistant"),
+                None,
+            )
+            if oldest_answer is None or len(session.history) - oldest_answer - 1 < protected_messages:
+                break
+            removed = session.history[: oldest_answer + 1]
+            del session.history[: oldest_answer + 1]
+            self._charge(session, -sum(_text_bytes(message.get("content")) for message in removed))
+            session.dropped_history_messages += len(removed)
+
+    def _effective_trimmed_count(self, session: ChatSession) -> int:
+        """Count retained-history and prompt-budget omissions visible to a client."""
+        return (
+            session.dropped_history_messages
+            + len(session.history)
+            - len(recent_history(session.history, self._settings.max_history_chars))
+        )
 
     def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
         """Create a session after pruning expired entries."""
@@ -356,7 +374,7 @@ class SessionStore:
             self._recount(session)
             return session
 
-    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str, str, str]:
+    def begin(self, session_id: str, owner_token: str | None) -> tuple[list[ChatMessage], str, str, str, str, int]:
         """Reserve a session and return its history and schedule snapshots."""
         with self._lock:
             session = self._get_owned(session_id, owner_token)
@@ -373,9 +391,10 @@ class SessionStore:
                 session.revision,
                 session.proposal_yaml,
                 session.proposal_diff,
+                session.dropped_history_messages,
             )
 
-    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str] | None:
+    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str, int] | None:
         """Reserve an idle session for a trusted background-triggered turn."""
         with self._lock:
             self._prune_expired()
@@ -391,6 +410,7 @@ class SessionStore:
                 session.revision,
                 session.proposal_yaml,
                 session.proposal_diff,
+                session.dropped_history_messages,
             )
 
     def require_owned(self, session_id: str, owner_token: str | None) -> None:
@@ -431,14 +451,15 @@ class SessionStore:
                 session.steering_ids.clear()
                 self._recount(session)
                 return TurnCompletion(turn_saved=False, proposal_saved=False)
-            session.history.extend(
-                turn_messages
-                or (
-                    ChatMessage(role="user", content=user_message),
-                    ChatMessage(role="assistant", content=assistant_message),
-                )
+            previously_dropped = session.dropped_history_messages
+            completed_turn = turn_messages or (
+                ChatMessage(role="user", content=user_message),
+                ChatMessage(role="assistant", content=assistant_message),
             )
+            session.history.extend(completed_turn)
+            removed_by_message_cap = max(0, len(session.history) - self._settings.max_history_messages)
             session.history = session.history[-self._settings.max_history_messages :]
+            session.dropped_history_messages += removed_by_message_cap
             proposal_saved = proposal is not None
             if proposal_saved:
                 session.proposal_yaml, session.proposal_diff = proposal
@@ -447,8 +468,16 @@ class SessionStore:
             session.steering_queue.clear()
             session.steering_ids.clear()
             self._recount(session)
-            self._trim_history_to_budget(session)
-            return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
+            self._trim_history_to_budget(session, min(len(completed_turn), len(session.history)))
+            return TurnCompletion(
+                turn_saved=True,
+                proposal_saved=proposal_saved,
+                history_trimmed_count=(
+                    self._effective_trimmed_count(session)
+                    if session.dropped_history_messages > previously_dropped
+                    else 0
+                ),
+            )
 
     def queue_steering(
         self,
@@ -1029,7 +1058,9 @@ def create_app(
                 turn_lock.release()
 
         try:
-            history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = store.begin(session_id, owner)
+            history, schedule_yaml, base_revision, proposal_yaml, proposal_diff, previously_dropped = store.begin(
+                session_id, owner
+            )
         except BaseException:
             pending_turn_stops.discard(session_id)
             release_turn()
@@ -1063,7 +1094,7 @@ def create_app(
         stream_started = threading.Event()
         latest_artifact = await session_optimizer.latest_result_artifact(session_id)
         retained_history = recent_history(history, settings.max_history_chars)
-        dropped_history = len(history) - len(retained_history)
+        dropped_history = previously_dropped + len(history) - len(retained_history)
         messages = build_provider_messages(
             retained_history,
             schedule_yaml,
@@ -1190,6 +1221,8 @@ def create_app(
                 if not completion.turn_saved:
                     yield _sse_event("stale", {"message": STALE_TURN_ERROR})
                     return
+                if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
+                    yield _sse_event("history_trimmed", {"dropped": completion.history_trimmed_count})
                 if completion.proposal_saved:
                     yield _sse_event("proposal", {"diff": pending_proposal.diff})
                 done = {"message_id": turn_id}

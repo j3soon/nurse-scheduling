@@ -60,12 +60,13 @@ class TurnCompletion(Protocol):
 
     turn_saved: bool
     proposal_saved: bool
+    history_trimmed_count: int
 
 
 class BackgroundSessionStore(Protocol):
     """Session operations needed by a trusted background turn."""
 
-    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str] | None: ...
+    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str, int] | None: ...
 
     def finish(
         self,
@@ -230,7 +231,7 @@ async def run_background_turn(
         snapshot = store.begin_background(session_id)
         if snapshot is None:
             return
-        history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = snapshot
+        history, schedule_yaml, base_revision, proposal_yaml, proposal_diff, previously_dropped = snapshot
         turn_id = str(uuid4())
         event_broker.publish(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
         if history_log is not None:
@@ -256,11 +257,12 @@ async def run_background_turn(
                 )
                 return
         retained_history = recent_history(history, settings.max_history_chars)
-        if len(retained_history) < len(history):
+        dropped_history = previously_dropped + len(history) - len(retained_history)
+        if dropped_history:
             event_broker.publish(
                 session_id,
                 "history_trimmed",
-                {"dropped": len(history) - len(retained_history)},
+                {"dropped": dropped_history},
             )
         messages = build_provider_messages(
             retained_history,
@@ -341,6 +343,12 @@ async def run_background_turn(
                 event_broker.publish(session_id, "stale", {"message": STALE_TURN_ERROR})
                 return
             outcome, error_code = "completed", None
+            if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
+                event_broker.publish(
+                    session_id,
+                    "history_trimmed",
+                    {"dropped": completion.history_trimmed_count},
+                )
             if completion.proposal_saved and pending_proposal is not None:
                 event_broker.publish(session_id, "proposal", {"diff": pending_proposal.diff})
             event_broker.publish(session_id, "done", {"message_id": turn_id})
