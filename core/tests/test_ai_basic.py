@@ -2222,7 +2222,7 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     assert store.retained_bytes == 600
 
 
-def test_proposal_history_event_counts_a_message_removed_by_the_cap() -> None:
+def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None:
     app = create_test_app(settings=make_settings(max_history_messages=2), provider=FakeProvider())
     store = app.state.session_store
     session = store.create("browser-owner", "description: test")
@@ -2231,8 +2231,24 @@ def test_proposal_history_event_counts_a_message_removed_by_the_cap() -> None:
 
     store.discard_proposal(session.id, "browser-owner")
 
-    assert [message["role"] for message in store._sessions[session.id].history] == ["assistant", "user"]
-    assert store.begin(session.id, "browser-owner")[-1] == 1
+    assert [message["role"] for message in store._sessions[session.id].history] == ["user"]
+    assert store.begin(session.id, "browser-owner")[-1] == 2
+
+
+def test_history_message_cap_keeps_complete_exchanges() -> None:
+    app = create_test_app(settings=make_settings(max_history_messages=3), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "description: test")
+
+    for question in ("first question", "second question"):
+        store.begin(session.id, "browser-owner")
+        store.finish(session.id, question, f"answer to {question}", base_revision=session.revision)
+
+    assert session.history == [
+        ChatMessage(role="user", content="second question"),
+        ChatMessage(role="assistant", content="answer to second question"),
+    ]
+    assert session.dropped_history_messages == 2
 
 
 def test_steering_adjusts_retained_bytes_without_a_full_recount() -> None:
