@@ -68,6 +68,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- Session transitions are synchronous and owned by the service event loop.
+  Admit agent turns through `SessionTurns` and keep foreground and background
+  execution in the shared turn runner. Await owned cleanup before releasing
+  admission. Commit conversation changes only with the matching `TurnSnapshot`.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.

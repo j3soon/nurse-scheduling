@@ -22,15 +22,17 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Protocol
-from uuid import uuid4
 
-from .agent import AgentProposal, AgentReasoning, AgentText, AgentToolStart, AgentToolUse
+from fastapi import HTTPException
+
+from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
 from .history import ChatHistory
+from .lifecycle import Turn, TurnSnapshot
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT, OptimizerArtifact, SessionOptimizer
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
@@ -65,7 +67,11 @@ class TurnCompletion(Protocol):
 class BackgroundSessionStore(Protocol):
     """Session operations needed by a trusted background turn."""
 
-    def begin_background(self, session_id: str) -> tuple[list[ChatMessage], str, str, str, str] | None: ...
+    def begin(self, session_id: str, owner_token: str | None) -> TurnSnapshot: ...
+
+    def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]: ...
+
+    def begin_background(self, session_id: str) -> TurnSnapshot | None: ...
 
     def finish(
         self,
@@ -74,11 +80,11 @@ class BackgroundSessionStore(Protocol):
         assistant_message: str,
         proposal: tuple[str, str] | None = None,
         *,
-        base_revision: str,
+        snapshot: TurnSnapshot,
         turn_messages: Sequence[ChatMessage] = (),
     ) -> TurnCompletion: ...
 
-    def abort(self, session_id: str) -> None: ...
+    def abort(self, session_id: str, snapshot: TurnSnapshot) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -208,107 +214,110 @@ def build_provider_messages(
     ]
 
 
-async def run_background_turn(
+async def run_turn(
+    turn: Turn,
     session_id: str,
     question: str,
-    artifact: OptimizerArtifact | None,
     *,
     settings: AiSettings,
     store: BackgroundSessionStore,
-    event_broker: SessionEventBroker,
-    turn_locks: dict[str, asyncio.Lock],
-    track_active_turn: Callable[[str], AbstractAsyncContextManager[None]],
+    emit: Callable[[str, dict[str, object]], Awaitable[None]],
     concurrency_limit: asyncio.Semaphore,
     history_log: ChatHistory | None,
     provider: ToolCapableChatProvider,
     sandbox_factory: SandboxFactory,
     session_optimizer: SessionOptimizer,
+    background: bool = False,
+    owner: str | None = None,
+    credential_id: str | None = None,
+    attachments: Sequence[SandboxAttachment] = (),
+    artifact: OptimizerArtifact | None = None,
 ) -> None:
-    """Wake an idle agent after a background optimizer job reaches a terminal state."""
-    turn_lock = turn_locks.setdefault(session_id, asyncio.Lock())
-    async with turn_lock, track_active_turn(session_id):
-        snapshot = store.begin_background(session_id)
-        if snapshot is None:
-            return
-        history, schedule_yaml, base_revision, proposal_yaml, proposal_diff = snapshot
-        turn_id = str(uuid4())
-        event_broker.publish(session_id, "turn_start", {"message_id": turn_id, "trigger": "optimizer"})
+    """Own every turn phase and finalize once, regardless of trigger or transport."""
+    snapshot = store.begin_background(session_id) if background else store.begin(session_id, owner)
+    if snapshot is None:
+        return
+    history, schedule_yaml = snapshot.history, snapshot.schedule_yaml
+    proposal_yaml, proposal_diff = snapshot.proposal_yaml, snapshot.proposal_diff
+    history_question = question
+    if attachments:
+        filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
+        history_question += f"\n[Files were attached: {filenames}.]"
+    assistant_parts: list[str] = []
+    assistant_segment: list[str] = []
+    turn_messages = [ChatMessage(role="user", content=history_question)]
+    pending_proposal: AgentProposal | None = None
+    completed = False
+    logged = False
+    outcome = "cancelled"
+    error_code = None
+    usage = None
+
+    async def write_history(operation: str, *args) -> bool:
+        # asyncio cancellation and ASGI cancel scopes both wait for the audit write.
+        task = asyncio.create_task(history_log.write(operation, *args))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    try:
+        if background:
+            await emit("turn_start", {"message_id": turn.id, "trigger": "optimizer"})
         if history_log is not None:
-            try:
-                logged = await history_log.write(
-                    "start_turn",
-                    turn_id,
-                    session_id,
-                    None,
-                    question,
-                    settings.provider_model,
-                    0,
-                )
-            except Exception:
-                logger.exception("Background AI history start failed session_id=%s", session_id)
-                logged = False
+            logged = True
+            logged = await write_history(
+                "start_turn", turn.id, session_id, credential_id, question, settings.provider_model, len(attachments)
+            )
             if not logged:
-                store.abort(session_id)
-                event_broker.publish(
-                    session_id,
-                    "error",
-                    {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."},
-                )
-                return
+                raise HTTPException(status_code=503, detail="AI chat history is temporarily unavailable.")
+        turn.ready.set_result(True)
+        if not background:
+            artifact = await session_optimizer.latest_result_artifact(session_id)
+            await turn.streaming.wait()
         retained_history = recent_history(history, settings.max_history_chars)
         if len(retained_history) < len(history):
-            event_broker.publish(
-                session_id,
-                "history_trimmed",
-                {"dropped": len(history) - len(retained_history)},
-            )
+            await emit("history_trimmed", {"dropped": len(history) - len(retained_history)})
         messages = build_provider_messages(
             retained_history,
             schedule_yaml,
             question,
-            system_prompt=SANDBOX_SYSTEM_PROMPT,
+            attachments,
             pending_proposal=bool(proposal_yaml),
             optimizer_result_available=artifact is not None,
             max_history_chars=settings.max_history_chars,
         )
-        assistant_parts: list[str] = []
-        pending_proposal: AgentProposal | None = None
-        completed = False
-        outcome = "failed"
-        error_code: str | None = "internal_error"
-        usage: TokenUsage | None = None
-        try:
-            async with concurrency_limit:
-                agent_events = run_sandbox_agent(
-                    provider,
-                    sandbox_factory,
-                    schedule_yaml,
-                    messages,
-                    SandboxAgentLimits.from_settings(settings),
-                    pending_proposal_yaml=proposal_yaml,
-                    pending_proposal_diff=proposal_diff,
-                    execute_optimizer=(
-                        lambda current_yaml, arguments: session_optimizer.execute(session_id, current_yaml, arguments)
-                    ),
-                    optimizer_result=artifact.content if artifact is not None else None,
-                )
+        async with concurrency_limit:
+            agent_events = run_sandbox_agent(
+                provider,
+                sandbox_factory,
+                schedule_yaml,
+                messages,
+                SandboxAgentLimits.from_settings(settings),
+                take_steering=None if background else lambda close: store.take_steering(session_id, close),
+                pending_proposal_yaml=proposal_yaml,
+                pending_proposal_diff=proposal_diff,
+                execute_optimizer=lambda current_yaml, arguments: session_optimizer.execute(
+                    session_id, current_yaml, arguments
+                ),
+                attachments=attachments,
+                optimizer_result=artifact.content if artifact is not None else None,
+            )
+            async with aclosing(agent_events):
                 async for event in agent_events:
                     if isinstance(event, AgentText):
                         assistant_parts.append(event.text)
-                        event_broker.publish(session_id, "delta", {"text": event.text})
+                        assistant_segment.append(event.text)
+                        await emit("delta", {"text": event.text})
                     elif isinstance(event, AgentReasoning):
-                        event_broker.publish(session_id, "reasoning", {"text": event.text})
+                        await emit("reasoning", {"text": event.text})
                     elif isinstance(event, TokenUsage):
                         usage = event if usage is None else usage + event
                     elif isinstance(event, AgentToolStart):
-                        event_broker.publish(
-                            session_id,
-                            "tool_start",
-                            {"name": event.name, "arguments": event.arguments},
-                        )
+                        await emit("tool_start", {"name": event.name, "arguments": event.arguments})
                     elif isinstance(event, AgentToolUse):
-                        event_broker.publish(
-                            session_id,
+                        await emit(
                             "tool",
                             {
                                 "name": event.name,
@@ -317,70 +326,69 @@ async def run_background_turn(
                                 "ok": event.ok,
                             },
                         )
+                    elif isinstance(event, AgentSteering):
+                        if assistant_segment:
+                            turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
+                        turn_messages.append(ChatMessage(role="user", content=event.text))
+                        assistant_segment.clear()
+                        await emit("steering", {"message_id": event.message_id, "message": event.text})
                     elif isinstance(event, AgentScheduleChange):
-                        event_broker.publish(
-                            session_id,
-                            "schedule_change",
-                            {"schedule_yaml": event.schedule_yaml},
-                        )
+                        await emit("schedule_change", {"schedule_yaml": event.schedule_yaml})
                     elif isinstance(event, AgentProposal):
                         pending_proposal = event
-            proposal = None
-            if pending_proposal is not None:
-                proposal = (pending_proposal.text, pending_proposal.diff)
-            completion = store.finish(
-                session_id,
-                question,
-                "".join(assistant_parts),
-                proposal,
-                base_revision=base_revision,
-            )
-            completed = True
-            if not completion.turn_saved:
-                outcome, error_code = "stale", None
-                event_broker.publish(session_id, "stale", {"message": STALE_TURN_ERROR})
-                return
-            outcome, error_code = "completed", None
-            if completion.proposal_saved and pending_proposal is not None:
-                event_broker.publish(session_id, "proposal", {"diff": pending_proposal.diff})
-            event_broker.publish(session_id, "done", {"message_id": turn_id})
-        except asyncio.CancelledError:
-            outcome, error_code = "cancelled", None
-            event_broker.publish(session_id, "stopped", {"message_id": turn_id})
+        turn_messages.append(ChatMessage(role="assistant", content="".join(assistant_segment)))
+        completion = store.finish(
+            session_id,
+            history_question,
+            "".join(assistant_parts),
+            (pending_proposal.text, pending_proposal.diff) if pending_proposal is not None else None,
+            snapshot=snapshot,
+            turn_messages=turn_messages,
+        )
+        completed = True
+        outcome = "completed" if completion.turn_saved else "stale"
+        history_saved = None
+        if logged:
+            # The audit result is part of foreground done. Do not write it again in finally.
+            logged = False
+            history_saved = await write_history("finish_turn", turn.id, "".join(assistant_parts), outcome, None, usage)
+        if not completion.turn_saved:
+            await emit("stale", {"message": STALE_TURN_ERROR})
+            return
+        if completion.proposal_saved and pending_proposal is not None:
+            await emit("proposal", {"diff": pending_proposal.diff})
+        done = {"message_id": turn.id}
+        if history_saved is not None and not background:
+            done["history_saved"] = history_saved
+        await emit("done", done)
+    except asyncio.CancelledError:
+        if background:
+            await emit("stopped", {"message_id": turn.id})
+        raise
+    except HTTPException:
+        if not background:
             raise
-        except ProviderError:
-            error_code = "provider_error"
-            event_broker.publish(session_id, "error", {"message": PROVIDER_ERROR})
-        except SandboxTurnTimeoutError:
-            error_code = "sandbox_timeout"
-            event_broker.publish(session_id, "error", {"message": SANDBOX_TURN_TIMEOUT_ERROR})
-        except SandboxCandidateError:
-            error_code = "candidate_validation"
-            event_broker.publish(session_id, "error", {"message": CANDIDATE_VALIDATION_ERROR})
-        except SandboxError:
-            error_code = "sandbox_error"
-            logger.exception("Background AI sandbox turn failed session_id=%s", session_id)
-            event_broker.publish(
-                session_id,
-                "error",
-                {"message": "The temporary AI sandbox failed while reviewing optimizer results."},
-            )
-        except Exception:
-            logger.exception("Unexpected background AI turn failure session_id=%s", session_id)
-            event_broker.publish(
-                session_id,
-                "error",
-                {"message": "The AI could not review the optimizer result."},
-            )
-        finally:
-            if not completed:
-                store.abort(session_id)
-            if history_log is not None:
-                await history_log.write(
-                    "finish_turn",
-                    turn_id,
-                    "".join(assistant_parts),
-                    outcome,
-                    error_code,
-                    usage,
-                )
+        outcome, error_code = "failed", "history_unavailable"
+        await emit("error", {"message": "AI chat history is unavailable, so the optimizer result was not reviewed."})
+    except (ProviderError, SandboxTurnTimeoutError, SandboxCandidateError, SandboxError) as exc:
+        outcome = "failed"
+        if isinstance(exc, ProviderError):
+            error_code, message = "provider_error", PROVIDER_ERROR
+        elif isinstance(exc, SandboxTurnTimeoutError):
+            error_code, message = "sandbox_timeout", SANDBOX_TURN_TIMEOUT_ERROR
+        elif isinstance(exc, SandboxCandidateError):
+            error_code, message = "candidate_validation", CANDIDATE_VALIDATION_ERROR
+        else:
+            error_code, message = "sandbox_error", "The temporary AI sandbox failed. Please try again."
+            logger.exception("AI sandbox turn failed session_id=%s", session_id)
+        await emit("error", {"message": message})
+    except Exception:
+        outcome, error_code = "failed", "internal_error"
+        logger.exception("Unexpected AI turn failure session_id=%s", session_id)
+        await emit("error", {"message": "The AI response failed unexpectedly."})
+    finally:
+        turn.finishing = True
+        if not completed:
+            store.abort(session_id, snapshot)
+        if logged:
+            await write_history("finish_turn", turn.id, "".join(assistant_parts), outcome, error_code, usage)
