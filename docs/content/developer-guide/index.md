@@ -4,6 +4,7 @@ Use these pages to develop, operate, or extend Nurse Scheduling.
 
 - [Repository setup and development workflow](https://github.com/j3soon/nurse-scheduling#how-to-run)
 - [Backend server](../backend-server.md)
+- [Backend containers and networks](../containers.md)
 - [Experimental AI assistant backend](../ai-assistant.md)
 - [Solver behavior](../solvers.md)
 - [System design](../design.md)
