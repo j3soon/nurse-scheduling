@@ -58,10 +58,8 @@ services:
     environment:
       <<: *sentry-environment
       JOB_BACKEND: memory
-      # cloudflared is a separate container, so Uvicorn's peer is a Compose-network address
-      # rather than the caller. Trusting private ranges lets it resolve the real client
-      # address from X-Forwarded-For, which error reports are attributed to.
-      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
+      # Trust nginx as the TCP peer and cloudflared in the forwarded chain.
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-192.168.250.2,192.168.251.2}"
       OPTIMIZE_SOLVERS: "${OPTIMIZE_SOLVERS:-ortools/cp-sat}"
       OPTIMIZE_DEFAULT_SOLVER: "${OPTIMIZE_DEFAULT_SOLVER:-ortools/cp-sat}"
       OPTIMIZE_MIN_TIMEOUT_SECONDS: "${OPTIMIZE_MIN_TIMEOUT_SECONDS:-1}"
@@ -159,9 +157,10 @@ services:
     image: nginx:1.29-alpine
     restart: unless-stopped
     networks:
-      - tunnel
-      - api
-      - ai
+      tunnel:
+      api:
+        ipv4_address: "${NGINX_API_IP:-192.168.250.2}"
+      ai:
     depends_on:
       api:
         condition: service_healthy
@@ -181,7 +180,8 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     networks:
-      - tunnel
+      tunnel:
+        ipv4_address: "${CLOUDFLARED_TUNNEL_IP:-192.168.251.2}"
     depends_on:
       nginx:
         condition: service_healthy
@@ -215,7 +215,13 @@ services:
 
 networks:
   tunnel:
+    ipam:
+      config:
+        - subnet: "${TUNNEL_NETWORK_SUBNET:-192.168.251.0/28}"
   api:
+    ipam:
+      config:
+        - subnet: "${API_NETWORK_SUBNET:-192.168.250.0/28}"
   ai:
   postgres:
 

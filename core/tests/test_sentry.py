@@ -22,6 +22,7 @@
 import sys
 import types
 from datetime import datetime, timezone
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 
 import pytest
@@ -304,6 +305,48 @@ def test_compose_python_services_share_sentry_environment(compose_file, service_
     for service_name in service_names:
         environment = compose["services"][service_name]["environment"]
         assert {name: environment.get(name) for name in expected} == expected
+
+
+@pytest.mark.parametrize("compose_file", ["compose.backend.yml", "compose.backend.memory.yml"])
+def test_compose_trusts_only_its_pinned_forwarding_proxies(compose_file):
+    docker_dir = REPOSITORY_ROOT / "docker"
+    compose = YAML(typ="safe").load((docker_dir / compose_file).read_text(encoding="utf-8"))
+
+    def default(value, name):
+        prefix = "${" + name + ":-"
+        assert value.startswith(prefix) and value.endswith("}")
+        return value[len(prefix) : -1]
+
+    nginx_ip = default(compose["services"]["nginx"]["networks"]["api"]["ipv4_address"], "NGINX_API_IP")
+    tunnel_ip = default(
+        compose["services"]["cloudflared"]["networks"]["tunnel"]["ipv4_address"],
+        "CLOUDFLARED_TUNNEL_IP",
+    )
+    trusted = default(compose["services"]["api"]["environment"]["FORWARDED_ALLOW_IPS"], "FORWARDED_ALLOW_IPS")
+
+    assert trusted.split(",") == [nginx_ip, tunnel_ip]
+    assert ip_address(nginx_ip) in ip_network(
+        default(compose["networks"]["api"]["ipam"]["config"][0]["subnet"], "API_NETWORK_SUBNET")
+    )
+    assert ip_address(tunnel_ip) in ip_network(
+        default(compose["networks"]["tunnel"]["ipam"]["config"][0]["subnet"], "TUNNEL_NETWORK_SUBNET")
+    )
+    assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" in (
+        docker_dir / "nginx.backend.conf"
+    ).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("env_file", [".env.example", ".env.staging.example"])
+def test_compose_env_trust_matches_its_proxy_addresses(env_file):
+    lines = (REPOSITORY_ROOT / "docker" / env_file).read_text(encoding="utf-8").splitlines()
+    values = dict(line.split("=", 1) for line in lines if line and not line.startswith("#") and "=" in line)
+
+    assert values["FORWARDED_ALLOW_IPS"].split(",") == [
+        values["NGINX_API_IP"],
+        values["CLOUDFLARED_TUNNEL_IP"],
+    ]
+    assert ip_address(values["NGINX_API_IP"]) in ip_network(values["API_NETWORK_SUBNET"])
+    assert ip_address(values["CLOUDFLARED_TUNNEL_IP"]) in ip_network(values["TUNNEL_NETWORK_SUBNET"])
 
 
 def _request(path: str, *, route: str | None = None, method: str = "GET") -> types.SimpleNamespace:
