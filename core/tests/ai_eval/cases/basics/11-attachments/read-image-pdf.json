@@ -1,0 +1,22 @@
+{
+  "id": "read-image-pdf",
+  "fixture": "new-schedule",
+  "question": "Inspect the image embedded in the attached PDF. What code does the image show?",
+  "expect_proposal": false,
+  "attachments": [
+    "image-pdf"
+  ],
+  "answer_contains": [
+    "PDF VISION 3816"
+  ],
+  "tool_usage": {
+    "required": [
+      "bash",
+      "read"
+    ]
+  },
+  "tags": [
+    "attachment"
+  ],
+  "note": "Regression for extracting a PDF image and reading it through the multimodal read tool."
+}

@@ -1,0 +1,30 @@
+{
+  "id": "pref-description",
+  "fixture": "ward87",
+  "question": "Add a shift type requirement for 1 person on the N shift, described as 'Overnight cover'.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift type requirement",
+          "description": "Overnight cover",
+          "shiftType": [
+            "N"
+          ],
+          "requiredNumPeople": 1,
+          "qualifiedPeople": [
+            "All Nurses w/o Students"
+          ],
+          "date": [
+            "ALL"
+          ]
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

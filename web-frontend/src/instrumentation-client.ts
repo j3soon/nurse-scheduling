@@ -19,6 +19,12 @@ if (!isSentryDisabled) {
       Sentry.feedbackIntegration({
         colorScheme: "light",
         enableScreenshot: true,
+        triggerLabel: "Feedback",
+        triggerAriaLabel: "Send feedback",
+        formTitle: "Send Feedback",
+        messageLabel: "Feedback",
+        messagePlaceholder: "Tell us what worked, what did not, or what could be improved.",
+        submitButtonLabel: "Send Feedback",
         isNameRequired: true,
         isEmailRequired: true,
       }),
@@ -43,6 +49,13 @@ if (!isSentryDisabled) {
 
     // Ref: https://docs.sentry.io/platforms/javascript/enriching-events/attachments/#add-or-modify-attachments-before-sending
     beforeSend(event, hint) {
+      if (
+        event.type === "feedback" &&
+        event.contexts?.feedback?.source === "optimization-result-rating"
+      ) {
+        return event;
+      }
+
       const yaml = getLatestSchedulingYamlForSentry();
 
       if (yaml) {

@@ -1,0 +1,9 @@
+{
+  "id": "ask-person-history",
+  "fixture": "ward87",
+  "question": "What is recorded in P1's history?",
+  "expect_proposal": false,
+  "answer_contains": [
+    "OFF"
+  ]
+}

@@ -18,7 +18,9 @@ for its workbook.
 !!! warning "Experimental"
 
     Keep the default layout for the first run. Download a YAML backup before
-    making extensive changes.
+    making extensive changes. Saving any entry pins the layout, so the
+    auto-generated default stops updating as shift types and date groups
+    change. Use Clear All and Regenerate to restore auto-updates.
 
 ## Customize the layout
 

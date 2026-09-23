@@ -27,6 +27,7 @@ import { useSchedulingData } from '@/hooks/useSchedulingData';
 import ToggleButton from '@/components/ToggleButton';
 import UploadButton from '@/components/UploadButton';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
+import StarRepoNudge from '@/components/StarRepoNudge';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
@@ -80,6 +81,7 @@ export default function SaveAndLoadPage() {
   const [editedYaml, setEditedYaml] = useState('');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
   const [anonymizePeopleItems, setAnonymizePeopleItems] = useState(true);
   const [anonymizePeopleGroups, setAnonymizePeopleGroups] = useState(false);
   const [scatterShiftRequests, setScatterShiftRequests] = useState(false);
@@ -120,6 +122,7 @@ export default function SaveAndLoadPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    setDownloaded(true);
   };
 
   const handleDownload = () => {
@@ -307,6 +310,8 @@ export default function SaveAndLoadPage() {
           />
         </div>
       </div>
+
+      {downloaded && <div className="mb-6"><StarRepoNudge /></div>}
 
       {/* Warning Section */}
       <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4">

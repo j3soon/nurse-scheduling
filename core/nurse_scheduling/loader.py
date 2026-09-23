@@ -34,9 +34,6 @@ from ruamel.yaml.events import (
 
 from .models import NurseSchedulingData
 
-yaml = YAML(typ="safe")
-
-
 MAX_EXPANDED_NODES = 200_000
 """Largest number of nodes a document may expand to once aliases are followed."""
 MAX_RAW_NESTING_DEPTH = 256
@@ -161,11 +158,15 @@ def _load_yaml(content: bytes) -> dict[str, Any]:
     Returns:
         dict[str, Any]: The loaded YAML data
     """
+    measure_yaml_expansion(content)
     stream = BytesIO(content)
     # Use ruamel.yaml instead of PyYAML to support YAML 1.2
     # This avoids the auto-conversion of special strings such as
     # `Off` into boolean value `False`.
-    return yaml.load(stream)
+    data = YAML(typ="safe").load(stream)
+    if not isinstance(data, dict):
+        raise TypeError("Scheduling YAML must contain a top-level mapping")
+    return data
 
 
 def load_data(content: bytes) -> NurseSchedulingData:
@@ -180,7 +181,5 @@ def load_data(content: bytes) -> NurseSchedulingData:
     Raises:
         SchedulingDataTooComplexError: If the data expands to more nodes than are processed.
     """
-    # Validation walks every node an alias expands to, so bound the expansion before it does.
-    measure_yaml_expansion(content)
     data = _load_yaml(content)
-    return NurseSchedulingData(**data)
+    return NurseSchedulingData.model_validate(data)

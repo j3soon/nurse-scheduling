@@ -101,7 +101,8 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
   };
 
   return (
-    <div className="bg-white shadow-md rounded-lg overflow-auto h-fit">
+    // Named from the title so tests can select a whole table without matching style classes.
+    <div data-testid={`data-table-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} className="bg-white shadow-md rounded-lg overflow-auto h-fit">
       <div className="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
         <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
         {headerAction && <div className="flex items-center">{headerAction}</div>}

@@ -1,0 +1,27 @@
+{
+  "id": "approve-then-follow-up-edit",
+  "fixture": "new-schedule",
+  "user_turns": [
+    "Set the schedule description to March training roster.",
+    "Now add person P1 with description Head nurse."
+  ],
+  "intermediate_answer_contains": [
+    ["March training roster"]
+  ],
+  "expect_proposal": true,
+  "proposal_turns": [1, 2],
+  "turn_actions": [
+    {"after_turn": 1, "action": "approve"}
+  ],
+  "expected_diff": [
+    {"path": "description", "before": "", "after": "March training roster"},
+    {
+      "path": "people.items",
+      "added": [
+        {"id": "P1", "description": "Head nurse", "history": []}
+      ]
+    }
+  ],
+  "changes": ["description", "people.items"],
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "proposal-approval", "adopted-state"]
+}

@@ -23,6 +23,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { FiChevronDown, FiCheck } from 'react-icons/fi';
+import yaml from 'js-yaml';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { useSchedulingData } from '@/hooks/useSchedulingData';
 import { DOCUMENTATION_URLS, STATIC_BUILD_URLS } from '@/constants/urls';
@@ -36,8 +37,12 @@ import {
 
 export default function Home() {
   const router = useRouter();
-  const { createNewState } = useSchedulingData();
+  const { createNewState, loadFromYaml } = useSchedulingData();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [newScheduleKind, setNewScheduleKind] = useState<'empty' | 'example'>('empty');
+  const [isNewScheduleMenuOpen, setIsNewScheduleMenuOpen] = useState(false);
+  const [isCreatingSchedule, setIsCreatingSchedule] = useState(false);
+  const [newScheduleError, setNewScheduleError] = useState<string | null>(null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const currentOrigin = useSyncExternalStore(
     () => () => {},
@@ -46,6 +51,7 @@ export default function Home() {
   );
   const [releaseBranches, setReleaseBranches] = useState<BuildEntry[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const newScheduleDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const loadReleaseBranches = async () => {
@@ -60,12 +66,15 @@ export default function Home() {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsDropdownOpen(false);
       }
+      if (newScheduleDropdownRef.current && !newScheduleDropdownRef.current.contains(event.target as Node)) {
+        setIsNewScheduleMenuOpen(false);
+      }
     };
-    if (isDropdownOpen) {
+    if (isDropdownOpen || isNewScheduleMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isDropdownOpen]);
+  }, [isDropdownOpen, isNewScheduleMenuOpen]);
 
   const buildUrls = useMemo(() => [...STATIC_BUILD_URLS, ...releaseBranches], [releaseBranches]);
 
@@ -83,13 +92,30 @@ export default function Home() {
     }
   };
 
-  const handleStartNew = () => {
+  const handleStartNew = (kind: 'empty' | 'example') => {
+    setNewScheduleKind(kind);
+    setNewScheduleError(null);
+    setIsNewScheduleMenuOpen(false);
     setShowConfirmDialog(true);
   };
 
-  const confirmStartNew = () => {
-    createNewState();
-    setShowConfirmDialog(false);
+  const confirmStartNew = async () => {
+    setIsCreatingSchedule(true);
+    setNewScheduleError(null);
+    try {
+      if (newScheduleKind === 'empty') {
+        createNewState();
+      } else {
+        const response = await fetch('/examples/large-ward-with-87-people-2025-11.yaml');
+        if (!response.ok) throw new Error('The example schedule could not be loaded.');
+        loadFromYaml(yaml.load(await response.text()));
+      }
+      setShowConfirmDialog(false);
+    } catch (error) {
+      setNewScheduleError(error instanceof Error ? error.message : 'The schedule could not be created.');
+    } finally {
+      setIsCreatingSchedule(false);
+    }
   };
 
   const getBuildLabelColor = (label: string) => {
@@ -119,12 +145,43 @@ export default function Home() {
           </div>
         )}
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <button
-            onClick={handleStartNew}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            New Schedule
-          </button>
+          <div ref={newScheduleDropdownRef} className="relative inline-flex">
+            <button
+              onClick={() => handleStartNew('empty')}
+              className="rounded-l-lg bg-blue-600 px-6 py-3 text-white transition-colors hover:bg-blue-700"
+            >
+              New Schedule
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsNewScheduleMenuOpen(previous => !previous)}
+              aria-label="Choose new schedule type"
+              aria-expanded={isNewScheduleMenuOpen}
+              className="rounded-r-lg border-l border-blue-500 bg-blue-600 px-3 py-3 text-white transition-colors hover:bg-blue-700"
+            >
+              <FiChevronDown className={`h-5 w-5 transition-transform ${isNewScheduleMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {isNewScheduleMenuOpen && (
+              <div className="absolute left-0 top-full z-20 mt-2 w-64 overflow-hidden rounded-lg border border-gray-200 bg-white text-left shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => handleStartNew('empty')}
+                  className="block w-full px-4 py-3 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <span className="block font-medium">Empty schedule</span>
+                  <span className="block text-xs text-gray-500">Start without people or shift types.</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleStartNew('example')}
+                  className="block w-full border-t border-gray-100 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <span className="block font-medium">87-person example</span>
+                  <span className="block text-xs text-gray-500">Load the realistic November 2025 testcase.</span>
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={() => router.push('/dates')}
             className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
@@ -179,20 +236,25 @@ export default function Home() {
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-bold mb-4 text-gray-800">Confirm Reset</h2>
             <p className="text-gray-600 mb-6">
-              Are you sure you want to start from a new state? This will reset all your current data.
+              {newScheduleKind === 'empty'
+                ? 'Start an empty schedule? This will reset all your current data.'
+                : 'Load the 87-person example? This will reset all your current data.'}
             </p>
+            {newScheduleError && <p className="mb-4 text-sm text-red-700" role="alert">{newScheduleError}</p>}
             <div className="flex justify-end gap-4">
               <button
                 onClick={() => setShowConfirmDialog(false)}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                disabled={isCreatingSchedule}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmStartNew}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                disabled={isCreatingSchedule}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:cursor-wait disabled:opacity-50"
               >
-                Reset Data
+                {isCreatingSchedule ? 'Loading…' : newScheduleKind === 'empty' ? 'Create empty schedule' : 'Load example'}
               </button>
             </div>
           </div>

@@ -1,0 +1,44 @@
+{
+  "id": "people-remove",
+  "fixture": "ward87",
+  "question": "P86 has left the ward. Remove them from the schedule entirely.",
+  "expect_proposal": true,
+  "assert": [
+    {
+      "path": "people.items[?id=P86]",
+      "absent": true
+    },
+    {
+      "path": "people.items[].id",
+      "added": []
+    },
+    {
+      "path": "people.items[].id",
+      "removed": [
+        "P86"
+      ]
+    },
+    {
+      "path": "people.groups[].id",
+      "added": []
+    },
+    {
+      "path": "people.groups[].id",
+      "removed": []
+    },
+    {
+      "path": "preferences",
+      "delta": 0
+    },
+    {
+      "path": "people.groups[?members=P86]",
+      "absent": true
+    }
+  ],
+  "changes": [
+    "people.items",
+    "people.groups",
+    "preferences"
+  ],
+  "note": "P86 belongs to four people groups, so removing the person must clear every membership."
+}

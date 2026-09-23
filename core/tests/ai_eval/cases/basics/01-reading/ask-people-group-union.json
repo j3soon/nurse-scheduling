@@ -1,0 +1,9 @@
+{
+  "id": "ask-people-group-union",
+  "fixture": "ward87",
+  "question": "How many unique people are in either the Day People group or the Prev Night People group? Count anyone in both groups only once.",
+  "expect_proposal": false,
+  "answer_contains": ["50"],
+  "tags": ["difficult", "tuning", "set-reasoning", "reading"],
+  "note": "The groups contain 33 and 25 people with an overlap of 8, so summing their sizes would be wrong."
+}

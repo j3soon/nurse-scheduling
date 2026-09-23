@@ -21,12 +21,13 @@
 
 import logging
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import fakeredis
 import pytest
+import redis
 
 from nurse_scheduling.server.config import ServerSettings
 from nurse_scheduling.server.jobs.controller import JobController
@@ -39,7 +40,13 @@ from nurse_scheduling.server.jobs.models import (
     StoredArtifact,
     StoreLimits,
 )
-from nurse_scheduling.server.usage_metrics import REPORT_LOCK_SECONDS, RedisUsageMetrics, week_bounds, week_id_for
+from nurse_scheduling.server.usage_metrics import (
+    REPORT_LOCK_SECONDS,
+    RedisUsageMetrics,
+    schedule_basics_for,
+    week_bounds,
+    week_id_for,
+)
 from nurse_scheduling.server.usage_report import (
     MailgunReportTransport,
     UsageReporter,
@@ -55,6 +62,22 @@ def redis_client():
     return fakeredis.FakeRedis(decode_responses=False)
 
 
+PRIVATE_SCHEDULE = b"""\
+dates:
+  range:
+    startDate: 2026-01-05
+    endDate: 2026-01-11
+people:
+  items:
+    - id: Private Person A
+    - id: Private Person B
+shiftTypes:
+  items:
+    - id: Private Shift D
+    - id: Private Shift N
+"""
+
+
 def _job(created_at: datetime, *, job_id: str = "job_metrics", client_id: str = "private-client-id") -> Job:
     return Job(
         id=job_id,
@@ -68,6 +91,42 @@ def _job(created_at: datetime, *, job_id: str = "job_metrics", client_id: str = 
         ),
         created_at=created_at,
     )
+
+
+# Telemetry keys expire at an absolute instant derived from their week, so a
+# fixed fixture timeline stops being retained once that instant passes and the
+# tests start reading empty buckets. Shifting the whole timeline by whole weeks
+# keeps every weekday, week ID, and retention assertion below exactly as
+# written while always landing inside retention.
+FIXTURE_ANCHOR_SUNDAY = datetime(2026, 8, 30, tzinfo=timezone.utc)
+
+
+def _fixture_week_offset() -> timedelta:
+    """Return whole weeks between the written fixture timeline and this week.
+
+    Raises:
+        ValueError: If the anchor is not a past or current Sunday, which would
+            shift the timeline off its weekdays or back out of retention.
+    """
+    now = datetime.now(timezone.utc)
+    this_sunday = (now - timedelta(days=(now.weekday() + 1) % 7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    offset = this_sunday - FIXTURE_ANCHOR_SUNDAY
+    if offset < timedelta(0) or offset % timedelta(days=7):
+        raise ValueError("FIXTURE_ANCHOR_SUNDAY must be a past or current Sunday at midnight UTC")
+    return offset
+
+
+FIXTURE_WEEK_OFFSET = _fixture_week_offset()
+
+
+def _at(*args: int, tzinfo: timezone = timezone.utc) -> datetime:
+    """Return one fixture timestamp shifted onto the current reporting week."""
+    return datetime(*args, tzinfo=tzinfo) + FIXTURE_WEEK_OFFSET
+
+
+def _week(week_id: str) -> str:
+    """Return one fixture Sunday's week ID shifted onto the current reporting week."""
+    return (date.fromisoformat(week_id) + FIXTURE_WEEK_OFFSET).isoformat()
 
 
 def _stage(metrics: RedisUsageMetrics, callback) -> None:
@@ -108,7 +167,7 @@ def test_redis_job_store_records_complete_lifecycle_atomically(monkeypatch):
         usage_metrics_key_prefix="test:usage",
         usage_metrics_retention_days=30,
     )
-    now = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
+    now = _at(2026, 8, 24, 12, tzinfo=timezone.utc)
     clock = lambda: now
     record_download = store._usage_metrics.record_download
     monkeypatch.setattr(
@@ -130,7 +189,7 @@ def test_redis_job_store_records_complete_lifecycle_atomically(monkeypatch):
         solver="ortools/cp-sat",
         prettify=True,
         timeout_seconds=60,
-        input_bytes=b"private scheduling input",
+        input_bytes=PRIVATE_SCHEDULE,
     )
     now += timedelta(seconds=10)
     lease = controller.register_worker("worker")
@@ -150,7 +209,7 @@ def test_redis_job_store_records_complete_lifecycle_atomically(monkeypatch):
     assert controller.get_artifact(created.id, "schedule.xlsx") == artifact
     controller.delete_job(created.id)
 
-    report = store._usage_metrics.load_week("2026-08-23")
+    report = store._usage_metrics.load_week(_week("2026-08-23"))
     entry = report.entries[0]
 
     assert completed.state == JobState.COMPLETED
@@ -164,13 +223,109 @@ def test_redis_job_store_records_complete_lifecycle_atomically(monkeypatch):
     assert entry.outcome == "optimal"
     assert entry.solver_status == "OPTIMAL"
     assert entry.termination_reason == "optimality_proven"
+    assert entry.people_count == 2
+    assert entry.shift_type_count == 2
+    assert entry.date_range_start == "2026-01-05"
+    assert entry.date_range_end == "2026-01-11"
     assert entry.download_count == 1
     assert store._redis.get(store._job_key(created.id)) is None
     assert store._redis.get(store._input_key(created.id)) is None
     assert store._redis.get(store._artifact_key(created.id)) is None
     assert store._redis.exists("test:usage:job:job_metrics")
-    assert b"input_name" not in store._redis.hgetall("test:usage:job:job_metrics")
+    telemetry = store._redis.hgetall("test:usage:job:job_metrics")
+    assert b"input_name" not in telemetry
+    assert all(b"Private Person" not in value and b"Private Shift" not in value for value in telemetry.values())
     assert not list(store._redis.scan_iter("test:usage:*private-filename*"))
+
+
+def test_malformed_schedule_omits_basics_without_dropping_job_telemetry(redis_client):
+    metrics = RedisUsageMetrics(
+        redis_client,
+        key_prefix="test:usage",
+        retention_days=30,
+        report_timezone=timezone.utc,
+    )
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
+    basics = schedule_basics_for(b"not: [valid")
+
+    assert basics == {}
+    _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted, basics))
+
+    entry = metrics.load_week(_week("2026-08-23")).entries[0]
+
+    assert entry.state == JobState.QUEUED
+    assert entry.people_count is None
+    assert entry.shift_type_count is None
+    assert entry.date_range_start is None
+    assert entry.date_range_end is None
+
+
+def test_submitted_schedule_is_parsed_once_even_when_the_transaction_retries(monkeypatch):
+    from nurse_scheduling.server.stores import redis as redis_store
+
+    fake_server = fakeredis.FakeServer()
+    monkeypatch.setattr(
+        redis_store.redis.Redis,
+        "from_url",
+        lambda url, **kwargs: fakeredis.FakeRedis.from_url(url, server=fake_server, **kwargs),
+    )
+    store = redis_store.RedisJobStore(
+        url="redis://localhost/0",
+        key_prefix="test:jobs",
+        usage_metrics_key_prefix="test:usage",
+        usage_metrics_retention_days=30,
+    )
+    parses = 0
+    parse_schedule_basics = redis_store.schedule_basics_for
+
+    def counted_schedule_basics(input_bytes: bytes):
+        nonlocal parses
+        parses += 1
+        return parse_schedule_basics(input_bytes)
+
+    monkeypatch.setattr(redis_store, "schedule_basics_for", counted_schedule_basics)
+    _raise_watch_error_once(store, monkeypatch)
+    created = store.create(
+        _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc)),
+        PRIVATE_SCHEDULE,
+        StoreLimits(max_pending=10, max_retained=10),
+        events=(),
+    )
+
+    # A watched transaction retries its whole body, and the submitted YAML can be megabytes.
+    assert parses == 1
+    entry = store._usage_metrics.load_week(_week("2026-08-23")).entries[0]
+    assert entry.job_id == created.id
+    assert entry.people_count == 2
+
+
+def _raise_watch_error_once(store, monkeypatch) -> None:
+    """Force exactly one optimistic-locking retry of the next watched transaction."""
+    original_pipeline = store._redis.pipeline
+    error_pending = True
+
+    class WatchErrorPipeline:
+        def __init__(self, pipeline):
+            self.pipeline = pipeline
+
+        def __enter__(self):
+            self.pipeline.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.pipeline.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.pipeline, name)
+
+        def execute(self):
+            nonlocal error_pending
+            if error_pending:
+                error_pending = False
+                raise redis.WatchError
+            return self.pipeline.execute()
+
+    monkeypatch.setattr(store._redis, "pipeline", lambda: WatchErrorPipeline(original_pipeline()))
 
 
 def test_terminal_events_are_bucketed_when_they_occur(redis_client):
@@ -180,7 +335,7 @@ def test_terminal_events_are_bucketed_when_they_occur(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    created_at = datetime(2026, 8, 29, 23, 59, tzinfo=timezone.utc)
+    created_at = _at(2026, 8, 29, 23, 59, tzinfo=timezone.utc)
     submitted = _job(created_at)
     started = replace(submitted, state=JobState.RUNNING, started_at=created_at + timedelta(seconds=30))
     completed = replace(
@@ -198,22 +353,28 @@ def test_terminal_events_are_bucketed_when_they_occur(redis_client):
     _stage(metrics, lambda transaction: metrics.stage_job_started(transaction, started))
     _stage(metrics, lambda transaction: metrics.stage_job_transition(transaction, started, completed))
 
-    first = metrics.load_week("2026-08-23")
-    second = metrics.load_week("2026-08-30")
+    first = metrics.load_week(_week("2026-08-23"))
+    second = metrics.load_week(_week("2026-08-30"))
     assert first.entries == second.entries
     assert first.entries[0].state == JobState.COMPLETED
     assert first.entries[0].outcome == "feasible"
     assert first.entries[0].queue_wait_seconds == 30
     assert first.entries[0].run_seconds == 90
-    assert redis_client.type("test:usage:week:2026-08-23:members") == b"zset"
-    assert redis_client.zscore("test:usage:week:2026-08-23:members", "job_metrics") == started.started_at.timestamp()
-    assert redis_client.zscore("test:usage:week:2026-08-30:members", "job_metrics") == completed.finished_at.timestamp()
+    assert redis_client.type(f"test:usage:week:{_week('2026-08-23')}:members") == b"zset"
+    assert (
+        redis_client.zscore(f"test:usage:week:{_week('2026-08-23')}:members", "job_metrics")
+        == started.started_at.timestamp()
+    )
+    assert (
+        redis_client.zscore(f"test:usage:week:{_week('2026-08-30')}:members", "job_metrics")
+        == completed.finished_at.timestamp()
+    )
     assert not redis_client.exists("test:usage:weeks")
 
 
 def test_telemetry_preserves_the_requested_solver(redis_client):
     metrics = RedisUsageMetrics(redis_client, key_prefix="test:usage", retention_days=30)
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     submitted = replace(
         submitted,
         request=replace(submitted.request, solver="unknown\nreport-content"),
@@ -221,7 +382,7 @@ def test_telemetry_preserves_the_requested_solver(redis_client):
 
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
 
-    assert metrics.load_week("2026-08-23").entries[0].solver == "unknown\nreport-content"
+    assert metrics.load_week(_week("2026-08-23")).entries[0].solver == "unknown\nreport-content"
 
 
 def test_telemetry_keys_expire_after_the_report_window(redis_client):
@@ -231,13 +392,13 @@ def test_telemetry_keys_expire_after_the_report_window(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
 
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
 
-    expected_expiry = datetime(2026, 9, 29, tzinfo=timezone.utc).timestamp()
+    expected_expiry = _at(2026, 9, 29, tzinfo=timezone.utc).timestamp()
     assert redis_client.expiretime("test:usage:job:job_metrics") == expected_expiry
-    assert redis_client.expiretime("test:usage:week:2026-08-23:members") == expected_expiry
+    assert redis_client.expiretime(f"test:usage:week:{_week('2026-08-23')}:members") == expected_expiry
 
 
 class _RecordingTransport:
@@ -259,7 +420,7 @@ def test_reporter_retries_failures_and_checkpoints_success(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     transport = _RecordingTransport(failures=1)
     reporter = UsageReporter(
@@ -268,14 +429,14 @@ def test_reporter_retries_failures_and_checkpoints_success(redis_client):
         retry_delays=(),
         minimum_interval_seconds=0,
     )
-    now = datetime(2026, 8, 30, 10, tzinfo=timezone.utc)
+    now = _at(2026, 8, 30, 10, tzinfo=timezone.utc)
 
     assert reporter.run_once(now) is False
     assert reporter.run_once(now) is True
     assert reporter.run_once(now) is True
 
     assert len(transport.reports) == 2
-    delivery = redis_client.hgetall("test:usage:report:2026-08-23")
+    delivery = redis_client.hgetall(f"test:usage:report:{_week('2026-08-23')}")
     assert delivery[b"status"] == b"sent"
     assert delivery[b"attempts"] == b"2"
     rendered = render_report(transport.reports[-1])
@@ -293,14 +454,20 @@ def test_render_report_adds_local_summary_before_csv(monkeypatch, redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
-    report = metrics.load_week("2026-08-23")
-    base = report.entries[0]
+    report = metrics.load_week(_week("2026-08-23"))
+    base = replace(
+        report.entries[0],
+        people_count=4,
+        shift_type_count=3,
+        date_range_start="2026-01-05",
+        date_range_end="2026-01-11",
+    )
     report = replace(
         report,
-        starts_at=datetime(2026, 8, 22, 16, tzinfo=timezone.utc),
-        ends_at=datetime(2026, 8, 29, 16, tzinfo=timezone.utc),
+        starts_at=_at(2026, 8, 22, 16, tzinfo=timezone.utc),
+        ends_at=_at(2026, 8, 29, 16, tzinfo=timezone.utc),
         entries=(
             base,
             replace(base, job_id="zero", state=JobState.COMPLETED, outcome="optimal", run_seconds=0),
@@ -320,9 +487,9 @@ def test_render_report_adds_local_summary_before_csv(monkeypatch, redis_client):
     rendered = render_report(report)
 
     assert rendered.startswith(
-        "Nurse Scheduling backend usage: 2026-08-23\n"
+        f"Nurse Scheduling backend usage: {_week('2026-08-23')}\n"
         "\n"
-        "Period: 2026-08-23T00:00:00+08:00 to 2026-08-30T00:00:00+08:00 "
+        f"Period: {_week('2026-08-23')}T00:00:00+08:00 to {_week('2026-08-30')}T00:00:00+08:00 "
         "(UTC+08:00, end exclusive)\n"
         "Jobs: 8\n"
         "States: cancelled=1, completed=4, failed=1, queued=1, running=1\n"
@@ -332,6 +499,9 @@ def test_render_report_adds_local_summary_before_csv(monkeypatch, redis_client):
         "\n"
         "job_id,client_id,solver,state,"
     )
+    assert "people_count,shift_type_count,date_range_start,date_range_end" in rendered
+    assert ",4,3,2026-01-05,2026-01-11,60,0\n" in rendered
+    assert "Schedule telemetry includes only counts and the date range" in rendered
 
 
 def test_reporter_retries_transport_within_one_weekly_run(redis_client):
@@ -341,7 +511,7 @@ def test_reporter_retries_transport_within_one_weekly_run(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     transport = _RecordingTransport(failures=1)
     waits = []
@@ -360,7 +530,7 @@ def test_reporter_retries_transport_within_one_weekly_run(redis_client):
         retry_wait=wait,
     )
 
-    assert reporter.run_once(datetime(2026, 8, 30, 10, tzinfo=timezone.utc)) is True
+    assert reporter.run_once(_at(2026, 8, 30, 10, tzinfo=timezone.utc)) is True
     assert len(transport.reports) == 2
     assert waits == [10 * 60]
     assert reserve_delivery.call_count == 2
@@ -373,7 +543,7 @@ def test_reporter_renews_lease_through_long_retry_wait(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     transport = _RecordingTransport(failures=1)
     waits = []
@@ -392,7 +562,7 @@ def test_reporter_renews_lease_through_long_retry_wait(redis_client):
         minimum_interval_seconds=0,
     )
 
-    assert reporter.run_once(datetime(2026, 8, 30, 10, tzinfo=timezone.utc)) is True
+    assert reporter.run_once(_at(2026, 8, 30, 10, tzinfo=timezone.utc)) is True
     assert waits == [REPORT_LOCK_SECONDS // 3] * 3 + [1]
     assert renew_report.call_count >= len(waits) + 2
 
@@ -404,15 +574,15 @@ def test_reporter_stops_before_send_when_report_lease_is_lost(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     metrics.renew_report = Mock(return_value=False)
     transport = _RecordingTransport()
     reporter = UsageReporter(metrics, transport, retry_delays=(), minimum_interval_seconds=0)
 
-    assert reporter.run_once(datetime(2026, 8, 30, 10, tzinfo=timezone.utc)) is False
+    assert reporter.run_once(_at(2026, 8, 30, 10, tzinfo=timezone.utc)) is False
     assert transport.reports == []
-    delivery = redis_client.hgetall("test:usage:report:2026-08-23")
+    delivery = redis_client.hgetall(f"test:usage:report:{_week('2026-08-23')}")
     assert delivery[b"status"] == b"failed"
     assert delivery[b"last_error"] == b"Report delivery lease expired before transport send"
 
@@ -424,8 +594,8 @@ def test_reporter_catches_up_retained_completed_weeks(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    older = _job(datetime(2026, 8, 10, 12, tzinfo=timezone.utc), job_id="older")
-    newer = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc), job_id="newer")
+    older = _job(_at(2026, 8, 10, 12, tzinfo=timezone.utc), job_id="older")
+    newer = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc), job_id="newer")
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, older))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, newer))
     transport = _RecordingTransport()
@@ -444,10 +614,10 @@ def test_reporter_catches_up_retained_completed_weeks(redis_client):
         retry_delays=(),
         retry_wait=wait,
     )
-    now = datetime(2026, 8, 30, 10, tzinfo=timezone.utc)
+    now = _at(2026, 8, 30, 10, tzinfo=timezone.utc)
 
     assert reporter.run_once(now) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-09", "2026-08-23"]
+    assert [report.week_id for report in transport.reports] == [_week("2026-08-09"), _week("2026-08-23")]
     assert waits == [10 * 60]
     assert reporter.run_once(now) is True
 
@@ -459,36 +629,36 @@ def test_reporter_force_sends_latest_retained_week_without_completing_partial_we
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    older = _job(datetime(2026, 8, 10, 12, tzinfo=timezone.utc), job_id="older")
-    newer = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc), job_id="newer")
-    current = _job(datetime(2026, 8, 31, 12, tzinfo=timezone.utc), job_id="current")
+    older = _job(_at(2026, 8, 10, 12, tzinfo=timezone.utc), job_id="older")
+    newer = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc), job_id="newer")
+    current = _job(_at(2026, 8, 31, 12, tzinfo=timezone.utc), job_id="current")
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, older))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, newer))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, current))
     transport = _RecordingTransport()
     reporter = UsageReporter(metrics, transport, retry_delays=(), minimum_interval_seconds=0)
-    now = datetime(2026, 9, 3, 10, tzinfo=timezone.utc)
+    now = _at(2026, 9, 3, 10, tzinfo=timezone.utc)
 
     assert reporter.run_once(now) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-09", "2026-08-23"]
+    assert [report.week_id for report in transport.reports] == [_week("2026-08-09"), _week("2026-08-23")]
 
     transport.reports.clear()
     assert reporter.run_once(now, force_latest=True) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-30"]
+    assert [report.week_id for report in transport.reports] == [_week("2026-08-30")]
     assert [entry.job_id for entry in transport.reports[0].entries] == ["current"]
-    assert transport.reports[0].starts_at == datetime(2026, 8, 30, tzinfo=timezone.utc)
-    assert transport.reports[0].ends_at == datetime(2026, 9, 6, tzinfo=timezone.utc)
-    assert redis_client.hget("test:usage:report:2026-08-09", "attempts") == b"1"
-    assert redis_client.hget("test:usage:report:2026-08-23", "attempts") == b"1"
-    partial_delivery = redis_client.hgetall("test:usage:report:2026-08-30")
+    assert transport.reports[0].starts_at == _at(2026, 8, 30, tzinfo=timezone.utc)
+    assert transport.reports[0].ends_at == _at(2026, 9, 6, tzinfo=timezone.utc)
+    assert redis_client.hget(f"test:usage:report:{_week('2026-08-09')}", "attempts") == b"1"
+    assert redis_client.hget(f"test:usage:report:{_week('2026-08-23')}", "attempts") == b"1"
+    partial_delivery = redis_client.hgetall(f"test:usage:report:{_week('2026-08-30')}")
     assert b"status" not in partial_delivery
-    assert partial_delivery[b"force_message_id"] == b"message-2026-08-30"
+    assert partial_delivery[b"force_message_id"] == f"message-{_week('2026-08-30')}".encode()
 
     transport.reports.clear()
-    assert reporter.run_once(datetime(2026, 9, 6, 1, tzinfo=timezone.utc)) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-30"]
-    assert redis_client.hget("test:usage:report:2026-08-30", "status") == b"sent"
-    assert redis_client.hget("test:usage:report:2026-08-30", "attempts") == b"2"
+    assert reporter.run_once(_at(2026, 9, 6, 1, tzinfo=timezone.utc)) is True
+    assert [report.week_id for report in transport.reports] == [_week("2026-08-30")]
+    assert redis_client.hget(f"test:usage:report:{_week('2026-08-30')}", "status") == b"sent"
+    assert redis_client.hget(f"test:usage:report:{_week('2026-08-30')}", "attempts") == b"2"
 
 
 def test_forced_report_bypasses_delivery_interval(redis_client):
@@ -498,15 +668,15 @@ def test_forced_report_bypasses_delivery_interval(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 31, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 31, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     reserve_delivery = Mock(return_value=10 * 60)
     metrics.reserve_report_delivery = reserve_delivery
     transport = _RecordingTransport()
     reporter = UsageReporter(metrics, transport, retry_delays=())
 
-    assert reporter.run_once(datetime(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is True
-    assert [report.week_id for report in transport.reports] == ["2026-08-30"]
+    assert reporter.run_once(_at(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is True
+    assert [report.week_id for report in transport.reports] == [_week("2026-08-30")]
     reserve_delivery.assert_not_called()
 
 
@@ -520,7 +690,7 @@ def test_forced_report_fails_clearly_without_retained_telemetry(redis_client, ca
     reporter = UsageReporter(metrics, _RecordingTransport(), retry_delays=())
 
     with caplog.at_level(logging.ERROR, logger="nurse_scheduling.usage_report"):
-        assert reporter.run_once(datetime(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is False
+        assert reporter.run_once(_at(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is False
 
     assert "reason=no-retained-telemetry" in caplog.text
 
@@ -532,14 +702,14 @@ def test_forced_report_fails_clearly_when_week_is_locked(redis_client, caplog):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 31, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 31, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
-    assert metrics.acquire_report("2026-08-30") is not None
+    assert metrics.acquire_report(_week("2026-08-30")) is not None
     transport = _RecordingTransport()
     reporter = UsageReporter(metrics, transport, retry_delays=())
 
     with caplog.at_level(logging.ERROR, logger="nurse_scheduling.usage_report"):
-        assert reporter.run_once(datetime(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is False
+        assert reporter.run_once(_at(2026, 9, 3, 10, tzinfo=timezone.utc), force_latest=True) is False
 
     assert transport.reports == []
     assert "reason=delivery-lock-held" in caplog.text
@@ -552,18 +722,18 @@ def test_failed_forced_resend_preserves_successful_checkpoint(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     transport = _RecordingTransport()
     reporter = UsageReporter(metrics, transport, retry_delays=(), minimum_interval_seconds=0)
-    now = datetime(2026, 8, 30, 10, tzinfo=timezone.utc)
+    now = _at(2026, 8, 30, 10, tzinfo=timezone.utc)
 
     assert reporter.run_once(now) is True
-    original_delivery = redis_client.hgetall("test:usage:report:2026-08-23")
+    original_delivery = redis_client.hgetall(f"test:usage:report:{_week('2026-08-23')}")
 
     transport.failures = 2
     assert reporter.run_once(now, force_latest=True) is False
-    forced_delivery = redis_client.hgetall("test:usage:report:2026-08-23")
+    forced_delivery = redis_client.hgetall(f"test:usage:report:{_week('2026-08-23')}")
     assert forced_delivery[b"status"] == b"sent"
     assert forced_delivery[b"message_id"] == original_delivery[b"message_id"]
     assert forced_delivery[b"sent_at"] == original_delivery[b"sent_at"]
@@ -595,8 +765,8 @@ def test_forced_report_still_respects_the_week_lock(redis_client):
         report_timezone=timezone.utc,
     )
 
-    assert metrics.acquire_report("2026-08-23") is not None
-    assert metrics.acquire_report("2026-08-23", force=True) is None
+    assert metrics.acquire_report(_week("2026-08-23")) is not None
+    assert metrics.acquire_report(_week("2026-08-23"), force=True) is None
 
 
 def test_report_lease_renewal_requires_matching_token(redis_client):
@@ -606,14 +776,14 @@ def test_report_lease_renewal_requires_matching_token(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    token = metrics.acquire_report("2026-08-23")
+    token = metrics.acquire_report(_week("2026-08-23"))
     assert token is not None
-    lock_key = "test:usage:report:2026-08-23:lock"
+    lock_key = f"test:usage:report:{_week('2026-08-23')}:lock"
     redis_client.expire(lock_key, 1)
 
-    assert metrics.renew_report("2026-08-23", "wrong-token") is False
+    assert metrics.renew_report(_week("2026-08-23"), "wrong-token") is False
     assert redis_client.ttl(lock_key) <= 1
-    assert metrics.renew_report("2026-08-23", token) is True
+    assert metrics.renew_report(_week("2026-08-23"), token) is True
     assert REPORT_LOCK_SECONDS - 1 <= redis_client.ttl(lock_key) <= REPORT_LOCK_SECONDS
 
 
@@ -639,13 +809,13 @@ def test_reporter_ignores_week_membership_outside_retention(redis_client):
         report_timezone=timezone.utc,
     )
     redis_client.zadd(
-        "test:usage:week:2026-07-26:members",
-        {"expired-job": datetime(2026, 7, 27, tzinfo=timezone.utc).timestamp()},
+        f"test:usage:week:{_week('2026-07-26')}:members",
+        {"expired-job": _at(2026, 7, 27, tzinfo=timezone.utc).timestamp()},
     )
     transport = _RecordingTransport()
     reporter = UsageReporter(metrics, transport, retry_delays=())
 
-    assert reporter.run_once(datetime(2026, 9, 2, tzinfo=timezone.utc)) is True
+    assert reporter.run_once(_at(2026, 9, 2, tzinfo=timezone.utc)) is True
     assert transport.reports == []
 
 
@@ -656,7 +826,7 @@ def test_successful_report_retains_terminal_telemetry(redis_client):
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     completed = replace(
         submitted,
         state=JobState.COMPLETED,
@@ -669,19 +839,19 @@ def test_successful_report_retains_terminal_telemetry(redis_client):
     )
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
     _stage(metrics, lambda transaction: metrics.stage_job_transition(transaction, submitted, completed))
-    terminal_expiry = int(datetime(2026, 9, 29, tzinfo=timezone.utc).timestamp())
+    terminal_expiry = int(_at(2026, 9, 29, tzinfo=timezone.utc).timestamp())
     assert redis_client.expiretime("test:usage:job:job_metrics") == terminal_expiry
 
     reporter = UsageReporter(metrics, _RecordingTransport())
-    assert reporter.run_once(datetime(2026, 8, 30, 1, tzinfo=timezone.utc)) is True
+    assert reporter.run_once(_at(2026, 8, 30, 1, tzinfo=timezone.utc)) is True
 
     assert redis_client.exists("test:usage:job:job_metrics")
     assert redis_client.expiretime("test:usage:job:job_metrics") == terminal_expiry
-    metrics.record_download("job_metrics", datetime(2026, 8, 30, 2, tzinfo=timezone.utc))
+    metrics.record_download("job_metrics", _at(2026, 8, 30, 2, tzinfo=timezone.utc))
     assert redis_client.hget("test:usage:job:job_metrics", "download_count") == b"1"
     assert (
         redis_client.expiretime("test:usage:job:job_metrics")
-        == datetime(
+        == _at(
             2026,
             10,
             6,
@@ -786,9 +956,9 @@ def test_reporter_catches_up_only_after_the_local_weekly_deadline(redis_client):
         retention_days=30,
         report_timezone=local_timezone,
     )
-    submitted = _job(datetime(2026, 8, 29, 15, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 29, 15, tzinfo=timezone.utc))
     current_week = _job(
-        datetime(2026, 8, 30, 2, tzinfo=timezone.utc),
+        _at(2026, 8, 30, 2, tzinfo=timezone.utc),
         job_id="current-week",
     )
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
@@ -798,7 +968,7 @@ def test_reporter_catches_up_only_after_the_local_weekly_deadline(redis_client):
 
     assert (
         reporter.run_once(
-            datetime(2026, 8, 30, 0, 59, tzinfo=timezone.utc),
+            _at(2026, 8, 30, 0, 59, tzinfo=timezone.utc),
             local_hour=9,
         )
         is True
@@ -806,7 +976,7 @@ def test_reporter_catches_up_only_after_the_local_weekly_deadline(redis_client):
     assert transport.reports == []
     assert (
         reporter.run_once(
-            datetime(2026, 8, 30, 1, tzinfo=timezone.utc),
+            _at(2026, 8, 30, 1, tzinfo=timezone.utc),
             local_hour=9,
         )
         is True
@@ -990,9 +1160,9 @@ def test_mailgun_transport_sends_plain_text_job_table(monkeypatch, redis_client,
         retention_days=30,
         report_timezone=timezone.utc,
     )
-    submitted = _job(datetime(2026, 8, 24, 12, tzinfo=timezone.utc))
+    submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted))
-    report = metrics.load_week("2026-08-23")
+    report = metrics.load_week(_week("2026-08-23"))
 
     assert MailgunReportTransport(settings).send(report) == "mailgun-message"
 
@@ -1000,8 +1170,8 @@ def test_mailgun_transport_sends_plain_text_job_table(monkeypatch, redis_client,
     assert post.call_args.args == (expected_url,)
     assert post.call_args.kwargs["auth"] == ("api", "secret-key")
     assert post.call_args.kwargs["follow_redirects"] is False
-    assert post.call_args.kwargs["files"]["subject"] == (None, "Private backend report: 2026-08-23")
-    assert post.call_args.kwargs["files"]["text"][1].startswith("Private backend report: 2026-08-23\n")
+    assert post.call_args.kwargs["files"]["subject"] == (None, f"Private backend report: {_week('2026-08-23')}")
+    assert post.call_args.kwargs["files"]["text"][1].startswith(f"Private backend report: {_week('2026-08-23')}\n")
     assert post.call_args.kwargs["files"]["to"] == (None, "operator@example.com")
     assert "private-client-id" in post.call_args.kwargs["files"]["text"][1]
     assert "private-filename.yaml" not in post.call_args.kwargs["files"]["text"][1]

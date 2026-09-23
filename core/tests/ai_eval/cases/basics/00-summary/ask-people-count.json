@@ -1,0 +1,13 @@
+{
+  "id": "ask-people-count",
+  "fixture": "ward87",
+  "question": "How many people are in this schedule?",
+  "expect_proposal": false,
+  "answer_contains": [
+    [
+      "{people_count}",
+      "eighty-seven",
+      "eighty seven"
+    ]
+  ]
+}

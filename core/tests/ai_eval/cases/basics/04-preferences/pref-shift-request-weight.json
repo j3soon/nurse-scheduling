@@ -1,0 +1,29 @@
+{
+  "id": "pref-shift-request-weight",
+  "fixture": "ward87",
+  "question": "P61 must not work the D shift on the 9th. Make it a hard rule with weight -1000.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "P61"
+          ],
+          "date": [
+            "09"
+          ],
+          "shiftType": [
+            "D"
+          ],
+          "weight": -1000
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

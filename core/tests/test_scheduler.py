@@ -43,14 +43,7 @@ def _load_valid_yaml_bytes() -> bytes:
 def test_scheduler_rejects_unsupported_api_version():
     content = _load_valid_yaml_bytes().replace(b"apiVersion: alpha", b"apiVersion: beta")
 
-    with pytest.raises(NotImplementedError, match="Unsupported API version"):
-        scheduler.schedule(content)
-
-
-def test_scheduler_rejects_unsupported_country():
-    content = _load_valid_yaml_bytes() + b"\ncountry: US\n"
-
-    with pytest.raises(ValueError, match="Country US is not supported yet"):
+    with pytest.raises(ValueError, match="Unsupported API version"):
         scheduler.schedule(content)
 
 
@@ -556,20 +549,19 @@ def test_scheduler_model_build_stats_callback_reports_build_steps(monkeypatch):
     )
 
     assert status_name == "FEASIBLE"
-    assert [event.step for event in events[:3]] == [
+    assert [event.step for event in events[:2]] == [
         "create_shift_variables",
         "create_off_variables",
-        "create_lookup_maps",
     ]
-    assert [event.step for event in events[3:]] == ["add_preference", "add_preference"]
-    assert [event.preferenceType for event in events[3:]] == [
+    assert [event.step for event in events[2:]] == ["add_preference", "add_preference"]
+    assert [event.preferenceType for event in events[2:]] == [
         "at most one shift per day",
         "shift type requirement",
     ]
     assert events[0].variablesAdded == 1
     assert events[1].variablesAdded == 1
     assert events[1].constraintsAdded == 1
-    assert events[3].constraintsAdded == 0
+    assert events[2].constraintsAdded == 0
     assert events[-1].totalVariables >= events[-1].variablesAdded
     assert isinstance(events[-1].to_dict(), dict)
 
@@ -631,7 +623,6 @@ def test_scheduler_emits_phase_progress_events():
         "initializing_solver",
         "creating_shift_variables",
         "creating_off_variables",
-        "creating_lookup_maps",
         "adding_preferences",
         "solving",
         "exporting",

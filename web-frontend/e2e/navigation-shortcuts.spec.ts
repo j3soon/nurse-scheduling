@@ -47,5 +47,5 @@ test('navigation keyboard shortcuts work globally but are suppressed while typin
 
   await page.keyboard.press('0');
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('button', { name: 'New Schedule' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Schedule', exact: true })).toBeVisible();
 });

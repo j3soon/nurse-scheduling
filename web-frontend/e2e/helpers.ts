@@ -75,6 +75,25 @@ export async function seedSchedulingState(page: Page, state: StoredState) {
   );
 }
 
+export async function seedMinimalSchedulingState(page: Page) {
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'minimal E2E schedule',
+    dates: { range: {}, groups: [] },
+    people: {
+      items: [{ id: 'Person 1', description: '', history: [] }],
+      groups: [],
+      history: [],
+    },
+    shiftTypes: {
+      items: [{ id: 'D', description: 'Day' }],
+      groups: [],
+    },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+}
+
 export async function disableModalDialogs(page: Page) {
   page.on('dialog', async (dialog) => {
     await dialog.accept();

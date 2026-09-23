@@ -1,0 +1,120 @@
+{
+  "id": "people-add-group-request",
+  "fixture": "ward87",
+  "question": "Add a nurse called Alice with empty history, put Alice in the Night People group, and record that Alice wants to work N on the 7th.",
+  "expect_proposal": true,
+  "changes": [
+    "people",
+    "preferences"
+  ],
+  "tags": [
+    "difficult",
+    "tuning",
+    "compound-edit",
+    "cross-module"
+  ],
+  "note": "All three coordinated changes must be present in one valid proposal. Ordinary wants language uses the shift-request default weight.",
+  "expected_diff": [
+    {
+      "path": "people.items",
+      "added": [
+        {
+          "id": "Alice",
+          "description": "",
+          "history": []
+        }
+      ]
+    },
+    {
+      "path": "people.groups",
+      "removed": [
+        {
+          "id": "Night People",
+          "members": [
+            "P61",
+            "P62",
+            "P63",
+            "P64",
+            "P65",
+            "P66",
+            "P67",
+            "P68",
+            "P69",
+            "P70",
+            "P71",
+            "P72",
+            "P73",
+            "P74",
+            "P75",
+            "P76",
+            "P77",
+            "P78",
+            "P79",
+            "P80",
+            "P81",
+            "P82",
+            "P83",
+            "P84",
+            "P85",
+            "P86",
+            "P87"
+          ],
+          "description": ""
+        }
+      ],
+      "added": [
+        {
+          "id": "Night People",
+          "members": [
+            "P61",
+            "P62",
+            "P63",
+            "P64",
+            "P65",
+            "P66",
+            "P67",
+            "P68",
+            "P69",
+            "P70",
+            "P71",
+            "P72",
+            "P73",
+            "P74",
+            "P75",
+            "P76",
+            "P77",
+            "P78",
+            "P79",
+            "P80",
+            "P81",
+            "P82",
+            "P83",
+            "P84",
+            "P85",
+            "P86",
+            "P87",
+            "Alice"
+          ],
+          "description": ""
+        }
+      ]
+    },
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift request",
+          "person": [
+            "Alice"
+          ],
+          "date": [
+            "07"
+          ],
+          "shiftType": [
+            "N"
+          ]
+        }
+      ]
+    }
+  ]
+}

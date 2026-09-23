@@ -1,0 +1,22 @@
+{
+  "id": "read-image-docx",
+  "fixture": "new-schedule",
+  "question": "Inspect the image embedded in the attached Word document. What code does the image show?",
+  "expect_proposal": false,
+  "attachments": [
+    "image-docx"
+  ],
+  "answer_contains": [
+    "DOCX VISION 6248"
+  ],
+  "tool_usage": {
+    "required": [
+      "bash",
+      "read"
+    ]
+  },
+  "tags": [
+    "attachment"
+  ],
+  "note": "Regression for discovering and reading an image inside an OOXML document."
+}

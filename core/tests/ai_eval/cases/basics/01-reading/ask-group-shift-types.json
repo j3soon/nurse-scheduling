@@ -1,0 +1,11 @@
+{
+  "id": "ask-group-shift-types",
+  "fixture": "ward87",
+  "question": "Which shift types belong to the Night shift type group?",
+  "expect_proposal": false,
+  "answer_contains": [
+    "N+",
+    "N~"
+  ],
+  "note": "The summary names the shift type groups but not what they contain. The groups sit near the end of the 1312 line ward file, so this case measures paging as much as reading."
+}

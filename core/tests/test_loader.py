@@ -208,3 +208,9 @@ def test_nesting_is_refused_before_the_scanner_reads_it():
 
     # Reading this through the scanner took a quarter second before it was refused early.
     assert time.monotonic() - started < 0.05
+
+
+@pytest.mark.parametrize("content", [b"null\n", b"- one\n- two\n"])
+def test_load_yaml_requires_top_level_mapping(content):
+    with pytest.raises(TypeError, match="top-level mapping"):
+        _load_yaml(content)

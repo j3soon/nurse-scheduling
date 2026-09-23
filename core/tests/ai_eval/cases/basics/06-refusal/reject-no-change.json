@@ -1,0 +1,15 @@
+{
+  "id": "reject-no-change",
+  "fixture": "ward87",
+  "question": "Is P1 already in the Day People group?",
+  "expect_proposal": false,
+  "note": "P1 is in the Day People group. A question about state must be answered, not turned into an edit.",
+  "answer_contains": [
+    [
+      "yes",
+      "is a member",
+      "belongs",
+      "is in"
+    ]
+  ]
+}

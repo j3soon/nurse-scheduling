@@ -6,24 +6,53 @@ The FastAPI backend entry point is `nurse_scheduling/serve.py`.
 Run commands from `core/`:
 
 - `uv venv --python 3.12 && source .venv/bin/activate`
-- `uv pip install -r requirements.txt`
+- `uv pip install -r requirements-optional.txt`: the development install. See
+  the Dependencies section below.
 - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `../README.md`.
-- `pytest --log-cli-level=INFO`: run the normal core test suite.
-- `pytest --log-cli-level=INFO <affected_test_paths>`
-- `../scripts/test_core_affected.sh`: run changed test files with compact
-  output, or the compact normal suite when core source/helper files change.
-- `pytest --log-cli-level=INFO tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
-- `pytest --log-cli-level=INFO tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
+- `pytest`: run the normal core test suite with logs captured unless a test fails.
+- `pytest <affected_test_paths>`
+- `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
+  pytest suites. AI code and bundled guidance changes run all `test_ai_*.py`
+  files. Other source, helper, dependency, and deleted-file changes run the
+  normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
+  suites.
+- `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
+- `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.
 - `python tests/real/solver_capabilities.py --solver ortools/cp-sat`: probe
   timeout, cancel, and finish-now behavior on the large real scenario.
-- `pytest --log-cli-level=INFO tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run the primary solver/schedule suites.
+- `pytest tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run the primary solver/schedule suites.
 - `ruff check nurse_scheduling tests`
 - `ruff format nurse_scheduling tests`
 
 After modifying core code, run Ruff and affected pytest suites before finishing.
 Prefer `../scripts/test_core_affected.sh` for routine validation. Pass explicit
-test paths when a narrower suite is known to be sufficient.
+test paths when a narrower suite is known to be sufficient. Use `--base REF` to
+include committed branch changes since the merge base with `REF`, `--list` to
+inspect selection without running checks, or `--full` for the normal local
+suite. Run optional solver and real-scenario suites explicitly when affected.
+
+## Dependencies
+- `requirements.txt` is the minimal runtime set. Deployment images install only
+  it, so a small file keeps those builds fast. Add a package there only when
+  the CLI, the backend, or the AI service imports it at runtime.
+- `requirements-optional.txt` starts with `-r requirements.txt` and adds the
+  extra solver backends, the sandbox-only attachment tool packages, and the
+  test and lint tooling. It is the development and CI install.
+- A package a sandbox tool imports belongs in the optional file even when the
+  tool ships under `nurse_scheduling/`. Those scripts are uploaded and run
+  inside the E2B image, which installs its own pinned copies, and only the
+  tests import them here. Keep the two pin sets in step.
+- Keep an optional solver reachable through a lazy import and let
+  `server/solver_options.py` report it unavailable. It already treats
+  `ImportError` as unavailable, so a missing optional backend must degrade
+  rather than break startup.
+- Verify a dependency move by installing `requirements.txt` alone into a
+  throwaway virtual environment, then importing `nurse_scheduling.cli`,
+  `serve`, `ai_serve`, `server.diagnostic`, and `server.usage_report`, and
+  running one CLI solve with `--prettify` to reach the XLSX export path.
+  Reading the imports is not enough, because transitive-only packages such as
+  the `jinja2` that `pandas.DataFrame.style` needs have no import statement.
 
 ## Server Job Processes
 - `run_optimization_process` owns its optimization process tree through
@@ -43,20 +72,125 @@ test paths when a narrower suite is known to be sufficient.
 - A worker that cannot persist an execution outcome must relinquish its lease.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
+## Experimental AI
+- Keep attachment limits server-configured and report them through
+  `/capabilities`. Attachments and the optimizer tool are always offered.
+  Keep schedules and attachments separate from model instructions.
+- Bound uploads before provider calls and place them under fixed sandbox paths.
+  Do not retain raw attachments longer than their documented turn behavior requires.
+- Keep model-facing prompts and intermediate messages concise. Avoid repeated
+  warnings about malicious uploads or prescribed workbook-inspection commands.
+  Rely on sandbox and server controls for security, and give generated artifacts
+  exact paths when available.
+- Keep bundled attachment helpers general and optional. Preserve meaningful
+  source data such as spreadsheet formulas and cached values, report truncation,
+  and let the agent write a focused sandbox parser when a helper is insufficient.
+- Sandbox allocation is lazy. Tests that verify attachment hydration must make
+  the agent call a tool, since a text-only turn never creates a sandbox.
+- Keep canonical schedule invariants in `NurseSchedulingData`. Implement
+  consumer-specific subsets through explicit Pydantic entry points rather than
+  input-controlled or global validation flags.
+- The assistant is reachable only from the web frontend, so its schedule tools
+  target the frontend subset alone. Validate through
+  `ai/validation.py`, and do not expose the canonical backend flavor, which
+  accepts shapes the editor cannot represent.
+- Frontend validation checks normalized frontend state, not raw import
+  compatibility. Do not broaden it merely because an import path can convert
+  or repair additional input shapes.
+- Keep schedule facts out of the prompt summary in `describe_schedule` and put
+  them in a tool result instead. The evaluation asserts that a reading case
+  cannot be answered from the summary alone, so listing item IDs or line numbers
+  there turns a reading case into a copying case. See
+  `test_reading_questions_cannot_be_answered_from_the_prompt_summary`.
+- Decide what to fix next by tallying failed tool calls across a whole
+  evaluation run, not from one trajectory. A repeated recoverable failure costs
+  more than the case that exposed it, and a bounded tool should clamp an
+  over-large request rather than refuse it.
+- For AI behavior changes, run deterministic affected pytest checks first. Then
+  smoke-test the smallest relevant live evaluation set with repeatable
+  `./scripts/run_ai_eval.sh --case CASE_ID` selectors from the repository root.
+  Include a contrasting control for ambiguity or scope changes. Expand to a
+  category or tag only when the changed behavior spans it or a selected case
+  reveals a neighboring risk. A bare evaluation command exits without running
+  cases. Use `--tuning` to opt into the default tuning set.
+- Treat one provider pass as a smoke check. Before claiming a tuning improvement,
+  repeat affected cases at least three times with four total jobs and compare
+  pass rate, infrastructure failures, turns, and tokens with a recorded baseline.
+  Reserve `--tuning` for broad changes or final tuning confirmation.
+  Use `--full` only when explicitly requested, for release-level confirmation,
+  or when cross-cutting behavior could affect cases outside the tuning set.
+  Otherwise report the selected cases and that the wider evaluation was not run.
+- For live AI evaluations, load provider and E2B credentials from the ignored
+  repository-root `docker/.env`, or `docker/.env.staging` if it does not exist,
+  in the evaluation process. Never print or commit credential values. Check
+  that the selected file and required values exist before starting. If absent,
+  report the missing configuration instead of running a known-to-fail evaluation.
+  Use four concurrent case jobs.
+- Pair ambiguous-language cases with exact-target controls so clarification
+  guidance does not teach the agent to ask when the user already supplied a
+  unique ID. Keep structurally different fixtures under a `holdout` tag. Do not
+  tune prompts directly against one held-out trajectory.
+- Expose Pi's default `read`, `bash`, `edit`, and `write` model tools over
+  the disposable sandbox. Always offer the server-side `optimizer` lifecycle
+  tool. Keep optimizer execution and credentials outside
+  the sandbox. Match the browser's basic optimizer anonymization, retain the
+  reverse ID map server-side, restore IDs before download, and pass retained
+  workbooks into a dedicated sandbox result path, separate from user attachments.
+  Use `read` for bounded text and image inspection, `edit` for unique
+  exact-text replacements, and `write` only for a complete file rewrite. Put
+  domain guidance in task-sized reference documents that return related schema
+  shapes together instead of adding model-specific tools or fine-grained lookup
+  turns. Keep trusted validation after every possible schedule change and the
+  structural diff at review, since those catch a dropped entry that still
+  parses. Emit an intermediate working-copy preview only after that trusted
+  validation.
+- Run a provider batch concurrently only when every call is read-only. Preserve
+  call order in the returned results, keep mixed or mutating batches sequential,
+  and make sandbox close wait for active reads before teardown.
+- Keep model-facing tool contracts and output behavior in pinned Pi ports under
+  `ai/pi`. Keep E2B execution and service timeout policy in the thin sandbox
+  adapter so upstream behavior remains identifiable and testable.
+- When changing `ai/pi`, compare with the exact upstream Pi revision cited in
+  the module header. Preserve model-facing wording and edge-case behavior, add
+  focused regression tests, and document intentional differences beside the port.
+- Retry a provider timeout only before any stream event reaches the caller.
+  Once text, reasoning, usage, or a tool call is visible, surface the timeout
+  rather than replaying the request and risking duplicate output or tool work.
+
 ## Server Authentication
-- `API_AUTH_TOKEN` is optional. Unset means the deployment serves without
-  authentication, which keeps local runs and older clients working.
+- `API_AUTH_TOKEN` is the optional legacy credential. Authentication is
+  disabled only when neither legacy nor identified credentials are configured,
+  which keeps local runs and older clients working.
+- `API_AUTH_TOKENS` accepts a JSON object mapping IDs to keys. IDs are for
+  administration and audit logs only. Clients continue to send only the key as
+  a bearer token and must never receive the ID. Keep `legacy` reserved for
+  `API_AUTH_TOKEN`.
+- Identified keys attribute requests, they do not isolate them. Every key
+  reaches every protected route and every job. Do not present them as tenants
+  or add per-key ownership checks without a deliberate multi-tenancy design.
 - `API_AUTH_REQUIRED` makes a token mandatory and is set in the deployment images,
   so a published backend fails to start rather than serving openly by accident.
   Leave it unset outside those images.
 - `/optimize/{job_id}/events` accepts a signed, job-scoped, expiring URL token as
   well as the bearer header, because `EventSource` cannot set headers. Mint it
-  into `links.events`; never put `API_AUTH_TOKEN` itself in a URL. Its lifetime
+  into `links.events`; never put a bearer key itself in a URL, and never put a
+  stable key-derived value such as a per-key selector there either, because it
+  correlates every stream a key opens and never expires. Verify the token
+  against each configured key instead. Its lifetime
   comes from `ServerSettings.stream_token_ttl_seconds`, which tracks the longest
   run the deployment allows.
 - Keep `/info` and `/ready` public. Clients discover the requirement from
   `/info`, and deployment probes must not need credentials. Gate every other
-  route with the shared-token dependency.
+  route with the bearer-auth dependency.
+- The separately deployed AI service uses `AI_AUTH_TOKEN` or `AI_AUTH_TOKENS`
+  when configured. Keep
+  `/health`, `/ready`, and `/capabilities` public, advertise the effective bearer
+  auth requirement through `/capabilities`, and gate every session route when a
+  token is set. Native runs may omit auth. Docker Compose services set
+  `AI_AUTH_REQUIRED=true`; opting out must be explicit in the env file and must
+  leave `AI_AUTH_TOKEN` and `AI_AUTH_TOKENS` empty.
+- `AI_AUTH_TOKENS` provides the same JSON static-key behavior for the AI
+  service. Either legacy or identified keys satisfy required-auth startup.
 
 ## Sentry
 - Initialize Sentry before configuration or logging in every first-party
@@ -82,6 +216,17 @@ test paths when a narrower suite is known to be sufficient.
 
 ## Testing
 - Normal tests live under `tests/`.
+- Derive a fixture timestamp from the current clock whenever the code under test
+  compares it against real time, such as a Redis `EXPIREAT` or a retention
+  window. A hardcoded date passes until that instant arrives and then fails for
+  a reason the assertion does not name. `tests/test_usage_metrics.py` shifts its
+  whole timeline onto the current reporting week for this reason.
+- Resolve input selectors and input-derived invariants in
+  `NurseSchedulingData.compiled_schedule`. Scheduler, preference, and export
+  phases should consume that representation instead of reparsing YAML fields.
+- Treat a validated schedule and its compiled representation as one snapshot.
+  Revalidate changed input instead of mutating a validated model and reusing
+  stale compiled data.
 - Keep server-facing solver traits in
   `nurse_scheduling/server/solver_capabilities.py`. Runtime control checks and
   `/optimize/options` must use that registry rather than duplicate selector
@@ -108,13 +253,24 @@ test paths when a narrower suite is known to be sufficient.
 - Use `--show-model-build-stats` when checking or benchmarking model-building
   optimizations against real testcases. It emits a compact aggregated summary
   and suppresses the full schedule output.
+- Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
+  neutral, including paths, line endings, and environment limits.
+- Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
+  binary or text payload. Pytest derives the node ID from the parameter value
+  and exports it through `PYTEST_CURRENT_TEST`, which fails on Windows once the
+  ID exceeds the 32767-character environment variable limit.
 
 ## Python Style
 - Use 4-space indentation, `snake_case` functions/modules, and `PascalCase`
   classes. Keep type names explicit.
+- Treat existing comments and docstrings as durable project knowledge. When
+  moving or replacing code, preserve their information near the replacement.
+  Do not silently delete them unless the documented behavior is obsolete, and
+  explain that decision during review.
 - Core linting and formatting use Ruff.
 - Every Python file must use the repository module-docstring and AGPL header
   convention documented in `../docs/agent-license-headers.md`.
 - Mark a file written entirely by an AI coding agent immediately after the license
-  block, using `# This test is mostly AI generated.` in a test and
-  `# This file is mostly AI generated.` in any other new file.
+  block, using `# This test is mostly AI generated.` for anything under `tests/`,
+  including helpers and runners, and `# This file is mostly AI generated.` in any
+  other new file. Editing a file someone else wrote does not earn a marker.

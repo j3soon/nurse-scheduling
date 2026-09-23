@@ -1,7 +1,7 @@
 [project]
 site_name = "Nurse Scheduling"
 site_url = "https://nursescheduling.org/docs/"
-dev_addr = "127.0.0.1:8001"
+dev_addr = "127.0.0.1:8003"
 site_description = "A user-friendly web app to automate the nurse scheduling task."
 docs_dir = "docs/content"
 site_dir = "site"
@@ -30,6 +30,7 @@ nav = [
           { "Export Layout" = "user-guide/export-layout.md" },
           { "Save and Load" = "user-guide/save-and-load.md" },
           { "Optimize and Export" = "user-guide/optimize-and-export.md" },
+          { "Experimental AI" = "user-guide/experimental-ai.md" },
         ]
       },
       { "Shared Reference" = "user-guide/reference.md" },
@@ -39,6 +40,7 @@ nav = [
     "Developer Guide" = [
       { "Overview" = "developer-guide/index.md" },
       { "Backend Server" = "backend-server.md" },
+      { "AI Assistant Backend" = "ai-assistant.md" },
       { "Solvers" = "solvers.md" },
       { "Design" = "design.md" },
       { "Timeline" = "timeline.md" },

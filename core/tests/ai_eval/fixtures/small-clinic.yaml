@@ -1,0 +1,56 @@
+apiVersion: alpha
+description: Small pediatric clinic
+dates:
+  range:
+    startDate: 2026-01-05
+    endDate: 2026-01-11
+  items: []
+  groups:
+    - id: Weekdays
+      description: Clinic weekdays
+      members: ['05', '06', '07', '08', '09']
+people:
+  items:
+    - id: Ana
+      description: Charge nurse
+      history: [D]
+    - id: Ana-M
+      description: Float nurse
+      history: [OFF]
+    - id: 林護師
+      description: Pediatric nurse
+      history: [N]
+    - id: Omar
+      description: Weekend nurse
+      history: [O]
+  groups:
+    - id: Day Team
+      description: Primary daytime team
+      members: [Ana, 林護師]
+    - id: Day Team Backup
+      description: Backup daytime team
+      members: [Ana-M]
+shiftTypes:
+  items:
+    - id: D
+      description: Day shift
+    - id: N
+      description: Night shift
+    - id: O
+      description: On-call shift
+  groups:
+    - id: Night
+      description: Overnight coverage
+      members: [N, O]
+preferences:
+  - type: at most one shift per day
+  - type: shift request
+    person: [Ana]
+    date: ['06']
+    shiftType: [N]
+    weight: -1
+  - type: shift request
+    person: [Ana]
+    date: ['07']
+    shiftType: [Night]
+    weight: -1

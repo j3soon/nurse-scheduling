@@ -1,0 +1,26 @@
+{
+  "id": "export-column-format",
+  "fixture": "ward87",
+  "question": "In the export, colour the column for the 1st with the font colour #ff0000.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "export",
+      "before": null,
+      "after": {
+        "formatting": [
+          {
+            "type": "column",
+            "dates": [
+              "01"
+            ],
+            "fontColor": "#ff0000"
+          }
+        ]
+      }
+    }
+  ],
+  "changes": [
+    "export"
+  ]
+}

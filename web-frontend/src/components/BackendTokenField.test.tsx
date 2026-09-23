@@ -73,6 +73,23 @@ describe('BackendTokenField', () => {
     expect(screen.getByRole('button', { name: `Save token for ${ENDPOINT}` })).toBeDisabled();
   });
 
+  it('shows and hides the entered token on request', async () => {
+    const user = userEvent.setup();
+    renderField({ token: 'secret', rememberToken: true, isEditing: true });
+
+    const input = screen.getByLabelText(`Token for ${ENDPOINT}`);
+    const showButton = screen.getByRole('button', { name: `Show token for ${ENDPOINT}` });
+    expect(input).toHaveAttribute('type', 'password');
+    expect(showButton).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(showButton);
+    expect(input).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: `Hide token for ${ENDPOINT}` })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: `Hide token for ${ENDPOINT}` }));
+    expect(input).toHaveAttribute('type', 'password');
+  });
+
   it('does not save a blank token', async () => {
     const user = userEvent.setup();
     const { props } = renderField({ isEditing: true });
@@ -80,6 +97,29 @@ describe('BackendTokenField', () => {
     const input = screen.getByLabelText(`Token for ${ENDPOINT}`);
     expect(input).toHaveValue('');
 
+    await user.type(input, '{Enter}');
+    expect(props.onSave).not.toHaveBeenCalled();
+  });
+
+  it('explains why an all-space token cannot be saved', async () => {
+    const user = userEvent.setup();
+    renderField({ isEditing: true });
+
+    await user.type(screen.getByLabelText(`Token for ${ENDPOINT}`), '   ');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Token cannot contain only spaces.');
+    expect(screen.getByRole('button', { name: `Save token for ${ENDPOINT}` })).toBeDisabled();
+  });
+
+  it('warns about Unicode and does not save the malformed token', async () => {
+    const user = userEvent.setup();
+    const { props } = renderField({ isEditing: true });
+
+    const input = screen.getByLabelText(`Token for ${ENDPOINT}`);
+    await user.type(input, 'token‐with‐unicode');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Use visible ASCII characters only.');
+    expect(screen.getByRole('button', { name: `Save token for ${ENDPOINT}` })).toBeDisabled();
     await user.type(input, '{Enter}');
     expect(props.onSave).not.toHaveBeenCalled();
   });

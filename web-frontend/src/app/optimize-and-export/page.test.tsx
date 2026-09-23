@@ -24,8 +24,10 @@ import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import {
+  BACKEND_API_CANDIDATES,
   buildAuthHeaders,
   createBackendApiCandidates,
+  isOfficialBackendEndpoint,
   isOptimizationOptionsResponse,
   normalizeEndpoint,
   parseAuthRequirement,
@@ -37,6 +39,7 @@ const mockUseSchedulingData = vi.hoisted(() => vi.fn());
 const mockGenerateYamlFromState = vi.hoisted(() => vi.fn());
 const mockRestorePeopleIdsInXlsx = vi.hoisted(() => vi.fn());
 const mockCurrentAppVersion = vi.hoisted(() => ({ value: 'frontend-test' }));
+const mockSendFeedback = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/useSchedulingData', () => ({
   useSchedulingData: mockUseSchedulingData,
@@ -58,6 +61,10 @@ vi.mock('@/utils/version', () => ({
   parseVersionParts: (version: string) => ({
     dirty: version.endsWith('-dirty'),
   }),
+}));
+
+vi.mock('@sentry/nextjs', () => ({
+  sendFeedback: mockSendFeedback,
 }));
 
 const LOCAL_API_URL = 'http://localhost:8000';
@@ -243,6 +250,12 @@ describe('backend authentication discovery', () => {
 });
 
 describe('backend endpoint normalization', () => {
+  it('recognizes both hosted production endpoints as official', () => {
+    expect(isOfficialBackendEndpoint('https://api.nursescheduling.org')).toBe(true);
+    expect(isOfficialBackendEndpoint('https://api-secondary.nursescheduling.org/')).toBe(true);
+    expect(isOfficialBackendEndpoint('https://backend.example.test')).toBe(false);
+  });
+
   it.each([
     ['api.nursescheduling.org', 'https://api.nursescheduling.org'],
     ['api.nursescheduling.org/', 'https://api.nursescheduling.org'],
@@ -359,6 +372,8 @@ describe('OptimizeAndExportPage error handling', () => {
     mockGenerateYamlFromState.mockReturnValue('apiVersion: alpha\ndescription: baseline\n');
     mockRestorePeopleIdsInXlsx.mockClear();
     mockRestorePeopleIdsInXlsx.mockImplementation(async blob => blob);
+    mockSendFeedback.mockReset();
+    mockSendFeedback.mockResolvedValue(undefined);
     mockUseSchedulingData.mockReturnValue(createSchedulingData());
     mockCurrentAppVersion.value = 'frontend-test';
     vi.stubGlobal('fetch', vi.fn());
@@ -710,6 +725,118 @@ describe('OptimizeAndExportPage error handling', () => {
     });
   });
 
+  it('keeps feedback metadata tied to the submitted settings when the preferred backend changes', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const primaryEndpoint = 'https://primary-backend.example.test';
+    const secondaryEndpoint = 'https://secondary-backend.example.test';
+    const solverChoices = [
+      {
+        value: 'ortools/cp-sat',
+        label: 'OR-Tools | CP-SAT',
+        compute: 'cpu' as const,
+        timeout: { default: 222, minimum: 1, maximum: 3600 },
+        controls: { cancel_running: true, finish_now: true },
+      },
+      {
+        value: 'pulp/cuopt',
+        label: 'PuLP | cuOpt',
+        compute: 'gpu' as const,
+        timeout: { default: 111, minimum: 1, maximum: 3600 },
+        controls: { cancel_running: true, finish_now: false },
+      },
+    ];
+    let resolvePrimaryHealth: (response: ReturnType<typeof healthyResponse>) => void = () => undefined;
+    let resolvePrimaryOptions: (response: ReturnType<typeof optimizationOptionsResponse>) => void = () => undefined;
+    let resolveCreateJob: (response: { ok: boolean; json: ReturnType<typeof vi.fn> }) => void = () => undefined;
+    window.localStorage.setItem('nurse-scheduling-optimize-server-options', JSON.stringify({
+      servers: [{ endpoint: primaryEndpoint }, { endpoint: secondaryEndpoint }],
+      selectedServerEndpoint: 'auto',
+    }));
+    fetchMock.mockImplementation((url: string, options?: RequestInit) => {
+      if (url === `${primaryEndpoint}/info` || url === `${primaryEndpoint}/optimize/options`) {
+        return new Promise(resolve => {
+          if (url.endsWith('/optimize/options')) {
+            resolvePrimaryOptions = resolve;
+          } else {
+            resolvePrimaryHealth = resolve;
+          }
+        });
+      }
+      if (url === `${secondaryEndpoint}/info`) {
+        return Promise.resolve(healthyResponse());
+      }
+      if (url === `${secondaryEndpoint}/optimize/options`) {
+        return Promise.resolve(optimizationOptionsResponse({
+          defaultSolver: 'pulp/cuopt',
+          solverChoices,
+        }));
+      }
+      if (url === `${secondaryEndpoint}/optimize` && options?.method === 'POST') {
+        return new Promise(resolve => {
+          resolveCreateJob = resolve;
+        });
+      }
+      if (url === `${secondaryEndpoint}/optimize/opt_settings/xlsx`) {
+        return Promise.resolve({
+          ok: true,
+          blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
+          headers: new Headers(),
+        });
+      }
+      if (url === `${secondaryEndpoint}/optimize/opt_settings` && options?.method === 'DELETE') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    });
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Online');
+    expect(screen.getByRole('combobox', { name: /solver/i })).toHaveValue('pulp/cuopt');
+    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveValue(111);
+
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `${secondaryEndpoint}/optimize`,
+      expect.objectContaining({ method: 'POST' })
+    ));
+
+    act(() => {
+      resolvePrimaryHealth(healthyResponse());
+      resolvePrimaryOptions(optimizationOptionsResponse({
+        defaultSolver: 'ortools/cp-sat',
+        solverChoices,
+      }));
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /solver/i })).toHaveValue('ortools/cp-sat');
+      expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveValue(222);
+    });
+
+    act(() => {
+      resolveCreateJob({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_settings', state: 'completed', outcome: 'optimal', score: 1, solverStatus: 'OPTIMAL',
+        })),
+      });
+    });
+    await screen.findByText('Schedule optimized and downloaded successfully!');
+    await user.click(screen.getByRole('button', { name: 'Yes, this optimization result was useful' }));
+
+    await waitFor(() => expect(mockSendFeedback).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        captureContext: expect.objectContaining({
+          tags: expect.objectContaining({ optimization_solver: 'pulp/cuopt' }),
+          contexts: expect.objectContaining({
+            optimization_result: expect.objectContaining({ timeout_seconds: 111 }),
+          }),
+        }),
+      })
+    ));
+  });
+
   it('silently refreshes activity while preserving the previous online snapshot', async () => {
     const user = userEvent.setup();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
@@ -913,6 +1040,25 @@ describe('OptimizeAndExportPage error handling', () => {
     });
   });
 
+  it('restores the default backends when legacy settings held only localhost', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => respondWithHealthyBackend(url));
+    window.localStorage.setItem('nurse-scheduling-optimize-server-options', JSON.stringify({
+      servers: [{ endpoint: LOCAL_API_URL }],
+      selectedServerEndpoint: LOCAL_API_URL,
+    }));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle(BACKEND_API_CANDIDATES[0])).resolves.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem('nurse-scheduling-optimize-server-options') ?? '{}')).toEqual({
+      appVersion: 'frontend-test',
+      servers: BACKEND_API_CANDIDATES.map(endpoint => ({ endpoint })),
+      // The restored defaults still contain localhost here, so the stored selection resolves.
+      selectedServerEndpoint: LOCAL_API_URL,
+    });
+  });
+
   it('adds localhost at the front of the backend list after an explicit click', async () => {
     const user = userEvent.setup();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
@@ -995,6 +1141,7 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByTitle('https://stored-backend.example.test')).resolves.toBeInTheDocument();
+    expect(screen.getByText(/unofficially hosted.*privacy and data retention practices may vary/i)).toBeInTheDocument();
     const customResetButton = screen.getByRole('button', {
       name: /reset server settings to defaults.*custom server settings active/i,
     });
@@ -1447,6 +1594,8 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
+    expect(screen.getByText('Was this optimization result useful?')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Star the project on GitHub' })).toBeInTheDocument();
     expect(screen.getByText('schedule.xlsx')).toBeInTheDocument();
     expect(screen.getByText('42,000')).toBeInTheDocument();
     expect(screen.getByText('OPTIMAL')).toBeInTheDocument();

@@ -70,7 +70,7 @@ def solver_is_available(value: str) -> bool:
             return False
         if selector.engine == "cuopt":
             problem = pulp.LpProblem("cuopt-availability", pulp.LpMinimize)
-            variable = pulp.LpVariable("available", lowBound=0.0, upBound=1.0)
+            variable = problem.add_variable("available", lowBound=0.0, upBound=1.0)
             problem += 1.0 * variable
             problem += 1.0 * variable == 1.0
             return problem.solve(solver) == pulp.LpStatusOptimal

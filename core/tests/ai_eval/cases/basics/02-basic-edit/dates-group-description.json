@@ -1,0 +1,28 @@
+{
+  "id": "dates-group-description",
+  "fixture": "ward87",
+  "question": "Describe the WORKDAY date group as 'Monday to Friday'.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "dates.groups",
+      "removed": [
+        {
+          "id": "WORKDAY",
+          "members": ["03", "04", "05", "06", "07", "10", "11", "12", "13", "14", "17", "18", "19", "20", "21", "24", "25", "26", "27", "28"],
+          "description": "11 月沒有放假"
+        }
+      ],
+      "added": [
+        {
+          "id": "WORKDAY",
+          "members": ["03", "04", "05", "06", "07", "10", "11", "12", "13", "14", "17", "18", "19", "20", "21", "24", "25", "26", "27", "28"],
+          "description": "Monday to Friday"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "dates.groups"
+  ]
+}

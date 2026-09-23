@@ -104,7 +104,8 @@ describe('ExportLayoutPage extra column coefficients', () => {
   it('shows the experimental export layout warning', () => {
     renderExportLayoutPage();
 
-    expect(screen.getByText("This page is experimental. Only modify export layout entries if you know exactly what you're doing.")).toBeInTheDocument();
+    expect(screen.getByText(/This page is experimental\. Saving any entry pins the layout/)).toBeInTheDocument();
+    expect(screen.getByText(/Use Clear All and Regenerate to restore auto-updates\./)).toBeInTheDocument();
   });
 
   it('saves only non-default coefficients on an extra column', async () => {

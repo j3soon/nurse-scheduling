@@ -16,6 +16,7 @@ The hosted frontend uses Google Analytics and Sentry for analytics, diagnostics,
 
 - Sentry Session Replay samples video-like page interactions. Its current defaults mask text and input values and block media before transmission, but replay events and technical metadata are still sent.
 - Feedback screenshots are optional and user-initiated. They are not automatically fully anonymized; users can redact sensitive areas with Sentry's **Hide** tool before submission.
+- One-click optimization ratings send Sentry the rating, job ID, solver, timeout, outcome, score, solver status, termination reason, and whether schedule anonymization was enabled. They do not include the scheduling YAML or a session replay.
 - On frontend or backend errors, the current scheduling YAML may be attached to Sentry. Individual people IDs are anonymized and descriptions are removed where possible, but other sensitive information may remain. If backend anonymization fails, the original YAML may be attached.
 
 Data received by Google Analytics and Sentry is subject to their policies and retention settings.
@@ -29,7 +30,15 @@ Clicking **Optimize** sends the current scheduling YAML to the backend shown in 
 - Operational logs may include job IDs, pseudonymous client IDs, filenames, statuses, timing, and errors.
 - The backend sets a pseudonymous client UUID cookie for up to 7 days.
 - The backend counts repeated suspicious requests as a salted digest of the connecting address, never the address itself. Counters expire within minutes and are excluded from reporting telemetry.
-- Docker Redis deployments retain minimal per-job telemetry for weekly reports, including job and pseudonymous client IDs, solver, lifecycle timestamps and state, queue and runtime durations, outcome, failure code, solver status, termination reason, configured timeout, and download count. Telemetry excludes scheduling inputs, filenames, IP addresses, and email addresses. Reporting does not remove telemetry. Rows expire 30 days after the end of their event week by default. Operators may send this telemetry through a configured reporting provider such as Mailgun.
+- Docker Redis deployments retain minimal per-job telemetry for weekly reports, including job and pseudonymous client IDs, solver, lifecycle timestamps and state, queue and runtime durations, outcome, failure code, solver status, termination reason, configured timeout, download count, people and shift type counts, and the schedule date range. Telemetry excludes the uploaded YAML, people and shift type identifiers, descriptions, filenames, IP addresses, and email addresses. Reporting does not remove telemetry. Rows expire 30 days after the end of their event week by default. Operators may send this telemetry through a configured reporting provider such as Mailgun.
+
+## Experimental AI
+
+The hosted beta AI service is separate from the main optimization backend and requires beta API-key access. Ordinary optimization never uses this route, so users outside the beta will not trigger its data handling.
+
+Assume all AI chats, schedules, attachments, responses, and request metadata are logged and not anonymized. This data may be used to improve our product and the AI provider's product. Do not submit personal, confidential, regulated, or otherwise sensitive information.
+
+Deployments configured with AI chat history additionally store each turn's user and assistant text, model, timestamps, attachment counts, token usage, and status in PostgreSQL, keyed by a chat session and the administrative credential ID when authentication is enabled. Raw attachments, extracted document text, schedule snapshots, tool arguments and results, and reasoning are excluded. Stored turns are deleted after the operator's configured retention window, 30 days by default. Operators configure their own backups and backup retention separately.
 
 ## Opting Out While Using Hosted Services
 

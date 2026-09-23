@@ -37,6 +37,18 @@ Two hosted optimization servers are provided as free, shared, best-effort servic
 
 The hosted application anonymizes individual people IDs and removes descriptions by default before sending a schedule for optimization. A schedule without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](PRIVACY.md) for details.
 
+## AI Beta Access
+
+During the evaluation period, the hosted AI assistant is gated by an API key by default.
+
+To request access for experimentation, email [admin@nursescheduling.org](mailto:admin@nursescheduling.org) from your institution email address. Include your institution's name and a short description of how you plan to evaluate the assistant.
+
+Before requesting or using access, review [Privacy and Data Handling](PRIVACY.md). Do not submit personal, confidential, regulated, or otherwise sensitive information.
+
+## Support
+
+For general questions, [open a GitHub issue](https://github.com/j3soon/nurse-scheduling/issues). For personal questions, email [admin@nursescheduling.org](mailto:admin@nursescheduling.org).
+
 ## How to run
 
 ### Prerequisites
@@ -122,6 +134,11 @@ uv pip install -r requirements.txt
 fastapi dev nurse_scheduling\serve.py
 ```
 
+`core/requirements.txt` holds only what the CLI and the backend need at
+runtime, which keeps the deployment image small. Install
+`core/requirements-optional.txt` instead to add the experimental solver
+backends and the test and lint tooling.
+
 ### Linux Development and Docker
 
 The commands below are Linux-focused reference material for setup, testing, and Docker.
@@ -134,11 +151,25 @@ For Linux only: to quickly set up all local environments (`core`, `web-frontend`
 
 For Docker-based development environment:
 
+The development images include GitHub CLI. GitHub authentication is optional.
+For read-only GitHub access, create a short-lived
+[fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+with access limited to this repository. Grant read-only repository permissions
+for Contents, Pull requests, Issues, and Actions, then export it on the host:
+
+```sh
+export GH_TOKEN=github_pat_your_token
+```
+
+The run commands below pass `GH_TOKEN` into the container when it is set. Do not
+put the token in the image, this repository, or a tracked environment file. Run
+`gh auth status` inside the container to verify access.
+
 CPU image:
 
 ```sh
 # build image
-docker build -f docker/Dockerfile -t j3soon/nurse-scheduling:dev .
+docker build -f docker/Dockerfile.dev -t j3soon/nurse-scheduling:dev .
 ```
 
 ```sh
@@ -151,6 +182,7 @@ mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
 # mount project files and Codex/Claude Code/OpenCode/Pi config
 docker run --rm -it --network=host \
+  -e GH_TOKEN \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
@@ -167,7 +199,7 @@ GPU image with cuOpt support:
 
 ```sh
 # build image with cuOpt support
-docker build -f docker/Dockerfile.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
+docker build -f docker/Dockerfile.dev.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 ```
 
 The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
@@ -183,6 +215,7 @@ mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
 # mount project files and Codex/Claude Code/OpenCode/Pi config
 docker run --rm -it --gpus all --network=host \
+  -e GH_TOKEN \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
@@ -211,6 +244,7 @@ mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
 # mount project files and Codex/Claude Code/OpenCode/Pi config, and forward X11 display
 docker run --rm -it --network=host \
+  -e GH_TOKEN \
   -v $(pwd):/app \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
@@ -262,7 +296,7 @@ bun run test:e2e
 bun run test:e2e:ui
 ```
 
-When using the repository `docker/Dockerfile`, Chromium is preinstalled in the image at
+When using the repository `docker/Dockerfile.dev`, Chromium is preinstalled in the image at
 build time using the frontend's locked Playwright version. If you rebuild the
 image after Playwright version changes, `bun run test:e2e` and
 `bun run test:e2e:ui` should not require rerunning `bunx playwright install chromium`
@@ -330,6 +364,35 @@ bun run lint -- --fix
 
 > `bun` can be replaced directly with `npm` for the basic Next.js workflow, but the documented project scripts assume Bun.
 
+### Experimental AI Chat
+
+The experimental chat answers questions about the schedule currently open in
+the frontend. Arbitrary file attachments are copied into a disposable sandbox
+for inspection. The chat runs as a separate backend process and sends the
+schedule and model-visible inputs to an OpenAI-compatible
+provider.
+
+Create a local configuration file. The real `docker/.env` file is ignored by Git:
+
+```sh
+cp docker/.env.example docker/.env
+# Review and update the AI values. Set AI_AUTH_REQUIRED=false and leave
+# AI_AUTH_TOKEN and AI_AUTH_TOKENS empty only for intentional local no-auth use.
+```
+
+Start the AI backend and frontend in separate terminals:
+
+```sh
+./scripts/start_ai_backend.sh
+./scripts/start_frontend.sh --hostname 0.0.0.0
+```
+
+Open `http://localhost:3000/experimental-ai`, select **Change**, then select
+**Use localhost**. The local AI backend listens on `http://localhost:8001`.
+The page otherwise uses `https://api.nursescheduling.org/ai` by default. See the
+[AI assistant backend guide](https://nursescheduling.org/docs/ai-assistant/)
+for container commands, configuration, security notes, and focused tests.
+
 ### Core
 
 The main solver paths are:
@@ -349,8 +412,8 @@ cd core
 uv venv --python 3.12
 # activate virtual environment
 source .venv/bin/activate
-# install dependencies
-uv pip install -r requirements.txt
+# install dependencies, including the optional solvers and test tooling
+uv pip install -r requirements-optional.txt
 # run the CPU solver, OR-Tools | CP-SAT is the default
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 # for example:
@@ -488,8 +551,9 @@ export OPTIMIZE_DEFAULT_PRETTIFY=true
 ```
 
 The server is unauthenticated by default, which suits local development. Set
-`API_AUTH_TOKEN` to require a shared bearer token on every application route
-except `/info` and `/ready`:
+the legacy `API_AUTH_TOKEN` or a JSON object such as
+`API_AUTH_TOKENS='{"institution-a":"key"}'` to require a bearer key on every
+application route except `/info` and `/ready`:
 
 ```sh
 cd core
@@ -497,11 +561,11 @@ API_AUTH_TOKEN="$(openssl rand -base64 32)" \
 uvicorn nurse_scheduling.serve:app --no-access-log
 ```
 
-`GET /info` reports `auth.required` so the frontend can prompt for the token.
+`GET /info` reports `auth.required` so the frontend can prompt for a key.
 The generated `/openapi.json`, `/docs`, and `/redoc` routes are disabled while
 authentication is configured.
 The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployed backend
-refuses to start without a token, and serving one without authentication
+refuses to start without a configured key. Serving one without authentication
 requires `API_AUTH_REQUIRED=false`.
 
 Only advertise solvers available on that machine. The server validates the
@@ -570,32 +634,6 @@ HGETALL nurse_scheduling:jobs:v0:job:<job-id>:artifact_metadata
 Use `SCAN` instead of `KEYS *` on a busy database. Job artifacts are binary and
 are better inspected through the API download endpoint.
 
-For a graphical browser, run
-[Redis Insight](https://redis.io/docs/latest/operate/redisinsight/install/install-on-docker/)
-on the Compose network:
-
-```sh
-docker run --rm \
-  --name redisinsight \
-  --network nurse-scheduling-backend_default \
-  -p 127.0.0.1:5540:5540 \
-  -v redisinsight:/data \
-  redis/redisinsight:latest
-```
-
-Open `http://localhost:5540` and add a database with `redis://default@redis:6379`. Filter the Browser view with
-`nurse_scheduling:jobs:v0:*`.
-
-When Redis Insight runs on a remote VM, forward its locally bound port before
-opening it in a local browser:
-
-```sh
-ssh -L 5540:127.0.0.1:5540 user@your-server
-```
-
-Keep Redis and Redis Insight off public interfaces. Redis Insight can modify or
-delete stored data.
-
 To run one backend worker with process-local memory and no Redis service, use
 the pre-Redis deployment configuration:
 
@@ -621,7 +659,7 @@ uv venv --python 3.12 docs/.venv
 source docs/.venv/bin/activate
 # install dependencies
 uv pip install -r docs/requirements.txt
-# preview documentation
+# preview documentation on the port used by local page-help links
 zensical serve
 ```
 
@@ -634,6 +672,8 @@ zensical build --clean --strict
 ## Acknowledgments
 
 This project would not have been possible without the contributors in [CONTRIBUTORS.md](https://github.com/j3soon/nurse-scheduling/blob/dev/CONTRIBUTORS.md).
+
+See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for the free services this project relies on.
 
 ## License
 

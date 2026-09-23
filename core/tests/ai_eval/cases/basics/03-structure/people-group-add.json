@@ -1,0 +1,24 @@
+{
+  "id": "people-group-add",
+  "fixture": "ward87",
+  "question": "Create a people group 'Seniors' with P2 and P3 in it.",
+  "expect_proposal": true,
+  "changes": [
+    "people.groups"
+  ],
+  "expected_diff": [
+    {
+      "path": "people.groups",
+      "added": [
+        {
+          "id": "Seniors",
+          "members": [
+            "P2",
+            "P3"
+          ],
+          "description": ""
+        }
+      ]
+    }
+  ]
+}

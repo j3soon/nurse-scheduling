@@ -1,0 +1,26 @@
+{
+  "id": "reject-then-narrower-edit",
+  "fixture": "ward87",
+  "user_turns": [
+    "Copy all three of P85's shift requests to P86 with the same dates and weights.",
+    "Instead, copy only P85's N request to P86. Do not copy K or OFF."
+  ],
+  "intermediate_answer_contains": [
+    ["P86", "N", "K", "OFF"]
+  ],
+  "expect_proposal": true,
+  "proposal_turns": [1, 2],
+  "turn_actions": [
+    {"after_turn": 1, "action": "reject"}
+  ],
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {"type": "shift request", "person": ["P86"], "date": ["04"], "shiftType": ["N"], "weight": 11000000000}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "proposal-rejection", "scope-narrowing"]
+}

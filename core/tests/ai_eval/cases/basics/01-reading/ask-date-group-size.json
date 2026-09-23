@@ -1,0 +1,13 @@
+{
+  "id": "ask-date-group-size",
+  "fixture": "ward87",
+  "question": "How many dates are in the FREEDAY group?",
+  "expect_proposal": false,
+  "answer_contains": [
+    [
+      "10",
+      "ten"
+    ]
+  ],
+  "note": "The summary carries the date range, not the membership of a date group."
+}

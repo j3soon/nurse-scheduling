@@ -34,7 +34,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from ..sentry import capture_invalid_request, init_sentry, tag_client_address
 from .api.optimize import events_router as optimize_events_router
 from .api.optimize import router as optimize_router
-from .auth import AUTH_SCHEME, create_auth_dependency, create_stream_auth_dependency
+from .auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_auth_dependency
 from .config import ServerSettings
 from .errors import (
     JobArtifactNotFoundError,
@@ -52,6 +52,7 @@ from .jobs.models import StoreLimits
 from .jobs.runner import OptimizationRunner
 from .jobs.worker import JobWorker
 from .maintenance import JobMaintenance
+from .request_limits import MULTIPART_OVERHEAD_BYTES, MaxBodySizeMiddleware
 from .runtime_identity import get_deployment_id
 from .solver_options import validate_solver_availability
 from .stores.memory import MemoryJobStore
@@ -168,9 +169,10 @@ def create_app(
     )
     # Authentication is advertised publicly so clients can prompt for credentials before
     # calling a protected route, and so older clients keep working against open deployments.
-    require_auth = create_auth_dependency(settings.auth_token)
-    require_stream_auth = create_stream_auth_dependency(settings.auth_token)
-    auth_descriptor = {"required": settings.auth_token is not None, "scheme": AUTH_SCHEME}
+    auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
+    require_auth = create_auth_dependency(auth_registry)
+    require_stream_auth = create_stream_auth_dependency(auth_registry)
+    auth_descriptor = {"required": auth_registry.enabled, "scheme": AUTH_SCHEME}
     runtime_identity = {
         "service_name": SERVICE_NAME,
         "api_version": API_VERSION,
@@ -218,7 +220,7 @@ def create_app(
             instance_id,
             settings.job_backend,
             store.store_id,
-            AUTH_SCHEME if settings.auth_token is not None else "disabled",
+            AUTH_SCHEME if auth_registry.enabled else "disabled",
         )
         if start_background:
             worker.start()
@@ -230,7 +232,7 @@ def create_app(
                 maintenance.stop()
                 worker.stop()
 
-    generated_docs_are_public = settings.auth_token is None
+    generated_docs_are_public = not auth_registry.enabled
     app = FastAPI(
         title=TITLE,
         version=API_VERSION,
@@ -240,6 +242,7 @@ def create_app(
         redoc_url="/redoc" if generated_docs_are_public else None,
     )
     app.state.settings = settings
+    app.state.auth_registry = auth_registry
     app.state.job_store = store
     app.state.job_controller = controller
     app.state.job_runner = runner
@@ -301,6 +304,12 @@ def create_app(
         tag_client_address(request)
         return await call_next(request)
 
+    # Added before CORS so the CORS layer stays outermost and still decorates a
+    # rejected oversize request.
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        max_bytes=settings.max_yaml_bytes + MULTIPART_OVERHEAD_BYTES,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=ORIGIN_REGEX,

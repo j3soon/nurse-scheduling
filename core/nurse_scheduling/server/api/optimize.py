@@ -54,10 +54,18 @@ def _controller(request: Request) -> JobController:
 
 def _events_token(request: Request, job_id: str) -> str | None:
     """Mint the stream credential embedded in a job's events link, when authentication is on."""
-    settings = _settings(request)
-    if settings.auth_token is None:
+    registry = request.app.state.auth_registry
+    if not registry.enabled:
         return None
-    return create_stream_token(settings.auth_token, job_id, ttl_seconds=settings.stream_token_ttl_seconds)
+    credential_id = request.state.auth_credential_id
+    credential = registry.get(credential_id)
+    if credential is None:
+        raise RuntimeError("authenticated request has no matching credential")
+    return create_stream_token(
+        credential.token,
+        job_id,
+        ttl_seconds=_settings(request).stream_token_ttl_seconds,
+    )
 
 
 def _settings(request: Request) -> ServerSettings:
@@ -109,7 +117,9 @@ def _client_id(request: Request, response: Response) -> str:
             max_age=CLIENT_ID_COOKIE_MAX_AGE_SECONDS,
             httponly=True,
             samesite="lax",
-            secure=request.url.scheme == "https",
+            # A TLS-terminating proxy forwards plain HTTP, so the scheme alone cannot
+            # tell whether the browser reached this deployment over HTTPS.
+            secure=_settings(request).cookie_secure or request.url.scheme == "https",
             path="/",
         )
     return client_id
@@ -179,6 +189,7 @@ async def create_job(
         prettify=prettify if prettify is not None else settings.default_prettify,
         timeout_seconds=timeout_seconds,
         input_bytes=content,
+        auth_credential_id=request.state.auth_credential_id,
     )
     # This project's own data is plain and always parses, so neither shape comes from it.
     # The job is queued by now, so reporting must not be able to fail the response for it.

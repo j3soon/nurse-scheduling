@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs } from './helpers';
+import { disableModalDialogs, seedSchedulingState } from './helpers';
 
 test('canceling YAML edits keeps the draft isolated before a later upload', async ({ page }) => {
   /*
@@ -31,17 +31,30 @@ test('canceling YAML edits keeps the draft isolated before a later upload', asyn
    * 4. Confirm the uploaded state appears and the canceled draft never leaks into the preview.
    */
   await disableModalDialogs(page);
+  await seedSchedulingState(page, {
+    apiVersion: 'test',
+    description: 'original boundary state',
+    dates: { range: {}, groups: [] },
+    people: {
+      items: [{ id: 'P1', description: 'Original nurse', history: [] }],
+      groups: [{ id: 'Original Group', members: ['P1'], description: '' }],
+      history: [],
+    },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
   const uploadedYaml = `apiVersion: test\ndescription: upload boundary state\ndates:\n  range:\n    startDate: 2026-05-01\n    endDate: 2026-05-01\n  groups: []\npeople:\n  items:\n    - id: P9\n      description: Uploaded nurse\n      history: []\n  groups: []\n  history: []\nshiftTypes:\n  items:\n    - id: D\n      description: Day\n  groups: []\npreferences:\n  - type: at most one shift per day\nexport:\n  formatting: []\n`;
 
   await page.goto('/save-and-load');
-  await expect(page.locator('pre')).toContainText('Group 1');
+  await expect(page.locator('pre')).toContainText('Original Group');
 
   await page.getByRole('button', { name: 'Edit YAML' }).click();
   const editor = page.locator('textarea');
-  await editor.fill((await editor.inputValue()).replaceAll('Group 1', 'Draft Group'));
+  await editor.fill((await editor.inputValue()).replaceAll('Original Group', 'Draft Group'));
   await page.getByRole('button', { name: 'Cancel' }).click();
 
-  await expect(page.locator('pre')).toContainText('Group 1');
+  await expect(page.locator('pre')).toContainText('Original Group');
   await expect(page.locator('pre')).not.toContainText('Draft Group');
 
   await page.locator('input[type="file"]').setInputFiles({
@@ -50,7 +63,7 @@ test('canceling YAML edits keeps the draft isolated before a later upload', asyn
     buffer: Buffer.from(uploadedYaml, 'utf8'),
   });
 
-  await expect(page.locator('pre')).not.toContainText('Group 1');
+  await expect(page.locator('pre')).not.toContainText('Original Group');
   await expect(page.locator('pre')).toContainText('upload boundary state');
   await expect(page.locator('pre')).toContainText('P9');
   await expect(page.locator('pre')).not.toContainText('Draft Group');

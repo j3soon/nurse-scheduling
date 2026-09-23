@@ -1,0 +1,11 @@
+{
+  "id": "reject-conflicting-shift-request",
+  "fixture": "ward87",
+  "question": "Require P60 to work N on the 7th and also forbid P60 from working N on the 7th.",
+  "expect_proposal": false,
+  "answer_contains": [
+    ["conflict", "contradict", "cannot both", "can't both", "clarify"]
+  ],
+  "tags": ["difficult", "tuning", "conflicting-intent", "refusal"],
+  "note": "The two requested hard rules cannot both be satisfied, so the assistant must seek clarification rather than emitting a schema-valid but impossible pair."
+}

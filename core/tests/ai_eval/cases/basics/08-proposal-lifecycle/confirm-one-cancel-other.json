@@ -1,0 +1,25 @@
+{
+  "id": "confirm-one-cancel-other",
+  "fixture": "ward87",
+  "user_turns": [
+    "Change one of P84's OFF request weights and copy one of P85's requests to P86.",
+    "Change only P84's OFF request on the 1st to weight -100. Cancel the P85 copy."
+  ],
+  "intermediate_answer_contains": [
+    ["P84", "P85", ["which", "clarify", "specify"]]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": 11000000000}
+      ],
+      "added": [
+        {"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": -100}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "partial-cancellation", "intent-retention"]
+}
