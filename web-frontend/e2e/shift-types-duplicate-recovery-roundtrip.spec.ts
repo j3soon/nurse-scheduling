@@ -82,8 +82,8 @@ test('shift-type duplicate-ID recovery survives a save-load roundtrip', async ({
   expect(yamlText).toContain('Daytime Group');
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/save-and-load');
   await page.locator('input[type="file"]').setInputFiles({

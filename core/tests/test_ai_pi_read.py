@@ -1,0 +1,209 @@
+"""Tests for the Python port of Pi's text-file read behavior."""
+
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+#
+# Copyright (C) 2023-2026 Johnson Sun
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# This test is mostly AI generated.
+
+import json
+import math
+from io import BytesIO
+
+import pytest
+from PIL import Image, ImageFile
+
+from nurse_scheduling.ai.pi import image_process
+from nurse_scheduling.ai.pi.mime import detect_supported_image_mime_type
+from nurse_scheduling.ai.pi.read import (
+    READ_TOOL_DESCRIPTION,
+    ReadArgumentError,
+    ReadInput,
+    parse_read_input,
+    read_parameters,
+    render_read_result,
+    truncate_head,
+)
+
+
+def test_pi_read_schema_and_defaults_match_the_pinned_source():
+    assert "2000 lines or 50KB" in READ_TOOL_DESCRIPTION
+    assert read_parameters() == {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path to the file to read (relative or absolute)"},
+            "offset": {"type": "number", "description": "Line number to start reading from (1-indexed)"},
+            "limit": {"type": "number", "description": "Maximum number of lines to read"},
+        },
+        "required": ["path"],
+    }
+
+
+def test_pi_read_input_accepts_optional_ranges_and_ignores_extra_properties():
+    parsed = parse_read_input('{"path":"schedule.yaml","offset":2,"limit":3,"future":true}')
+
+    assert parsed == ReadInput("schedule.yaml", 2, 3)
+    assert parse_read_input('{"path":""}').path == ""
+
+
+@pytest.mark.parametrize("value", [math.inf, math.nan, True, "2"])
+def test_pi_read_input_rejects_invalid_numbers(value):
+    with pytest.raises(ReadArgumentError, match="Invalid offset"):
+        parse_read_input(json.dumps({"path": "schedule.yaml", "offset": value}))
+
+
+def test_pi_read_applies_one_indexed_offset_and_user_limit():
+    result = render_read_result(b"one\ntwo\nthree\nfour", ReadInput("schedule.yaml", offset=2, limit=2))
+
+    assert result.text == "two\nthree\n\n[1 more lines in file. Use offset=4 to continue.]"
+    assert result.truncation is None
+
+
+def test_pi_read_head_truncation_keeps_complete_first_lines():
+    result = truncate_head("one\ntwo\nthree\n", max_lines=2, max_bytes=100)
+
+    assert result.content == "one\ntwo"
+    assert result.truncated
+    assert result.truncated_by == "lines"
+    assert result.total_lines == 3
+    assert result.output_lines == 2
+
+
+def test_pi_read_truncation_notice_points_to_the_next_offset():
+    content = "\n".join(str(line) for line in range(2_001)).encode()
+
+    result = render_read_result(content, ReadInput("large.txt"))
+
+    assert result.text.startswith("0\n1\n")
+    assert result.text.endswith("[Showing lines 1-2000 of 2001. Use offset=2001 to continue.]")
+    assert result.truncation is not None
+
+
+def test_pi_read_large_first_line_recommends_bounded_bash_fallback():
+    result = render_read_result(b"x" * (50 * 1_024 + 1), ReadInput("wide.txt"))
+
+    assert result.text.startswith("[Line 1 is 50.0KB, exceeds 50.0KB limit.")
+    assert "sed -n '1p' wide.txt | head -c 51200" in result.text
+    assert result.truncation is not None
+    assert result.truncation.first_line_exceeds_limit
+
+
+def test_pi_read_rejects_an_offset_beyond_the_file():
+    with pytest.raises(ReadArgumentError, match=r"Offset 3 is beyond end of file \(2 lines total\)"):
+        render_read_result(b"one\ntwo", ReadInput("small.txt", offset=3))
+
+
+@pytest.mark.parametrize(
+    ("image_format", "media_type"),
+    [
+        ("PNG", "image/png"),
+        ("JPEG", "image/jpeg"),
+        ("GIF", "image/gif"),
+        ("WEBP", "image/webp"),
+        ("BMP", "image/bmp"),
+    ],
+)
+def test_pi_read_returns_supported_images_to_the_model(image_format: str, media_type: str):
+    output = BytesIO()
+    Image.new("RGB", (2, 3), "red").save(output, image_format)
+    content = output.getvalue()
+
+    result = render_read_result(content, ReadInput("attachment"))
+
+    assert detect_supported_image_mime_type(content) == media_type
+    assert result.image is not None
+    expected_type = "image/png" if media_type == "image/bmp" else media_type
+    assert result.image.media_type == expected_type
+    if media_type != "image/bmp":
+        assert result.image.data == content
+    assert expected_type in result.text
+
+
+def test_pi_read_resizes_large_images_to_the_upstream_dimension_limit():
+    output = BytesIO()
+    Image.new("RGB", (2_001, 10), "red").save(output, "PNG")
+
+    result = render_read_result(output.getvalue(), ReadInput("wide.png"))
+
+    assert "original 2001x10, displayed at 2000x10" in result.text
+    assert result.image is not None
+    with Image.open(BytesIO(result.image.data)) as resized:
+        assert resized.size == (2_000, 10)
+
+
+@pytest.mark.parametrize(
+    ("image_format", "media_type", "failure_message"),
+    [
+        ("PNG", "image/png", image_process.RESIZE_FAILURE),
+        ("BMP", "image/bmp", image_process.CONVERSION_FAILURE),
+    ],
+)
+def test_pi_read_rejects_oversized_source_before_decoding(
+    monkeypatch: pytest.MonkeyPatch,
+    image_format: str,
+    media_type: str,
+    failure_message: str,
+) -> None:
+    output = BytesIO()
+    Image.new("RGB", (2, 3), "red").save(output, image_format)
+    monkeypatch.setattr(image_process, "MAX_SOURCE_IMAGE_PIXELS", 5)
+
+    def fail_decode(_image: ImageFile.ImageFile) -> None:
+        pytest.fail("Oversized image was decoded")
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", fail_decode)
+
+    result = image_process.process_image(output.getvalue(), media_type)
+
+    assert result == image_process.ImageProcessFailure(failure_message)
+
+
+def test_pi_read_omits_invalid_data_detected_as_an_image():
+    broken_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRnot-an-image"
+
+    result = render_read_result(broken_png, ReadInput("broken.png"))
+
+    assert result.image is None
+    assert "could not be resized below the inline image size limit" in result.text
+
+
+def test_pi_image_detection_excludes_jpeg_ls_like_upstream():
+    assert detect_supported_image_mime_type(b"\xff\xd8\xff\xf7payload") is None
+
+
+def test_pi_image_detection_excludes_animated_png_like_upstream():
+    animated_png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 17 + b"\x00\x00\x00\x08acTL"
+
+    assert detect_supported_image_mime_type(animated_png_header) is None
+
+
+def test_pi_image_detection_rejects_an_invalid_bmp_header():
+    assert detect_supported_image_mime_type(b"BM" + b"\x00" * 40) is None
+
+
+def test_pi_read_applies_exif_orientation_before_resizing():
+    output = BytesIO()
+    image = Image.new("RGB", (10, 2_001), "red")
+    exif = image.getexif()
+    exif[274] = 6
+    image.save(output, "JPEG", exif=exif)
+
+    result = render_read_result(output.getvalue(), ReadInput("oriented.jpg"))
+
+    assert "original 2001x10, displayed at 2000x10" in result.text
+    assert result.image is not None
+    with Image.open(BytesIO(result.image.data)) as resized:
+        assert resized.size == (2_000, 10)

@@ -1,0 +1,31 @@
+{
+  "id": "pref-successions",
+  "fixture": "ward87",
+  "question": "P5 should never work a student night shift N~ followed by a student day shift D~ the next day.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift type successions",
+          "person": [
+            "P5"
+          ],
+          "pattern": [
+            "N~",
+            "D~"
+          ],
+          "date": [
+            "ALL"
+          ],
+          "weight": "-.inf"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ],
+  "note": "The pattern is ordered, so N then D is a different rule from D then N."
+}

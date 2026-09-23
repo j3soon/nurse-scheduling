@@ -1,0 +1,25 @@
+{
+  "id": "pronoun-selects-second-request",
+  "fixture": "ward87",
+  "user_turns": [
+    "Change one of P84's OFF request weights to -100.",
+    "The second one."
+  ],
+  "intermediate_answer_contains": [
+    ["P84", ["which", "which one"], "11000000000"]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": 11000000000}
+      ],
+      "added": [
+        {"type": "shift request", "person": ["P84"], "date": ["01"], "shiftType": ["OFF"], "weight": -100}
+      ]
+    }
+  ],
+  "changes": ["preferences"],
+  "tags": ["difficult", "tuning", "proposal-lifecycle", "pronoun-reference", "intent-retention"]
+}

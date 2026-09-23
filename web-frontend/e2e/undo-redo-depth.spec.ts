@@ -33,8 +33,8 @@ test('multi-step undo and redo restore intermediate people-page states', async (
   await disableModalDialogs(page);
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/people');
   await expect(page.getByRole('heading', { name: 'People Management', exact: true })).toBeVisible();

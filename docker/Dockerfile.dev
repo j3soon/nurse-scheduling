@@ -1,6 +1,4 @@
-# Ref: https://docs.nvidia.com/cuopt/user-guide/latest/cuopt-server/quick-start.html#container-from-docker-hub
-# Ref: https://hub.docker.com/r/nvidia/cuopt/tags
-FROM nvidia/cuopt:26.8.0a-cuda13.3-py3.14
+FROM python:3.12
 
 WORKDIR /app
 
@@ -16,18 +14,29 @@ RUN apt-get update && apt-get install -y \
     redis-tools \
     ripgrep \
     unzip \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 RUN git config --system --add safe.directory /app
+
+# Install GitHub CLI from its official apt repository.
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/* \
+    && gh --version
 
 # Optional solver support: install the GLPK command-line backend for PuLP.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     glpk-utils \
     && rm -rf /var/lib/apt/lists/*
 
-COPY core/requirements.txt /tmp/requirements.txt
-# highspy 1.12.0 has no CPython 3.14 wheel, so omit PuLP/HiGHS from this image.
-RUN sed -i '/^highspy==/d' /tmp/requirements.txt \
-    && pip3 install --no-cache-dir -r /tmp/requirements.txt
+COPY core/requirements.txt core/requirements-optional.txt /tmp/
+RUN pip3 install --no-cache-dir -r /tmp/requirements-optional.txt
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install | bash
@@ -66,15 +75,21 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN claude_version="$(claude --version)" \
     && test -n "$claude_version" \
     && echo "Installed Claude Code CLI: $claude_version"
-RUN echo 'alias claude-yolo="claude --allow-dangerously-skip-permissions --dangerously-skip-permissions"' >> /root/.bashrc
+# The co/cl/op yolo aliases only exist inside the container, so yolo stays a
+# short, deliberate launch here instead of a habit that could accidentally
+# run on the host machine, similar to the two-character pi shortcut.
+RUN echo 'alias claude-yolo="claude --allow-dangerously-skip-permissions --dangerously-skip-permissions"' >> /root/.bashrc \
+    && echo 'alias cl="claude-yolo"' >> /root/.bashrc \
+    && echo 'alias co="codex --yolo"' >> /root/.bashrc \
+    && echo 'alias op="opencode --yolo"' >> /root/.bashrc
 
 # Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/opencode/Dockerfile
 # Install OpenCode CLI
-# This remote metadata changes when the OpenCode latest release advances, which
+# This remote metadata changes when the npm latest tag advances, which
 # invalidates the install layer during normal Docker builds.
-ADD https://api.github.com/repos/anomalyco/opencode/releases/latest /tmp/opencode-latest-release.json
+ADD https://registry.npmjs.org/opencode-ai/latest /tmp/opencode-latest.json
 ENV PATH="/root/.opencode/bin:${PATH}"
-RUN curl -fsSL https://opencode.ai/install | bash
+RUN npm install -g opencode-ai@latest
 RUN opencode_version="$(opencode --version)" \
     && test -n "$opencode_version" \
     && echo "Installed OpenCode CLI: $opencode_version"

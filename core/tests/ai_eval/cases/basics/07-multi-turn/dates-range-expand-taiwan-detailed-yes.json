@@ -1,0 +1,28 @@
+{
+  "id": "dates-range-expand-taiwan-detailed-yes",
+  "fixture": "ward87",
+  "user_turns": [
+    "Extend the roster through December 31, 2025.",
+    "Yes. Refresh only the Taiwan WORKDAY and FREEDAY holiday groups from the frontend calendar. Preserve our custom date groups and all existing requests."
+  ],
+  "intermediate_answer_contains": [
+    ["Taiwan", ["holiday", "holidays"], ["renew", "update", "import", "refresh"]]
+  ],
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "dates.range",
+      "before": {"startDate": "2025-11-01", "endDate": "2025-11-30"},
+      "after": {"startDate": "2025-11-01", "endDate": "2025-12-31"}
+    }
+  ],
+  "assert": [
+    {"path": "dates.groups[?id=WORKDAY].members", "equals": ["11-03", "11-04", "11-05", "11-06", "11-07", "11-10", "11-11", "11-12", "11-13", "11-14", "11-17", "11-18", "11-19", "11-20", "11-21", "11-24", "11-25", "11-26", "11-27", "11-28", "12-01", "12-02", "12-03", "12-04", "12-05", "12-08", "12-09", "12-10", "12-11", "12-12", "12-15", "12-16", "12-17", "12-18", "12-19", "12-22", "12-23", "12-24", "12-26", "12-29", "12-30", "12-31"]},
+    {"path": "dates.groups[?id=FREEDAY].members", "equals": ["11-01", "11-02", "11-08", "11-09", "11-15", "11-16", "11-22", "11-23", "11-29", "11-30", "12-06", "12-07", "12-13", "12-14", "12-20", "12-21", "12-25", "12-27", "12-28"]},
+    {"path": "dates.groups[?id=Before 4].members", "equals": ["11-01", "11-02", "11-03"]},
+    {"path": "dates.groups[?id=After 4].members", "equals": ["11-04", "11-05", "11-06", "11-07", "11-08", "11-09", "11-10", "11-11", "11-12", "11-13", "11-14", "11-15", "11-16", "11-17", "11-18", "11-19", "11-20", "11-21", "11-22", "11-23", "11-24", "11-25", "11-26", "11-27", "11-28", "11-29", "11-30"]}
+  ],
+  "changes": ["dates", "preferences"],
+  "tags": ["difficult", "tuning", "advanced-multi-turn", "date-expansion", "taiwan-holidays"],
+  "note": "The detailed acceptance limits holiday renewal to the canonical Taiwan groups while preserving custom groups. Cross-month validation may normalize concrete request dates."
+}

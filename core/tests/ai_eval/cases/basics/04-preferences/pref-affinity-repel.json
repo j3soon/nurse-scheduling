@@ -1,0 +1,32 @@
+{
+  "id": "pref-affinity-repel",
+  "fixture": "ward87",
+  "question": "P7 and P8 should not share a D shift. Use a negative weight of -10.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift affinity",
+          "date": [
+            "ALL"
+          ],
+          "people1": [
+            "P7"
+          ],
+          "people2": [
+            "P8"
+          ],
+          "shiftTypes": [
+            "D"
+          ],
+          "weight": -10
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

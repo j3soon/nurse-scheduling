@@ -20,20 +20,18 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, setDateRange } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalSchedulingState, setDateRange } from './helpers';
 
 test('a repeated optimize run after upstream edits submits updated YAML', async ({ page }) => {
   /*
    * Steps:
-   * 1. Reset the schedule and run optimize once.
+   * 1. Seed a minimal schedule and run optimize once.
    * 2. Edit the People page state.
    * 3. Run optimize again.
    * 4. Confirm the second request body reflects the edit and differs from the first.
    */
   await disableModalDialogs(page);
-  await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await seedMinimalSchedulingState(page);
   await setDateRange(page);
 
   const bodies: string[] = [];

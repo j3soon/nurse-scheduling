@@ -61,8 +61,8 @@ test('save-load YAML preview reflects uploaded state after a page refresh', asyn
   expect(yamlText).toContain('Team Alpha');
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule' }).click();
-  await page.getByRole('button', { name: 'Reset Data' }).click();
+  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty schedule' }).click();
 
   await page.goto('/save-and-load');
   await expect(page.locator('pre')).not.toContainText('Team Alpha');

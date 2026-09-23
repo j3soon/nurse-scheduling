@@ -1,0 +1,18 @@
+# Optional dependencies for development, testing, and the experimental solver
+# backends. Install with `uv pip install -r requirements-optional.txt`, which
+# also pulls in requirements.txt.
+-r requirements.txt
+# For more solvers support, on top of the OR-Tools and PuLP backends that the
+# minimal set already provides.
+# Keep this aligned with the HiGHS ABI bundled by OR-Tools 9.15.
+highspy==1.12.0
+pyscipopt==6.2.1
+# For the sandbox attachment tools, which run inside the E2B image and are
+# exercised by the core tests. The server itself never imports them.
+pypdf==6.19.0 # For PDF text and embedded-image inspection
+pypdfium2==5.13.0 # For bounded PDF page rendering in the sandbox
+# For CI
+pytest
+pytest-cov
+fakeredis
+ruff

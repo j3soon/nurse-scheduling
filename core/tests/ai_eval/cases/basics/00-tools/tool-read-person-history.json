@@ -1,0 +1,24 @@
+{
+  "id": "tool-read-person-history",
+  "fixture": "ward87",
+  "question": "Use exactly one read call with path `/workspace/schedule.yaml`, offset 210, and limit 15. Tell me exactly what is recorded in P64's history. Do not run a shell command or modify anything.",
+  "expect_proposal": false,
+  "answer_contains": [
+    "P64",
+    "OFF"
+  ],
+  "tool_usage": {
+    "required": [
+      "read"
+    ],
+    "forbidden": [
+      "bash",
+      "edit",
+      "write"
+    ],
+    "max_total": 1,
+    "max_per_tool": {
+      "read": 1
+    }
+  }
+}

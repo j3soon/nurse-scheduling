@@ -20,7 +20,9 @@
 import logging
 import threading
 
+from ..sentry import report_outage_recovery
 from .jobs.controller import JobController
+from .retry import RepeatedFailure
 
 server_logger = logging.getLogger("nurse_scheduling.server")
 
@@ -38,6 +40,8 @@ class JobMaintenance:
         """Signal that interrupts the maintenance wait and stops the loop."""
         self._thread: threading.Thread | None = None
         """Daemon maintenance thread, or `None` when no thread is retained."""
+        self._failures = RepeatedFailure(base_delay_seconds=interval_seconds, max_delay_seconds=interval_seconds * 4)
+        """Quiets and slows repeated passes while the store is unavailable."""
 
     def start(self) -> None:
         """Start the daemon maintenance loop unless it is already running."""
@@ -61,9 +65,18 @@ class JobMaintenance:
 
         Failures are logged without terminating future maintenance passes.
         """
-        while not self._stop.wait(self._interval_seconds):
+        while not self._stop.wait(self._failures.delay_seconds()):
             try:
                 self._controller.expire_worker_claims()
                 self._controller.expire_jobs()
             except Exception:
-                server_logger.exception("[server:maintenance] job retention check failed")
+                if self._failures.report():
+                    server_logger.exception("[server:maintenance] job retention check failed")
+                continue
+            ended_failures = self._failures.recovered()
+            if ended_failures:
+                server_logger.warning(
+                    "[server:maintenance] resumed after %d failed passes",
+                    ended_failures,
+                )
+                report_outage_recovery("maintenance", ended_failures)

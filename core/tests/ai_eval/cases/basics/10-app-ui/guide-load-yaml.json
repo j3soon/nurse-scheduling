@@ -1,0 +1,14 @@
+{
+  "id": "guide-load-yaml",
+  "fixture": "small-clinic",
+  "question": "Where in this app can I load an existing schedule YAML file?",
+  "expect_proposal": false,
+  "tags": ["tuning", "app-ui", "navigation"],
+  "answer_contains": [
+    "Save and Load",
+    "Upload",
+    "YAML",
+    ["replace", "replaces", "current schedule"]
+  ],
+  "note": "The assistant should direct the user to the existing import UI rather than trying to read an unavailable attachment."
+}

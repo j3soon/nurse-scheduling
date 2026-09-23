@@ -27,7 +27,7 @@ import { DataTable } from '@/components/DataTable';
 import { InlineEdit } from '@/components/InlineEdit';
 import OptimizationProgressChart, { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 import NumberInput from '@/components/NumberInput';
-import BackendTokenField from '@/components/BackendTokenField';
+import BackendTokenField, { isValidBackendToken } from '@/components/BackendTokenField';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import StarRepoNudge from '@/components/StarRepoNudge';
 import OptimizationFeedbackNudge from '@/components/OptimizationFeedbackNudge';
@@ -40,6 +40,7 @@ import {
   BACKEND_API_CANDIDATES,
   buildAuthHeaders,
   EXPECTED_BACKEND_SERVICE_NAME,
+  isOfficialBackendEndpoint,
   isOptimizationOptionsResponse,
   LOCAL_BACKEND_API_URL,
   normalizeEndpoint,
@@ -195,8 +196,8 @@ function createServerEntry(
   const storedToken = typeof server.token === 'string' ? server.token.trim() : '';
   return {
     endpoint: server.endpoint,
-    token: storedToken || null,
-    rememberToken: storedToken.length > 0,
+    token: isValidBackendToken(storedToken) ? storedToken : null,
+    rememberToken: isValidBackendToken(storedToken),
     authRequired: false,
     status,
     health: null,
@@ -282,7 +283,12 @@ function loadStoredServerOptions(): { servers: OptimizeServerEntry[]; selectedSe
           normalizeEndpoint(server.endpoint) !== LOCAL_BACKEND_API_URL
         ))
       : parsed.servers;
-    const servers = dedupeServerEntries(storedServers);
+    const migratedServers = dedupeServerEntries(storedServers);
+    // A legacy store holding only the dropped localhost entry migrates to nothing,
+    // which would leave the backend list empty.
+    const servers = isLegacyStore && migratedServers.length === 0
+      ? createDefaultServerEntries()
+      : migratedServers;
     const parsedSelection = typeof parsed.selectedServerEndpoint === 'string'
       ? parsed.selectedServerEndpoint
       : 'auto';
@@ -2195,6 +2201,12 @@ export default function OptimizeAndExportPage() {
                   Privacy Policy
                 </a>.
               </p>
+              {resolvedOptimizeEndpoint
+                && !isOfficialBackendEndpoint(resolvedOptimizeEndpoint) && (
+                <p className="mt-1 text-xs text-amber-700">
+                  This server is unofficially hosted. Privacy and data retention practices may vary.
+                </p>
+              )}
             </div>
           </div>
         </section>

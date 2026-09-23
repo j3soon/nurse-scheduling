@@ -1,0 +1,72 @@
+"""Load bounded, model-readable frontend schedule YAML references."""
+
+# This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
+#
+# Copyright (C) 2023-2026 Johnson Sun
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+from collections.abc import Mapping
+from functools import cache, lru_cache
+from pathlib import Path
+from types import MappingProxyType
+
+MAX_SCHEMA_REFERENCE_CHARS = 50_000
+REFERENCE_DIRECTORY = Path(__file__).with_name("references")
+SCHEMA_REFERENCE_FILES = {
+    "core": REFERENCE_DIRECTORY / "schema-core.md",
+    "preferences": REFERENCE_DIRECTORY / "schema-preferences.md",
+    "shift-request": REFERENCE_DIRECTORY / "schema-shift-request.md",
+    "export": REFERENCE_DIRECTORY / "schema-export.md",
+}
+USER_GUIDE_DIRECTORY = Path(__file__).resolve().parents[3] / "docs/content/user-guide"
+TAIWAN_HOLIDAYS_SOURCE = Path(__file__).resolve().parents[3] / "web-frontend/src/utils/taiwanHolidays.ts"
+
+
+@cache
+def load_schedule_reference(group: str) -> str | None:
+    """Load one task-sized schema reference from its Markdown source."""
+    path = SCHEMA_REFERENCE_FILES.get(group)
+    if path is None:
+        return None
+    reference = path.read_text(encoding="utf-8")
+    if len(reference) > MAX_SCHEMA_REFERENCE_CHARS:
+        raise ValueError(f"{group} schedule reference exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
+    return reference
+
+
+@lru_cache(maxsize=1)
+def load_taiwan_holidays_reference() -> str:
+    """Load the frontend's authoritative Taiwan holiday implementation."""
+    reference = TAIWAN_HOLIDAYS_SOURCE.read_text(encoding="utf-8")
+    if len(reference) > MAX_SCHEMA_REFERENCE_CHARS:
+        raise ValueError(f"Taiwan holiday reference exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
+    return reference
+
+
+@lru_cache(maxsize=1)
+def load_user_guide_references() -> Mapping[str, str]:
+    """Load the canonical user-facing Markdown pages for in-app guidance.
+
+    Cached because every turn hydrates the same read-only files, which do not change
+    while the process runs.
+    """
+    references: dict[str, str] = {}
+    for path in sorted(USER_GUIDE_DIRECTORY.rglob("*.md")):
+        relative_path = path.relative_to(USER_GUIDE_DIRECTORY).as_posix()
+        reference = path.read_text(encoding="utf-8")
+        if len(reference) > MAX_SCHEMA_REFERENCE_CHARS:
+            raise ValueError(f"{relative_path} user guide exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
+        references[relative_path] = reference
+    return MappingProxyType(references)

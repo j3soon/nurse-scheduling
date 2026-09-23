@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import asyncio
 import sys
 import types
 from datetime import datetime, timezone
@@ -26,9 +27,16 @@ from pathlib import Path
 
 import pytest
 from ruamel.yaml import YAML
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from nurse_scheduling.loader import _load_yaml
-from nurse_scheduling.sentry import capture_invalid_request, capture_optimize_exception, flush_sentry, init_sentry
+from nurse_scheduling.sentry import (
+    _redact_stream_token,
+    capture_invalid_request,
+    capture_optimize_exception,
+    flush_sentry,
+    init_sentry,
+)
 from nurse_scheduling.server.jobs.models import Job, JobRequest, JobState
 
 SCHEDULE_YAML = b"""\
@@ -211,9 +219,42 @@ def test_init_sentry_configures_sdk_when_enabled(monkeypatch):
             "profile_session_sample_rate": 1.0,
             "profile_lifecycle": "trace",
             "enable_logs": True,
+            # A stream token is a live credential and Sentry does not scrub a query string.
+            "before_send": _redact_stream_token,
+            "before_send_transaction": _redact_stream_token,
         }
     ]
     assert tags == [("app", "backend")]
+
+
+def test_init_sentry_accepts_service_tag(monkeypatch):
+    tags = []
+    fake_sentry_sdk = types.SimpleNamespace(
+        init=lambda **_kwargs: None,
+        set_tag=lambda name, value: tags.append((name, value)),
+    )
+    monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+    init_sentry("v1.2.3", app="ai-backend")
+
+    assert tags == [("app", "ai-backend")]
+
+
+def test_stream_token_redaction_decodes_parameter_names():
+    query = "x=1&%74oken=live-secret&TOKEN=second-secret&x=2"
+    event = {
+        "request": {"query_string": query},
+        "contexts": {"trace": {"data": {"http.query": query, "url.full": f"https://example.test/events?{query}"}}},
+        "spans": [{"data": {"http.query": query, "url.full": f"https://example.test/events?{query}"}}],
+    }
+
+    redacted = _redact_stream_token(event, {})
+    expected = "x=1&%74oken=[Filtered]&TOKEN=[Filtered]&x=2"
+    assert redacted["request"]["query_string"] == expected
+    for data in (redacted["contexts"]["trace"]["data"], redacted["spans"][0]["data"]):
+        assert data["http.query"] == expected
+        assert data["url.full"] == f"https://example.test/events?{expected}"
 
 
 def test_init_sentry_keeps_shared_development_defaults(monkeypatch):
@@ -249,8 +290,8 @@ def test_flush_sentry_waits_for_pending_logs(monkeypatch):
 @pytest.mark.parametrize(
     ("compose_file", "service_names"),
     [
-        ("compose.backend.yml", ("api", "diagnostic", "usage-reporter")),
-        ("compose.backend.memory.yml", ("api", "diagnostic")),
+        ("compose.backend.yml", ("api", "ai", "diagnostic", "usage-reporter")),
+        ("compose.backend.memory.yml", ("api", "ai", "diagnostic")),
     ],
 )
 def test_compose_python_services_share_sentry_environment(compose_file, service_names):
@@ -265,6 +306,94 @@ def test_compose_python_services_share_sentry_environment(compose_file, service_
     for service_name in service_names:
         environment = compose["services"][service_name]["environment"]
         assert {name: environment.get(name) for name in expected} == expected
+
+
+@pytest.mark.parametrize("compose_file", ["compose.backend.yml", "compose.backend.memory.yml"])
+def test_compose_trusts_local_proxies_without_address_configuration(compose_file):
+    docker_dir = REPOSITORY_ROOT / "docker"
+    compose = YAML(typ="safe").load((docker_dir / compose_file).read_text(encoding="utf-8"))
+    api = compose["services"]["api"]
+    nginx = compose["services"]["nginx"]
+    cloudflared = compose["services"]["cloudflared"]
+    ai = compose["services"]["ai"]
+    assert set(api["networks"]) >= {"api"}
+    assert set(nginx["networks"]) == {"api", "ai", "tunnel"}
+    assert set(cloudflared["networks"]) == {"tunnel"}
+    assert set(ai["networks"]) >= {"api", "ai"}
+    assert api["command"][api["command"].index("--forwarded-allow-ips") + 1] == "*"
+    assert ai["command"][ai["command"].index("--forwarded-allow-ips") + 1] == "*"
+    assert ai["environment"]["AI_OPTIMIZER_BASE_URL"] == "${AI_OPTIMIZER_BASE_URL:-http://api:8000}"
+    assert "ipam" not in str(compose["networks"])
+    assert "ipv4_address" not in str(compose)
+    assert "FORWARDED_ALLOW_IPS" not in str(compose)
+
+
+def test_compose_examples_have_no_address_allocation_settings():
+    removed_names = {
+        "FORWARDED_ALLOW_IPS",
+        "NGINX_API_IP",
+        "CLOUDFLARED_TUNNEL_IP",
+        "API_NETWORK_SUBNET",
+        "TUNNEL_NETWORK_SUBNET",
+        "API_NETWORK_DYNAMIC_RANGE",
+        "TUNNEL_NETWORK_DYNAMIC_RANGE",
+        "API_NETWORK_GATEWAY",
+        "TUNNEL_NETWORK_GATEWAY",
+    }
+    for env_file in (".env.example", ".env.staging.example"):
+        lines = (REPOSITORY_ROOT / "docker" / env_file).read_text(encoding="utf-8").splitlines()
+        keys = {line.split("=", 1)[0] for line in lines if line and not line.startswith("#") and "=" in line}
+        assert keys.isdisjoint(removed_names)
+
+    config = (REPOSITORY_ROOT / "docker" / "nginx.backend.conf").read_text(encoding="utf-8")
+    assert "map $http_cf_connecting_ip $origin_client_ip {" in config
+    assert config.count("proxy_set_header X-Forwarded-For $origin_client_ip;") == 2
+    assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" not in config
+
+
+@pytest.mark.parametrize(
+    ("forwarded_for", "expected"),
+    [
+        ("198.51.100.99", "198.51.100.99"),
+        ("2001:db8::7", "2001:db8::7"),
+    ],
+    ids=["ipv4", "ipv6"],
+)
+def test_uvicorn_uses_nginx_single_client_header(forwarded_for, expected):
+    resolved_client = None
+
+    async def app(scope, receive, send):
+        nonlocal resolved_client
+        resolved_client = scope["client"]
+
+    middleware = ProxyHeadersMiddleware(app, trusted_hosts="*")
+    scope = {
+        "type": "http",
+        "client": ("172.30.0.2", 1234),
+        "scheme": "http",
+        "headers": [
+            (b"x-forwarded-for", forwarded_for.encode("ascii")),
+            (b"x-forwarded-proto", b"https"),
+        ],
+    }
+    asyncio.run(middleware(scope, None, None))
+
+    assert resolved_client is not None
+    assert resolved_client[0] == expected
+
+
+def _request(path: str, *, route: str | None = None, method: str = "GET") -> types.SimpleNamespace:
+    """Build a stub carrying every request attribute the reporting path reads."""
+    return types.SimpleNamespace(
+        scope={"route": types.SimpleNamespace(path=route) if route is not None else None},
+        url=types.SimpleNamespace(path=path),
+        method=method,
+        headers={},
+        query_params={},
+        cookies={},
+        path_params={},
+        state=types.SimpleNamespace(),
+    )
 
 
 def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypatch):
@@ -292,11 +421,7 @@ def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypat
         new_scope=FakeScope,
         capture_message=lambda message, level: messages.append((message, level)),
     )
-    request = types.SimpleNamespace(
-        scope={"route": types.SimpleNamespace(path="/optimize/{job_id}")},
-        url=types.SimpleNamespace(path="/optimize/abc"),
-        method="GET",
-    )
+    request = _request("/optimize/abc", route="/optimize/{job_id}")
     detail = [{"loc": ("path", "job_id"), "msg": "missing"}]
     monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
@@ -327,13 +452,9 @@ def test_capture_invalid_request_records_route_context_and_fingerprint(monkeypat
     assert scope.fingerprint == ["invalid-request", "422", "/optimize/{job_id}"]
 
 
-@pytest.mark.parametrize("route", [None, types.SimpleNamespace(path="/optimize/{job_id}")])
+@pytest.mark.parametrize("route", [None, "/optimize/{job_id}"])
 def test_capture_invalid_request_ignores_not_found(monkeypatch, route):
-    request = types.SimpleNamespace(
-        scope={"route": route},
-        url=types.SimpleNamespace(path="/optimize/missing"),
-        method="GET",
-    )
+    request = _request("/optimize/missing", route=route)
     fake_sentry_sdk = types.SimpleNamespace(
         new_scope=lambda: pytest.fail("404 response reached Sentry"),
     )
@@ -345,11 +466,7 @@ def test_capture_invalid_request_ignores_not_found(monkeypatch, route):
 
 def test_capture_invalid_request_ignores_unauthorized():
     """Unauthenticated probes of a protected public deployment are expected traffic."""
-    request = types.SimpleNamespace(
-        scope={"route": None},
-        url=types.SimpleNamespace(path="/optimize/options"),
-        method="GET",
-    )
+    request = _request("/optimize/options")
     fake_sentry_sdk = types.SimpleNamespace(
         new_scope=lambda: pytest.fail("401 response reached Sentry"),
     )

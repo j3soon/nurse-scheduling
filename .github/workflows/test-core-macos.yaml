@@ -26,11 +26,11 @@ jobs:
         run: brew install glpk
       - name: Install dependencies
         working-directory: core
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements-optional.txt
       - name: Test with pytest and collect coverage
         working-directory: core
         run: >-
-          pytest --cov=nurse_scheduling --log-cli-level=INFO tests
+          pytest --cov=nurse_scheduling tests
           --ignore=tests/test_schedule_pulp_cuopt.py
           --ignore=tests/test_schedule_pulp_highs.py
       - name: Upload coverage to Codecov

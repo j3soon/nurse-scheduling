@@ -1,0 +1,9 @@
+{
+  "id": "ask-preference-count",
+  "fixture": "ward87",
+  "question": "How many shift requests are in this schedule?",
+  "expect_proposal": false,
+  "answer_contains": [
+    "155"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "ask-positive-k-exceptions",
+  "fixture": "ward87",
+  "question": "Which individual people have a positive K shift request despite the schedule-wide negative K request? List every matching person.",
+  "expect_proposal": false,
+  "answer_contains": ["P1", "P3", "P42", "P62", "P63", "P85"],
+  "tags": ["difficult", "tuning", "preference-reasoning", "reading"],
+  "note": "This requires combining the blanket negative K request with all positive individual K requests while excluding unrelated requests."
+}

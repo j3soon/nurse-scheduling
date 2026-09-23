@@ -24,8 +24,10 @@ import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import {
+  BACKEND_API_CANDIDATES,
   buildAuthHeaders,
   createBackendApiCandidates,
+  isOfficialBackendEndpoint,
   isOptimizationOptionsResponse,
   normalizeEndpoint,
   parseAuthRequirement,
@@ -248,6 +250,12 @@ describe('backend authentication discovery', () => {
 });
 
 describe('backend endpoint normalization', () => {
+  it('recognizes both hosted production endpoints as official', () => {
+    expect(isOfficialBackendEndpoint('https://api.nursescheduling.org')).toBe(true);
+    expect(isOfficialBackendEndpoint('https://api-secondary.nursescheduling.org/')).toBe(true);
+    expect(isOfficialBackendEndpoint('https://backend.example.test')).toBe(false);
+  });
+
   it.each([
     ['api.nursescheduling.org', 'https://api.nursescheduling.org'],
     ['api.nursescheduling.org/', 'https://api.nursescheduling.org'],
@@ -1032,6 +1040,25 @@ describe('OptimizeAndExportPage error handling', () => {
     });
   });
 
+  it('restores the default backends when legacy settings held only localhost', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => respondWithHealthyBackend(url));
+    window.localStorage.setItem('nurse-scheduling-optimize-server-options', JSON.stringify({
+      servers: [{ endpoint: LOCAL_API_URL }],
+      selectedServerEndpoint: LOCAL_API_URL,
+    }));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle(BACKEND_API_CANDIDATES[0])).resolves.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem('nurse-scheduling-optimize-server-options') ?? '{}')).toEqual({
+      appVersion: 'frontend-test',
+      servers: BACKEND_API_CANDIDATES.map(endpoint => ({ endpoint })),
+      // The restored defaults still contain localhost here, so the stored selection resolves.
+      selectedServerEndpoint: LOCAL_API_URL,
+    });
+  });
+
   it('adds localhost at the front of the backend list after an explicit click', async () => {
     const user = userEvent.setup();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
@@ -1114,6 +1141,7 @@ describe('OptimizeAndExportPage error handling', () => {
     render(<OptimizeAndExportPage />);
 
     await expect(screen.findByTitle('https://stored-backend.example.test')).resolves.toBeInTheDocument();
+    expect(screen.getByText(/unofficially hosted.*privacy and data retention practices may vary/i)).toBeInTheDocument();
     const customResetButton = screen.getByRole('button', {
       name: /reset server settings to defaults.*custom server settings active/i,
     });

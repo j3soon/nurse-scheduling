@@ -35,7 +35,7 @@ test('navigation arrow buttons move between neighboring tabs with the expected b
   await expect(page.getByRole('heading', { name: 'Date Management', exact: true })).toBeVisible();
 
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'New Schedule' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Schedule', exact: true })).toBeVisible();
   await expect(page.getByTitle('Previous tab (←)')).toHaveCount(0);
   await expect(page.getByTitle('Next tab (→)')).toBeVisible();
 
@@ -47,6 +47,6 @@ test('navigation arrow buttons move between neighboring tabs with the expected b
 
   await page.getByTitle('Previous tab (←)').click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('button', { name: 'New Schedule' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Schedule', exact: true })).toBeVisible();
   await expect(page.getByTitle('Previous tab (←)')).toHaveCount(0);
 });

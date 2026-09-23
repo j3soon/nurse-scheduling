@@ -1,0 +1,4 @@
+interface:
+  display_name: "HTML Commit Review"
+  short_description: "Build and host a concise HTML review page for git commits"
+  default_prompt: "Use $html-commit-review to build and host an HTML review of the last two commits."

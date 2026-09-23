@@ -173,10 +173,10 @@ checkpointing it outside the child process.
 
 ### Authentication
 
-A deployment that sets `API_AUTH_TOKEN` requires a bearer token on every
-application route except `/info` and `/ready`. Those two stay public so clients
-and deployment probes can discover the server without credentials. `/info`
-reports the requirement:
+A deployment that sets `API_AUTH_TOKEN` or `API_AUTH_TOKENS` requires a bearer
+key on every application route except `/info` and `/ready`. Those two stay
+public so clients and deployment probes can discover the server without
+credentials. `/info` reports the requirement:
 
 ```json
 { "auth": { "required": true, "scheme": "bearer" } }
@@ -202,28 +202,45 @@ one in `links.events`, so a client opens the stream with the link as given:
 { "links": { "events": "/optimize/<job_id>/events?token=<stream_token>" } }
 ```
 
-The stream token is an HMAC of the job ID and an expiry signed with
-`API_AUTH_TOKEN`. It authorizes only that job's stream and is rejected on every
-other route, which keeps the deployment's shared token out of URLs, proxy logs,
-and referrer headers. Its lifetime is `OPTIMIZE_MAX_TIMEOUT_SECONDS` plus
+The stream token is an HMAC of the job ID and an expiry signed with the matched
+bearer key. It authorizes only that job's stream and is rejected on every
+other route, which keeps the deployment key out of URLs, proxy logs, and
+referrer headers. Its lifetime is `OPTIMIZE_MAX_TIMEOUT_SECONDS` plus
 `OPTIMIZE_TIMEOUT_GRACE_SECONDS` plus a few seconds of slack, so it outlives the
 longest run the deployment allows and expires shortly after. An expired stream
 token makes the frontend fall back to polling the job.
 
-A missing or incorrect token returns `401` with a `WWW-Authenticate: Bearer`
-header. Tokens are compared in constant time. The token is shared by every
-client of the deployment, so rotate it by changing `API_AUTH_TOKEN` and
-restarting the server.
+A missing or incorrect key returns `401` with a `WWW-Authenticate: Bearer`
+header. Configure multiple static keys with a JSON object mapping IDs to keys:
+
+```dotenv
+API_AUTH_TOKENS='{"institution-a":"first-key","person-b":"second-key"}'
+```
+
+IDs may contain letters, numbers, underscores, and hyphens. The `legacy` ID is
+reserved for `API_AUTH_TOKEN`. IDs are recorded for administration, while
+clients send only the key and never receive the ID. Requests use a keyed
+fingerprint map for direct lookup followed by a constant-time comparison. Stream
+links carry no credential hint, so the server verifies a stream token against
+each configured key rather than putting a stable key-derived value in a URL. Remove a pair and restart the server to
+revoke its bearer and stream tokens. `API_AUTH_TOKEN` remains
+supported and may be used alongside identified keys during migration.
+
+Identified keys attribute a request, they do not isolate one. Every configured
+key reaches every protected route, so any key may read, cancel, finish, and
+stream a job created with another key. Use separate deployments when callers
+must not see each other's jobs.
 
 When authentication is configured, the generated `/openapi.json`, `/docs`, and
 `/redoc` routes are disabled and return `404`.
 
 `API_AUTH_REQUIRED` makes authentication mandatory rather than optional. The
 images built for deployment set it, so a container started without
-`API_AUTH_TOKEN` fails with
-`API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty` instead of
+either key setting fails with
+`API_AUTH_REQUIRED is set, so API_AUTH_TOKEN or API_AUTH_TOKENS must not be empty`
+instead of
 serving openly. A server run outside those images leaves it unset, so setting
-`API_AUTH_TOKEN` alone is still enough to turn authentication on for local use.
+either key setting is enough to turn authentication on for local use.
 
 Prepare the input as YAML. The repository includes a
 [minimal scheduling example](https://github.com/j3soon/nurse-scheduling/blob/dev/core/tests/testcases/basics/01_1nurse_1shift_1day.yaml).
@@ -260,7 +277,8 @@ The server persists and replays `job.state_changed`, `job.phase_changed`,
 Disconnecting from the stream does not stop the job.
 
 Job submission sets a seven-day, HTTP-only client correlation cookie for
-diagnostics. It does not control access to a job or its lifetime. Browser CORS
+diagnostics. It does not control access to a job or its lifetime, though a
+browser reaching a job that a different browser created is reported. Browser CORS
 access is limited to local origins and `nursescheduling.org` subdomains.
 
 Lifecycle and storage errors use a stable JSON envelope:
@@ -277,6 +295,81 @@ Lifecycle and storage errors use a stable JSON envelope:
 Request parsing and validation errors retain FastAPI's standard error format.
 Common status codes include `404` for missing resources, `409` for invalid job
 operations, `413` for oversized YAML, and `429` when job capacity is exhausted.
+
+The frontend and CLI serialize plain, valid YAML, so aliases and parse failures
+both indicate a client that built its request by hand. Both are reported without
+changing how the request is answered. Submitted YAML is also bounded by how far
+its aliases expand and how deeply it nests, not only by its byte size. An alias
+is a reference, so a small document can name hundreds of millions of nodes that
+every later traversal pays for, and parsing costs grow faster than nesting
+depth. Nesting is measured from parser events, so brackets in text do not count,
+and data passing either bound is refused with `400` before a job is queued. Reading
+happens on a worker thread and only after the checks that cost nothing, so a
+request that was going to be rejected never pays for it.
+
+### Suspicious request reporting
+
+Missing routes and unauthenticated probes are internet background noise and are
+not reported. Client errors that instead require knowledge of this API's
+contract are sent to Sentry, because a scanner cannot produce them:
+
+| Signal | Meaning | Level |
+| --- | --- | --- |
+| `forged_stream_token` | An event-stream token failed verification and had not merely expired, so it was constructed rather than issued. Error when it was unexpired and of the minted shape, warning otherwise. | error/warning |
+| `yaml_expansion_bomb` | Submitted data expands or nests past what the server reads, so it was refused. | error |
+| `yaml_aliases_used` | Accepted data used a YAML alias, which nothing this project produces does. | warning |
+| `yaml_unparseable` | Accepted data is not valid YAML, which a client that serializes its own data does not submit. | warning |
+| `foreign_job_access` | A browser read, controlled, downloaded, or deleted a job that a different browser created. A caller sending no cookie is not reported. | warning |
+| `job_capacity_exceeded` | One address met a full job queue, which repeats only when that address filled it. | warning |
+| `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |
+| `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
+| `timeout_out_of_range` | An optimization timeout fell outside the range advertised by `GET /optimize/options`. | warning |
+
+A reported request answers exactly like an unreported one, so its body, status,
+and headers reveal nothing. Reporting still costs a little time, so a caller
+measuring closely can infer that something happened. Each signal groups into its
+own Sentry issue.
+
+Repeats of one signal from one address are counted within a fixed window, and a
+signal that reaches `SUSPICION_ESCALATE_COUNT` is reported as an error rather
+than a warning, carrying its `occurrences` count. A signal naming a job also
+carries `distinct_job_ids`, and escalates only when that count reaches the
+threshold, so a client retrying one job stays a warning however often it repeats
+while a caller working through identifiers does not. Only a signal whose every
+request names a job counts them, so mixing one job request into another signal
+cannot hold that signal's escalation down. Further repeats within that
+window keep counting but are not reported, so one address cannot spend the
+project's event quota. Because the window is fixed rather than sliding, repeats
+spread across a boundary can stay below the threshold. Addresses are counted as a
+salted digest, so the counters hold no record of who connected, and the salt is
+derived from bearer keys and the deployment ID when authentication is enabled.
+Authenticated Redis deployments share counters across worker processes. Open
+deployments use a random salt per process, so their counters are process-local
+even with Redis. They can reach the threshold later.
+Counting is advisory. A Redis failure leaves a report unescalated and does not
+suppress it based on incomplete counts.
+
+A stale browser tab can produce `job_id_probe` after its job is deleted or
+expires, and a mistyped token produces `rejected_bearer_token`, so both are
+reported as warnings rather than errors. Neither reaches an error by repeating,
+because a stale tab names one job and a mistyped token names none. Changing `API_AUTH_TOKEN` invalidates
+every stream token already handed out, so expect `forged_stream_token` from real
+clients until the longest outstanding one expires.
+
+Every event carries a `client.address` tag holding the address Uvicorn resolved
+for its request. Sentry's own attribution is left alone. In Compose, NGINX
+replaces `X-Forwarded-For` with Cloudflare's single `CF-Connecting-IP` value,
+and Uvicorn trusts that forwarded header. Both the tag and Sentry therefore
+receive the same public client address. The original caller-supplied forwarding
+chain is intentionally discarded, so Compose no longer reports a claimed
+address disagreement.
+
+Docker assigns all network addresses. This trust model assumes local service
+containers are not hostile, because Uvicorn accepts forwarded headers from
+any peer. Keep the API and AI ports unpublished and route public traffic only
+through Cloudflare Tunnel and NGINX. [Cloudflare recommends `CF-Connecting-IP`](https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip)
+for the original visitor address because it has one consistent address rather
+than the variable-length `X-Forwarded-For` chain.
 
 ## Storage and Scaling
 
@@ -334,7 +427,11 @@ All server settings are read once when the application is constructed.
 | `CLAIMED_PERFORMANCE_APP_VERSION` | unset | Record the app version used by the claimed-performance benchmark. |
 | `CLAIMED_PERFORMANCE_MEASURED_AT` | unset | Record the benchmark report time as an ISO 8601 date and time with a timezone. |
 | `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
-| `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty `API_AUTH_TOKEN` a startup failure. Set in the deployment images. |
+| `API_AUTH_TOKENS` | unset | Require one of the bearer keys in this JSON object mapping administrative IDs to keys. |
+| `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty legacy and identified key set a startup failure. Set in the deployment images. |
+| `SUSPICION_COUNTER_ENABLED` | `true` | Count repeats of one signal from one address and escalate them. |
+| `SUSPICION_WINDOW_SECONDS` | `300` | Length of the window over which repeats are counted. |
+| `SUSPICION_ESCALATE_COUNT` | `5` | Repeats within a window that make a signal an error. |
 | `DISABLE_SENTRY` | unset | Disable error reporting for all Python services when set to a non-empty value. |
 | `SENTRY_DSN` | shared development project | Select the Python services' shared Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |
 | `SENTRY_ENVIRONMENT` | `development` | Set the Sentry environment for all Python services. The `app` tag separates backend, usage reporter, and diagnostic events. |
@@ -344,14 +441,14 @@ Numeric values must be positive. `JOB_MAX_RETAINED` must be at least
 `JOB_MAX_PENDING`. The default solver must be advertised, and the timeout
 default must remain within the configured minimum and maximum.
 
-`API_AUTH_TOKEN` is optional and unset by default, so a locally run server
-needs no credentials. Setting it turns on authentication for that deployment.
-Use at least 16 characters. When `API_AUTH_REQUIRED=true`, the backend rejects a
-shorter token. When it is `false`, a shorter token is accepted with a warning for
-local testing.
+Both key settings are optional and unset by default, so a locally run server
+needs no credentials. Setting either one turns on authentication for that
+deployment. Use at least 16 characters per key. When
+`API_AUTH_REQUIRED=true`, the backend rejects a shorter key. When it is
+`false`, a shorter key is accepted with a warning for local testing.
 
 The images under `docker/` set `API_AUTH_REQUIRED=true`, so a deployment that
-publishes the backend refuses to start without a token. Serving one without
+publishes the backend refuses to start without a key. Serving one without
 authentication requires `API_AUTH_REQUIRED=false`. See
 [Authentication](#authentication).
 
@@ -360,6 +457,38 @@ together. A complete compute benchmark writes them to
 `claimed-performance.env` beside its report. The API publishes the result at
 `GET /info` as `claimed_performance`. The frontend displays it as
 `Claimed performance` when that backend is selected.
+
+## Inspect Redis with RedisInsight
+
+The Redis-backed Compose deployment includes an optional RedisInsight service.
+It listens only on the backend host's loopback interface and does not retain its
+own settings. Start it from `docker/`:
+
+```sh
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports redisinsight
+```
+
+For a remote backend, forward the loopback port over SSH:
+
+```sh
+ssh -L 5540:127.0.0.1:5540 user@backend-host
+```
+
+Open `http://127.0.0.1:5540` and select the preconfigured
+**Nurse Scheduling Redis** database. Job-store keys start with
+`nurse_scheduling:jobs:v0:`. Usage-reporting keys start with
+`nurse_scheduling:usage:v0:`. Use those prefixes in the key browser to narrow
+the results.
+
+RedisInsight connects with the same unrestricted access as the backend. Its
+browser and CLI can change or delete production data, so use them only for
+inspection. Press Ctrl+C when finished. Compose removes the temporary
+RedisInsight container while the Redis service and its `redis-data` volume
+remain intact.
+
+For staging, pass `--env-file .env.staging` to the command. The
+`compose.backend.memory.yml` variant has no Redis service and therefore no
+RedisInsight inspector.
 
 ## Tests
 

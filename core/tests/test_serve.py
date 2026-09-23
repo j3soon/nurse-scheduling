@@ -38,7 +38,7 @@ from fastapi.testclient import TestClient
 
 from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
-from nurse_scheduling.server.auth import create_stream_token, extract_bearer_token, verify_stream_token
+from nurse_scheduling.server.auth import AuthCredential, create_stream_token, extract_bearer_token, verify_stream_token
 from nurse_scheduling.server.config import (
     DEFAULT_JOB_RETENTION_SECONDS,
     DEFAULT_MAX_EVENTS_PER_JOB,
@@ -620,6 +620,51 @@ def test_job_creation_offloads_the_synchronous_store_write():
 def test_server_settings_reject_invalid_relationships(updates, message):
     with pytest.raises(ValueError, match=message):
         _settings(**updates)
+
+
+def test_a_claim_poll_interval_above_the_default_retry_cap_starts():
+    app = create_app(settings=_settings(claim_poll_seconds=6.0), store=MemoryJobStore(), start_background=False)
+
+    assert app.state.job_worker._claim_failures.delay_seconds() == 6.0
+
+
+def test_lease_recovery_polling_resumes_while_an_owned_job_finishes(monkeypatch):
+    lease = WorkerLease("worker", "old-token", datetime.now(timezone.utc) - timedelta(seconds=1))
+    recovered = WorkerLease("worker", "new-token", datetime.now(timezone.utc) + timedelta(seconds=60))
+
+    class Controller:
+        def renew_worker(self, _lease):
+            return None
+
+        def expire_worker_claims(self):
+            return []
+
+        def register_worker(self, _worker_id):
+            return recovered
+
+    worker = JobWorker(
+        Controller(), SuccessfulRunner(), worker_id="worker", claim_poll_seconds=0.1, worker_lease_seconds=60
+    )
+    worker._executing.set()
+    monkeypatch.setattr(worker, "_claim_loop_is_alive", lambda: True)
+    for _ in range(5):
+        worker._recover_failures.report()
+
+    waits = []
+
+    class StopAfterJob:
+        def is_set(self):
+            return False
+
+        def wait(self, delay):
+            waits.append(delay)
+            worker._executing.clear()
+            return False
+
+    worker._stop = StopAfterJob()
+
+    assert worker._recover_worker_lease(lease) == recovered
+    assert waits == [0.1]
 
 
 def test_runtime_deployment_identity_is_shared_within_one_server_launch(monkeypatch):
@@ -2027,8 +2072,8 @@ def test_worker_recovers_after_presence_lease_expires(monkeypatch):
     class ControllerWithRenewalOutage:
         def __init__(self, delegate):
             self.delegate = delegate
-            self.registration_count = 0
             self.renewal_outage = threading.Event()
+            self.outage_observed = threading.Event()
             self.recovered = threading.Event()
 
         def __getattr__(self, name):
@@ -2036,14 +2081,13 @@ def test_worker_recovers_after_presence_lease_expires(monkeypatch):
 
         def register_worker(self, worker_id):
             registered = self.delegate.register_worker(worker_id)
-            if registered:
-                self.registration_count += 1
-                if self.registration_count > 1:
-                    self.recovered.set()
+            if registered and self.outage_observed.is_set():
+                self.recovered.set()
             return registered
 
         def renew_worker(self, lease):
             if self.renewal_outage.is_set():
+                self.outage_observed.set()
                 raise ConnectionError("simulated heartbeat outage")
             return self.delegate.renew_worker(lease)
 
@@ -2061,6 +2105,7 @@ def test_worker_recovers_after_presence_lease_expires(monkeypatch):
     try:
         assert process_started.wait(timeout=2)
         worker_controller.renewal_outage.set()
+        assert worker_controller.outage_observed.wait(timeout=2)
         assert worker_controller.recovered.wait(timeout=2)
         assert _wait_for_worker_ready(worker)
         failed = controller.get_job(created.id)
@@ -2139,6 +2184,39 @@ def test_input_and_timeout_validation():
         assert oversized.status_code == 413
 
 
+def test_client_cookie_is_marked_secure_when_the_deployment_says_so():
+    # A TLS-terminating proxy forwards plain HTTP, so the request scheme alone
+    # would leave the cookie unmarked on an HTTPS deployment.
+    with _client(start_background=False, settings=_settings()) as client:
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        assert "secure" not in response.headers["set-cookie"].lower()
+
+    with _client(start_background=False, settings=_settings(cookie_secure=True)) as client:
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        assert "; Secure" in response.headers["set-cookie"]
+
+
+def test_declared_oversize_body_is_refused_before_the_upload_is_buffered():
+    # FastAPI resolves upload parameters before the route runs, so a route-level
+    # size check only fires once Starlette has spooled the whole body.
+    settings = _settings(max_yaml_bytes=1024)
+    with _client(start_background=False, settings=settings) as client:
+        refused = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * (1024 * 1024), "application/x-yaml")},
+        )
+        assert refused.status_code == 413
+        assert refused.json()["error"]["code"] == "request_too_large"
+
+        # A body the middleware admits still reaches the route's own limit.
+        oversized = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * 1025, "application/x-yaml")},
+        )
+        assert oversized.status_code == 413
+        assert oversized.json()["detail"] == "Scheduling YAML is too large"
+
+
 def test_file_input_uses_configured_limit_above_multipart_text_default():
     max_yaml_bytes = 1024 * 1024 + 1
     settings = _settings(max_yaml_bytes=max_yaml_bytes)
@@ -2157,6 +2235,10 @@ def test_file_input_uses_configured_limit_above_multipart_text_default():
 
 
 AUTH_TOKEN = "integration-shared-token"
+AUTH_TOKENS = (
+    AuthCredential(id="institution-a", token="institution-a-auth-token"),
+    AuthCredential(id="person_b", token="person-b-auth-token"),
+)
 
 
 def _auth_header(token: str = AUTH_TOKEN) -> dict[str, str]:
@@ -2220,6 +2302,18 @@ def test_protected_routes_accept_the_configured_shared_token():
         assert client.get(f"/optimize/{job_id}", headers=_auth_header()).status_code == 200
 
 
+def test_protected_routes_accept_each_identified_token_and_retain_its_id(caplog):
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        for credential in AUTH_TOKENS:
+            assert client.get("/optimize/options", headers=_auth_header(credential.token)).status_code == 200
+            assert client.app.state.auth_registry.authenticate(credential.token).id == credential.id
+
+        _create(client, headers=_auth_header(AUTH_TOKENS[0].token))
+        assert client.get("/optimize/options", headers=_auth_header("revoked-auth-token")).status_code == 401
+
+    assert "auth_credential_id=institution-a" in caplog.text
+
+
 MISSING_JOB_ID = "job_does_not_exist"
 
 
@@ -2255,6 +2349,57 @@ def test_event_stream_accepts_either_the_shared_token_or_a_stream_token():
 
         assert _stream_status(client, MISSING_JOB_ID, f"?token={stream_token}") == 404
         assert _stream_status(client, MISSING_JOB_ID, headers=_auth_header()) == 404
+
+
+def test_identified_token_mints_a_resolvable_stream_token_without_a_credential_hint():
+    credential = AUTH_TOKENS[0]
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        job = _create(client, headers=_auth_header(credential.token)).json()
+        token = job["links"]["events"].split("token=", 1)[1]
+
+        # Nothing stable and key-derived may reach a URL, so the token carries only the
+        # job's expiry and signature and the server tries each configured key.
+        assert credential.id not in token
+        expiry, _, signature = token.partition(".")
+        assert expiry.isdigit() and signature
+        assert verify_stream_token(credential.token, job["id"], token)
+        assert not verify_stream_token(AUTH_TOKENS[1].token, job["id"], token)
+
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        assert _stream_status(client, job["id"], f"?token={token}") == 404
+
+
+def test_stream_tokens_from_different_keys_never_share_a_prefix():
+    first, second = AUTH_TOKENS[0], AUTH_TOKENS[1]
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        first_job = _create(client, headers=_auth_header(first.token)).json()
+        second_job = _create(client, headers=_auth_header(second.token)).json()
+
+    first_token = first_job["links"]["events"].split("token=", 1)[1]
+    second_token = second_job["links"]["events"].split("token=", 1)[1]
+
+    # A per-key prefix would correlate every stream URL a key ever opens.
+    assert first_token.count(".") == second_token.count(".") == 1
+    assert first_token.split(".")[1] != second_token.split(".")[1]
+
+
+def test_stream_tokens_are_rejected_for_a_job_created_with_another_key():
+    first, second = AUTH_TOKENS[0], AUTH_TOKENS[1]
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        job = _create(client, headers=_auth_header(first.token)).json()
+        forged = create_stream_token(second.token, "another-job", ttl_seconds=60)
+
+        assert _stream_status(client, job["id"], f"?token={forged}") == 401
+
+
+def test_removing_an_identified_key_revokes_its_stream_tokens():
+    credential = AUTH_TOKENS[0]
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS)) as client:
+        job = _create(client, headers=_auth_header(credential.token)).json()
+        token = job["links"]["events"].split("token=", 1)[1]
+
+    with _client(start_background=False, settings=_settings(auth_tokens=AUTH_TOKENS[1:])) as client:
+        assert _stream_status(client, job["id"], f"?token={token}") == 401
 
 
 def test_event_stream_rejects_missing_or_unusable_stream_tokens():
@@ -2423,8 +2568,41 @@ def test_server_settings_load_the_shared_token_from_env(monkeypatch):
     assert ServerSettings.from_env().auth_token is None
 
 
+def test_server_settings_load_identified_tokens_from_env(monkeypatch):
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv(
+        "API_AUTH_TOKENS",
+        '{"institution-a":"institution-a-auth-token","person_b":"person-b-auth-token"}',
+    )
+
+    settings = ServerSettings.from_env()
+
+    assert settings.auth_tokens == AUTH_TOKENS
+
+
+@pytest.mark.parametrize(
+    "configured,error",
+    [
+        ("not-json", "must be a JSON object"),
+        ('["not", "an", "object"]', "must be a JSON object"),
+        ('{"institution-a": 123}', "values must be strings"),
+        ('{"legacy":"long-enough-auth-token"}', "ID 'legacy' is reserved"),
+        ('{"bad.id":"long-enough-auth-token"}', "IDs must use only"),
+        ('{"same":"first-long-enough-token","same":"second-long-enough-token"}', "duplicate ID"),
+        ('{"first":"duplicate-long-enough-token","second":"duplicate-long-enough-token"}', "duplicate token"),
+    ],
+)
+def test_server_settings_reject_invalid_identified_tokens(monkeypatch, configured, error):
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("API_AUTH_TOKENS", configured)
+
+    with pytest.raises(ValueError, match=error):
+        ServerSettings.from_env()
+
+
 def test_authentication_stays_off_by_default_for_local_runs(monkeypatch):
     monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("API_AUTH_TOKENS", raising=False)
     monkeypatch.delenv("API_AUTH_REQUIRED", raising=False)
     settings = ServerSettings.from_env()
 
@@ -2436,11 +2614,11 @@ def test_enabled_authentication_requires_a_token(monkeypatch):
     monkeypatch.setenv("API_AUTH_REQUIRED", "true")
     monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
 
-    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty"):
+    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN or API_AUTH_TOKENS"):
         ServerSettings.from_env()
 
     monkeypatch.setenv("API_AUTH_TOKEN", "   ")
-    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN must not be empty"):
+    with pytest.raises(ValueError, match="API_AUTH_REQUIRED is set, so API_AUTH_TOKEN or API_AUTH_TOKENS"):
         ServerSettings.from_env()
 
 
@@ -2461,6 +2639,18 @@ def test_enabled_authentication_accepts_a_configured_token(monkeypatch):
     assert settings.auth_token == AUTH_TOKEN
 
 
+def test_enabled_authentication_accepts_identified_tokens_without_the_legacy_token(monkeypatch):
+    monkeypatch.setenv("API_AUTH_REQUIRED", "true")
+    monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("API_AUTH_TOKENS", '{"institution-a":"institution-a-auth-token"}')
+
+    settings = ServerSettings.from_env()
+
+    assert settings.auth_required is True
+    assert settings.auth_token is None
+    assert settings.auth_tokens == AUTH_TOKENS[:1]
+
+
 def test_authentication_can_be_turned_off_deliberately(monkeypatch):
     monkeypatch.setenv("API_AUTH_REQUIRED", "false")
     monkeypatch.delenv("API_AUTH_TOKEN", raising=False)
@@ -2476,3 +2666,74 @@ def test_a_token_alone_still_enables_authentication():
     with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
         assert client.get("/optimize/options").status_code == 401
         assert client.get("/optimize/options", headers=_auth_header()).status_code == 200
+
+
+def test_a_store_outage_reports_once_rather_than_once_per_attempt(caplog):
+    """One outage produced 108 identical reports before background loops backed off."""
+
+    class UnavailableStore(MemoryJobStore):
+        """Fails every claim the way an unreachable Redis does."""
+
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def claim_next_job(self, *args, **kwargs):
+            self.claim_attempts += 1
+            raise TimeoutError("Timeout reading from socket")
+
+    store = UnavailableStore()
+    app = create_app(
+        settings=_settings(claim_poll_seconds=0.005),
+        store=store,
+        runner=SuccessfulRunner(),
+        start_background=True,
+    )
+    with caplog.at_level(logging.ERROR, logger="nurse_scheduling.server"), TestClient(app):
+        deadline = time.monotonic() + 2
+        while store.claim_attempts < 5 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert store.claim_attempts >= 5
+    # Other tests run their own workers, so count only this application's.
+    worker_id = app.state.instance_id
+    claim_failures = [
+        r for r in caplog.records if "failed to claim job" in r.getMessage() and worker_id in r.getMessage()
+    ]
+    assert len(claim_failures) == 1
+
+
+def test_a_store_recovery_is_reported_so_the_silence_ends(monkeypatch):
+    """The failure reaches Sentry as an error log, but recovery is only a warning."""
+    recoveries = []
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.worker.report_outage_recovery",
+        lambda operation, failures: recoveries.append((operation, failures)),
+    )
+
+    class BrieflyUnavailableStore(MemoryJobStore):
+        """Fails a few claims the way a restarting Redis does, then serves again."""
+
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def claim_next_job(self, *args, **kwargs):
+            self.claim_attempts += 1
+            if self.claim_attempts <= 3:
+                raise ConnectionError("Error -3 connecting to redis")
+            return super().claim_next_job(*args, **kwargs)
+
+    store = BrieflyUnavailableStore()
+    app = create_app(
+        settings=_settings(claim_poll_seconds=0.005),
+        store=store,
+        runner=SuccessfulRunner(),
+        start_background=True,
+    )
+    with TestClient(app):
+        deadline = time.monotonic() + 3
+        while not recoveries and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert recoveries == [("worker.claim", 3)]

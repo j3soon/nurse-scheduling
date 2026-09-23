@@ -1,0 +1,13 @@
+apiVersion: alpha
+description: ''
+dates:
+  range: {}
+  items: []
+  groups: []
+people:
+  items: []
+  groups: []
+shiftTypes:
+  items: []
+  groups: []
+preferences: []

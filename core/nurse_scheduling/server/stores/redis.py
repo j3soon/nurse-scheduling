@@ -51,7 +51,7 @@ from ..jobs.models import (
     WorkerLease,
 )
 from ..retry import retry_with_backoff
-from ..usage_metrics import RedisUsageMetrics
+from ..usage_metrics import RedisUsageMetrics, schedule_basics_for
 
 SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
 """Additional socket time allowed beyond one blocking event-stream read."""
@@ -237,6 +237,9 @@ class RedisJobStore:
             JobCapacityError: If pending or retained capacity is exhausted.
             redis.RedisError: If a Redis operation fails.
         """
+        # Parsed once outside the loop, because a watched transaction may retry and the
+        # submitted YAML can be megabytes.
+        schedule_basics = schedule_basics_for(input_bytes) if self._usage_metrics is not None else {}
         while True:
             try:
                 with self._redis.pipeline() as transaction:
@@ -287,7 +290,7 @@ class RedisJobStore:
                         self._with_initial_queue_position(events, queue_position),
                     )
                     if self._usage_metrics is not None:
-                        self._usage_metrics.stage_job_created(transaction, saved)
+                        self._usage_metrics.stage_job_created(transaction, saved, schedule_basics)
                     for position, (queued_id, _score) in enumerate(queue_order, start=1):
                         if queued_id != job.id:
                             self._stage_queue_position_event(transaction, queued_id, position, job.created_at)

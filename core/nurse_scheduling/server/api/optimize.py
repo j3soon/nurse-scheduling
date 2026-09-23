@@ -24,8 +24,11 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
+from ruamel.yaml.error import YAMLError
 from starlette.concurrency import run_in_threadpool
 
+from ...loader import SchedulingDataTooComplexError, measure_yaml_expansion
+from ...sentry import report_suspicious_request
 from ..auth import create_stream_token
 from ..config import ServerSettings
 from ..jobs.controller import JobController
@@ -51,10 +54,18 @@ def _controller(request: Request) -> JobController:
 
 def _events_token(request: Request, job_id: str) -> str | None:
     """Mint the stream credential embedded in a job's events link, when authentication is on."""
-    settings = _settings(request)
-    if settings.auth_token is None:
+    registry = request.app.state.auth_registry
+    if not registry.enabled:
         return None
-    return create_stream_token(settings.auth_token, job_id, ttl_seconds=settings.stream_token_ttl_seconds)
+    credential_id = request.state.auth_credential_id
+    credential = registry.get(credential_id)
+    if credential is None:
+        raise RuntimeError("authenticated request has no matching credential")
+    return create_stream_token(
+        credential.token,
+        job_id,
+        ttl_seconds=_settings(request).stream_token_ttl_seconds,
+    )
 
 
 def _settings(request: Request) -> ServerSettings:
@@ -106,10 +117,24 @@ def _client_id(request: Request, response: Response) -> str:
             max_age=CLIENT_ID_COOKIE_MAX_AGE_SECONDS,
             httponly=True,
             samesite="lax",
-            secure=request.url.scheme == "https",
+            # A TLS-terminating proxy forwards plain HTTP, so the scheme alone cannot
+            # tell whether the browser reached this deployment over HTTPS.
+            secure=_settings(request).cookie_secure or request.url.scheme == "https",
             path="/",
         )
     return client_id
+
+
+def _report_foreign_job_access(request: Request, job) -> None:
+    """Report a browser reaching a job that a different browser created.
+
+    A job identifier is the only thing guarding a job, so anyone holding one can read the
+    schedule it produced or destroy it. An absent cookie is an ordinary API client, while a
+    different one is a browser with its own identity reaching someone else's work.
+    """
+    client_id = request.cookies.get(CLIENT_ID_COOKIE_NAME)
+    if client_id is not None and client_id != job.request.client_id:
+        report_suspicious_request(request, "foreign_job_access", "warning")
 
 
 @router.post("/optimize", status_code=202, response_model=JobResponse)
@@ -134,6 +159,8 @@ async def create_job(
         raise HTTPException(status_code=400, detail=f"Solver must be one of: {choices}")
     timeout_seconds = timeout if timeout is not None else settings.default_timeout_seconds
     if timeout_seconds < settings.min_timeout_seconds or timeout_seconds > settings.max_timeout_seconds:
+        # Clients discover this range from GET /optimize/options, so exceeding it is reported.
+        request.state.invalid_reason = "timeout_out_of_range"
         raise HTTPException(
             status_code=400,
             detail=(
@@ -141,6 +168,16 @@ async def create_job(
                 f"{settings.min_timeout_seconds} and {settings.max_timeout_seconds} seconds"
             ),
         )
+    try:
+        # Read only once the free checks above have passed, so a request that was going to be
+        # rejected never pays for it, and off the event loop because the data is untrusted.
+        expansion = await run_in_threadpool(measure_yaml_expansion, content)
+    except SchedulingDataTooComplexError as error:
+        request.state.invalid_reason = "yaml_expansion_bomb"
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except YAMLError:
+        # The optimization reports the parse error usefully, so the request is still accepted.
+        expansion = None
     # Unlike the synchronous endpoints below, create_job must remain async for
     # upload reading. Offload its synchronous controller/store write so it cannot
     # block the ASGI event loop.
@@ -152,7 +189,14 @@ async def create_job(
         prettify=prettify if prettify is not None else settings.default_prettify,
         timeout_seconds=timeout_seconds,
         input_bytes=content,
+        auth_credential_id=request.state.auth_credential_id,
     )
+    # This project's own data is plain and always parses, so neither shape comes from it.
+    # The job is queued by now, so reporting must not be able to fail the response for it.
+    if expansion is None:
+        await run_in_threadpool(report_suspicious_request, request, "yaml_unparseable", "warning")
+    elif expansion.aliases:
+        await run_in_threadpool(report_suspicious_request, request, "yaml_aliases_used", "warning")
     response.headers["Location"] = f"/optimize/{job.id}"
     response.headers["Retry-After"] = "1"
     return JobResponse.from_job(job, _events_token(request, job.id))
@@ -168,7 +212,9 @@ def get_optimization_options(request: Request, response: Response):
 @router.get("/optimize/{job_id}", response_model=JobResponse)
 def get_job(request: Request, job_id: str):
     """Return the current job representation."""
-    return JobResponse.from_job(_controller(request).get_job(job_id), _events_token(request, job_id))
+    job = _controller(request).get_job(job_id)
+    _report_foreign_job_access(request, job)
+    return JobResponse.from_job(job, _events_token(request, job_id))
 
 
 @events_router.get("/optimize/{job_id}/events")
@@ -178,7 +224,8 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
     Disconnecting closes only this response stream; the durable job continues.
     """
     controller = _controller(request)
-    controller.get_job(job_id)
+    job = controller.get_job(job_id)
+    _report_foreign_job_access(request, job)
 
     def generate():
         """Yield SSE frames, blocking up to the configured keepalive interval."""
@@ -221,19 +268,24 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
 @router.post("/optimize/{job_id}/cancel", status_code=202, response_model=JobResponse)
 def cancel_job(request: Request, job_id: str):
     """Cancel a queued job or request cancellation of a running job."""
-    return JobResponse.from_job(_controller(request).cancel_job(job_id), _events_token(request, job_id))
+    _report_foreign_job_access(request, _controller(request).get_job(job_id))
+    job = _controller(request).cancel_job(job_id)
+    return JobResponse.from_job(job, _events_token(request, job_id))
 
 
 @router.post("/optimize/{job_id}/finish-now", status_code=202, response_model=JobResponse)
 def finish_job_now(request: Request, job_id: str):
     """Ask a supported running solver to return its current result."""
-    return JobResponse.from_job(_controller(request).request_early_completion(job_id), _events_token(request, job_id))
+    _report_foreign_job_access(request, _controller(request).get_job(job_id))
+    job = _controller(request).request_early_completion(job_id)
+    return JobResponse.from_job(job, _events_token(request, job_id))
 
 
 @router.get("/optimize/{job_id}/xlsx")
 def download_xlsx(request: Request, job_id: str):
     """Download the XLSX artifact produced by a completed job."""
     job = _controller(request).get_job(job_id)
+    _report_foreign_job_access(request, job)
     artifact = _controller(request).get_artifact(job_id, job.artifact_name or "schedule.xlsx")
     headers = {"Content-Disposition": f'attachment; filename="{artifact.name}"'}
     return StreamingResponse(BytesIO(artifact.content), media_type=artifact.media_type, headers=headers)
@@ -242,5 +294,7 @@ def download_xlsx(request: Request, job_id: str):
 @router.delete("/optimize/{job_id}", status_code=204)
 def delete_job(request: Request, job_id: str):
     """Delete a terminal job and all associated retained data."""
+    job = _controller(request).get_job(job_id)
+    _report_foreign_job_access(request, job)
     _controller(request).delete_job(job_id)
     return Response(status_code=204)

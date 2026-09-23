@@ -1,0 +1,15 @@
+{
+  "id": "dates-group-add",
+  "fixture": "ward87",
+  "question": "Create a date group called 'Month end' containing the 29th and the 30th.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "dates.groups",
+      "added": [{"id": "Month end", "members": ["29", "30"], "description": ""}]
+    }
+  ],
+  "changes": [
+    "dates.groups"
+  ]
+}

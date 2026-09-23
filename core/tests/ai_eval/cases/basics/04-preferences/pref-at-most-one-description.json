@@ -1,0 +1,25 @@
+{
+  "id": "pref-at-most-one-description",
+  "fixture": "ward87",
+  "question": "Add a description to the 'at most one shift per day' rule saying 'No double shifts'.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "removed": [
+        {
+          "type": "at most one shift per day"
+        }
+      ],
+      "added": [
+        {
+          "type": "at most one shift per day",
+          "description": "No double shifts"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}

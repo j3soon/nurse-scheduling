@@ -20,7 +20,7 @@
 // React hook for scheduling data management with localStorage
 'use client';
 
-import { createContext, createElement, useContext, useState, useEffect, useLayoutEffect, type ReactNode } from 'react';
+import { createContext, createElement, useContext, useMemo, useState, useEffect, useLayoutEffect, type ReactNode } from 'react';
 import { Item, Group, DateRange, ShiftTypeRequirementsPreference, ShiftRequestPreference, ShiftTypeSuccessionsPreference, DataType, Preference, SHIFT_TYPE_REQUIREMENT, SHIFT_REQUEST, SHIFT_TYPE_SUCCESSIONS, SHIFT_COUNT, ExportConfig, ExportFormatting, ExportExtraColumn, ExportExtraRow } from '@/types/scheduling';
 import { ItemGroupEditorPageData } from '@/components/ItemGroupEditorPage';
 import { isReservedKeyword, API_VERSION, ALL } from '@/utils/keywords';
@@ -969,8 +969,13 @@ export function useSchedulingDataInternal() {
     });
   };
 
-  const effectiveExportData =
-    historyState.state.export ?? generateExportLayoutConfig(historyState.state.shiftTypes, historyState.state.dates.groups);
+  // Memoized because the generated fallback would otherwise be a new object on
+  // every render, invalidating every consumer that derives YAML from it.
+  const effectiveExportData = useMemo(
+    () => historyState.state.export
+      ?? generateExportLayoutConfig(historyState.state.shiftTypes, historyState.state.dates.groups),
+    [historyState.state.export, historyState.state.shiftTypes, historyState.state.dates.groups],
+  );
 
   const reloadFromStorage = () => {
     setHistoryState(loadStateFromStorage());

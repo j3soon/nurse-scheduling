@@ -1,0 +1,31 @@
+{
+  "id": "pref-count",
+  "fixture": "ward87",
+  "question": "P63 should work exactly 4 N shifts across the whole month.",
+  "expect_proposal": true,
+  "expected_diff": [
+    {
+      "path": "preferences",
+      "added": [
+        {
+          "type": "shift count",
+          "person": [
+            "P63"
+          ],
+          "countDates": [
+            "ALL"
+          ],
+          "countShiftTypes": [
+            "N"
+          ],
+          "expression": "x = T",
+          "target": 4,
+          "weight": "-.inf"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    "preferences"
+  ]
+}
