@@ -606,6 +606,12 @@ def test_server_settings_reject_invalid_relationships(updates, message):
         _settings(**updates)
 
 
+def test_a_claim_poll_interval_above_the_default_retry_cap_starts():
+    app = create_app(settings=_settings(claim_poll_seconds=6.0), store=MemoryJobStore(), start_background=False)
+
+    assert app.state.job_worker._claim_failures.delay_seconds() == 6.0
+
+
 def test_runtime_deployment_identity_is_shared_within_one_server_launch(monkeypatch):
     supervisor = type("Supervisor", (), {"pid": 123})()
     monkeypatch.setattr("nurse_scheduling.server.runtime_identity.parent_process", lambda: supervisor)

@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import math
 import time
 from collections.abc import Callable
 from typing import TypeVar
@@ -44,11 +45,17 @@ class RepeatedFailure:
 
     def __init__(self, *, base_delay_seconds: float, max_delay_seconds: float = DEFAULT_OUTAGE_MAX_DELAY_SECONDS):
         """Configure the normal retry delay and the longest delay backoff may reach."""
-        if base_delay_seconds <= 0 or max_delay_seconds < base_delay_seconds:
+        if (
+            not math.isfinite(base_delay_seconds)
+            or not math.isfinite(max_delay_seconds)
+            or base_delay_seconds <= 0
+            or max_delay_seconds < base_delay_seconds
+        ):
             raise ValueError("repeated failure delays must be positive and ordered")
         self._base_delay_seconds = base_delay_seconds
         self._max_delay_seconds = max_delay_seconds
         self._failures = 0
+        self._delay_seconds = base_delay_seconds
 
     @property
     def failures(self) -> int:
@@ -58,17 +65,18 @@ class RepeatedFailure:
     def report(self) -> bool:
         """Record one failure and return whether it is the one worth reporting."""
         self._failures += 1
+        if self._failures > 1:
+            self._delay_seconds = min(self._delay_seconds * 2, self._max_delay_seconds)
         return self._failures == 1
 
     def delay_seconds(self) -> float:
         """Return how long to wait before retrying, growing while failures continue."""
-        if self._failures <= 1:
-            return self._base_delay_seconds
-        return min(self._base_delay_seconds * (2 ** (self._failures - 1)), self._max_delay_seconds)
+        return self._delay_seconds
 
     def recovered(self) -> int:
         """Record one success and return how many consecutive failures it ended."""
         ended, self._failures = self._failures, 0
+        self._delay_seconds = self._base_delay_seconds
         return ended
 
 

@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from ...sentry import capture_optimize_exception, report_outage_recovery
 from ..config import DEFAULT_TIMEOUT_GRACE_SECONDS
 from ..errors import JobNotFoundError
-from ..retry import RepeatedFailure
+from ..retry import DEFAULT_OUTAGE_MAX_DELAY_SECONDS, RepeatedFailure
 from ..solver_capabilities import solver_supports_finish_now
 from .controller import JobController
 from .models import Job, JobFailure, JobState, WorkerLease
@@ -66,13 +66,19 @@ class JobWorker:
         """Stable identity recorded on jobs claimed by this worker."""
         self._claim_poll_seconds = claim_poll_seconds
         """Delay between attempts to claim a queued job."""
-        self._claim_failures = RepeatedFailure(base_delay_seconds=claim_poll_seconds)
+        outage_max_delay = max(claim_poll_seconds, DEFAULT_OUTAGE_MAX_DELAY_SECONDS)
+        self._claim_failures = RepeatedFailure(
+            base_delay_seconds=claim_poll_seconds, max_delay_seconds=outage_max_delay
+        )
         """Quiets and slows claim attempts while the store is unavailable."""
-        self._renew_failures = RepeatedFailure(base_delay_seconds=claim_poll_seconds)
+        self._renew_failures = RepeatedFailure(
+            base_delay_seconds=claim_poll_seconds, max_delay_seconds=outage_max_delay
+        )
         """Quiets lease renewal while the store is unavailable."""
-        self._recover_failures = RepeatedFailure(base_delay_seconds=claim_poll_seconds)
+        self._recover_failures = RepeatedFailure(
+            base_delay_seconds=claim_poll_seconds, max_delay_seconds=outage_max_delay
+        )
         """Quiets lease recovery while the store is unavailable."""
-        """Delay between claim attempts and after recoverable loop errors."""
         self._worker_lease_seconds = worker_lease_seconds
         """Maximum time this worker remains live without a successful heartbeat."""
         self._worker_heartbeat_seconds = worker_lease_seconds / 3
