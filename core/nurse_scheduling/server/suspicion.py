@@ -20,6 +20,9 @@
 # This file is mostly AI generated.
 
 import hashlib
+import hmac
+import json
+import secrets
 import threading
 import time
 from collections import OrderedDict
@@ -51,9 +54,25 @@ def address_digest(salt: str, address: str) -> str:
 
     Counting never reads an address back, so a digest keeps the counters from becoming a
     record of who connected. The salt is per deployment launch, so digests do not carry
-    across restarts or compare between deployments.
+    across restarts or compare between deployments. An open deployment uses a separate salt
+    in each process.
     """
-    return hashlib.sha256(f"{salt}:{address}".encode()).hexdigest()[:DIGEST_LENGTH]
+    return hmac.new(salt.encode(), address.encode(), hashlib.sha256).hexdigest()[:DIGEST_LENGTH]
+
+
+def suspicion_salt(settings: "ServerSettings", deployment_id: str) -> str:
+    """Return a private salt shared by authenticated workers in one deployment.
+
+    The deployment ID is public. Bearer keys keep its derived salt private, and an open
+    deployment uses independent process randomness instead of a reversible public salt.
+    """
+    tokens = [credential.token for credential in settings.auth_tokens]
+    if settings.auth_token is not None:
+        tokens.append(settings.auth_token)
+    if not tokens:
+        return secrets.token_hex(32)
+    key = json.dumps(sorted(tokens), separators=(",", ":")).encode()
+    return hmac.new(key, deployment_id.encode(), hashlib.sha256).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -68,6 +87,8 @@ class SuspicionCount:
     A signal repeated against one subject is a client stuck on it, while the same count
     spread across many is a caller working through them. Only the second is deliberate.
     """
+    new_subject: bool = False
+    """Whether this request named a subject not counted earlier in the window."""
 
 
 class SuspicionTracker(Protocol):
@@ -113,15 +134,18 @@ class MemorySuspicionTracker:
             while len(self._counters) > MAX_TRACKED_COUNTERS:
                 self._counters.popitem(last=False)
             distinct = 0
+            new_subject = False
             if subject is not None:
                 seen = self._subjects.pop(key, set())
                 if len(seen) < MAX_TRACKED_SUBJECTS:
-                    seen.add(hash(address_digest(self._salt, subject)))
+                    subject_digest = hash(address_digest(self._salt, subject))
+                    new_subject = subject_digest not in seen
+                    seen.add(subject_digest)
                 self._subjects[key] = seen
                 distinct = len(seen)
                 while len(self._subjects) > MAX_TRACKED_COUNTERS:
                     self._subjects.popitem(last=False)
-        return SuspicionCount(occurrences=total, distinct_subjects=distinct)
+        return SuspicionCount(occurrences=total, distinct_subjects=distinct, new_subject=new_subject)
 
 
 class RedisSuspicionTracker:
@@ -181,6 +205,7 @@ class RedisSuspicionTracker:
             return SuspicionCount(
                 occurrences=int(results[0]),
                 distinct_subjects=int(results[-1]) if subject is not None else 0,
+                new_subject=bool(results[2]) if subject is not None else False,
             )
         except Exception:  # noqa: BLE001
             return self._fallback.record(signal, address, subject)

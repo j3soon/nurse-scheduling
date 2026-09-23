@@ -391,6 +391,17 @@ def test_retrying_one_identifier_never_escalates(captured):
     assert [context["distinct_job_ids"] for context in contexts] == [1, 1, 1]
 
 
+def test_retrying_a_malformed_stream_token_for_one_job_never_escalates(captured):
+    client = _client(auth_token=AUTH_TOKEN, suspicion_escalate_count=3)
+
+    for _ in range(3):
+        assert client.get(f"/optimize/{ISSUED_JOB_ID}/events?token=malformed").status_code == 401
+
+    assert _signals(captured) == [("forged_stream_token", "warning")] * 3
+    contexts = [event["scope"].contexts["suspicious_request"] for event in captured.events]
+    assert [context["distinct_job_ids"] for context in contexts] == [1, 1, 1]
+
+
 def test_probes_from_different_addresses_do_not_escalate_each_other(captured):
     # One application, so one shared tracker, which is what makes the addresses the variable.
     app = _app(suspicion_escalate_count=3)
@@ -472,6 +483,21 @@ def test_one_address_cannot_spend_the_event_quota(captured):
 
     for index in range(8):
         client.get(f"/optimize/job_{index:032x}")
+
+    assert _signals(captured) == [
+        ("job_id_probe", "warning"),
+        ("job_id_probe", "warning"),
+        ("job_id_probe", "error"),
+    ]
+
+
+def test_repeating_after_distinct_job_escalation_stays_capped(captured):
+    client = _client(suspicion_escalate_count=3)
+
+    for index in range(3):
+        client.get(f"/optimize/job_{index:032x}")
+    for _ in range(8):
+        client.get("/optimize/job_00000000000000000000000000000002")
 
     assert _signals(captured) == [
         ("job_id_probe", "warning"),
@@ -566,6 +592,52 @@ def _completed_job(**overrides) -> tuple[TestClient, str]:
             break
         time.sleep(0.01)
     return client, job_id
+
+
+@pytest.mark.parametrize("suffix", ["", "/events"])
+def test_reading_another_browsers_job_is_reported(captured, suffix):
+    client, job_id = _completed_job()
+    try:
+        captured.events.clear()
+        client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
+
+        response = client.get(f"/optimize/{job_id}{suffix}")
+
+        assert response.status_code == 200
+        assert _signals(captured) == [("foreign_job_access", "warning")]
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_cancelling_another_browsers_job_is_reported(captured):
+    client = _client()
+    job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
+    captured.events.clear()
+    client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
+
+    response = client.post(f"/optimize/{job_id}/cancel")
+
+    assert response.status_code == 202
+    assert _signals(captured) == [("foreign_job_access", "warning")]
+
+
+def test_foreign_job_access_escalates_on_distinct_jobs(captured):
+    client = _client(suspicion_escalate_count=3)
+    job_ids = [client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"] for _ in range(3)]
+    captured.events.clear()
+    client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
+
+    for job_id in (job_ids[0], job_ids[0], job_ids[1], job_ids[2]):
+        assert client.get(f"/optimize/{job_id}").status_code == 200
+
+    assert _signals(captured) == [
+        ("foreign_job_access", "warning"),
+        ("foreign_job_access", "warning"),
+        ("foreign_job_access", "warning"),
+        ("foreign_job_access", "error"),
+    ]
+    contexts = [event["scope"].contexts["suspicious_request"] for event in captured.events]
+    assert [context["distinct_job_ids"] for context in contexts] == [1, 1, 2, 3]
 
 
 def test_downloading_another_browsers_job_is_reported(captured):

@@ -319,7 +319,7 @@ contract are sent to Sentry, because a scanner cannot produce them:
 | `yaml_expansion_bomb` | Submitted data expands or nests past what the server reads, so it was refused. | error |
 | `yaml_aliases_used` | Accepted data used a YAML alias, which nothing this project produces does. | warning |
 | `yaml_unparseable` | Accepted data is not valid YAML, which a client that serializes its own data does not submit. | warning |
-| `foreign_job_access` | A browser downloaded or deleted a job that a different browser created. A caller sending no cookie is not reported. | warning |
+| `foreign_job_access` | A browser read, controlled, downloaded, or deleted a job that a different browser created. A caller sending no cookie is not reported. | warning |
 | `job_capacity_exceeded` | One address met a full job queue, which repeats only when that address filled it. | warning |
 | `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |
 | `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
@@ -342,10 +342,12 @@ window keep counting but are not reported, so one address cannot spend the
 project's event quota. Because the window is fixed rather than sliding, repeats
 spread across a boundary can stay below the threshold. Addresses are counted as a
 salted digest, so the counters hold no record of who connected, and the salt is
-per deployment launch. Redis deployments share counters across worker processes.
-A memory deployment counts per process, so it reaches the threshold later.
-Counting is advisory, and a storage failure leaves the report unescalated rather
-than losing it.
+derived from bearer keys and the deployment ID when authentication is enabled.
+Authenticated Redis deployments share counters across worker processes. Open
+deployments use a random salt per process, so their counters are process-local
+even with Redis. They can reach the threshold later.
+Counting is advisory. During a Redis failure each process uses local fallback
+counts, so escalation reflects only the requests that process saw.
 
 A stale browser tab can produce `job_id_probe` after its job is deleted or
 expires, and a mistyped token produces `rejected_bearer_token`, so both are

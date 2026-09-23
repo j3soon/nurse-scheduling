@@ -212,7 +212,9 @@ def get_optimization_options(request: Request, response: Response):
 @router.get("/optimize/{job_id}", response_model=JobResponse)
 def get_job(request: Request, job_id: str):
     """Return the current job representation."""
-    return JobResponse.from_job(_controller(request).get_job(job_id), _events_token(request, job_id))
+    job = _controller(request).get_job(job_id)
+    _report_foreign_job_access(request, job)
+    return JobResponse.from_job(job, _events_token(request, job_id))
 
 
 @events_router.get("/optimize/{job_id}/events")
@@ -222,7 +224,8 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
     Disconnecting closes only this response stream; the durable job continues.
     """
     controller = _controller(request)
-    controller.get_job(job_id)
+    job = controller.get_job(job_id)
+    _report_foreign_job_access(request, job)
 
     def generate():
         """Yield SSE frames, blocking up to the configured keepalive interval."""
@@ -265,13 +268,17 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
 @router.post("/optimize/{job_id}/cancel", status_code=202, response_model=JobResponse)
 def cancel_job(request: Request, job_id: str):
     """Cancel a queued job or request cancellation of a running job."""
-    return JobResponse.from_job(_controller(request).cancel_job(job_id), _events_token(request, job_id))
+    job = _controller(request).cancel_job(job_id)
+    _report_foreign_job_access(request, job)
+    return JobResponse.from_job(job, _events_token(request, job_id))
 
 
 @router.post("/optimize/{job_id}/finish-now", status_code=202, response_model=JobResponse)
 def finish_job_now(request: Request, job_id: str):
     """Ask a supported running solver to return its current result."""
-    return JobResponse.from_job(_controller(request).request_early_completion(job_id), _events_token(request, job_id))
+    job = _controller(request).request_early_completion(job_id)
+    _report_foreign_job_access(request, job)
+    return JobResponse.from_job(job, _events_token(request, job_id))
 
 
 @router.get("/optimize/{job_id}/xlsx")

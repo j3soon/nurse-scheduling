@@ -56,7 +56,7 @@ from .request_limits import MULTIPART_OVERHEAD_BYTES, MaxBodySizeMiddleware
 from .runtime_identity import get_deployment_id
 from .solver_options import validate_solver_availability
 from .stores.memory import MemoryJobStore
-from .suspicion import create_suspicion_tracker
+from .suspicion import create_suspicion_tracker, suspicion_salt
 
 TITLE = "Nurse Scheduling API"
 SERVICE_NAME = "nurse-scheduling-api"
@@ -203,8 +203,7 @@ def create_app(
         unexpected_error_formatter=_format_unexpected_error,
     )
     maintenance = JobMaintenance(controller, interval_seconds=settings.maintenance_interval_seconds)
-    # Salted per deployment launch, which every worker of that launch shares.
-    suspicion_tracker = create_suspicion_tracker(settings, salt=deployment_id)
+    suspicion_tracker = create_suspicion_tracker(settings, salt=suspicion_salt(settings, deployment_id))
     init_sentry(app_version)
 
     @asynccontextmanager

@@ -205,7 +205,7 @@ ISSUED_JOB_ID_SHAPE = "issued_shape"
 """Description of a job identifier that this server could have issued."""
 STREAM_ROUTE_SUFFIX = "/events"
 """Route suffix of the only endpoint accepting a stream token."""
-SUBJECT_SIGNALS = frozenset({"job_id_probe"})
+SUBJECT_SIGNALS = frozenset({"job_id_probe", "foreign_job_access", "forged_stream_token"})
 """Signals whose every request names a job, so spread is what makes them deliberate."""
 INVALID_REASON_LEVELS = {"yaml_expansion_bomb": "error"}
 """Levels for a signal a route names directly, defaulting to a warning."""
@@ -344,7 +344,8 @@ def _report_suspicious_request(
             level = "error"
         # One address cannot spend the project's event quota. The request that first reaches
         # the threshold is still reported, so spreading slowly cannot buy silence.
-        if occurrences > escalate_count and spread != escalate_count:
+        crossed_threshold = signal_name in SUBJECT_SIGNALS and spread == escalate_count and counted.new_subject
+        if occurrences > escalate_count and not crossed_threshold:
             return
 
     route = request.scope.get("route")

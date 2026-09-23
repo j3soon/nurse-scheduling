@@ -19,8 +19,10 @@
 
 # This test is mostly AI generated.
 
+import fakeredis
 import pytest
 
+from nurse_scheduling.server.auth import AuthCredential
 from nurse_scheduling.server.config import ServerSettings
 from nurse_scheduling.server.suspicion import (
     MAX_TRACKED_COUNTERS,
@@ -29,6 +31,7 @@ from nurse_scheduling.server.suspicion import (
     RedisSuspicionTracker,
     address_digest,
     create_suspicion_tracker,
+    suspicion_salt,
 )
 
 
@@ -99,6 +102,24 @@ def test_a_digest_hides_the_address_and_does_not_compare_across_salts():
     assert digest != address_digest("other-salt", "203.0.113.7")
 
 
+def test_authenticated_workers_share_a_private_deployment_salt():
+    settings = ServerSettings(auth_tokens=(AuthCredential("service", "a-private-bearer-key"),))
+
+    first = suspicion_salt(settings, "public-deployment-id")
+    second = suspicion_salt(settings, "public-deployment-id")
+
+    assert first == second
+    assert first != "public-deployment-id"
+    assert first != suspicion_salt(settings, "another-deployment-id")
+    assert first != suspicion_salt(ServerSettings(auth_token="another-private-key"), "public-deployment-id")
+
+
+def test_open_workers_do_not_derive_a_salt_from_the_public_deployment_id():
+    settings = ServerSettings()
+
+    assert suspicion_salt(settings, "public-deployment-id") != suspicion_salt(settings, "public-deployment-id")
+
+
 def test_redis_counting_failure_keeps_counting_in_this_process():
     import redis
 
@@ -136,9 +157,22 @@ def test_distinct_subjects_separate_a_stuck_client_from_a_caller_working_through
     stuck = [tracker.record("job_id_probe", "203.0.113.7", "job_a") for _ in range(4)]
     assert [c.occurrences for c in stuck] == [1, 2, 3, 4]
     assert [c.distinct_subjects for c in stuck] == [1, 1, 1, 1]
+    assert [c.new_subject for c in stuck] == [True, False, False, False]
 
     walking = [tracker.record("job_id_probe", "203.0.113.8", f"job_{n}") for n in range(4)]
     assert [c.distinct_subjects for c in walking] == [1, 2, 3, 4]
+    assert all(c.new_subject for c in walking)
+
+
+def test_redis_marks_only_the_first_request_for_a_subject_as_new():
+    tracker = RedisSuspicionTracker(
+        fakeredis.FakeRedis(), salt="salt", window_seconds=300, escalate_count=3, clock=FakeClock()
+    )
+
+    counts = [tracker.record("job_id_probe", "203.0.113.7", subject) for subject in ("a", "a", "b", "c", "c")]
+
+    assert [count.distinct_subjects for count in counts] == [1, 1, 2, 3, 3]
+    assert [count.new_subject for count in counts] == [True, False, True, True, False]
 
 
 def test_a_signal_naming_no_subject_counts_none():
