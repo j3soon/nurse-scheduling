@@ -21,6 +21,7 @@
 
 import asyncio
 import json
+import threading
 from collections.abc import AsyncIterator
 
 import httpx
@@ -1070,5 +1071,90 @@ def test_session_limit_preserves_a_live_sessions_completed_result() -> None:
         assert not blocked.ok
         assert (await optimizer.result_artifact("session-1", job_id)).content == WORKBOOK_BYTES
         await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_retirement_during_preparation_revokes_submission(monkeypatch) -> None:
+    from nurse_scheduling.ai import optimizer as module
+
+    entered = threading.Event()
+    release = threading.Event()
+    prepare = module.prepare_optimizer_schedule
+
+    def blocked_prepare(*args):
+        entered.set()
+        assert release.wait(timeout=2)
+        return prepare(*args)
+
+    monkeypatch.setattr(module, "prepare_optimizer_schedule", blocked_prepare)
+
+    async def scenario():
+        backend = FakeOptimizerBackend()
+
+        async def on_completion(*_args):
+            pytest.fail("A retired job cannot wake the assistant")
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        starting = asyncio.create_task(optimizer.execute("session", TEST_SCHEDULE, "{}"))
+        assert await asyncio.to_thread(entered.wait, 1)
+        optimizer.forget_session("session")
+        release.set()
+        assert not (await starting).ok
+        assert backend.submissions == []
+        assert optimizer._sessions == {}
+        await optimizer.close()
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_submission_cleans_its_late_remote_response_without_revoking_the_retry() -> None:
+    async def scenario():
+        backend = FakeOptimizerBackend()
+        backend.submit_gate = asyncio.Event()
+
+        async def on_completion(*_args):
+            return None
+
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=0.001, on_completion=on_completion, max_runs_per_session=1
+        )
+        starting = asyncio.create_task(optimizer.execute("session", TEST_SCHEDULE, "{}"))
+        await backend.submit_entered.wait()
+        starting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await starting
+        # The abandoned submission and its retry now have distinct owners.
+        retry = asyncio.create_task(optimizer.execute("session", TEST_SCHEDULE, "{}"))
+        backend.submit_gate.set()
+        assert (await retry).ok
+        await asyncio.wait_for(backend.deleted_event.wait(), timeout=1)
+        assert backend.cancel_requests == ["remote-1"]
+        assert backend.deleted == ["remote-1"]
+        assert optimizer._latest("session").remote_id == "remote-2"
+        assert optimizer._sessions["session"].runs == 1
+        await optimizer.close()
+        assert backend.closed
+        assert optimizer._tasks == set()
+        assert optimizer._submissions == set()
+
+    asyncio.run(scenario())
+
+
+def test_shutdown_during_followup_does_not_delete_the_remote_job_twice() -> None:
+    async def scenario():
+        backend = FakeOptimizerBackend()
+        reviewing = asyncio.Event()
+
+        async def on_completion(*_args):
+            reviewing.set()
+            await asyncio.Event().wait()
+
+        optimizer = SessionOptimizer(backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        assert (await optimizer.execute("session", TEST_SCHEDULE, "{}")).ok
+        backend.release.set()
+        await reviewing.wait()
+        await optimizer.close()
+        assert backend.deleted == ["remote-1"]
 
     asyncio.run(scenario())

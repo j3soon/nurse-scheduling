@@ -72,6 +72,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   Admit agent turns through `SessionTurns` and keep foreground and background
   execution in the shared turn runner. Await owned cleanup before releasing
   admission. Commit conversation changes only with the matching `TurnSnapshot`.
+- Optimizer submissions and jobs belong to the optimizer service, not to the
+  requesting turn. Revoke the submission owner on cancellation and dispose of
+  late remote responses. Keep progress readers inside the job lifecycle scope.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.

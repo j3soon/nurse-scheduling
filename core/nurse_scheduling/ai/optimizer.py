@@ -26,7 +26,7 @@ import json
 import logging
 import math
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlsplit
 from uuid import uuid4
@@ -230,7 +230,13 @@ class SessionOptimization:
     original_id_by_anonymized_id: dict[str, str]
     people_count: int
     artifact: "OptimizerArtifact | None" = None
-    progress_task: asyncio.Task[None] | None = None
+    retired: asyncio.Event = field(default_factory=asyncio.Event)
+    deleted: bool = False
+
+    def observe(self, payload: OptimizerJobPayload) -> None:
+        """Terminal snapshots dominate late control and poll responses."""
+        if not _is_terminal(self.payload):
+            self.payload = payload
 
 
 @dataclass(frozen=True)
@@ -244,6 +250,15 @@ class OptimizerArtifact:
 
 CompletionCallback = Callable[[str, str, OptimizerArtifact | None], Awaitable[None]]
 UpdateCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
+
+
+@dataclass
+class OptimizerSession:
+    """One revocable owner for run limits, submission and the latest job."""
+
+    runs: int = 0
+    reservation: object | None = None
+    latest: str | None = None
 
 
 class SessionOptimizer:
@@ -276,13 +291,12 @@ class SessionOptimizer:
         self._max_cached_result_bytes = max_cached_result_bytes
         self._max_schedule_bytes = max_schedule_bytes
         self._jobs: dict[str, SessionOptimization] = {}
-        self._latest_by_session: dict[str, str] = {}
-        self._starting: dict[str, object] = {}
-        self._run_counts: dict[str, int] = {}
+        self._sessions: dict[str, OptimizerSession] = {}
         self._artifact_order: list[str] = []
         self._cached_artifact_bytes = 0
         self._tasks: set[asyncio.Task[None]] = set()
-        self._lock = asyncio.Lock()
+        self._submissions: set[asyncio.Task] = set()
+        self._closed = False
 
     async def execute(self, session_id: str, schedule_yaml: str, arguments: str) -> AgentToolOutcome:
         """Execute the model-facing optimizer action."""
@@ -305,122 +319,136 @@ class SessionOptimizer:
         return AgentToolOutcome("action must be one of: start, status, finish_now.", False)
 
     async def close(self) -> None:
+        self._closed = True
+        for session_id in tuple(self._sessions):
+            self.forget_session(session_id)
+        # Keep ownership of in-flight submissions until the bounded transport returns.
+        await asyncio.gather(*tuple(self._submissions), return_exceptions=True)
         tasks = tuple(self._tasks)
         for task in tasks:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         await self._backend.close()
 
     async def result_artifact(self, session_id: str, job_id: str) -> OptimizerArtifact:
         """Return a completed artifact only to the session that started it."""
-        async with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None or job.session_id != session_id:
-                raise OptimizerResultUnavailable("Optimizer result not found.")
-            if job.artifact is None:
-                raise OptimizerResultUnavailable("This optimizer run has no downloadable result.")
-            return job.artifact
+        job = self._jobs.get(job_id)
+        if job is None or job.session_id != session_id:
+            raise OptimizerResultUnavailable("Optimizer result not found.")
+        if job.artifact is None:
+            raise OptimizerResultUnavailable("This optimizer run has no downloadable result.")
+        return job.artifact
 
     async def latest_result_artifact(self, session_id: str) -> OptimizerArtifact | None:
         """Return the newest finished workbook for a follow-up sandbox turn."""
-        async with self._lock:
-            for job in reversed(self._jobs.values()):
-                # A run that is still going has no result yet, so an older workbook
-                # remains current. A finished run without one makes every earlier
-                # workbook stale, and mounting it would misreport the latest result.
-                if job.session_id != session_id or not _is_terminal(job.payload):
-                    continue
-                return job.artifact
-            return None
+        for job in reversed(self._jobs.values()):
+            # A run that is still going has no result yet, so an older workbook
+            # remains current. A finished run without one makes every earlier
+            # workbook stale, and mounting it would misreport the latest result.
+            if job.session_id != session_id or not _is_terminal(job.payload):
+                continue
+            return job.artifact
+        return None
 
     def forget_session(self, session_id: str) -> None:
-        """Drop every record of a retired chat session.
-
-        The AI session store calls this synchronously while retiring a session, so it
-        only rebinds state that the lock-holding coroutines never mutate across an await.
-        """
-        self._starting.pop(session_id, None)
+        """Revoke the owner synchronously. Its jobs perform their own remote cleanup."""
         for job in self._jobs.values():
-            if job.session_id == session_id and not _is_terminal(job.payload):
-                if job.progress_task is not None:
-                    job.progress_task.cancel()
-                self._start_task(self._cancel_retired(job))
+            if job.session_id == session_id:
+                job.retired.set()
         self._discard_session(session_id)
 
     async def _start(self, session_id: str, schedule_yaml: str, timeout_seconds: int | None) -> AgentToolOutcome:
+        if self._closed:
+            return AgentToolOutcome("The optimizer service is shutting down.", False)
+        owner = self._sessions.get(session_id)
+        if owner is None:
+            if len(self._sessions) >= self._max_sessions:
+                return AgentToolOutcome("The optimizer session limit has been reached.", False)
+            owner = OptimizerSession()
+            self._sessions[session_id] = owner
+        if owner.reservation is not None:
+            return AgentToolOutcome("An optimizer run for this chat session is already being submitted.", False)
+        if owner.runs >= self._max_runs_per_session:
+            return AgentToolOutcome(
+                f"This chat session has reached its limit of {self._max_runs_per_session} optimizer runs.",
+                False,
+            )
+        current = self._latest(session_id)
+        if current is not None and not _is_terminal(current.payload):
+            return AgentToolOutcome(
+                f"Optimizer job {current.id} is already {current.payload.state}. Check it or finish it now.",
+                False,
+            )
+        # Reserve before the first await, including threaded validation.
+        reservation = object()
+        owner.reservation = reservation
+        owner.runs += 1
+        submission = asyncio.create_task(self._submit(session_id, owner, reservation, schedule_yaml, timeout_seconds))
+        self._submissions.add(submission)
+
+        def submitted(task: asyncio.Task) -> None:
+            self._submissions.discard(task)
+            if not task.cancelled():
+                task.exception()
+
+        submission.add_done_callback(submitted)
+        try:
+            return await asyncio.shield(submission)
+        except asyncio.CancelledError:
+            self._release_reservation(session_id, owner, reservation)
+            # The owned submission disposes of any late response after revocation.
+            raise
+
+    async def _submit(
+        self,
+        session_id: str,
+        owner: OptimizerSession,
+        reservation: object,
+        schedule_yaml: str,
+        timeout_seconds: int | None,
+    ) -> AgentToolOutcome:
+        def owns_submission() -> bool:
+            return not self._closed and self._sessions.get(session_id) is owner and owner.reservation is reservation
+
+        expired = AgentToolOutcome("This chat session expired while the optimizer job was starting.", False)
         try:
             prepared = await asyncio.to_thread(prepare_optimizer_schedule, schedule_yaml, self._max_schedule_bytes)
-        except ValueError as exc:
-            return AgentToolOutcome(f"The optimizer requires a valid frontend schedule. {exc}", False)
-        async with self._lock:
-            if (
-                session_id not in self._latest_by_session
-                and session_id not in self._starting
-                and len(set(self._latest_by_session) | set(self._starting)) >= self._max_sessions
-            ):
-                return AgentToolOutcome("The optimizer session limit has been reached.", False)
-            if self._run_counts.get(session_id, 0) >= self._max_runs_per_session:
-                return AgentToolOutcome(
-                    f"This chat session has reached its limit of {self._max_runs_per_session} optimizer runs.",
-                    False,
-                )
-            if session_id in self._starting:
-                return AgentToolOutcome("An optimizer run for this chat session is already being submitted.", False)
-            current = self._latest(session_id)
-            if current is not None and not _is_terminal(current.payload):
-                return AgentToolOutcome(
-                    f"Optimizer job {current.id} is already {current.payload.state}. Check it or finish it now.",
-                    False,
-                )
-            # Reserve the run, then submit without the shared lock. Remote submission
-            # would otherwise serialize starts, retention, and downloads across sessions.
-            reservation = object()
-            self._starting[session_id] = reservation
-            self._run_counts[session_id] = self._run_counts.get(session_id, 0) + 1
-        try:
+            if not owns_submission():
+                return expired
             payload = await self._backend.submit(
                 prepared.submission_yaml,
                 self._default_timeout_seconds if timeout_seconds is None else timeout_seconds,
             )
+        except ValueError as exc:
+            self._release_reservation(session_id, owner, reservation)
+            return AgentToolOutcome(f"The optimizer requires a valid frontend schedule. {exc}", False)
         except OptimizerError as exc:
             logger.warning("Optimizer submission failed: %s", exc)
-            self._release_reservation(session_id, reservation)
+            self._release_reservation(session_id, owner, reservation)
             return AgentToolOutcome(f"The optimizer could not accept the schedule. {exc}", False)
         except BaseException:
-            # A stopped turn cancels this call, and keeping the reservation would leave
-            # the session unable to start another run.
-            self._release_reservation(session_id, reservation)
+            self._release_reservation(session_id, owner, reservation)
             raise
-        async with self._lock:
-            retired = self._starting.get(session_id) is not reservation
-            if not retired:
-                self._starting.pop(session_id)
-            job = SessionOptimization(
-                id=f"opt_{uuid4().hex}",
-                session_id=session_id,
-                remote_id=payload.id,
-                source_sha256=hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest(),
-                payload=payload,
-                original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
-                people_count=prepared.people_count,
-            )
-            if not retired:
-                self._jobs[job.id] = job
-                self._latest_by_session[session_id] = job.id
-            if retired:
-                if _is_terminal(payload):
-                    self._start_task(self._delete_retired(job))
-                else:
-                    self._start_task(self._monitor(job))
-                    self._start_task(self._cancel_retired(job))
-            elif _is_terminal(payload):
-                self._start_task(self._complete(job))
-            else:
-                job.progress_task = self._start_task(self._relay_progress(job))
-                self._start_task(self._monitor(job))
+        retired = not owns_submission()
+        if not retired:
+            owner.reservation = None
+        job = SessionOptimization(
+            id=f"opt_{uuid4().hex}",
+            session_id=session_id,
+            remote_id=payload.id,
+            source_sha256=hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest(),
+            payload=payload,
+            original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
+            people_count=prepared.people_count,
+        )
         if retired:
-            return AgentToolOutcome("This chat session expired while the optimizer job was starting.", False)
+            job.retired.set()
+        else:
+            self._jobs[job.id] = job
+            owner.latest = job.id
+        self._start_task(self._run_job(job))
+        if retired:
+            return expired
         if not _is_terminal(job.payload):
             await self._notify_update(job)
         return AgentToolOutcome(
@@ -428,6 +456,36 @@ class SessionOptimizer:
             "The assistant will be woken when it finishes. The user can keep chatting meanwhile.",
             True,
         )
+
+    async def _run_job(self, job: SessionOptimization) -> None:
+        """Own progress, monitoring, result delivery and remote cleanup as one scope."""
+        progress = asyncio.create_task(self._relay_progress(job))
+        try:
+            await self._monitor(job)
+            if not progress.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(progress), timeout=1)
+                except TimeoutError:
+                    progress.cancel()
+            await asyncio.gather(progress, return_exceptions=True)
+            if not _is_terminal(job.payload):
+                return
+            if self._jobs.get(job.id) is job:
+                await self._complete(job)
+            else:
+                await self._delete_retired(job)
+        except asyncio.CancelledError:
+            # Shutdown also owns the remote side of a still-running job.
+            if not _is_terminal(job.payload):
+                await self._cancel_retired(job)
+            if _is_terminal(job.payload):
+                await self._delete_retired(job)
+            raise
+        finally:
+            progress.cancel()
+            await asyncio.gather(progress, return_exceptions=True)
+            if _is_terminal(job.payload):
+                await self._delete_retired(job)
 
     async def _status(self, session_id: str) -> AgentToolOutcome:
         job = self._latest(session_id)
@@ -441,15 +499,16 @@ class SessionOptimizer:
         except OptimizerError as exc:
             logger.warning("Optimizer cancellation failed job_id=%s error=%s", job.id, exc)
             return
-        async with self._lock:
-            if not _is_terminal(job.payload):
-                job.payload = payload
+        job.observe(payload)
 
     async def _delete_retired(self, job: SessionOptimization) -> None:
+        if job.deleted:
+            return
         try:
             await self._backend.delete(job.remote_id)
         except OptimizerError as exc:
             logger.warning("Optimizer cleanup failed job_id=%s error=%s", job.id, exc)
+        job.deleted = True
 
     async def _finish_now(self, session_id: str) -> AgentToolOutcome:
         job = self._latest(session_id)
@@ -462,11 +521,10 @@ class SessionOptimizer:
         except OptimizerError as exc:
             logger.warning("Optimizer finish-now request failed job_id=%s error=%s", job.id, exc)
             return AgentToolOutcome(f"The optimizer did not accept the finish-now request. {exc}", False)
-        async with self._lock:
-            # Polling can reach a terminal state while this request is in flight. Keeping
-            # the older snapshot would block the session from ever starting another run.
-            if self._jobs.get(job.id) is job and not _is_terminal(job.payload):
-                job.payload = payload
+        # Polling can reach a terminal state while this request is in flight. Keeping
+        # the older snapshot would block the session from ever starting another run.
+        if self._jobs.get(job.id) is job:
+            job.observe(payload)
         if not _is_terminal(job.payload):
             await self._notify_update(job)
         return AgentToolOutcome(
@@ -477,8 +535,21 @@ class SessionOptimizer:
     async def _monitor(self, job: SessionOptimization) -> None:
         unreachable_since: float | None = None
         outage_reported = False
+        cancellation_requested = False
         while not _is_terminal(job.payload):
-            await asyncio.sleep(self._poll_interval_seconds)
+            if job.retired.is_set() and not cancellation_requested:
+                cancellation_requested = True
+                await self._cancel_retired(job)
+                if _is_terminal(job.payload):
+                    break
+            if cancellation_requested:
+                await asyncio.sleep(self._poll_interval_seconds)
+            else:
+                try:
+                    await asyncio.wait_for(job.retired.wait(), timeout=self._poll_interval_seconds)
+                    continue
+                except TimeoutError:
+                    pass
             try:
                 payload = await self._backend.get(job.remote_id)
             except asyncio.CancelledError:
@@ -500,21 +571,7 @@ class SessionOptimizer:
                 continue
             unreachable_since = None
             outage_reported = False
-            async with self._lock:
-                if not _is_terminal(job.payload):
-                    job.payload = payload
-        if job.progress_task is not None:
-            try:
-                await asyncio.wait_for(job.progress_task, timeout=1)
-            except TimeoutError:
-                job.progress_task.cancel()
-            except asyncio.CancelledError:
-                if self._jobs.get(job.id) is job:
-                    raise
-        if self._jobs.get(job.id) is job:
-            await self._complete(job)
-        else:
-            await self._delete_retired(job)
+            job.observe(payload)
 
     async def _relay_progress(self, job: SessionOptimization) -> None:
         try:
@@ -546,10 +603,7 @@ class SessionOptimizer:
             except (OptimizerError, OptimizerResultError) as exc:
                 logger.warning("Optimizer result read failed job_id=%s error=%s", job.id, exc)
                 artifact_error = str(exc)
-        try:
-            await self._backend.delete(job.remote_id)
-        except OptimizerError as exc:
-            logger.warning("Optimizer cleanup failed job_id=%s error=%s", job.id, exc)
+        await self._delete_retired(job)
         if self._jobs.get(job.id) is not job:
             return
         result_data = {
@@ -572,21 +626,20 @@ class SessionOptimizer:
         await self._on_completion(job.session_id, prompt, job.artifact)
 
     async def _retain_artifact(self, job: SessionOptimization, artifact: OptimizerArtifact) -> None:
-        async with self._lock:
-            if self._jobs.get(job.id) is not job:
-                return
-            while self._artifact_order and (
-                self._cached_artifact_bytes + len(artifact.content) > self._max_cached_result_bytes
-            ):
-                expired_id = self._artifact_order.pop(0)
-                expired = self._jobs.get(expired_id)
-                if expired is not None and expired.artifact is not None:
-                    self._cached_artifact_bytes -= len(expired.artifact.content)
-                    expired.artifact = None
-            if len(artifact.content) <= self._max_cached_result_bytes:
-                job.artifact = artifact
-                self._artifact_order.append(job.id)
-                self._cached_artifact_bytes += len(artifact.content)
+        if self._jobs.get(job.id) is not job:
+            return
+        while self._artifact_order and (
+            self._cached_artifact_bytes + len(artifact.content) > self._max_cached_result_bytes
+        ):
+            expired_id = self._artifact_order.pop(0)
+            expired = self._jobs.get(expired_id)
+            if expired is not None and expired.artifact is not None:
+                self._cached_artifact_bytes -= len(expired.artifact.content)
+                expired.artifact = None
+        if len(artifact.content) <= self._max_cached_result_bytes:
+            job.artifact = artifact
+            self._artifact_order.append(job.id)
+            self._cached_artifact_bytes += len(artifact.content)
 
     async def _notify_update(self, job: SessionOptimization) -> None:
         if self._on_update is None or self._jobs.get(job.id) is not job:
@@ -604,28 +657,20 @@ class SessionOptimizer:
         )
 
     def _latest(self, session_id: str) -> SessionOptimization | None:
-        job_id = self._latest_by_session.get(session_id)
-        return self._jobs.get(job_id) if job_id is not None else None
+        owner = self._sessions.get(session_id)
+        return self._jobs.get(owner.latest) if owner is not None else None
 
-    def _release_reservation(self, session_id: str, reservation: object) -> None:
-        """Return the run reserved for a submission that never produced a job.
-
-        Rebinding this bookkeeping never spans an await, so it stays consistent for the
-        lock holders and remains available while a cancelled call unwinds.
-        """
-        if self._starting.get(session_id) is not reservation:
+    def _release_reservation(self, session_id: str, owner: OptimizerSession, reservation: object) -> None:
+        if self._sessions.get(session_id) is not owner or owner.reservation is not reservation:
             return
-        self._starting.pop(session_id)
-        remaining = self._run_counts.get(session_id, 1) - 1
-        if remaining > 0:
-            self._run_counts[session_id] = remaining
-        else:
-            self._run_counts.pop(session_id, None)
+        owner.reservation = None
+        owner.runs -= 1
+        if owner.runs == 0:
+            self._sessions.pop(session_id)
 
     def _discard_session(self, session_id: str) -> None:
         """Release every run a session owns, including the ones it already replaced."""
-        self._latest_by_session.pop(session_id, None)
-        self._run_counts.pop(session_id, None)
+        self._sessions.pop(session_id, None)
         for job_id in [job_id for job_id, job in self._jobs.items() if job.session_id == session_id]:
             job = self._jobs.pop(job_id)
             if job.artifact is not None:
@@ -635,7 +680,13 @@ class SessionOptimizer:
     def _start_task(self, coroutine: Awaitable[None]) -> asyncio.Task[None]:
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+
+        def finished(task: asyncio.Task[None]) -> None:
+            self._tasks.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                logger.error("Optimizer lifecycle failed", exc_info=task.exception())
+
+        task.add_done_callback(finished)
         return task
 
 
