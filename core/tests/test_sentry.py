@@ -19,14 +19,15 @@
 
 # This test is mostly AI generated.
 
+import asyncio
 import sys
 import types
 from datetime import datetime, timezone
-from ipaddress import ip_address, ip_network
 from pathlib import Path
 
 import pytest
 from ruamel.yaml import YAML
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from nurse_scheduling.loader import _load_yaml
 from nurse_scheduling.sentry import (
@@ -308,45 +309,77 @@ def test_compose_python_services_share_sentry_environment(compose_file, service_
 
 
 @pytest.mark.parametrize("compose_file", ["compose.backend.yml", "compose.backend.memory.yml"])
-def test_compose_trusts_only_its_pinned_forwarding_proxies(compose_file):
+def test_compose_trusts_local_proxies_without_address_configuration(compose_file):
     docker_dir = REPOSITORY_ROOT / "docker"
     compose = YAML(typ="safe").load((docker_dir / compose_file).read_text(encoding="utf-8"))
+    api = compose["services"]["api"]
+    nginx = compose["services"]["nginx"]
+    cloudflared = compose["services"]["cloudflared"]
+    ai = compose["services"]["ai"]
+    assert set(api["networks"]) >= {"api"}
+    assert set(nginx["networks"]) == {"api", "ai", "tunnel"}
+    assert set(cloudflared["networks"]) == {"tunnel"}
+    assert set(ai["networks"]) >= {"api", "ai"}
+    assert api["command"][api["command"].index("--forwarded-allow-ips") + 1] == "*"
+    assert ai["command"][ai["command"].index("--forwarded-allow-ips") + 1] == "*"
+    assert ai["environment"]["AI_OPTIMIZER_BASE_URL"] == "${AI_OPTIMIZER_BASE_URL:-http://api:8000}"
+    assert "ipam" not in str(compose["networks"])
+    assert "ipv4_address" not in str(compose)
+    assert "FORWARDED_ALLOW_IPS" not in str(compose)
 
-    def default(value, name):
-        prefix = "${" + name + ":-"
-        assert value.startswith(prefix) and value.endswith("}")
-        return value[len(prefix) : -1]
 
-    nginx_ip = default(compose["services"]["nginx"]["networks"]["api"]["ipv4_address"], "NGINX_API_IP")
-    tunnel_ip = default(
-        compose["services"]["cloudflared"]["networks"]["tunnel"]["ipv4_address"],
+def test_compose_examples_have_no_address_allocation_settings():
+    removed_names = {
+        "FORWARDED_ALLOW_IPS",
+        "NGINX_API_IP",
         "CLOUDFLARED_TUNNEL_IP",
-    )
-    trusted = default(compose["services"]["api"]["environment"]["FORWARDED_ALLOW_IPS"], "FORWARDED_ALLOW_IPS")
+        "API_NETWORK_SUBNET",
+        "TUNNEL_NETWORK_SUBNET",
+        "API_NETWORK_DYNAMIC_RANGE",
+        "TUNNEL_NETWORK_DYNAMIC_RANGE",
+        "API_NETWORK_GATEWAY",
+        "TUNNEL_NETWORK_GATEWAY",
+    }
+    for env_file in (".env.example", ".env.staging.example"):
+        lines = (REPOSITORY_ROOT / "docker" / env_file).read_text(encoding="utf-8").splitlines()
+        keys = {line.split("=", 1)[0] for line in lines if line and not line.startswith("#") and "=" in line}
+        assert keys.isdisjoint(removed_names)
 
-    assert trusted.split(",") == [nginx_ip, tunnel_ip]
-    assert ip_address(nginx_ip) in ip_network(
-        default(compose["networks"]["api"]["ipam"]["config"][0]["subnet"], "API_NETWORK_SUBNET")
-    )
-    assert ip_address(tunnel_ip) in ip_network(
-        default(compose["networks"]["tunnel"]["ipam"]["config"][0]["subnet"], "TUNNEL_NETWORK_SUBNET")
-    )
-    assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" in (
-        docker_dir / "nginx.backend.conf"
-    ).read_text(encoding="utf-8")
+    config = (REPOSITORY_ROOT / "docker" / "nginx.backend.conf").read_text(encoding="utf-8")
+    assert "map $http_cf_connecting_ip $origin_client_ip {" in config
+    assert config.count("proxy_set_header X-Forwarded-For $origin_client_ip;") == 2
+    assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" not in config
 
 
-@pytest.mark.parametrize("env_file", [".env.example", ".env.staging.example"])
-def test_compose_env_trust_matches_its_proxy_addresses(env_file):
-    lines = (REPOSITORY_ROOT / "docker" / env_file).read_text(encoding="utf-8").splitlines()
-    values = dict(line.split("=", 1) for line in lines if line and not line.startswith("#") and "=" in line)
+@pytest.mark.parametrize(
+    ("forwarded_for", "expected"),
+    [
+        ("198.51.100.99", "198.51.100.99"),
+        ("2001:db8::7", "2001:db8::7"),
+    ],
+    ids=["ipv4", "ipv6"],
+)
+def test_uvicorn_uses_nginx_single_client_header(forwarded_for, expected):
+    resolved_client = None
 
-    assert values["FORWARDED_ALLOW_IPS"].split(",") == [
-        values["NGINX_API_IP"],
-        values["CLOUDFLARED_TUNNEL_IP"],
-    ]
-    assert ip_address(values["NGINX_API_IP"]) in ip_network(values["API_NETWORK_SUBNET"])
-    assert ip_address(values["CLOUDFLARED_TUNNEL_IP"]) in ip_network(values["TUNNEL_NETWORK_SUBNET"])
+    async def app(scope, receive, send):
+        nonlocal resolved_client
+        resolved_client = scope["client"]
+
+    middleware = ProxyHeadersMiddleware(app, trusted_hosts="*")
+    scope = {
+        "type": "http",
+        "client": ("172.30.0.2", 1234),
+        "scheme": "http",
+        "headers": [
+            (b"x-forwarded-for", forwarded_for.encode("ascii")),
+            (b"x-forwarded-proto", b"https"),
+        ],
+    }
+    asyncio.run(middleware(scope, None, None))
+
+    assert resolved_client is not None
+    assert resolved_client[0] == expected
 
 
 def _request(path: str, *, route: str | None = None, method: str = "GET") -> types.SimpleNamespace:

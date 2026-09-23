@@ -109,8 +109,6 @@ services:
       JOB_BACKEND: redis
       JOB_REDIS_URL: redis://redis:6379/0
       JOB_REDIS_KEY_PREFIX: nurse_scheduling:jobs:v0
-      # Trust nginx as the TCP peer and cloudflared in the forwarded chain.
-      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-192.168.250.2,192.168.251.2}"
       OPTIMIZE_SOLVERS: "${OPTIMIZE_SOLVERS:-ortools/cp-sat}"
       OPTIMIZE_DEFAULT_SOLVER: "${OPTIMIZE_DEFAULT_SOLVER:-ortools/cp-sat}"
       OPTIMIZE_MIN_TIMEOUT_SECONDS: "${OPTIMIZE_MIN_TIMEOUT_SECONDS:-1}"
@@ -133,16 +131,7 @@ services:
       USAGE_METRICS_ENABLED: ${USAGE_METRICS_ENABLED:-true}
       USAGE_METRICS_KEY_PREFIX: nurse_scheduling:usage:v0
       USAGE_METRICS_RETENTION_DAYS: ${USAGE_METRICS_RETENTION_DAYS:-30}
-    command:
-      - uvicorn
-      - nurse_scheduling.serve:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --workers
-      - "3"
-      - --no-access-log
+    command: ["uvicorn", "nurse_scheduling.serve:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "3", "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
     expose:
       - "8000"
     volumes:
@@ -208,7 +197,7 @@ services:
       AI_COOKIE_SECURE: "${AI_COOKIE_SECURE:-1}"
       AI_MAX_ATTACHMENT_FILES: "${AI_MAX_ATTACHMENT_FILES:-8}"
       AI_MAX_ATTACHMENT_BYTES: "${AI_MAX_ATTACHMENT_BYTES:-5000000}"
-    command: ["uvicorn", "nurse_scheduling.ai_serve:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--no-access-log"]
+    command: ["uvicorn", "nurse_scheduling.ai_serve:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
     expose:
       - "8001"
     healthcheck:
@@ -221,10 +210,9 @@ services:
     image: nginx:1.29-alpine
     restart: unless-stopped
     networks:
-      tunnel:
-      api:
-        ipv4_address: "${NGINX_API_IP:-192.168.250.2}"
-      ai:
+      - tunnel
+      - api
+      - ai
     depends_on:
       api:
         condition: service_healthy
@@ -244,8 +232,7 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     networks:
-      tunnel:
-        ipv4_address: "${CLOUDFLARED_TUNNEL_IP:-192.168.251.2}"
+      - tunnel
     depends_on:
       nginx:
         condition: service_healthy
@@ -307,13 +294,7 @@ services:
 
 networks:
   tunnel:
-    ipam:
-      config:
-        - subnet: "${TUNNEL_NETWORK_SUBNET:-192.168.251.0/28}"
   api:
-    ipam:
-      config:
-        - subnet: "${API_NETWORK_SUBNET:-192.168.250.0/28}"
   ai:
   redis:
   postgres:

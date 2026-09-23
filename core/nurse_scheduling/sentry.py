@@ -151,13 +151,7 @@ CLIENT_ADDRESS_TAG = "client.address"
 
 
 def tag_client_address(request: Request) -> None:
-    """Record the address a request connected from, alongside Sentry's own attribution.
-
-    Sentry infers a request's address from the leftmost `X-Forwarded-For` entry, which the
-    caller supplies. Uvicorn resolves the address from the proxy chain it trusts instead.
-    Recording that separately leaves Sentry's attribution untouched and makes a caller
-    claiming a different address visible as a disagreement between the two.
-    """
+    """Record Uvicorn's resolved client address without changing Sentry's attribution."""
     if not _should_enable_sentry():
         return
     try:
