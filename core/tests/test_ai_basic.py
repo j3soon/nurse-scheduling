@@ -2177,6 +2177,22 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     assert store.retained_bytes == 600
 
 
+def test_steering_adjusts_retained_bytes_without_a_full_recount() -> None:
+    app = create_test_app(settings=make_settings(), provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "a" * 100)
+    store.begin(session.id, "browser-owner")
+
+    store.queue_steering(session.id, "browser-owner", "queued-1", "é" * 10)
+    # A retried POST reuses its ID and must not be charged twice.
+    store.queue_steering(session.id, "browser-owner", "queued-1", "é" * 10)
+    store.queue_steering(session.id, "browser-owner", "queued-2", "ok")
+    assert store.retained_bytes == 100 + 20 + 2
+
+    assert len(store.take_steering(session.id, False)) == 2
+    assert store.retained_bytes == 100
+
+
 def test_completed_turns_do_not_accumulate_past_the_budget() -> None:
     # A turn grows a session without passing an admission check, so sessions
     # admitted cheaply must not keep every answer they produce.

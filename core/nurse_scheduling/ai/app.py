@@ -296,6 +296,15 @@ class SessionStore:
         self._session_bytes[session.id] = current
         self._retained_bytes += current - previous
 
+    def _charge(self, session: ChatSession, delta: int) -> None:
+        """Apply a known size change to one session's contribution, under the caller's lock.
+
+        Cheaper than `_recount`, which re-encodes the whole history while every session
+        waits on the lock.
+        """
+        self._session_bytes[session.id] += delta
+        self._retained_bytes += delta
+
     def _forget(self, session_id: str) -> None:
         """Drop one session's contribution to the retained total, under the caller's lock."""
         self._retained_bytes -= self._session_bytes.pop(session_id, 0)
@@ -327,9 +336,7 @@ class SessionStore:
         turn.
         """
         while self._retained_bytes > self._settings.max_session_bytes and len(session.history) > 1:
-            reclaimed = _text_bytes(session.history.pop(0).get("content"))
-            self._session_bytes[session.id] -= reclaimed
-            self._retained_bytes -= reclaimed
+            self._charge(session, -_text_bytes(session.history.pop(0).get("content")))
 
     def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
         """Create a session after pruning expired entries."""
@@ -461,11 +468,12 @@ class SessionStore:
             # that makes a retried POST idempotent is never emptied mid-turn.
             if len(session.steering_ids) >= self._settings.max_history_messages:
                 raise HTTPException(status_code=429, detail="Too many messages are already queued.")
-            self._require_capacity(_text_bytes(message))
+            message_bytes = _text_bytes(message)
+            self._require_capacity(message_bytes)
             session.steering_queue.append((message_id, message))
             session.steering_ids.add(message_id)
             session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
-            self._recount(session)
+            self._charge(session, message_bytes)
 
     def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]:
         """Drain queued messages and close the final race when a response is done."""
@@ -477,7 +485,7 @@ class SessionStore:
             session.steering_queue.clear()
             if close_if_empty and not queued:
                 session.accepting_steering = False
-            self._recount(session)
+            self._charge(session, -sum(_text_bytes(text) for _message_id, text in queued))
             return queued
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
