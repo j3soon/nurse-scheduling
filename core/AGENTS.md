@@ -12,10 +12,10 @@ Run commands from `core/`:
 - `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
 - `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
-  pytest suites. AI code and bundled guidance changes run all `test_ai_*.py`
-  files. Other source, helper, dependency, and deleted-file changes run the
-  normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
-  suites.
+  pytest suites. AI code, bundled guidance, and AI test helper changes run all
+  `test_ai_*.py` files. Other source, helper, dependency, and deleted-file changes
+  run the normal local suite, excluding optional PuLP CBC, cuOpt, and mixed
+  progress suites.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
 - `python -m nurse_scheduling.cli tests/testcases/real/large-ward-with-87-people-2025-11.yaml --solver ortools/cp-sat --timeout 10 --show-model-build-stats`: print compact real-case model-build statistics.

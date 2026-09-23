@@ -25,7 +25,7 @@ elif [[ "$run_full_suite" == false ]]; then
       tests/test_*.py)
         test_paths+=("$relative")
         ;;
-      nurse_scheduling/ai/* | nurse_scheduling/ai_serve.py)
+      nurse_scheduling/ai/* | nurse_scheduling/ai_serve.py | tests/ai_eval/* | tests/ai_test_helper.py)
         ai_changed=true
         ;;
       nurse_scheduling/* | tests/* | requirements*.txt | pyproject.toml)
