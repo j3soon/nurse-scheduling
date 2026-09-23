@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient
 from nurse_scheduling.sentry import CLIENT_ADDRESS_TAG
 from nurse_scheduling.server.api.optimize import CLIENT_ID_COOKIE_NAME
 from nurse_scheduling.server.app import create_app
-from nurse_scheduling.server.auth import create_stream_token, describe_stream_token
+from nurse_scheduling.server.auth import create_stream_token, describe_stream_token, verify_stream_token
 from nurse_scheduling.server.config import ServerSettings
 from nurse_scheduling.server.jobs.models import OptimizationOutcome, OptimizationResult, StoredArtifact
 from nurse_scheduling.server.jobs.runner import RunOutput
@@ -136,6 +136,13 @@ def test_a_wordlist_path_on_the_job_route_is_not_reported(captured, path):
     client = _client()
 
     response = client.get(path)
+
+    assert response.status_code == 404
+    assert captured.events == []
+
+
+def test_job_id_with_trailing_newline_is_not_mistaken_for_an_issued_id(captured):
+    response = _client().get(f"/optimize/{ISSUED_JOB_ID}%0A")
 
     assert response.status_code == 404
     assert captured.events == []
@@ -334,6 +341,13 @@ def test_describe_stream_token_reports_an_unexpired_token_as_live():
     live = create_stream_token(AUTH_TOKEN, ISSUED_JOB_ID, ttl_seconds=3600)
 
     assert describe_stream_token(live) == "live"
+
+
+def test_stream_token_with_trailing_newline_is_rejected():
+    live = create_stream_token(AUTH_TOKEN, ISSUED_JOB_ID, ttl_seconds=3600)
+
+    assert describe_stream_token(f"{live}\n") == "malformed"
+    assert not verify_stream_token(AUTH_TOKEN, ISSUED_JOB_ID, f"{live}\n")
 
 
 # Address attribution: the connection address is recorded beside Sentry's own.

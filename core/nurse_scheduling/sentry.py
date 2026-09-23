@@ -216,7 +216,7 @@ def _describe_job_id(request: Request) -> str | None:
     job_id = request.path_params.get("job_id")
     if job_id is None:
         return None
-    return ISSUED_JOB_ID_SHAPE if JOB_ID_SHAPE.match(job_id) else "unissued_shape"
+    return ISSUED_JOB_ID_SHAPE if JOB_ID_SHAPE.fullmatch(job_id) else "unissued_shape"
 
 
 def _record_suspicion(request: Request, signal_name: str) -> "SuspicionCount":

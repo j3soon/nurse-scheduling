@@ -252,7 +252,7 @@ def parse_stream_token(token: str | None) -> tuple[int, str] | None:
     token is. Accepting only the minted shape also keeps one token from having many accepted
     spellings, which `int` alone would allow through signs, separators, and surrounding space.
     """
-    match = STREAM_TOKEN_SHAPE.match(token or "")
+    match = STREAM_TOKEN_SHAPE.fullmatch(token or "")
     if match is None:
         return None
     return int(match.group(1)), match.group(2)
