@@ -21,7 +21,6 @@
 
 import os
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -198,16 +197,29 @@ def test_an_unsupported_version_directive_reads_as_a_yaml_error():
         load_data(b"%YAML 1.3\n---\na: 1\n")
 
 
-def test_nesting_is_refused_before_the_scanner_reads_it():
-    """The scanner works proportionally to its depth, so depth must be refused first."""
-    payload = b"apiVersion: alpha\nx: " + b"[" * 2000 + b"]" * 2000
+@pytest.mark.parametrize(
+    "description",
+    [
+        b"'" + b"[" * 300 + b"'",
+        b"|\n  " + b"[" * 300,
+        b"plain " + b"[" * 300,
+    ],
+    ids=["quoted", "block", "plain"],
+)
+def test_brackets_in_description_are_not_nesting(description):
+    base = VALID_YAML_BODY.format(api_version_key="apiVersion").encode()
+    payload = base.replace(b"dates:\n", b"description: " + description + b"\ndates:\n", 1)
 
-    started = time.monotonic()
-    with pytest.raises(SchedulingDataTooComplexError):
-        measure_yaml_expansion(payload)
+    assert measure_yaml_expansion(payload).nodes < MAX_NESTING_DEPTH
+    assert load_data(payload).description.strip().endswith("[" * 300)
 
-    # Reading this through the scanner took a quarter second before it was refused early.
-    assert time.monotonic() - started < 0.05
+
+def test_brackets_in_a_comment_are_not_nesting():
+    base = VALID_YAML_BODY.format(api_version_key="apiVersion").encode()
+    payload = base.replace(b"dates:\n", b"# " + b"[" * 300 + b"\ndates:\n", 1)
+
+    assert measure_yaml_expansion(payload).nodes < MAX_NESTING_DEPTH
+    assert load_data(payload).apiVersion == "alpha"
 
 
 @pytest.mark.parametrize("content", [b"null\n", b"- one\n- two\n"])

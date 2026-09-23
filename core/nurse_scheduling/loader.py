@@ -36,14 +36,6 @@ from .models import NurseSchedulingData
 
 MAX_EXPANDED_NODES = 200_000
 """Largest number of nodes a document may expand to once aliases are followed."""
-MAX_RAW_NESTING_DEPTH = 256
-"""Bracket nesting refused before parsing.
-
-The YAML scanner does work proportional to how deep it currently is for every token it
-reads, so a document need only nest to be expensive to look at. Counting brackets in the
-raw bytes over-counts any that appear inside quoted text, so this bound sits well above
-the parsed one, which is what actually enforces the shape.
-"""
 MAX_NESTING_DEPTH = 64
 """Deepest a document may nest. Parsing costs grow faster than depth, and this project's
 own data nests five deep, so a bound well above that keeps a deep document from being
@@ -52,26 +44,6 @@ expensive to even look at."""
 
 class SchedulingDataTooComplexError(ValueError):
     """Scheduling data expands to more nodes than this project will process."""
-
-
-_NON_BRACKETS = bytes(value for value in range(256) if value not in b"[]{}")
-"""Every byte that is not a flow collection marker, deleted before measuring nesting."""
-
-
-def raw_nesting_depth(content: bytes) -> int:
-    """Return the deepest bracket nesting in the raw bytes, ignoring YAML structure.
-
-    The brackets are extracted at native speed first, so a document large enough to be
-    worth rejecting is not expensive to reject.
-    """
-    depth = deepest = 0
-    for bracket in content.translate(None, _NON_BRACKETS):
-        if bracket in b"[{":
-            depth += 1
-            deepest = max(deepest, depth)
-        else:
-            depth -= 1
-    return deepest
 
 
 @dataclass(frozen=True)
@@ -109,10 +81,6 @@ def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -
     Raises:
         SchedulingDataTooComplexError: If the expansion or the nesting exceeds its bound.
     """
-    if raw_nesting_depth(content) > MAX_RAW_NESTING_DEPTH:
-        raise SchedulingDataTooComplexError(
-            f"Scheduling data nests deeper than {MAX_NESTING_DEPTH} levels, which this server refuses to process"
-        )
     anchor_sizes: dict[str, int] = {}
     aliases = 0
     # Each open collection accumulates its own size, and the root frame holds the total.
@@ -149,7 +117,7 @@ def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -
     return YamlExpansion(nodes=frames[0][0], aliases=aliases)
 
 
-def _load_yaml(content: bytes) -> dict[str, Any]:
+def _load_yaml(content: bytes, *, reject_aliases: bool = False) -> dict[str, Any]:
     """Load YAML from bytes content.
 
     Args:
@@ -158,7 +126,9 @@ def _load_yaml(content: bytes) -> dict[str, Any]:
     Returns:
         dict[str, Any]: The loaded YAML data
     """
-    measure_yaml_expansion(content)
+    expansion = measure_yaml_expansion(content)
+    if reject_aliases and expansion.aliases:
+        raise ValueError("YAML aliases are not allowed in frontend schedules")
     stream = BytesIO(content)
     # Use ruamel.yaml instead of PyYAML to support YAML 1.2
     # This avoids the auto-conversion of special strings such as

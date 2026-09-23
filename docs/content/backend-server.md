@@ -302,8 +302,8 @@ changing how the request is answered. Submitted YAML is also bounded by how far
 its aliases expand and how deeply it nests, not only by its byte size. An alias
 is a reference, so a small document can name hundreds of millions of nodes that
 every later traversal pays for, and parsing costs grow faster than nesting
-depth. Nesting is refused from the raw bytes before the parser reads them, and
-data passing either bound is refused with `400` before a job is queued. Reading
+depth. Nesting is measured from parser events, so brackets in text do not count,
+and data passing either bound is refused with `400` before a job is queued. Reading
 happens on a worker thread and only after the checks that cost nothing, so a
 request that was going to be rejected never pays for it.
 
