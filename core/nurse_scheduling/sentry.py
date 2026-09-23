@@ -79,19 +79,43 @@ def init_sentry(app_version: str, *, app: str = "backend") -> None:
 
 
 def _redact_stream_token(event: dict, _hint: dict) -> dict:
-    """Remove a stream credential from a reported query string.
+    """Remove a stream credential from reported query strings and trace URLs.
 
     Sentry scrubs sensitive headers, cookies, and body fields, but not a query string, and a
     rejected request can still carry a valid token. Stream tokens are kept out of logs by
     design, so one must not reach a report either.
     """
-    request = event.get("request")
-    if isinstance(request, dict) and isinstance(request.get("query_string"), str):
+
+    def redact_query(query: str) -> str:
         parts = []
-        for parameter in request["query_string"].split("&"):
+        for parameter in query.split("&"):
             name, separator, _value = parameter.partition("=")
             parts.append(f"{name}=[Filtered]" if separator and unquote_plus(name).lower() == "token" else parameter)
-        request["query_string"] = "&".join(parts)
+        return "&".join(parts)
+
+    def redact_trace_data(data: Any) -> None:
+        if not isinstance(data, dict):
+            return
+        if isinstance(data.get("http.query"), str):
+            data["http.query"] = redact_query(data["http.query"])
+        url = data.get("url.full")
+        if isinstance(url, str) and "?" in url:
+            prefix, query = url.split("?", 1)
+            data["url.full"] = f"{prefix}?{redact_query(query)}"
+
+    request = event.get("request")
+    if isinstance(request, dict) and isinstance(request.get("query_string"), str):
+        request["query_string"] = redact_query(request["query_string"])
+    contexts = event.get("contexts")
+    if isinstance(contexts, dict):
+        trace = contexts.get("trace")
+        if isinstance(trace, dict):
+            redact_trace_data(trace.get("data"))
+    spans = event.get("spans")
+    if isinstance(spans, list):
+        for span in spans:
+            if isinstance(span, dict):
+                redact_trace_data(span.get("data"))
     return event
 
 

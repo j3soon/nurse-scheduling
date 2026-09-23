@@ -240,9 +240,19 @@ def test_init_sentry_accepts_service_tag(monkeypatch):
 
 
 def test_stream_token_redaction_decodes_parameter_names():
-    event = {"request": {"query_string": "x=1&%74oken=live-secret&TOKEN=second-secret&x=2"}}
+    query = "x=1&%74oken=live-secret&TOKEN=second-secret&x=2"
+    event = {
+        "request": {"query_string": query},
+        "contexts": {"trace": {"data": {"http.query": query, "url.full": f"https://example.test/events?{query}"}}},
+        "spans": [{"data": {"http.query": query, "url.full": f"https://example.test/events?{query}"}}],
+    }
 
-    assert _redact_stream_token(event, {})["request"]["query_string"] == ("x=1&%74oken=[Filtered]&TOKEN=[Filtered]&x=2")
+    redacted = _redact_stream_token(event, {})
+    expected = "x=1&%74oken=[Filtered]&TOKEN=[Filtered]&x=2"
+    assert redacted["request"]["query_string"] == expected
+    for data in (redacted["contexts"]["trace"]["data"], redacted["spans"][0]["data"]):
+        assert data["http.query"] == expected
+        assert data["url.full"] == f"https://example.test/events?{expected}"
 
 
 def test_init_sentry_keeps_shared_development_defaults(monkeypatch):
