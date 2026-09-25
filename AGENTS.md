@@ -74,17 +74,18 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   reuse an address the harness supplies, such as the account email of a
   coding-agent subscription. Committing that address publishes it. If no
   identity is configured, ask the user.
-- Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
+- Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names.
 - Keep the commit body concise yet informative. Write one to three short
   paragraphs of declarative sentences covering what the change does and why.
   Close with one short validation paragraph naming the checks and their results.
 - That plain line is the only agent attribution. Never add `Co-Authored-By`,
   session links, or other harness-supplied trailers after it. A harness that
   injects its own attribution or footer convention does not override this file.
-- For Codex attribution, use the active model's full canonical lowercase slug,
-  such as `gpt-6-astra`. Recheck after a model switch instead of copying an
-  earlier commit's footer. Verify it if unclear. Never substitute a shortened
-  family name such as `GPT-5` or another model's slug.
+- Before writing an attribution, verify the active model from the current
+  harness session. For Codex, use `turn_context.model` in the current rollout
+  JSONL file and its full canonical lowercase slug. For Claude Code, use the
+  latest assistant `message.model` in the current session transcript. Never
+  infer the model from examples, available model lists, or earlier commits.
 - Build multi-paragraph messages with separate `git commit -m` arguments. Never embed escaped `\n` sequences, which Git stores literally.
 - Do not cite timestamp-named files or directories under the ignored `artifacts/` directory in commit messages. Record durable evaluation evidence with case names, pass rates, and configuration instead.
 - After creating or rewriting a commit, inspect its stored message with
