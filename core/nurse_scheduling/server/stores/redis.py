@@ -26,6 +26,8 @@ from typing import Any, overload
 from uuid import uuid4
 
 import redis
+from redis.backoff import ExponentialBackoff
+from redis.retry import Retry
 
 from ..errors import (
     JobArtifactNotFoundError,
@@ -54,6 +56,50 @@ SOCKET_TIMEOUT_MARGIN_SECONDS = 5.0
 """Additional socket time allowed beyond one blocking event-stream read."""
 REDIS_OPERATION_TIMEOUT_SECONDS = 2.0
 """Short timeout for ordinary Redis operations and deployment probes."""
+REDIS_RETRY_ATTEMPTS = 2
+"""Retries allowed after a dropped or slow Redis connection."""
+REDIS_RETRY_BACKOFF_BASE_SECONDS = 0.01
+"""Delay after the first retryable Redis connection failure."""
+REDIS_RETRY_BACKOFF_CAP_SECONDS = 0.2
+"""Maximum delay between Redis connection retries."""
+
+
+def _connection_retry(*, retry_on_timeout: bool) -> Retry:
+    """Build a bounded retry policy for one Redis client.
+
+    `redis.Redis.from_url` otherwise leaves connections with zero retries, so a
+    single slow or dropped connection surfaces as a failed operation. Callers
+    that treat a read timeout as control flow must exclude it, since retrying
+    would stall them for another full timeout.
+    """
+    supported_errors: tuple[type[Exception], ...] = (redis.exceptions.ConnectionError,)
+    if retry_on_timeout:
+        supported_errors += (redis.exceptions.TimeoutError,)
+    return Retry(
+        ExponentialBackoff(base=REDIS_RETRY_BACKOFF_BASE_SECONDS, cap=REDIS_RETRY_BACKOFF_CAP_SECONDS),
+        retries=REDIS_RETRY_ATTEMPTS,
+        supported_errors=supported_errors,
+    )
+
+
+_MAX_STREAM_ID_COMPONENT = 2**64 - 1
+"""Largest value Redis accepts for either stream ID component."""
+
+
+def _normalize_stream_id(after_id: str | None) -> str:
+    """Return a replay cursor that Redis accepts as a stream ID.
+
+    Clients choose `Last-Event-ID`, and Redis rejects a malformed one with a
+    `ResponseError` that would abort the stream. Replay from the beginning
+    instead, matching how `MemoryJobStore` treats an unparsable cursor.
+    """
+    if after_id is not None:
+        components = after_id.split("-", 2)
+        if len(components) == 2 and all(component.isascii() and component.isdecimal() for component in components):
+            normalized = [component.lstrip("0") or "0" for component in components]
+            if all(len(component) <= 20 and int(component) <= _MAX_STREAM_ID_COMPONENT for component in normalized):
+                return "-".join(normalized)
+    return "0-0"
 
 
 @overload
@@ -113,13 +159,17 @@ class RedisJobStore:
             decode_responses=False,
             socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             socket_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            retry=_connection_retry(retry_on_timeout=True),
         )
         """Binary-safe Redis client for bounded ordinary operations."""
+        # `stream_events` reads a blocking-read timeout as its keepalive tick, so
+        # this client must not retry one.
         self._stream_redis = redis.Redis.from_url(
             url,
             decode_responses=False,
             socket_connect_timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             socket_timeout=event_stream_keepalive_seconds + SOCKET_TIMEOUT_MARGIN_SECONDS,
+            retry=_connection_retry(retry_on_timeout=False),
         )
         """Redis client whose read timeout exceeds one blocking event-stream read."""
         self._redis.ping()
@@ -610,7 +660,7 @@ class RedisJobStore:
             redis.RedisError: If a Redis operation fails.
         """
         self.get(job_id)
-        last_id = after_id or "0-0"
+        last_id = _normalize_stream_id(after_id)
         block_ms = max(1, int(keepalive_seconds * 1000))
         while True:
             terminal = self.get(job_id).state.terminal

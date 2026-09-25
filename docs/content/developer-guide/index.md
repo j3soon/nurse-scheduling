@@ -25,6 +25,7 @@ environment, Sentry, usage reporting, and diagnostics.
 ## Architecture
 
 - [Backend server](backend-server.md)
+- [Backend containers and networks](containers.md)
 - [Experimental AI assistant backend](ai-assistant.md)
 - [Solver behavior](solvers.md)
 - [Design rationale](design-rationale.md)

@@ -167,6 +167,11 @@ printf '%s\n' \
   > "$fixture_root/bin/pytest"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  'printf "mock python: %s\n" "$*"' \
+  'if [[ ${MOCK_SOLVER_PREFLIGHT_FAIL:-} == 1 ]]; then exit 2; fi' \
+  > "$fixture_root/bin/python"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
   'printf "mock bun: %s\n" "$*"' \
   > "$fixture_root/bin/bun"
 printf '%s\n' \
@@ -183,16 +188,34 @@ printf '%s\n' \
   'done' \
   'echo "No test files found, exiting with code 0"' \
   > "$fixture_root/bin/bunx"
-chmod +x "$fixture_root/bin/ruff" "$fixture_root/bin/pytest" \
+chmod +x "$fixture_root/bin/ruff" "$fixture_root/bin/pytest" "$fixture_root/bin/python" \
   "$fixture_root/bin/bun" "$fixture_root/bin/bunx"
 
-output="$(PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_core_affected.sh" \
+output="$(MOCK_SOLVER_PREFLIGHT_FAIL=1 PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_core_affected.sh" \
   core/tests/test_scheduler.py)"
 assert_line "$output" 'mock ruff: format --check nurse_scheduling tests'
 assert_line "$output" 'mock ruff: check nurse_scheduling tests'
 assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 tests/test_scheduler.py'
+assert_no_line "$output" 'mock python: - pulp/highs'
 output="$(PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_core_affected.sh" --full)"
+assert_line "$output" 'mock python: - pulp/highs pulp/scip'
 assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 --ignore-glob=*pulp_cbc.py --ignore-glob=*pulp_cuopt.py --ignore=tests/test_solver_pulp_progress.py tests'
+
+set +e
+output="$(MOCK_SOLVER_PREFLIGHT_FAIL=1 PATH="$fixture_root/bin:$PATH" \
+  "$fixture_root/scripts/test_core_affected.sh" core/tests/test_serve.py 2>&1)"
+status=$?
+set -e
+if [[ $status -ne 2 ]]; then
+  printf 'Expected unavailable solver preflight to fail with 2, got %d\n' "$status" >&2
+  exit 1
+fi
+assert_line "$output" 'mock python: - pulp/highs'
+assert_no_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 tests/test_serve.py'
+output="$(MOCK_SOLVER_PREFLIGHT_FAIL=1 PATH="$fixture_root/bin:$PATH" \
+  "$fixture_root/scripts/test_core_affected.sh" \
+  core/tests/test_serve.py::test_optimization_runner_reports_invalid_input)"
+assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 tests/test_serve.py::test_optimization_runner_reports_invalid_input'
 
 set +e
 output="$(PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_frontend_affected.sh" \

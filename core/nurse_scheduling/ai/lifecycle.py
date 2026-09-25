@@ -39,6 +39,7 @@ class TurnSnapshot:
     proposal_yaml: str
     proposal_diff: str
     accepting_steering: bool
+    previously_dropped: int = 0
     steering_queue: list[tuple[str, str]] = field(default_factory=list)
     steering_ids: set[str] = field(default_factory=set)
 

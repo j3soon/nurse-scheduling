@@ -72,6 +72,39 @@ cd "$CORE_DIR"
 ruff format --check nurse_scheduling tests
 ruff check nurse_scheduling tests
 
+required_solvers=()
+if [[ "$run_full_suite" == true ]]; then
+  required_solvers=(pulp/highs pulp/scip)
+else
+  for path in "${test_paths[@]}"; do
+    case "$path" in
+      tests/test_serve.py | tests/test_schedule_pulp_highs.py)
+        required_solvers+=(pulp/highs)
+        ;;
+      tests/test_schedule_pulp_scip.py)
+        required_solvers+=(pulp/scip)
+        ;;
+      tests | tests/test_solver_pulp_python.py)
+        required_solvers+=(pulp/highs pulp/scip)
+        ;;
+    esac
+  done
+fi
+
+if ((${#required_solvers[@]} > 0)); then
+  python - "${required_solvers[@]}" <<'PY'
+import sys
+
+from nurse_scheduling.server.solver_options import solver_is_available
+
+unavailable = [solver for solver in dict.fromkeys(sys.argv[1:]) if not solver_is_available(solver)]
+if unavailable:
+    print(f"Required optional solver runtimes unavailable: {', '.join(unavailable)}", file=sys.stderr)
+    print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
+    raise SystemExit(2)
+PY
+fi
+
 pytest_args=(-q --tb=short --disable-warnings --maxfail=1)
 if [[ "$run_full_suite" == true ]]; then
   echo "Broad core changes detected; running the compact normal suite."

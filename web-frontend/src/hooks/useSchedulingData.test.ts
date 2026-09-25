@@ -1123,6 +1123,77 @@ describe('useSchedulingData', () => {
     });
   });
 
+  it('defaults omitted descriptions and person history when loading backend-shaped YAML', async () => {
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    act(() => {
+      result.current.loadFromYaml({
+        apiVersion: 'alpha',
+        dates: {
+          range: { startDate: '2025-01-01', endDate: '2025-01-06' },
+          groups: [{ id: 'Weekend', members: ['04', '05'] }],
+        },
+        people: {
+          items: [{ id: 'n1' }, { id: 'n2' }],
+          groups: [{ id: 'Team A', members: ['n1'] }],
+        },
+        shiftTypes: {
+          items: [{ id: 'D' }],
+          groups: [{ id: 'Day', members: ['D'] }],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items).toEqual([
+        { id: 'n1', description: '', history: [] },
+        { id: 'n2', description: '', history: [] },
+      ]);
+      expect(result.current.peopleData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Team A', members: ['n1'], description: '' }]),
+      );
+      expect(result.current.shiftTypeData.items).toEqual(
+        expect.arrayContaining([{ id: 'D', description: '' }]),
+      );
+      expect(result.current.shiftTypeData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Day', members: ['D'], description: '' }]),
+      );
+      expect(result.current.dateData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Weekend', members: ['04', '05'], description: '' }]),
+      );
+    });
+  });
+
+  it('defaults omitted descriptions and person history when hydrating older stored state', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          apiVersion: 'alpha',
+          description: '',
+          dates: { range: {}, items: [], groups: [] },
+          people: { items: [{ id: 'n1' }], groups: [{ id: 'Team A', members: ['n1'] }] },
+          shiftTypes: { items: [{ id: 'D' }], groups: [] },
+          preferences: [],
+        },
+        history: [],
+        currentHistoryIndex: 0,
+      }),
+    );
+
+    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.items).toEqual([{ id: 'n1', description: '', history: [] }]);
+      expect(result.current.peopleData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Team A', members: ['n1'], description: '' }]),
+      );
+      expect(result.current.shiftTypeData.items).toEqual(
+        expect.arrayContaining([{ id: 'D', description: '' }]),
+      );
+    });
+  });
+
   it('sorts SHIFT_REQUEST preferences and date arrays in updatePreferencesByType', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
@@ -2824,7 +2895,7 @@ describe('useSchedulingData', () => {
 
     await waitFor(() => {
       const person = result.current.peopleData.items.find(item => item.id === 'P1');
-      expect(person?.history).toEqual(['A', '', 'N']);
+      expect(person?.history).toEqual(['N']);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_REQUEST)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_REQUIREMENT)).toBe(false);
       expect(result.current.preferences.some(pref => pref.type === SHIFT_TYPE_SUCCESSIONS)).toBe(false);
@@ -4327,7 +4398,7 @@ describe('useSchedulingData', () => {
     });
   });
 
-  it('deleting a repeated shift type from history blanks only matching entries', async () => {
+  it('deleting a repeated shift type from history keeps only the usable suffix', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -4353,7 +4424,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['', 'N', '', 'A']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A']);
     });
   });
 
@@ -4387,7 +4458,7 @@ describe('useSchedulingData', () => {
     });
   });
 
-  it('deleting multiple shift types blanks history through repeated public deletions', async () => {
+  it('deleting multiple shift types shortens history through repeated public deletions', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -4418,7 +4489,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N', 'E']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N', 'E']);
     });
 
     act(() => {
@@ -4426,11 +4497,11 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', '', 'E']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['E']);
     });
   });
 
-  it('undoes and redoes shift-type deletion history blanking exactly', async () => {
+  it('undoes and redoes shift-type deletion history truncation exactly', async () => {
     const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
 
     act(() => {
@@ -4456,7 +4527,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N']);
     });
 
     act(() => {
@@ -4472,7 +4543,7 @@ describe('useSchedulingData', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['A', '', 'N']);
+      expect(result.current.peopleData.items.find(item => item.id === 'P1')?.history).toEqual(['N']);
     });
   });
 

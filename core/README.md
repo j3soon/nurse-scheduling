@@ -281,6 +281,9 @@ All server settings are read once when the application is constructed.
 | `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
 | `API_AUTH_TOKENS` | unset | Require one of the bearer keys in this JSON object mapping administrative IDs to keys. |
 | `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty legacy and identified key set a startup failure. Set in the deployment images. |
+| `SUSPICION_COUNTER_ENABLED` | `true` | Count repeated suspicious requests from one address and escalate them. |
+| `SUSPICION_WINDOW_SECONDS` | `300` | Window for counting repeated signals. |
+| `SUSPICION_ESCALATE_COUNT` | `5` | Repeats within a window that escalate a signal to an error. |
 | `DISABLE_SENTRY` | unset | Disable error reporting for all Python services when set to a non-empty value. |
 | `SENTRY_DSN` | shared development project | Select the Python services' shared Sentry project DSN. Docker maps this from `SENTRY_BACKEND_DSN`. |
 | `SENTRY_ENVIRONMENT` | `development` | Set the Sentry environment for all Python services. The `app` tag separates backend, usage reporter, and diagnostic events. |
@@ -439,7 +442,8 @@ and the [deployment guide](https://dev.nursescheduling.org/docs/developer-guide/
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `172800` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. |
-| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. |
+| `AI_MAX_SESSION_BYTES` | `268435456` | Chat text budget across live sessions. New sessions, schedule updates, and queued steering that exceed it return HTTP 429. Completed turns trim the oldest complete exchanges while retaining the newest turn. |
+| `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session, with an effective minimum of two to preserve the newest exchange. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
 | `AI_MAX_SCHEDULE_BYTES` | `1000000` | Maximum UTF-8 YAML snapshot size. |

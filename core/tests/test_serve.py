@@ -36,6 +36,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from nurse_scheduling.loader import MAX_NESTING_DEPTH
 from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.auth import AuthCredential, create_stream_token, extract_bearer_token, verify_stream_token
@@ -240,6 +241,23 @@ def _client(runner=None, *, start_background=True, settings=None) -> TestClient:
         start_background=start_background,
     )
     return TestClient(app)
+
+
+_INVALID_INPUT_SCENARIO = """\
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2026-05-14
+    endDate: 2026-05-14
+people:
+  items:
+    - id: Person 1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+"""
 
 
 def _create(client: TestClient, headers=None, **data):
@@ -604,6 +622,51 @@ def test_job_creation_offloads_the_synchronous_store_write():
 def test_server_settings_reject_invalid_relationships(updates, message):
     with pytest.raises(ValueError, match=message):
         _settings(**updates)
+
+
+def test_a_claim_poll_interval_above_the_default_retry_cap_starts():
+    app = create_app(settings=_settings(claim_poll_seconds=6.0), store=MemoryJobStore(), start_background=False)
+
+    assert app.state.job_worker._claim_failures.delay_seconds() == 6.0
+
+
+def test_lease_recovery_polling_resumes_while_an_owned_job_finishes(monkeypatch):
+    lease = WorkerLease("worker", "old-token", datetime.now(timezone.utc) - timedelta(seconds=1))
+    recovered = WorkerLease("worker", "new-token", datetime.now(timezone.utc) + timedelta(seconds=60))
+
+    class Controller:
+        def renew_worker(self, _lease):
+            return None
+
+        def expire_worker_claims(self):
+            return []
+
+        def register_worker(self, _worker_id):
+            return recovered
+
+    worker = JobWorker(
+        Controller(), SuccessfulRunner(), worker_id="worker", claim_poll_seconds=0.1, worker_lease_seconds=60
+    )
+    worker._executing.set()
+    monkeypatch.setattr(worker, "_claim_loop_is_alive", lambda: True)
+    for _ in range(5):
+        worker._recover_failures.report()
+
+    waits = []
+
+    class StopAfterJob:
+        def is_set(self):
+            return False
+
+        def wait(self, delay):
+            waits.append(delay)
+            worker._executing.clear()
+            return False
+
+    worker._stop = StopAfterJob()
+
+    assert worker._recover_worker_lease(lease) == recovered
+    assert waits == [0.1]
 
 
 def test_runtime_deployment_identity_is_shared_within_one_server_launch(monkeypatch):
@@ -1195,6 +1258,75 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
     )
 
     assert result == expected_failure
+
+
+@pytest.mark.parametrize(
+    ("description", "yaml_content", "expected_message"),
+    [
+        ("malformed yaml", "not: [", "expected the node content"),
+        (
+            "deeply nested yaml",
+            "apiVersion: alpha\nx: " + "[" * (MAX_NESTING_DEPTH + 1) + "0" + "]" * (MAX_NESTING_DEPTH + 1),
+            "nests deeper than",
+        ),
+        ("non-mapping document", "$0", "top-level mapping"),
+        (
+            "unsupported api version",
+            _INVALID_INPUT_SCENARIO.replace("apiVersion: alpha", "apiVersion: beta"),
+            "Unsupported API version: beta",
+        ),
+        ("schema violation", "apiVersion: alpha\npeople: 3\n", "people\n  Input should be"),
+        (
+            "unknown person reference",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift request\n    person: nobody\n    date: 05-14\n    shiftType: D\n",
+            "Unknown person ID: nobody",
+        ),
+        (
+            "malformed date reference",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift request\n    person: Person 1\n    date: Freeday_\n    shiftType: D\n",
+            "Date 'Freeday_' is not in the format",
+        ),
+        (
+            "invalid export formatting reference",
+            _INVALID_INPUT_SCENARIO
+            + "export:\n  formatting:\n    - type: row\n      people: [nobody]\n      backgroundColor: '#ff0000'\n",
+            "Invalid person identifier 'nobody' in export formatting rule",
+        ),
+        (
+            "empty count shift types",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift count\n    person: Person 1\n    countDates: [05-14]\n"
+            + "    countShiftTypes: []\n    expression: '|x - T|'\n    target: 1\n    weight: -1\n",
+            "Non-empty count shift types are required",
+        ),
+    ],
+)
+def test_optimization_runner_reports_invalid_input(description, yaml_content, expected_message):
+    job = Job(
+        id="job_invalid_input",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout_seconds=60,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    result = OptimizationRunner().run(
+        job,
+        yaml_content.encode("utf-8"),
+        event_callback=lambda *_args: None,
+        should_stop=None,
+    )
+
+    assert isinstance(result, JobFailure), description
+    assert result.code == "invalid_input", description
+    assert expected_message in result.message, description
 
 
 def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):
@@ -2066,6 +2198,39 @@ def test_input_and_timeout_validation():
         assert oversized.status_code == 413
 
 
+def test_client_cookie_is_marked_secure_when_the_deployment_says_so():
+    # A TLS-terminating proxy forwards plain HTTP, so the request scheme alone
+    # would leave the cookie unmarked on an HTTPS deployment.
+    with _client(start_background=False, settings=_settings()) as client:
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        assert "secure" not in response.headers["set-cookie"].lower()
+
+    with _client(start_background=False, settings=_settings(cookie_secure=True)) as client:
+        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        assert "; Secure" in response.headers["set-cookie"]
+
+
+def test_declared_oversize_body_is_refused_before_the_upload_is_buffered():
+    # FastAPI resolves upload parameters before the route runs, so a route-level
+    # size check only fires once Starlette has spooled the whole body.
+    settings = _settings(max_yaml_bytes=1024)
+    with _client(start_background=False, settings=settings) as client:
+        refused = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * (1024 * 1024), "application/x-yaml")},
+        )
+        assert refused.status_code == 413
+        assert refused.json()["error"]["code"] == "request_too_large"
+
+        # A body the middleware admits still reaches the route's own limit.
+        oversized = client.post(
+            "/optimize",
+            files={"file": ("schedule.yaml", b"x" * 1025, "application/x-yaml")},
+        )
+        assert oversized.status_code == 413
+        assert oversized.json()["detail"] == "Scheduling YAML is too large"
+
+
 def test_file_input_uses_configured_limit_above_multipart_text_default():
     max_yaml_bytes = 1024 * 1024 + 1
     settings = _settings(max_yaml_bytes=max_yaml_bytes)
@@ -2515,3 +2680,74 @@ def test_a_token_alone_still_enables_authentication():
     with _client(start_background=False, settings=_settings(auth_token=AUTH_TOKEN)) as client:
         assert client.get("/optimize/options").status_code == 401
         assert client.get("/optimize/options", headers=_auth_header()).status_code == 200
+
+
+def test_a_store_outage_reports_once_rather_than_once_per_attempt(caplog):
+    """One outage produced 108 identical reports before background loops backed off."""
+
+    class UnavailableStore(MemoryJobStore):
+        """Fails every claim the way an unreachable Redis does."""
+
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def claim_next_job(self, *args, **kwargs):
+            self.claim_attempts += 1
+            raise TimeoutError("Timeout reading from socket")
+
+    store = UnavailableStore()
+    app = create_app(
+        settings=_settings(claim_poll_seconds=0.005),
+        store=store,
+        runner=SuccessfulRunner(),
+        start_background=True,
+    )
+    with caplog.at_level(logging.ERROR, logger="nurse_scheduling.server"), TestClient(app):
+        deadline = time.monotonic() + 2
+        while store.claim_attempts < 5 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert store.claim_attempts >= 5
+    # Other tests run their own workers, so count only this application's.
+    worker_id = app.state.instance_id
+    claim_failures = [
+        r for r in caplog.records if "failed to claim job" in r.getMessage() and worker_id in r.getMessage()
+    ]
+    assert len(claim_failures) == 1
+
+
+def test_a_store_recovery_is_reported_so_the_silence_ends(monkeypatch):
+    """The failure reaches Sentry as an error log, but recovery is only a warning."""
+    recoveries = []
+    monkeypatch.setattr(
+        "nurse_scheduling.server.jobs.worker.report_outage_recovery",
+        lambda operation, failures: recoveries.append((operation, failures)),
+    )
+
+    class BrieflyUnavailableStore(MemoryJobStore):
+        """Fails a few claims the way a restarting Redis does, then serves again."""
+
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def claim_next_job(self, *args, **kwargs):
+            self.claim_attempts += 1
+            if self.claim_attempts <= 3:
+                raise ConnectionError("Error -3 connecting to redis")
+            return super().claim_next_job(*args, **kwargs)
+
+    store = BrieflyUnavailableStore()
+    app = create_app(
+        settings=_settings(claim_poll_seconds=0.005),
+        store=store,
+        runner=SuccessfulRunner(),
+        start_background=True,
+    )
+    with TestClient(app):
+        deadline = time.monotonic() + 3
+        while not recoveries and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert recoveries == [("worker.claim", 3)]

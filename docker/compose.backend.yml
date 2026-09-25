@@ -119,23 +119,19 @@ services:
       # without a token. Serving it open needs a deliberate API_AUTH_REQUIRED=false.
       API_AUTH_REQUIRED: "${API_AUTH_REQUIRED:-true}"
       API_AUTH_TOKEN: "${API_AUTH_TOKEN:-}"
+      SUSPICION_COUNTER_ENABLED: "${SUSPICION_COUNTER_ENABLED:-true}"
+      SUSPICION_WINDOW_SECONDS: "${SUSPICION_WINDOW_SECONDS:-300}"
+      SUSPICION_ESCALATE_COUNT: "${SUSPICION_ESCALATE_COUNT:-5}"
       API_AUTH_TOKENS: "${API_AUTH_TOKENS:-}"
+      # The proxy terminates TLS, so the service cannot infer this from the request.
+      API_COOKIE_SECURE: "${API_COOKIE_SECURE:-true}"
       CLAIMED_PERFORMANCE_SCORE: "${CLAIMED_PERFORMANCE_SCORE:-}"
       CLAIMED_PERFORMANCE_APP_VERSION: "${CLAIMED_PERFORMANCE_APP_VERSION:-}"
       CLAIMED_PERFORMANCE_MEASURED_AT: "${CLAIMED_PERFORMANCE_MEASURED_AT:-}"
       USAGE_METRICS_ENABLED: ${USAGE_METRICS_ENABLED:-true}
       USAGE_METRICS_KEY_PREFIX: nurse_scheduling:usage:v0
       USAGE_METRICS_RETENTION_DAYS: ${USAGE_METRICS_RETENTION_DAYS:-30}
-    command:
-      - uvicorn
-      - nurse_scheduling.serve:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --workers
-      - "3"
-      - --no-access-log
+    command: ["uvicorn", "nurse_scheduling.serve:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "3", "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
     expose:
       - "8000"
     volumes:
@@ -173,6 +169,7 @@ services:
       AI_HISTORY_POSTGRES_URL: postgresql://ai_history:ai_history@postgres:5432/ai_history
       AI_HISTORY_RETENTION_DAYS: "${AI_HISTORY_RETENTION_DAYS:-30}"
       AI_REQUEST_LOG_ENABLED: "${AI_REQUEST_LOG_ENABLED:-true}"
+      AI_MAX_SESSION_BYTES: "${AI_MAX_SESSION_BYTES:-268435456}"
       AI_PROVIDER_TIMEOUT_SECONDS: "${AI_PROVIDER_TIMEOUT_SECONDS:-180}"
       AI_PROVIDER_MAX_ATTEMPTS: "${AI_PROVIDER_MAX_ATTEMPTS:-3}"
       AI_PROVIDER_RETRY_BACKOFF_SECONDS: "${AI_PROVIDER_RETRY_BACKOFF_SECONDS:-1}"
@@ -200,7 +197,7 @@ services:
       AI_COOKIE_SECURE: "${AI_COOKIE_SECURE:-1}"
       AI_MAX_ATTACHMENT_FILES: "${AI_MAX_ATTACHMENT_FILES:-8}"
       AI_MAX_ATTACHMENT_BYTES: "${AI_MAX_ATTACHMENT_BYTES:-5000000}"
-    command: ["uvicorn", "nurse_scheduling.ai_serve:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--no-access-log"]
+    command: ["uvicorn", "nurse_scheduling.ai_serve:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
     expose:
       - "8001"
     healthcheck:

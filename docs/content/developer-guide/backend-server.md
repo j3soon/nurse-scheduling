@@ -257,7 +257,8 @@ The server persists and replays `job.state_changed`, `job.phase_changed`,
 Disconnecting from the stream does not stop the job.
 
 Job submission sets a seven-day, HTTP-only client correlation cookie for
-diagnostics. It does not control access to a job or its lifetime. Browser CORS
+diagnostics. It does not control access to a job or its lifetime, though a
+browser reaching a job that a different browser created is reported. Browser CORS
 access is limited to local origins and `nursescheduling.org` subdomains.
 
 Lifecycle and storage errors use a stable JSON envelope:
@@ -274,6 +275,81 @@ Lifecycle and storage errors use a stable JSON envelope:
 Request parsing and validation errors retain FastAPI's standard error format.
 Common status codes include `404` for missing resources, `409` for invalid job
 operations, `413` for oversized YAML, and `429` when job capacity is exhausted.
+
+The frontend and CLI serialize plain, valid YAML, so aliases and parse failures
+both indicate a client that built its request by hand. Both are reported without
+changing how the request is answered. Submitted YAML is also bounded by how far
+its aliases expand and how deeply it nests, not only by its byte size. An alias
+is a reference, so a small document can name hundreds of millions of nodes that
+every later traversal pays for, and parsing costs grow faster than nesting
+depth. Nesting is measured from parser events, so brackets in text do not count,
+and data passing either bound is refused with `400` before a job is queued. Reading
+happens on a worker thread and only after the checks that cost nothing, so a
+request that was going to be rejected never pays for it.
+
+### Suspicious request reporting
+
+Missing routes and unauthenticated probes are internet background noise and are
+not reported. Client errors that instead require knowledge of this API's
+contract are sent to Sentry, because a scanner cannot produce them:
+
+| Signal | Meaning | Level |
+| --- | --- | --- |
+| `forged_stream_token` | An event-stream token failed verification and had not merely expired, so it was constructed rather than issued. Error when it was unexpired and of the minted shape, warning otherwise. | error/warning |
+| `yaml_expansion_bomb` | Submitted data expands or nests past what the server reads, so it was refused. | error |
+| `yaml_aliases_used` | Accepted data used a YAML alias, which nothing this project produces does. | warning |
+| `yaml_unparseable` | Accepted data is not valid YAML, which a client that serializes its own data does not submit. | warning |
+| `foreign_job_access` | A browser read, controlled, downloaded, or deleted a job that a different browser created. A caller sending no cookie is not reported. | warning |
+| `job_capacity_exceeded` | One address met a full job queue, which repeats only when that address filled it. | warning |
+| `job_id_probe` | A job of the shape this server issues was requested and does not exist. | warning |
+| `rejected_bearer_token` | A request presented a bearer token that is not the configured one. | warning |
+| `timeout_out_of_range` | An optimization timeout fell outside the range advertised by `GET /optimize/options`. | warning |
+
+A reported request answers exactly like an unreported one, so its body, status,
+and headers reveal nothing. Reporting still costs a little time, so a caller
+measuring closely can infer that something happened. Each signal groups into its
+own Sentry issue.
+
+Repeats of one signal from one address are counted within a fixed window, and a
+signal that reaches `SUSPICION_ESCALATE_COUNT` is reported as an error rather
+than a warning, carrying its `occurrences` count. A signal naming a job also
+carries `distinct_job_ids`, and escalates only when that count reaches the
+threshold, so a client retrying one job stays a warning however often it repeats
+while a caller working through identifiers does not. Only a signal whose every
+request names a job counts them, so mixing one job request into another signal
+cannot hold that signal's escalation down. Further repeats within that
+window keep counting but are not reported, so one address cannot spend the
+project's event quota. Because the window is fixed rather than sliding, repeats
+spread across a boundary can stay below the threshold. Addresses are counted as a
+salted digest, so the counters hold no record of who connected, and the salt is
+derived from bearer keys and the deployment ID when authentication is enabled.
+Authenticated Redis deployments share counters across worker processes. Open
+deployments use a random salt per process, so their counters are process-local
+even with Redis. They can reach the threshold later.
+Counting is advisory. A Redis failure leaves a report unescalated and does not
+suppress it based on incomplete counts.
+
+A stale browser tab can produce `job_id_probe` after its job is deleted or
+expires, and a mistyped token produces `rejected_bearer_token`, so both are
+reported as warnings rather than errors. Neither reaches an error by repeating,
+because a stale tab names one job and a mistyped token names none. Changing `API_AUTH_TOKEN` invalidates
+every stream token already handed out, so expect `forged_stream_token` from real
+clients until the longest outstanding one expires.
+
+Every event carries a `client.address` tag holding the address Uvicorn resolved
+for its request. Sentry's own attribution is left alone. In Compose, NGINX
+replaces `X-Forwarded-For` with Cloudflare's single `CF-Connecting-IP` value,
+and Uvicorn trusts that forwarded header. Both the tag and Sentry therefore
+receive the same public client address. The original caller-supplied forwarding
+chain is intentionally discarded, so Compose no longer reports a claimed
+address disagreement.
+
+Docker assigns all network addresses. This trust model assumes local service
+containers are not hostile, because Uvicorn accepts forwarded headers from
+any peer. Keep the API and AI ports unpublished and route public traffic only
+through Cloudflare Tunnel and NGINX. [Cloudflare recommends `CF-Connecting-IP`](https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip)
+for the original visitor address because it has one consistent address rather
+than the variable-length `X-Forwarded-For` chain.
 
 ## Storage and Scaling
 

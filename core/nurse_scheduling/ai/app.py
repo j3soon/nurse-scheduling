@@ -44,6 +44,7 @@ from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
 from .background import (
     SessionEventBroker,
+    recent_history,
     run_turn,
 )
 from .config import AiSettings, validate_ai_auth_credentials
@@ -218,6 +219,7 @@ class ChatSession:
     schedule_yaml: str
     revision: str
     history: list[ChatMessage] = field(default_factory=list)
+    dropped_history_messages: int = 0
     version: int = 0
     turn: TurnSnapshot | None = None
     proposal_yaml: str = ""
@@ -228,12 +230,34 @@ class ChatSession:
         return self.turn is not None
 
 
+SESSION_MEMORY_LIMIT_MESSAGE = "The AI service has reached its memory limit."
+
+
+def _text_bytes(value: object) -> int:
+    """Return the UTF-8 size of one chat content value, ignoring inline image data."""
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    if isinstance(value, list):
+        return sum(len(part.get("text", "").encode("utf-8")) for part in value if part.get("type") == "text")
+    return 0
+
+
+def _session_bytes(session: "ChatSession") -> int:
+    """Return the chat text one session retains."""
+    total = _text_bytes(session.schedule_yaml) + _text_bytes(session.proposal_yaml) + _text_bytes(session.proposal_diff)
+    total += sum(_text_bytes(message.get("content")) for message in session.history)
+    if session.turn is not None:
+        total += sum(_text_bytes(text) for _message_id, text in session.turn.steering_queue)
+    return total
+
+
 @dataclass(frozen=True)
 class TurnCompletion:
     """Whether a completed turn and its optional proposal were retained."""
 
     turn_saved: bool
     proposal_saved: bool
+    history_trimmed_count: int = 0
 
 
 class SessionStore:
@@ -242,17 +266,99 @@ class SessionStore:
     def __init__(self, settings: AiSettings) -> None:
         self._settings = settings
         self._sessions: dict[str, ChatSession] = {}
+        self._retained_bytes = 0
+        self._session_bytes: dict[str, int] = {}
         self._on_retire: Callable[[str], None] | None = None
 
     def on_retire(self, callback: Callable[[str], None]) -> None:
         """Register the cleanup that follows every dropped session."""
         self._on_retire = callback
 
+    @property
+    def retained_bytes(self) -> int:
+        """Return the chat text retained across live sessions."""
+        return self._retained_bytes
+
+    def _recount(self, session: ChatSession) -> None:
+        """Refresh one session's contribution to the retained total."""
+        previous = self._session_bytes.get(session.id, 0)
+        current = _session_bytes(session)
+        self._session_bytes[session.id] = current
+        self._retained_bytes += current - previous
+
+    def _charge(self, session: ChatSession, delta: int) -> None:
+        """Apply a known size change to one session's contribution.
+
+        Cheaper than `_recount`, which re-encodes the whole history while every session
+        waits on the event loop.
+        """
+        self._session_bytes[session.id] += delta
+        self._retained_bytes += delta
+
+    def _forget(self, session_id: str) -> None:
+        """Drop one session's contribution to the retained total."""
+        self._retained_bytes -= self._session_bytes.pop(session_id, 0)
+
+    def _require_capacity(self, additional_bytes: int) -> None:
+        """Refuse text that would push retained chat state past the configured budget.
+
+        Checked where a client pushes new text. A completed turn is never refused here,
+        because its answer has already streamed to the user; `_trim_history_to_budget`
+        reclaims the space instead.
+
+        Raises:
+            HTTPException: With status 429 when the budget is exhausted.
+        """
+        if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
+            raise HTTPException(status_code=429, detail=SESSION_MEMORY_LIMIT_MESSAGE)
+
+    def _trim_history_to_budget(self, session: ChatSession, protected_messages: int) -> None:
+        """Drop this session's oldest context until retained text fits the budget.
+
+        A turn grows a session without passing an admission check, so sessions admitted
+        cheaply would otherwise accumulate answers and proposals far past the budget and
+        hold them until they expire. Older context is the part a later turn needs least,
+        and the message cap already truncates from the same end.
+
+        Keep the entire completed turn so its answer still has the question and any
+        steering that produced it. Retained text therefore settles at the budget plus
+        one turn and any pending proposal per session.
+        """
+        while self._retained_bytes > self._settings.max_session_bytes:
+            oldest_answer = next(
+                (index for index, message in enumerate(session.history) if message["role"] == "assistant"),
+                None,
+            )
+            if oldest_answer is None or len(session.history) - oldest_answer - 1 < protected_messages:
+                break
+            removed = session.history[: oldest_answer + 1]
+            del session.history[: oldest_answer + 1]
+            self._charge(session, -sum(_text_bytes(message.get("content")) for message in removed))
+            session.dropped_history_messages += len(removed)
+
+    def _effective_trimmed_count(self, session: ChatSession) -> int:
+        """Count retained-history and prompt-budget omissions visible to a client."""
+        return (
+            session.dropped_history_messages
+            + len(session.history)
+            - len(recent_history(session.history, self._settings.max_history_chars))
+        )
+
+    def _cap_history(self, session: ChatSession) -> None:
+        """Limit retained messages without leaving an assistant reply at the front."""
+        overflow = max(0, len(session.history) - max(2, self._settings.max_history_messages))
+        if overflow:
+            while overflow < len(session.history) and session.history[overflow]["role"] != "user":
+                overflow += 1
+            del session.history[:overflow]
+            session.dropped_history_messages += overflow
+
     def create(self, owner_token: str, schedule_yaml: str) -> ChatSession:
         """Create a session after pruning expired entries."""
         self._prune_expired()
         if len(self._sessions) >= self._settings.max_sessions:
             raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
+        self._require_capacity(_text_bytes(schedule_yaml))
         session = ChatSession(
             id=str(uuid4()),
             owner_token=owner_token,
@@ -261,6 +367,7 @@ class SessionStore:
             revision=schedule_revision(schedule_yaml),
         )
         self._sessions[session.id] = session
+        self._recount(session)
         return session
 
     def begin(self, session_id: str, owner_token: str | None) -> TurnSnapshot:
@@ -285,6 +392,7 @@ class SessionStore:
             session.proposal_yaml,
             session.proposal_diff,
             accepting_steering,
+            previously_dropped=session.dropped_history_messages,
         )
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         return session.turn
@@ -315,19 +423,24 @@ class SessionStore:
             return TurnCompletion(turn_saved=False, proposal_saved=False)
         session.turn = None
         if session.version != snapshot.version:
+            self._recount(session)
             return TurnCompletion(turn_saved=False, proposal_saved=False)
-        session.history.extend(
-            turn_messages
-            or (
-                ChatMessage(role="user", content=user_message),
-                ChatMessage(role="assistant", content=assistant_message),
-            )
+        completed_turn = turn_messages or (
+            ChatMessage(role="user", content=user_message),
+            ChatMessage(role="assistant", content=assistant_message),
         )
-        session.history = session.history[-self._settings.max_history_messages :]
+        session.history.extend(completed_turn)
+        self._cap_history(session)
         proposal_saved = proposal is not None
         if proposal_saved:
             session.proposal_yaml, session.proposal_diff = proposal
-        return TurnCompletion(turn_saved=True, proposal_saved=proposal_saved)
+        self._recount(session)
+        self._trim_history_to_budget(session, min(len(completed_turn), len(session.history)))
+        return TurnCompletion(
+            turn_saved=True,
+            proposal_saved=proposal_saved,
+            history_trimmed_count=self._effective_trimmed_count(session),
+        )
 
     def queue_steering(
         self,
@@ -347,9 +460,12 @@ class SessionStore:
         # that makes a retried POST idempotent is never emptied mid-turn.
         if len(turn.steering_ids) >= self._settings.max_history_messages:
             raise HTTPException(status_code=429, detail="Too many messages are already queued.")
+        message_bytes = _text_bytes(message)
+        self._require_capacity(message_bytes)
         turn.steering_queue.append((message_id, message))
         turn.steering_ids.add(message_id)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+        self._charge(session, message_bytes)
 
     def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]:
         """Drain queued messages and close the final race when a response is done."""
@@ -361,6 +477,7 @@ class SessionStore:
         turn.steering_queue.clear()
         if close_if_empty and not queued:
             turn.accepting_steering = False
+        self._charge(session, -sum(_text_bytes(text) for _message_id, text in queued))
         return queued
 
     def update_schedule(self, session_id: str, owner_token: str | None, schedule_yaml: str) -> None:
@@ -369,11 +486,20 @@ class SessionStore:
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         if session.schedule_yaml == schedule_yaml:
             return
+        additional_bytes = (
+            _text_bytes(schedule_yaml)
+            - _text_bytes(session.schedule_yaml)
+            - _text_bytes(session.proposal_yaml)
+            - _text_bytes(session.proposal_diff)
+        )
+        if additional_bytes > 0:
+            self._require_capacity(additional_bytes)
         session.version += 1
         session.schedule_yaml = schedule_yaml
         session.revision = schedule_revision(schedule_yaml)
         session.proposal_yaml = ""
         session.proposal_diff = ""
+        self._recount(session)
 
     def peek_proposal(self, session_id: str, owner_token: str | None, base_sha256: str) -> tuple[str, str]:
         """Return the pending proposal and the schedule it would replace, without adopting it."""
@@ -391,6 +517,7 @@ class SessionStore:
         session.revision = schedule_revision(approved)
         self._append_history_event(session, PROPOSAL_APPROVED_HISTORY)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+        self._recount(session)
         return approved
 
     def _require_approvable(self, session_id: str, owner_token: str | None, base_sha256: str) -> ChatSession:
@@ -402,6 +529,7 @@ class SessionStore:
             session.version += 1
             session.proposal_yaml = ""
             session.proposal_diff = ""
+            self._recount(session)
             raise HTTPException(
                 status_code=409,
                 detail="The schedule changed after this proposal was created, so it was discarded.",
@@ -423,17 +551,19 @@ class SessionStore:
             session.version += 1
             self._append_history_event(session, history_event)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
+        self._recount(session)
 
     def abort(self, session_id: str, snapshot: TurnSnapshot) -> None:
         """Only the owner of a reservation may release it."""
         session = self._sessions.get(session_id)
         if session is not None and session.turn is snapshot:
             session.turn = None
+            self._recount(session)
 
     def _append_history_event(self, session: ChatSession, content: str) -> None:
         """Append one trusted application event within the retention bound."""
         session.history.append(ChatMessage(role="user", content=content))
-        session.history = session.history[-self._settings.max_history_messages :]
+        self._cap_history(session)
 
     def _get_owned(self, session_id: str, owner_token: str | None) -> ChatSession:
         self._prune_expired()
@@ -447,6 +577,7 @@ class SessionStore:
         expired_ids = [session_id for session_id, session in self._sessions.items() if session.expires_at <= now]
         for session_id in expired_ids:
             del self._sessions[session_id]
+            self._forget(session_id)
             if self._on_retire is not None:
                 self._on_retire(session_id)
 

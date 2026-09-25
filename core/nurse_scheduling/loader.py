@@ -17,10 +17,12 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 from ruamel.yaml.events import (
     AliasEvent,
     MappingEndEvent,
@@ -30,36 +32,93 @@ from ruamel.yaml.events import (
     SequenceStartEvent,
 )
 
+from .errors import InputValidationError
 from .models import NurseSchedulingData
 
-MAX_YAML_DEPTH = 64
-MAX_YAML_NODES = 200_000
+MAX_EXPANDED_NODES = 200_000
+"""Largest number of nodes a document may expand to once aliases are followed."""
+MAX_NESTING_DEPTH = 64
+"""Deepest a document may nest. Parsing costs grow faster than depth, and this project's
+own data nests five deep, so a bound well above that keeps a deep document from being
+expensive to even look at."""
 
 
-def _validate_yaml_complexity(content: bytes) -> None:
-    """Reject YAML structures that can expand into excessive work."""
-    depth = 0
-    nodes = 0
-    stream = BytesIO(content)
+class SchedulingDataTooComplexError(ValueError):
+    """Scheduling data expands to more nodes than this project will process."""
 
-    for event in YAML(typ="safe").parse(stream):
-        if isinstance(event, AliasEvent):
-            raise ValueError("YAML aliases are not allowed")  # noqa: TRY004
+
+@dataclass(frozen=True)
+class YamlExpansion:
+    """How far a document expands once its aliases are followed."""
+
+    nodes: int
+    """Nodes the document expands to, counting each alias in full."""
+    aliases: int
+    """Aliases the document uses, which this project's own data never does."""
+
+
+def _parse_events(content: bytes):
+    """Yield parse events, reporting every malformed document as a YAML error.
+
+    The parser raises bare assertions for some malformed input, such as an unsupported
+    version directive. Callers separate unusable data from unusable requests, so every
+    such failure has to arrive as one kind of error.
+    """
+    try:
+        yield from YAML(typ="safe").parse(content)
+    except (SchedulingDataTooComplexError, YAMLError):
+        raise
+    except Exception as error:
+        raise YAMLError(f"Scheduling data could not be read: {error}") from error
+
+
+def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -> YamlExpansion:
+    """Return how far this document expands, counting each alias in full.
+
+    An alias is a reference, so parsing a document that nests them stays cheap while
+    everything that later walks the result pays for the expansion. Counting the expansion
+    from the event stream keeps that cost visible without ever building the structure.
+
+    Raises:
+        SchedulingDataTooComplexError: If the expansion or the nesting exceeds its bound.
+    """
+    anchor_sizes: dict[str, int] = {}
+    aliases = 0
+    # Each open collection accumulates its own size, and the root frame holds the total.
+    frames: list[list] = [[0, None]]
+    for event in _parse_events(content):
+        anchor = getattr(event, "anchor", None)
         if isinstance(event, (MappingStartEvent, SequenceStartEvent)):
-            depth += 1
-            nodes += 1
-            if depth > MAX_YAML_DEPTH:
-                raise ValueError(f"YAML nesting exceeds the limit of {MAX_YAML_DEPTH}")
-        elif isinstance(event, (MappingEndEvent, SequenceEndEvent)):
-            depth -= 1
+            frames.append([1, anchor])
+            if len(frames) - 1 > MAX_NESTING_DEPTH:
+                # Raised while parsing, so the rest of a deep document is never read.
+                raise SchedulingDataTooComplexError(
+                    f"Scheduling data nests deeper than {MAX_NESTING_DEPTH} levels, "
+                    "which this server refuses to process"
+                )
+            continue
+        if isinstance(event, (MappingEndEvent, SequenceEndEvent)):
+            size, collection_anchor = frames.pop()
+            if collection_anchor is not None:
+                anchor_sizes[collection_anchor] = size
+            frames[-1][0] += size
         elif isinstance(event, ScalarEvent):
-            nodes += 1
+            if anchor is not None:
+                anchor_sizes[anchor] = 1
+            frames[-1][0] += 1
+        elif isinstance(event, AliasEvent):
+            aliases += 1
+            frames[-1][0] += anchor_sizes.get(event.anchor, 1)
+        else:
+            continue
+        if frames[-1][0] > limit:
+            raise SchedulingDataTooComplexError(
+                f"Scheduling data expands to more than {limit} nodes, which this server refuses to process"
+            )
+    return YamlExpansion(nodes=frames[0][0], aliases=aliases)
 
-        if nodes > MAX_YAML_NODES:
-            raise ValueError(f"YAML node count exceeds the limit of {MAX_YAML_NODES}")
 
-
-def _load_yaml(content: bytes) -> dict[str, Any]:
+def _load_yaml(content: bytes, *, reject_aliases: bool = False) -> dict[str, Any]:
     """Load YAML from bytes content.
 
     Args:
@@ -68,14 +127,16 @@ def _load_yaml(content: bytes) -> dict[str, Any]:
     Returns:
         dict[str, Any]: The loaded YAML data
     """
-    _validate_yaml_complexity(content)
+    expansion = measure_yaml_expansion(content)
+    if reject_aliases and expansion.aliases:
+        raise ValueError("YAML aliases are not allowed in frontend schedules")
     stream = BytesIO(content)
     # Use ruamel.yaml instead of PyYAML to support YAML 1.2
     # This avoids the auto-conversion of special strings such as
     # `Off` into boolean value `False`.
     data = YAML(typ="safe").load(stream)
     if not isinstance(data, dict):
-        raise TypeError("Scheduling YAML must contain a top-level mapping")
+        raise InputValidationError("Scheduling YAML must contain a top-level mapping")
     return data
 
 
@@ -87,6 +148,9 @@ def load_data(content: bytes) -> NurseSchedulingData:
 
     Returns:
         NurseSchedulingData: The validated scheduling data
+
+    Raises:
+        SchedulingDataTooComplexError: If the data expands to more nodes than are processed.
     """
     data = _load_yaml(content)
     return NurseSchedulingData.model_validate(data)

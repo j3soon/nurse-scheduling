@@ -22,6 +22,8 @@ import math
 import re
 from typing import TYPE_CHECKING
 
+from .errors import InputValidationError
+
 if TYPE_CHECKING:
     from .models import DateRange
 
@@ -54,19 +56,19 @@ def _parse_single_date(date: str, date_range: "DateRange") -> datetime.date:
     error_details = f"- Start date: {startdate}\n- End date: {enddate}\n"
     if match := re.match(r"^\d{1,2}$", date):
         if startdate.year != enddate.year or startdate.month != enddate.month:
-            raise ValueError(
+            raise InputValidationError(
                 f"Pure day format (D) is not allowed when start date and end date are not in the same month.\n{error_details}"
             )
         return datetime.date(startdate.year, startdate.month, int(match.group(0)))
     elif match := re.match(r"^(\d{2})-(\d{2})$", date):
         if startdate.year != enddate.year:
-            raise ValueError(
+            raise InputValidationError(
                 f"Pure month-day format (MM-DD) is not allowed when start date and end date are not in the same year.\n{error_details}"
             )
         return datetime.date(startdate.year, *map(int, match.groups()))
     elif match := re.match(r"^(\d{4})-(\d{2})-(\d{2})$", date):
         return datetime.date(*map(int, match.groups()))
-    raise ValueError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
+    raise InputValidationError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
 
 
 def parse_dates(dates, map_did_d, date_range):
@@ -89,7 +91,7 @@ def parse_dates(dates, map_did_d, date_range):
     result = []
     for date in parsed_dates:
         if date < startdate or date > enddate:
-            raise ValueError(f"Date '{date}' is out of the range of start date and end date.")
+            raise InputValidationError(f"Date '{date}' is out of the range of start date and end date.")
         result.append((date - startdate).days)
 
     return sorted(set(result))
@@ -99,9 +101,10 @@ def parse_sids(sids, map_sid_s):
     sids = ensure_list(sids)
     result = []
     for sid in sids:
-        if sid not in map_sid_s:
-            raise ValueError(f"Unknown shift type ID: {sid}")
-        result.extend(map_sid_s[sid])
+        # Look up by string, matching how the ID maps are keyed.
+        if str(sid) not in map_sid_s:
+            raise InputValidationError(f"Unknown shift type ID: {sid}")
+        result.extend(map_sid_s[str(sid)])
     return sorted(set(result))
 
 
@@ -109,9 +112,9 @@ def parse_pids(pids, map_pid_p):
     pids = ensure_list(pids)
     result = []
     for pid in pids:
-        if pid not in map_pid_p:
-            raise ValueError(f"Unknown person ID: {pid}")
-        result.extend(map_pid_p[pid])
+        if str(pid) not in map_pid_p:
+            raise InputValidationError(f"Unknown person ID: {pid}")
+        result.extend(map_pid_p[str(pid)])
     return sorted(set(result))
 
 

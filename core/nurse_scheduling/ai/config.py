@@ -134,6 +134,13 @@ class AiSettings:
     request_log_enabled: bool = True
     """Whether incoming question previews are logged, which records chat text."""
     max_sessions: int = 1000
+    max_session_bytes: int = 256 * 1024 * 1024
+    """Chat text budget across live sessions, enforced where a client pushes new text.
+
+    A completed turn is trimmed rather than refused, so retained text settles at this
+    budget plus the newest message and any pending proposal of each live session. Size
+    the process above that floor, not at this value.
+    """
     max_history_messages: int = 1000
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS
     max_message_chars: int = 8000
@@ -208,6 +215,7 @@ class AiSettings:
             history_retention_days=_read_positive_int("AI_HISTORY_RETENTION_DAYS", 30),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
+            max_session_bytes=_read_positive_int("AI_MAX_SESSION_BYTES", 256 * 1024 * 1024),
             max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 1000),
             max_history_chars=_read_positive_int("AI_MAX_HISTORY_CHARS", DEFAULT_MAX_HISTORY_CHARS),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),

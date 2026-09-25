@@ -62,6 +62,7 @@ class TurnCompletion(Protocol):
 
     turn_saved: bool
     proposal_saved: bool
+    history_trimmed_count: int
 
 
 class BackgroundSessionStore(Protocol):
@@ -288,8 +289,9 @@ async def run_turn(
             artifact = await session_optimizer.latest_result_artifact(session_id)
             await turn.streaming.wait()
         retained_history = recent_history(history, settings.max_history_chars)
-        if len(retained_history) < len(history):
-            await emit("history_trimmed", {"dropped": len(history) - len(retained_history)})
+        dropped_history = snapshot.previously_dropped + len(history) - len(retained_history)
+        if dropped_history:
+            await emit("history_trimmed", {"dropped": dropped_history})
         messages = build_provider_messages(
             retained_history,
             schedule_yaml,
@@ -366,6 +368,8 @@ async def run_turn(
         if not completion.turn_saved:
             await emit("stale", {"message": STALE_TURN_ERROR})
             return
+        if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
+            await emit("history_trimmed", {"dropped": completion.history_trimmed_count})
         if completion.proposal_saved and pending_proposal is not None:
             await emit("proposal", {"diff": pending_proposal.diff})
         done = {"message_id": turn.id}

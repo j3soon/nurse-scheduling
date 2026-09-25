@@ -52,6 +52,10 @@ DEFAULT_USAGE_METRICS_RETENTION_DAYS = 30
 """Default retention period for minimal job telemetry."""
 MIN_USAGE_METRICS_RETENTION_DAYS = 9
 """Shortest retention that covers a complete local week before reporting."""
+DEFAULT_SUSPICION_WINDOW_SECONDS = 5 * 60
+"""Default window over which repeats of one signal are counted."""
+DEFAULT_SUSPICION_ESCALATE_COUNT = 5
+"""Default occurrences within a window that escalate a signal to an error."""
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -210,6 +214,18 @@ class ServerSettings:
     """Namespace and schema version prepended to telemetry keys."""
     usage_metrics_retention_days: int = DEFAULT_USAGE_METRICS_RETENTION_DAYS
     """Retention period for every telemetry row."""
+    suspicion_enabled: bool = True
+    """Whether repeated suspicious requests are counted and escalated."""
+    suspicion_window_seconds: int = DEFAULT_SUSPICION_WINDOW_SECONDS
+    """Length of the window over which one signal's repeats are counted."""
+    suspicion_escalate_count: int = DEFAULT_SUSPICION_ESCALATE_COUNT
+    """Occurrences within a window that make a signal worth reporting as an error."""
+    cookie_secure: bool = False
+    """Whether the client correlation cookie is always marked secure.
+
+    A deployment behind a TLS-terminating proxy sees plain HTTP, so it cannot infer this
+    from the request. Requests that arrive over HTTPS directly still get a secure cookie.
+    """
 
     def __post_init__(self) -> None:
         """Validate cross-field and direct-construction constraints.
@@ -228,6 +244,8 @@ class ServerSettings:
             "min_timeout_seconds",
             "default_timeout_seconds",
             "max_timeout_seconds",
+            "suspicion_window_seconds",
+            "suspicion_escalate_count",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -322,6 +340,7 @@ class ServerSettings:
             auth_token=os.getenv(AUTH_TOKEN_ENV_NAME),
             auth_tokens=parse_auth_credentials(os.getenv(AUTH_TOKENS_ENV_NAME)),
             auth_required=_boolean(AUTH_REQUIRED_ENV_NAME, False),
+            cookie_secure=_boolean("API_COOKIE_SECURE", False),
             usage_metrics_enabled=_boolean("USAGE_METRICS_ENABLED", False),
             usage_metrics_key_prefix=os.getenv(
                 "USAGE_METRICS_KEY_PREFIX",
@@ -330,5 +349,14 @@ class ServerSettings:
             usage_metrics_retention_days=_positive_int(
                 "USAGE_METRICS_RETENTION_DAYS",
                 DEFAULT_USAGE_METRICS_RETENTION_DAYS,
+            ),
+            suspicion_enabled=_boolean("SUSPICION_COUNTER_ENABLED", True),
+            suspicion_window_seconds=_positive_int(
+                "SUSPICION_WINDOW_SECONDS",
+                DEFAULT_SUSPICION_WINDOW_SECONDS,
+            ),
+            suspicion_escalate_count=_positive_int(
+                "SUSPICION_ESCALATE_COUNT",
+                DEFAULT_SUSPICION_ESCALATE_COUNT,
             ),
         )

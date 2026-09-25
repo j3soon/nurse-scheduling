@@ -131,7 +131,7 @@ class _FrontendNurseSchedulingData(NurseSchedulingData):
 
 def load_frontend_data(content: bytes) -> NurseSchedulingData:
     """Parse YAML with canonical validation and the frontend subset policy."""
-    return _FrontendNurseSchedulingData.model_validate(_load_yaml(content))
+    return _FrontendNurseSchedulingData.model_validate(_load_yaml(content, reject_aliases=True))
 
 
 def validate_frontend_data(data: NurseSchedulingData) -> NurseSchedulingData:

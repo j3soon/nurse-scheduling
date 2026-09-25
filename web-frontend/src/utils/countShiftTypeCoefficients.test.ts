@@ -53,6 +53,23 @@ describe('countShiftTypeCoefficients', () => {
     ]);
   });
 
+  it('expands nested groups when their parent is declared first', () => {
+    const nestedShiftTypeData = {
+      items: [...shiftTypeData.items, { id: 'E', description: 'Evening' }],
+      groups: [
+        { id: 'ALL_WORK', members: ['WORK', 'E'], description: 'All working shifts' },
+        ...shiftTypeData.groups,
+      ],
+    };
+
+    expect(getCoefficientShiftTypeIds(['ALL_WORK'], nestedShiftTypeData)).toEqual([
+      'D', 'N', 'E', 'ALL_WORK', 'WORK',
+    ]);
+    expect(validateCoefficientPairs(
+      ['D', 'ALL_WORK'], [['D', 2], ['ALL_WORK', 3]], nestedShiftTypeData
+    ).overlapError).toBe('Shift type coefficients overlap: D, ALL_WORK include D');
+  });
+
   it('leaves missing coefficients blank and omits them from output', () => {
     expect(validateCoefficientPairs(['D', 'N'], [], shiftTypeData)).toEqual({
       coefficients: [],

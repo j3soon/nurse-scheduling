@@ -65,8 +65,11 @@ async function waitForServer(url: string, processExited: Promise<number | null>,
   // rejection from surfacing as an unhandled rejection during teardown.
   exited.catch(() => {});
   while (Date.now() < deadline) {
+    // The first request compiles the route. Give it the remaining readiness
+    // budget instead of repeatedly aborting a healthy but slow response.
     const result = await Promise.race([
-      fetch(url, { signal: AbortSignal.timeout(1_000) }).then(response => response.ok).catch(() => false),
+      fetch(url, { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) })
+        .then(response => response.ok).catch(() => false),
       exited,
     ]);
     if (result) return;

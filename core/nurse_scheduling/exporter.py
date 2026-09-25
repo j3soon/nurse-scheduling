@@ -458,7 +458,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 if solver.get_value(ctx.shifts[(d, s, p)]) == 1:
                     if cell_value != "":
                         cell_value += ", "
-                    cell_value += shift_types[s].id
+                    cell_value += str(shift_types[s].id)
             if prettify and (d, p) in cell_annotations:
                 for append_text in cell_annotations[(d, p)]["append_text"]:
                     cell_value += append_text
