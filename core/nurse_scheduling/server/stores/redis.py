@@ -19,7 +19,6 @@
 
 import json
 import math
-import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -83,8 +82,6 @@ def _connection_retry(*, retry_on_timeout: bool) -> Retry:
     )
 
 
-_STREAM_ID_PATTERN = re.compile(r"[0-9]+-[0-9]+")
-"""Shape of the `<ms>-<seq>` entry IDs Redis assigns to stream events."""
 _MAX_STREAM_ID_COMPONENT = 2**64 - 1
 """Largest value Redis accepts for either stream ID component."""
 
@@ -96,10 +93,12 @@ def _normalize_stream_id(after_id: str | None) -> str:
     `ResponseError` that would abort the stream. Replay from the beginning
     instead, matching how `MemoryJobStore` treats an unparsable cursor.
     """
-    if after_id is not None and _STREAM_ID_PATTERN.fullmatch(after_id):
-        components = [component.lstrip("0") or "0" for component in after_id.split("-")]
-        if all(len(component) <= 20 and int(component) <= _MAX_STREAM_ID_COMPONENT for component in components):
-            return "-".join(components)
+    if after_id is not None:
+        components = after_id.split("-", 2)
+        if len(components) == 2 and all(component.isascii() and component.isdecimal() for component in components):
+            normalized = [component.lstrip("0") or "0" for component in components]
+            if all(len(component) <= 20 and int(component) <= _MAX_STREAM_ID_COMPONENT for component in normalized):
+                return "-".join(normalized)
     return "0-0"
 
 
