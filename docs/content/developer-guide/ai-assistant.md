@@ -14,6 +14,11 @@ For setup commands, see the [Core README](reproduce/core.md#ai-backend). The
 The separate [backend server guide](backend-server.md) covers the optimizer API.
 On narrow screens, scroll the diagrams sideways to read their labels.
 
+**Diagram key:** Solid arrows are calls. Dashed arrows are returned results or
+SSE events. `opt` is conditional, `alt` shows alternative outcomes, and a loop
+may repeat within one turn. Arrow style does not encode synchronous versus
+background work.
+
 <style>
 @media (max-width: 48rem) {
   .ai-diagram {
@@ -128,10 +133,10 @@ flowchart TB
     Start[<b>Browser message or optimizer follow-up</b>] --> Admit[<b>Admit turn</b><br/>Reserve schedule, history, version]
     Admit --> Step{<b>Model step</b>}
     Step -->|Text or reasoning| Text[Stream delta or reasoning] --> Step
-    Step -->|Workspace tool| Tool[Run E2B tool<br/>Return result, optional preview] --> Step
+    Step -->|Workspace tool| Tool[Run E2B tool<br/>Return result, working-copy preview if valid] --> Step
     Step -->|Optimizer tool| Job[Start, inspect, or finish job<br/>Return tool result] --> Step
     Step -->|Final answer| Cleanup[Read final YAML if used<br/>Cleanup sandbox]
-    Cleanup --> Check{Version and outcome}
+    Cleanup --> Check{Conversation version and outcome}
     Check -->|Current| Done[Save answer and any proposal<br/>SSE done]
     Check -->|Changed| Stale[SSE stale<br/>Discard result]
     Check -->|Failure| Error[SSE error<br/>Discard result]
@@ -143,9 +148,9 @@ flowchart TB
 | Browser action during a foreground turn | Result |
 | --- | --- |
 | Queue the next message | HTTP `202` injects it at the next model boundary. If the turn is closing, HTTP `409` makes the browser send it as a new turn later. |
-| Stop the current answer | HTTP `202` cancels the active turn and queued follow-ups. Cleanup finishes, and locally queued text is cleared. An optimizer job whose ID was returned continues. |
+| Stop the current answer | The browser clears its locally queued messages, aborts the foreground SSE stream, and sends `POST /stop` (HTTP `202`). The service cancels the active turn and every queued follow-up turn. Cleanup still finishes. |
 | Start a second answer directly | HTTP `409` leaves the current turn running. |
-| Disconnect the foreground stream | Cancels the turn and completes cleanup. |
+| Disconnect the foreground SSE stream | Cancels only the active turn. Cleanup still finishes. Queued follow-up turns run once admitted. |
 
 A lost background event connection instead resumes from `Last-Event-ID` while
 the server turn continues.
@@ -179,7 +184,7 @@ sequenceDiagram
     Note over Agent: No E2B sandbox created
     Agent-->>AI: Answer complete
     alt Conversation version current
-        AI->>AI: Save answer
+        AI->>AI: Save answer to history
         AI-->>Browser: SSE done
     else Version changed
         AI-->>Browser: SSE stale
@@ -223,7 +228,7 @@ sequenceDiagram
         end
         Agent-->>AI: Tool result
         AI-->>Browser: SSE tool
-        opt Preview available
+        opt Working copy changed and valid
             Agent-->>AI: Working schedule
             AI-->>Browser: SSE schedule_change
         end
@@ -238,18 +243,19 @@ sequenceDiagram
         Agent->>E2B: Read final YAML
         E2B-->>Agent: Final candidate
         Agent->>Agent: Validate and diff
-        alt Proposal
-            Agent-->>AI: Proposal candidate
-        else Rejected
-            Note over Agent: Fail turn, no proposal
-        else Unchanged
-            Note over Agent: Answer only
-        end
     end
     opt Sandbox was created
         Note over Agent,E2B: Cleanup on exit
         Agent->>E2B: Destroy
         E2B-->>Agent: Deletion outcome
+    end
+    alt Proposal
+        Agent-->>AI: Proposal candidate
+        AI-->>Browser: SSE proposal
+    else Rejected
+        Note over Agent: Fail turn, no proposal
+    else Unchanged
+        Note over Agent: Answer only
     end
     opt Deletion unconfirmed
         AI->>E2B: Reaper retries later
@@ -258,22 +264,34 @@ sequenceDiagram
 
 </div>
 
-**Diagram key:** Solid arrows are calls. Dashed arrows are returned results or
-SSE events. `opt` is conditional, `alt` shows alternative outcomes, and the
-loop may repeat within one turn. Arrow style does not encode synchronous versus
-background work. The model waits for each tool batch. The reaper runs later.
+The model waits for each tool batch. The reaper runs later. Approving or
+rejecting a pending proposal happens after the turn and is drawn in the
+Schedule Proposals flowchart below.
+
+The `schedule_change` preview sends the working copy after any non-read tool
+that changed it and passed server-side validation. It waits until the model
+requests another tool, and is dropped if the model answers instead, leaving
+the final YAML to the proposal review below.
 
 The model can use `read`, `bash`, `edit`, and `write`. `read` handles text and
 supported images. Workspace helpers inspect XLSX and PDF files. Tool output,
 individual commands, tool rounds, and the full turn are bounded. The provider
 sees a schedule summary and reads full YAML through tools only when needed.
 
-Hydration puts `schedule.yaml` under `/workspace`, schema and guide references
-under `/reference`, and uploaded files under `/workspace/attachments`. An
-attachment manifest records safe paths and original filenames. Pending proposal
-files and a retained optimizer workbook are copied when present. Upload bytes
-last only for this turn. Later prompts retain their filenames. The sandbox has
-no repository or retrieval access and no outbound Internet access.
+Hydration copies the files below into the sandbox. The model inspects and edits
+them with the four basic tools, and runs the inspect helpers through `bash`.
+
+| Sandbox path | Content |
+| --- | --- |
+| `/workspace/schedule.yaml` | The session schedule snapshot. |
+| `/workspace/pending-proposal.yaml`, `/workspace/pending-proposal.diff` | The pending proposal's full candidate YAML and its frozen diff against the canonical schedule, if any. Read-only reference, and the new diff is computed by the server at turn end. |
+| `/workspace/attachments/` | Uploaded files plus a `manifest.json` with safe paths and original filenames. |
+| `/workspace/optimizer-results/optimized-schedule.xlsx` | A retained optimizer workbook, if any. |
+| `/reference/` | Schema and guide references, plus `tools/inspect_xlsx.py` and `tools/inspect_pdf.py`. |
+
+Attachment contents last only in this turn's sandbox. Later prompts retain only
+the filenames. The sandbox has no repository or retrieval access and no
+outbound Internet access.
 
 A sandbox belongs to one turn. If deletion cannot be confirmed, the background
 reaper retries and scans for overdue application-owned sandboxes. To run one
@@ -320,6 +338,12 @@ flowchart TB
 ```
 
 </div>
+
+A job is independent of the turn that started it. Its monitor is a separate
+background task, so stopping or disconnecting a turn does not cancel a job
+whose ID was returned. The service still reviews the result when the job ends,
+while a job still being submitted when its turn is cancelled is retired. The
+monitor then cancels and deletes the remote job.
 
 The optimizer credential and reverse person-ID mapping stay in the AI service,
 outside E2B.
@@ -442,8 +466,10 @@ The production NGINX proxy routes `/ai/*` to the AI service and other paths to
 the optimizer API. It must disable response buffering for streaming routes.
 With `proxy_pass http://ai:8001/;`, the trailing slash strips `/ai` before
 FastAPI receives the request. Set `AI_COOKIE_SECURE=1` for a public HTTPS
-browser route, even when the proxy talks to the container over HTTP. The CORS
-origin allowlist still controls credentialed browser requests.
+browser route, even when the proxy talks to the container over HTTP. The
+service only sees the proxy's plain-HTTP connection, so the flag is what marks
+the owner cookie `Secure`. The CORS origin allowlist separately controls which
+browser origins may make credentialed requests with it.
 
 The complete schedule reaches the AI service, and selected content reaches
 the model provider through tool results. Use approved services and anonymize
