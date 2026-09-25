@@ -820,7 +820,7 @@ def test_capabilities_report_configured_attachment_limits() -> None:
 
 def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     )
@@ -848,7 +848,7 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
 
 def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
@@ -868,7 +868,7 @@ def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.Monk
 
 def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     store = app.state.session_store
     owner = "b6d00cf8-1c7b-49b6-ab06-e162a54de489"
@@ -885,7 +885,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
 
 def test_unchanged_schedule_renews_session_with_owner_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
     now = 100.0
-    monkeypatch.setattr("nurse_scheduling.ai.app.time.monotonic", lambda: now)
+    monkeypatch.setattr("nurse_scheduling.ai.sessions.time.monotonic", lambda: now)
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
     schedule = schedule_yaml()
