@@ -3,63 +3,41 @@
 The experimental AI assistant answers questions about a schedule and can
 propose edits to it. It runs as a separate FastAPI application at
 `nurse_scheduling.ai_serve:app`. The service keeps the current schedule in a
-browser-owned session. Each message gets a fresh E2B Cloud sandbox where the
-model can inspect a working copy. A changed schedule reaches the browser only
-as a proposal that the user must approve.
+browser-owned session. When a tool needs a workspace, the turn gets a fresh
+E2B Cloud sandbox with a working copy. Assistant edits change the canonical
+browser schedule only after the user approves a proposal.
 
-This page follows a message from the browser through the assistant and back.
-It also covers the HTTP API and the checks used to evaluate the assistant.
+This page follows a turn from admission through the model, workspace, and
+optimizer paths. It also covers proposals, the HTTP API, and operational checks.
 For setup commands, see the [Core README](reproduce/core.md#ai-backend). The
 [user guide](../user-guide/experimental-ai.md) describes the browser controls.
 The separate [backend server guide](backend-server.md) covers the optimizer API.
+On narrow screens, scroll the diagrams sideways to read their labels.
 
-## Architecture
-
-```mermaid
-flowchart TB
-    Browser[<b>Browser</b><br/>Schedule, chat, and approval]
-    Service[<b>AI service</b><br/>Session state and turn runner]
-    Provider[<b>Model provider</b><br/>OpenAI-compatible chat]
-    Sandbox[<b>E2B Cloud sandbox</b><br/>Fresh working copy per message]
-    Optimizer[<b>Optimizer API</b><br/>Independent schedule jobs]
-
-    Browser <-->|HTTP and SSE| Service
-    Service <-->|Chat| Provider
-    Service <-->|Tools| Sandbox
-    Service <-->|Jobs| Optimizer
-```
-
-| Component | Responsibility |
-| --- | --- |
-| `ai/app.py` | Builds the app, authenticates requests, and exposes session and proposal routes. |
-| `ai/lifecycle.py` and `ai/background.py` | Admit turns, run foreground and background responses, and deliver their events. |
-| `ai/sandbox_agent.py` and `ai/sandbox/` | Prepare a disposable workspace, execute model tools, and read candidates for trusted validation. |
-| `ai/optimizer.py` | Submit and monitor optimizer jobs without exposing their credentials to the sandbox. |
-| `ai/history.py` | Optionally write chat history to PostgreSQL. |
-| `web-frontend/src/app/experimental-ai/chatLifecycle.ts` | Track browser operations and ignore callbacks from superseded streams. |
-
-Sessions, proposals, event replay, and optimizer monitors live in the AI
-process. They do not use the optimization server's Redis store. Run one AI
-backend instance until shared AI storage exists. A restart loses active
-sessions, even when PostgreSQL chat logging is enabled.
+<style>
+@media (max-width: 48rem) {
+  .ai-diagram {
+    overflow-x: auto;
+  }
+  .ai-diagram .mermaid {
+    min-width: 680px;
+  }
+}
+</style>
 
 ## Turn Lifecycle
 
-The browser creates a session with a YAML schedule snapshot. The response
-includes an unguessable session ID, and an HTTP-only cookie identifies its
-owner. A session expires after 48 hours of inactivity by default. Messages,
-schedule updates, and proposal decisions renew that window. Checking the
-session's remaining lifetime does not.
+<div class="ai-diagram" markdown="1" tabindex="0">
 
 ```mermaid
 stateDiagram-v2
-    [*] --> waiting: message accepted or optimizer completes
-    waiting --> running: reaches session head
-    waiting --> stopped: Stop
-    running --> completed: answer committed
-    running --> stale: schedule changed
-    running --> failed: provider or sandbox error
-    running --> stopping: Stop or disconnect
+    [*] --> waiting: foreground accepted or optimizer follow-up queued
+    waiting --> running: admitted at session head
+    waiting --> stopped: Stop or shutdown
+    running --> completed: cleanup path, current version, result saved
+    running --> stale: cleanup, conversation version changed
+    running --> failed: cleanup after error
+    running --> stopping: Stop, disconnect, or shutdown
     stopping --> stopped: cleanup finishes
     completed --> [*]
     stale --> [*]
@@ -72,134 +50,333 @@ stateDiagram-v2
     class stale,failed,stopped otherState
 ```
 
-`SessionTurns` admits one assistant turn per session. A new foreground message
-returns HTTP `409` while that session is busy. A follow-up triggered by an
-optimizer result waits behind the active turn. Admission remains held until
-sandbox and history cleanup finish. A process-wide limit, set by
-`AI_MAX_CONCURRENT_REQUESTS` and defaulting to four, bounds concurrent model
-streams across sessions.
+</div>
 
-The same runner handles foreground messages and optimizer follow-ups. It
-reserves the schedule, history, and a monotonic conversation version before
-work begins. A changed schedule or a decision on a pending proposal advances
-the version. If it changes during a turn, the result is stale and cannot
-overwrite newer work, even if the schedule text later returns to its old value.
+These are the effective phases of `SessionTurns` and the turn runner, not a
+stored state enum. A session admits one turn at a time. Background optimizer
+follow-ups wait in its FIFO queue, while a second foreground request gets HTTP
+`409`. The process-wide model-stream limit defaults to four.
 
-Stop cancels an assistant turn, including one waiting for admission. A browser
-disconnect cancels its foreground turn. In either case, the service still
-finishes resource and history cleanup. Stop does not cancel an independent
-optimizer job. A failed, stopped, or stale turn can leave provisional activity
-visible in the browser, but its question, answer, and candidate do not enter
-model conversation history. Retrying starts a new sandbox. Attachments must be
-selected again.
+A session begins with a browser-supplied YAML snapshot, an unguessable ID, and
+an HTTP-only owner cookie. It expires after 48 hours of inactivity by default.
+Messages, schedule updates, and proposal decisions renew that window. Checking
+remaining lifetime does not. Each turn reserves a conversation version. A
+changed schedule or decision on a pending proposal advances it, so an older
+result becomes stale even if the YAML later returns to the same text.
+
+## Architecture
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+flowchart TB
+    Browser[<b>Browser</b><br/>Chat, approval, SSE]
+
+    subgraph Service[AI service process]
+        Routes[<b>API routes</b><br/>Auth and streams]
+        Sessions[<b>Session store</b><br/>YAML, version, proposal]
+        Queue[<b>SessionTurns</b><br/>FIFO and Stop]
+        Runner[<b>Turn runner</b><br/>Answer, cleanup, save]
+        Agent[<b>Sandbox agent</b><br/>Model, tools, YAML review]
+        Jobs[<b>SessionOptimizer</b><br/>Monitor, wake review]
+        Events[<b>Event broker</b><br/>Replay SSE]
+
+        Routes --> Queue --> Runner --> Agent
+        Routes --> Sessions
+        Runner <-->|Snapshot, commit| Sessions
+        Agent -->|Optimizer tool| Jobs
+        Jobs -.->|Result review| Queue
+        Runner --> Events
+        Jobs --> Events
+        Events -->|Session SSE| Routes
+    end
+
+    Provider[<b>Model provider</b>]
+    E2B[<b>E2B sandbox</b>]
+    Optimizer[<b>Optimizer API</b>]
+
+    Browser <-->|HTTP and SSE| Routes
+    Agent <-->|Prompts, calls, results| Provider
+    Agent <-->|Tools and files| E2B
+    Jobs <-->|Job lifecycle| Optimizer
+```
+
+</div>
+
+The provider and E2B paths run inside an assistant turn. The optimizer monitor
+can outlive that turn and queue a follow-up when the job ends. Session state,
+turn admission, replay, and job monitors are process-local, separate from the
+optimizer server's Redis store. Run one AI backend instance until shared AI
+storage exists. A restart loses active sessions even when PostgreSQL logging is
+enabled.
+
+| Diagram component | Code |
+| --- | --- |
+| API routes and session store | `ai/app.py` |
+| SessionTurns | `ai/lifecycle.py` |
+| Turn runner and event broker | `ai/background.py` |
+| Sandbox agent and workspace | `ai/sandbox_agent.py`, `ai/sandbox/` |
+| SessionOptimizer | `ai/optimizer.py` |
+| Browser operation lifecycle | `web-frontend/src/app/experimental-ai/chatLifecycle.ts` |
+
+## One Turn at a Glance
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+flowchart TB
+    Start[<b>Browser message or optimizer follow-up</b>] --> Admit[<b>Admit turn</b><br/>Reserve schedule, history, version]
+    Admit --> Step{<b>Model step</b>}
+    Step -->|Text or reasoning| Text[Stream delta or reasoning] --> Step
+    Step -->|Workspace tool| Tool[Run E2B tool<br/>Return result, optional preview] --> Step
+    Step -->|Optimizer tool| Job[Start, inspect, or finish job<br/>Return tool result] --> Step
+    Step -->|Final answer| Cleanup[Read final YAML if used<br/>Cleanup sandbox]
+    Cleanup --> Check{Version and outcome}
+    Check -->|Current| Done[Save answer and any proposal<br/>SSE done]
+    Check -->|Changed| Stale[SSE stale<br/>Discard result]
+    Check -->|Failure| Error[SSE error<br/>Discard result]
+
+```
+
+</div>
+
+| Browser action during a foreground turn | Result |
+| --- | --- |
+| Queue the next message | HTTP `202` injects it at the next model boundary. If the turn is closing, HTTP `409` makes the browser send it as a new turn later. |
+| Stop the current answer | HTTP `202` cancels the active turn and queued follow-ups. Cleanup finishes, and locally queued text is cleared. An optimizer job whose ID was returned continues. |
+| Start a second answer directly | HTTP `409` leaves the current turn running. |
+| Disconnect the foreground stream | Cancels the turn and completes cleanup. |
+
+A lost background event connection instead resumes from `Last-Event-ID` while
+the server turn continues.
+
+The three paths below show a model step in detail. Text and tool requests can
+occur in the same provider response, and a turn may loop through several model
+responses. A failed, stopped, or stale turn can leave provisional activity in
+the browser, but its answer and candidate do not enter model conversation
+history.
+
+### Text-only response
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant AI as AI service
+    participant Agent as Sandbox agent
+    participant Model as Model provider
+
+    Browser->>AI: POST /messages
+    AI->>Agent: Summary, history, question
+    Agent->>Model: Stream response
+    loop Text or reasoning chunks
+        Model-->>Agent: TextDelta or ReasoningDelta
+        Agent-->>AI: Text or reasoning
+        AI-->>Browser: SSE delta or reasoning
+    end
+    Model-->>Agent: Response ends without tool calls
+    Note over Agent: No E2B sandbox created
+    Agent-->>AI: Answer complete
+    alt Conversation version current
+        AI->>AI: Save answer
+        AI-->>Browser: SSE done
+    else Version changed
+        AI-->>Browser: SSE stale
+    end
+```
+
+</div>
+
+Reasoning is streamed separately from answer text. It is not saved to
+conversation history or sent back to the provider on later turns.
 
 ### Workspace and model tools
 
-The provider receives a schedule summary, recent committed history, and the
-current question. It reads the full YAML through tools only when needed. The
-service creates `/workspace/schedule.yaml`, places schema references under
-`/reference`, and copies uploads below `/workspace/attachments` with a
-manifest of safe paths and original filenames. Upload contents are available
-for that turn only. Later prompts retain attachment names, not raw files.
+<div class="ai-diagram" markdown="1" tabindex="0">
 
-The model has `read`, `bash`, `edit`, and `write` tools. `read` can inspect text
-and supported images. The sandbox also provides helpers for XLSX and PDF
-inspection. Independent reads in one model response can run concurrently.
-Calls that include a file or shell mutation run in order. Tool output is
-bounded before it returns to the provider. The service also bounds individual
-commands, tool rounds, and the complete turn. File attachments are enabled by
-default. Within configured size limits, arbitrary file types are copied into
-the sandbox without being executed during upload handling. The model has no
-repository or retrieval access.
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant AI as AI service
+    participant Agent as Sandbox agent
+    participant E2B as E2B sandbox
 
-E2B may pause the sandbox between tool activity and resume it for the next
-operation. The application turn deadline and explicit sandbox destruction
-provide the hard lifetime limit. If destruction is unconfirmed, a background
-reaper retries it and scans for overdue application-owned sandboxes. To run one
-cleanup pass while the AI service is offline, use:
+    Note over Browser,Agent: Within one admitted assistant turn
+    loop Workspace tool batches
+        Note over Agent,E2B: Reads may overlap, other calls run in order
+        opt Sandbox not yet created
+            Agent->>E2B: Create sandbox
+            Agent->>E2B: Hydrate schedule, references, files
+        end
+        opt Sandbox paused
+            Agent->>E2B: Resume
+        end
+        Agent-->>AI: Tool start
+        AI-->>Browser: SSE tool_start
+        Agent->>E2B: Run workspace tool
+        E2B-->>Agent: Tool output
+        opt After any non-read workspace tool
+            Agent->>E2B: Read working YAML
+            E2B-->>Agent: Contents or missing file
+            Agent->>Agent: Check change, report issues to model
+        end
+        Agent-->>AI: Tool result
+        AI-->>Browser: SSE tool
+        opt Preview available
+            Agent-->>AI: Working schedule
+            AI-->>Browser: SSE schedule_change
+        end
+        opt Idle gap
+            Agent->>E2B: Pause
+        end
+    end
+    opt Model finishes after sandbox use
+        opt Sandbox paused
+            Agent->>E2B: Resume
+        end
+        Agent->>E2B: Read final YAML
+        E2B-->>Agent: Final candidate
+        Agent->>Agent: Validate and diff
+        alt Proposal
+            Agent-->>AI: Proposal candidate
+        else Rejected
+            Note over Agent: Fail turn, no proposal
+        else Unchanged
+            Note over Agent: Answer only
+        end
+    end
+    opt Sandbox was created
+        Note over Agent,E2B: Cleanup on exit
+        Agent->>E2B: Destroy
+        E2B-->>Agent: Deletion outcome
+    end
+    opt Deletion unconfirmed
+        AI->>E2B: Reaper retries later
+    end
+```
+
+</div>
+
+**Diagram key:** Solid arrows are calls. Dashed arrows are returned results or
+SSE events. `opt` is conditional, `alt` shows alternative outcomes, and the
+loop may repeat within one turn. Arrow style does not encode synchronous versus
+background work. The model waits for each tool batch. The reaper runs later.
+
+The model can use `read`, `bash`, `edit`, and `write`. `read` handles text and
+supported images. Workspace helpers inspect XLSX and PDF files. Tool output,
+individual commands, tool rounds, and the full turn are bounded. The provider
+sees a schedule summary and reads full YAML through tools only when needed.
+
+Hydration puts `schedule.yaml` under `/workspace`, schema and guide references
+under `/reference`, and uploaded files under `/workspace/attachments`. An
+attachment manifest records safe paths and original filenames. Pending proposal
+files and a retained optimizer workbook are copied when present. Upload bytes
+last only for this turn. Later prompts retain their filenames. The sandbox has
+no repository or retrieval access and no outbound Internet access.
+
+A sandbox belongs to one turn. If deletion cannot be confirmed, the background
+reaper retries and scans for overdue application-owned sandboxes. To run one
+cleanup pass while the AI service is offline:
 
 ```sh
 python -m nurse_scheduling.ai.sandbox.reap
 ```
 
-This command needs `E2B_API_KEY` and exits nonzero if listing fails or a
-deletion remains unconfirmed. Schedule it externally if cleanup must continue
-during a complete service outage.
-
-## Schedule Proposals
-
-The sandbox working copy is untrusted. After a tool changes it, the service
-reads and validates it outside the sandbox before sending an intermediate
-`schedule_change` preview. That preview does not change the session schedule.
-At the end of a successful turn, the service validates the final file again
-and computes a structural diff.
-
-```mermaid
-flowchart TB
-    Working[<b>Sandbox working copy</b><br/>Candidate YAML] --> Check[<b>Trusted validation</b><br/>Parse, rules, and diff]
-    Check -->|Valid change| Pending[<b>Pending proposal</b><br/>Diff and base revision]
-    Check -->|Invalid| Discard[<b>Discard candidate</b><br/>Canonical schedule unchanged]
-    Check -->|No change| Answer[<b>Answer only</b><br/>No proposal]
-    Pending -->|Approve matching revision| Recheck[<b>Revalidate</b><br/>Return approved YAML]
-    Pending -->|Reject or schedule update| Discard
-    Recheck -->|No new issues| Browser[<b>Browser import</b><br/>One undo step]
-    Recheck -->|New issues| Discard
-```
-
-The final proposal event carries the diff, not the candidate YAML. Approval
-supplies the SHA-256 revision of the schedule currently in the browser. A
-mismatch discards the proposal. A matching proposal is revalidated and returned
-for import as one undo step. Rejection and a schedule update elsewhere in the
-app also drop the pending proposal. Approval or rejection records a short
-action note for later model turns. If approval revalidation finds a new issue,
-the proposal is discarded. A failed final validation discards all edits from
-that turn.
-
-The sandbox has no canonical storage, provider key, optimizer key, or database
-credential. It has no outbound Internet access. The trusted application alone
-stores proposals and decides whether a candidate can be applied. Uploads and
-shell output remain untrusted input throughout this path.
+The command needs `E2B_API_KEY` and exits nonzero if listing fails or deletion
+remains unconfirmed. Schedule it externally if cleanup must continue during a
+complete service outage.
 
 ## Optimizer Jobs and Events
 
-The assistant can submit its current working YAML to the existing optimizer
-API through a server-side tool. Before submission, the service replaces person
-IDs and removes descriptions in the same way as the browser's Optimize and
-Export flow. It keeps the reverse mapping and remote credential outside the
-sandbox. Submission returns to the assistant immediately, while an independent
-monitor follows the durable job.
+<div class="ai-diagram" markdown="1" tabindex="0">
 
-When the job ends, the monitor restores person IDs in the workbook, retains a
-size-bounded copy for a session-owned download, deletes the remote job, and
-starts a background assistant turn with the result metadata. That turn and
-later turns can inspect the retained workbook at
-`/workspace/optimizer-results/optimized-schedule.xlsx`. Foreground chat can
-continue while optimization runs. The resulting assistant turn still waits for
-its session's turn slot.
+```mermaid
+flowchart TB
+    Model[<b>Model calls optimizer</b><br/>start, status, or finish_now]
+    Model --> Batch[<b>Sandbox agent</b><br/>Open E2B tool batch]
+    Batch -->|start| Read[Read and review working YAML in E2B]
+    Read --> Prepare[<b>SessionOptimizer</b><br/>Validate, anonymize IDs,<br/>remove descriptions]
+    Prepare -->|Invalid schedule| ToolError[Tool error, no job]
+    Prepare --> Submit[<b>Optimizer API</b><br/>Submit schedule]
+    Submit -->|Rejected| ToolError
+    Submit -->|Turn stopped before job ID| Retire[Retire late job<br/>Cancel if still running]
+    Submit --> JobID[<b>Remote job ID</b><br/>Start owned monitor]
+    JobID -->|Tool result now| Answer[<b>Assistant continues</b><br/>Foreground SSE tool]
+    JobID -->|Independent background task| Monitor[<b>Monitor job</b>]
+    Monitor --> Progress[Progress stream<br/>Session SSE to browser]
+    Monitor --> Poll[Poll status<br/>until terminal]
+    Poll --> Terminal[<b>Terminal job</b><br/>Completed, failed, or cancelled]
+    Terminal -->|Completed with XLSX| Download[Download workbook<br/>Restore person IDs, retain copy]
+    Terminal -->|No workbook| Delete[Delete remote job]
+    Download --> Delete
+    Delete --> Owned{Session still owned?}
+    Owned -->|Yes| Update[Session SSE optimization state] --> Queue[Queue result-review turn<br/>behind active turn]
+    Owned -->|No| End[Stop publication]
+    Queue --> Review[<b>Wake assistant</b><br/>Result JSON and retained XLSX if any]
+    Review --> Events[Session SSE turn_start,<br/>answer, terminal event]
+    Batch -->|status| Status[SessionOptimizer<br/>Read local job status] --> ToolResult[Return tool result]
+    Batch -->|finish_now| Finish[SessionOptimizer<br/>Ask API for best available result] --> ToolResult
+```
 
-Foreground answers use the message request's SSE response. Optimizer progress
-and background answers use a separate session SSE stream. The latter supports
-`Last-Event-ID` for reconnects and retains up to 1,000 turn events and 100
-progress events per session. Its events include `turn_id`, so the browser can
-attach replayed fragments to the right answer. A browser operation also has an
-identity token, preventing an older stream callback from replacing newer
-state.
+</div>
+
+The optimizer credential and reverse person-ID mapping stay in the AI service,
+outside E2B.
+
+A retained workbook is mounted for the review turn at
+`/workspace/optimizer-results/optimized-schedule.xlsx`. The browser can also
+download it through the session-owned route.
+
+Foreground answers use the message request's SSE stream. Optimizer progress
+and result-review turns use replayable session SSE with `Last-Event-ID`. The
+broker retains up to 1,000 turn events and 100 progress events per session.
+Events carry `turn_id` so the browser can attach replayed fragments to the
+right answer. Browser operation tokens prevent an older stream callback from
+replacing newer state.
 
 | Event | Meaning |
 | --- | --- |
-| `delta`, `reasoning` | Answer text and a separate, nonpersistent reasoning stream. |
+| `delta`, `reasoning` | Answer text and separate reasoning stream. |
 | `tool_start`, `tool` | Tool request and completed result, including success status. |
-| `schedule_change`, `proposal` | Validated working-copy preview and final candidate diff. |
-| `steering`, `history_trimmed` | Queued user input consumed at a model boundary and prompt-history reduction. |
-| `optimization_progress`, `turn_start` | Session-stream updates for a remote job and a background turn. |
+| `schedule_change`, `proposal` | Working-copy preview and final candidate diff. |
+| `steering`, `history_trimmed` | Queued input consumed and prompt-history reduction. |
+| `optimization`, `optimization_progress`, `turn_start` | Job state, progress, and a background review turn. |
 | `done`, `stopped`, `stale`, `error` | Terminal turn outcomes. |
 
-Reasoning stays separate from answer text and is neither saved to conversation
-history nor sent back to the provider on later turns. The service retries a
-provider timeout only before it has received a streamed event, avoiding a
-repeat of visible text or tool calls. Replay-safe E2B operations can also be
-retried. Sandbox creation and shell execution are not replayed after an
+The service retries a provider timeout only before receiving a streamed event,
+avoiding a repeat of visible text or tool calls. Replay-safe E2B operations can
+also be retried. Sandbox creation and shell execution are not replayed after an
 uncertain response.
+
+## Schedule Proposals
+
+<div class="ai-diagram" markdown="1" tabindex="0">
+
+```mermaid
+flowchart TB
+    Working[<b>Final sandbox YAML</b><br/>Untrusted working copy] --> Review[<b>Server review</b><br/>Parse, validate, diff against base]
+    Review -->|Unchanged| Answer[<b>Answer only</b><br/>No proposal]
+    Review -->|Unreadable or new issues| Fail[<b>Turn error</b><br/>No proposal saved]
+    Review -->|Changed, no new issues| Current{<b>Turn version current?</b>}
+    Current -->|No| Stale[<b>Stale turn</b><br/>Discard result]
+    Current -->|Yes, after cleanup| Pending[<b>Pending proposal</b><br/>Browser receives diff only]
+    Pending -->|Reject or schedule update| Discard[<b>Discard proposal</b><br/>Canonical YAML unchanged]
+    Pending -->|Approve with base SHA-256| Revision{<b>Base revision matches?</b>}
+    Revision -->|No, HTTP 409| Discard
+    Revision -->|Yes| Recheck[<b>Revalidate candidate</b><br/>Compare new issues with base]
+    Recheck -->|New issues, HTTP 409| Discard
+    Recheck -->|No new issues| Adopt[<b>Adopt in session</b><br/>Return YAML to browser]
+    Adopt --> Import[<b>Browser import</b><br/>One undo step]
+```
+
+</div>
+
+A preview from a tool is provisional and never changes the canonical schedule.
+Approval and rejection record short action notes for later model turns. The
+sandbox has no canonical storage,
+provider key, optimizer key, or database credential. Uploads and shell output
+remain untrusted throughout review.
 
 ## HTTP API
 
