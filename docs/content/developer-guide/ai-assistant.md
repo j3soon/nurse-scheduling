@@ -35,13 +35,13 @@ flowchart TB
 | `ai/lifecycle.py` and `ai/background.py` | Admit turns, run foreground and background responses, and deliver their events. |
 | `ai/sandbox_agent.py` and `ai/sandbox/` | Prepare a disposable workspace, execute model tools, and read candidates for trusted validation. |
 | `ai/optimizer.py` | Submit and monitor optimizer jobs without exposing their credentials to the sandbox. |
-| `ai/history.py` | Optionally write chat audit records to PostgreSQL. |
+| `ai/history.py` | Optionally write chat history to PostgreSQL. |
 | `web-frontend/src/app/experimental-ai/chatLifecycle.ts` | Track browser operations and ignore callbacks from superseded streams. |
 
 Sessions, proposals, event replay, and optimizer monitors live in the AI
 process. They do not use the optimization server's Redis store. Run one AI
 backend instance until shared AI storage exists. A restart loses active
-sessions, even when PostgreSQL audit logging is enabled.
+sessions, even when PostgreSQL chat logging is enabled.
 
 ## Turn Lifecycle
 
@@ -75,7 +75,7 @@ stateDiagram-v2
 `SessionTurns` admits one assistant turn per session. A new foreground message
 returns HTTP `409` while that session is busy. A follow-up triggered by an
 optimizer result waits behind the active turn. Admission remains held until
-sandbox and audit cleanup finish. A process-wide limit, set by
+sandbox and history cleanup finish. A process-wide limit, set by
 `AI_MAX_CONCURRENT_REQUESTS` and defaulting to four, bounds concurrent model
 streams across sessions.
 
@@ -87,7 +87,7 @@ overwrite newer work, even if the schedule text later returns to its old value.
 
 Stop cancels an assistant turn, including one waiting for admission. A browser
 disconnect cancels its foreground turn. In either case, the service still
-finishes resource and audit cleanup. Stop does not cancel an independent
+finishes resource and history cleanup. Stop does not cancel an independent
 optimizer job. A failed, stopped, or stale turn can leave provisional activity
 visible in the browser, but its question, answer, and candidate do not enter
 model conversation history. Retrying starts a new sandbox. Attachments must be
@@ -240,7 +240,7 @@ backend Compose variants. It stores turn text, status, timestamps, usage when
 available, attachment counts, and the administrative credential ID. It does
 not store schedule snapshots, raw attachments, tool arguments or results, or
 reasoning. User and assistant text can still contain staff information, so
-database access is for operators. Audit records do not restore an active chat
+database access is for operators. History records do not restore an active chat
 after a restart.
 
 An unavailable configured database prevents startup. If its initial write

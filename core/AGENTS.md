@@ -165,7 +165,7 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   disabled only when neither legacy nor identified credentials are configured,
   which keeps local runs and older clients working.
 - `API_AUTH_TOKENS` accepts a JSON object mapping IDs to keys. IDs are for
-  administration and audit logs only. Clients continue to send only the key as
+  administration and chat history records only. Clients continue to send only the key as
   a bearer token and must never receive the ID. Keep `legacy` reserved for
   `API_AUTH_TOKEN`.
 - Identified keys attribute requests, they do not isolate them. Every key

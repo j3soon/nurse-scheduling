@@ -1,4 +1,4 @@
-"""AI audit logging lifecycle and PostgreSQL persistence checks."""
+"""AI chat history lifecycle and PostgreSQL persistence checks."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

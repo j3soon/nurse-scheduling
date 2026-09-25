@@ -1,4 +1,4 @@
-"""Durable text-only AI audit history in PostgreSQL."""
+"""Durable text-only AI chat history in PostgreSQL."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

@@ -266,7 +266,7 @@ async def run_turn(
             await publish(event_type, data)
 
     async def write_history(operation: str, *args) -> bool:
-        # asyncio cancellation and ASGI cancel scopes both wait for the audit write.
+        # asyncio cancellation and ASGI cancel scopes both wait for the history write.
         task = asyncio.create_task(history_log.write(operation, *args))
         try:
             return await asyncio.shield(task)
@@ -362,7 +362,7 @@ async def run_turn(
         outcome = "completed" if completion.turn_saved else "stale"
         history_saved = None
         if logged:
-            # The audit result is part of foreground done. Do not write it again in finally.
+            # The history result is part of foreground done. Do not write it again in finally.
             logged = False
             history_saved = await write_history("finish_turn", turn.id, "".join(assistant_parts), outcome, None, usage)
         if not completion.turn_saved:

@@ -238,7 +238,7 @@ def test_discarding_a_proposal_revokes_a_turn_that_was_using_it(decision):
 
 
 @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
-def test_stop_during_audit_start_waits_for_audit_then_releases_the_session(monkeypatch, background):
+def test_stop_during_history_start_waits_for_history_then_releases_the_session(monkeypatch, background):
     async def exercise():
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -277,7 +277,7 @@ def test_stop_during_audit_start_waits_for_audit_then_releases_the_session(monke
     asyncio.run(exercise())
 
 
-def test_terminal_background_event_is_published_only_after_audit_cleanup(monkeypatch):
+def test_terminal_background_event_is_published_only_after_history_cleanup(monkeypatch):
     async def exercise():
         finalizing = asyncio.Event()
         release = asyncio.Event()
