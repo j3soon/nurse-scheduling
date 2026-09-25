@@ -12,7 +12,7 @@ optimizer paths. It also covers proposals, the HTTP API, and operational checks.
 For setup commands, see the [Core README](reproduce/core.md#ai-backend). The
 [user guide](../user-guide/experimental-ai.md) describes the browser controls.
 The separate [backend server guide](backend-server.md) covers the optimizer API.
-On narrow screens, scroll the diagrams sideways to read their labels.
+Scroll wide diagrams sideways to read their labels.
 
 **Diagram key:** Solid arrows are calls. Dashed arrows are returned results or
 SSE events. `opt` is conditional, `alt` shows alternative outcomes, and a loop
@@ -20,6 +20,12 @@ may repeat within one turn. Arrow style does not encode synchronous versus
 background work.
 
 <style>
+.ai-diagram--optimizer {
+  overflow-x: auto;
+}
+.ai-diagram.ai-diagram--optimizer .mermaid {
+  min-width: 1080px;
+}
 @media (max-width: 48rem) {
   .ai-diagram {
     overflow-x: auto;
@@ -307,34 +313,98 @@ complete service outage.
 
 ## Optimizer Jobs and Events
 
-<div class="ai-diagram" markdown="1" tabindex="0">
+<div class="ai-diagram ai-diagram--optimizer" markdown="1" tabindex="0">
 
 ```mermaid
-flowchart TB
-    Model[<b>Model calls optimizer</b><br/>start, status, or finish_now]
-    Model --> Batch[<b>Sandbox agent</b><br/>Open E2B tool batch]
-    Batch -->|start| Read[Read and review working YAML in E2B]
-    Read --> Prepare[<b>SessionOptimizer</b><br/>Validate, anonymize IDs,<br/>remove descriptions]
-    Prepare -->|Invalid schedule| ToolError[Tool error, no job]
-    Prepare --> Submit[<b>Optimizer API</b><br/>Submit schedule]
-    Submit -->|Rejected| ToolError
-    Submit -->|Turn stopped before job ID| Retire[Retire late job<br/>Cancel if still running]
-    Submit --> JobID[<b>Remote job ID</b><br/>Start owned monitor]
-    JobID -->|Tool result now| Answer[<b>Assistant continues</b><br/>Foreground SSE tool]
-    JobID -->|Independent background task| Monitor[<b>Monitor job</b>]
-    Monitor --> Progress[Progress stream<br/>Session SSE to browser]
-    Monitor --> Poll[Poll status<br/>until terminal]
-    Poll --> Terminal[<b>Terminal job</b><br/>Completed, failed, or cancelled]
-    Terminal -->|Completed with XLSX| Download[Download workbook<br/>Restore person IDs, retain copy]
-    Terminal -->|No workbook| Delete[Delete remote job]
-    Download --> Delete
-    Delete --> Owned{Session still owned?}
-    Owned -->|Yes| Update[Session SSE optimization state] --> Queue[Queue result-review turn<br/>behind active turn]
-    Owned -->|No| End[Stop publication]
-    Queue --> Review[<b>Wake assistant</b><br/>Result JSON and retained XLSX if any]
-    Review --> Events[Session SSE turn_start,<br/>answer, terminal event]
-    Batch -->|status| Status[SessionOptimizer<br/>Read local job status] --> ToolResult[Return tool result]
-    Batch -->|finish_now| Finish[SessionOptimizer<br/>Ask API for best available result] --> ToolResult
+sequenceDiagram
+    participant Browser
+    participant Agent as Sandbox agent
+    participant E2B as E2B sandbox
+    participant Jobs as SessionOptimizer
+    participant API as Optimizer API
+    participant Turns as SessionTurns
+
+    Note over Agent,Jobs: Model requests an optimizer tool within an admitted turn
+    Agent->>Agent: Open tool batch
+    opt First executed batch
+        Agent->>E2B: Create and hydrate workspace
+    end
+    opt Sandbox paused
+        Agent->>E2B: Resume workspace
+    end
+    alt start
+        Agent->>E2B: Read working schedule.yaml
+        E2B-->>Agent: Working YAML or read error
+        opt YAML readable
+            Agent->>Agent: Review candidate against turn schedule
+        end
+        alt Read or review fails
+            Agent-->>Browser: Foreground SSE tool error, no job
+        else Working YAML passes review
+            Agent->>Jobs: start(current working YAML)
+            Jobs->>Jobs: Check run limits, validate, anonymize IDs, remove descriptions
+            alt Validation or run limit fails
+                Jobs-->>Agent: Tool error, no job
+                Agent-->>Browser: Foreground SSE tool error
+            else Prepared schedule accepted
+                Jobs->>API: Submit schedule
+                alt Submission rejected
+                    API-->>Jobs: Error, no job
+                    Jobs-->>Agent: Tool error
+                    Agent-->>Browser: Foreground SSE tool error
+                else Turn cancelled before job ID returns
+                    API-->>Jobs: Late job ID
+                    Jobs->>API: Cancel if running, then delete when terminal
+                else Job ID returned to owned turn
+                    API-->>Jobs: Job ID
+                    Jobs->>Jobs: Start independent monitor and progress relay
+                    opt Job not already terminal
+                        Jobs-->>Browser: Session SSE optimization state
+                    end
+                    Jobs-->>Agent: Tool result with session job ID
+                    Agent-->>Browser: Foreground SSE tool, answer may continue
+                    par Progress relay
+                        Jobs->>API: Open progress stream
+                        API-->>Jobs: Progress events
+                        Jobs-->>Browser: Session SSE optimization_progress
+                    and Status monitor
+                        loop Until completed, failed, or cancelled
+                            Jobs->>API: Poll job status
+                            API-->>Jobs: Current state
+                        end
+                    end
+                    opt Completed job
+                        Jobs->>API: Download result workbook
+                        API-->>Jobs: XLSX or download error
+                        Jobs->>Jobs: Restore person IDs and retain if possible
+                    end
+                    Jobs->>API: Delete remote job
+                    opt Session still owns job
+                        Jobs-->>Browser: Session SSE optimization state
+                        Jobs->>Turns: Queue result review behind active turn
+                        Turns-->>Browser: Session SSE turn_start when admitted
+                        Turns->>Agent: Run review turn with result JSON and retained XLSX if any
+                        Agent-->>Browser: Session SSE answer and terminal event
+                    end
+                end
+            end
+        end
+    else status
+        Agent->>Jobs: Read latest local job status
+        Jobs-->>Agent: Tool result
+        Agent-->>Browser: Foreground SSE tool
+    else finish_now
+        Agent->>Jobs: Request best available result for latest job
+        opt Job still running
+            Jobs->>API: finish_now
+            API-->>Jobs: Current job state or error
+            opt Accepted and still running
+                Jobs-->>Browser: Session SSE optimization state
+            end
+        end
+        Jobs-->>Agent: Tool result
+        Agent-->>Browser: Foreground SSE tool
+    end
 ```
 
 </div>
