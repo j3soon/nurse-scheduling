@@ -582,6 +582,30 @@ bun run build
 bun run test:e2e:affected -- e2e/experimental-ai-basic.spec.ts
 ```
 
+### AI evaluation
+
+The manual evaluation corpus in `core/tests/ai_eval/cases/` checks questions,
+edits, multi-turn requests, and refusals against explicit criteria. Each run
+uses the configured model provider and E2B, so it is separate from local CI
+and from the optimizer performance benchmark. Run the launcher from the
+repository root. It loads AI settings from `docker/.env` by default and
+requires an evaluation scope:
+
+```sh
+./scripts/run_ai_eval.sh --case clarify-night-request-scope
+./scripts/run_ai_eval.sh --category 01-reading
+./scripts/run_ai_eval.sh --tuning
+./scripts/run_ai_eval.sh --full
+```
+
+Start with cases affected by the change. `--tuning` selects cases tagged
+`difficult` or `tuning`, while `--full` runs the entire corpus. Use `--repeat 3`
+on selected cases to check reliability. The runner uses four concurrent case
+jobs by default. Reports under `artifacts/ai-evals/` contain a summary, per-case
+criteria, prompts, answers and proposals, tool activity, and provider and
+sandbox timings. The [evaluation README](https://github.com/j3soon/nurse-scheduling/blob/dev/core/tests/ai_eval/README.md)
+describes case format and runner options.
+
 ### PostgreSQL chat history
 
 Run PostgreSQL integration checks against a test database whose role can create

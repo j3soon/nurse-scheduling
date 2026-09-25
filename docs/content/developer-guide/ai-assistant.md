@@ -1,593 +1,281 @@
-# Experimental AI Assistant Backend
+# AI Assistant Backend
 
-The AI assistant is a separate FastAPI application that answers text questions
-about one schedule snapshot. Its ASGI entry point is
-`nurse_scheduling.ai_serve:app`. It does not import the optimization server or
-use its Redis data.
+The experimental AI assistant answers questions about a schedule and can
+propose edits to it. It runs as a separate FastAPI application at
+`nurse_scheduling.ai_serve:app`. The service keeps the current schedule in a
+browser-owned session. Each message gets a fresh E2B Cloud sandbox where the
+model can inspect a working copy. A changed schedule reaches the browser only
+as a proposal that the user must approve.
 
-File attachments are enabled by default. The frontend accepts arbitrary file
-types and copies them into the disposable sandbox without executing them. The
-assistant reads and edits the schedule in that sandbox and can propose a new
-schedule, which the browser applies only after the user approves it.
-Each user message gets one temporary shell backed by E2B Cloud. This version
-excludes retrieval and repository access. Run the service locally, in the
-development container, or with Docker Compose using the commands in the [Core
-README](reproduce/core.md#ai-backend).
+This page follows a message from the browser through the assistant and back.
+It also covers the HTTP API and the checks used to evaluate the assistant.
+For setup commands, see the [Core README](reproduce/core.md#ai-backend). The
+[user guide](../user-guide/experimental-ai.md) describes the browser controls.
+The separate [backend server guide](backend-server.md) covers the optimizer API.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    Browser[Frontend<br/>current schedule] -->|POST schedule once| Session[AI backend<br/>in-memory session]
-    Browser -->|POST question<br/>and optional attachments| Session
-    Session -->|OpenAI-compatible chat request| Provider[Model provider]
-    Provider -->|streamed deltas and tool calls| Session
-    Session -->|one fresh turn| Sandbox[E2B Cloud sandbox<br/>shell working copy]
-    Session -->|background job with YAML snapshot| Optimizer[Optimizer API<br/>durable job]
-    Optimizer -->|status, score, and output workbook| Session
-    Sandbox -->|candidate schedule| Validation[Trusted server validation<br/>and structural diff]
-    Session -->|SSE text, tool, optimization status, and proposal events| Browser
-    Browser -->|approve with base revision| Session
+flowchart TB
+    Browser[<b>Browser</b><br/>Schedule, chat, and approval]
+    Service[<b>AI service</b><br/>Session state and turn runner]
+    Provider[<b>Model provider</b><br/>OpenAI-compatible chat]
+    Sandbox[<b>E2B Cloud sandbox</b><br/>Fresh working copy per message]
+    Optimizer[<b>Optimizer API</b><br/>Independent schedule jobs]
+
+    Browser <-->|HTTP and SSE| Service
+    Service <-->|Chat| Provider
+    Service <-->|Tools| Sandbox
+    Service <-->|Jobs| Optimizer
 ```
 
-The browser receives an HTTP-only owner cookie and an unguessable session UUID.
-Active sessions expire after 48 hours of inactivity by default. Sending or
-queueing a message, synchronizing a changed schedule, or deciding a proposal
-renews that window. The browser can retain the conversation within its current
-tab and verify the session without extending its lifetime.
-The backend stores the YAML snapshot and completed conversation turns. Each
-provider request includes a schedule summary, recent history, and the current
-question. The complete YAML stays in the sandbox until the model reads relevant
-content through a tool. Attachments are available only during the active turn. **Raw files
-and their contents are not included in subsequent chat history.** This is
-intentional to avoid retaining uploads or repeatedly consuming provider context
-tokens. History retains only attachment markers and filenames.
-The prompt gives the agent workspace paths for schedules and attachments.
+| Component | Responsibility |
+| --- | --- |
+| `ai/app.py` | Builds the app, authenticates requests, and exposes session and proposal routes. |
+| `ai/lifecycle.py` and `ai/background.py` | Admit turns, run foreground and background responses, and deliver their events. |
+| `ai/sandbox_agent.py` and `ai/sandbox/` | Prepare a disposable workspace, execute model tools, and read candidates for trusted validation. |
+| `ai/optimizer.py` | Submit and monitor optimizer jobs without exposing their credentials to the sandbox. |
+| `ai/history.py` | Optionally write chat audit records to PostgreSQL. |
+| `web-frontend/src/app/experimental-ai/chatLifecycle.ts` | Track browser operations and ignore callbacks from superseded streams. |
 
-The server-side `optimizer` tool submits a copy of the current sandbox working
-YAML to the existing optimizer API. It replaces person IDs and removes
-descriptions as the browser's Optimize and Export flow does, while retaining the
-reverse ID mapping server-side. It returns immediately and keeps
-the remote credential and job ID outside the sandbox. A process-local monitor
-waits for terminal status, restores person IDs in the output workbook, retains
-the size-bounded workbook for an authenticated browser download, deletes the
-remote optimizer job, and starts a new assistant turn with result metadata.
-The restored workbook is copied to
-`/workspace/optimizer-results/optimized-schedule.xlsx` in that turn and later
-chat turns while retained. It is separate from user attachments. The browser
-keeps a separate replayable session event stream open for
-optimizer status and background turns. It retains the latest 1,000 background
-turn events and 100 optimizer progress updates per session for reconnects.
-Foreground chat and optimization can proceed at the same time. Assistant turns
-remain serialized per session. The Stop control cancels either a foreground or
-background assistant turn. It does not cancel the independent optimizer run.
+Sessions, proposals, event replay, and optimizer monitors live in the AI
+process. They do not use the optimization server's Redis store. Run one AI
+backend instance until shared AI storage exists. A restart loses active
+sessions, even when PostgreSQL audit logging is enabled.
 
-### Lifecycle ownership
+## Turn Lifecycle
 
-Session state changes run synchronously on the service event loop. `SessionTurns`
-admits one assistant turn per session, rejects overlapping foreground requests,
-and queues optimizer follow-ups. Both triggers use the same `run_turn` lifecycle.
-The queue retains ownership through sandbox and audit cleanup. Stop is an
-idempotent cancellation of currently admitted turns, including queued follow-ups.
-Disconnect cancels the foreground turn only. Shutdown drains turns before closing
-the sandbox factory and optimizer transport.
+The browser creates a session with a YAML schedule snapshot. The response
+includes an unguessable session ID, and an HTTP-only cookie identifies its
+owner. A session expires after 48 hours of inactivity by default. Messages,
+schedule updates, and proposal decisions renew that window. Checking the
+session's remaining lifetime does not.
 
-A `TurnSnapshot` authorizes a single conversation commit. Identity and a monotonic
-conversation version prevent an old completion from overwriting newer work,
-including a schedule that was changed and then restored. Approval still revalidates
-the candidate against the frontend schedule rules.
+```mermaid
+stateDiagram-v2
+    [*] --> waiting: message accepted or optimizer completes
+    waiting --> running: reaches session head
+    waiting --> stopped: Stop
+    running --> completed: answer committed
+    running --> stale: schedule changed
+    running --> failed: provider or sandbox error
+    running --> stopping: Stop or disconnect
+    stopping --> stopped: cleanup finishes
+    completed --> [*]
+    stale --> [*]
+    failed --> [*]
+    stopped --> [*]
 
-Optimizer submissions have revocable session owners reserved before preparation.
-The optimizer service retains ownership of in-flight remote requests after a turn
-is cancelled, so late responses can be cleaned up. Each accepted job owns its
-progress reader, polling, artifact restoration, and remote deletion. Terminal
-status cannot be overwritten by a late control response. Transport failure before
-a remote identifier is returned remains an uncertain remote outcome, bounded by
-the optimizer's own job retention and timeout policies.
+    classDef completedState fill:transparent,stroke:#43a047,stroke-width:3px
+    classDef otherState fill:transparent,stroke:#78909c,stroke-width:3px
+    class completed completedState
+    class stale,failed,stopped otherState
+```
 
-The browser's `ChatLifecycle` tracks identified foreground and background
-operations. Busy and Stop controls derive from those operations. Conversation
-reset revokes outstanding callbacks, and a replaced stream cannot advance the
-current replay cursor or apply a proposal. Background events carry `turn_id`, so
-replay can recover the correct message even when `turn_start` has aged out.
-Only complete SSE frames advance `Last-Event-ID`. Older servers without `turn_id`
-retain the existing best-effort replay fallback.
+`SessionTurns` admits one assistant turn per session. A new foreground message
+returns HTTP `409` while that session is busy. A follow-up triggered by an
+optimizer result waits behind the active turn. Admission remains held until
+sandbox and audit cleanup finish. A process-wide limit, set by
+`AI_MAX_CONCURRENT_REQUESTS` and defaulting to four, bounds concurrent model
+streams across sessions.
 
-Sandbox and conversation state are separate. The backend copies the current
-schedule to `/workspace/schedule.yaml` and searchable schema documentation to
-`/reference`. It writes uploads below `/workspace/attachments` and records safe
-paths, original names, media types, and sizes in `manifest.json`. It then runs
-every command for that user message in the same sandbox,
-reads the candidate, and destroys the sandbox. A later message always starts a
-new sandbox. Only conversation history, the canonical schedule revision, and a
-pending validated proposal remain in application state.
+The same runner handles foreground messages and optimizer follow-ups. It
+reserves the schedule, history, and a monotonic conversation version before
+work begins. A changed schedule or a decision on a pending proposal advances
+the version. If it changes during a turn, the result is stale and cannot
+overwrite newer work, even if the schedule text later returns to its old value.
 
-When a turn fails, its provisional activity remains visible but is not added to
-model conversation history. Optional PostgreSQL logging retains failed turns
-for operators. **Retry** resends the original text in a fresh sandbox. For a
-request with attachments, **Prepare retry** restores the text and requires the
-files to be attached again before sending.
+Stop cancels an assistant turn, including one waiting for admission. A browser
+disconnect cancels its foreground turn. In either case, the service still
+finishes resource and audit cleanup. Stop does not cancel an independent
+optimizer job. A failed, stopped, or stale turn can leave provisional activity
+visible in the browser, but its question, answer, and candidate do not enter
+model conversation history. Retrying starts a new sandbox. Attachments must be
+selected again.
 
-## Reasoning and tool activity
+### Workspace and model tools
 
-Providers stream reasoning in a field of its own, either `reasoning_content` or
-`reasoning`, and the adapter forwards it as a separate event. It is never joined
-to the answer text, never stored in conversation history, and never sent back to
-the provider, so it cannot leak into an assistant message and costs nothing on
-later turns.
+The provider receives a schedule summary, recent committed history, and the
+current question. It reads the full YAML through tools only when needed. The
+service creates `/workspace/schedule.yaml`, places schema references under
+`/reference`, and copies uploads below `/workspace/attachments` with a
+manifest of safe paths and original filenames. Upload contents are available
+for that turn only. Later prompts retain attachment names, not raw files.
 
-The `tool_start` event carries the tool name and arguments before execution, so
-the UI and evaluation artifact retain a command even if the sandbox fails. A
-later `tool` event carries its result and whether the call did what it was
-asked. Sandbox backends return raw command output to the AI layer. The AI
-`bash` adapter combines stdout and stderr, keeps the last 2,000 lines or 50 KB,
-and stores the full output in the temporary sandbox when truncation occurs.
-This policy stays outside the provider-neutral sandbox interface.
+The model has `read`, `bash`, `edit`, and `write` tools. `read` can inspect text
+and supported images. The sandbox also provides helpers for XLSX and PDF
+inspection. Independent reads in one model response can run concurrently.
+Calls that include a file or shell mutation run in order. Tool output is
+bounded before it returns to the provider. The service also bounds individual
+commands, tool rounds, and the complete turn. File attachments are enabled by
+default. Within configured size limits, arbitrary file types are copied into
+the sandbox without being executed during upload handling. The model has no
+repository or retrieval access.
 
-When one model response requests multiple reads, the reads run concurrently
-and their results are returned in the model's original call order. Batches that
-contain `bash`, `edit`, or `write` remain sequential so filesystem mutations
-have deterministic ordering. E2B stays active for either kind of batch and
-pauses again before the next provider reasoning turn.
-
-When a Bash command changes the schedule, the backend reads the working copy
-and validates it outside the sandbox before emitting `schedule_change`. The
-event contains that validated working copy. The browser compares it with the
-previous working copy and renders the changed lines in red and green. These
-intermediate previews do not create or apply a proposal. The final validated
-candidate still follows the separate proposal and approval lifecycle.
-
-## Evaluation
-
-The assistant is evaluated against fixed cases with verifiable criteria. This is
-evaluation, and is separate from the solver performance benchmark described in
-the backend server guide.
-
-`core/tests/ai_eval/cases/` holds the cases grouped by category, from questions
-answerable from the prompt summary through schedule edits to requests that must
-be refused. Each case states criteria over the schedule a run produces, so
-grading does not depend on how the assistant reached it. Every run contacts the
-configured provider, so this is a manual tool rather than part of CI.
-
-The runner needs the same provider settings the service uses:
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `AI_PROVIDER_BASE_URL` | Yes | OpenAI-compatible endpoint. |
-| `AI_PROVIDER_API_KEY` | Yes | Provider bearer token. |
-| `AI_PROVIDER_MODEL` | No | Defaults to `local-model`. |
-| `AI_SANDBOX_BACKEND` | Yes | Use `e2b`. |
-| `E2B_API_KEY` | Yes | E2B Cloud credential used by the trusted application. |
-| `E2B_TEMPLATE` | No | Defaults to `nurse-scheduling-ai-sandbox`. |
-| `AI_EVAL_ARTIFACT_ROOT` | No | Report root, `artifacts` by default. |
-
-The launcher reads them from `docker/.env`, so the shortest form is:
+E2B may pause the sandbox between tool activity and resume it for the next
+operation. The application turn deadline and explicit sandbox destruction
+provide the hard lifetime limit. If destruction is unconfirmed, a background
+reaper retries it and scans for overdue application-owned sandboxes. To run one
+cleanup pass while the AI service is offline, use:
 
 ```sh
-./scripts/run_ai_eval.sh --case clarify-night-request-scope
-./scripts/run_ai_eval.sh --category 01-reading
-./scripts/run_ai_eval.sh --tuning         # default tuning set
-./scripts/run_ai_eval.sh --full           # every case
-```
-
-An evaluation scope is required. `--tuning` selects cases tagged `difficult`
-or `tuning`, keeping prompt tuning focused as the corpus grows. Pass `--full`
-to run every case. Explicit `--case`, `--category`, or `--tag` selectors bypass
-the tuning tag filter and cannot be combined with `--tuning` or `--full`.
-Start with cases relevant to the changed behavior, including a contrasting
-control when ambiguity or scope is involved. Use `--repeat 3` on that selected
-set to assess reliability before a broad tuning or full run. A single selected
-pass is only a smoke check, not evidence of an improvement.
-Cases may use `user_turns` for a real multi-turn conversation and
-`intermediate_answer_contains` to verify that earlier turns ask a required
-question without producing a proposal.
-
-The launcher checks provider authentication before provisioning any E2B
-sandbox. Providers without a `/models` endpoint produce an inconclusive result
-and continue.
-
-To run it without the launcher, load the settings first:
-
-```sh
-set -a && . ./docker/.env && set +a
-cd core && python -m tests.ai_eval.runner --category 01-reading
-```
-
-Select cases with `--case` and `--category`, both repeatable. The runner creates
-and destroys one E2B sandbox per case, so start with selected cases before
-running the complete evaluation.
-
-Every run writes a report to its own directory under
-`artifacts/ai-evals/<timestamp>/`, alongside the performance benchmark reports,
-and prints the path when it finishes. `summary.md` holds the pass count, median
-seconds, LLM inference time, provider HTTP attempt and retry counts, and the
-aggregate sandbox timing per category. It also includes per-case tables for
-every sandbox timing and suspension metric. `results.jsonl` holds one line per case, and
-`cases/<id>.json` holds the whole run for one case: the prompt it was given,
-its reasoning, every tool call with its arguments and result, the answer, the
-proposed schedule, timing breakdown, and each criterion with its outcome. Pass `--output-dir` to
-choose the directory, which must not already exist, or set
-`AI_EVAL_ARTIFACT_ROOT` to move the root.
-
-Each case also records tool batches, calls per model turn, calls per batch,
-parallel execution, execution time per batch, and the number of batches
-containing multiple calls. The summary lists batch counts beside sandbox pause
-metrics so pause behavior can be checked at model-turn boundaries instead of
-inferred from the total tool count.
-
-To measure E2B read concurrency without provider or model variance, run:
-
-```sh
-./scripts/run_ai_read_benchmark.sh
-```
-
-The benchmark alternates repeated sequential and concurrent read batches in one
-warm sandbox. It reports median and p95 latency plus the median speedup under
-`artifacts/ai-read-benchmarks/`. Use `--runs`, `--calls`, and `--bytes` to change
-the sample count, calls per batch, and file size.
-
-Timing fields use wall-clock seconds. `end_to_end_seconds` covers the agent run.
-`llm_inference_seconds` sums only time awaiting provider stream events.
-`llm_turn_seconds` records that wait separately for each logical model turn.
-`provider_requests` reports the underlying HTTP attempts, retries, retried
-turns, and attempts per logical turn. A successful retry therefore remains
-visible in both the case artifact and aggregate summary.
-`sandbox.lifetime_seconds` covers the complete create-to-destroy lifecycle. Its
-mutually exclusive components are provisioning, execution, pause transition,
-warm waiting, suspended, resume wait, and teardown. Their sum equals the
-sandbox lifetime. Resume wait is the blocking interval after work needs the
-sandbox but before E2B has made it usable, and `max_resume_wait_seconds` exposes
-the worst individual resume. The `sandbox.suspension` object reports pause and
-resume counts. It also reports `pause_cancel_count` for an in-progress pause
-cancelled when new sandbox work arrives. A pause cancelled before its E2B
-request starts or during final cleanup is not included. LLM inference can
-overlap warm waiting, pause transition, and suspended time by design.
-
-After each sandbox operation, the E2B backend schedules an explicit warm-memory
-pause. Immediate follow-up activity cancels a pause that has not started, so
-hydration and other consecutive operations stay together. Otherwise the pause
-transition can overlap model inference, and E2B auto-resumes the same sandbox
-when the next operation arrives. The memory snapshot is retained because five
-fresh disk-only resume trials took 5.95 to 12.62 seconds, with an 8.01-second
-median. Commands, file operations, pause/resume transitions, and close share
-one serialized lifecycle lock.
-
-Pause is optional optimization work and has a five-second application deadline.
-The longer background deadline does not delay foreground work because new
-activity cancels an in-progress pause. A failed or timed-out pause is not
-retried. Because a timeout cannot prove whether E2B accepted the request, the
-next operation first uses the separately bounded, replay-safe auto-resume probe.
-A later idle pause may still be attempted because the control-plane failure may
-have been transient.
-
-The E2B creation timeout is not the hard deadline. E2B 2.46.0 testing showed
-that an `on_timeout=kill` deadline did not kill a manually paused sandbox. The
-application-level maximum agent-turn deadline and explicit kill in `finally`
-are therefore the authoritative hard deadline. A separate live check confirms
-that after this explicit kill, E2B rejects resume with `SandboxNotFoundException`.
-
-Each created sandbox carries non-secret application ownership and hard-deadline
-metadata. A completed `kill` response confirms either that the sandbox was
-killed or was already absent. If deletion cannot be confirmed within request
-cleanup, the sandbox ID enters a background queue that retries with capped
-exponential backoff. At application startup and every configured reaper
-interval, a metadata-filtered scan covers both running and paused sandboxes and
-queues overdue instances. This avoids a full-account scan and lets a restarted
-process recover cleanup work after a crash. If the application remains down,
-no in-process cleanup can run, so deployments requiring cleanup during a full
-service outage should invoke the same reconciliation from an external job.
-The AI service initializes the shared Sentry integration with the
-`app=ai-backend` tag. An unconfirmed request cleanup is logged as a warning.
-An overdue sandbox or three consecutive background deletion failures is logged
-as an error. All later attempts remain visible as warning logs, and a successful
-cleanup is logged as confirmation. Sentry log alerts can use these severities
-and the structured sandbox cleanup fields to notify administrators without an
-error event for every retry.
-Even a successful foreground kill is checked again in the background after one
-E2B control-request timeout. This settling period covers a late pause or resume
-request that can otherwise make a sandbox reappear after the kill response.
-Confirmation lists only application-owned running and paused sandboxes. A
-still-present ID is killed again with capped exponential backoff.
-
-Deployments can run the same metadata-filtered cleanup independently of the AI
-service with:
-
-```bash
 python -m nurse_scheduling.ai.sandbox.reap
 ```
 
-The command requires only `E2B_API_KEY`, performs one reconciliation and
-deletion pass, and returns a nonzero status if listing fails or any deletion is
-still unconfirmed. Schedule it periodically when overdue sandboxes must be
-cleaned while the AI service is offline.
+This command needs `E2B_API_KEY` and exits nonzero if listing fails or a
+deletion remains unconfirmed. Schedule it externally if cleanup must continue
+during a complete service outage.
 
-## Agent capabilities
+## Schedule Proposals
 
-The model receives Pi's four default coding tools: `read`, `bash`, `edit`, and
-`write`. `read` provides bounded text-file inspection with offsets and returns
-supported images as multimodal tool results. `edit`
-applies one or more unique, non-overlapping exact-text replacements against the
-same original file snapshot. `write` creates or overwrites one complete file.
-`bash` remains available for searches, checks, and complex operations using
-preinstalled Bash, Python with `ruamel.yaml`, ripgrep, grep, and diff. All
-relative paths resolve from `/workspace`. The application hydrates separate
-core, preference, and export schema documents under `/reference` for each turn.
-Each document groups related variants so the model can retrieve the context for
-one domain in one read instead of making a sequence of fine-grained lookups.
+The sandbox working copy is untrusted. After a tool changes it, the service
+reads and validates it outside the sandbox before sending an intermediate
+`schedule_change` preview. That preview does not change the session schedule.
+At the end of a successful turn, the service validates the final file again
+and computes a structural diff.
 
-This follows the minimalism philosophy of the [Pi coding agent](https://pi.dev/):
-prefer a small set of general file and shell capabilities with discoverable
-documentation over a growing set of domain-specific tools. Nurse Scheduling
-retains stricter service boundaries than a local coding agent. The workspace is
-disposable, tool output is bounded, secrets and canonical storage stay outside
-it, and a trusted application validates every possible schedule change and the
-final candidate.
-
-Configured tool-round and tool-call limits bound the model-tool loop alongside
-per-command and complete agent-turn deadlines.
-
-The model-facing tool schemas and read behavior are Python ports pinned to Pi
-commit [`e266507`](https://github.com/earendil-works/pi/tree/e266507b606b9552fa277252644054afd4384b11/packages/coding-agent/src/core/tools).
-The read tool recognizes JPEG, PNG, GIF, WebP, and BMP files. Its multimodal
-result lets the model inspect an image extracted from another file. The sandbox
-also includes optional helpers: `inspect_xlsx.py` reads every worksheet by
-default and shows formulas alongside their last-saved cached values, while
-`inspect_pdf.py` extracts text by page and can render a selected page. The agent
-can write a focused parser in its sandbox when these helpers are insufficient.
-The Nurse Scheduling adapter delegates file and command operations to
-`SandboxBackend` and enforces the configured command timeout ceiling. E2B
-returns completed stdout and stderr separately, so the adapter concatenates
-them and cannot reproduce Pi's live
-stream interleaving exactly.
-
-## Proposal lifecycle
-
-A finished run that changed the schedule leaves one pending proposal. The
-browser receives its structural diff, never its YAML. `POST
-/sessions/{id}/proposal/approve` requires the SHA-256 of the schedule the
-browser holds, so a proposal built on an older schedule is discarded instead of
-applied. The approved schedule is revalidated before it is returned, becomes the
-session schedule, and the browser applies it through the normal YAML import path
-as one undo step. `POST /sessions/{id}/proposal/reject` drops it, and `PUT
-/sessions/{id}/schedule` replaces the snapshot when the schedule changed
-elsewhere in the app, which also drops any pending proposal.
-
-Approval and rejection add a backend-only user-action note to model history.
-The rejection note says that every schedule change from the proposed turn was
-discarded and that the next turn starts from a fresh copy of the canonical
-schedule. It never includes the discarded YAML.
-
-A run that fails, is cancelled, or is abandoned does not commit its user
-message, assistant response, or candidate proposal. Its provisional activity
-may remain visible in the browser, but the next turn starts from the last
-successfully committed history and canonical schedule. A successful run that
-only answers a question never creates a proposal.
-
-If the final candidate fails trusted validation, the UI reports that every
-schedule change from the turn was discarded and that the canonical schedule
-was not changed. The failed turn does not add a history note.
-
-After a Bash command changes the candidate, the trusted application returns an
-intermediate validation result so the model can repair it. The backend reads
-the final file as untrusted input and applies authoritative validation and a
-structural diff. Validation inside the sandbox is feedback only. It is never
-the acceptance boundary.
-
-The provider boundary uses OpenAI-compatible chat completions. The
-[Cloudflare Tunnel example](https://github.com/j3soon/local-llm-notes/tree/main/examples/basic-secure-api/cloudflare)
-shows one compatible deployment pattern.
-
-A provider request gets three total attempts by default. A timeout before the
-first streamed event waits one second before the second attempt and two seconds
-before the third. Once text, reasoning, token usage, or a tool call has reached
-the application, the request is not replayed because that could duplicate
-visible output or tool work. The complete sandbox-turn deadline still applies
-across provider attempts and may end a turn before every retry is available.
-
-Replay-safe E2B requests also get three total attempts with exponential
-backoff. This covers file reads and replacements, automatic resume, and sandbox
-destruction. Auto-resume attempts also have an application-enforced control
-request deadline. Idle pause is attempted once because it is optional and a
-failed response cannot prove whether E2B accepted it. Retry logs include the
-operation, sandbox ID, attempt, delay, and exception type without response
-contents. Sandbox creation and Bash execution are not replayed because a failed
-response cannot prove that the original operation did not take effect.
-
-## Configuration
-
-The service settings and their defaults are documented in the [Core
-README](reproduce/core.md#ai-backend-configuration). Deployment values are set
-in the `docker/.env` file, whose tracked template `docker/.env.example`
-documents the deployment subset and is the source of truth for it.
-
-Attachments are always enabled. Every upload is copied unchanged into the
-disposable sandbox, where the agent can inspect it with Pi-compatible tools.
-
-`AI_AUTH_TOKENS` uses a JSON object such as
-`'{"institution-a":"first-key","person-b":"second-key"}'`. IDs may contain
-letters, numbers, underscores, and hyphens. They appear in administrative
-session logs, while clients send only the key and never receive the ID. Remove a
-pair and restart the service to revoke it. The legacy and identified settings
-may coexist during migration.
-
-## Durable chat logging
-
-Both Compose variants include PostgreSQL with the `postgres-ai-data` volume and
-no published database port. As with Redis, the private service connection is
-fixed in Compose and needs no setting in `docker/.env`. Native runs enable
-logging only when `AI_HISTORY_POSTGRES_URL` is set.
-
-Startup applies numbered SQL migrations transactionally. Chat sessions are
-recorded on their first message. Each turn stores the user text, assistant text
-(including partial answers), model, timestamps, attachment counts, available
-token usage, and a completed, failed, cancelled, or stale status. Writes reuse a
-server-generated turn UUID, also returned as `message_id`, to avoid duplicate
-rows. Sending another HTTP request creates another turn.
-
-The database stores the administrative credential ID when authentication is
-enabled, never the owner cookie or bearer key. Raw attachments, extracted
-document text, schedule snapshots, tool arguments/results, and reasoning are
-excluded. User and assistant text can still contain staff information. Database
-access is for operators only. No history-reading API or browser viewer is added.
-Use a separate read-only database role for reporting. Question previews are
-logged separately to stdout and have their own deployment log retention. Set
-`AI_REQUEST_LOG_ENABLED=false` to stop logging chat text without silencing the
-rest of that logger, and configure the `nurse_scheduling.ai.requests` logger to
-redirect it. The built-in stdout handler is installed only when neither that
-logger nor the root logger already has one.
-
-Startup fails if configured storage is unavailable. A failed initial write
-returns HTTP 503 before contacting the provider. A failed final write emits an
-operator error log and reports `history_saved: false` in a successful `done`
-event without discarding the live conversation. A process crash or final-write
-failure can leave a row in `running` with no final answer. These rows indicate
-incomplete logging, not a confirmed active request. There is no durable retry
-queue or recovery of partial output after a process crash.
-
-Retention runs on startup and hourly, deleting turns older than
-`AI_HISTORY_RETENTION_DAYS` and expired empty session records. Configure backups
-and their retention separately. Active sessions, schedules, and proposals remain
-in memory, so stored history does not enable resuming a chat after restart.
-
-## Inspect chat history with pgAdmin
-
-The optional pgAdmin service listens only on the backend host's loopback
-interface. Start it from `docker/` with the same Compose file and environment
-file used by that deployment:
-
-```sh
-docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
+```mermaid
+flowchart TB
+    Working[<b>Sandbox working copy</b><br/>Candidate YAML] --> Check[<b>Trusted validation</b><br/>Parse, rules, and diff]
+    Check -->|Valid change| Pending[<b>Pending proposal</b><br/>Diff and base revision]
+    Check -->|Invalid| Discard[<b>Discard candidate</b><br/>Canonical schedule unchanged]
+    Check -->|No change| Answer[<b>Answer only</b><br/>No proposal]
+    Pending -->|Approve matching revision| Recheck[<b>Revalidate</b><br/>Return approved YAML]
+    Pending -->|Reject or schedule update| Discard
+    Recheck -->|No new issues| Browser[<b>Browser import</b><br/>One undo step]
+    Recheck -->|New issues| Discard
 ```
 
-For a remote backend, forward the loopback port over SSH:
+The final proposal event carries the diff, not the candidate YAML. Approval
+supplies the SHA-256 revision of the schedule currently in the browser. A
+mismatch discards the proposal. A matching proposal is revalidated and returned
+for import as one undo step. Rejection and a schedule update elsewhere in the
+app also drop the pending proposal. Approval or rejection records a short
+action note for later model turns. If approval revalidation finds a new issue,
+the proposal is discarded. A failed final validation discards all edits from
+that turn.
 
-```sh
-ssh -L 5050:127.0.0.1:5050 user@backend-host
-```
+The sandbox has no canonical storage, provider key, optimizer key, or database
+credential. It has no outbound Internet access. The trusted application alone
+stores proposals and decides whether a candidate can be applied. Uploads and
+shell output remain untrusted input throughout this path.
 
-Open `http://127.0.0.1:5050` and sign in with
-`admin@nursescheduling.local` / `pgadmin`. Expand **Nurse Scheduling**, then
-connect to **AI chat history** with database password `ai_history`. The server
-definition is preloaded on every run.
+## Optimizer Jobs and Events
 
-Use **Tools > Query Tool** to inspect the newest turns:
+The assistant can submit its current working YAML to the existing optimizer
+API through a server-side tool. Before submission, the service replaces person
+IDs and removes descriptions in the same way as the browser's Optimize and
+Export flow. It keeps the reverse mapping and remote credential outside the
+sandbox. Submission returns to the assistant immediately, while an independent
+monitor follows the durable job.
 
-```sql
-SELECT
-    turns.started_at,
-    sessions.auth_credential_id,
-    turns.status,
-    turns.user_message,
-    turns.assistant_message,
-    turns.error_code,
-    turns.usage
-FROM chat_turns AS turns
-JOIN chat_sessions AS sessions ON sessions.id = turns.session_id
-ORDER BY turns.started_at DESC
-LIMIT 100;
-```
+When the job ends, the monitor restores person IDs in the workbook, retains a
+size-bounded copy for a session-owned download, deletes the remote job, and
+starts a background assistant turn with the result metadata. That turn and
+later turns can inspect the retained workbook at
+`/workspace/optimizer-results/optimized-schedule.xlsx`. Foreground chat can
+continue while optimization runs. The resulting assistant turn still waits for
+its session's turn slot.
 
-Press Ctrl+C when finished. Compose removes the temporary pgAdmin container;
-the PostgreSQL service and its `postgres-ai-data` volume remain intact.
+Foreground answers use the message request's SSE response. Optimizer progress
+and background answers use a separate session SSE stream. The latter supports
+`Last-Event-ID` for reconnects and retains up to 1,000 turn events and 100
+progress events per session. Its events include `turn_id`, so the browser can
+attach replayed fragments to the right answer. A browser operation also has an
+identity token, preventing an older stream callback from replacing newer
+state.
 
-Use `compose.backend.memory.yml` in these commands for the process-local backend
-variant. For staging, also pass its `--env-file .env.staging` option.
+| Event | Meaning |
+| --- | --- |
+| `delta`, `reasoning` | Answer text and a separate, nonpersistent reasoning stream. |
+| `tool_start`, `tool` | Tool request and completed result, including success status. |
+| `schedule_change`, `proposal` | Validated working-copy preview and final candidate diff. |
+| `steering`, `history_trimmed` | Queued user input consumed at a model boundary and prompt-history reduction. |
+| `optimization_progress`, `turn_start` | Session-stream updates for a remote job and a background turn. |
+| `done`, `stopped`, `stale`, `error` | Terminal turn outcomes. |
 
-## Production path proxy
-
-The backend Compose deployment routes Cloudflare Tunnel traffic through NGINX.
-It sends `/ai/*` to the AI service and all other paths to the optimization API.
-Disable response buffering on the streaming route. See the
-[NGINX proxy buffering directive](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering).
-
-```nginx
-location /ai/ {
-    proxy_pass http://ai:8001/;
-    proxy_http_version 1.1;
-    proxy_buffering off;
-    proxy_cache off;
-}
-```
-
-The Cloudflare public hostname must target `http://nginx:8080`. The trailing
-slash on `proxy_pass` removes the public `/ai` prefix before the request reaches
-FastAPI.
+Reasoning stays separate from answer text and is neither saved to conversation
+history nor sent back to the provider on later turns. The service retries a
+provider timeout only before it has received a streamed event, avoiding a
+repeat of visible text or tool calls. Replay-safe E2B operations can also be
+retried. Sandbox creation and shell execution are not replayed after an
+uncertain response.
 
 ## HTTP API
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | Process and service identity check. |
-| `GET /ready` | Required configuration accepted at startup. |
-| `GET /capabilities` | Public attachment limits, session lifetime, and authentication requirement. |
-| `POST /sessions` | Store a YAML snapshot and create a browser-owned session. |
-| `GET /sessions/{id}` | Check the remaining session lifetime without renewing it. |
-| `POST /sessions/{id}/messages` | Stream one answer. Accepts JSON text or multipart text and attachments. |
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health`, `/ready` | Check service identity and readiness. |
+| `GET` | `/capabilities` | Discover attachment limits, session lifetime, and authentication requirement. |
+| `POST` | `/sessions` | Create a session from `schedule_yaml`. |
+| `GET` | `/sessions/{id}` | Check a session's remaining lifetime. |
+| `POST` | `/sessions/{id}/messages` | Start a foreground SSE turn with JSON text or multipart text and attachments. |
+| `POST` | `/sessions/{id}/messages/queue` | Queue steering text for the active turn's next model boundary. |
+| `POST` | `/sessions/{id}/stop` | Stop the active assistant turn. |
+| `GET` | `/sessions/{id}/events` | Replayable SSE for optimizer progress and background turns. |
+| `PUT` | `/sessions/{id}/schedule` | Replace the session snapshot and discard a pending proposal. |
+| `POST` | `/sessions/{id}/proposal/approve` | Revalidate and adopt a proposal against its base revision. |
+| `POST` | `/sessions/{id}/proposal/reject` | Discard a proposal. |
+| `GET` | `/sessions/{id}/optimizations/{job_id}/xlsx` | Download a retained optimizer workbook. |
 
-Multipart requests use one `message` field and repeated `files` fields. Other
-attachment field names are rejected. Sessions are process-local. Use one AI
-backend instance until shared AI storage is added.
+For multipart messages, send one `message` field and repeat the `files` field
+for attachments. The message and event routes return server-sent events.
+`stop` and `messages/queue` return HTTP `202`. Creating a session sets its
+owner cookie. Later session routes require that cookie. All session routes
+also require a bearer key when bearer authentication is configured.
 
-`GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
-probes work and the frontend can discover authentication and attachment limits.
-Capabilities reports whether bearer auth is active. When either AI key setting
-is set, every session route requires `Authorization: Bearer <key>` and
-returns `401` when the credential is missing or wrong. Native runs may leave the
-key settings unset to serve locally without auth. Docker Compose sets
-`AI_AUTH_REQUIRED=true` on the service, so its env file must explicitly set
-`AI_AUTH_REQUIRED=false` and leave both key settings empty to serve without
-authentication. Required mode refuses to start with a missing, blank, shorter
-than 16 character, or non-ASCII key. `AI_AUTH_TOKEN` remains supported for
-backward compatibility.
+`/health`, `/ready`, and `/capabilities` are public. Set `AI_AUTH_TOKEN` or
+`AI_AUTH_TOKENS` to require a bearer key for session routes. The latter is a
+JSON map from administrative IDs to keys. The IDs appear in operator records,
+while clients send only the key. Docker Compose sets `AI_AUTH_REQUIRED=true`,
+so it refuses to start without a valid key unless that setting is explicitly
+disabled. Native local runs may leave authentication off. The
+[configuration reference](reproduce/core.md#ai-backend-configuration) gives
+defaults and validation rules.
 
-For example, create a session directly with:
+## Storage and Deployment
+
+PostgreSQL chat logging is optional for native runs and included in both
+backend Compose variants. It stores turn text, status, timestamps, usage when
+available, attachment counts, and the administrative credential ID. It does
+not store schedule snapshots, raw attachments, tool arguments or results, or
+reasoning. User and assistant text can still contain staff information, so
+database access is for operators. Audit records do not restore an active chat
+after a restart.
+
+An unavailable configured database prevents startup. If its initial write
+fails, the request returns HTTP `503` before contacting the provider. If the
+final write fails, a completed live turn reports `history_saved: false` and
+logs the failure. Retention removes old turns according to
+`AI_HISTORY_RETENTION_DAYS`. Backups need their own retention policy. Use the
+optional pgAdmin Compose profile for inspection:
 
 ```sh
-curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data '{"schedule_yaml":"description: test"}' \
-  http://localhost:8001/sessions
+cd docker
+docker compose -f compose.backend.yml --profile inspection run --rm --service-ports pgadmin
 ```
 
-## Security notes
+It listens on the backend host's loopback port `5050`. For a remote host,
+forward that port with `ssh -L 5050:127.0.0.1:5050 user@backend-host`.
+The Compose variant using a process-local optimizer uses
+`compose.backend.memory.yml` instead. The [backend deployment guide](backend-deployment.md)
+covers the Compose services and environment file.
 
-- Keep `docker/.env` private. Git ignores it, while `docker/.env.example`
-  contains only empty secret fields and documented defaults.
-- The browser keeps the AI token in memory unless the user explicitly chooses
-  to store it unencrypted on that device. A stored token is scoped to the AI
-  endpoint that requested it. AI keys are independent from optimizer keys,
-  although an operator may configure equal values.
-- E2B Cloud is currently the only sandbox backend. The agent depends on the
-  project `SandboxBackend` contract so a future self-hosted E2B or remote gVisor
-  backend does not require changing model logic.
-- The trusted application creates E2B sandboxes with outbound Internet access
-  disabled. It does not pass the E2B key, model provider key, database
-  credentials, host paths, or canonical storage into the sandbox.
-- Treat shell commands and every sandbox file as untrusted. A sandbox can only
-  return a candidate schedule. Trusted validation, proposal storage, revision
-  checks, user approval, and canonical updates remain outside it.
-- Use `AI_COOKIE_SECURE=0` only for local HTTP. Set it to `1` when the public
-  browser route uses HTTPS, even if NGINX uses internal HTTP to the container.
-  Secure deployments set the owner cookie to `SameSite=None`; the CORS origin
-  allowlist still limits which browser origins may make credentialed requests.
-- The owner cookie contains an opaque UUID, not the provider key. It is not a
-  replacement for future account authentication.
-- The complete schedule is sent to the AI service. Relevant content is sent to
-  the configured provider through model-facing tool results. Use approved
-  services and anonymize sensitive schedules when required.
-- Arbitrary uploads are bounded, assigned safe sandbox paths, and treated as
-  untrusted data. Configure a matching request-body limit at the public reverse
-  proxy. Never add attachment execution to the sandbox workflow.
-- The Pi-compatible `read` tool recognizes JPEG, PNG, GIF, WebP, and BMP content.
-  It normalizes and bounds images before returning them to the model as
-  multimodal tool results.
-- The XLSX helper disables external links and reports formulas with their
-  last-saved cached values. It does not recalculate formulas. The PDF inspector
-  reports text-extraction and page-limit gaps, and its optional page rendering
-  is bounded by a pixel budget. PDF helpers reject encrypted files.
-- Assistant answers use a safe Markdown renderer. Raw HTML is disabled and
-  remote Markdown images are omitted to prevent third-party requests.
-- Provider HTTP errors return a searchable error ID to the browser. The backend
-  logs the upstream response body under that ID after redacting common
-  credential forms.
-- A failed or cancelled answer is not added to conversation history.
+The production NGINX proxy routes `/ai/*` to the AI service and other paths to
+the optimizer API. It must disable response buffering for streaming routes.
+With `proxy_pass http://ai:8001/;`, the trailing slash strips `/ai` before
+FastAPI receives the request. Set `AI_COOKIE_SECURE=1` for a public HTTPS
+browser route, even when the proxy talks to the container over HTTP. The CORS
+origin allowlist still controls credentialed browser requests.
+
+The complete schedule reaches the AI service, and selected content reaches
+the model provider through tool results. Use approved services and anonymize
+sensitive schedules as needed. The browser keeps the AI bearer key in memory
+unless the user chooses to store it on the device. AI and optimizer keys are
+configured independently. Keep `docker/.env` private.
+
+## Tests
+
+Run the affected AI checks from the [Core README](reproduce/core.md#focused-ai-checks).
+Its [AI evaluation section](reproduce/core.md#ai-evaluation) covers the manual
+case runner, selection, and reports.
