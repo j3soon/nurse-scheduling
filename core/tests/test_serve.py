@@ -255,6 +255,7 @@ shiftTypes:
   items:
     - id: D
 preferences:
+  - type: at most one shift per day
 """
 
 
@@ -1259,37 +1260,44 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
 
 
 @pytest.mark.parametrize(
-    ("description", "yaml_content"),
+    ("description", "yaml_content", "expected_message"),
     [
-        ("malformed yaml", "not: ["),
-        ("non-mapping document", "$0"),
-        ("unsupported api version", "apiVersion: beta\n"),
-        ("schema violation", "apiVersion: alpha\npeople: 3\n"),
+        ("malformed yaml", "not: [", "expected the node content"),
+        ("non-mapping document", "$0", "top-level mapping"),
+        (
+            "unsupported api version",
+            _INVALID_INPUT_SCENARIO.replace("apiVersion: alpha", "apiVersion: beta"),
+            "Unsupported API version: beta",
+        ),
+        ("schema violation", "apiVersion: alpha\npeople: 3\n", "people\n  Input should be"),
         (
             "unknown person reference",
             _INVALID_INPUT_SCENARIO
             + "  - type: shift request\n    person: nobody\n    date: 05-14\n    shiftType: D\n",
+            "Unknown person ID: nobody",
         ),
         (
             "malformed date reference",
             _INVALID_INPUT_SCENARIO
             + "  - type: shift request\n    person: Person 1\n    date: Freeday_\n    shiftType: D\n",
+            "Date 'Freeday_' is not in the format",
         ),
         (
             "invalid export formatting reference",
             _INVALID_INPUT_SCENARIO
-            + "  - type: at most one shift per day\n"
             + "export:\n  formatting:\n    - type: row\n      people: [nobody]\n      backgroundColor: '#ff0000'\n",
+            "Invalid person identifier 'nobody' in export formatting rule",
         ),
         (
             "empty count shift types",
             _INVALID_INPUT_SCENARIO
             + "  - type: shift count\n    person: Person 1\n    countDates: [05-14]\n"
             + "    countShiftTypes: []\n    expression: '|x - T|'\n    target: 1\n    weight: -1\n",
+            "Non-empty count shift types are required",
         ),
     ],
 )
-def test_optimization_runner_reports_invalid_input(description, yaml_content):
+def test_optimization_runner_reports_invalid_input(description, yaml_content, expected_message):
     job = Job(
         id="job_invalid_input",
         state=JobState.RUNNING,
@@ -1312,7 +1320,7 @@ def test_optimization_runner_reports_invalid_input(description, yaml_content):
 
     assert isinstance(result, JobFailure), description
     assert result.code == "invalid_input", description
-    assert result.message, description
+    assert expected_message in result.message, description
 
 
 def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):

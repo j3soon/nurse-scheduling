@@ -475,7 +475,22 @@ def test_live_event_stream_emits_keepalive_after_catching_up(store):
     assert next(resumed) is None
 
 
-@pytest.mark.parametrize("after_id", ["invalid", "", "0-0-0", "abc-1", "$", "-1--1"])
+@pytest.mark.parametrize(
+    "after_id",
+    [
+        "invalid",
+        "",
+        "0-0-0",
+        "abc-1",
+        "$",
+        "-1--1",
+        "١-0",
+        "0-١",
+        "18446744073709551616-0",
+        "0-18446744073709551616",
+        "1-0\n",
+    ],
+)
 def test_event_stream_replays_from_invalid_cursor(store_factory, after_id):
     # `Last-Event-ID` is client-controlled, so every backend must fall back to a
     # full replay rather than failing the stream.
@@ -487,6 +502,12 @@ def test_event_stream_replays_from_invalid_cursor(store_factory, after_id):
 
     assert event is not None
     assert event.type == "job.state_changed"
+
+
+def test_redis_normalizes_long_zero_padded_cursor():
+    from nurse_scheduling.server.stores.redis import _normalize_stream_id
+
+    assert _normalize_stream_id(f"{'0' * 5000}-{'0' * 5000}") == "0-0"
 
 
 def test_redis_store_retries_dropped_connections(fake_redis_store_factory):
