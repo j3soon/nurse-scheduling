@@ -28,6 +28,7 @@ from ruamel.yaml import YAMLError
 
 from ... import exporter, scheduler
 from ...errors import InputValidationError
+from ...loader import SchedulingDataTooComplexError
 from ...solver_interface import (
     SchedulePhaseProgress,
     ScheduleProgress,
@@ -86,7 +87,7 @@ class OptimizationRunner:
                 progress_callback=publish_progress,
                 should_stop=should_stop,
             )
-        except (YAMLError, ValidationError, InputValidationError) as error:
+        except (YAMLError, ValidationError, InputValidationError, SchedulingDataTooComplexError) as error:
             # The submitted scenario is unusable, so report a client input
             # problem rather than letting the worker record an internal failure.
             return JobFailure(code="invalid_input", message=str(error))

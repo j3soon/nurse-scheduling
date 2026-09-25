@@ -36,6 +36,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from nurse_scheduling.loader import MAX_NESTING_DEPTH
 from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.auth import AuthCredential, create_stream_token, extract_bearer_token, verify_stream_token
@@ -1263,6 +1264,11 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
     ("description", "yaml_content", "expected_message"),
     [
         ("malformed yaml", "not: [", "expected the node content"),
+        (
+            "deeply nested yaml",
+            "apiVersion: alpha\nx: " + "[" * (MAX_NESTING_DEPTH + 1) + "0" + "]" * (MAX_NESTING_DEPTH + 1),
+            "nests deeper than",
+        ),
         ("non-mapping document", "$0", "top-level mapping"),
         (
             "unsupported api version",
