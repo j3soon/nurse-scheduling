@@ -471,8 +471,8 @@ class CompiledSchedule:
     """Validated, index-based schedule data shared by downstream phases."""
 
     dates: tuple[datetime.date, ...]
-    map_sid_s: Mapping[int | str, tuple[int, ...]]
-    map_pid_p: Mapping[int | str, tuple[int, ...]]
+    map_sid_s: Mapping[str, tuple[int, ...]]
+    map_pid_p: Mapping[str, tuple[int, ...]]
     map_did_d: Mapping[str, tuple[int, ...]]
     histories: tuple[tuple[int, ...] | None, ...]
     preferences: tuple[CompiledPreference, ...]
@@ -521,13 +521,13 @@ class NurseSchedulingData(BaseModel):
         shift_type_ids = set()
         shift_type_group_ids = set()
         for shift_type in self.shiftTypes.items:
-            if shift_type.id in shift_type_ids:
+            if str(shift_type.id) in shift_type_ids:
                 raise ValueError(f"Duplicated shift type ID: {shift_type.id!r}")
             if str(shift_type.id).upper() in shift_type_reserved_ids:
                 raise ValueError(
                     f"Shift type ID {shift_type.id!r} cannot be one of the reserved values: {shift_type_reserved_ids}"
                 )
-            shift_type_ids.add(shift_type.id)
+            shift_type_ids.add(str(shift_type.id))
         for group in self.shiftTypes.groups:
             if group.id in shift_type_ids or group.id in shift_type_group_ids:
                 raise ValueError(f"Duplicated shift type group (or shift type) ID: {group.id!r}")
@@ -541,7 +541,7 @@ class NurseSchedulingData(BaseModel):
         people_reserved_ids = {k.upper() for k in {ALL}}
         person_and_group_ids = set()
         for person in self.people.items:
-            if person.id in person_and_group_ids:
+            if str(person.id) in person_and_group_ids:
                 raise ValueError(f"Duplicated person ID: {person.id!r}")
             if str(person.id).upper() in people_reserved_ids:
                 raise ValueError(f"Person ID {person.id!r} cannot be one of the reserved values: {people_reserved_ids}")
@@ -552,7 +552,7 @@ class NurseSchedulingData(BaseModel):
                     raise ValueError(f"History must not include group ID, but got {history_shift_type_id!r}")
                 if history_shift_type_id != OFF and history_shift_type_id not in shift_type_ids:
                     raise ValueError(f"Unknown shift type ID in history: {history_shift_type_id!r}")
-            person_and_group_ids.add(person.id)
+            person_and_group_ids.add(str(person.id))
         for group in self.people.groups:
             if group.id in person_and_group_ids:
                 raise ValueError(f"Duplicated people group (or person) ID: {group.id!r}")
@@ -598,14 +598,14 @@ def _build_reference_index(item_ids, groups, reserved, reference_name):
     selectors such as ALL and OFF. Groups can reference items or earlier
     groups, and each group is flattened and deduplicated.
     """
-    reference_map = {item_id: (index,) for index, item_id in enumerate(item_ids)}
+    reference_map = {str(item_id): (index,) for index, item_id in enumerate(item_ids)}
     reference_map.update(reserved)
     for group in groups:
         expanded = set()
         for member in group.members:
-            if member not in reference_map:
+            if str(member) not in reference_map:
                 raise ValueError(f"Unknown {reference_name} ID: {member}")
-            expanded.update(reference_map[member])
+            expanded.update(reference_map[str(member)])
         reference_map[group.id] = tuple(sorted(expanded))
     return reference_map
 
@@ -671,9 +671,9 @@ def _compile_coefficients(entries, selected, shift_map, label, selection_name):
     for shift_type_id, coefficient in entries or []:
         if coefficient < 1:
             raise ValueError(f"{label} for '{shift_type_id}' must be at least 1.")
-        if shift_type_id not in shift_map:
+        if str(shift_type_id) not in shift_map:
             raise ValueError(f"Unknown shift type ID: {shift_type_id}")
-        expanded = set(shift_map[shift_type_id])
+        expanded = set(shift_map[str(shift_type_id)])
         if not expanded.issubset(selected):
             raise ValueError(f"{label} for '{shift_type_id}' must be covered by {selection_name}.")
         if covered.intersection(expanded):
@@ -686,15 +686,15 @@ def _compile_coefficients(entries, selected, shift_map, label, selection_name):
 
 def _classify_shift_request_shape(data, dates, person_target, date_target, parsed_dates):
     """Classify a request using its original selector granularity."""
-    person_item_ids = {person.id for person in data.people.items}
+    person_item_ids = {str(person.id) for person in data.people.items}
     people_group_ids = {group.id for group in data.people.groups}
     date_item_ids = {str(date) for date in dates}
     date_group_ids = {group.id for group in data.dates.groups}
     date_keyword_ids = set(MAP_DATE_KEYWORD_TO_FILTER) | set(MAP_WEEKDAY_TO_STR)
 
-    if person_target in person_item_ids:
+    if str(person_target) in person_item_ids:
         person_shape = "person-item"
-    elif person_target in people_group_ids:
+    elif str(person_target) in people_group_ids:
         person_shape = "people-group"
     else:
         return "unknown"
@@ -903,7 +903,7 @@ def _compile_export(data, people_map, shift_map, date_map):
         shift_types = ()
         if hasattr(rule, "people"):
             for target in rule.people:
-                if target not in people_map:
+                if str(target) not in people_map:
                     raise ValueError(
                         f"Invalid person identifier '{target}' in export formatting rule with type '{rule.type}'"
                     )
@@ -912,7 +912,7 @@ def _compile_export(data, people_map, shift_map, date_map):
             dates = tuple(utils.parse_dates(rule.dates, date_map, data.dates.range))
         if hasattr(rule, "shiftTypes"):
             for target in rule.shiftTypes:
-                if target not in shift_map:
+                if str(target) not in shift_map:
                     raise ValueError(
                         f"Invalid shift type identifier '{target}' in export formatting rule with type 'cell'"
                     )
@@ -978,7 +978,7 @@ def _validate_and_compile_schedule(data: NurseSchedulingData) -> CompiledSchedul
     )
     dates, date_map = _build_date_index(data)
     histories = tuple(
-        None if person.history is None else tuple(shift_map[shift_type_id][0] for shift_type_id in person.history)
+        None if person.history is None else tuple(shift_map[str(shift_type_id)][0] for shift_type_id in person.history)
         for person in data.people.items
     )
     preferences = tuple(

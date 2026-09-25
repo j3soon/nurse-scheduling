@@ -36,6 +36,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from nurse_scheduling.loader import MAX_NESTING_DEPTH
 from nurse_scheduling.scheduler import CANONICAL_SOLVER_CHOICES, ScheduleResult
 from nurse_scheduling.server.app import create_app
 from nurse_scheduling.server.auth import AuthCredential, create_stream_token, extract_bearer_token, verify_stream_token
@@ -240,6 +241,23 @@ def _client(runner=None, *, start_background=True, settings=None) -> TestClient:
         start_background=start_background,
     )
     return TestClient(app)
+
+
+_INVALID_INPUT_SCENARIO = """\
+apiVersion: alpha
+dates:
+  range:
+    startDate: 2026-05-14
+    endDate: 2026-05-14
+people:
+  items:
+    - id: Person 1
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+"""
 
 
 def _create(client: TestClient, headers=None, **data):
@@ -1240,6 +1258,75 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
     )
 
     assert result == expected_failure
+
+
+@pytest.mark.parametrize(
+    ("description", "yaml_content", "expected_message"),
+    [
+        ("malformed yaml", "not: [", "expected the node content"),
+        (
+            "deeply nested yaml",
+            "apiVersion: alpha\nx: " + "[" * (MAX_NESTING_DEPTH + 1) + "0" + "]" * (MAX_NESTING_DEPTH + 1),
+            "nests deeper than",
+        ),
+        ("non-mapping document", "$0", "top-level mapping"),
+        (
+            "unsupported api version",
+            _INVALID_INPUT_SCENARIO.replace("apiVersion: alpha", "apiVersion: beta"),
+            "Unsupported API version: beta",
+        ),
+        ("schema violation", "apiVersion: alpha\npeople: 3\n", "people\n  Input should be"),
+        (
+            "unknown person reference",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift request\n    person: nobody\n    date: 05-14\n    shiftType: D\n",
+            "Unknown person ID: nobody",
+        ),
+        (
+            "malformed date reference",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift request\n    person: Person 1\n    date: Freeday_\n    shiftType: D\n",
+            "Date 'Freeday_' is not in the format",
+        ),
+        (
+            "invalid export formatting reference",
+            _INVALID_INPUT_SCENARIO
+            + "export:\n  formatting:\n    - type: row\n      people: [nobody]\n      backgroundColor: '#ff0000'\n",
+            "Invalid person identifier 'nobody' in export formatting rule",
+        ),
+        (
+            "empty count shift types",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift count\n    person: Person 1\n    countDates: [05-14]\n"
+            + "    countShiftTypes: []\n    expression: '|x - T|'\n    target: 1\n    weight: -1\n",
+            "Non-empty count shift types are required",
+        ),
+    ],
+)
+def test_optimization_runner_reports_invalid_input(description, yaml_content, expected_message):
+    job = Job(
+        id="job_invalid_input",
+        state=JobState.RUNNING,
+        request=JobRequest(
+            input_name="input.yaml",
+            client_id="client",
+            solver="ortools/cp-sat",
+            prettify=False,
+            timeout_seconds=60,
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
+
+    result = OptimizationRunner().run(
+        job,
+        yaml_content.encode("utf-8"),
+        event_callback=lambda *_args: None,
+        should_stop=None,
+    )
+
+    assert isinstance(result, JobFailure), description
+    assert result.code == "invalid_input", description
+    assert expected_message in result.message, description
 
 
 def test_optimization_runner_uses_job_timestamp_for_artifact_name(monkeypatch):

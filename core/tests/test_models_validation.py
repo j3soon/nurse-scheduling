@@ -219,6 +219,15 @@ def test_model_rejects_duplicate_or_reserved_people_ids():
         NurseSchedulingData.model_validate(payload)
 
 
+@pytest.mark.parametrize("container", ["people", "shiftTypes"])
+def test_model_rejects_ids_that_collide_after_yaml_quoting(container):
+    payload = _base_payload()
+    payload[container]["items"] = [{"id": 7}, {"id": "7"}]
+
+    with pytest.raises(ValueError, match="Duplicated"):
+        NurseSchedulingData.model_validate(payload)
+
+
 def test_model_rejects_invalid_dates_items_and_group_ids():
     payload = _base_payload()
     payload["dates"]["items"] = [datetime.date(2025, 1, 1)]

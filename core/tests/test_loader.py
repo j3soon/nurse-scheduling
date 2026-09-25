@@ -30,6 +30,7 @@ from ruamel.yaml.error import YAMLError
 # Add the project root to the Python path so imports work when running directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from nurse_scheduling.errors import InputValidationError
 from nurse_scheduling.loader import (
     MAX_EXPANDED_NODES,
     MAX_NESTING_DEPTH,
@@ -224,5 +225,5 @@ def test_brackets_in_a_comment_are_not_nesting():
 
 @pytest.mark.parametrize("content", [b"null\n", b"- one\n- two\n"])
 def test_load_yaml_requires_top_level_mapping(content):
-    with pytest.raises(TypeError, match="top-level mapping"):
+    with pytest.raises(InputValidationError, match="top-level mapping"):
         _load_yaml(content)

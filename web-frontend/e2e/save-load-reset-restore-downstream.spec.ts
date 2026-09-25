@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('reset followed by upload restores downstream pages, not just the YAML preview', async ({ page }) => {
   /*
@@ -73,6 +73,8 @@ test('reset followed by upload restores downstream pages, not just the YAML prev
   });
 
   await expect.poll(() => dialogs.some(message => message.includes('YAML file loaded successfully!'))).toBe(true);
+  // The dialog can arrive before React commits and persists the import.
+  await waitForStoredCurrentSchedulingData(page, 'Restore Person');
 
   await page.goto('/people');
   await expect(page.locator('span').filter({ hasText: 'Restore Person' }).first()).toBeVisible();

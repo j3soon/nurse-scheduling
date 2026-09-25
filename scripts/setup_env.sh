@@ -40,8 +40,13 @@ setup_python_project() {
   (
     cd "$project_dir"
 
-    echo "Creating virtual environment in $project_dir/.venv ..."
-    uv venv --python 3.12
+    if [[ -x .venv/bin/python ]] && \
+      .venv/bin/python -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' >/dev/null 2>&1; then
+      echo "Reusing Python 3.12 virtual environment in $project_dir/.venv ..."
+    else
+      echo "Creating virtual environment in $project_dir/.venv ..."
+      uv venv --python 3.12 --clear
+    fi
 
     echo "Activating virtual environment ..."
     # shellcheck disable=SC1091

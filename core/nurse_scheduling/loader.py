@@ -32,6 +32,7 @@ from ruamel.yaml.events import (
     SequenceStartEvent,
 )
 
+from .errors import InputValidationError
 from .models import NurseSchedulingData
 
 MAX_EXPANDED_NODES = 200_000
@@ -135,7 +136,7 @@ def _load_yaml(content: bytes, *, reject_aliases: bool = False) -> dict[str, Any
     # `Off` into boolean value `False`.
     data = YAML(typ="safe").load(stream)
     if not isinstance(data, dict):
-        raise TypeError("Scheduling YAML must contain a top-level mapping")
+        raise InputValidationError("Scheduling YAML must contain a top-level mapping")
     return data
 
 
