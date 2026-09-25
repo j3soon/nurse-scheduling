@@ -226,6 +226,13 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?' });
   expect(captured.scheduleYaml).toContain('apiVersion:');
 
+  await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
+  await page.getByRole('button', { name: '1. Dates' }).click();
+  await expect(page).toHaveURL(/\/dates$/);
+  await page.getByRole('button', { name: '12. Experimental AI' }).click();
+  await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Check next week.');
   page.once('dialog', async dialog => {
     expect(dialog.message()).toBe('You have unsaved edits. Leave this page without saving?');
     await dialog.dismiss();
