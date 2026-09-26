@@ -86,8 +86,22 @@ rm -- "$fixture_root/core/requirements.txt"
 
 rm -- "$fixture_root/core/tests/test_ai_provider.py"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
-assert_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+assert_line "$output" 'test: tests/test_ai_basic.py'
+assert_no_line "$output" 'test: tests/test_ai_provider.py'
+assert_no_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
 write_fixture core/tests/test_ai_provider.py
+
+git -C "$fixture_root" mv core/nurse_scheduling/ai/pi/read.py core/nurse_scheduling/ai/pi/renamed.py
+output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
+assert_line "$output" 'test: tests/test_ai_basic.py'
+assert_no_line "$output" 'test: tests/test_scheduler.py'
+assert_no_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+git -C "$fixture_root" mv core/nurse_scheduling/ai/pi/renamed.py core/nurse_scheduling/ai/pi/read.py
+
+rm -- "$fixture_root/core/tests/test_scheduler.py"
+output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
+assert_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+write_fixture core/tests/test_scheduler.py
 
 printf 'change\n' >> "$fixture_root/web-frontend/src/app/page.tsx"
 output="$("$fixture_root/scripts/test_frontend_affected.sh" --list)"

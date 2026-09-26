@@ -21,6 +21,20 @@ elif [[ "$run_full_suite" == false ]]; then
   mapfile -d '' changed_files < <(affected_changed_files "$ROOT_DIR" core)
   for file in "${changed_files[@]}"; do
     relative="${file#core/}"
+    # Only AI code imports the AI package and AI test helpers, so deleting one of
+    # them can break only the AI suites. Other deletions can break any importer.
+    if [[ ! -e "$ROOT_DIR/$file" ]]; then
+      case "$relative" in
+        nurse_scheduling/ai/* | nurse_scheduling/ai_serve.py | tests/ai_eval/* | tests/ai_test_helper.py | tests/test_ai_*.py)
+          ai_changed=true
+          continue
+          ;;
+        nurse_scheduling/* | tests/*)
+          run_full_suite=true
+          continue
+          ;;
+      esac
+    fi
     case "$relative" in
       tests/test_*.py)
         test_paths+=("$relative")
@@ -38,11 +52,6 @@ elif [[ "$run_full_suite" == false ]]; then
         ;;
     esac
   done
-
-  if ! git -C "$ROOT_DIR" diff --no-renames --quiet --diff-filter=D "$affected_base" -- \
-    core/nurse_scheduling core/tests; then
-    run_full_suite=true
-  fi
 
   if [[ "$ai_changed" == true && "$run_full_suite" == false ]]; then
     for path in "$CORE_DIR"/tests/test_ai_*.py; do
