@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .provider import ChatMessage, TokenUsage, ToolResultImage
-from .transcript import AssistantMessage
+from .transcript import AssistantMessage, ToolCall
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ AgentEvent = (
     | AgentProposal
     | TokenUsage
 )
-ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
+ToolBatchScope = Callable[[Sequence[ToolCall]], AbstractAsyncContextManager[None]]
 SteeringSource = Callable[[bool], Sequence[tuple[str, str]]]
 # Derive one provider request from the run's conversation without changing it.
 RequestPreparer = Callable[[Sequence[ChatMessage]], list[ChatMessage]]

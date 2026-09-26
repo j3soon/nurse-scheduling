@@ -329,7 +329,8 @@ def test_one_activity_batch_contains_all_calls_from_a_model_response():
     executed = 0
 
     @asynccontextmanager
-    async def activity_batch():
+    async def activity_batch(calls: Sequence[ToolCall]):
+        assert len(calls) == 2
         activity.append("enter")
         try:
             yield

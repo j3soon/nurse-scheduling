@@ -297,6 +297,42 @@ def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: st
     assert control_result.ok
 
 
+@pytest.mark.parametrize("action", ["status", "finish_now"])
+def test_optimizer_job_controls_do_not_start_a_sandbox(action: str) -> None:
+    arguments = json.dumps({"action": action})
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("control-job", OPTIMIZER_TOOL, arguments),))],
+        [TextDelta("The job control completed.")],
+    )
+    factory = FakeSandboxFactory(create_error=SandboxError("E2B is unavailable"))
+    controls: list[tuple[str, str]] = []
+
+    async def execute_optimizer(current_schedule: str, received_arguments: str) -> AgentToolResult:
+        controls.append((current_schedule, received_arguments))
+        return AgentToolResult("Existing job updated.", True)
+
+    async def collect() -> list[AgentEvent | AgentScheduleChange]:
+        return [
+            event
+            async for event in run_workspace(
+                provider,
+                factory,
+                schedule_yaml(),
+                MESSAGES,
+                _limits(),
+                execute_optimizer=execute_optimizer,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    assert controls == [("", arguments)]
+    assert factory.created == []
+    assert any(
+        isinstance(event, ToolExecutionEnd) and event.name == OPTIMIZER_TOOL and event.ok
+        for event in events
+    )
+
+
 def test_pending_proposal_is_hydrated_as_trusted_read_only_context():
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id))
 

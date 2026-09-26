@@ -64,7 +64,7 @@ TRUNCATED_TOOL_CALL_RESULT = (
 
 
 @asynccontextmanager
-async def _unbatched_activity() -> AsyncIterator[None]:
+async def _unbatched_activity(_calls: Sequence[ToolCall]) -> AsyncIterator[None]:
     yield
 
 
@@ -163,7 +163,7 @@ async def agent_loop(
         tool_rounds += 1
         tool_calls += len(calls)
         batch_scope = activity_batch or _unbatched_activity
-        async with batch_scope():
+        async with batch_scope(calls):
             image_results: list[ChatMessage] = []
             parallel = len(calls) > 1 and all(
                 by_name.get(call.name) is not None and by_name[call.name].read_only for call in calls

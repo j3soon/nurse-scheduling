@@ -323,9 +323,9 @@ sequenceDiagram
     participant E2B as E2B sandbox
 
     Note over Session,Agent: One admitted run can contain multiple model/tool turns
-    loop Model chooses a tool batch
+    loop Model chooses a workspace tool batch
         Agent->>Workspace: Open activity batch
-        opt First executed batch
+        opt First batch that needs workspace files
             Workspace->>E2B: Create VM and hydrate schedule, references, attachments, prior proposal, optimizer workbook if any
         end
         opt Sandbox paused
@@ -441,7 +441,7 @@ sequenceDiagram
 
     Note over Agent,Jobs: Model requests an optimizer tool within an admitted run
     Agent->>Agent: Open tool batch
-    opt First executed batch
+    opt Starting a job needs a workspace
         Agent->>E2B: Create and hydrate workspace
     end
     opt Sandbox paused
@@ -529,6 +529,9 @@ background task, so stopping or disconnecting a run does not cancel a job
 whose ID was returned. The service still reviews the result when the job ends,
 while a job still being submitted when its run is cancelled is retired. The
 monitor then cancels and deletes the remote job.
+
+The `status` and `finish_now` actions use service-held job state and do not
+create an E2B sandbox when they are the only tools in a batch.
 
 The optimizer credential and reverse person-ID mapping stay in the AI service,
 outside E2B.

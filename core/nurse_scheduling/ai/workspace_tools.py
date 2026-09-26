@@ -23,7 +23,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
 from functools import partial
 
 from .agent import Agent
@@ -35,6 +35,7 @@ from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
 from .sandbox import SandboxFactory, SandboxFileNotFoundError
 from .sandbox_tools import SandboxPiTools
+from .transcript import ToolCall
 from .workspace import (
     WORKSPACE_SCHEDULE,
     AgentScheduleChange,
@@ -67,6 +68,9 @@ class WorkspaceTools:
         self.limits = limits
         self.execute_optimizer = execute_optimizer
         self.sandbox_tools = SandboxPiTools(sandbox, limits.bash_command_timeout_seconds)
+        self._sandbox_tool_names = {
+            definition["function"]["name"] for definition in self.sandbox_tools.definitions
+        }
         self.candidate_tracker = _ScheduleCandidateTracker(sandbox, schedule_yaml, limits.max_schedule_bytes)
         definitions = list(self.sandbox_tools.definitions)
         if execute_optimizer is not None:
@@ -80,16 +84,20 @@ class WorkspaceTools:
             for definition in definitions
         ]
 
+    def needs_workspace(self, name: str, arguments: str) -> bool:
+        if name != OPTIMIZER_TOOL:
+            return name in self._sandbox_tool_names
+        if self.execute_optimizer is None:
+            return False
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            return False
+        return isinstance(parsed, dict) and parsed.get("action", "start") == "start"
+
     async def _execute(self, name: str, arguments: str) -> AgentToolResult:
         if name == OPTIMIZER_TOOL and self.execute_optimizer is not None:
-            try:
-                optimizer_arguments = json.loads(arguments or "{}")
-            except json.JSONDecodeError:
-                optimizer_arguments = None
-            if isinstance(optimizer_arguments, dict) and optimizer_arguments.get("action") in {
-                "status",
-                "finish_now",
-            }:
+            if not self.needs_workspace(name, arguments):
                 return await self.execute_optimizer("", arguments)
             try:
                 current_schedule = (await self.sandbox.read_file(WORKSPACE_SCHEDULE)).decode("utf-8")
@@ -146,11 +154,19 @@ async def run_workspace(
             ) as sandbox:
                 toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
 
+                @asynccontextmanager
+                async def tool_batch(calls: Sequence[ToolCall]) -> AsyncIterator[None]:
+                    if any(toolset.needs_workspace(call.name, call.arguments) for call in calls):
+                        async with sandbox.activity_batch():
+                            yield
+                    else:
+                        yield
+
                 events = agent.prompt(
                     provider,
                     messages,
                     toolset.tools,
-                    activity_batch=sandbox.activity_batch,
+                    activity_batch=tool_batch,
                     observe_tool_batch=observe_tool_batch,
                     take_steering=take_steering,
                     max_tool_rounds=limits.max_tool_rounds,
