@@ -10,6 +10,8 @@ The hosted optimization workflow anonymizes individual people IDs and removes de
 
 Scheduling data and up to 50 undo-history entries are stored in browser `localStorage` until cleared or replaced.
 
+The experimental AI page stores its selected server and display preferences in browser `localStorage`. It also stores AI API keys by server endpoint there when you choose to save them. It stores the current chat in tab `sessionStorage` so a reload can restore it. That record includes the chat messages and attachment filenames, assistant responses and reasoning, tool activity and schedule changes with before and after YAML, the full schedule last synced with the AI service, any pending proposal diff, optimizer progress and job details, and session identifiers and expiry data. These values are stored as plain JSON. The page clears the chat record when you start a new chat or it detects that the session expired or became unavailable. Tab `sessionStorage` normally lasts until the tab is closed. Clearing the chat does not clear saved AI API keys or the scheduling data in `localStorage`.
+
 ## Analytics and Error Reporting
 
 The hosted frontend uses Google Analytics and Sentry for analytics, diagnostics, performance monitoring, feedback, and error reporting. Depending on the event, they may receive IP addresses, request headers, interaction metadata, logs, feedback contact details, and scheduling data.
