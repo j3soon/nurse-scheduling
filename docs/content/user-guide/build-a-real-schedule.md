@@ -11,6 +11,12 @@ and two group-date requests that the UI stores as single-date pairs (see
 People are anonymized as `P1` through `P87`. Group descriptions keep the
 original ward's mix of English and Chinese labels.
 
+In practice, a ward often starts with an Excel grid: people in rows, dates in
+columns, and staffing levels, requests, roles, and previous-month shifts in or
+around the sheet. This guide's companion files represent information
+transcribed from that kind of source into the app's import formats. The YAML
+download is the structured result, not the starting point for a ward.
+
 ## How the example is organized
 
 The files preserve one ward's configuration. Use the numbers as an example to
@@ -23,10 +29,12 @@ review with your own scheduler, not as staffing targets for another ward.
   people. People can belong to overlapping groups, so review the rules they
   receive together.
 - **Ward date groups:** `WORKDAY` and `FREEDAY` select dates for staffing and
-  counts. `Freeday shift right` lists weekend dates shifted one calendar day
-  later, but no rule in this example currently selects it.
-- **November 4 split:** `Before 4` and `After 4` apply different cross-team
-  request weights. The configured penalty is stronger from November 4.
+  counts. `Freeday shift right` is reserved for a possible night-team rest rule
+  and is not selected by a rule in this example.
+- **November 4 split:** Nurses may change their primary Day, Evening, or Night
+  team between months. `Before 4` allows a lower-penalty transition from the
+  previous team. Some cross-team assignments become more costly from November
+  4, once the new monthly team is expected to be established.
 
 Weights express how strongly the optimizer scores a preference: positive
 weights encourage it, negative weights discourage it, and `-inf` forbids it.
@@ -34,8 +42,27 @@ A large finite penalty is still a preference, not a prohibition. The
 [Shift Requests](shift-requests.md),
 [Shift Type Requirements](shift-type-requirements.md), and
 [Shift Type Successions](shift-type-successions.md) pages explain how each rule
-is applied. The source data does not explain the ward's clinical reason for
-every number or group boundary.
+is applied. The exact finite weights are empirical priorities, not measured
+clinical quantities.
+
+## Prepare data from a ward schedule
+
+If starting from a ward workbook instead of these supplied files:
+
+1. Confirm the month, personnel list, roles, and daily staffing levels with
+   the scheduler. Colors and abbreviations may encode group membership, but
+   confirm ambiguous cases rather than inferring them from appearance.
+2. Translate the ward's request notation. A `1` might mean `OFF` in one ward,
+   while another uses `D`, `E`, and `N` directly. If formatting marks different
+   request strengths, separate those cells before importing them.
+3. Convert previous-month entries, such as `D2` or `O4`, to the history upload's
+   `person,shift,repetition` rows. Check what each source abbreviation means.
+4. Use the GUI to enter date groups, qualifications, staffing, and rules that
+   the bulk imports do not contain. Review the result with the scheduler.
+
+The supplied `people.txt` and CSV files have already been prepared for this
+example. The app does not interpret arbitrary Excel colors or ward shorthand
+on its own.
 
 ## Data files
 
@@ -72,6 +99,9 @@ imported from a file.
 
 The app creates one date item per day (`01`–`30`) and the automatic groups
 `ALL`, `WEEKDAY`, `WEEKEND`, and the weekday names.
+For another ward or month, the Taiwan calendar import can be a starting point.
+Confirm the resulting workday and freeday groups against the ward's actual
+calendar before using them in staffing or fairness rules.
 
 ![November 1–30 range with the automatic date groups](../assets/images/user-guide/build-a-real-schedule/build-real-dates-range.png)
 
@@ -86,14 +116,23 @@ The automatic `OFF` shift type and `ALL` group are always present and cannot be
 edited or deleted.
 
 The `+` shifts have separate senior-nurse coverage requirements in step 9.
-The `~` descriptions say that new staff do not count toward staffing; the
-`Student Shifts` group lets the schedule refer to those shifts together.
-`K` is labeled as class or training in the reference data.
+The ordinary `D`, `E`, and `N` slots can be filled by qualified non-student
+nurses, including seniors. The `~` shifts are learning assignments. Students
+do not count toward ordinary staffing. `K` means `上課` (required class
+attendance), with `K` recalling the Mandarin initial sound `ㄎ` of `課`. It is
+not ward staffing. These symbols are names for rules, so clarify a ward's
+terminology before assigning them a meaning.
 
 Then create the 5 shift-type groups listed under `shiftTypes.groups` in
 `reference.yaml`, in that order: `Day`, `Day (w/o A, D~, K)`, `Evening`,
 `Night`, and `Student Shifts`. Select **Add Group**, enter the ID and
 description, select the member shift types, and select **Add**.
+
+The broad `Day` group includes `A`, `D~`, and `K` because all occupy daytime
+when evaluating shift succession. `Day (w/o A, D~, K)` contains only `D` and
+`D+`, but no rule in this example currently selects that narrower group. It is
+retained as part of the ward's configuration. Groups can represent different
+questions and need not share identical membership.
 
 ![Eleven shift types and five shift-type groups with their members](../assets/images/user-guide/build-a-real-schedule/build-real-shift-types.png)
 
@@ -113,7 +152,8 @@ The upload adds all 87 people (`P1`–`P87`). Each appears under the automatic
 2. Select **Upload People History (shorthand)** and choose `people-history.csv`.
 
 Each row is `person,shift,repetition`. The history fills the `H-1`–`H-6`
-columns so succession rules can reach back before November 1.
+columns so succession rules can reach back before November 1. A source workbook
+may need abbreviation and repetition cleanup before it matches this format.
 
 ![Previous-shift history for the ward roster](../assets/images/user-guide/build-a-real-schedule/build-real-history.png)
 
@@ -136,9 +176,11 @@ Keep the creation order from `reference.yaml`.
 
 `FREEDAY` contains the ten weekends in this month. `Freeday shift right`
 contains the following dates for nine of them because November 30 falls at
-the end of the schedule. It is present in the source schedule but unused by
-its rules. Review both date lists and whether the unused group is still needed
-when carrying this pattern into another month.
+the end of the schedule. A night shift crosses midnight, so an ordinary
+calendar weekend may not give a night worker the same usable rest as a day
+worker. The shifted group records a possible way to evaluate those days, but
+this example intentionally does not connect it to an optimization rule. Keep
+the basic schedule working before adding that advanced refinement.
 
 ![Five ward date groups above the automatic calendar groups](../assets/images/user-guide/build-a-real-schedule/build-real-date-groups.png)
 
@@ -154,10 +196,11 @@ Open **People**, select **Add Group**, enter the ID and description, and select
 the member people from `reference.yaml`. Groups may overlap; the automatic
 `ALL` group always holds everyone.
 
-The team groups drive cross-team requests, while `Senior Nurses`, `Admin
-People`, and `All Nurses w/o Students` select who can satisfy the corresponding
-staffing requirements. Group membership is an eligibility and rule-selection
-choice, not a label to infer from an anonymized ID.
+Current Day, Evening, and Night groups represent primary teams for November.
+The `Prev` groups represent previous-month teams and apply transition requests
+early in the month. `Senior Nurses`, `Admin People`, and `All Nurses w/o
+Students` select who can satisfy corresponding staffing requirements. Confirm
+membership with the ward. An anonymized ID alone does not establish a role.
 
 ![Thirteen ward people groups with their member chips](../assets/images/user-guide/build-a-real-schedule/build-real-people-groups.png)
 
@@ -176,6 +219,13 @@ split by weight into two uploads.
 Each row is one person; the columns line up with the displayed dates. Blank
 cells are ignored, so the two uploads do not conflict.
 
+The `11000000000` requests form a very strong, near-hard preference tier. The
+`11000000` requests are a strong but lower-priority tier. These values are
+empirical: their relative priority matters more than their exact digits. The
+leading `11` makes the request tiers easy to find and retune together. In a
+new ward, first confirm how the source marks each tier, then retune weights
+against staffing and other rules after a trial optimization.
+
 ## 8. Add the group and person requests
 
 Create the 33 shift requests listed under `shiftRequests` in `reference.yaml`
@@ -192,10 +242,13 @@ controls for infinite weights), and click the group-row × date-column cell.
 Red cells show discouraged or forbidden work.
 
 The group requests discourage cross-team work with finite negative weights.
-Some of those penalties become stronger after November 3. The
-`-inf` requests prohibit specific combinations, including
-student shifts for `All Nurses w/o Students`. Check the exact weights and date
-selectors in `reference.yaml` before adapting these requests.
+Early-month switching remains possible at a lower penalty while people move
+from previous-month to current-month teams. Some penalties become much
+stronger after November 3. The `-inf` requests prohibit specific combinations,
+including student shifts for `All Nurses w/o Students`. Check the exact
+weights and date selectors in `reference.yaml` before adapting them. `K` is
+discouraged for everyone by default. Stronger individual requests in the CSV
+mark the people and dates with required class attendance.
 
 ![Group rows filled with requests across the date-group columns](../assets/images/user-guide/build-a-real-schedule/build-real-requests.png)
 
@@ -210,13 +263,25 @@ Requirement** for each:
   `-1000000000000`*.
 - Leave the weight at `-1` for the senior and admin minimums.
 
-The `D`, `E`, and `N` requirements count non-student nurses and set a preferred
-headcount one above the required minimum. `D` has separate workday and freeday
-levels. The `+` requirements count senior nurses, and the freeday `A`
-requirement uses `Admin People`. These are the example's configured staffing
-levels, not a recommendation for another ward.
-
 ![Eight staffing requirements for the ward](../assets/images/user-guide/build-a-real-schedule/build-real-requirements.png)
+
+The `D`, `E`, and `N` requirements count non-student nurses. They use a hard
+minimum one below the preferred level, with a very large penalty for missing
+the preferred person. This gives the solver a narrow escape hatch if desired
+staffing cannot be reached. `D` has separate workday and freeday levels because
+ward demand can differ. The `+` requirements count senior nurses, and the
+freeday `A` requirement uses `Admin People`. The headcounts come from the ward,
+not from a universal staffing formula. The `+` slots are separate from the
+ordinary slots: `N+` requiring three seniors is in addition to the `N`
+minimum of 12, not part of that 12.
+
+The GUI warns that 140 date/shift-type pairs have no fixed staffing
+requirement: `A` on `WORKDAY`, plus `D~`, `E~`, `N~`, and `K` on `ALL`. Special
+assignments need not have a daily headcount, but an undefined pair can be used
+in unexpected quantities. Review whether other requests or rules adequately
+control each one before optimizing. Add a requirement if they do not.
+
+![Coverage warning naming the unconstrained shift and date pairs in the example](../assets/images/user-guide/build-a-real-schedule/build-real-coverage-warning.png)
 
 ## 10. Add the succession rules
 
@@ -227,9 +292,14 @@ people `ALL` on dates `ALL`. These forbid sequences such as *Day then Night*
 (weight `-1000000000`).
 
 Previous-shift history from step 4 lets a pattern crossing November 1 be
-checked. The three two-shift transitions with `-inf` and six consecutive
-working shifts are prohibited. Other patterns have finite positive or negative
-weights and can trade off against the rest of the schedule.
+checked. The three two-shift transitions with `-inf` prevent combinations
+with insufficient rest. Six consecutive working shifts are also prohibited.
+Other transitions, such as Night then Day, may be physically possible but
+disrupt the sleep cycle, so this ward applies a strong finite penalty. Smaller
+weights discourage fragmented `OFF` days, long runs of work or leave, and
+repeated switching. Positive weights favor consecutive shifts in the same
+category or consecutive `OFF` days. The strength of sleep-cycle rules depends
+on ward policy.
 
 ![Fourteen succession rules applied to everyone](../assets/images/user-guide/build-a-real-schedule/build-real-successions.png)
 
@@ -244,9 +314,12 @@ at weight `-1000`:
 - `Night People` on `FREEDAY`, target `4`.
 
 Each rule scores every selected person's own count. The squared expression
-penalizes a larger gap from the target more strongly, but a target can be
-missed when other rules take priority. Review the resulting `OFF` counts per
-person rather than treating these targets as guaranteed totals.
+penalizes a larger gap from the target more strongly, promoting a fairer
+distribution of days off. `11` and `4` are empirical starting points, not
+fixed labor-policy constants. Inspect the resulting distribution and adjust
+the targets for the month, staffing levels, and the ward's seniority policy.
+The example does not include a rule comparing senior and junior days off. Add
+one only if the ward asks for that policy.
 
 ![Three workload-balancing count rules](../assets/images/user-guide/build-a-real-schedule/build-real-counts.png)
 
@@ -274,11 +347,14 @@ The download differs from the bundled example only in two ways, both expected:
 Before optimizing, have the scheduler review the roster and group memberships,
 the dates in `WORKDAY` and `FREEDAY`, previous-shift history, staffing levels,
 and every `-inf` rule. Also confirm which finite preferences may be traded off
-when the schedule is crowded. Resolve unintended warnings on the staffing
-requirements page.
+when the schedule is crowded. Review every staffing coverage warning.
 
-Then refine individual requests or rules and run
-[Optimize and Export](optimize-and-export.md). Review the resulting assignments,
-coverage, and `OFF` counts with the scheduler before using the schedule. For a
-recurring ward, update the dates, roster, history, and imports for the new
-period, then review every group and rule again.
+Build a new ward's schedule in stages: first confirm staffing, qualifications,
+mandatory assignments, and rest constraints. Then add requests, team
+preferences, and basic fairness. Run [Optimize and
+Export](optimize-and-export.md), inspect assignments and `OFF` counts with the
+scheduler, and tune the finite weights or targets. Add advanced rules, such as
+night-team shifted freedays, only after the basic schedule works well.
+
+For a recurring ward, update the dates, roster, history, and imports for the
+new period, then review every group and rule again.

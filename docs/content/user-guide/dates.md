@@ -9,7 +9,8 @@ groups are optional and can be added later.
 
 An anonymized ward schedules November 1 through 30, 2025. `WORKDAY` and
 `FREEDAY` separate staffing days. `Before 4` and `After 4` let later rules use
-different priorities around a team change on November 4.
+different priorities around a team change on November 4. The first three days
+allow a lower-penalty transition from the previous month's shift team.
 
 ![November 2025 range with workday, freeday, and cutoff groups](../assets/images/user-guide/10-real-dates.png)
 
@@ -49,5 +50,9 @@ Holiday import can create or replace editable `WORKDAY` and `FREEDAY` groups.
 Use it only when these groups match the workplace calendar. It supports ranges
 within `2023-01-01` through `2026-12-31`. Follow the in-app warning for Labor
 Day in 2023 and 2024, then adjust May 1 when needed.
+
+The 87-person November example enters its own groups instead of importing
+holidays. In a real ward, the Taiwan calendar is a useful starting point, but
+confirm the resulting days against the ward's actual staffing calendar.
 
 Continue with [People](people.md).

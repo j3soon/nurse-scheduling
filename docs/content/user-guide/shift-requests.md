@@ -10,6 +10,8 @@ page is optional. Skip it when the schedule has no individual preferences.
 The anonymized ward uses group requests to keep day, evening, and night teams
 on their usual shift families. Red cells show discouraged or forbidden work.
 History columns `H-1` through `H-6` let succession rules cross into November.
+Early-month cross-team requests have lower penalties while nurses transition
+from the previous month's team. Some penalties increase from November 4.
 
 ![Group requests and previous-shift history for an anonymized ward](../assets/images/user-guide/14-real-requests.png)
 
@@ -28,6 +30,12 @@ with one shift per day. A group covering every working shift, including the
 automatic `ALL` group, instead requires any non-`OFF` shift. A `-∞` request on
 a group forbids every member. Conflicting hard requests make the schedule
 infeasible.
+
+The real-schedule walkthrough imports individual requests in two empirical
+tiers: `11000000000` for near-hard requests and `11000000` for strong soft
+requests. Their relative order matters more than the exact digits. Confirm
+how a ward marks request strengths in its workbook before assigning a tier.
+Colors or a `1` can mean different things in different wards.
 
 ## Add previous-shift history
 

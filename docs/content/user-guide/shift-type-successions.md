@@ -9,7 +9,9 @@ This page is optional. Skip it when shift order does not need a rule.
 
 The anonymized ward forbids `Day` then `Night`, `Evening` then `Night`, and
 `Evening` then `Day` for everyone. It also forbids six consecutive working
-days. Each rule applies on `ALL` dates.
+days. These are rest and feasibility rules. `Night` then `Day` is possible but
+disrupts the sleep cycle, so the ward gives it a strong finite penalty rather
+than forbidding it. Each rule applies on `ALL` dates.
 
 ![Forbidden shift sequences for everyone in an anonymized ward](../assets/images/user-guide/15-real-successions.png)
 
@@ -24,6 +26,12 @@ days. Each rule applies on `ALL` dates.
 
 A positive weight encourages the pattern. A negative weight discourages it.
 Negative infinity forbids it.
+
+Decide which transitions truly cannot be worked with sufficient rest and
+which are undesirable but negotiable. For the latter, tune finite penalties
+to the ward's sleep-cycle policy. Smaller preferences can reward repeated
+shifts in the same category or consecutive `OFF` days and discourage
+fragmented rest.
 
 Add previous shifts on [Shift Requests](shift-requests.md#add-previous-shift-history)
 when the rule must cross the start of the scheduling period.
