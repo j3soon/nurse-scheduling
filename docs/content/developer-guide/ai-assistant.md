@@ -379,8 +379,9 @@ sequenceDiagram
         Session-->>Browser: SSE error, discard run
     else Snapshot changed
         Session-->>Browser: SSE stale, discard run
-    else Cancelled
-        Note over Session: Discard run, release admission after cleanup
+    else Cancelled before commit
+        Note over Session: Keep prompt and aborted partial answer if current
+        Session-->>Browser: SSE stopped after cleanup
     end
     opt Deletion unconfirmed
         Workspace->>E2B: Background reaper retries later

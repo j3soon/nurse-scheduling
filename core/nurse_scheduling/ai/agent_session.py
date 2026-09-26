@@ -435,6 +435,10 @@ class AgentSession:
                         wire_event = output.consume(event)
                         if wire_event is not None:
                             await emit(*wire_event)
+            # The outcome is fixed once cleanup has finished and the session commit
+            # begins. Stop must not turn a committed answer into a stopped response
+            # while its history write is still pending.
+            run.finishing = True
             completion = store.finish(
                 session_id,
                 retained_entries(output.entries),

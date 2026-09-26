@@ -315,6 +315,37 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
     asyncio.run(exercise())
 
 
+def test_stop_during_completed_history_write_keeps_completed_outcome(monkeypatch):
+    async def exercise():
+        finalizing = asyncio.Event()
+        release = asyncio.Event()
+        statuses = []
+
+        async def write(_self, operation, *args):
+            if operation == "finish_run":
+                finalizing.set()
+                await release.wait()
+                statuses.append(args[1])
+            return True
+
+        monkeypatch.setattr(ChatHistory, "write", write)
+        app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
+        session = app.state.session_store.create("owner", schedule_yaml())
+        running = asyncio.create_task(app.state.session_optimizer._on_completion(session.id, "Review", None))
+
+        await asyncio.wait_for(finalizing.wait(), timeout=1)
+        assert [type(entry) for entry in session.transcript] == [UserMessage, AssistantMessage]
+        app.state.runs.stop(session.id)
+        release.set()
+        await asyncio.wait_for(running, timeout=1)
+
+        assert statuses == ["completed"]
+        assert [event.type for event in app.state.session_event_broker.events_after(session.id)][-1] == "done"
+        assert not app.state.runs.busy(session.id)
+
+    asyncio.run(exercise())
+
+
 def test_terminal_foreground_event_never_blocks_cleanup_on_a_full_reader_queue():
     async def exercise():
         turns = SessionRuns()
