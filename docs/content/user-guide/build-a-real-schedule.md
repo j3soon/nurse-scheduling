@@ -5,8 +5,7 @@ November 2025 entirely through the running web UI, starting from an empty
 schedule. It is validated end-to-end: after the steps below, **Save and Load →
 Download** produces a YAML file that matches the bundled example
 (`large-ward-with-87-people-2025-11.yaml`), except for the `appVersion` stamp
-and two group-date requests that the UI stores as single-date pairs (see
-[Validate the result](#validate-the-result)).
+(see [Validate the result](#validate-the-result)).
 
 People are anonymized as `P1` through `P87`. Group descriptions keep the
 original ward's mix of English and Chinese labels.
@@ -228,10 +227,10 @@ against staffing and other rules after a trial optimization.
 
 ## 8. Add the group and person requests
 
-Create the 33 shift requests listed under `shiftRequests` in `reference.yaml`
+Create the 35 shift requests listed under `shiftRequests` in `reference.yaml`
 with **Quick Add Preference**. These are the requests the CSVs do not cover:
 
-- 25 group-level requests (24 ward groups plus the `ALL` group), such as *Day
+- 27 group-level requests (26 on ward groups plus one on `ALL`), such as *Day
   People → Evening on `Before 4` and `After 4` at weight `-100000000`* and *Day
   People w/o A → `A` on `ALL` at weight `-inf`*.
 - 8 person-level requests on `ALL` for `P1`–`P3`, such as *`P1` → `D` and `OFF`
@@ -240,6 +239,10 @@ with **Quick Add Preference**. These are the requests the CSVs do not cover:
 For each entry, choose the shift type, set the weight (use the `-inf` / `inf`
 controls for infinite weights), and click the group-row × date-column cell.
 Red cells show discouraged or forbidden work.
+For *Day People → Evening* and *Evening People → Day*, click the `Before 4`
+and `After 4` cells separately at the same weight. The matrix saves each
+date-group cell as its own request. This also lets overlapping date groups
+contribute their weights independently.
 
 The group requests discourage cross-team work with finite negative weights.
 Early-month switching remains possible at a lower penalty while people move
@@ -327,18 +330,11 @@ one only if the ward asks for that policy.
 
 1. Open **Save and Load** and select **Download**.
 2. Compare the downloaded YAML to the bundled example. The `apiVersion`,
-   `description`, `dates`, `people`, and `shiftTypes` sections match, and every
-   preference matches once you group requests by person, shift type, and
-   weight.
+   `description`, `dates`, `people`, `shiftTypes`, and `preferences` sections
+   match, including separate requests for `Before 4` and `After 4`.
 
-The download differs from the bundled example only in two ways, both expected:
-
-- `appVersion` is stamped with the running app version.
-- Two group-date requests (*Day People → Evening* and *Evening People → Day*,
-  each on `Before 4` and `After 4`) are stored as two single-date requests
-  instead of one multi-date request. The app merges concrete date items
-  automatically but not date-group items, so the UI represents each as a
-  pair. The scheduling effect is identical.
+The remaining expected difference is `appVersion`, which is stamped with the
+running app version.
 
 ![Downloaded YAML for the completed schedule](../assets/images/user-guide/build-a-real-schedule/build-real-final-yaml.png)
 

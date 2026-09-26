@@ -10,7 +10,7 @@ backup is strongly recommended for useful work.
 ## Real scenario example
 
 The anonymized ward YAML contains the November 2025 range, 87 people, shift
-groups, and 181 preference rules. After upload, the preview confirms the dates
+groups, and 183 preference rules. After upload, the preview confirms the dates
 and groups before any page is edited.
 
 ![Loaded anonymized ward YAML with November 2025 dates](../assets/images/user-guide/19-real-save-load.png)

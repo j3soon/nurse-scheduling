@@ -433,7 +433,12 @@ preferences:
     weight: -.inf
   - type: shift request
     person: [Day People]
-    date: [Before 4, After 4]
+    date: [Before 4]
+    shiftType: [Evening]
+    weight: -100000000
+  - type: shift request
+    person: [Day People]
+    date: [After 4]
     shiftType: [Evening]
     weight: -100000000
   - type: shift request
@@ -448,7 +453,12 @@ preferences:
     weight: -100000000
   - type: shift request
     person: [Evening People]
-    date: [Before 4, After 4]
+    date: [Before 4]
+    shiftType: [Day]
+    weight: -100000000
+  - type: shift request
+    person: [Evening People]
+    date: [After 4]
     shiftType: [Day]
     weight: -100000000
   - type: shift request
