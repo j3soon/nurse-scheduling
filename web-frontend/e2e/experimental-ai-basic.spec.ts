@@ -320,7 +320,7 @@ test('Stop aborts the active AI stream', async ({ page }) => {
 
     await expect.poll(backend.wasDisconnected).toBe(true);
     await expect(page.getByText('bash · interrupted')).toBeVisible();
-    await expect(page.getByText('Stopped.')).toBeVisible();
+    await expect(page.getByText('Stopped before completion.')).toBeVisible();
   } finally {
     await backend.close();
   }
