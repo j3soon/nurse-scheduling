@@ -420,8 +420,7 @@ class AgentSession:
                 done["history_saved"] = history_saved
             await emit("done", done)
         except asyncio.CancelledError:
-            if background:
-                await emit("stopped", {"message_id": run.id})
+            await emit("stopped", {"message_id": run.id})
             raise
         except HTTPException:
             if not background:

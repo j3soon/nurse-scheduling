@@ -549,12 +549,13 @@ def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: s
 
 
 def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
-    async def exercise() -> tuple[int, bool]:
+    async def exercise() -> tuple[int, bool, list[tuple[str, dict[str, str]]]]:
         started = asyncio.Event()
         cancelled = asyncio.Event()
 
         class WaitingProvider:
             async def stream_events(self, _messages, tools=None):
+                yield TextDelta("Partial answer.")
                 started.set()
                 try:
                     await asyncio.Event().wait()
@@ -580,13 +581,17 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
             await asyncio.wait_for(started.wait(), timeout=1)
             stopped = await client.post(f"/sessions/{session_id}/stop")
             await asyncio.wait_for(cancelled.wait(), timeout=1)
-            await asyncio.gather(turn, return_exceptions=True)
-            return stopped.status_code, app.state.session_store._sessions[session_id].active
+            response = await turn
+            return stopped.status_code, app.state.session_store._sessions[session_id].active, parse_sse(response.text)
 
-    status_code, session_active = asyncio.run(exercise())
+    status_code, session_active, events = asyncio.run(exercise())
 
     assert status_code == 202
     assert not session_active
+    # Stop is a typed terminal outcome, not synthetic answer text.
+    assert events[0] == ("delta", {"text": "Partial answer."})
+    assert events[-1][0] == "stopped"
+    assert [name for name, _ in events].count("stopped") == 1
 
 
 def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:

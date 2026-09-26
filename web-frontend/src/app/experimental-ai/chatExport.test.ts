@@ -99,6 +99,27 @@ describe('chat export', () => {
     expect(output).toContain('<time datetime="2026-09-18T01:00:01.250Z">');
   });
 
+  it('exports a stopped response as a status with its partial output', () => {
+    const stopped: ChatExportMessage = {
+      role: 'assistant',
+      content: '',
+      status: 'stopped',
+      activity: [
+        { kind: 'tool', toolCallId: 'call-1', name: 'bash', arguments: '{}', result: '', ok: true, state: 'interrupted' },
+      ],
+    };
+
+    const markdown = buildMarkdownChatExport([stopped], metadata);
+    const html = buildHtmlChatExport([stopped], metadata);
+
+    expect(markdown).toContain('Status: stopped');
+    expect(markdown).toContain('### bash (interrupted)');
+    expect(markdown).not.toContain('[No message text]');
+    expect(html).toContain('<p class="message-status" role="status">Stopped before completion.</p>');
+    expect(html).toContain('<summary>bash · interrupted</summary>');
+    expect(html).not.toContain('[No message text]');
+  });
+
   it('exports optimizer messages as their own labeled and styled block', () => {
     const optimizerMessage: ChatExportMessage = {
       role: 'optimizer',

@@ -607,7 +607,7 @@ describe('ExperimentalAiPage', () => {
       content: 'Completed answer.',
       responseCompletedAt: expect.any(Number),
     }));
-    expect(stored.messages[0].status).toBeUndefined();
+    expect(stored.messages[0].status).toBe(event === 'done' ? undefined : 'stopped');
   });
 
   it('warns that the chat is stored unencrypted in this browser', async () => {
@@ -868,7 +868,8 @@ describe('ExperimentalAiPage', () => {
     expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
     act(() => backgroundCallbacks?.onStopped?.());
 
-    expect(screen.getByText('Stopped.')).toBeInTheDocument();
+    expect(screen.getByText('Stopped before completion.')).toBeInTheDocument();
+    expect(screen.queryByText('Stopped.')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
@@ -1485,14 +1486,19 @@ describe('ExperimentalAiPage', () => {
     expect(secondRow).not.toHaveTextContent('failed');
   });
 
-  it('stops the active response through the session endpoint', async () => {
+  it('stops the active response through the session endpoint and keeps its partial output', async () => {
     const user = userEvent.setup();
     mockStreamMessage.mockImplementationOnce(async (
       _sessionId: string,
       _message: string,
-      _callbacks: unknown,
+      callbacks: {
+        onDelta: (text: string) => void;
+        onToolStart?: (activity: { toolCallId?: string; name: string; arguments: string }) => void;
+      },
       signal: AbortSignal,
     ) => {
+      callbacks.onDelta('Partial answer.');
+      callbacks.onToolStart?.({ toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sleep 60"}' });
       await new Promise<void>((_resolve, reject) => {
         signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
       });
@@ -1504,7 +1510,10 @@ describe('ExperimentalAiPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Stop' }));
 
     expect(mockStopSession).toHaveBeenCalledWith('session-id', null, '/ai');
-    expect(await screen.findByText('Stopped.')).toBeInTheDocument();
+    expect(await screen.findByText('Stopped before completion.')).toBeInTheDocument();
+    expect(screen.getByText('Partial answer.')).toBeInTheDocument();
+    expect(screen.getByText('bash · interrupted')).toBeInTheDocument();
+    expect(screen.queryByText('Stopped.')).not.toBeInTheDocument();
     expect(screen.queryByText('This turn failed and was not saved to AI history.')).not.toBeInTheDocument();
   });
 

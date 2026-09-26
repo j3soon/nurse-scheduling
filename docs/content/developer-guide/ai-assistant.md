@@ -210,7 +210,9 @@ The three paths below show a model step in detail. Text and tool requests can
 occur in the same provider response, and a run may loop through several model
 responses. A failed, stopped, or stale run can leave provisional activity in
 the browser, but its answer and candidate do not enter model conversation
-history.
+history. Every run ends with one terminal event. A stopped response keeps its
+partial output under a stopped status, and unfinished tool calls are marked
+interrupted.
 
 ### Text-only response
 

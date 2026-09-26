@@ -261,7 +261,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
       || (Array.isArray(message.attachmentNames) && message.attachmentNames.every(name => typeof name === 'string')))
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
-    && (message.status === undefined || message.status === 'pending' || message.status === 'failed')
+    && (message.status === undefined || ['pending', 'failed', 'stopped'].includes(message.status))
     && (message.responseStartedAt === undefined || Number.isFinite(message.responseStartedAt))
     && (message.responseCompletedAt === undefined || Number.isFinite(message.responseCompletedAt))
     && (message.retry === undefined || (
@@ -386,6 +386,16 @@ function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
       ? { ...entry, state: 'interrupted' as const }
       : entry
   ));
+}
+
+// A stopped response keeps its partial output instead of gaining synthetic answer text.
+function stopResponse(message: ChatMessage): ChatMessage {
+  return {
+    ...message,
+    status: 'stopped',
+    responseCompletedAt: Date.now(),
+    activity: interruptRunningTools(message.activity ?? []),
+  };
 }
 
 function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
@@ -1235,15 +1245,7 @@ export default function ExperimentalAiPage() {
           lifecycle.finish(lifecycle.current('background'));
         },
         onStopped: messageId => {
-          updateBackgroundMessage(message => ({
-            ...message,
-            content: message.content || 'Stopped.',
-            status: undefined,
-            responseCompletedAt: Date.now(),
-            activity: message.content
-              ? interruptRunningTools(message.activity ?? [])
-              : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
-          }), messageId);
+          updateBackgroundMessage(stopResponse, messageId);
           lifecycle.finish(lifecycle.current('background'));
         },
         onStale: message => {
@@ -1490,17 +1492,7 @@ export default function ExperimentalAiPage() {
       const staleTurnMessage = streamError instanceof AiStaleTurnError ? streamError.message : null;
       setMessages(previous => previous.map(message => {
         if (message.id !== activeAssistantId) return message;
-        if (controller.signal.aborted) {
-          return {
-            ...message,
-            content: message.content || 'Stopped.',
-            status: undefined,
-            responseCompletedAt: Date.now(),
-            activity: message.content
-              ? interruptRunningTools(message.activity ?? [])
-              : [...interruptRunningTools(message.activity ?? []), { kind: 'response', text: 'Stopped.' }],
-          };
-        }
+        if (controller.signal.aborted) return stopResponse(message);
         return {
           ...message,
           content: staleTurnMessage ?? message.content,
@@ -2013,6 +2005,9 @@ export default function ExperimentalAiPage() {
             ) : message.role !== 'assistant' ? (
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
             ) : null}
+            {message.role === 'assistant' && message.status === 'stopped' && (
+              <p role="status" className="mt-2 text-xs text-gray-500">Stopped before completion.</p>
+            )}
             {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
               <button
                 type="button"

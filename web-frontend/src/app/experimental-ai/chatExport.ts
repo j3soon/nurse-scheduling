@@ -31,7 +31,7 @@ export interface ChatExportMessage {
   content: string;
   attachmentNames?: string[];
   activity?: ActivityEntry[];
-  status?: 'pending' | 'failed';
+  status?: 'pending' | 'failed' | 'stopped';
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }
@@ -174,8 +174,7 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
 function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
   if (message.attachmentNames?.length) details.push(`Attachments: ${message.attachmentNames.join(', ')}`);
-  if (message.status === 'failed') details.push('Status: failed');
-  if (message.status === 'pending') details.push('Status: pending');
+  if (message.status) details.push(`Status: ${message.status}`);
   if (message.responseCompletedAt !== undefined) {
     details.push(`Completed: ${new Date(message.responseCompletedAt).toISOString()}`);
   }
@@ -188,6 +187,7 @@ function messageDetails(message: ChatExportMessage): string[] {
 function assistantTimeline(message: ChatExportMessage): ActivityEntry[] {
   const activity = message.activity ?? [];
   if (activity.some(entry => entry.kind === 'response')) return activity;
+  if (!message.content && message.status === 'stopped') return activity;
   return [
     ...activity,
     { kind: 'response', text: message.content || '[No message text]' },
@@ -198,7 +198,7 @@ function htmlAssistantTimeline(message: ChatExportMessage): ActivityEntry[] {
   const activity = message.activity ?? [];
   if (activity.some(entry => entry.kind === 'response')) return activity;
   if (message.content) return [...activity, { kind: 'response', text: message.content }];
-  if (message.status === 'pending' || message.status === 'failed') return activity;
+  if (message.status !== undefined) return activity;
   return [...activity, { kind: 'response', text: '[No message text]' }];
 }
 
@@ -225,7 +225,9 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
     ? '<p class="message-status" role="status">Thinking</p>'
     : message.status === 'failed'
       ? '<p class="failure">This turn failed and was not saved to AI history.</p>'
-      : '';
+      : message.status === 'stopped'
+        ? '<p class="message-status" role="status">Stopped before completion.</p>'
+        : '';
   const timing = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
     ? `<time datetime="${new Date(message.responseCompletedAt).toISOString()}">${escapeHtml(new Date(message.responseCompletedAt).toLocaleString())} · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}</time>`
     : '';
