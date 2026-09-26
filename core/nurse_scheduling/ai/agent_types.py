@@ -24,7 +24,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any
 
-from .provider import TokenUsage, ToolResultImage
+from .provider import ChatMessage, TokenUsage, ToolResultImage
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,8 @@ AgentEvent = (
 )
 ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
 SteeringSource = Callable[[bool], Sequence[tuple[str, str]]]
+# Derive one provider request from the run's conversation without changing it.
+RequestPreparer = Callable[[Sequence[ChatMessage]], list[ChatMessage]]
 
 
 @dataclass(frozen=True)

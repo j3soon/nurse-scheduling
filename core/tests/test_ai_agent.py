@@ -531,3 +531,27 @@ def test_an_answer_cut_off_by_the_output_limit_is_marked_truncated():
     provider = FakeProvider([*_text("The first half"), ResponseEnd("length")])
 
     assert _run(provider) == [MessageTextDelta("The first half"), MessageTruncated()]
+
+
+def test_each_request_is_prepared_from_the_unchanged_run_conversation():
+    marker: ChatMessage = {"role": "system", "content": "Prepared."}
+    seen: list[int] = []
+
+    def prepare(conversation):
+        seen.append(len(conversation))
+        return [*conversation, marker]
+
+    provider = FakeProvider(_calls(), _text("Done."))
+
+    async def execute(_name: str, _arguments: str) -> AgentToolResult:
+        return AgentToolResult("result", True)
+
+    async def collect() -> list:
+        return [event async for event in agent_loop(provider, QUESTION, _tools(execute), prepare_request=prepare)]
+
+    asyncio.run(collect())
+
+    assert seen == [1, 3]
+    # A marker added for one request never becomes part of the next one's record.
+    assert [request.count(marker) for request, _tools in provider.requests] == [1, 1]
+    assert provider.requests[1][0][2]["role"] == "tool"

@@ -83,6 +83,17 @@ def recent_history(transcript: Sequence[SessionEntry], max_chars: int) -> list[C
     return kept
 
 
+def prepare_provider_request(conversation: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """Derive each in-run provider request from the run's conversation.
+
+    Prior history is already bounded by `build_provider_messages`, and the run's own
+    growth is bounded by tool budgets, so this sends the conversation unchanged. A
+    later in-run policy belongs here. It must keep each assistant tool call with all
+    of its tool results, and must return a new list rather than edit the record.
+    """
+    return list(conversation)
+
+
 def build_provider_messages(
     transcript: Sequence[SessionEntry],
     schedule_yaml: str,

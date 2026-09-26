@@ -34,6 +34,7 @@ from .agent_types import (
     MessageReasoningDelta,
     MessageTextDelta,
     MessageTruncated,
+    RequestPreparer,
     SteeringSource,
     ToolBatchObserver,
     ToolBatchScope,
@@ -76,8 +77,14 @@ async def agent_loop(
     take_steering: SteeringSource | None = None,
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
+    prepare_request: RequestPreparer = list,
 ) -> AsyncIterator[AgentEvent]:
-    """Run the model/tool loop shared by agent capability layers."""
+    """Run the model/tool loop shared by agent capability layers.
+
+    `conversation` is the run's complete provider-protocol record. Each request is
+    derived from it by `prepare_request`, so a context policy can shape what the
+    provider sees without dropping records that later requests or events need.
+    """
     by_name = {tool.name: tool for tool in tools}
     definitions = [tool.definition for tool in tools]
 
@@ -93,7 +100,8 @@ async def agent_loop(
     final_answer_only = False
     while True:
         answer, calls, finish_reason = [], (), None
-        async for event in provider.stream_events(conversation, [] if final_answer_only else definitions):
+        request = prepare_request(conversation)
+        async for event in provider.stream_events(request, [] if final_answer_only else definitions):
             if isinstance(event, TextDelta):
                 answer.append(event.text)
                 yield MessageTextDelta(event.text)

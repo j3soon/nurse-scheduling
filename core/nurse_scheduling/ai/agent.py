@@ -27,6 +27,7 @@ from .agent_loop import agent_loop
 from .agent_types import (
     AgentEvent,
     AgentTool,
+    RequestPreparer,
     SteeringSource,
     ToolBatchObserver,
     ToolBatchScope,
@@ -93,6 +94,7 @@ class Agent:
         take_steering: SteeringSource | None = None,
         max_tool_rounds: int | None = None,
         max_tool_calls: int | None = None,
+        prepare_request: RequestPreparer = list,
     ) -> AsyncIterator[AgentEvent]:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
@@ -108,6 +110,7 @@ class Agent:
                 take_steering=take_steering or self.take_steering,
                 max_tool_rounds=max_tool_rounds,
                 max_tool_calls=max_tool_calls,
+                prepare_request=prepare_request,
             )
             async with aclosing(events):
                 async for event in events:

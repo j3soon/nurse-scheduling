@@ -29,6 +29,7 @@ from functools import partial
 from .agent import Agent
 from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, AgentToolResult, ToolExecutionEnd
 from .candidate import review_schedule_candidate
+from .context import prepare_provider_request
 from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition
 from .pi.read import READ_TOOL
 from .provider import ChatMessage, ToolCapableChatProvider
@@ -154,6 +155,7 @@ async def run_workspace(
                     take_steering=take_steering,
                     max_tool_rounds=limits.max_tool_rounds,
                     max_tool_calls=limits.max_tool_calls,
+                    prepare_request=prepare_provider_request,
                 )
                 async with aclosing(events):
                     async for event in events:
