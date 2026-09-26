@@ -21,7 +21,10 @@
 # This file is mostly AI generated.
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .provider import ToolResultImage
 
 # Pi's stop reasons. `tool_use` ends a response that requested tools.
 StopReason = Literal["stop", "length", "tool_use", "aborted", "error"]
@@ -65,6 +68,7 @@ class ToolResultMessage:
     tool_name: str
     text: str
     ok: bool
+    image: "ToolResultImage | None" = None
 
 
 @dataclass(frozen=True)

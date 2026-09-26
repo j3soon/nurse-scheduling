@@ -31,8 +31,8 @@ import pytest
 from psycopg import sql
 
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.history import ChatHistory
-from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage
+from nurse_scheduling.ai.history import ChatHistory, _insert_entries
+from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage, ToolResultImage
 from nurse_scheduling.ai.transcript import (
     AssistantMessage,
     ProposalDecisionEntry,
@@ -276,7 +276,43 @@ def record(entry) -> tuple[str, dict]:
         ProposalDecisionEntry: "proposal_decision",
     }[type(entry)]
     # JSON stores tuples as arrays.
-    return kind, json.loads(json.dumps(asdict(entry)))
+    payload = asdict(entry)
+    if isinstance(entry, ToolResultMessage):
+        payload.pop("image")
+    return kind, json.loads(json.dumps(payload))
+
+
+def test_history_excludes_in_run_tool_images():
+    class Cursor:
+        def __init__(self):
+            self.rows = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def executemany(self, _query, rows):
+            self.rows.extend(rows)
+
+    class Connection:
+        def __init__(self):
+            self.saved = Cursor()
+
+        def cursor(self):
+            return self.saved
+
+    connection = Connection()
+    result = ToolResultMessage("call-1", "read", "Image inspected.", True, ToolResultImage("image/png", b"raw"))
+    _insert_entries(connection, "run-1", 1, [result])
+
+    assert connection.saved.rows[0][3].obj == {
+        "tool_call_id": "call-1",
+        "tool_name": "read",
+        "text": "Image inspected.",
+        "ok": True,
+    }
 
 
 def run_entries(connection) -> list[tuple[str, dict]]:

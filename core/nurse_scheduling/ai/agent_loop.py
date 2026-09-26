@@ -41,6 +41,7 @@ from .agent_types import (
     ToolExecutionEnd,
     ToolExecutionStart,
 )
+from .context import prepare_provider_request
 from .provider import (
     ChatMessage,
     ReasoningDelta,
@@ -49,11 +50,8 @@ from .provider import (
     TokenUsage,
     ToolCallRequest,
     ToolCapableChatProvider,
-    assistant_tool_call_message,
-    tool_result_image_message,
-    tool_result_message,
 )
-from .transcript import AssistantMessage, ToolCall
+from .transcript import AgentMessage, AssistantMessage, ToolCall, ToolResultMessage, UserMessage
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
 
@@ -77,13 +75,13 @@ async def agent_loop(
     take_steering: SteeringSource | None = None,
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
-    prepare_request: RequestPreparer = list,
+    prepare_request: RequestPreparer = prepare_provider_request,
+    run_messages: list[AgentMessage] | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers.
 
-    `conversation` is the run's complete provider-protocol record. Each request is
-    derived from it by `prepare_request`, so a context policy can shape what the
-    provider sees without dropping records that later requests or events need.
+    `run_messages` is the canonical in-run record. Each provider request is a
+    projection of it after the already bounded system and prior-run context.
     """
     by_name = {tool.name: tool for tool in tools}
     definitions = [tool.definition for tool in tools]
@@ -94,13 +92,13 @@ async def agent_loop(
             return AgentToolResult(f"Unknown tool `{name}`. Available tools: {', '.join(by_name)}.", False)
         return await tool.execute(arguments)
 
-    conversation = list(messages)
+    conversation = [] if run_messages is None else run_messages
     tool_rounds = 0
     tool_calls = 0
     final_answer_only = False
     while True:
         answer, reasoning, calls, finish_reason = [], [], (), None
-        request = prepare_request(conversation)
+        request = prepare_request(messages, conversation)
         async for event in provider.stream_events(request, [] if final_answer_only else definitions):
             if isinstance(event, TextDelta):
                 answer.append(event.text)
@@ -115,20 +113,17 @@ async def agent_loop(
             elif isinstance(event, ResponseEnd):
                 finish_reason = event.finish_reason
         stop_reason = "length" if finish_reason == "length" else "tool_use" if calls else "stop"
-        yield MessageEnd(AssistantMessage("".join(answer), stop_reason, "".join(reasoning), calls))
+        assistant = AssistantMessage("".join(answer), stop_reason, "".join(reasoning), calls)
+        conversation.append(assistant)
+        yield MessageEnd(assistant)
         if finish_reason == "length" and calls and not final_answer_only:
             # Arguments cut off mid-stream can still parse as different, valid JSON, so
             # no call from this response runs. The model sees why and can reissue them.
-            conversation.append(
-                assistant_tool_call_message(
-                    tuple(ToolCall(call.id, call.name, "{}") for call in calls), "".join(answer)
-                )
-            )
             tool_rounds += 1
             for call in calls:
                 yield ToolExecutionStart(call.name, call.arguments, call.id)
+                conversation.append(ToolResultMessage(call.id, call.name, TRUNCATED_TOOL_CALL_RESULT, False))
                 yield ToolExecutionEnd(call.name, call.arguments, TRUNCATED_TOOL_CALL_RESULT, False, call.id)
-                conversation.append(tool_result_message(call.id, TRUNCATED_TOOL_CALL_RESULT))
             # A refused batch still spends a round, so repeated truncation ends in an answer.
             final_answer_only = max_tool_rounds is not None and tool_rounds >= max_tool_rounds
             continue
@@ -136,9 +131,8 @@ async def agent_loop(
             steering = tuple(take_steering(True)) if take_steering is not None else ()
             if not steering:
                 break
-            conversation.append(ChatMessage(role="assistant", content="".join(answer)))
             for message_id, text in steering:
-                conversation.append(ChatMessage(role="user", content=text))
+                conversation.append(UserMessage(text))
                 yield AgentSteering(message_id, text)
             continue
 
@@ -147,24 +141,21 @@ async def agent_loop(
         if final_answer_only or exceeds_rounds or exceeds_calls:
             if final_answer_only:
                 break
-            conversation.append(assistant_tool_call_message(calls, "".join(answer)))
             for call in calls:
                 outcome = AgentToolResult(
                     "The trusted tool budget is exhausted. Finish with the verified information already available.",
                     False,
                 )
                 yield ToolExecutionStart(call.name, call.arguments, call.id)
+                conversation.append(ToolResultMessage(call.id, call.name, outcome.text, outcome.ok))
                 yield ToolExecutionEnd(call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details)
-                conversation.append(tool_result_message(call.id, outcome.text))
             final_answer_only = True
             continue
 
-        conversation.append(assistant_tool_call_message(calls, "".join(answer)))
         tool_rounds += 1
         tool_calls += len(calls)
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope(calls):
-            image_results: list[ChatMessage] = []
             parallel = len(calls) > 1 and all(
                 by_name.get(call.name) is not None and by_name[call.name].read_only for call in calls
             )
@@ -177,12 +168,10 @@ async def agent_loop(
                 completed = zip(calls, outcomes, strict=True)
                 for call, outcome in completed:
                     _log_tool_outcome(call.name, outcome)
+                    conversation.append(ToolResultMessage(call.id, call.name, outcome.text, outcome.ok, outcome.image))
                     yield ToolExecutionEnd(
                         call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details
                     )
-                    conversation.append(tool_result_message(call.id, outcome.text))
-                    if outcome.image is not None:
-                        image_results.append(tool_result_image_message(call.id, outcome.image))
             else:
                 execution_seconds = 0.0
                 for call in calls:
@@ -191,18 +180,15 @@ async def agent_loop(
                     outcome = await execute(call.name, call.arguments)
                     execution_seconds += time.perf_counter() - started
                     _log_tool_outcome(call.name, outcome)
+                    conversation.append(ToolResultMessage(call.id, call.name, outcome.text, outcome.ok, outcome.image))
                     yield ToolExecutionEnd(
                         call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details
                     )
-                    conversation.append(tool_result_message(call.id, outcome.text))
-                    if outcome.image is not None:
-                        image_results.append(tool_result_image_message(call.id, outcome.image))
-            conversation.extend(image_results)
             if observe_tool_batch is not None:
                 observe_tool_batch(AgentToolBatchMetrics(len(calls), parallel, execution_seconds))
         if take_steering is not None:
             for message_id, text in take_steering(False):
-                conversation.append(ChatMessage(role="user", content=text))
+                conversation.append(UserMessage(text))
                 yield AgentSteering(message_id, text)
 
 

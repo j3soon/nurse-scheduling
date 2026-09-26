@@ -168,9 +168,13 @@ _ENTRY_TYPES: dict[type, str] = {
 
 
 def _insert_entries(connection, run_id: str, first_seq: int, entries: Sequence[AgentMessage]) -> None:
-    rows = [
-        (run_id, seq, _ENTRY_TYPES[type(entry)], Jsonb(asdict(entry))) for seq, entry in enumerate(entries, first_seq)
-    ]
+    rows = []
+    for seq, entry in enumerate(entries, first_seq):
+        payload = asdict(entry)
+        if isinstance(entry, ToolResultMessage):
+            # Provider images are needed within a run, but never stored in chat history.
+            payload.pop("image")
+        rows.append((run_id, seq, _ENTRY_TYPES[type(entry)], Jsonb(payload)))
     if rows:
         with connection.cursor() as cursor:
             cursor.executemany(

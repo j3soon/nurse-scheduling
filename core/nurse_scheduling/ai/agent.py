@@ -34,7 +34,9 @@ from .agent_types import (
     ToolExecutionEnd,
     ToolExecutionStart,
 )
+from .context import prepare_provider_request
 from .provider import ChatMessage, ToolCapableChatProvider
+from .transcript import AgentMessage
 
 
 @dataclass
@@ -43,6 +45,7 @@ class AgentState:
 
     is_streaming: bool = False
     pending_tool_calls: set[str] = field(default_factory=set)
+    messages: list[AgentMessage] = field(default_factory=list)
 
 
 class Agent:
@@ -85,6 +88,7 @@ class Agent:
         self._accepting_steering = False
         self._steering_queue.clear()
         self._steering_ids.clear()
+        self.state.messages.clear()
 
     def steer(self, message_id: str, text: str) -> None:
         """Queue already admitted input. The session enforces ownership and limits."""
@@ -112,11 +116,12 @@ class Agent:
         take_steering: SteeringSource | None = None,
         max_tool_rounds: int | None = None,
         max_tool_calls: int | None = None,
-        prepare_request: RequestPreparer = list,
+        prepare_request: RequestPreparer = prepare_provider_request,
     ) -> AsyncIterator[AgentEvent]:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
         self.state.is_streaming = True
+        self.state.messages.clear()
 
         try:
             events = agent_loop(
@@ -129,6 +134,7 @@ class Agent:
                 max_tool_rounds=max_tool_rounds,
                 max_tool_calls=max_tool_calls,
                 prepare_request=prepare_request,
+                run_messages=self.state.messages,
             )
             async with aclosing(events):
                 async for event in events:

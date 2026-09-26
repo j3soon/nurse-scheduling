@@ -37,6 +37,7 @@ from nurse_scheduling.ai.agent_types import (
     ToolExecutionEnd,
     ToolExecutionStart,
 )
+from nurse_scheduling.ai.context import prepare_provider_request
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
@@ -47,7 +48,7 @@ from nurse_scheduling.ai.provider import (
     ToolCallRequest,
     ToolResultImage,
 )
-from nurse_scheduling.ai.transcript import AssistantMessage, ToolCall
+from nurse_scheduling.ai.transcript import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
 
 QUESTION: list[ChatMessage] = [{"role": "user", "content": "Who works on the first day?"}]
 TOOLS = [
@@ -427,6 +428,12 @@ def test_stateful_agent_tracks_tools_and_consumes_steering_at_the_boundary():
         assert not agent.state.is_streaming
         assert not agent.state.pending_tool_calls
         assert not agent.accepting_steering
+        assert [type(message) for message in agent.state.messages] == [
+            AssistantMessage,
+            ToolResultMessage,
+            UserMessage,
+            AssistantMessage,
+        ]
 
     asyncio.run(scenario())
 
@@ -549,13 +556,13 @@ def test_an_answer_cut_off_by_the_output_limit_is_marked_truncated():
     ]
 
 
-def test_each_request_is_prepared_from_the_unchanged_run_conversation():
+def test_each_request_is_projected_from_the_unchanged_run_messages():
     marker: ChatMessage = {"role": "system", "content": "Prepared."}
     seen: list[int] = []
 
-    def prepare(conversation):
-        seen.append(len(conversation))
-        return [*conversation, marker]
+    def prepare(prefix, entries):
+        seen.append(len(entries))
+        return [*prepare_provider_request(prefix, entries), marker]
 
     provider = FakeProvider(_calls(), _text("Done."))
 
@@ -567,7 +574,7 @@ def test_each_request_is_prepared_from_the_unchanged_run_conversation():
 
     asyncio.run(collect())
 
-    assert seen == [1, 3]
+    assert seen == [0, 2]
     # A marker added for one request never becomes part of the next one's record.
     assert [request.count(marker) for request, _tools in provider.requests] == [1, 1]
     assert provider.requests[1][0][2]["role"] == "tool"

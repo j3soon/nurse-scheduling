@@ -24,13 +24,19 @@ from collections.abc import Sequence
 
 from .config import DEFAULT_MAX_HISTORY_CHARS
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
-from .provider import ChatMessage
+from .provider import (
+    ChatMessage,
+    assistant_tool_call_message,
+    tool_result_image_message,
+    tool_result_message,
+)
 from .schedule_context import describe_schedule
 from .transcript import (
     AgentMessage,
     AssistantMessage,
     ProposalDecision,
     ProposalDecisionEntry,
+    ToolCall,
     ToolResultMessage,
     UserMessage,
 )
@@ -129,15 +135,38 @@ def recent_history(transcript: Sequence[AgentMessage], max_chars: int) -> list[C
     return [message for _prompt, message in reversed(kept)]
 
 
-def prepare_provider_request(conversation: Sequence[ChatMessage]) -> list[ChatMessage]:
-    """Derive each in-run provider request from the run's conversation.
+def prepare_provider_request(prefix: Sequence[ChatMessage], entries: Sequence[AgentMessage]) -> list[ChatMessage]:
+    """Project the agent's in-run messages at the provider boundary."""
+    request = list(prefix)
+    pending_images: list[ChatMessage] = []
 
-    Prior history is already bounded by `build_provider_messages`, and the run's own
-    growth is bounded by tool budgets, so this sends the conversation unchanged. A
-    later in-run policy belongs here. It must keep each assistant tool call with all
-    of its tool results, and must return a new list rather than edit the record.
-    """
-    return list(conversation)
+    def flush_images() -> None:
+        request.extend(pending_images)
+        pending_images.clear()
+
+    for entry in entries:
+        if isinstance(entry, ToolResultMessage):
+            request.append(tool_result_message(entry.tool_call_id, entry.text))
+            if entry.image is not None:
+                pending_images.append(tool_result_image_message(entry.tool_call_id, entry.image))
+            continue
+        flush_images()
+        if isinstance(entry, AssistantMessage):
+            if entry.tool_calls:
+                # A truncated response is an audit record of raw model output. The
+                # provider sees placeholder arguments so it can safely reissue calls.
+                calls = (
+                    tuple(ToolCall(call.id, call.name, "{}") for call in entry.tool_calls)
+                    if entry.stop_reason == "length"
+                    else entry.tool_calls
+                )
+                request.append(assistant_tool_call_message(calls, entry.text))
+            else:
+                request.append(ChatMessage(role="assistant", content=entry.text))
+        elif isinstance(entry, UserMessage):
+            request.append(ChatMessage(role="user", content=entry.text))
+    flush_images()
+    return request
 
 
 def build_provider_messages(

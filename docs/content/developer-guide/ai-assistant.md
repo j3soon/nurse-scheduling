@@ -158,7 +158,7 @@ Each row lists shared behavior first, then what only one side has.
 
 | Component | Shared | Ours only | Pi only |
 | --- | --- | --- | --- |
-| `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits the transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, transcript, and partial streaming message. Awaited subscribers settle each run. |
+| `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, in-run messages, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits its retained transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, persistent transcript, and partial streaming message. Awaited subscribers settle each run. |
 | `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters after a tool batch, or continues the run when it arrives as the answer ends. Tool calls from a response cut off by the output limit fail without running. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request, and a refused truncated batch spends a round. Each request passes through one context projection. | Parallel execution by default with per-tool sequential overrides, before and after tool-call hooks, context transform hooks, and early termination requested by tool results. |
 | `AgentTool` / `AgentToolResult`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content and UI details, and start and end events correlate by `tool_call_id`. | Tools receive raw JSON arguments, return text, an optional image, and an explicit success flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw on failure instead of encoding it. |
 | `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Context projection keeps aborted answers out of replayed model input. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and proposal decision entries. The in-memory session keeps only prompts, answer text, and decisions, and a stopped prompt stays with an interruption note. The persisted log is an audit record keyed by run, not a resumable session. | A persistent, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. |
@@ -183,6 +183,11 @@ disposable sandbox's tools. Model context merges the responses between two
 prompts into the answer the user saw. Trimming for memory, the message cap, or
 the prompt budget removes whole exchanges, so an answer or proposal decision is
 never left without its prompt.
+
+During a run, `AgentState.messages` holds the messages the loop produces.
+`context.py` projects them for each provider request. `RunOutput` projects the
+same events onto SSE. History omits image bytes from tool results, and the
+session retains only the entries useful to later questions.
 
 | Content | Later model context | Session transcript | Browser and export | Chat history log |
 | --- | --- | --- | --- | --- |

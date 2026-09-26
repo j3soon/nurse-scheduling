@@ -68,9 +68,7 @@ class WorkspaceTools:
         self.limits = limits
         self.execute_optimizer = execute_optimizer
         self.sandbox_tools = SandboxPiTools(sandbox, limits.bash_command_timeout_seconds)
-        self._sandbox_tool_names = {
-            definition["function"]["name"] for definition in self.sandbox_tools.definitions
-        }
+        self._sandbox_tool_names = {definition["function"]["name"] for definition in self.sandbox_tools.definitions}
         self.candidate_tracker = _ScheduleCandidateTracker(sandbox, schedule_yaml, limits.max_schedule_bytes)
         definitions = list(self.sandbox_tools.definitions)
         if execute_optimizer is not None:

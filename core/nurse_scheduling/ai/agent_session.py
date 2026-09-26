@@ -53,7 +53,6 @@ from .transcript import (
     AssistantMessage,
     ProposalDecision,
     ProposalDecisionEntry,
-    ToolResultMessage,
     UserMessage,
 )
 from .workspace import (
@@ -125,9 +124,8 @@ class SessionRuntime:
 
 @dataclass
 class RunOutput:
-    """Build the run's canonical entries and project agent events onto the SSE contract."""
+    """Project agent events onto the SSE contract and track interrupted output."""
 
-    entries: list[AgentMessage]
     assistant_parts: list[str] = field(default_factory=list)
     # Output of the model response in progress, which only an interruption can leave open.
     pending_text: list[str] = field(default_factory=list)
@@ -139,10 +137,12 @@ class RunOutput:
     def text(self) -> str:
         return "".join(self.assistant_parts)
 
-    def interrupted_entries(self, stop_reason: Literal["aborted", "error"]) -> list[AgentMessage]:
+    def interrupted_entries(
+        self, entries: Sequence[AgentMessage], stop_reason: Literal["aborted", "error"]
+    ) -> list[AgentMessage]:
         """End the run with Pi's interrupted assistant message, holding any partial response."""
         interrupted = AssistantMessage("".join(self.pending_text), stop_reason, "".join(self.pending_reasoning))
-        return [*self.entries, interrupted]
+        return [*entries, interrupted]
 
     def consume(self, event: AgentEvent | AgentScheduleChange) -> tuple[str, dict[str, object]] | None:
         if isinstance(event, MessageTextDelta):
@@ -153,7 +153,6 @@ class RunOutput:
             self.pending_reasoning.append(event.text)
             return "reasoning", {"text": event.text}
         if isinstance(event, MessageEnd):
-            self.entries.append(event.message)
             self.pending_text.clear()
             self.pending_reasoning.clear()
             return ("truncated", {}) if event.message.stop_reason == "length" else None
@@ -162,7 +161,6 @@ class RunOutput:
         elif isinstance(event, ToolExecutionStart):
             return "tool_start", {"tool_call_id": event.tool_call_id, "name": event.name, "arguments": event.arguments}
         elif isinstance(event, ToolExecutionEnd):
-            self.entries.append(ToolResultMessage(event.tool_call_id, event.name, event.result, event.ok))
             return "tool", {
                 "tool_call_id": event.tool_call_id,
                 "name": event.name,
@@ -171,7 +169,6 @@ class RunOutput:
                 "ok": event.ok,
             }
         elif isinstance(event, AgentSteering):
-            self.entries.append(UserMessage(event.text))
             return "steering", {"message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
             return "schedule_change", {"schedule_yaml": event.schedule_yaml}
@@ -354,7 +351,8 @@ class AgentSession:
         if attachments:
             filenames = json.dumps([attachment.filename for attachment in attachments], ensure_ascii=False)
             history_question += f"\n[Files were attached: {filenames}.]"
-        output = RunOutput([UserMessage(history_question)])
+        output = RunOutput()
+        run_entries: list[AgentMessage] = [UserMessage(history_question)]
         completed = False
         logged = False
         outcome = "cancelled"
@@ -435,13 +433,14 @@ class AgentSession:
                         wire_event = output.consume(event)
                         if wire_event is not None:
                             await emit(*wire_event)
+            run_entries = [run_entries[0], *self.agent.state.messages]
             # The outcome is fixed once cleanup has finished and the session commit
             # begins. Stop must not turn a committed answer into a stopped response
             # while its history write is still pending.
             run.finishing = True
             completion = store.finish(
                 session_id,
-                retained_entries(output.entries),
+                retained_entries(run_entries),
                 (output.proposal.text, output.proposal.diff) if output.proposal is not None else None,
                 snapshot=snapshot,
             )
@@ -453,9 +452,7 @@ class AgentSession:
                 logged = False
                 # The prompt was written at start, without the attachment filenames in its session copy.
                 # The prompt entry was written when the run started.
-                history_saved = await write_history(
-                    "finish_run", run.id, outcome, None, output.usage, output.entries[1:]
-                )
+                history_saved = await write_history("finish_run", run.id, outcome, None, output.usage, run_entries[1:])
             if not completion.run_saved:
                 await emit("stale", {"message": STALE_RUN_ERROR})
                 return
@@ -471,7 +468,8 @@ class AgentSession:
             if not completed:
                 # Keep the prompt so a follow-up can refer to it. Workspace changes and any
                 # proposal were discarded with the sandbox, which context.py accounts for.
-                store.finish(session_id, retained_entries(output.interrupted_entries("aborted")), snapshot=snapshot)
+                run_entries = output.interrupted_entries([run_entries[0], *self.agent.state.messages], "aborted")
+                store.finish(session_id, retained_entries(run_entries), snapshot=snapshot)
                 completed = True
             await emit("stopped", {"message_id": run.id})
             raise
@@ -501,16 +499,17 @@ class AgentSession:
         finally:
             run.finishing = True
             if not completed:
+                stop_reason = "aborted" if outcome == "cancelled" else "error"
+                run_entries = output.interrupted_entries([run_entries[0], *self.agent.state.messages], stop_reason)
                 store.abort(session_id, snapshot)
             if logged:
-                stop_reason = "aborted" if outcome == "cancelled" else "error"
                 await write_history(
                     "finish_run",
                     run.id,
                     outcome,
                     error_code,
                     output.usage,
-                    output.interrupted_entries(stop_reason)[1:],
+                    run_entries[1:],
                 )
             if terminal_event is not None:
                 await publish(*terminal_event)
