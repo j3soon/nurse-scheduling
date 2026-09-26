@@ -1830,7 +1830,9 @@ def test_a_tool_run_streams_tool_use_and_a_proposal() -> None:
     response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
 
     events = parse_sse(response.text)
+    tool_start = next(data for name, data in events if name == "tool_start")
     tool = next(data for name, data in events if name == "tool")
+    assert tool_start["tool_call_id"] == tool["tool_call_id"] == "call_0"
     assert tool["name"] == BASH_TOOL
     assert tool["ok"] is True
     assert "Head" in tool["arguments"]
@@ -1911,6 +1913,7 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
     events = parse_sse(failed.text)
     assert [name for name, _ in events] == ["tool_start", "error"]
     assert events[0][1] == {
+        "tool_call_id": "call_0",
         "name": BASH_TOOL,
         "arguments": json.dumps({"command": "python3 -c 'set P1 description to Head'"}),
     }

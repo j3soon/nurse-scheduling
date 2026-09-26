@@ -244,6 +244,7 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
       && 'after' in value && typeof value.after === 'string';
   }
   return value.kind === 'tool'
+    && (!('toolCallId' in value) || value.toolCallId === undefined || typeof value.toolCallId === 'string')
     && 'name' in value && typeof value.name === 'string'
     && 'arguments' in value && typeof value.arguments === 'string'
     && 'result' in value && typeof value.result === 'string'
@@ -367,11 +368,13 @@ function isAuthenticationError(error: unknown): boolean {
     && error.status === 401;
 }
 
+// Concurrent calls finish in any order, so a result completes the start that shares its ID.
 function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): ActivityEntry[] {
-  let runningIndex = -1;
-  entries.forEach((entry, index) => {
-    if (entry.kind === 'tool' && entry.state === 'running') runningIndex = index;
-  });
+  const runningIndex = entries.findIndex(entry => (
+    entry.kind === 'tool'
+    && entry.state === 'running'
+    && (result.toolCallId === undefined ? entry.name === result.name : entry.toolCallId === result.toolCallId)
+  ));
   const completed = { kind: 'tool' as const, ...result };
   if (runningIndex < 0) return [...entries, completed];
   return entries.map((entry, index) => (index === runningIndex ? completed : entry));

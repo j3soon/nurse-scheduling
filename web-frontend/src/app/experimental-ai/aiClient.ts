@@ -27,13 +27,14 @@ import {
 import type { OptimizationProgressPoint } from '@/components/OptimizationProgressChart';
 
 export interface ToolActivity {
+  toolCallId?: string;
   name: string;
   arguments: string;
   result: string;
   ok: boolean;
 }
 
-export type ToolStartActivity = Pick<ToolActivity, 'name' | 'arguments'>;
+export type ToolStartActivity = Pick<ToolActivity, 'toolCallId' | 'name' | 'arguments'>;
 
 export interface OptimizationActivity {
   jobId: string;
@@ -100,6 +101,7 @@ interface SsePayload {
   ok?: unknown;
   schedule_yaml?: unknown;
   message_id?: unknown;
+  tool_call_id?: unknown;
   turn_id?: unknown;
   trigger?: unknown;
   job_id?: unknown;
@@ -108,6 +110,13 @@ interface SsePayload {
   downloadable?: unknown;
   progress?: unknown;
   dropped?: unknown;
+}
+
+// Older backends omit the ID, so callers fall back to matching by tool name.
+function toolCallIdentity(payload: SsePayload): Pick<ToolActivity, 'toolCallId'> {
+  return typeof payload.tool_call_id === 'string' && payload.tool_call_id
+    ? { toolCallId: payload.tool_call_id }
+    : {};
 }
 
 export class AiHttpError extends Error {
@@ -274,11 +283,13 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     callbacks.onReasoning?.(payload.text);
   } else if (eventType === 'tool_start' && typeof payload.name === 'string') {
     callbacks.onToolStart?.({
+      ...toolCallIdentity(payload),
       name: payload.name,
       arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
     });
   } else if (eventType === 'tool' && typeof payload.name === 'string') {
     callbacks.onTool?.({
+      ...toolCallIdentity(payload),
       name: payload.name,
       arguments: typeof payload.arguments === 'string' ? payload.arguments : '',
       result: typeof payload.result === 'string' ? payload.result : '',

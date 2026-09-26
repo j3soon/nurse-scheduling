@@ -275,6 +275,7 @@ async def run_case(
                     events.append(
                         {
                             "kind": "tool_start",
+                            "tool_call_id": event.tool_call_id,
                             "name": event.name,
                             "arguments": event.arguments,
                         }
@@ -284,6 +285,7 @@ async def run_case(
                     events.append(
                         {
                             "kind": "tool",
+                            "tool_call_id": event.tool_call_id,
                             "name": event.name,
                             "ok": event.ok,
                             "arguments": event.arguments,

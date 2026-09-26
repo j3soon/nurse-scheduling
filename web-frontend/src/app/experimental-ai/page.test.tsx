@@ -1450,6 +1450,41 @@ describe('ExperimentalAiPage', () => {
     expect(activity.querySelectorAll('hr')).toHaveLength(5);
   });
 
+  it('completes each concurrent tool call on the row that shares its ID', async () => {
+    mockStreamMessage.mockImplementationOnce(async (
+      _sessionId: string,
+      _message: string,
+      callbacks: {
+        onToolStart?: (activity: { toolCallId?: string; name: string; arguments: string }) => void;
+        onTool?: (activity: {
+          toolCallId?: string; name: string; arguments: string; result: string; ok: boolean;
+        }) => void;
+      },
+    ) => {
+      const first = { toolCallId: 'call-a', name: 'read', arguments: '{"path":"a.txt"}' };
+      const second = { toolCallId: 'call-b', name: 'read', arguments: '{"path":"b.txt"}' };
+      callbacks.onToolStart?.(first);
+      callbacks.onToolStart?.(second);
+      // A parallel batch reports its results in call order after starting every call.
+      callbacks.onTool?.({ ...first, result: 'contents of a', ok: false });
+      callbacks.onTool?.({ ...second, result: 'contents of b', ok: true });
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read both.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    await screen.findByText('contents of b');
+    const [firstRow, secondRow] = (await screen.findByLabelText('Assistant activity')).querySelectorAll('details');
+    expect(firstRow).toHaveTextContent('{"path":"a.txt"}');
+    expect(firstRow).toHaveTextContent('read · failed');
+    expect(firstRow).toHaveTextContent('contents of a');
+    expect(secondRow).toHaveTextContent('{"path":"b.txt"}');
+    expect(secondRow).toHaveTextContent('contents of b');
+    expect(secondRow).not.toHaveTextContent('failed');
+  });
+
   it('stops the active response through the session endpoint', async () => {
     const user = userEvent.setup();
     mockStreamMessage.mockImplementationOnce(async (

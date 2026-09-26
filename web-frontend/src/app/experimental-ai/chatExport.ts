@@ -98,6 +98,7 @@ function activityText(entry: ActivityEntry): string {
   if (entry.kind === 'reasoning' || entry.kind === 'response') return entry.text;
   if (entry.kind === 'schedule-change') return `Before:\n${entry.before}\n\nAfter:\n${entry.after}`;
   return [
+    entry.toolCallId ? `Call ID: ${entry.toolCallId}` : '',
     entry.arguments ? `Arguments:\n${entry.arguments}` : '',
     entry.result ? `Result:\n${entry.result}` : '',
   ].filter(Boolean).join('\n\n');
@@ -150,6 +151,9 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
   } else if (entry.kind === 'schedule-change') {
     body = renderScheduleChangeHtml(entry);
   } else {
+    const callId = entry.toolCallId
+      ? `<p class="tool-call-id">Call ID: <code>${escapeHtml(entry.toolCallId)}</code></p>`
+      : '';
     const argumentsOutput = entry.arguments && entry.arguments !== '{}'
       ? `<pre class="activity-output">${escapeHtml(entry.arguments)}</pre>`
       : '';
@@ -159,7 +163,7 @@ function renderActivityDetailsHtml(entry: Exclude<ActivityEntry, { kind: 'respon
     const interrupted = entry.state === 'interrupted' && !entry.result
       ? '<p class="interrupted">The command did not return before the turn ended.</p>'
       : '';
-    body = `<div class="tool-body">${argumentsOutput}${resultOutput}${interrupted}</div>`;
+    body = `<div class="tool-body">${callId}${argumentsOutput}${resultOutput}${interrupted}</div>`;
   }
   return `<details class="activity-details">
             <summary>${escapeHtml(activitySummary(entry))}</summary>
@@ -323,6 +327,7 @@ export function buildHtmlChatExport(
     .schedule-diff .removed { color: #b91c1c; }
     .schedule-diff .added { color: #15803d; }
     .interrupted { margin: 0; color: #b91c1c; font-size: 12px; }
+    .tool-call-id { margin: 0; color: #6b7280; font-size: 11px; }
     .attachments { margin: 8px 0 0; font-size: 12px; opacity: .8; }
     .message-status { margin: 0; color: #4b5563; }
     .failure { margin: 12px 0 0; border-top: 1px solid #fecaca; padding-top: 12px; color: #b91c1c; font-size: 14px; }

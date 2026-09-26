@@ -483,7 +483,7 @@ replacing newer state.
 | Event | Meaning |
 | --- | --- |
 | `delta`, `reasoning` | Answer text and separate reasoning stream. |
-| `tool_start`, `tool` | Tool request and completed result, including success status. |
+| `tool_start`, `tool` | Tool request and completed result, correlated by `tool_call_id` and including success status. |
 | `schedule_change`, `proposal` | Working-copy preview and final candidate diff. |
 | `steering`, `history_trimmed` | Queued input consumed and prompt-history reduction. |
 | `optimization`, `optimization_progress`, `turn_start` | Job state, progress, and a background review run. |

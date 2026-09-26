@@ -405,6 +405,7 @@ def test_a_command_that_raises_is_recorded_before_the_sandbox_failure():
     assert run.error == "sandbox command failed"
     assert run.trajectory["events"][-1] == {
         "kind": "tool_start",
+        "tool_call_id": "call_0",
         "name": BASH_TOOL,
         "arguments": '{"command":"slow command"}',
     }

@@ -35,7 +35,14 @@ const messages: ChatExportMessage[] = [
     responseCompletedAt: Date.parse('2026-09-18T01:00:01.250Z'),
     activity: [
       { kind: 'reasoning', text: 'Checked each ward.' },
-      { kind: 'tool', name: 'read', arguments: '{"path":"ward.xlsx"}', result: '87 people', ok: true },
+      {
+        kind: 'tool',
+        toolCallId: 'call-1',
+        name: 'read',
+        arguments: '{"path":"ward.xlsx"}',
+        result: '87 people',
+        ok: true,
+      },
       { kind: 'schedule-change', before: 'description: old', after: 'description: new' },
       { kind: 'response', text: 'Coverage is **complete**.' },
     ],
@@ -59,6 +66,7 @@ describe('chat export', () => {
     expect(output).toContain('Response time: 1.25s');
     expect(output).toContain('### Reasoning');
     expect(output).toContain('### read');
+    expect(output).toContain('Call ID: call-1');
     expect(output).toContain('### Schedule change');
     expect(output.match(/Coverage is \*\*complete\*\*\./g)).toHaveLength(1);
     expect(output.indexOf('### Reasoning')).toBeLessThan(output.indexOf('### read'));
@@ -78,6 +86,7 @@ describe('chat export', () => {
     expect(output).toContain('Coverage is <strong>complete</strong>.');
     expect(output).not.toContain('Coverage is **complete**.');
     expect(output).toContain('<summary>Reasoning · 18 characters</summary>');
+    expect(output).toContain('<p class="tool-call-id">Call ID: <code>call-1</code></p>');
     expect(output.indexOf('<summary>Reasoning · 18 characters</summary>')).toBeLessThan(output.indexOf('<summary>read</summary>'));
     expect(output.indexOf('<summary>read</summary>')).toBeLessThan(
       output.indexOf('Coverage is <strong>complete</strong>.'),

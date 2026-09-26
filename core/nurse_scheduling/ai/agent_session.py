@@ -157,9 +157,15 @@ class RunOutput:
         if isinstance(event, TokenUsage):
             self.usage = event if self.usage is None else self.usage + event
         elif isinstance(event, ToolExecutionStart):
-            return "tool_start", {"name": event.name, "arguments": event.arguments}
+            return "tool_start", {"tool_call_id": event.tool_call_id, "name": event.name, "arguments": event.arguments}
         elif isinstance(event, ToolExecutionEnd):
-            return "tool", {"name": event.name, "arguments": event.arguments, "result": event.result, "ok": event.ok}
+            return "tool", {
+                "tool_call_id": event.tool_call_id,
+                "name": event.name,
+                "arguments": event.arguments,
+                "result": event.result,
+                "ok": event.ok,
+            }
         elif isinstance(event, AgentSteering):
             if self.assistant_segment:
                 self.messages.append(ChatMessage(role="assistant", content="".join(self.assistant_segment)))

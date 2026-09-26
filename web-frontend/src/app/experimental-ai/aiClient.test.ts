@@ -257,8 +257,8 @@ describe('AI client', () => {
   it('forwards tool use and a proposal to the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
-      'event: tool_start\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
-      'event: tool\ndata: {"name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
+      'event: tool_start\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
+      'event: tool\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true}\n\n',
       'event: steering\ndata: {"message_id":"queued-1","message":"Focus on P2."}\n\n',
       'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
@@ -279,8 +279,8 @@ describe('AI client', () => {
       {
         onDelta: text => texts.push(text),
         onReasoning: text => reasoning.push(text),
-        onToolStart: activity => toolStarts.push(`${activity.name}:${activity.arguments}`),
-        onTool: activity => tools.push(`${activity.name}:${activity.ok}:${activity.result}`),
+        onToolStart: activity => toolStarts.push(`${activity.toolCallId}:${activity.name}:${activity.arguments}`),
+        onTool: activity => tools.push(`${activity.toolCallId}:${activity.name}:${activity.ok}:${activity.result}`),
         onSteering: (messageId, message) => steering.push(`${messageId}:${message}`),
         onScheduleChange: scheduleYaml => scheduleChanges.push(scheduleYaml),
         onProposal: diff => diffs.push(diff),
@@ -289,8 +289,8 @@ describe('AI client', () => {
       null,
     );
 
-    expect(toolStarts).toEqual(['bash:{"command":"sed -n 1p schedule.yaml"}']);
-    expect(tools).toEqual(['bash:true:exit_code: 0']);
+    expect(toolStarts).toEqual(['call-1:bash:{"command":"sed -n 1p schedule.yaml"}']);
+    expect(tools).toEqual(['call-1:bash:true:exit_code: 0']);
     expect(steering).toEqual(['queued-1:Focus on P2.']);
     expect(reasoning).toEqual(['Checking people.']);
     expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
