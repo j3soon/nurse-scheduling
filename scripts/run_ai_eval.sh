@@ -25,6 +25,24 @@ if [[ -x "${CORE_DIR}/.venv/bin/python" && -f "${CORE_DIR}/.venv/bin/activate" ]
   source "${CORE_DIR}/.venv/bin/activate"
 fi
 
+# The runner starts in core/, so resolve path options against the caller's directory.
+arguments=()
+path_option=""
+for arg in "$@"; do
+  if [[ -n "$path_option" ]]; then
+    [[ "$arg" == /* ]] || arg="${PWD}/${arg}"
+    path_option=""
+  elif [[ "$arg" =~ ^(--output-dir|--baseline-report|--cases-dir)=(.*)$ ]]; then
+    value="${BASH_REMATCH[2]}"
+    [[ "$value" == /* ]] || value="${PWD}/${value}"
+    arg="${BASH_REMATCH[1]}=${value}"
+  elif [[ "$arg" == --output-dir || "$arg" == --baseline-report || "$arg" == --cases-dir ]]; then
+    path_option="$arg"
+  fi
+  arguments+=("$arg")
+done
+set -- "${arguments[@]}"
+
 cd "${CORE_DIR}"
 for arg in "$@"; do
   if [[ "$arg" == --help || "$arg" == -h ]]; then
