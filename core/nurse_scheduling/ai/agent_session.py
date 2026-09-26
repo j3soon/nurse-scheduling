@@ -386,7 +386,7 @@ class AgentSession:
             if history_log is not None:
                 logged = True
                 logged = await write_history(
-                    "start_turn",
+                    "start_run",
                     run.id,
                     session_id,
                     credential_id,
@@ -450,7 +450,7 @@ class AgentSession:
                 # The prompt was written at start, without the attachment filenames in its session copy.
                 # The prompt entry was written when the run started.
                 history_saved = await write_history(
-                    "finish_turn", run.id, outcome, None, output.usage, output.entries[1:]
+                    "finish_run", run.id, outcome, None, output.usage, output.entries[1:]
                 )
             if not completion.run_saved:
                 await emit("stale", {"message": STALE_RUN_ERROR})
@@ -501,7 +501,7 @@ class AgentSession:
             if logged:
                 stop_reason = "aborted" if outcome == "cancelled" else "error"
                 await write_history(
-                    "finish_turn",
+                    "finish_run",
                     run.id,
                     outcome,
                     error_code,

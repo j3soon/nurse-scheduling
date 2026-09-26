@@ -21,19 +21,25 @@
 
 import asyncio
 import hashlib
+import json
 import os
-from pathlib import Path
+from dataclasses import asdict
 from uuid import uuid4
 
 import psycopg
 import pytest
 from psycopg import sql
 
-from nurse_scheduling.ai import history as ai_history
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.provider import ProviderError, ReasoningDelta, TextDelta, TokenUsage
-from nurse_scheduling.ai.transcript import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
+from nurse_scheduling.ai.transcript import (
+    AssistantMessage,
+    ProposalDecisionEntry,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
 
 from . import test_ai_basic as basic
 
@@ -56,7 +62,7 @@ def test_history_environment_settings(monkeypatch):
         AiSettings.from_env()
 
 
-def test_postgres_stream_records_ordered_turns_and_partial_failure(postgres_history):
+def test_postgres_stream_records_ordered_runs_and_partial_failure(postgres_history):
     provider = basic.FakeProvider([["Answer"], ["Partial", ProviderError("private detail")]])
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
@@ -64,15 +70,15 @@ def test_postgres_stream_records_ordered_turns_and_partial_failure(postgres_hist
         for question in ["First", "Second"]:
             client.post(f"/sessions/{session_id}/messages", json={"message": question})
     with postgres_history._connect() as connection:
-        assert connection.execute("SELECT status, error_code FROM chat_turns ORDER BY sequence").fetchall() == [
+        assert connection.execute("SELECT status, error_code FROM chat_runs ORDER BY sequence").fetchall() == [
             ("completed", None),
             ("failed", "provider_error"),
         ]
-        assert turn_entries(connection) == [
-            ("user", "First", None, None),
-            ("assistant", "Answer", "stop", None),
-            ("user", "Second", None, None),
-            ("assistant", "Partial", "error", None),
+        assert run_entries(connection) == [
+            record(UserMessage("First")),
+            record(AssistantMessage("Answer")),
+            record(UserMessage("Second")),
+            record(AssistantMessage("Partial", "error")),
         ]
 
 
@@ -80,8 +86,8 @@ def test_postgres_stream_records_ordered_turns_and_partial_failure(postgres_hist
 def recorded_history(monkeypatch):
     records = {"starts": [], "finishes": []}
     monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
-    monkeypatch.setattr(ChatHistory, "start_turn", lambda _self, *args: records["starts"].append(args))
-    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: records["finishes"].append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda _self, *args: records["starts"].append(args))
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: records["finishes"].append(args))
     return records
 
 
@@ -119,7 +125,7 @@ def test_database_unavailable_releases_session_before_provider_call(recorded_his
     def unavailable(*_args):
         raise psycopg.OperationalError("secret-database-url")
 
-    monkeypatch.setattr(ChatHistory, "start_turn", unavailable)
+    monkeypatch.setattr(ChatHistory, "start_run", unavailable)
     provider = basic.FakeProvider()
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
@@ -127,7 +133,7 @@ def test_database_unavailable_releases_session_before_provider_call(recorded_his
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
         assert response.status_code == 503
         assert provider.calls == []
-        monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
+        monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
 
@@ -136,7 +142,7 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
     def unavailable(*_args):
         raise psycopg.OperationalError("secret-database-url")
 
-    monkeypatch.setattr(ChatHistory, "finish_turn", unavailable)
+    monkeypatch.setattr(ChatHistory, "finish_run", unavailable)
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
     )
@@ -144,7 +150,7 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
         session_id = basic.create_session(client)
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
     assert basic.parse_sse(response.text)[-1][1]["history_saved"] is False
-    assert "AI history finish_turn failed" in caplog.text
+    assert "AI history finish_run failed" in caplog.text
     assert "secret-database-url" not in caplog.text
 
 
@@ -261,16 +267,28 @@ def test_database_unavailable_prevents_startup(recorded_history, monkeypatch):
         pass
 
 
-def turn_entries(connection) -> list[tuple]:
-    """Return every entry in turn and entry order."""
+def record(entry) -> tuple[str, dict]:
+    """Return the stored type and payload expected for one agent message."""
+    kind = {
+        UserMessage: "user",
+        AssistantMessage: "assistant",
+        ToolResultMessage: "tool_result",
+        ProposalDecisionEntry: "proposal_decision",
+    }[type(entry)]
+    # JSON stores tuples as arrays.
+    return kind, json.loads(json.dumps(asdict(entry)))
+
+
+def run_entries(connection) -> list[tuple[str, dict]]:
+    """Return every entry in run and entry order."""
     return connection.execute(
-        "SELECT e.type, e.text, e.stop_reason, e.decision FROM chat_turn_entries e "
-        "JOIN chat_turns t ON t.id = e.turn_id ORDER BY t.sequence, e.seq"
+        "SELECT e.type, e.payload FROM chat_run_entries e "
+        "JOIN chat_runs r ON r.id = e.run_id ORDER BY r.sequence, e.seq"
     ).fetchall()
 
 
 @pytest.fixture
-def postgres_schema(monkeypatch):
+def postgres_history(monkeypatch):
     database_url = os.getenv("AI_HISTORY_TEST_POSTGRES_URL")
     if not database_url:
         pytest.skip("Set AI_HISTORY_TEST_POSTGRES_URL to run PostgreSQL integration checks")
@@ -283,23 +301,19 @@ def postgres_schema(monkeypatch):
 
     monkeypatch.setattr(ChatHistory, "_connect", connect)
     try:
-        yield ChatHistory(database_url)
+        history = ChatHistory(database_url)
+        history.initialize()
+        yield history
     finally:
         with psycopg.connect(database_url, autocommit=True) as connection:
             connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
-@pytest.fixture
-def postgres_history(postgres_schema):
-    postgres_schema.initialize()
-    return postgres_schema
-
-
-def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
+def test_postgres_duplicates_and_reconnection(postgres_history):
     history = postgres_history
-    turn, session = str(uuid4()), str(uuid4())
-    history.start_turn(turn, session, "team-a", "What's next?", "model", 3)
-    history.start_turn(turn, session, "team-a", "duplicate", "model", 3)
+    run, session = str(uuid4()), str(uuid4())
+    history.start_run(run, session, "team-a", "What's next?", "model", 3)
+    history.start_run(run, session, "team-a", "duplicate", "model", 3)
     call = ToolCall("call-1", "read", '{"path":"schedule.yaml"}')
     entries = [
         AssistantMessage("Checking.", "tool_use", "Look first.", (call,)),
@@ -307,13 +321,13 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
         UserMessage("Only nights."),
         AssistantMessage("Answer"),
     ]
-    history.finish_turn(turn, "completed", None, TokenUsage(1, 2, 3), entries)
-    history.finish_turn(turn, "cancelled", None, None, [AssistantMessage("Overwrite", "aborted")])
-    history.record_decision(turn, "approved")
+    history.finish_run(run, "completed", None, TokenUsage(1, 2, 3), entries)
+    history.finish_run(run, "cancelled", None, None, [AssistantMessage("Overwrite", "aborted")])
+    history.record_decision(run, "approved")
     restarted = ChatHistory("test")
     restarted.initialize()
     with restarted._connect() as connection:
-        row = connection.execute("SELECT status, usage, finished_at, attachment_count FROM chat_turns").fetchone()
+        row = connection.execute("SELECT status, usage, finished_at, attachment_count FROM chat_runs").fetchone()
         assert row[:2] == (
             "completed",
             {
@@ -326,100 +340,50 @@ def test_postgres_migrations_duplicates_and_reconnection(postgres_history):
         )
         assert row[2] is not None
         assert row[3] == 3
-        assert turn_entries(connection) == [
-            ("user", "What's next?", None, None),
-            ("assistant", "Checking.", "tool_use", None),
-            ("tool_result", "people: []", None, None),
-            ("user", "Only nights.", None, None),
-            ("assistant", "Answer", "stop", None),
-            ("proposal_decision", None, None, "approved"),
+        assert run_entries(connection) == [
+            record(UserMessage("What's next?")),
+            *map(record, entries),
+            record(ProposalDecisionEntry("approved")),
         ]
-        assert connection.execute(
-            "SELECT reasoning, tool_calls FROM chat_turn_entries WHERE type = 'assistant' ORDER BY seq LIMIT 1"
-        ).fetchone() == ("Look first.", [{"id": "call-1", "name": "read", "arguments": '{"path":"schedule.yaml"}'}])
-        assert connection.execute(
-            "SELECT tool_call_id, tool_name, ok FROM chat_turn_entries WHERE type = 'tool_result'"
-        ).fetchone() == ("call-1", "read", True)
         credential_id = connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone()
         assert credential_id == ("team-a",)
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (3,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (1,)
 
 
-def test_postgres_retention_preserves_recent_turns(postgres_history):
+def test_postgres_retention_preserves_recent_runs(postgres_history):
     history = postgres_history
     session = str(uuid4())
     old, recent = str(uuid4()), str(uuid4())
-    history.start_turn(old, session, None, "old", "model", 0)
-    history.start_turn(recent, session, None, "recent", "model", 0)
+    history.start_run(old, session, None, "old", "model", 0)
+    history.start_run(recent, session, None, "recent", "model", 0)
     with history._connect() as connection:
-        connection.execute("UPDATE chat_turns SET started_at = now() - interval '31 days' WHERE id = %s", (old,))
+        connection.execute("UPDATE chat_runs SET started_at = now() - interval '31 days' WHERE id = %s", (old,))
         connection.execute("UPDATE chat_sessions SET created_at = now() - interval '31 days'")
     history.prune()
     with history._connect() as connection:
-        assert turn_entries(connection) == [("user", "recent", None, None)]
+        assert run_entries(connection) == [record(UserMessage("recent"))]
         assert connection.execute("SELECT count(*) FROM chat_sessions").fetchone() == (1,)
-        connection.execute("UPDATE chat_turns SET started_at = now() - interval '31 days'")
+        connection.execute("UPDATE chat_runs SET started_at = now() - interval '31 days'")
     history.prune()
     with history._connect() as connection:
         assert connection.execute("SELECT count(*) FROM chat_sessions").fetchone() == (0,)
-        assert connection.execute("SELECT count(*) FROM chat_turn_entries").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM chat_run_entries").fetchone() == (0,)
 
 
 def test_postgres_writes_survive_cancel_scope(postgres_history):
     import anyio
 
-    turn, session = str(uuid4()), str(uuid4())
-    postgres_history.start_turn(turn, session, None, "question", "model", 0)
+    run, session = str(uuid4()), str(uuid4())
+    postgres_history.start_run(run, session, None, "question", "model", 0)
 
     async def cancel_and_save():
         with anyio.CancelScope() as scope:
             scope.cancel()
             assert await postgres_history.write(
-                "finish_turn", turn, "cancelled", None, None, [AssistantMessage("partial", "aborted")]
+                "finish_run", run, "cancelled", None, None, [AssistantMessage("partial", "aborted")]
             )
 
     asyncio.run(cancel_and_save())
     with postgres_history._connect() as connection:
-        assert connection.execute("SELECT status FROM chat_turns").fetchone() == ("cancelled",)
-        assert turn_entries(connection)[-1] == ("assistant", "partial", "aborted", None)
-
-
-def test_postgres_migration_moves_legacy_turn_text_into_entries(postgres_schema):
-    migrations = sorted(Path(ai_history.__file__).with_name("migrations").glob("*.sql"))
-    completed, cancelled, running = str(uuid4()), str(uuid4()), str(uuid4())
-    session = str(uuid4())
-    with postgres_schema._connect() as connection:
-        connection.execute("CREATE TABLE ai_history_migrations (version text PRIMARY KEY)")
-        for migration in migrations[:2]:
-            connection.execute(migration.read_text(encoding="utf-8"))
-            connection.execute("INSERT INTO ai_history_migrations (version) VALUES (%s)", (migration.name,))
-        connection.execute("INSERT INTO chat_sessions (id) VALUES (%s)", (session,))
-        for turn, user_message, assistant_message, status in [
-            (completed, "Q1", "A1", "completed"),
-            (cancelled, "Q2", "partial", "cancelled"),
-            (running, "Q3", "", "running"),
-        ]:
-            connection.execute(
-                "INSERT INTO chat_turns (id, session_id, user_message, assistant_message, model, status) "
-                "VALUES (%s, %s, %s, %s, 'model', %s)",
-                (turn, session, user_message, assistant_message, status),
-            )
-
-    postgres_schema.initialize()
-
-    with postgres_schema._connect() as connection:
-        assert turn_entries(connection) == [
-            ("user", "Q1", None, None),
-            ("assistant", "A1", "stop", None),
-            ("user", "Q2", None, None),
-            ("assistant", "partial", "aborted", None),
-            ("user", "Q3", None, None),
-        ]
-        columns = {
-            row[0]
-            for row in connection.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'chat_turns' AND table_schema = current_schema()"
-            )
-        }
-        assert not columns & {"user_message", "assistant_message", "transcript"}
+        assert connection.execute("SELECT status FROM chat_runs").fetchone() == ("cancelled",)
+        assert run_entries(connection)[-1] == record(AssistantMessage("partial", "aborted"))

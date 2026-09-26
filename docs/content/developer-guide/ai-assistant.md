@@ -621,16 +621,18 @@ defaults and validation rules.
 ## Storage and Deployment
 
 PostgreSQL chat logging is optional for native runs and included in both
-backend Compose variants. `chat_turns` keeps run metadata: status, error code,
+backend Compose variants. `chat_runs` keeps run metadata: status, error code,
 model, timestamps, usage when available, and attachment count.
-`chat_turn_entries` stores each run's canonical entries in order, keyed by
-`(turn_id, seq)`. The prompt is written when the run starts, then every model
-response, tool result, and queued steering message when it ends. A later
-approval or rejection is appended to the run that proposed it. Sessions keep
+`chat_run_entries` stores each run's agent messages in order, keyed by
+`(run_id, seq)`, with a `type` and a JSON `payload` holding the fields of the
+matching `transcript.py` type. The prompt is written when the run starts, then
+every model response, tool result, and queued steering message when it ends. A
+later proposal decision is appended to the run that proposed it. Sessions keep
 the administrative credential ID. Raw attachment files and images are not
 stored, but tool results can contain schedule and attachment text. Entries can
 contain staff information, so database access is for operators. History records
-do not restore an active chat after a restart.
+do not restore an active chat after a restart. Upgrading a database from the
+earlier experimental `chat_turns` schema drops that history.
 
 An unavailable configured database prevents startup. If its initial write
 fails, the request returns HTTP `503` before contacting the provider. If the

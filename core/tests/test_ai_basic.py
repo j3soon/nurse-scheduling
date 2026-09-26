@@ -470,8 +470,8 @@ def parse_sse(response_text: str) -> list[tuple[str, dict[str, str]]]:
 @pytest.mark.parametrize("wait_stage", ["provider", "command"])
 def test_client_disconnect_cancels_the_turn_and_closes_its_sandbox(wait_stage: str, monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: saved.append(args))
 
     async def exercise() -> tuple[FakeSandboxBackend | None, bool, bool, list[AgentMessage]]:
         operation_started = asyncio.Event()
@@ -774,8 +774,8 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
 
 def test_disconnect_before_stream_iteration_releases_the_session(monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: saved.append(args))
 
     async def exercise() -> bool:
         app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
@@ -1147,8 +1147,8 @@ def test_provider_failure_is_streamed_without_recording_a_turn() -> None:
 
 def test_turn_is_reported_stale_when_its_schedule_changes_during_streaming(monkeypatch) -> None:
     saved = []
-    monkeypatch.setattr(ChatHistory, "start_turn", lambda *_args: None)
-    monkeypatch.setattr(ChatHistory, "finish_turn", lambda _self, *args: saved.append(args))
+    monkeypatch.setattr(ChatHistory, "start_run", lambda *_args: None)
+    monkeypatch.setattr(ChatHistory, "finish_run", lambda _self, *args: saved.append(args))
 
     class ScheduleUpdatingProvider(FakeProvider):
         update_schedule = lambda self: None
@@ -1738,7 +1738,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     history_starts: list[tuple[str, str, str | None, str, str, int]] = []
     if history_enabled:
         monkeypatch.setattr(ChatHistory, "initialize", lambda _self: None)
-        monkeypatch.setattr(ChatHistory, "finish_turn", lambda *_args: None)
+        monkeypatch.setattr(ChatHistory, "finish_run", lambda *_args: None)
 
         def record_start(
             _self: ChatHistory,
@@ -1751,7 +1751,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         ) -> None:
             history_starts.append((turn_id, session_id, credential_id, question, model, attachment_count))
 
-        monkeypatch.setattr(ChatHistory, "start_turn", record_start)
+        monkeypatch.setattr(ChatHistory, "start_run", record_start)
     optimizer_call = [ToolCallRequest((ToolCall("optimizer-call", OPTIMIZER_TOOL, json.dumps({"action": "start"})),))]
     provider = ScriptedToolProvider(
         optimizer_call,

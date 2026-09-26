@@ -250,7 +250,7 @@ def test_stop_during_history_start_waits_for_history_then_releases_the_session(m
         records = []
 
         async def write(_self, operation, *args):
-            if operation == "start_turn":
+            if operation == "start_run":
                 entered.set()
                 await release.wait()
             records.append((operation, args))
@@ -276,7 +276,7 @@ def test_stop_during_history_start_waits_for_history_then_releases_the_session(m
             assert not app.state.runs.busy(session_id)
             assert not app.state.session_store._sessions[session_id].active
             assert provider.calls == []
-            assert [operation for operation, _ in records] == ["start_turn", "finish_turn"]
+            assert [operation for operation, _ in records] == ["start_run", "finish_run"]
             assert records[-1][1][1] == "cancelled"
 
     asyncio.run(exercise())
@@ -288,7 +288,7 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
         release = asyncio.Event()
 
         async def write(_self, operation, *_args):
-            if operation == "finish_turn":
+            if operation == "finish_run":
                 finalizing.set()
                 await release.wait()
             return True

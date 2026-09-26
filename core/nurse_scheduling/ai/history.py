@@ -42,7 +42,7 @@ from .transcript import (
 )
 
 logger = logging.getLogger("nurse_scheduling.ai.history")
-TurnStatus = Literal["completed", "failed", "cancelled", "stale"]
+RunStatus = Literal["completed", "failed", "cancelled", "stale"]
 
 
 class ChatHistory:
@@ -74,29 +74,29 @@ class ChatHistory:
         self.prune()
 
     def prune(self) -> None:
-        """Delete expired messages and their now-empty session metadata."""
+        """Delete expired runs and their now-empty session metadata."""
         with self._connect() as connection:
             connection.execute(
-                "DELETE FROM chat_turns WHERE started_at < now() - %s * interval '1 day'",
+                "DELETE FROM chat_runs WHERE started_at < now() - %s * interval '1 day'",
                 (self._retention_days,),
             )
             connection.execute(
                 "DELETE FROM chat_sessions s WHERE NOT EXISTS "
-                "(SELECT 1 FROM chat_turns t WHERE t.session_id = s.id) "
+                "(SELECT 1 FROM chat_runs r WHERE r.session_id = s.id) "
                 "AND s.created_at < now() - %s * interval '1 day'",
                 (self._retention_days,),
             )
 
-    def start_turn(
+    def start_run(
         self,
-        turn_id: str,
+        run_id: str,
         session_id: str,
         credential_id: str | None,
         prompt: str,
         model: str,
         attachment_count: int,
     ) -> None:
-        """Atomically create a session, a uniquely identified turn, and its prompt entry.
+        """Atomically create a session, a uniquely identified run, and its prompt entry.
 
         The prompt is written before model work, so it survives a process that dies mid-run.
         """
@@ -106,42 +106,41 @@ class ChatHistory:
                 (session_id, credential_id),
             )
             inserted = connection.execute(
-                "INSERT INTO chat_turns (id, session_id, model, attachment_count) "
+                "INSERT INTO chat_runs (id, session_id, model, attachment_count) "
                 "VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING RETURNING id",
-                (turn_id, session_id, model, attachment_count),
+                (run_id, session_id, model, attachment_count),
             ).fetchone()
             if inserted is not None:
-                _insert_entries(connection, turn_id, 0, [UserMessage(prompt)])
+                _insert_entries(connection, run_id, 0, [UserMessage(prompt)])
 
-    def finish_turn(
+    def finish_run(
         self,
-        turn_id: str,
-        status: TurnStatus,
+        run_id: str,
+        status: RunStatus,
         error_code: str | None,
         usage: TokenUsage | None,
         entries: Sequence[AgentMessage] = (),
     ) -> None:
         """Keep the first terminal result when cleanup or writes are repeated.
 
-        `entries` continue the prompt written by `start_turn`: queued steering and
-        answer segments in run order.
+        `entries` continue the prompt written by `start_run` in run order.
         """
         with self._connect() as connection:
             finished = connection.execute(
-                "UPDATE chat_turns SET status = %s, error_code = %s, usage = %s, finished_at = now() "
+                "UPDATE chat_runs SET status = %s, error_code = %s, usage = %s, finished_at = now() "
                 "WHERE id = %s AND status = 'running' RETURNING id",
-                (status, error_code, Jsonb(asdict(usage)) if usage else None, turn_id),
+                (status, error_code, Jsonb(asdict(usage)) if usage else None, run_id),
             ).fetchone()
             if finished is not None:
-                _insert_entries(connection, turn_id, 1, entries)
+                _insert_entries(connection, run_id, 1, entries)
 
-    def record_decision(self, turn_id: str, decision: ProposalDecision) -> None:
-        """Append a proposal decision to the turn whose proposal it decides."""
+    def record_decision(self, run_id: str, decision: ProposalDecision) -> None:
+        """Append a proposal decision to the run whose proposal it decides."""
         with self._connect() as connection:
             (next_seq,) = connection.execute(
-                "SELECT COALESCE(max(seq) + 1, 0) FROM chat_turn_entries WHERE turn_id = %s", (turn_id,)
+                "SELECT COALESCE(max(seq) + 1, 0) FROM chat_run_entries WHERE run_id = %s", (run_id,)
             ).fetchone()
-            _insert_entries(connection, turn_id, next_seq, [ProposalDecisionEntry(decision)])
+            _insert_entries(connection, run_id, next_seq, [ProposalDecisionEntry(decision)])
 
     async def write(self, operation: str, *args) -> bool:
         """Report failures without leaking connection strings or chat text to logs."""
@@ -160,52 +159,23 @@ class ChatHistory:
             await self.write("prune")
 
 
-def _insert_entries(connection, turn_id: str, first_seq: int, entries: Sequence[AgentMessage]) -> None:
-    rows = []
-    for seq, entry in enumerate(entries, first_seq):
-        row = dict.fromkeys(_ENTRY_COLUMNS)
-        if isinstance(entry, UserMessage):
-            row.update(type="user", text=entry.text)
-        elif isinstance(entry, AssistantMessage):
-            row.update(
-                type="assistant",
-                text=entry.text,
-                reasoning=entry.reasoning or None,
-                stop_reason=entry.stop_reason,
-                tool_calls=Jsonb([asdict(call) for call in entry.tool_calls]) if entry.tool_calls else None,
-            )
-        elif isinstance(entry, ToolResultMessage):
-            row.update(
-                type="tool_result",
-                text=entry.text,
-                tool_call_id=entry.tool_call_id,
-                tool_name=entry.tool_name,
-                ok=entry.ok,
-            )
-        else:
-            row.update(type="proposal_decision", decision=entry.decision)
-        rows.append((turn_id, seq, *row.values()))
-    if not rows:
-        return
-    with connection.cursor() as cursor:
-        cursor.executemany(
-            f"INSERT INTO chat_turn_entries (turn_id, seq, {', '.join(_ENTRY_COLUMNS)}) "
-            f"VALUES (%s, %s, {', '.join(['%s'] * len(_ENTRY_COLUMNS))})",
-            rows,
-        )
+_ENTRY_TYPES: dict[type, str] = {
+    UserMessage: "user",
+    AssistantMessage: "assistant",
+    ToolResultMessage: "tool_result",
+    ProposalDecisionEntry: "proposal_decision",
+}
 
 
-_ENTRY_COLUMNS = (
-    "type",
-    "text",
-    "reasoning",
-    "stop_reason",
-    "tool_calls",
-    "tool_call_id",
-    "tool_name",
-    "ok",
-    "decision",
-)
+def _insert_entries(connection, run_id: str, first_seq: int, entries: Sequence[AgentMessage]) -> None:
+    rows = [
+        (run_id, seq, _ENTRY_TYPES[type(entry)], Jsonb(asdict(entry))) for seq, entry in enumerate(entries, first_seq)
+    ]
+    if rows:
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO chat_run_entries (run_id, seq, type, payload) VALUES (%s, %s, %s, %s)", rows
+            )
 
 
 async def stop_maintenance(task: asyncio.Task) -> None:
