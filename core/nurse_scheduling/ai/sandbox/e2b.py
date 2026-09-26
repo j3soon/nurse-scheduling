@@ -118,7 +118,7 @@ class E2BSandboxState(str, Enum):
 
 
 class E2BSandboxFactory:
-    """Create one internet-disabled E2B Cloud sandbox for an agent turn."""
+    """Create one internet-disabled E2B Cloud sandbox for an agent run."""
 
     def __init__(
         self,

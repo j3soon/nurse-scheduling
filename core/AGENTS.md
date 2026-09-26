@@ -85,13 +85,13 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   projection and the model-facing projection and wording in `context.py`, so
   retention, model context, and audit remain separate decisions.
 - Optimizer submissions and jobs belong to the optimizer service, not to the
-  requesting turn. Revoke the submission owner on cancellation and dispose of
+  requesting run. Revoke the submission owner on cancellation and dispose of
   late remote responses. Keep progress readers inside the job lifecycle scope.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
 - Bound uploads before provider calls and place them under fixed sandbox paths.
-  Do not retain raw attachments longer than their documented turn behavior requires.
+  Do not retain raw attachments longer than their documented run behavior requires.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts
@@ -100,7 +100,7 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
   source data such as spreadsheet formulas and cached values, report truncation,
   and let the agent write a focused sandbox parser when a helper is insufficient.
 - Sandbox allocation is lazy. Tests that verify attachment hydration must make
-  the agent call a tool, since a text-only turn never creates a sandbox.
+  the agent call a tool, since a text-only run never creates a sandbox.
 - Keep canonical schedule invariants in `NurseSchedulingData`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.

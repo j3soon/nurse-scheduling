@@ -97,7 +97,7 @@ class SessionStore:
     def _require_capacity(self, additional_bytes: int) -> None:
         """Refuse text that would push retained chat state past the configured budget.
 
-        Checked where a client pushes new text. A completed turn is never refused here,
+        Checked where a client pushes new text. A completed run is never refused here,
         because its answer has already streamed to the user; `_trim_history_to_budget`
         reclaims the space instead.
 
@@ -112,12 +112,12 @@ class SessionStore:
 
         A run grows a session without passing an admission check, so sessions admitted
         cheaply would otherwise accumulate answers and proposals far past the budget and
-        hold them until they expire. Older context is the part a later turn needs least,
+        hold them until they expire. Older context is the part a later run needs least,
         and the message cap already truncates from the same end.
 
-        Keep the entire completed turn so its answer still has the question and any
+        Keep the entire completed run so its answer still has the question and any
         steering that produced it. Retained text therefore settles at the budget plus
-        one turn and any pending proposal per session.
+        one run and any pending proposal per session.
         """
         while self._retained_bytes > self._settings.max_session_bytes:
             removed = self._drop_oldest_exchange(session, protected_messages)

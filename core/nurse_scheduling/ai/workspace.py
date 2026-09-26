@@ -289,7 +289,7 @@ async def hydrate_sandbox(
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
 ) -> None:
-    """Copy trusted application state and searchable references into one turn."""
+    """Copy trusted application state and searchable references into one run."""
     started = time.perf_counter()
     files: dict[str, str | bytes] = {WORKSPACE_SCHEDULE: schedule_yaml}
     if pending_proposal_yaml:
@@ -326,7 +326,7 @@ async def hydrate_sandbox(
         )
     if optimizer_result is not None:
         files[WORKSPACE_OPTIMIZER_RESULT] = optimizer_result
-    # One request, because hydration now precedes the first tool result rather than the turn.
+    # One request, because hydration now precedes the first tool result rather than the run.
     await sandbox.write_files(files)
     logger.info(
         "sandbox hydrated sandbox_id=%s files=%s schedule_bytes=%s latency_seconds=%.3f",
@@ -352,7 +352,7 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
         candidate = await sandbox.read_file(WORKSPACE_SCHEDULE)
     except SandboxFileNotFoundError as exc:
         # The model owns the working copy and can delete it, which is a failed
-        # turn rather than a sandbox failure.
+        # run rather than a sandbox failure.
         raise SandboxCandidateError(f"The sandbox working copy {WORKSPACE_SCHEDULE} no longer exists.") from exc
     logger.info(
         "sandbox candidate read sandbox_id=%s candidate_bytes=%s latency_seconds=%.3f",
@@ -382,12 +382,12 @@ class _ScheduleCandidateTracker:
         try:
             content = await self._sandbox.read_file(WORKSPACE_SCHEDULE)
         except SandboxFileNotFoundError:
-            # Report the deletion to the model instead of failing the turn, so it
+            # Report the deletion to the model instead of failing the run, so it
             # can restore the working copy it removed.
             return (
                 AgentToolResult(
                     f"{prefix}\nThe working copy {WORKSPACE_SCHEDULE} no longer exists. "
-                    "Restore it before finishing this turn.",
+                    "Restore it before finishing this run.",
                     False,
                 ),
                 None,

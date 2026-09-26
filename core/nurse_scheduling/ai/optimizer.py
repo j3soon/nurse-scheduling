@@ -345,7 +345,7 @@ class SessionOptimizer:
         return job.artifact
 
     async def latest_result_artifact(self, session_id: str) -> OptimizerArtifact | None:
-        """Return the newest finished workbook for a follow-up sandbox turn."""
+        """Return the newest finished workbook for a follow-up sandbox run."""
         for job in reversed(self._jobs.values()):
             # A run that is still going has no result yet, so an older workbook
             # remains current. A finished run without one makes every earlier
@@ -704,7 +704,7 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
             "description": (
                 "Start the scheduling optimizer on the current working YAML, inspect its background status, or ask "
                 "a running optimizer to finish with its best available solution. Start returns immediately. "
-                f"A completed workbook is available at {WORKSPACE_OPTIMIZER_RESULT} in the next assistant turn. "
+                f"A completed workbook is available at {WORKSPACE_OPTIMIZER_RESULT} in the next assistant run. "
                 "Omit timeout_seconds to use the configured default."
             ),
             "parameters": {

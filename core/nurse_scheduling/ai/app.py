@@ -507,7 +507,7 @@ def create_app(
         request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> StreamingResponse:
-        """Replay and stream assistant turns triggered by background work."""
+        """Replay and stream assistant runs triggered by background work."""
         store.require_owned(session_id, owner)
         raw_cursor = request.headers.get("last-event-id", "0")
         try:
@@ -586,7 +586,7 @@ def create_app(
         http_request: Request,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Queue a follow-up for the next boundary in an active agent turn."""
+        """Queue a follow-up for the next boundary in an active agent run."""
         message = _validate_question(request.message, settings)
         store.queue_steering(session_id, owner, request.message_id, message)
         request_logger.info(
@@ -683,7 +683,7 @@ def create_app(
     ) -> ProposalResponse:
         """Return the proposed schedule once the browser proves it holds the base revision."""
         # Revalidate before adopting, so a refused proposal never becomes the
-        # session schedule that later turns are hydrated from.
+        # session schedule that later runs are hydrated from.
         approved, replaced = store.peek_proposal(session_id, owner, request.base_sha256)
         validation = validate_frontend_schedule_yaml(approved, settings.max_schedule_bytes)
         if not validation.valid:

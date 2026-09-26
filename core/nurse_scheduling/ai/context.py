@@ -46,12 +46,12 @@ PROPOSAL_APPROVED_HISTORY = (
     "The user approved the previous schedule proposal. Its changes are now part of the current canonical schedule."
 )
 PROPOSAL_REJECTED_HISTORY = (
-    "The user rejected the previous schedule proposal. All schedule changes made during that agent turn were "
-    "discarded. This turn starts with a fresh workspace containing the current canonical schedule."
+    "The user rejected the previous schedule proposal. All schedule changes made during that agent run were "
+    "discarded. This run starts with a fresh workspace containing the current canonical schedule."
 )
 PROPOSAL_INVALID_HISTORY = (
     "The previous schedule proposal failed trusted validation when the user approved it, so it was discarded. All "
-    "schedule changes made during that agent turn were dropped. This turn starts with a fresh workspace containing "
+    "schedule changes made during that agent run were dropped. This run starts with a fresh workspace containing "
     "the current canonical schedule."
 )
 PROPOSAL_DECISION_HISTORY: dict[ProposalDecision, str] = {

@@ -137,7 +137,7 @@ class AiSettings:
     max_session_bytes: int = 256 * 1024 * 1024
     """Chat text budget across live sessions, enforced where a client pushes new text.
 
-    A completed turn is trimmed rather than refused, so retained text settles at this
+    A completed run is trimmed rather than refused, so retained text settles at this
     budget plus the newest message and any pending proposal of each live session. Size
     the process above that floor, not at this value.
     """

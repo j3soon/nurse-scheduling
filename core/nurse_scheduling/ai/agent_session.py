@@ -65,7 +65,7 @@ from .workspace import (
 from .workspace_tools import run_workspace
 
 CANDIDATE_VALIDATION_ERROR = (
-    "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
+    "The candidate schedule failed trusted validation. All schedule changes made during this agent run were "
     "discarded. The canonical schedule was not changed."
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
@@ -490,11 +490,11 @@ class AgentSession:
                 error_code, message = "candidate_validation", CANDIDATE_VALIDATION_ERROR
             else:
                 error_code, message = "sandbox_error", "The temporary AI sandbox failed. Please try again."
-                logger.exception("AI sandbox turn failed session_id=%s", session_id)
+                logger.exception("AI sandbox run failed session_id=%s", session_id)
             await emit("error", {"message": message})
         except Exception:
             outcome, error_code = "failed", "internal_error"
-            logger.exception("Unexpected AI turn failure session_id=%s", session_id)
+            logger.exception("Unexpected AI run failure session_id=%s", session_id)
             await emit("error", {"message": "The AI response failed unexpectedly."})
         finally:
             run.finishing = True

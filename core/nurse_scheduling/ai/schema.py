@@ -59,7 +59,7 @@ def load_taiwan_holidays_reference() -> str:
 def load_user_guide_references() -> Mapping[str, str]:
     """Load the canonical user-facing Markdown pages for in-app guidance.
 
-    Cached because every turn hydrates the same read-only files, which do not change
+    Cached because every run hydrates the same read-only files, which do not change
     while the process runs.
     """
     references: dict[str, str] = {}

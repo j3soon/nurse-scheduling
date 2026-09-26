@@ -69,7 +69,7 @@ class SandboxLifecycleMetrics:
 
 
 class SandboxBackend(Protocol):
-    """One disposable sandbox that survives for one complete agent turn."""
+    """One disposable sandbox that survives for one complete agent run."""
 
     @property
     def sandbox_id(self) -> str:
@@ -102,7 +102,7 @@ class SandboxBackend(Protocol):
 
 
 class SandboxFactory(Protocol):
-    """Create a fresh provider backend for one agent turn."""
+    """Create a fresh provider backend for one agent run."""
 
     async def create(self) -> SandboxBackend:
         """Create and return a new disposable sandbox."""
@@ -115,7 +115,7 @@ async def managed_sandbox(
     *,
     cleanup_timeout_seconds: float = 10.0,
 ) -> AsyncIterator[SandboxBackend]:
-    """Create one sandbox and destroy it without masking a turn failure."""
+    """Create one sandbox and destroy it without masking a run failure."""
     if cleanup_timeout_seconds <= 0:
         raise ValueError("cleanup_timeout_seconds must be positive")
 
