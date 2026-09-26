@@ -96,7 +96,7 @@ flowchart TB
         Store[<b>SessionStore</b><br/>Ownership, retention, memory limits]
         Queue[<b>SessionRuns</b><br/>FIFO admission and Stop]
         Session[<b>AgentSession</b><br/>Transcript, YAML, proposals<br/>Prepare, execute, finalize run]
-        Agent[<b>Agent</b><br/>Streaming state, tool IDs<br/>Steering queue and cancellation]
+        Agent[<b>Agent</b><br/>Streaming state, tool IDs<br/>Steering queue]
         Loop[<b>agent_loop</b><br/>Model responses and tool batches]
         Workspace[<b>WorkspaceTools / SandboxWorkspace</b><br/>Tool validation, files, VM lifetime]
         Jobs[<b>SessionOptimizer</b><br/>Independent jobs and result wake-ups]
@@ -157,7 +157,7 @@ Each row lists shared behavior first, then what only one side has.
 
 | Component | Shared | Ours only | Pi only |
 | --- | --- | --- | --- |
-| `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits the transcript after cleanup. `AgentRun` owns Stop so repeated cancellation cannot interrupt cleanup. | State also holds the model, thinking level, tools, transcript, and partial streaming message. Awaited subscribers settle each run. |
+| `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits the transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, transcript, and partial streaming message. Awaited subscribers settle each run. |
 | `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters after a tool batch, or continues the run when it arrives as the answer ends. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request. | Parallel execution by default with per-tool sequential overrides, before and after tool-call hooks, context transform hooks, and early termination requested by tool results. |
 | `AgentTool` / `AgentToolResult`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content and UI details, and start and end events correlate by `tool_call_id`. | Tools receive raw JSON arguments, return text, an optional image, and an explicit success flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw on failure instead of encoding it. |
 | `AgentSession` / `RunOutput` / transcript<br/>Pi: [AgentSession][pi-session], [SessionEntry][pi-entries] | An application layer over `Agent` that owns a typed transcript. Context projection keeps aborted answers out of replayed model input. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and proposal decision entries. A stopped prompt stays with an interruption note. | A persistent, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. |

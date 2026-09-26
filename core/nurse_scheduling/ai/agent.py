@@ -19,7 +19,6 @@
 
 # This file is mostly AI generated.
 
-import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -34,7 +33,6 @@ from .agent_types import (
     ToolExecutionEnd,
     ToolExecutionStart,
 )
-from .lifecycle import AgentRun
 from .provider import ChatMessage, ToolCapableChatProvider
 
 
@@ -47,15 +45,18 @@ class AgentState:
 
 
 class Agent:
-    """Stateful model-loop owner with boundary-consumed steering and cancellation."""
+    """Stateful model-loop owner with boundary-consumed steering.
+
+    Unlike Pi's Agent, cancellation belongs to the `AgentRun` whose task consumes
+    `prompt`, because Stop must also cancel queued runs and must not interrupt
+    cleanup. Closing or cancelling that consumer resets this state.
+    """
 
     def __init__(self) -> None:
         self.state = AgentState()
-        self.active_run: AgentRun | None = None
         self.accepting_steering = False
         self.steering_queue: list[tuple[str, str]] = []
         self.steering_ids: set[str] = set()
-        self._task: asyncio.Task | None = None
 
     def open_steering(self, accepting: bool) -> None:
         self.close_steering()
@@ -81,12 +82,6 @@ class Agent:
             self.accepting_steering = False
         return queued
 
-    def abort(self) -> None:
-        if self.active_run is not None:
-            self.active_run.cancel()
-        elif self._task is not None and not self._task.cancelling():
-            self._task.cancel()
-
     async def prompt(
         self,
         provider: ToolCapableChatProvider,
@@ -102,7 +97,6 @@ class Agent:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
         self.state.is_streaming = True
-        self._task = asyncio.current_task()
 
         try:
             events = agent_loop(
@@ -125,4 +119,3 @@ class Agent:
         finally:
             self.state.is_streaming = False
             self.state.pending_tool_calls.clear()
-            self._task = None

@@ -417,7 +417,7 @@ def test_stateful_agent_tracks_tools_and_consumes_steering_at_the_boundary():
     asyncio.run(scenario())
 
 
-def test_stateful_agent_abort_joins_tool_cleanup_and_resets_execution_state():
+def test_cancelling_the_agent_consumer_joins_tool_cleanup_and_resets_execution_state():
     from nurse_scheduling.ai.agent import Agent
     from nurse_scheduling.ai.agent_types import AgentTool
 
@@ -439,7 +439,7 @@ def test_stateful_agent_abort_joins_tool_cleanup_and_resets_execution_state():
 
         task = asyncio.create_task(consume())
         await started.wait()
-        agent.abort()
+        task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         assert cleaned.is_set()

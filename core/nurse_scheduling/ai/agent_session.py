@@ -291,7 +291,6 @@ class AgentSession:
         snapshot = store.begin_background(session_id) if background else store.begin(session_id, owner)
         if snapshot is None:
             return
-        self.agent.active_run = run
         transcript, schedule_yaml = snapshot.transcript, snapshot.schedule_yaml
         proposal_yaml, proposal_diff = snapshot.proposal_yaml, snapshot.proposal_diff
         history_question = question
@@ -436,12 +435,9 @@ class AgentSession:
             await emit("error", {"message": "The AI response failed unexpectedly."})
         finally:
             run.finishing = True
-            try:
-                if not completed:
-                    store.abort(session_id, snapshot)
-                if logged:
-                    await write_history("finish_turn", run.id, output.text, outcome, error_code, output.usage)
-                if terminal_event is not None:
-                    await publish(*terminal_event)
-            finally:
-                self.agent.active_run = None
+            if not completed:
+                store.abort(session_id, snapshot)
+            if logged:
+                await write_history("finish_turn", run.id, output.text, outcome, error_code, output.usage)
+            if terminal_event is not None:
+                await publish(*terminal_event)
