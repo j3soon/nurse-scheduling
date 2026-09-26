@@ -200,8 +200,10 @@ The investigated alternatives below were not adopted:
   complete exchanges avoids an extra provider call with its cost, latency, and
   failure mode.
 - **Recording failed attempts in the transcript.** Retry resends the question,
-  so a recorded attempt would duplicate it in model context. The chat history
-  log keeps each attempt's outcome.
+  so a recorded attempt would duplicate it in model context. The browser also
+  replaces the failed pair on retry, so the question appears once and an old
+  Retry button cannot resend it again. The chat history log keeps each
+  attempt's outcome and ordered transcript as its lineage.
 
 [pi-agent]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/agent.ts#L188
 [pi-state]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L378
