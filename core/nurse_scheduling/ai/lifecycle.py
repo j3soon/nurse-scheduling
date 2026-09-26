@@ -28,6 +28,9 @@ from fastapi import HTTPException
 
 from .transcript import SessionEntry
 
+# Each run publishes exactly one of these, after its cleanup, whichever transport carries it.
+TERMINAL_EVENTS = frozenset({"done", "stopped", "stale", "error"})
+
 
 @dataclass(eq=False)
 class RunSnapshot:
@@ -136,7 +139,7 @@ class RunEvents:
 
     async def emit(self, event_type: str, data: dict[str, object]) -> None:
         # Finalization must never depend on an HTTP reader that may have left.
-        if event_type in {"done", "stopped", "stale", "error"}:
+        if event_type in TERMINAL_EVENTS:
             self._terminal = event_type, data
             return
         await self._queue.put((event_type, data))

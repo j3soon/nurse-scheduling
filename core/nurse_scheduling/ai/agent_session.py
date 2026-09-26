@@ -43,7 +43,7 @@ from .agent_types import (
 from .config import AiSettings
 from .context import build_provider_messages, recent_history
 from .history import ChatHistory
-from .lifecycle import AgentRun, RunSnapshot
+from .lifecycle import TERMINAL_EVENTS, AgentRun, RunSnapshot
 from .optimizer import OptimizerArtifact, SessionOptimizer
 from .provider import ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
@@ -310,7 +310,7 @@ class AgentSession:
             nonlocal terminal_event
             # Every replayable fragment identifies its turn, even after turn_start expires.
             data = {**data, "turn_id": run.id} if background else data
-            if event_type in {"done", "stopped", "stale", "error"}:
+            if event_type in TERMINAL_EVENTS:
                 terminal_event = event_type, data
             else:
                 await publish(event_type, data)

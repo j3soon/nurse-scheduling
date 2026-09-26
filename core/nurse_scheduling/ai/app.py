@@ -347,10 +347,10 @@ def create_app(
     async def optimizer_completed(session_id: str, prompt: str, artifact: OptimizerArtifact | None) -> None:
         async def emit(event_type: str, data: dict[str, object]) -> None:
             # Retirement revokes publication as well as cancelling execution.
-            if session_id in store._sessions:
+            if store.get(session_id) is not None:
                 event_broker.publish(session_id, event_type, data)
 
-        session = store._sessions.get(session_id)
+        session = store.get(session_id)
         if session is None:
             return
         run = runs.start(

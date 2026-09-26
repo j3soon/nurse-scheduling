@@ -185,6 +185,10 @@ class SessionStore:
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         return snapshot
 
+    def get(self, session_id: str) -> AgentSession | None:
+        """Return a retained session for service-internal work that has no browser owner."""
+        return self._sessions.get(session_id)
+
     def require_owned(self, session_id: str, owner_token: str | None) -> AgentSession:
         """Resolve a session after validating browser ownership."""
         return self._get_owned(session_id, owner_token)
