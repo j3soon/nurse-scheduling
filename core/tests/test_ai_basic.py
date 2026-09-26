@@ -2326,8 +2326,42 @@ def test_proposal_history_event_counts_the_exchange_removed_by_the_cap() -> None
 
     store.discard_proposal(session.id, "browser-owner")
 
-    assert store._sessions[session.id].transcript == [ProposalDecisionEntry("rejected")]
-    assert store.begin(session.id, "browser-owner").previously_dropped == 2
+    # The decision refers to the dropped exchange, so it is dropped and counted with it.
+    assert store._sessions[session.id].transcript == []
+    assert store.begin(session.id, "browser-owner").previously_dropped == 3
+
+
+def test_budget_trimming_drops_a_decision_with_the_exchange_it_decided() -> None:
+    settings = make_settings(max_session_bytes=10_000, max_schedule_bytes=1000, max_history_messages=20)
+    app = create_test_app(settings=settings, provider=FakeProvider())
+    store = app.state.session_store
+    session = store.create("browser-owner", "a" * 10)
+    snapshot = store.begin(session.id, "browser-owner")
+    store.finish(session.id, exchange("q" * 100, "A" * 5_000), ("proposal", "diff"), snapshot=snapshot)
+    store.discard_proposal(session.id, "browser-owner")
+
+    snapshot = store.begin(session.id, "browser-owner")
+    store.finish(session.id, exchange("next", "B" * 6_000), snapshot=snapshot)
+
+    assert session.transcript == exchange("next", "B" * 6_000)
+    assert session.dropped_history_messages == 3
+
+
+def test_prompt_budget_projection_starts_at_a_prompt() -> None:
+    history = [
+        UserEntry("q" * 400),
+        AssistantEntry("Proposed a change."),
+        ProposalDecisionEntry("approved"),
+        UserEntry("Next question."),
+        AssistantEntry("Next answer."),
+    ]
+
+    messages = build_provider_messages(history, "description: schedule\n", "Latest.", max_history_chars=300)
+
+    assert messages[1:-1] == [
+        ChatMessage(role="user", content="Next question."),
+        ChatMessage(role="assistant", content="Next answer."),
+    ]
 
 
 @pytest.mark.parametrize("message_cap", [1, 3], ids=["below-exchange-size", "odd-overflow"])

@@ -71,16 +71,19 @@ def recent_history(transcript: Sequence[SessionEntry], max_chars: int) -> list[C
     provider can accept. A long session would otherwise grow every later prompt past
     the model context window and fail the request outright.
     """
-    kept: list[ChatMessage] = []
+    kept: list[tuple[SessionEntry, ChatMessage]] = []
     remaining = max_chars
     for entry in reversed(transcript):
         message = context_message(entry)
         remaining -= len(json.dumps(message, ensure_ascii=False))
         if remaining < 0:
             break
-        kept.append(message)
-    kept.reverse()
-    return kept
+        kept.append((entry, message))
+    # Start at a prompt. An answer or proposal decision whose prompt did not fit
+    # refers to an exchange the model can no longer see.
+    while kept and not isinstance(kept[-1][0], UserEntry):
+        kept.pop()
+    return [message for _entry, message in reversed(kept)]
 
 
 def prepare_provider_request(conversation: Sequence[ChatMessage]) -> list[ChatMessage]:

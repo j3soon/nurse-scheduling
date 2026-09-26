@@ -176,7 +176,9 @@ Each row lists shared behavior first, then what only one side has.
 Each destination keeps its own subset of a run. The session transcript holds
 only what later model context may need. The chat history log stores the same
 entry types, `user`, `assistant` with its stop reason, and
-`proposal_decision`, as ordered rows under each run.
+`proposal_decision`, as ordered rows under each run. Trimming for memory, the
+message cap, or the prompt budget always leaves a user prompt first, so an
+answer or proposal decision is dropped together with the exchange it belongs to.
 
 | Content | Later model context | Session transcript | Browser and export | Chat history log |
 | --- | --- | --- | --- | --- |

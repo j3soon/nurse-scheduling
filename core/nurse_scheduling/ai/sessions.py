@@ -31,7 +31,7 @@ from .agent_session import AgentSession, RunCompletion, schedule_revision
 from .config import AiSettings
 from .context import recent_history
 from .lifecycle import RunSnapshot
-from .transcript import AssistantEntry, ProposalDecision, SessionEntry, entry_text
+from .transcript import AssistantEntry, ProposalDecision, ProposalDecisionEntry, SessionEntry, UserEntry, entry_text
 
 __all__ = ["SessionStore", "schedule_revision"]
 
@@ -125,10 +125,16 @@ class SessionStore:
                 (index for index, entry in enumerate(session.transcript) if isinstance(entry, AssistantEntry)),
                 None,
             )
-            if oldest_answer is None or len(session.transcript) - oldest_answer - 1 < protected_messages:
+            if oldest_answer is None:
                 break
-            removed = session.transcript[: oldest_answer + 1]
-            del session.transcript[: oldest_answer + 1]
+            end = oldest_answer + 1
+            # A decision on that answer's proposal goes with it.
+            while end < len(session.transcript) and isinstance(session.transcript[end], ProposalDecisionEntry):
+                end += 1
+            if len(session.transcript) - end < protected_messages:
+                break
+            removed = session.transcript[:end]
+            del session.transcript[:end]
             self._charge(session, -sum(_text_bytes(entry_text(entry)) for entry in removed))
             session.dropped_history_messages += len(removed)
 
@@ -141,10 +147,13 @@ class SessionStore:
         )
 
     def _cap_history(self, session: AgentSession) -> None:
-        """Limit retained entries without leaving an assistant reply at the front."""
+        """Limit retained entries so the oldest one is always a prompt.
+
+        An answer or proposal decision left at the front would refer to an exchange that was dropped.
+        """
         overflow = max(0, len(session.transcript) - max(2, self._settings.max_history_messages))
         if overflow:
-            while overflow < len(session.transcript) and isinstance(session.transcript[overflow], AssistantEntry):
+            while overflow < len(session.transcript) and not isinstance(session.transcript[overflow], UserEntry):
                 overflow += 1
             del session.transcript[:overflow]
             session.dropped_history_messages += overflow
