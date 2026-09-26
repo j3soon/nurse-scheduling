@@ -30,7 +30,7 @@ from e2b.exceptions import FileNotFoundException, InvalidArgumentException, Sand
 from e2b.sandbox.commands.command_handle import CommandExitException
 
 from nurse_scheduling.ai.agent_loop import agent_loop
-from nurse_scheduling.ai.agent_types import ToolExecutionEnd, ToolResult
+from nurse_scheduling.ai.agent_types import AgentTool, AgentToolResult, ToolExecutionEnd
 from nurse_scheduling.ai.provider import ChatMessage, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, managed_sandbox
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
@@ -554,15 +554,14 @@ def test_agent_multi_tool_batch_pauses_once_after_both_calls():
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
 
-        async def execute(_name: str, _arguments: str) -> ToolResult:
+        async def execute(_arguments: str) -> AgentToolResult:
             await e2b_backend.read_file("/workspace/schedule.yaml")
-            return ToolResult("schedule", True)
+            return AgentToolResult("schedule", True)
 
         async for event in agent_loop(
             TwoCallProvider(),
             [{"role": "user", "content": "Read twice."}],
-            [],
-            execute,
+            [AgentTool({"type": "function", "function": {"name": "read"}}, execute)],
             e2b_backend.activity_batch,
         ):
             if isinstance(event, ToolExecutionEnd):

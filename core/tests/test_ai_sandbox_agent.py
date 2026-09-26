@@ -28,10 +28,10 @@ import pytest
 from nurse_scheduling.ai.agent_types import (
     AgentEvent,
     AgentProposal,
+    AgentToolResult,
     MessageTextDelta,
     ToolExecutionEnd,
     ToolExecutionStart,
-    ToolResult,
 )
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -184,7 +184,7 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
 
     async def execute_optimizer(current_schedule: str, arguments: str):
         received.append((current_schedule, arguments))
-        return ToolResult("Started in the background.", True)
+        return AgentToolResult("Started in the background.", True)
 
     async def collect() -> list:
         return [
@@ -229,9 +229,9 @@ def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> No
     )
     submitted: list[str] = []
 
-    async def execute_optimizer(current_schedule: str, _arguments: str) -> ToolResult:
+    async def execute_optimizer(current_schedule: str, _arguments: str) -> AgentToolResult:
         submitted.append(current_schedule)
-        return ToolResult("Started in the background.", True)
+        return AgentToolResult("Started in the background.", True)
 
     async def collect() -> None:
         async for _event in run_workspace(
@@ -271,9 +271,9 @@ def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: st
     controls: list[tuple[str, str]] = []
     events: list[AgentEvent | AgentScheduleChange] = []
 
-    async def execute_optimizer(current_schedule: str, received_arguments: str) -> ToolResult:
+    async def execute_optimizer(current_schedule: str, received_arguments: str) -> AgentToolResult:
         controls.append((current_schedule, received_arguments))
-        return ToolResult("Existing job updated.", True)
+        return AgentToolResult("Existing job updated.", True)
 
     async def collect() -> None:
         async for event in run_workspace(

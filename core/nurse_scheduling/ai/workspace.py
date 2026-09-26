@@ -28,7 +28,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .agent_types import ToolResult
+from .agent_types import AgentToolResult
 from .candidate import SCHEDULE_FILENAME, review_schedule_candidate
 from .config import AiSettings
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
@@ -377,7 +377,7 @@ class _ScheduleCandidateTracker:
         self._max_bytes = max_bytes
         self._last_content = base_text.encode("utf-8")
 
-    async def review_if_changed(self) -> tuple[ToolResult, str | None] | None:
+    async def review_if_changed(self) -> tuple[AgentToolResult, str | None] | None:
         prefix = "Trusted schedule check after this command:"
         try:
             content = await self._sandbox.read_file(WORKSPACE_SCHEDULE)
@@ -385,7 +385,7 @@ class _ScheduleCandidateTracker:
             # Report the deletion to the model instead of failing the turn, so it
             # can restore the working copy it removed.
             return (
-                ToolResult(
+                AgentToolResult(
                     f"{prefix}\nThe working copy {WORKSPACE_SCHEDULE} no longer exists. "
                     "Restore it before finishing this turn.",
                     False,
@@ -397,7 +397,7 @@ class _ScheduleCandidateTracker:
         self._last_content = content
         if len(content) > self._max_bytes:
             return (
-                ToolResult(
+                AgentToolResult(
                     f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.",
                     False,
                 ),
@@ -407,7 +407,7 @@ class _ScheduleCandidateTracker:
             candidate = content.decode("utf-8")
         except UnicodeDecodeError:
             return (
-                ToolResult(f"{prefix}\nThe candidate is not valid UTF-8.", False),
+                AgentToolResult(f"{prefix}\nThe candidate is not valid UTF-8.", False),
                 None,
             )
 
@@ -420,7 +420,7 @@ class _ScheduleCandidateTracker:
         )
         if review.proposal is not None:
             return (
-                ToolResult(
+                AgentToolResult(
                     f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule.",
                     True,
                 ),
@@ -432,6 +432,6 @@ class _ScheduleCandidateTracker:
                 "The working copy retains this command's changes. Repair the reported problems before finishing.\n"
             )
         return (
-            ToolResult(f"{prefix}\n{guidance}{review.outcome.text}", review.outcome.ok),
+            AgentToolResult(f"{prefix}\n{guidance}{review.outcome.text}", review.outcome.ok),
             candidate if review.outcome.ok else None,
         )

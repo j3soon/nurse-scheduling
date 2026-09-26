@@ -34,7 +34,7 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from .agent_types import ToolResult
+from .agent_types import AgentToolResult
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
 
 OPTIMIZER_TOOL = "optimizer"
@@ -298,25 +298,25 @@ class SessionOptimizer:
         self._submissions: set[asyncio.Task] = set()
         self._closed = False
 
-    async def execute(self, session_id: str, schedule_yaml: str, arguments: str) -> ToolResult:
+    async def execute(self, session_id: str, schedule_yaml: str, arguments: str) -> AgentToolResult:
         """Execute the model-facing optimizer action."""
         try:
             raw = json.loads(arguments or "{}")
         except json.JSONDecodeError:
-            return ToolResult("Optimizer arguments must be valid JSON.", False)
+            return AgentToolResult("Optimizer arguments must be valid JSON.", False)
         if not isinstance(raw, dict):
-            return ToolResult("Optimizer arguments must be a JSON object.", False)
+            return AgentToolResult("Optimizer arguments must be a JSON object.", False)
         action = raw.get("action", "start")
         if action == "start":
             timeout = raw.get("timeout_seconds")
             if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0):
-                return ToolResult("timeout_seconds must be a positive integer.", False)
+                return AgentToolResult("timeout_seconds must be a positive integer.", False)
             return await self._start(session_id, schedule_yaml, timeout)
         if action == "status":
             return await self._status(session_id)
         if action == "finish_now":
             return await self._finish_now(session_id)
-        return ToolResult("action must be one of: start, status, finish_now.", False)
+        return AgentToolResult("action must be one of: start, status, finish_now.", False)
 
     async def close(self) -> None:
         self._closed = True
@@ -357,25 +357,25 @@ class SessionOptimizer:
                 job.retired.set()
         self._discard_session(session_id)
 
-    async def _start(self, session_id: str, schedule_yaml: str, timeout_seconds: int | None) -> ToolResult:
+    async def _start(self, session_id: str, schedule_yaml: str, timeout_seconds: int | None) -> AgentToolResult:
         if self._closed:
-            return ToolResult("The optimizer service is shutting down.", False)
+            return AgentToolResult("The optimizer service is shutting down.", False)
         owner = self._sessions.get(session_id)
         if owner is None:
             if len(self._sessions) >= self._max_sessions:
-                return ToolResult("The optimizer session limit has been reached.", False)
+                return AgentToolResult("The optimizer session limit has been reached.", False)
             owner = OptimizerSession()
             self._sessions[session_id] = owner
         if owner.reservation is not None:
-            return ToolResult("An optimizer run for this chat session is already being submitted.", False)
+            return AgentToolResult("An optimizer run for this chat session is already being submitted.", False)
         if owner.runs >= self._max_runs_per_session:
-            return ToolResult(
+            return AgentToolResult(
                 f"This chat session has reached its limit of {self._max_runs_per_session} optimizer runs.",
                 False,
             )
         current = self._latest(session_id)
         if current is not None and not _is_terminal(current.payload):
-            return ToolResult(
+            return AgentToolResult(
                 f"Optimizer job {current.id} is already {current.payload.state}. Check it or finish it now.",
                 False,
             )
@@ -406,11 +406,11 @@ class SessionOptimizer:
         reservation: object,
         schedule_yaml: str,
         timeout_seconds: int | None,
-    ) -> ToolResult:
+    ) -> AgentToolResult:
         def owns_submission() -> bool:
             return not self._closed and self._sessions.get(session_id) is owner and owner.reservation is reservation
 
-        expired = ToolResult("This chat session expired while the optimizer job was starting.", False)
+        expired = AgentToolResult("This chat session expired while the optimizer job was starting.", False)
         try:
             prepared = await asyncio.to_thread(prepare_optimizer_schedule, schedule_yaml, self._max_schedule_bytes)
             if not owns_submission():
@@ -421,11 +421,11 @@ class SessionOptimizer:
             )
         except ValueError as exc:
             self._release_reservation(session_id, owner, reservation)
-            return ToolResult(f"The optimizer requires a valid frontend schedule. {exc}", False)
+            return AgentToolResult(f"The optimizer requires a valid frontend schedule. {exc}", False)
         except OptimizerError as exc:
             logger.warning("Optimizer submission failed: %s", exc)
             self._release_reservation(session_id, owner, reservation)
-            return ToolResult(f"The optimizer could not accept the schedule. {exc}", False)
+            return AgentToolResult(f"The optimizer could not accept the schedule. {exc}", False)
         except BaseException:
             self._release_reservation(session_id, owner, reservation)
             raise
@@ -451,7 +451,7 @@ class SessionOptimizer:
             return expired
         if not _is_terminal(job.payload):
             await self._notify_update(job)
-        return ToolResult(
+        return AgentToolResult(
             f"Started optimizer job {job.id} in the background for schedule SHA-256 {job.source_sha256}. "
             "The assistant will be woken when it finishes. The user can keep chatting meanwhile.",
             True,
@@ -487,11 +487,11 @@ class SessionOptimizer:
             if _is_terminal(job.payload):
                 await self._delete_retired(job)
 
-    async def _status(self, session_id: str) -> ToolResult:
+    async def _status(self, session_id: str) -> AgentToolResult:
         job = self._latest(session_id)
         if job is None:
-            return ToolResult("No optimizer job has been started in this chat session.", False)
-        return ToolResult(_job_summary(job), True)
+            return AgentToolResult("No optimizer job has been started in this chat session.", False)
+        return AgentToolResult(_job_summary(job), True)
 
     async def _cancel_retired(self, job: SessionOptimization) -> None:
         try:
@@ -510,24 +510,24 @@ class SessionOptimizer:
             logger.warning("Optimizer cleanup failed job_id=%s error=%s", job.id, exc)
         job.deleted = True
 
-    async def _finish_now(self, session_id: str) -> ToolResult:
+    async def _finish_now(self, session_id: str) -> AgentToolResult:
         job = self._latest(session_id)
         if job is None:
-            return ToolResult("No optimizer job has been started in this chat session.", False)
+            return AgentToolResult("No optimizer job has been started in this chat session.", False)
         if _is_terminal(job.payload):
-            return ToolResult(_job_summary(job), True)
+            return AgentToolResult(_job_summary(job), True)
         try:
             payload = await self._backend.finish_now(job.remote_id)
         except OptimizerError as exc:
             logger.warning("Optimizer finish-now request failed job_id=%s error=%s", job.id, exc)
-            return ToolResult(f"The optimizer did not accept the finish-now request. {exc}", False)
+            return AgentToolResult(f"The optimizer did not accept the finish-now request. {exc}", False)
         # Polling can reach a terminal state while this request is in flight. Keeping
         # the older snapshot would block the session from ever starting another run.
         if self._jobs.get(job.id) is job:
             job.observe(payload)
         if not _is_terminal(job.payload):
             await self._notify_update(job)
-        return ToolResult(
+        return AgentToolResult(
             f"Asked optimizer job {job.id} to finish with its best available result. Current state: {job.payload.state}.",
             True,
         )

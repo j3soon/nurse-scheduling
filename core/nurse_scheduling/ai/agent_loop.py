@@ -22,10 +22,23 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import Any
 
+from .agent_types import (
+    AgentEvent,
+    AgentSteering,
+    AgentTool,
+    AgentToolBatchMetrics,
+    AgentToolResult,
+    MessageReasoningDelta,
+    MessageTextDelta,
+    SteeringSource,
+    ToolBatchObserver,
+    ToolBatchScope,
+    ToolExecutionEnd,
+    ToolExecutionStart,
+)
 from .provider import (
     ChatMessage,
     ReasoningDelta,
@@ -42,22 +55,6 @@ from .provider import (
 logger = logging.getLogger("nurse_scheduling.ai.agent")
 
 
-from .agent_types import (
-    AgentEvent,
-    AgentSteering,
-    AgentToolBatchMetrics,
-    MessageReasoningDelta,
-    MessageTextDelta,
-    SteeringSource,
-    ToolBatchObserver,
-    ToolBatchScope,
-    ToolExecutionEnd,
-    ToolExecutionStart,
-    ToolExecutor,
-    ToolResult,
-)
-
-
 @asynccontextmanager
 async def _unbatched_activity() -> AsyncIterator[None]:
     yield
@@ -66,23 +63,30 @@ async def _unbatched_activity() -> AsyncIterator[None]:
 async def agent_loop(
     provider: ToolCapableChatProvider,
     messages: Sequence[ChatMessage],
-    tools: Sequence[dict[str, Any]],
-    execute: ToolExecutor,
+    tools: Sequence[AgentTool],
     activity_batch: ToolBatchScope | None = None,
-    parallel_tool_names: frozenset[str] = frozenset(),
     observe_tool_batch: ToolBatchObserver | None = None,
     take_steering: SteeringSource | None = None,
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers."""
+    by_name = {tool.name: tool for tool in tools}
+    definitions = [tool.definition for tool in tools]
+
+    async def execute(name: str, arguments: str) -> AgentToolResult:
+        tool = by_name.get(name)
+        if tool is None:
+            return AgentToolResult(f"Unknown tool `{name}`. Available tools: {', '.join(by_name)}.", False)
+        return await tool.execute(arguments)
+
     conversation = list(messages)
     tool_rounds = 0
     tool_calls = 0
     final_answer_only = False
     while True:
         answer, calls = [], ()
-        async for event in provider.stream_events(conversation, [] if final_answer_only else tools):
+        async for event in provider.stream_events(conversation, [] if final_answer_only else definitions):
             if isinstance(event, TextDelta):
                 answer.append(event.text)
                 yield MessageTextDelta(event.text)
@@ -109,7 +113,7 @@ async def agent_loop(
                 break
             conversation.append(assistant_tool_call_message(calls, "".join(answer)))
             for call in calls:
-                outcome = ToolResult(
+                outcome = AgentToolResult(
                     "The trusted tool budget is exhausted. Finish with the verified information already available.",
                     False,
                 )
@@ -125,7 +129,9 @@ async def agent_loop(
         batch_scope = activity_batch or _unbatched_activity
         async with batch_scope():
             image_results: list[ChatMessage] = []
-            parallel = len(calls) > 1 and all(call.name in parallel_tool_names for call in calls)
+            parallel = len(calls) > 1 and all(
+                by_name.get(call.name) is not None and by_name[call.name].read_only for call in calls
+            )
             if parallel:
                 for call in calls:
                     yield ToolExecutionStart(call.name, call.arguments, call.id)
@@ -166,8 +172,8 @@ async def agent_loop(
 
 async def _execute_parallel_tool_calls(
     calls: Sequence[ToolCall],
-    execute: ToolExecutor,
-) -> list[ToolResult]:
+    execute: Callable[[str, str], Awaitable[AgentToolResult]],
+) -> list[AgentToolResult]:
     tasks = [asyncio.create_task(execute(call.name, call.arguments)) for call in calls]
     try:
         return await asyncio.gather(*tasks)
@@ -178,7 +184,7 @@ async def _execute_parallel_tool_calls(
         raise
 
 
-def _log_tool_outcome(name: str, outcome: ToolResult) -> None:
+def _log_tool_outcome(name: str, outcome: AgentToolResult) -> None:
     logger.info(
         "agent tool call name=%s ok=%s result_chars=%s image_bytes=%s",
         name,

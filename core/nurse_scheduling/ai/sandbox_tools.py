@@ -23,7 +23,7 @@ import posixpath
 import secrets
 from typing import Any
 
-from .agent_types import ToolResult
+from .agent_types import AgentToolResult
 from .pi.bash import (
     BASH_TOOL,
     BASH_TOOL_DESCRIPTION,
@@ -88,7 +88,7 @@ class SandboxPiTools:
             _tool_definition(WRITE_TOOL, WRITE_TOOL_DESCRIPTION, write_parameters()),
         ]
 
-    async def execute(self, name: str, arguments: str) -> ToolResult:
+    async def execute(self, name: str, arguments: str) -> AgentToolResult:
         """Run one validated Pi-compatible tool call inside the sandbox."""
         if name == READ_TOOL:
             return await self._read(arguments)
@@ -98,31 +98,31 @@ class SandboxPiTools:
             return await self._edit(arguments)
         if name == WRITE_TOOL:
             return await self._write(arguments)
-        return ToolResult(
+        return AgentToolResult(
             f"Unknown tool `{name}`. Available tools: {', '.join(TOOL_NAMES)}.",
             False,
         )
 
-    async def _read(self, arguments: str) -> ToolResult:
+    async def _read(self, arguments: str) -> AgentToolResult:
         try:
             call = parse_read_input(arguments)
         except ReadArgumentError as exc:
-            return ToolResult(str(exc), False)
+            return AgentToolResult(str(exc), False)
         try:
             content = await self._sandbox.read_file(_resolve_path(call.path))
         except SandboxFileNotFoundError as exc:
-            return ToolResult(str(exc), False)
+            return AgentToolResult(str(exc), False)
         try:
             result = render_read_result(content, call)
         except ReadArgumentError as exc:
-            return ToolResult(str(exc), False)
-        return ToolResult(result.text, True, result.image)
+            return AgentToolResult(str(exc), False)
+        return AgentToolResult(result.text, True, result.image)
 
-    async def _bash(self, arguments: str) -> ToolResult:
+    async def _bash(self, arguments: str) -> AgentToolResult:
         try:
             call = parse_bash_input(arguments)
         except BashArgumentError as exc:
-            return ToolResult(str(exc), False)
+            return AgentToolResult(str(exc), False)
 
         requested_timeout = call.timeout
         effective_timeout = (
@@ -143,32 +143,32 @@ class SandboxPiTools:
             timed_out=result.timed_out,
             timeout_seconds=effective_timeout or self._command_timeout_seconds,
         )
-        return ToolResult(rendered.text, rendered.ok)
+        return AgentToolResult(rendered.text, rendered.ok)
 
-    async def _edit(self, arguments: str) -> ToolResult:
+    async def _edit(self, arguments: str) -> AgentToolResult:
         try:
             call = parse_edit_input(arguments)
         except EditArgumentError as exc:
-            return ToolResult(str(exc), False)
+            return AgentToolResult(str(exc), False)
         path = _resolve_path(call.path)
         try:
             content = await self._sandbox.read_file(path)
         except SandboxFileNotFoundError as exc:
-            return ToolResult(str(exc), False)
+            return AgentToolResult(str(exc), False)
         try:
             edited = apply_edit(content, call)
         except EditApplyError as exc:
-            return ToolResult(str(exc), False)
+            return AgentToolResult(str(exc), False)
         await self._sandbox.write_file(path, edited)
-        return ToolResult(render_edit_result(call.path, len(call.edits)), True)
+        return AgentToolResult(render_edit_result(call.path, len(call.edits)), True)
 
-    async def _write(self, arguments: str) -> ToolResult:
+    async def _write(self, arguments: str) -> AgentToolResult:
         try:
             call = parse_write_input(arguments)
         except WriteArgumentError as exc:
-            return ToolResult(str(exc), False)
+            return AgentToolResult(str(exc), False)
         await self._sandbox.write_file(_resolve_path(call.path), call.content)
-        return ToolResult(render_write_result(call.path), True)
+        return AgentToolResult(render_write_result(call.path), True)
 
 
 def _tool_definition(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:

@@ -22,17 +22,19 @@
 import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from functools import partial
 
 import pytest
 
 from nurse_scheduling.ai.agent_loop import agent_loop
 from nurse_scheduling.ai.agent_types import (
     AgentSteering,
+    AgentTool,
+    AgentToolResult,
     MessageReasoningDelta,
     MessageTextDelta,
     ToolExecutionEnd,
     ToolExecutionStart,
-    ToolResult,
 )
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
@@ -56,6 +58,18 @@ TOOLS = [
         },
     }
 ]
+
+
+def _tools(execute, read_only=frozenset(), *, include_read=False):
+    definitions = list(TOOLS)
+    if include_read:
+        definitions.append({"type": "function", "function": {"name": READ_TOOL, "parameters": {"type": "object"}}})
+    return [
+        AgentTool(
+            definition, partial(execute, definition["function"]["name"]), definition["function"]["name"] in read_only
+        )
+        for definition in definitions
+    ]
 
 
 class FakeProvider:
@@ -82,20 +96,11 @@ def _calls(count: int = 1) -> list:
 
 
 def _run(provider: FakeProvider, *, tool_ok: bool = True, **limits: int) -> list:
-    async def execute(_name: str, _arguments: str) -> ToolResult:
-        return ToolResult("command result", tool_ok)
+    async def execute(_name: str, _arguments: str) -> AgentToolResult:
+        return AgentToolResult("command result", tool_ok)
 
     async def collect() -> list:
-        return [
-            event
-            async for event in agent_loop(
-                provider,
-                QUESTION,
-                TOOLS,
-                execute,
-                **limits,
-            )
-        ]
+        return [event async for event in agent_loop(provider, QUESTION, _tools(execute), **limits)]
 
     return asyncio.run(collect())
 
@@ -129,11 +134,11 @@ def test_an_image_tool_result_is_returned_as_multimodal_content():
     provider = FakeProvider(_calls(), _text("I inspected the image."))
     image = b"\x89PNG\r\n\x1a\nimage"
 
-    async def execute(_name: str, _arguments: str) -> ToolResult:
-        return ToolResult("Read image.", True, ToolResultImage("image/png", image))
+    async def execute(_name: str, _arguments: str) -> AgentToolResult:
+        return AgentToolResult("Read image.", True, ToolResultImage("image/png", image))
 
     async def collect() -> None:
-        async for _event in agent_loop(provider, QUESTION, TOOLS, execute):
+        async for _event in agent_loop(provider, QUESTION, _tools(execute)):
             pass
 
     asyncio.run(collect())
@@ -155,11 +160,11 @@ def test_an_image_tool_result_is_returned_as_multimodal_content():
 def test_image_tool_results_follow_all_tool_replies():
     provider = FakeProvider(_calls(2), _text("Done."))
 
-    async def execute(_name: str, _arguments: str) -> ToolResult:
-        return ToolResult("Read image.", True, ToolResultImage("image/png", b"image"))
+    async def execute(_name: str, _arguments: str) -> AgentToolResult:
+        return AgentToolResult("Read image.", True, ToolResultImage("image/png", b"image"))
 
     async def collect() -> None:
-        async for _event in agent_loop(provider, QUESTION, TOOLS, execute):
+        async for _event in agent_loop(provider, QUESTION, _tools(execute)):
             pass
 
     asyncio.run(collect())
@@ -178,8 +183,8 @@ def test_all_queued_steering_is_injected_after_the_next_tool_batch():
     ]
     close_checks: list[bool] = []
 
-    async def execute(_name: str, _arguments: str) -> ToolResult:
-        return ToolResult("command result", True)
+    async def execute(_name: str, _arguments: str) -> AgentToolResult:
+        return AgentToolResult("command result", True)
 
     def take_steering(close_if_empty: bool) -> list[tuple[str, str]]:
         close_checks.append(close_if_empty)
@@ -188,16 +193,7 @@ def test_all_queued_steering_is_injected_after_the_next_tool_batch():
         return messages
 
     async def collect() -> list:
-        return [
-            event
-            async for event in agent_loop(
-                provider,
-                QUESTION,
-                TOOLS,
-                execute,
-                take_steering=take_steering,
-            )
-        ]
+        return [event async for event in agent_loop(provider, QUESTION, _tools(execute), take_steering=take_steering)]
 
     events = asyncio.run(collect())
 
@@ -238,7 +234,7 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
     max_active = 0
     both_started = asyncio.Event()
 
-    async def execute(_name: str, arguments: str) -> ToolResult:
+    async def execute(_name: str, arguments: str) -> AgentToolResult:
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
@@ -246,19 +242,10 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
             both_started.set()
         await both_started.wait()
         active -= 1
-        return ToolResult(arguments, True)
+        return AgentToolResult(arguments, True)
 
     async def collect() -> list:
-        return [
-            event
-            async for event in agent_loop(
-                provider,
-                QUESTION,
-                TOOLS,
-                execute,
-                parallel_tool_names=frozenset({BASH_TOOL}),
-            )
-        ]
+        return [event async for event in agent_loop(provider, QUESTION, _tools(execute, frozenset({BASH_TOOL})))]
 
     events = asyncio.run(collect())
     uses = [event for event in events if isinstance(event, ToolExecutionEnd)]
@@ -277,7 +264,7 @@ def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
     sibling_started = asyncio.Event()
     sibling_cancelled = asyncio.Event()
 
-    async def execute(_name: str, arguments: str) -> ToolResult:
+    async def execute(_name: str, arguments: str) -> AgentToolResult:
         if "fail" in arguments:
             await sibling_started.wait()
             raise ValueError("tool failed")
@@ -289,13 +276,7 @@ def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
             raise
 
     async def collect() -> None:
-        async for _event in agent_loop(
-            provider,
-            QUESTION,
-            TOOLS,
-            execute,
-            parallel_tool_names=frozenset({BASH_TOOL}),
-        ):
+        async for _event in agent_loop(provider, QUESTION, _tools(execute, frozenset({BASH_TOOL}))):
             pass
 
     with pytest.raises(ValueError, match="tool failed"):
@@ -312,22 +293,16 @@ def test_mixed_tool_batch_remains_sequential():
     active = 0
     max_active = 0
 
-    async def execute(_name: str, _arguments: str) -> ToolResult:
+    async def execute(_name: str, _arguments: str) -> AgentToolResult:
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
         await asyncio.sleep(0.01)
         active -= 1
-        return ToolResult("result", True)
+        return AgentToolResult("result", True)
 
     async def collect() -> None:
-        async for _event in agent_loop(
-            provider,
-            QUESTION,
-            TOOLS,
-            execute,
-            parallel_tool_names=frozenset({READ_TOOL}),
-        ):
+        async for _event in agent_loop(provider, QUESTION, _tools(execute, frozenset({READ_TOOL}), include_read=True)):
             pass
 
     asyncio.run(collect())
@@ -348,14 +323,14 @@ def test_one_activity_batch_contains_all_calls_from_a_model_response():
         finally:
             activity.append("exit")
 
-    async def execute(_name: str, _arguments: str) -> ToolResult:
+    async def execute(_name: str, _arguments: str) -> AgentToolResult:
         nonlocal executed
         assert activity == ["enter"]
         executed += 1
-        return ToolResult("command result", True)
+        return AgentToolResult("command result", True)
 
     async def collect() -> None:
-        async for _event in agent_loop(provider, QUESTION, TOOLS, execute, activity_batch):
+        async for _event in agent_loop(provider, QUESTION, _tools(execute), activity_batch=activity_batch):
             pass
 
     asyncio.run(collect())
@@ -427,7 +402,7 @@ def test_stateful_agent_tracks_tools_and_consumes_steering_at_the_boundary():
             assert agent.state.pending_tool_calls == {"call_0"}
             agent.steer("next", "Check the next day too.")
             agent.steer("next", "Duplicate delivery.")
-            return ToolResult("result", True)
+            return AgentToolResult("result", True)
 
         events = []
         async for event in agent.prompt(provider, QUESTION, [AgentTool(TOOLS[0], execute)]):
@@ -491,3 +466,22 @@ def test_closing_agent_stream_resets_state_before_another_prompt():
         ]
 
     asyncio.run(scenario())
+
+
+def test_unknown_tool_returns_correlated_failure_without_executing_a_tool():
+    provider = FakeProvider([ToolCallRequest((ToolCall("unknown-call", "missing", "{}"),))], _text("Recovered."))
+
+    async def execute(_name, _arguments):
+        pytest.fail("An unknown tool must not execute a registered tool")
+
+    async def collect():
+        return [event async for event in agent_loop(provider, QUESTION, _tools(execute))]
+
+    events = asyncio.run(collect())
+    result = next(event for event in events if isinstance(event, ToolExecutionEnd))
+    assert result.tool_call_id == "unknown-call"
+    assert not result.ok
+    assert "Unknown tool `missing`" in result.result
+    assert provider.requests[1][0][-1]["tool_call_id"] == "unknown-call"
+    assert provider.requests[1][0][-1]["content"] == result.result
+    assert events[-1] == MessageTextDelta("Recovered.")

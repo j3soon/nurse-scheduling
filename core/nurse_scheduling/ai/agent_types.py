@@ -87,13 +87,12 @@ AgentEvent = (
     | AgentProposal
     | TokenUsage
 )
-ToolExecutor = Callable[[str, str], Awaitable["ToolResult"]]
 ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
 SteeringSource = Callable[[bool], Sequence[tuple[str, str]]]
 
 
 @dataclass(frozen=True)
-class ToolResult:
+class AgentToolResult:
     """One provider-neutral result produced by an agent-facing tool."""
 
     text: str
@@ -119,7 +118,7 @@ class AgentTool:
     """A model-facing definition bound to its execution and concurrency policy."""
 
     definition: dict[str, Any]
-    execute: Callable[[str], Awaitable[ToolResult]]
+    execute: Callable[[str], Awaitable[AgentToolResult]]
     read_only: bool = False
 
     @property

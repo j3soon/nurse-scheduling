@@ -27,7 +27,7 @@ from contextlib import aclosing
 from functools import partial
 
 from .agent import Agent
-from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, ToolExecutionEnd, ToolResult
+from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, AgentToolResult, ToolExecutionEnd
 from .candidate import review_schedule_candidate
 from .optimizer import OPTIMIZER_TOOL, optimizer_tool_definition
 from .pi.read import READ_TOOL
@@ -59,7 +59,7 @@ class WorkspaceTools:
         sandbox: SandboxWorkspace,
         schedule_yaml: str,
         limits: WorkspaceLimits,
-        execute_optimizer: Callable[[str, str], Awaitable[ToolResult]] | None,
+        execute_optimizer: Callable[[str, str], Awaitable[AgentToolResult]] | None,
     ) -> None:
         self.sandbox = sandbox
         self.schedule_yaml = schedule_yaml
@@ -79,13 +79,7 @@ class WorkspaceTools:
             for definition in definitions
         ]
 
-    async def execute(self, name: str, arguments: str) -> ToolResult:
-        for tool in self.tools:
-            if tool.name == name:
-                return await tool.execute(arguments)
-        return await self._execute(name, arguments)
-
-    async def _execute(self, name: str, arguments: str) -> ToolResult:
+    async def _execute(self, name: str, arguments: str) -> AgentToolResult:
         if name == OPTIMIZER_TOOL and self.execute_optimizer is not None:
             try:
                 optimizer_arguments = json.loads(arguments or "{}")
@@ -99,10 +93,10 @@ class WorkspaceTools:
             try:
                 current_schedule = (await self.sandbox.read_file(WORKSPACE_SCHEDULE)).decode("utf-8")
             except (SandboxFileNotFoundError, UnicodeDecodeError):
-                return ToolResult("The current working schedule is unavailable or invalid.", False)
+                return AgentToolResult("The current working schedule is unavailable or invalid.", False)
             review = review_schedule_candidate(self.schedule_yaml, current_schedule, self.limits.max_schedule_bytes)
             if not review.outcome.ok:
-                return ToolResult(f"Trusted schedule check before optimizer:\n{review.outcome.text}", False)
+                return AgentToolResult(f"Trusted schedule check before optimizer:\n{review.outcome.text}", False)
             return await self.execute_optimizer(current_schedule, arguments)
         outcome = await self.sandbox_tools.execute(name, arguments)
         if name == READ_TOOL:
@@ -111,7 +105,7 @@ class WorkspaceTools:
         if candidate_status is None:
             return outcome
         validation, schedule_change = candidate_status
-        return ToolResult(
+        return AgentToolResult(
             f"{outcome.text}\n\n{validation.text}",
             outcome.ok and validation.ok,
             details={"schedule_yaml": schedule_change} if schedule_change is not None else None,
@@ -129,7 +123,7 @@ async def run_workspace(
     take_steering: Callable[[bool], Sequence[tuple[str, str]]] | None = None,
     pending_proposal_yaml: str = "",
     pending_proposal_diff: str = "",
-    execute_optimizer: Callable[[str, str], Awaitable[ToolResult]] | None = None,
+    execute_optimizer: Callable[[str, str], Awaitable[AgentToolResult]] | None = None,
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     agent: Agent | None = None,
@@ -155,7 +149,6 @@ async def run_workspace(
                     provider,
                     messages,
                     toolset.tools,
-                    unknown_tool=toolset.execute,
                     activity_batch=sandbox.activity_batch,
                     observe_tool_batch=observe_tool_batch,
                     take_steering=take_steering,

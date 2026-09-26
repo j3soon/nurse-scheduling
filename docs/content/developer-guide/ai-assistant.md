@@ -157,7 +157,7 @@ counterparts, not identical APIs or a mapping of Pi's separate harness runtime.
 | --- | --- | --- |
 | `Agent` / `AgentState` | [Agent][pi-agent], [AgentState][pi-state] | Both own streaming state, pending tool IDs, steering, and cancellation. Our model context is passed per run and successful history is committed by the session. Pi also keeps model, tools, transcript, and partial messages in agent state. |
 | `agent_loop` | [agentLoop][pi-loop] | Both repeat model responses and tool execution, consuming steering at boundaries. We parallelize only all-read batches and enforce tool budgets. Pi supports configurable execution modes and a separate follow-up queue. |
-| `AgentTool` / `ToolResult` | [AgentTool / AgentToolResult][pi-tools] | Both bind tool definitions to execution and return model content plus UI details. Ours accepts raw JSON arguments and returns text, an optional image, and explicit success status. Pi passes parsed parameters, call ID, cancellation signal, and a partial-update callback. |
+| `AgentTool` / `AgentToolResult` | [AgentTool / AgentToolResult][pi-tools] | Both bind tool definitions to execution and return model content plus UI details. Ours accepts raw JSON arguments and returns text, an optional image, and explicit success status. Pi passes parsed parameters, call ID, cancellation signal, and a partial-update callback. |
 | `AgentSession` / `RunOutput` | [AgentSession][pi-session] | Both layer application behavior over `Agent`. Ours owns snapshot and proposal transitions, accumulates provisional output, and saves history and proposals after cleanup. `SessionStore` wraps mutations with ownership, expiry, and memory checks. Pi's coding session adds persistence, compaction, retries, and extension handling. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot` | [ActiveRun and run lifecycle][pi-agent] | Both track active execution and cancellation. Our service adds per-session FIFO admission, queued background runs, and a versioned commit capability. These three types have no direct counterpart in this Pi path. |
 | Steering queue | [steer / followUp][pi-agent] | Both deliver queued input at execution boundaries. Our steering drains all admitted messages, deduplicates IDs, and closes atomically when the answer ends. Optimizer follow-ups enter `SessionRuns` as fresh runs. Pi's follow-up queue continues the current run when it would otherwise finish. |
@@ -279,7 +279,7 @@ sequenceDiagram
             E2B-->>Workspace: Contents or missing file
             Workspace->>Workspace: If changed or missing, validate and attach model feedback
         end
-        Workspace-->>Agent: ToolResult with output, status, image and preview details if present
+        Workspace-->>Agent: AgentToolResult with output, status, image and preview details if present
         Agent-->>Session: ToolExecutionEnd with matching call ID
         Session-->>Browser: SSE tool
         opt Changed working copy passes validation

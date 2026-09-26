@@ -33,8 +33,6 @@ from .agent_types import (
     ToolBatchScope,
     ToolExecutionEnd,
     ToolExecutionStart,
-    ToolExecutor,
-    ToolResult,
 )
 from .lifecycle import AgentRun
 from .provider import ChatMessage, ToolCapableChatProvider
@@ -95,7 +93,6 @@ class Agent:
         messages: Sequence[ChatMessage],
         tools: Sequence[AgentTool],
         *,
-        unknown_tool: ToolExecutor | None = None,
         activity_batch: ToolBatchScope | None = None,
         observe_tool_batch: ToolBatchObserver | None = None,
         take_steering: SteeringSource | None = None,
@@ -104,25 +101,15 @@ class Agent:
     ) -> AsyncIterator[AgentEvent]:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
-        by_name = {tool.name: tool for tool in tools}
         self.state.is_streaming = True
         self._task = asyncio.current_task()
-
-        async def execute(name: str, arguments: str) -> ToolResult:
-            if name in by_name:
-                return await by_name[name].execute(arguments)
-            if unknown_tool is not None:
-                return await unknown_tool(name, arguments)
-            return ToolResult(f"Unknown tool `{name}`.", False)
 
         try:
             events = agent_loop(
                 provider,
                 messages,
-                [tool.definition for tool in tools],
-                execute,
+                tools,
                 activity_batch=activity_batch,
-                parallel_tool_names=frozenset(tool.name for tool in tools if tool.read_only),
                 observe_tool_batch=observe_tool_batch,
                 take_steering=take_steering or self.take_steering,
                 max_tool_rounds=max_tool_rounds,
