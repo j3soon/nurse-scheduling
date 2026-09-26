@@ -12,6 +12,7 @@
 
   pip install -r docs/requirements.txt
   python -m zensical build --clean --strict
+  python scripts/check_docs_links.py
 
   mkdir -p web-frontend/out/docs
   mv site/* web-frontend/out/docs/
@@ -34,6 +35,11 @@
 [[redirects]]
   from = "/docs/ai-assistant/*"
   to = "/docs/developer-guide/ai-assistant/:splat"
+  status = 301
+
+[[redirects]]
+  from = "/docs/containers/*"
+  to = "/docs/developer-guide/containers/:splat"
   status = 301
 
 [[redirects]]

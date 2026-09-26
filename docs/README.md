@@ -21,4 +21,5 @@ For building the static site, run:
 
 ```sh
 zensical build --clean --strict
+python scripts/check_docs_links.py
 ```

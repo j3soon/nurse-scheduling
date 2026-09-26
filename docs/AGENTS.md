@@ -87,6 +87,8 @@
   hosts, or the capture script aborts.
 - Run `zensical build --clean --strict` and `git diff --check` before
   finishing.
+- Run `python scripts/check_docs_links.py` after the build to check deployed
+  docs links, anchors, and redirect targets referenced by the repository.
 - Verify internal links and referenced assets resolve without 404 responses.
 - After renaming a heading, update inbound anchor links and let the Zensical
   build check for stale anchors.

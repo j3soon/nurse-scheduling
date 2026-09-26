@@ -629,6 +629,8 @@ defaults and validation rules.
 
 ## Storage and Deployment
 
+### Durable chat logging
+
 PostgreSQL chat logging is optional for native runs and included in both
 backend Compose variants. `chat_runs` keeps run metadata: status, error code,
 model, timestamps, usage when available, and attachment count.
@@ -648,7 +650,12 @@ fails, the request returns HTTP `503` before contacting the provider. If the
 final write fails, a completed live run reports `history_saved: false` and
 logs the failure. Retention removes old runs according to
 `AI_HISTORY_RETENTION_DAYS`. Backups need their own retention policy. Use the
-optional pgAdmin Compose profile for inspection:
+optional pgAdmin Compose profile for inspection.
+
+### Inspect chat history with pgAdmin
+
+Start pgAdmin from `docker/` with the same Compose file and environment file
+used by the deployment:
 
 ```sh
 cd docker
@@ -660,6 +667,24 @@ forward that port with `ssh -L 5050:127.0.0.1:5050 user@backend-host`.
 The Compose variant using a process-local optimizer uses
 `compose.backend.memory.yml` instead. The [backend deployment guide](backend-deployment.md)
 covers the Compose services and environment file.
+
+Open `http://127.0.0.1:5050` and sign in with
+`admin@nursescheduling.org` / `pgadmin`. Under **Nurse Scheduling**, connect
+to **AI chat history** with database password `ai_history`. The server
+definition is preloaded. In **Tools > Query Tool**, inspect recent entries:
+
+```sql
+SELECT r.started_at, s.auth_credential_id, r.status, r.model,
+       e.seq, e.type, e.payload
+FROM chat_runs AS r
+JOIN chat_sessions AS s ON s.id = r.session_id
+JOIN chat_run_entries AS e ON e.run_id = r.id
+ORDER BY r.started_at DESC, e.seq
+LIMIT 100;
+```
+
+Press Ctrl+C when finished. Compose removes the temporary pgAdmin container;
+the PostgreSQL service and its `postgres-ai-data` volume remain intact.
 
 The production NGINX proxy routes `/ai/*` to the AI service and other paths to
 the optimizer API. It must disable response buffering for streaming routes.
