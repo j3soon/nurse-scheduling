@@ -26,7 +26,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from openpyxl import Workbook
 from PIL import Image, ImageDraw, ImageFont
 
-from nurse_scheduling.ai.sandbox_agent import SandboxAttachment
+from nurse_scheduling.ai.workspace import SandboxAttachment
 
 
 def _label_image(label: str) -> bytes:

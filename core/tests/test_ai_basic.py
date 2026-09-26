@@ -65,7 +65,7 @@ from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import (
+from nurse_scheduling.ai.workspace import (
     WORKSPACE_PENDING_DIFF,
     WORKSPACE_PENDING_PROPOSAL,
     WORKSPACE_SCHEDULE,

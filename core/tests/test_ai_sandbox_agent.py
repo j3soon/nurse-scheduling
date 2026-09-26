@@ -25,13 +25,13 @@ from collections.abc import AsyncIterator, Sequence
 
 import pytest
 
-from nurse_scheduling.ai.agent import (
+from nurse_scheduling.ai.agent_types import (
     AgentEvent,
     AgentProposal,
     AgentText,
-    AgentToolOutcome,
-    AgentToolStart,
-    AgentToolUse,
+    ToolExecutionEnd,
+    ToolExecutionStart,
+    ToolResult,
 )
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, WORKSPACE_OPTIMIZER_RESULT
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
@@ -41,7 +41,9 @@ from nurse_scheduling.ai.pi.write import WRITE_TOOL
 from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import (
+from nurse_scheduling.ai.sandbox_agent import run_sandbox_agent
+from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
+from nurse_scheduling.ai.workspace import (
     REFERENCE_SCHEMAS,
     REFERENCE_USER_GUIDE,
     WORKSPACE_ATTACHMENT_MANIFEST,
@@ -53,9 +55,7 @@ from nurse_scheduling.ai.sandbox_agent import (
     SandboxAttachment,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
-    run_sandbox_agent,
 )
-from nurse_scheduling.ai.schema import load_taiwan_holidays_reference, load_user_guide_references
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, schedule_yaml
 
@@ -155,8 +155,14 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
         EDIT_TOOL,
         WRITE_TOOL,
     ]
-    assert isinstance(events[0], AgentToolStart)
-    tool_use = next(event for event in events if isinstance(event, AgentToolUse))
+    assert isinstance(events[0], ToolExecutionStart)
+    assert events[0].tool_call_id
+    preview_result = next(event for event in events if isinstance(event, ToolExecutionEnd))
+    assert preview_result.tool_call_id == events[0].tool_call_id
+    assert preview_result.details["schedule_yaml"] == next(
+        event.schedule_yaml for event in events if isinstance(event, AgentScheduleChange)
+    )
+    tool_use = next(event for event in events if isinstance(event, ToolExecutionEnd))
     assert tool_use.ok
     assert "Trusted schedule check after this command" in tool_use.result
     assert "passed trusted server-side validation" in tool_use.result
@@ -178,7 +184,7 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
 
     async def execute_optimizer(current_schedule: str, arguments: str):
         received.append((current_schedule, arguments))
-        return AgentToolOutcome("Started in the background.", True)
+        return ToolResult("Started in the background.", True)
 
     async def collect() -> list:
         return [
@@ -202,7 +208,7 @@ def test_optimizer_tool_receives_the_current_working_schedule() -> None:
         "Default: 420 seconds"
         in optimizer_tool["function"]["parameters"]["properties"]["timeout_seconds"]["description"]
     )
-    assert next(event for event in events if isinstance(event, AgentToolUse)).ok
+    assert next(event for event in events if isinstance(event, ToolExecutionEnd)).ok
 
 
 def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> None:
@@ -223,9 +229,9 @@ def test_optimizer_rejects_an_invalid_working_schedule_before_submission() -> No
     )
     submitted: list[str] = []
 
-    async def execute_optimizer(current_schedule: str, _arguments: str) -> AgentToolOutcome:
+    async def execute_optimizer(current_schedule: str, _arguments: str) -> ToolResult:
         submitted.append(current_schedule)
-        return AgentToolOutcome("Started in the background.", True)
+        return ToolResult("Started in the background.", True)
 
     async def collect() -> None:
         async for _event in run_sandbox_agent(
@@ -265,9 +271,9 @@ def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: st
     controls: list[tuple[str, str]] = []
     events: list[AgentEvent | AgentScheduleChange] = []
 
-    async def execute_optimizer(current_schedule: str, received_arguments: str) -> AgentToolOutcome:
+    async def execute_optimizer(current_schedule: str, received_arguments: str) -> ToolResult:
         controls.append((current_schedule, received_arguments))
-        return AgentToolOutcome("Existing job updated.", True)
+        return ToolResult("Existing job updated.", True)
 
     async def collect() -> None:
         async for event in run_sandbox_agent(
@@ -284,7 +290,9 @@ def test_optimizer_job_controls_work_with_an_invalid_working_schedule(action: st
         asyncio.run(collect())
 
     assert controls == [("", arguments)]
-    control_result = next(event for event in events if isinstance(event, AgentToolUse) and event.name == OPTIMIZER_TOOL)
+    control_result = next(
+        event for event in events if isinstance(event, ToolExecutionEnd) and event.name == OPTIMIZER_TOOL
+    )
     assert control_result.ok
 
 
@@ -395,7 +403,7 @@ def test_write_tool_rewrites_validates_and_proposes_the_schedule():
 
     events = _collect(provider, factory)
 
-    tool_use = next(event for event in events if isinstance(event, AgentToolUse))
+    tool_use = next(event for event in events if isinstance(event, ToolExecutionEnd))
     assert tool_use.name == WRITE_TOOL
     assert tool_use.ok
     assert "passed trusted server-side validation" in tool_use.result
@@ -428,7 +436,7 @@ def test_edit_tool_replaces_validates_and_proposes_the_schedule():
 
     events = _collect(provider, factory)
 
-    tool_use = next(event for event in events if isinstance(event, AgentToolUse))
+    tool_use = next(event for event in events if isinstance(event, ToolExecutionEnd))
     assert tool_use.name == EDIT_TOOL
     assert tool_use.ok
     assert "passed trusted server-side validation" in tool_use.result
@@ -559,7 +567,7 @@ def test_intermediate_trusted_validation_lets_the_model_repair_a_bad_edit():
 
     events = _collect(provider, factory)
 
-    tools = [event for event in events if isinstance(event, AgentToolUse)]
+    tools = [event for event in events if isinstance(event, ToolExecutionEnd)]
     assert not tools[0].ok
     assert "working copy retains this command's changes" in tools[0].result
     assert "Repair the reported problems before finishing" in tools[0].result
@@ -596,7 +604,7 @@ def test_a_deleted_working_copy_is_reported_so_the_model_can_restore_it():
 
     events = _collect(provider, factory)
 
-    tools = [event for event in events if isinstance(event, AgentToolUse)]
+    tools = [event for event in events if isinstance(event, ToolExecutionEnd)]
     assert not tools[0].ok
     assert f"{WORKSPACE_SCHEDULE} no longer exists" in tools[0].result
     assert tools[1].ok

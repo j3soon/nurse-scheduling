@@ -17,14 +17,13 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# This code is mostly AI generated.
+# This file is mostly AI generated.
 
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 from .provider import (
@@ -35,7 +34,6 @@ from .provider import (
     ToolCall,
     ToolCallRequest,
     ToolCapableChatProvider,
-    ToolResultImage,
     assistant_tool_call_message,
     tool_result_image_message,
     tool_result_message,
@@ -44,58 +42,20 @@ from .provider import (
 logger = logging.getLogger("nurse_scheduling.ai.agent")
 
 
-@dataclass(frozen=True)
-class AgentText:
-    """One streamed fragment of the answer shown to the user."""
-
-    text: str
-
-
-@dataclass(frozen=True)
-class AgentReasoning:
-    """One streamed fragment of the model's reasoning, for the reader only."""
-
-    text: str
-
-
-@dataclass(frozen=True)
-class AgentToolStart:
-    """One tool request recorded before execution begins."""
-
-    name: str
-    arguments: str
-
-
-@dataclass(frozen=True)
-class AgentToolUse:
-    """One tool call the assistant made, with what it sent and received."""
-
-    name: str
-    arguments: str
-    result: str
-    ok: bool
-
-
-@dataclass(frozen=True)
-class AgentSteering:
-    """One queued user message injected at a model turn boundary."""
-
-    message_id: str
-    text: str
-
-
-@dataclass(frozen=True)
-class AgentProposal:
-    """The schedule the run ended with, waiting for the user to approve it."""
-
-    text: str
-    diff: str
-
-
-AgentEvent = AgentText | AgentReasoning | AgentToolStart | AgentToolUse | AgentSteering | AgentProposal | TokenUsage
-ToolExecutor = Callable[[str, str], Awaitable["AgentToolOutcome"]]
-ToolBatchScope = Callable[[], AbstractAsyncContextManager[None]]
-SteeringSource = Callable[[bool], Sequence[tuple[str, str]]]
+from .agent_types import (
+    AgentEvent,
+    AgentReasoning,
+    AgentSteering,
+    AgentText,
+    AgentToolBatchMetrics,
+    SteeringSource,
+    ToolBatchObserver,
+    ToolBatchScope,
+    ToolExecutionEnd,
+    ToolExecutionStart,
+    ToolExecutor,
+    ToolResult,
+)
 
 
 @asynccontextmanager
@@ -103,28 +63,7 @@ async def _unbatched_activity() -> AsyncIterator[None]:
     yield
 
 
-@dataclass(frozen=True)
-class AgentToolOutcome:
-    """One provider-neutral result produced by an agent-facing tool."""
-
-    text: str
-    ok: bool
-    image: ToolResultImage | None = None
-
-
-@dataclass(frozen=True)
-class AgentToolBatchMetrics:
-    """Execution timing for one model-issued tool batch."""
-
-    call_count: int
-    parallel: bool
-    execution_seconds: float
-
-
-ToolBatchObserver = Callable[[AgentToolBatchMetrics], None]
-
-
-async def run_tool_agent(
+async def agent_loop(
     provider: ToolCapableChatProvider,
     messages: Sequence[ChatMessage],
     tools: Sequence[dict[str, Any]],
@@ -135,7 +74,7 @@ async def run_tool_agent(
     take_steering: SteeringSource | None = None,
     max_tool_rounds: int | None = None,
     max_tool_calls: int | None = None,
-) -> AsyncIterator[AgentText | AgentReasoning | AgentToolStart | AgentToolUse]:
+) -> AsyncIterator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers."""
     conversation = list(messages)
     tool_rounds = 0
@@ -170,12 +109,12 @@ async def run_tool_agent(
                 break
             conversation.append(assistant_tool_call_message(calls, "".join(answer)))
             for call in calls:
-                outcome = AgentToolOutcome(
+                outcome = ToolResult(
                     "The trusted tool budget is exhausted. Finish with the verified information already available.",
                     False,
                 )
-                yield AgentToolStart(call.name, call.arguments)
-                yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                yield ToolExecutionStart(call.name, call.arguments, call.id)
+                yield ToolExecutionEnd(call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details)
                 conversation.append(tool_result_message(call.id, outcome.text))
             final_answer_only = True
             continue
@@ -189,26 +128,30 @@ async def run_tool_agent(
             parallel = len(calls) > 1 and all(call.name in parallel_tool_names for call in calls)
             if parallel:
                 for call in calls:
-                    yield AgentToolStart(call.name, call.arguments)
+                    yield ToolExecutionStart(call.name, call.arguments, call.id)
                 started = time.perf_counter()
                 outcomes = await _execute_parallel_tool_calls(calls, execute)
                 execution_seconds = time.perf_counter() - started
                 completed = zip(calls, outcomes, strict=True)
                 for call, outcome in completed:
                     _log_tool_outcome(call.name, outcome)
-                    yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                    yield ToolExecutionEnd(
+                        call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details
+                    )
                     conversation.append(tool_result_message(call.id, outcome.text))
                     if outcome.image is not None:
                         image_results.append(tool_result_image_message(call.id, outcome.image))
             else:
                 execution_seconds = 0.0
                 for call in calls:
-                    yield AgentToolStart(call.name, call.arguments)
+                    yield ToolExecutionStart(call.name, call.arguments, call.id)
                     started = time.perf_counter()
                     outcome = await execute(call.name, call.arguments)
                     execution_seconds += time.perf_counter() - started
                     _log_tool_outcome(call.name, outcome)
-                    yield AgentToolUse(call.name, call.arguments, outcome.text, outcome.ok)
+                    yield ToolExecutionEnd(
+                        call.name, call.arguments, outcome.text, outcome.ok, call.id, outcome.details
+                    )
                     conversation.append(tool_result_message(call.id, outcome.text))
                     if outcome.image is not None:
                         image_results.append(tool_result_image_message(call.id, outcome.image))
@@ -224,7 +167,7 @@ async def run_tool_agent(
 async def _execute_parallel_tool_calls(
     calls: Sequence[ToolCall],
     execute: ToolExecutor,
-) -> list[AgentToolOutcome]:
+) -> list[ToolResult]:
     tasks = [asyncio.create_task(execute(call.name, call.arguments)) for call in calls]
     try:
         return await asyncio.gather(*tasks)
@@ -235,7 +178,7 @@ async def _execute_parallel_tool_calls(
         raise
 
 
-def _log_tool_outcome(name: str, outcome: AgentToolOutcome) -> None:
+def _log_tool_outcome(name: str, outcome: ToolResult) -> None:
     logger.info(
         "agent tool call name=%s ok=%s result_chars=%s image_bytes=%s",
         name,

@@ -35,13 +35,13 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
-from nurse_scheduling.ai.agent import (
+from nurse_scheduling.ai.agent_types import (
     AgentProposal,
     AgentReasoning,
     AgentText,
     AgentToolBatchMetrics,
-    AgentToolStart,
-    AgentToolUse,
+    ToolExecutionEnd,
+    ToolExecutionStart,
 )
 from nurse_scheduling.ai.app import PROPOSAL_APPROVED_HISTORY, PROPOSAL_REJECTED_HISTORY
 from nurse_scheduling.ai.background import build_provider_messages
@@ -57,12 +57,7 @@ from nurse_scheduling.ai.provider import (
 )
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
-from nurse_scheduling.ai.sandbox_agent import (
-    SANDBOX_SYSTEM_PROMPT,
-    SandboxAgentLimits,
-    SandboxTurnMetrics,
-    run_sandbox_agent,
-)
+from nurse_scheduling.ai.sandbox_agent import run_sandbox_agent
 from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
@@ -70,6 +65,7 @@ from nurse_scheduling.ai.schema import (
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
+from nurse_scheduling.ai.workspace import SANDBOX_SYSTEM_PROMPT, SandboxAgentLimits, SandboxTurnMetrics
 from nurse_scheduling.loader import _load_yaml
 
 from .attachment_fixtures import load_attachment_fixtures
@@ -275,7 +271,7 @@ async def run_case(
                 elif isinstance(event, AgentReasoning):
                     reasoning += len(event.text)
                     _record_text(events, "reasoning", event.text)
-                elif isinstance(event, AgentToolStart):
+                elif isinstance(event, ToolExecutionStart):
                     events.append(
                         {
                             "kind": "tool_start",
@@ -283,7 +279,7 @@ async def run_case(
                             "arguments": event.arguments,
                         }
                     )
-                elif isinstance(event, AgentToolUse):
+                elif isinstance(event, ToolExecutionEnd):
                     tools.append(event.name if event.ok else f"{event.name}(failed)")
                     events.append(
                         {

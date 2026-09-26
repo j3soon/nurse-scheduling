@@ -42,16 +42,12 @@ from nurse_scheduling.ai.provider import (
 )
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
-from nurse_scheduling.ai.sandbox_agent import (
-    WORKSPACE_ATTACHMENT_MANIFEST,
-    WORKSPACE_SCHEDULE,
-    SandboxTurnMetrics,
-)
 from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
     load_user_guide_references,
 )
+from nurse_scheduling.ai.workspace import WORKSPACE_ATTACHMENT_MANIFEST, WORKSPACE_SCHEDULE, SandboxTurnMetrics
 
 from .ai_eval.grading import EvalCase, ExpectedDiff, ToolUsageExpectation, TurnAction, load_cases
 from .ai_eval.runner import (

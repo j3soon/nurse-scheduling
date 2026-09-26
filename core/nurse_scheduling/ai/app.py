@@ -53,7 +53,6 @@ from .optimizer import (
 from .provider import OpenAiCompatibleProvider, ToolCapableChatProvider
 from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
-from .sandbox_agent import SandboxAttachment
 from .sessions import (
     PROPOSAL_APPROVED_HISTORY,
     PROPOSAL_INVALID_HISTORY,
@@ -62,6 +61,7 @@ from .sessions import (
     schedule_revision,
 )
 from .validation import new_schedule_issues, validate_frontend_schedule_yaml
+from .workspace import SandboxAttachment
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
 __all__ = (

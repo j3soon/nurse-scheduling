@@ -83,7 +83,9 @@ class SessionRuns:
     def busy(self, session_id: str) -> bool:
         return bool(self._turns.get(session_id))
 
-    def start(self, session_id: str, run: Callable[[AgentRun], Awaitable[None]], *, background: bool = False) -> AgentRun:
+    def start(
+        self, session_id: str, run: Callable[[AgentRun], Awaitable[None]], *, background: bool = False
+    ) -> AgentRun:
         if self._closed:
             raise HTTPException(status_code=503, detail="The AI service is shutting down.")
         pending = self._turns.setdefault(session_id, [])

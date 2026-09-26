@@ -29,23 +29,23 @@ from typing import Protocol
 
 from fastapi import HTTPException
 
-from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
+from .agent_types import AgentProposal, AgentReasoning, AgentSteering, AgentText, ToolExecutionEnd, ToolExecutionStart
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
 from .history import ChatHistory
 from .lifecycle import AgentRun, RunSnapshot
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT, OptimizerArtifact, SessionOptimizer
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
-from .sandbox_agent import (
+from .sandbox_agent import run_sandbox_agent
+from .schedule_context import describe_schedule
+from .workspace import (
     SANDBOX_SYSTEM_PROMPT,
     AgentScheduleChange,
     SandboxAgentLimits,
     SandboxAttachment,
     SandboxCandidateError,
     SandboxTurnTimeoutError,
-    run_sandbox_agent,
 )
-from .schedule_context import describe_schedule
 
 CANDIDATE_VALIDATION_ERROR = (
     "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
@@ -327,9 +327,9 @@ async def run_agent_run(
                         await emit("reasoning", {"text": event.text})
                     elif isinstance(event, TokenUsage):
                         usage = event if usage is None else usage + event
-                    elif isinstance(event, AgentToolStart):
+                    elif isinstance(event, ToolExecutionStart):
                         await emit("tool_start", {"name": event.name, "arguments": event.arguments})
-                    elif isinstance(event, AgentToolUse):
+                    elif isinstance(event, ToolExecutionEnd):
                         await emit(
                             "tool",
                             {
