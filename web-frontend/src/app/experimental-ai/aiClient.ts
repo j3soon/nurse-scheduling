@@ -55,6 +55,7 @@ export interface StreamCallbacks {
   onTurnContext?: (messageId: string) => void;
   onDelta: (text: string) => void;
   onReasoning?: (text: string) => void;
+  onTruncated?: () => void;
   onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
   onSteering?: (messageId: string, message: string) => void;
@@ -281,6 +282,8 @@ function consumeEvent(block: string, callbacks: StreamCallbacks): void {
     callbacks.onDelta(payload.text);
   } else if (eventType === 'reasoning' && typeof payload.text === 'string') {
     callbacks.onReasoning?.(payload.text);
+  } else if (eventType === 'truncated') {
+    callbacks.onTruncated?.();
   } else if (eventType === 'tool_start' && typeof payload.name === 'string') {
     callbacks.onToolStart?.({
       ...toolCallIdentity(payload),

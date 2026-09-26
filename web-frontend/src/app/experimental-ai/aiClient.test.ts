@@ -262,6 +262,7 @@ describe('AI client', () => {
       'event: steering\ndata: {"message_id":"queued-1","message":"Focus on P2."}\n\n',
       'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
+      'event: truncated\ndata: {}\n\n',
       'event: proposal\ndata: {"diff":"- people.items[0].id"}\n\n',
       'event: done\ndata: {"message_id":"1"}\n\n',
     ])));
@@ -272,6 +273,7 @@ describe('AI client', () => {
     const steering: string[] = [];
     const diffs: string[] = [];
     const texts: string[] = [];
+    let truncated = 0;
 
     await streamMessage(
       'session-id',
@@ -279,6 +281,7 @@ describe('AI client', () => {
       {
         onDelta: text => texts.push(text),
         onReasoning: text => reasoning.push(text),
+        onTruncated: () => { truncated += 1; },
         onToolStart: activity => toolStarts.push(`${activity.toolCallId}:${activity.name}:${activity.arguments}`),
         onTool: activity => tools.push(`${activity.toolCallId}:${activity.name}:${activity.ok}:${activity.result}`),
         onSteering: (messageId, message) => steering.push(`${messageId}:${message}`),
@@ -295,6 +298,7 @@ describe('AI client', () => {
     expect(reasoning).toEqual(['Checking people.']);
     expect(scheduleChanges).toEqual(['people:\n  - id: Head\n']);
     expect(texts).toEqual(['Renamed P1.']);
+    expect(truncated).toBe(1);
     expect(diffs).toEqual(['- people.items[0].id']);
   });
 

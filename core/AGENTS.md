@@ -164,6 +164,10 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 - When changing `ai/pi`, compare with the exact upstream Pi revision cited in
   the module header. Preserve model-facing wording and edge-case behavior, add
   focused regression tests, and document intentional differences beside the port.
+- Never execute tool calls from a response whose `finish_reason` is `length`.
+  Cut-off arguments can still parse as different valid JSON. Return a failed
+  result for each call so the model can reissue it, and keep a truncated text
+  answer with the `length` stop reason.
 - Retry a provider timeout only before any stream event reaches the caller.
   Once text, reasoning, usage, or a tool call is visible, surface the timeout
   rather than replaying the request and risking duplicate output or tool work.

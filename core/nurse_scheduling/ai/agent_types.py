@@ -42,6 +42,11 @@ class MessageReasoningDelta:
 
 
 @dataclass(frozen=True)
+class MessageTruncated:
+    """The answer text just streamed stopped at the provider's output token limit."""
+
+
+@dataclass(frozen=True)
 class ToolExecutionStart:
     """One tool request recorded before execution begins."""
 
@@ -81,6 +86,7 @@ class AgentProposal:
 AgentEvent = (
     MessageTextDelta
     | MessageReasoningDelta
+    | MessageTruncated
     | ToolExecutionStart
     | ToolExecutionEnd
     | AgentSteering

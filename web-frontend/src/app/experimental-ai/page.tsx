@@ -262,6 +262,7 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.activity === undefined
       || (Array.isArray(message.activity) && message.activity.every(isActivityEntry)))
     && (message.status === undefined || ['pending', 'failed', 'stopped'].includes(message.status))
+    && (message.truncated === undefined || typeof message.truncated === 'boolean')
     && (message.responseStartedAt === undefined || Number.isFinite(message.responseStartedAt))
     && (message.responseCompletedAt === undefined || Number.isFinite(message.responseCompletedAt))
     && (message.retry === undefined || (
@@ -1875,6 +1876,11 @@ export default function ExperimentalAiPage() {
             ) : null}
             {message.role === 'assistant' && message.status === 'stopped' && (
               <p role="status" className="mt-2 text-xs text-gray-500">Stopped before completion.</p>
+            )}
+            {message.role === 'assistant' && message.truncated && (
+              <p role="status" className="mt-2 text-xs text-gray-500">
+                This answer reached the output limit and may be incomplete.
+              </p>
             )}
             {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
               <button

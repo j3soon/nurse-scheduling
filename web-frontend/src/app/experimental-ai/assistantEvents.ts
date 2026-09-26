@@ -28,6 +28,7 @@ import type { ChatExportMessage } from './chatExport';
 export type AssistantEvent =
   | { type: 'delta'; text: string }
   | { type: 'reasoning'; text: string }
+  | { type: 'truncated' }
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'schedule_change'; before: string; after: string };
@@ -72,6 +73,8 @@ export function applyAssistantEvent<T extends ChatExportMessage>(message: T, eve
       };
     case 'reasoning':
       return { ...message, activity: appendReasoningActivity(activity, event.text) };
+    case 'truncated':
+      return { ...message, truncated: true };
     case 'tool_start':
       return {
         ...message,
@@ -106,7 +109,7 @@ export function stopResponse<T extends ChatExportMessage>(message: T): T {
 }
 
 type AssistantEventCallbacks = Required<
-  Pick<StreamCallbacks, 'onDelta' | 'onReasoning' | 'onToolStart' | 'onTool' | 'onScheduleChange'>
+  Pick<StreamCallbacks, 'onDelta' | 'onReasoning' | 'onTruncated' | 'onToolStart' | 'onTool' | 'onScheduleChange'>
 >;
 
 // Convert stream callbacks to events. A preview diffs against the previous working
@@ -119,6 +122,7 @@ export function assistantEventCallbacks(
   return {
     onDelta: text => apply({ type: 'delta', text }),
     onReasoning: text => apply({ type: 'reasoning', text }),
+    onTruncated: () => apply({ type: 'truncated' }),
     onToolStart: activity => apply({ type: 'tool_start', activity }),
     onTool: activity => apply({ type: 'tool', activity }),
     onScheduleChange: after => {

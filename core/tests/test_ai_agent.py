@@ -26,13 +26,14 @@ from functools import partial
 
 import pytest
 
-from nurse_scheduling.ai.agent_loop import agent_loop
+from nurse_scheduling.ai.agent_loop import TRUNCATED_TOOL_CALL_RESULT, agent_loop
 from nurse_scheduling.ai.agent_types import (
     AgentSteering,
     AgentTool,
     AgentToolResult,
     MessageReasoningDelta,
     MessageTextDelta,
+    MessageTruncated,
     ToolExecutionEnd,
     ToolExecutionStart,
 )
@@ -41,6 +42,7 @@ from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
     ChatMessage,
     ReasoningDelta,
+    ResponseEnd,
     TextDelta,
     ToolCall,
     ToolCallRequest,
@@ -485,3 +487,47 @@ def test_unknown_tool_returns_correlated_failure_without_executing_a_tool():
     assert provider.requests[1][0][-1]["tool_call_id"] == "unknown-call"
     assert provider.requests[1][0][-1]["content"] == result.result
     assert events[-1] == MessageTextDelta("Recovered.")
+
+
+def test_tool_calls_cut_off_by_the_output_limit_are_refused_and_reported_to_the_model():
+    executed = []
+    # The cut-off arguments still parse, so only the finish reason shows they are incomplete.
+    truncated = ToolCall("call_0", BASH_TOOL, '{"command":"rm -r"}')
+    provider = FakeProvider(
+        [TextDelta("Cleaning up."), ToolCallRequest((truncated,)), ResponseEnd("length")],
+        [*_calls(), ResponseEnd("tool_calls")],
+        [*_text("Done."), ResponseEnd("stop")],
+    )
+
+    async def execute(_name: str, arguments: str) -> AgentToolResult:
+        executed.append(arguments)
+        return AgentToolResult("ok", True)
+
+    async def collect() -> list:
+        return [event async for event in agent_loop(provider, QUESTION, _tools(execute))]
+
+    events = asyncio.run(collect())
+
+    assert executed == ['{"command":"rg people"}']
+    assert ToolExecutionEnd(BASH_TOOL, '{"command":"rm -r"}', TRUNCATED_TOOL_CALL_RESULT, False, "call_0") in events
+    assert not any(isinstance(event, MessageTruncated) for event in events)
+    replayed_call, refusal = provider.requests[1][0][-2:]
+    assert replayed_call["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert refusal == {"role": "tool", "tool_call_id": "call_0", "content": TRUNCATED_TOOL_CALL_RESULT}
+
+
+def test_repeated_tool_call_truncation_spends_the_round_budget():
+    truncated = [ToolCallRequest((ToolCall("call_0", BASH_TOOL, '{"comm'),)), ResponseEnd("length")]
+    provider = FakeProvider(truncated, truncated, [*_text("Stopping."), ResponseEnd("stop")])
+
+    events = _run(provider, max_tool_rounds=2)
+
+    assert len(provider.requests) == 3
+    assert provider.requests[2][1] == []
+    assert events[-1] == MessageTextDelta("Stopping.")
+
+
+def test_an_answer_cut_off_by_the_output_limit_is_marked_truncated():
+    provider = FakeProvider([*_text("The first half"), ResponseEnd("length")])
+
+    assert _run(provider) == [MessageTextDelta("The first half"), MessageTruncated()]

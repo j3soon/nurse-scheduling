@@ -65,7 +65,14 @@ from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
-from nurse_scheduling.ai.provider import ChatMessage, ProviderError, TextDelta, ToolCall, ToolCallRequest
+from nurse_scheduling.ai.provider import (
+    ChatMessage,
+    ProviderError,
+    ResponseEnd,
+    TextDelta,
+    ToolCall,
+    ToolCallRequest,
+)
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.transcript import AssistantEntry, ProposalDecisionEntry, SessionEntry, UserEntry
@@ -647,6 +654,25 @@ def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
         ChatMessage(role="user", content="Rename P1."),
         ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY),
         ChatMessage(role="user", content="Rename P2 instead."),
+    ]
+
+
+def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -> None:
+    class TruncatingProvider:
+        async def stream_events(self, _messages, tools=None):
+            yield TextDelta("The first half")
+            yield ResponseEnd("length")
+
+    app = create_test_app(settings=make_settings(), provider=TruncatingProvider())
+    client = AuthenticatedTestClient(app)
+    session_id = create_session(client)
+
+    events = parse_sse(client.post(f"/sessions/{session_id}/messages", json={"message": "Explain."}).text)
+
+    assert [name for name, _ in events] == ["delta", "truncated", "done"]
+    assert app.state.session_store._sessions[session_id].transcript == [
+        UserEntry("Explain."),
+        AssistantEntry("The first half", "length"),
     ]
 
 

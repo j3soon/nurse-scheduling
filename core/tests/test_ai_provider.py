@@ -36,6 +36,7 @@ from nurse_scheduling.ai.provider import (
     ProviderAttempt,
     ProviderError,
     ReasoningDelta,
+    ResponseEnd,
     TextDelta,
     TokenUsage,
     ToolCall,
@@ -235,7 +236,13 @@ def test_retries_pre_stream_timeouts_with_exponential_backoff(monkeypatch: pytes
         provider_retry_backoff_seconds=0.25,
     )
 
-    assert _events(provider) == [ProviderAttempt(1), ProviderAttempt(2), ProviderAttempt(3), TextDelta("Recovered")]
+    assert _events(provider) == [
+        ProviderAttempt(1),
+        ProviderAttempt(2),
+        ProviderAttempt(3),
+        TextDelta("Recovered"),
+        ResponseEnd(None),
+    ]
     assert len(attempts) == 3
     assert delays == [0.25, 0.5]
 
@@ -304,7 +311,10 @@ def test_reconstructs_one_tool_call_from_streamed_fragments(monkeypatch: pytest.
 
     events = _events(_streaming_provider(monkeypatch, body), TOOLS)
 
-    assert events == [ToolCallRequest((ToolCall(id="call_1", name="schedule_patch", arguments='{"operations":[]}'),))]
+    assert events == [
+        ToolCallRequest((ToolCall(id="call_1", name="schedule_patch", arguments='{"operations":[]}'),)),
+        ResponseEnd(None),
+    ]
 
 
 def test_reconstructs_parallel_tool_calls_in_index_order(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -386,7 +396,7 @@ def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.Monke
     events = _events(_streaming_provider(monkeypatch, body, requests, include_usage=True))
 
     assert json.loads(requests[0].content)["stream_options"] == {"include_usage": True}
-    assert events == [TextDelta("Answer"), TokenUsage(120, 30, 150, 80, 12)]
+    assert events == [TextDelta("Answer"), TokenUsage(120, 30, 150, 80, 12), ResponseEnd(None)]
 
 
 def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -394,7 +404,18 @@ def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.Monk
 
     events = _events(_streaming_provider(monkeypatch, body))
 
-    assert events == [TextDelta("Answer")]
+    assert events == [TextDelta("Answer"), ResponseEnd(None)]
+
+
+def test_reports_the_finish_reason_after_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse_body(
+        _delta_chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "bash", "arguments": "{"}}]}),
+        {"choices": [{"delta": {}, "finish_reason": "length"}]},
+    )
+
+    events = _events(_streaming_provider(monkeypatch, body))
+
+    assert events == [ToolCallRequest((ToolCall("call_1", "bash", "{"),)), ResponseEnd("length")]
 
 
 def test_does_not_request_token_usage_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -448,7 +469,12 @@ def test_streams_reasoning_separately_from_the_answer(monkeypatch: pytest.Monkey
 
     events = _events(_streaming_provider(monkeypatch, body))
 
-    assert events == [ReasoningDelta("The ward "), ReasoningDelta("has 3 nurses."), TextDelta("Yes.")]
+    assert events == [
+        ReasoningDelta("The ward "),
+        ReasoningDelta("has 3 nurses."),
+        TextDelta("Yes."),
+        ResponseEnd(None),
+    ]
 
 
 def test_rejects_an_answer_longer_than_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:

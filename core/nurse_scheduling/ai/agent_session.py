@@ -37,6 +37,7 @@ from .agent_types import (
     AgentSteering,
     MessageReasoningDelta,
     MessageTextDelta,
+    MessageTruncated,
     ToolExecutionEnd,
     ToolExecutionStart,
 )
@@ -122,6 +123,7 @@ class RunOutput:
     entries: list[SessionEntry]
     assistant_parts: list[str] = field(default_factory=list)
     assistant_segment: list[str] = field(default_factory=list)
+    segment_truncated: bool = False
     proposal: AgentProposal | None = None
     usage: TokenUsage | None = None
 
@@ -130,7 +132,9 @@ class RunOutput:
         return "".join(self.assistant_parts)
 
     def finish_entries(self, stop_reason: StopReason) -> list[SessionEntry]:
-        """Close the open answer segment. Only that segment can be aborted."""
+        """Close the open answer segment. Only that segment can be aborted or fail."""
+        if stop_reason == "stop" and self.segment_truncated:
+            stop_reason = "length"
         return [*self.entries, AssistantEntry("".join(self.assistant_segment), stop_reason)]
 
     def consume(self, event: AgentEvent | AgentScheduleChange) -> tuple[str, dict[str, object]] | None:
@@ -140,6 +144,9 @@ class RunOutput:
             return "delta", {"text": event.text}
         if isinstance(event, MessageReasoningDelta):
             return "reasoning", {"text": event.text}
+        if isinstance(event, MessageTruncated):
+            self.segment_truncated = True
+            return "truncated", {}
         if isinstance(event, TokenUsage):
             self.usage = event if self.usage is None else self.usage + event
         elif isinstance(event, ToolExecutionStart):
@@ -154,9 +161,11 @@ class RunOutput:
             }
         elif isinstance(event, AgentSteering):
             if self.assistant_segment:
-                self.entries.append(AssistantEntry("".join(self.assistant_segment)))
+                stop_reason = "length" if self.segment_truncated else "stop"
+                self.entries.append(AssistantEntry("".join(self.assistant_segment), stop_reason))
             self.entries.append(UserEntry(event.text))
             self.assistant_segment.clear()
+            self.segment_truncated = False
             return "steering", {"message_id": event.message_id, "message": event.text}
         elif isinstance(event, AgentScheduleChange):
             return "schedule_change", {"schedule_yaml": event.schedule_yaml}
@@ -426,8 +435,8 @@ class AgentSession:
             await emit("done", done)
         except asyncio.CancelledError:
             if not completed:
-                # Keep the prompt, as Pi keeps an aborted message, so a follow-up can refer to it.
-                # Workspace changes and any proposal were discarded with the sandbox.
+                # Keep the prompt so a follow-up can refer to it. Workspace changes and any
+                # proposal were discarded with the sandbox, which context.py accounts for.
                 store.finish(session_id, output.finish_entries("aborted"), snapshot=snapshot)
                 completed = True
             await emit("stopped", {"message_id": run.id})

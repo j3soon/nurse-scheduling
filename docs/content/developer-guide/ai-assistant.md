@@ -533,7 +533,7 @@ replacing newer state.
 
 | Event | Meaning |
 | --- | --- |
-| `delta`, `reasoning` | Answer text and separate reasoning stream. |
+| `delta`, `reasoning`, `truncated` | Answer text, a separate reasoning stream, and a marker that the answer stopped at the output limit. |
 | `tool_start`, `tool` | Tool request and completed result, correlated by `tool_call_id` and including success status. |
 | `schedule_change`, `proposal` | Working-copy preview and final candidate diff. |
 | `steering`, `history_trimmed` | Queued input consumed and prompt-history reduction. |

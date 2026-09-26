@@ -128,6 +128,17 @@ class ToolCallRequest:
 
 
 @dataclass(frozen=True)
+class ResponseEnd:
+    """The provider's reason for ending one streamed response, when it reported one.
+
+    `length` means the output token limit cut the response off, so its text and
+    any tool call arguments may be incomplete.
+    """
+
+    finish_reason: str | None
+
+
+@dataclass(frozen=True)
 class TokenUsage:
     """Provider-reported token usage for one streamed completion."""
 
@@ -155,7 +166,7 @@ class ProviderAttempt:
     number: int
 
 
-ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest | TokenUsage | ProviderAttempt
+ChatStreamEvent = TextDelta | ReasoningDelta | ToolCallRequest | ResponseEnd | TokenUsage | ProviderAttempt
 
 
 class ChatProvider(Protocol):
@@ -335,6 +346,7 @@ class OpenAiCompatibleProvider:
                 raise ProviderError(f"The AI provider returned HTTP {response.status_code}. Error ID: {error_id}.")
 
             partial_calls: dict[int, _PartialToolCall] = {}
+            finish_reason: str | None = None
             text_chars = 0
             reasoning_chars = 0
             async for line in response.aiter_lines():
@@ -359,6 +371,8 @@ class OpenAiCompatibleProvider:
                         continue
                     delta = choices[0]["delta"]
                     content = delta.get("content")
+                    if isinstance(choices[0].get("finish_reason"), str):
+                        finish_reason = choices[0]["finish_reason"]
                 except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
                     raise ProviderError("The AI provider returned an invalid stream.") from exc
                 if isinstance(content, str) and content:
@@ -376,6 +390,7 @@ class OpenAiCompatibleProvider:
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
             if partial_calls:
                 yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))
+            yield ResponseEnd(finish_reason)
 
 
 def _parse_token_usage(raw_usage: object) -> TokenUsage:

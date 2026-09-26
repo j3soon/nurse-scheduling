@@ -33,6 +33,7 @@ from .agent_types import (
     AgentToolResult,
     MessageReasoningDelta,
     MessageTextDelta,
+    MessageTruncated,
     SteeringSource,
     ToolBatchObserver,
     ToolBatchScope,
@@ -42,6 +43,7 @@ from .agent_types import (
 from .provider import (
     ChatMessage,
     ReasoningDelta,
+    ResponseEnd,
     TextDelta,
     TokenUsage,
     ToolCall,
@@ -53,6 +55,11 @@ from .provider import (
 )
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
+
+TRUNCATED_TOOL_CALL_RESULT = (
+    "The response reached the output token limit before this tool call was complete, so it was not run. "
+    "Issue it again with shorter arguments, or split the work into smaller steps."
+)
 
 
 @asynccontextmanager
@@ -85,7 +92,7 @@ async def agent_loop(
     tool_calls = 0
     final_answer_only = False
     while True:
-        answer, calls = [], ()
+        answer, calls, finish_reason = [], (), None
         async for event in provider.stream_events(conversation, [] if final_answer_only else definitions):
             if isinstance(event, TextDelta):
                 answer.append(event.text)
@@ -96,6 +103,26 @@ async def agent_loop(
                 yield event
             elif isinstance(event, ToolCallRequest):
                 calls = event.calls
+            elif isinstance(event, ResponseEnd):
+                finish_reason = event.finish_reason
+        if finish_reason == "length" and calls and not final_answer_only:
+            # Arguments cut off mid-stream can still parse as different, valid JSON, so
+            # no call from this response runs. The model sees why and can reissue them.
+            conversation.append(
+                assistant_tool_call_message(
+                    tuple(ToolCall(call.id, call.name, "{}") for call in calls), "".join(answer)
+                )
+            )
+            tool_rounds += 1
+            for call in calls:
+                yield ToolExecutionStart(call.name, call.arguments, call.id)
+                yield ToolExecutionEnd(call.name, call.arguments, TRUNCATED_TOOL_CALL_RESULT, False, call.id)
+                conversation.append(tool_result_message(call.id, TRUNCATED_TOOL_CALL_RESULT))
+            # A refused batch still spends a round, so repeated truncation ends in an answer.
+            final_answer_only = max_tool_rounds is not None and tool_rounds >= max_tool_rounds
+            continue
+        if finish_reason == "length":
+            yield MessageTruncated()
         if not calls:
             steering = tuple(take_steering(True)) if take_steering is not None else ()
             if not steering:

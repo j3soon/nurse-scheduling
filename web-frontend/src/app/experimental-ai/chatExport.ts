@@ -32,6 +32,8 @@ export interface ChatExportMessage {
   attachmentNames?: string[];
   activity?: ActivityEntry[];
   status?: 'pending' | 'failed' | 'stopped';
+  // The answer stopped at the model's output limit and may be incomplete.
+  truncated?: boolean;
   responseStartedAt?: number;
   responseCompletedAt?: number;
 }
@@ -175,6 +177,7 @@ function messageDetails(message: ChatExportMessage): string[] {
   const details: string[] = [];
   if (message.attachmentNames?.length) details.push(`Attachments: ${message.attachmentNames.join(', ')}`);
   if (message.status) details.push(`Status: ${message.status}`);
+  if (message.truncated) details.push('Truncated at the output limit');
   if (message.responseCompletedAt !== undefined) {
     details.push(`Completed: ${new Date(message.responseCompletedAt).toISOString()}`);
   }
@@ -228,10 +231,13 @@ function renderHtmlMessageDetails(message: ChatExportMessage): string {
       : message.status === 'stopped'
         ? '<p class="message-status" role="status">Stopped before completion.</p>'
         : '';
+  const truncated = message.truncated
+    ? '<p class="message-status" role="status">This answer reached the output limit and may be incomplete.</p>'
+    : '';
   const timing = message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined
     ? `<time datetime="${new Date(message.responseCompletedAt).toISOString()}">${escapeHtml(new Date(message.responseCompletedAt).toLocaleString())} · ${formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}</time>`
     : '';
-  return `${attachments}${status}${timing}`;
+  return `${attachments}${status}${truncated}${timing}`;
 }
 
 export function buildMarkdownChatExport(

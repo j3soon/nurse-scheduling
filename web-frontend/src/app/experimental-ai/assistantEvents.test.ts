@@ -95,6 +95,12 @@ describe('assistant events', () => {
     expect(working.current).toBe('v2');
   });
 
+  it('marks an answer cut off by the output limit without changing its text', () => {
+    const message = reduce([{ type: 'delta', text: 'The first half' }, { type: 'truncated' }]);
+
+    expect(message).toEqual(expect.objectContaining({ content: 'The first half', truncated: true }));
+  });
+
   it('stops a response without adding answer text', () => {
     const message = stopResponse(reduce([
       { type: 'delta', text: 'Partial.' },

@@ -54,11 +54,13 @@ def context_message(entry: SessionEntry) -> ChatMessage:
     if isinstance(entry, UserEntry):
         return ChatMessage(role="user", content=entry.text)
     if isinstance(entry, AssistantEntry):
-        # Like Pi, an aborted answer is kept but not replayed. Its partial text may
-        # describe workspace changes that were discarded with the run.
-        return ChatMessage(
-            role="assistant", content=entry.text if entry.stop_reason == "stop" else ABORTED_RESPONSE_HISTORY
-        )
+        # Pi's provider adapters also skip aborted and errored assistant messages. We
+        # keep a note in their place because the interrupted run's sandbox is gone, so
+        # its partial text may claim schedule changes that no longer exist. A
+        # length-truncated answer finished its run and is replayed as written.
+        if entry.stop_reason in ("stop", "length"):
+            return ChatMessage(role="assistant", content=entry.text)
+        return ChatMessage(role="assistant", content=ABORTED_RESPONSE_HISTORY)
     return ChatMessage(role="user", content=PROPOSAL_DECISION_HISTORY[entry.decision])
 
 

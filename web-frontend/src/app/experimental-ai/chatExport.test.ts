@@ -120,6 +120,13 @@ describe('chat export', () => {
     expect(html).not.toContain('[No message text]');
   });
 
+  it('exports a truncated answer with a note that it may be incomplete', () => {
+    const truncated: ChatExportMessage = { role: 'assistant', content: 'The first half', truncated: true };
+
+    expect(buildMarkdownChatExport([truncated], metadata)).toContain('Truncated at the output limit');
+    expect(buildHtmlChatExport([truncated], metadata)).toContain('This answer reached the output limit');
+  });
+
   it('exports optimizer messages as their own labeled and styled block', () => {
     const optimizerMessage: ChatExportMessage = {
       role: 'optimizer',
