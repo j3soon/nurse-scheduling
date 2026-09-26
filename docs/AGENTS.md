@@ -81,6 +81,10 @@
   narrow viewport when formulas or wide tables are involved.
 - Use Playwright or browser developer tools to capture and inspect rendered
   figures and formulas.
+- Mermaid renders into a closed shadow root, so an `svg` selector never
+  matches. Wait on the `.mermaid` container with a fixed delay, then inspect
+  the capture. Allow the page's font, CDN, analytics, and `api.github.com`
+  hosts, or the capture script aborts.
 - Run `zensical build --clean --strict` and `git diff --check` before
   finishing.
 - Verify internal links and referenced assets resolve without 404 responses.

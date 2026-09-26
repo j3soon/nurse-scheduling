@@ -26,7 +26,7 @@ background work.
 
 <style>
 .ai-pi-mapping table {
-  min-width: 680px;
+  min-width: 720px;
 }
 .ai-diagram--wide {
   overflow-x: auto;
@@ -95,7 +95,7 @@ flowchart TB
         Routes[<b>API routes</b><br/>Auth and streams]
         Store[<b>SessionStore</b><br/>Ownership, retention, memory limits]
         Queue[<b>SessionRuns</b><br/>FIFO admission and Stop]
-        Session[<b>AgentSession</b><br/>History, YAML, proposals<br/>Prepare, execute, finalize run]
+        Session[<b>AgentSession</b><br/>Transcript, YAML, proposals<br/>Prepare, execute, finalize run]
         Agent[<b>Agent</b><br/>Streaming state, tool IDs<br/>Steering queue and cancellation]
         Loop[<b>agent_loop</b><br/>Model responses and tool batches]
         Workspace[<b>WorkspaceTools / SandboxWorkspace</b><br/>Tool validation, files, VM lifetime]
@@ -139,6 +139,7 @@ enabled.
 | API routes / session registry | `ai/app.py`, `ai/sessions.py` |
 | SessionRuns / AgentRun / RunSnapshot | `ai/lifecycle.py` |
 | AgentSession / SSE projection | `ai/agent_session.py` |
+| Transcript entries / model context | `ai/transcript.py`, `ai/context.py` |
 | Agent / model-tool loop / event types | `ai/agent.py`, `ai/agent_loop.py`, `ai/agent_types.py` |
 | Workspace tools / SandboxWorkspace | `ai/workspace_tools.py`, `ai/workspace.py`, `ai/sandbox/` |
 | Background event replay | `ai/session_events.py` |
@@ -150,23 +151,57 @@ enabled.
 This comparison follows Pi's public agent loop and coding-agent session at
 revision `d6af72e`. Links are pinned to that revision. These are architectural
 counterparts, not identical APIs or a mapping of Pi's separate harness runtime.
+Each row lists shared behavior first, then what only one side has.
 
 <div class="ai-pi-mapping" markdown="1">
 
-| Our component | Pi counterpart | Similarity and differences |
-| --- | --- | --- |
-| `Agent` / `AgentState` | [Agent][pi-agent], [AgentState][pi-state] | Both own streaming state, pending tool IDs, steering, and cancellation. Our model context is passed per run and successful history is committed by the session. Pi also keeps model, tools, transcript, and partial messages in agent state. |
-| `agent_loop` | [agentLoop][pi-loop] | Both repeat model responses and tool execution, consuming steering at boundaries. We parallelize only all-read batches and enforce tool budgets. Pi supports configurable execution modes and a separate follow-up queue. |
-| `AgentTool` / `AgentToolResult` | [AgentTool / AgentToolResult][pi-tools] | Both bind tool definitions to execution and return model content plus UI details. Ours accepts raw JSON arguments and returns text, an optional image, and explicit success status. Pi passes parsed parameters, call ID, cancellation signal, and a partial-update callback. |
-| `AgentSession` / `RunOutput` | [AgentSession][pi-session] | Both layer application behavior over `Agent`. Ours owns snapshot and proposal transitions, accumulates provisional output, and saves history and proposals after cleanup. `SessionStore` wraps mutations with ownership, expiry, and memory checks. Pi's coding session adds persistence, compaction, retries, and extension handling. |
-| `SessionRuns` / `AgentRun` / `RunSnapshot` | [ActiveRun and run lifecycle][pi-agent] | Both track active execution and cancellation. Our service adds per-session FIFO admission, queued background runs, and a versioned commit capability. These three types have no direct counterpart in this Pi path. |
-| Steering queue | [steer / followUp][pi-agent] | Both deliver queued input at execution boundaries. Our steering drains all admitted messages, deduplicates IDs, and closes atomically when the answer ends. Optimizer follow-ups enter `SessionRuns` as fresh runs. Pi's follow-up queue continues the current run when it would otherwise finish. |
-| `WorkspaceTools` / `SandboxWorkspace` | [AgentTool execution boundary][pi-tools] | Both provide executable tools to the loop. Our integration additionally owns a disposable E2B VM, hydration, pause/resume, YAML validation, and teardown. Pi's generic tool interface does not prescribe a workspace lifetime. |
-| `SessionEventBroker` / SSE projection | [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Both expose execution events. We translate typed events to the existing SSE contract and retain background events for cursor replay. Pi's agent uses subscribers and includes agent, turn, message, and tool lifecycle events. |
-| `SessionOptimizer` | [Tool execution][pi-tools] and [followUp][pi-agent] are the nearest boundaries | Our optimizer owns independent remote jobs, progress, late-submission cleanup, and fresh review runs. This service has no direct counterpart in the compared Pi agent/session path. |
-| API routes / `SessionStore` / browser lifecycle | [AgentSession][pi-session] is the nearest application boundary | Our browser service adds HTTP authentication, cookie ownership, session expiry, memory limits, SSE reconnection, and schedule approval. These have no one-to-one mapping to Pi's coding-agent session. |
+| Component | Shared | Ours only | Pi only |
+| --- | --- | --- | --- |
+| `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits the transcript after cleanup. `AgentRun` owns Stop so repeated cancellation cannot interrupt cleanup. | State also holds the model, thinking level, tools, transcript, and partial streaming message. Awaited subscribers settle each run. |
+| `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters after a tool batch, or continues the run when it arrives as the answer ends. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request. | Parallel execution by default with per-tool sequential overrides, before and after tool-call hooks, context transform hooks, and early termination requested by tool results. |
+| `AgentTool` / `AgentToolResult`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content and UI details, and start and end events correlate by `tool_call_id`. | Tools receive raw JSON arguments, return text, an optional image, and an explicit success flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw on failure instead of encoding it. |
+| `AgentSession` / `RunOutput` / transcript<br/>Pi: [AgentSession][pi-session], [SessionEntry][pi-entries] | An application layer over `Agent` that owns a typed transcript. Context projection keeps aborted answers out of replayed model input. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and proposal decision entries. A stopped prompt stays with an interruption note. | A persistent, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. |
+| `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, settled before the next run starts. | Per-session FIFO admission, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
+| Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
+| `WorkspaceTools` / `SandboxWorkspace`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and model-facing wording, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, trusted YAML validation after each change, and teardown before commit. | Tools act on the user's local working directory, which persists across runs. Optional `find`, `grep`, and `ls` tools extend the default four. |
+| SSE projection / `RunEvents` / `SessionEventBroker`<br/>Pi: [AgentEvent][pi-events], [Agent.subscribe][pi-agent] | Typed text, reasoning, and tool events with call IDs, and exactly one terminal outcome per run. | Events map onto a stable SSE contract. Foreground output is a bounded stream that disconnect cancels. Background output is a journal replayed with `Last-Event-ID`. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. |
+| `SessionOptimizer`<br/>Pi: no counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | None. |
+| API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, global memory limits, SSE reconnection, a browser-owned canonical schedule, and proposal approval. | Local single-user sessions stored on disk that can be resumed and branched. |
 
 </div>
+
+### Retention and Context
+
+Each destination keeps its own subset of a run. The session transcript holds
+only what later model context may need.
+
+| Content | Later model context | Session transcript | Browser and export | Chat history log |
+| --- | --- | --- | --- | --- |
+| Answer text | Yes, within the history budget | Yes | Yes | Yes |
+| Reasoning | No | No | Yes | No |
+| Tool calls and results | Only within their run | No | Yes, by `tool_call_id` | No |
+| Queued steering | Yes | Yes | Yes | No, only the run's first message |
+| Stopped answer | Prompt and an interruption note | Prompt and aborted partial answer | Partial output, stopped status | Yes, as `cancelled` |
+| Failed or stale answer | No | No | Failed output with retry, or a stale notice | Yes, with status |
+
+The investigated alternatives below were not adopted:
+
+- **One event journal for both transports.** Foreground output is bounded and
+  backpressured for its single reader, and disconnect cancels the run.
+  Background output must outlive readers, replay by cursor, and also carry
+  optimizer progress. Both already share `RunOutput` projection and
+  `TERMINAL_EVENTS`. A single journal would add replay cost to every answer or
+  drop backpressure.
+- **Separate steering and follow-up queues.** The browser offers one queue
+  action. Optimizer results start a fresh run because they can arrive after the
+  run ends and must see the current schedule.
+- **Summary compaction.** Every run re-sends the canonical schedule, so older
+  exchanges carry less state than a coding transcript. Trimming the oldest
+  complete exchanges avoids an extra provider call with its cost, latency, and
+  failure mode.
+- **Recording failed attempts in the transcript.** Retry resends the question,
+  so a recorded attempt would duplicate it in model context. The chat history
+  log keeps each attempt's outcome.
 
 [pi-agent]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/agent.ts#L188
 [pi-state]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L378
@@ -174,6 +209,8 @@ counterparts, not identical APIs or a mapping of Pi's separate harness runtime.
 [pi-tools]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L420
 [pi-session]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/agent-session.ts#L331
 [pi-events]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/agent/src/types.ts#L485
+[pi-entries]: https://github.com/earendil-works/pi/blob/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/session-manager.ts#L183
+[pi-coding-tools]: https://github.com/earendil-works/pi/tree/d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31/packages/coding-agent/src/core/tools
 
 ## One Run at a Glance {#one-turn-at-a-glance}
 
@@ -187,7 +224,7 @@ flowchart TB
     Step -->|Workspace tool| Tool[Run E2B tool<br/>Return result, working-copy preview if valid] --> Step
     Step -->|Optimizer tool| Job[Start, inspect, or finish job<br/>Return tool result] --> Step
     Step -->|Final answer| Cleanup[Read final YAML if used<br/>Cleanup sandbox]
-    Step -->|Stop or disconnect| Cleanup
+    Stop[<b>Stop or disconnect</b><br/>Cancels the run at any point] --> Cleanup
     Cleanup --> Check{Conversation version and outcome}
     Check -->|Current| Done[Save answer and any proposal<br/>SSE done]
     Check -->|Stopped| Stopped[Save prompt and aborted answer if current<br/>SSE stopped]
