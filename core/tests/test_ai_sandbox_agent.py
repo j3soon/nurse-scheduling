@@ -669,3 +669,51 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
         _collect(WaitingProvider(), factory, turn_timeout_seconds=0.01)
 
     assert factory.created == []
+
+
+@pytest.mark.parametrize("arguments", ["not json", "[]", "{}"], ids=["invalid-json", "not-object", "missing-fields"])
+@pytest.mark.parametrize("tool", [READ_TOOL, BASH_TOOL, EDIT_TOOL, WRITE_TOOL, OPTIMIZER_TOOL])
+def test_every_offered_tool_refuses_malformed_arguments_before_acting(tool: str, arguments: str) -> None:
+    """Each tool owns Pi-compatible validation, so this contract replaces a central schema check."""
+    from nurse_scheduling.ai.optimizer import SessionOptimizer
+
+    from .test_ai_optimizer import FakeOptimizerBackend
+
+    if tool == OPTIMIZER_TOOL and arguments == "{}":
+        pytest.skip("An empty optimizer call means start, whose default action is valid")
+    optimizer_backend = FakeOptimizerBackend()
+    provider = ScriptedProvider(
+        [ToolCallRequest((ToolCall("call-1", tool, arguments),))],
+        [TextDelta("Done.")],
+    )
+    factory = FakeSandboxFactory()
+
+    async def collect() -> list:
+        async def on_completion(*_args) -> None:
+            raise AssertionError("A refused call must not start a job")
+
+        optimizer = SessionOptimizer(optimizer_backend, poll_interval_seconds=0.001, on_completion=on_completion)
+        try:
+            return [
+                event
+                async for event in run_workspace(
+                    provider,
+                    factory,
+                    schedule_yaml(),
+                    MESSAGES,
+                    _limits(),
+                    execute_optimizer=lambda current, raw: optimizer.execute("session", current, raw),
+                )
+            ]
+        finally:
+            await optimizer.close()
+
+    events = asyncio.run(collect())
+
+    result = next(event for event in events if isinstance(event, ToolExecutionEnd))
+    assert not result.ok
+    assert optimizer_backend.submissions == []
+    for backend in factory.created:
+        assert backend.commands == []
+        assert backend.files[WORKSPACE_SCHEDULE].decode() == schedule_yaml()
+    assert not any(isinstance(event, AgentProposal) for event in events)

@@ -204,6 +204,12 @@ The investigated alternatives below were not adopted:
   exchanges carry less state than a coding transcript. Trimming the oldest
   complete exchanges avoids an extra provider call with its cost, latency, and
   failure mode.
+- **Central schema validation of tool arguments.** The ported Pi tools already
+  validate with Pi's wording and accept the compatibility shapes Pi's
+  `prepareArguments` accepts, such as a legacy single edit. A generic schema
+  check would reject those shapes first. A contract test instead requires every
+  offered tool to refuse malformed arguments before any sandbox command, file
+  change, or optimizer submission.
 - **Recording failed attempts in the transcript.** Retry resends the question,
   so a recorded attempt would duplicate it in model context. The browser also
   replaces the failed pair on retry, so the question appears once and an old
