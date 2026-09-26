@@ -167,21 +167,42 @@ either application container.
 
 ## AI Chat History Backup and Restore
 
-Run these commands from the repository root.
+Run these commands from `docker/`:
+
+```sh
+cd docker
+```
+
+The examples target production with `--env-file .env -f compose.backend.yml`.
+For staging, use `--env-file .env.staging -f compose.backend.yml` on every
+command, for example:
+
+```sh
+docker compose --env-file .env.staging -f compose.backend.yml exec -T postgres \
+  pg_dump --username=ai_history --dbname=ai_history --format=custom --no-owner --no-acl \
+  > "../backups/ai-history-staging-$(date +%Y%m%d-%H%M%S).dump"
+```
+
+Create `../backups` before either backup command. When the deployed variant
+uses `compose.backend.memory.yml`, substitute that file on every command and
+keep its production or staging environment file. Preserve any custom project
+name used by the deployment. The environment file selects the Compose project,
+including its PostgreSQL volume, so use the same selection for backup, dump
+verification, and every restore step.
 
 ### Backup
 
 ```sh
-mkdir -p backups
+mkdir -p ../backups
 
-docker compose -f docker/compose.backend.yml exec -T postgres \
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
   pg_dump \
   --username=ai_history \
   --dbname=ai_history \
   --format=custom \
   --no-owner \
   --no-acl \
-  > "backups/ai-history-$(date +%Y%m%d-%H%M%S).dump"
+  > "../backups/ai-history-$(date +%Y%m%d-%H%M%S).dump"
 ```
 
 The dump is stored on the host at
@@ -189,13 +210,14 @@ The dump is stored on the host at
 with:
 
 ```sh
-ls -lh backups/
+ls -lh ../backups/
 ```
 
 Optionally verify that a dump is readable:
 
 ```sh
-pg_restore --list backups/ai-history-YYYYMMDD-HHMMSS.dump | head
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
+  pg_restore --list < ../backups/ai-history-YYYYMMDD-HHMMSS.dump
 ```
 
 ### Restore
@@ -203,42 +225,41 @@ pg_restore --list backups/ai-history-YYYYMMDD-HHMMSS.dump | head
 Stop the AI service first:
 
 ```sh
-docker compose -f docker/compose.backend.yml stop ai
+docker compose --env-file .env -f compose.backend.yml stop ai
 ```
 
 Recreate the database:
 
 ```sh
-docker compose -f docker/compose.backend.yml exec -T postgres \
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
   dropdb --username=ai_history --if-exists ai_history
 
-docker compose -f docker/compose.backend.yml exec -T postgres \
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
   createdb --username=ai_history ai_history
 ```
 
 Restore the selected backup:
 
 ```sh
-cat backups/ai-history-YYYYMMDD-HHMMSS.dump | \
-  docker compose -f docker/compose.backend.yml exec -T postgres \
+docker compose --env-file .env -f compose.backend.yml exec -T postgres \
   pg_restore \
     --username=ai_history \
     --dbname=ai_history \
     --no-owner \
     --no-acl \
-    --exit-on-error
+    --exit-on-error < ../backups/ai-history-YYYYMMDD-HHMMSS.dump
 ```
 
 Restart the AI service:
 
 ```sh
-docker compose -f docker/compose.backend.yml start ai
+docker compose --env-file .env -f compose.backend.yml start ai
 ```
 
 Verify the restored database:
 
 ```sh
-docker compose -f docker/compose.backend.yml exec postgres \
+docker compose --env-file .env -f compose.backend.yml exec postgres \
   psql -U ai_history -d ai_history \
   -c '\dt'
 ```
@@ -248,7 +269,7 @@ docker compose -f docker/compose.backend.yml exec postgres \
 For example, delete backups older than 30 days:
 
 ```sh
-find backups -name 'ai-history-*.dump' -mtime +30 -delete
+find ../backups -name 'ai-history-*.dump' -mtime +30 -delete
 ```
 
 These backups may contain the full stored AI conversation history, including
