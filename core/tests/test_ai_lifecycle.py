@@ -27,7 +27,7 @@ from fastapi import HTTPException
 
 from nurse_scheduling.ai.app import SessionStore
 from nurse_scheduling.ai.history import ChatHistory
-from nurse_scheduling.ai.lifecycle import SessionTurns, TurnEvents
+from nurse_scheduling.ai.lifecycle import RunEvents, SessionRuns
 from nurse_scheduling.ai.provider import ProviderError
 
 from .ai_test_helper import schedule_yaml
@@ -94,7 +94,7 @@ def test_retirement_cancels_the_owner_and_queued_followups_without_recreating_ev
 
 def test_cancelling_a_queued_turn_does_not_let_its_successor_overtake_the_owner():
     async def exercise():
-        turns = SessionTurns()
+        turns = SessionRuns()
         release = asyncio.Event()
         started = []
 
@@ -125,7 +125,7 @@ def test_cancelling_a_queued_turn_does_not_let_its_successor_overtake_the_owner(
 
 def test_stop_is_idempotent_through_cleanup_and_cancels_all_admitted_turns():
     async def exercise():
-        turns = SessionTurns()
+        turns = SessionRuns()
         started = asyncio.Event()
         cleaning = asyncio.Event()
         release = asyncio.Event()
@@ -167,7 +167,7 @@ def test_stop_is_idempotent_through_cleanup_and_cancels_all_admitted_turns():
 
 def test_shutdown_joins_cleanup_and_closes_admission():
     async def exercise():
-        turns = SessionTurns()
+        turns = SessionRuns()
         started = asyncio.Event()
         cleaning = asyncio.Event()
         release = asyncio.Event()
@@ -312,8 +312,8 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
 
 def test_terminal_foreground_event_never_blocks_cleanup_on_a_full_reader_queue():
     async def exercise():
-        turns = SessionTurns()
-        events = TurnEvents()
+        turns = SessionRuns()
+        events = RunEvents()
 
         async def run(_turn):
             for _ in range(64):

@@ -39,10 +39,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry
-from .background import SessionEventBroker, run_turn
+from .background import SessionEventBroker, run_agent_run
 from .config import AiSettings, validate_ai_auth_credentials
 from .history import ChatHistory, stop_maintenance
-from .lifecycle import SessionTurns, Turn, TurnEvents
+from .lifecycle import AgentRun, RunEvents, SessionRuns
 from .optimizer import (
     HttpOptimizerBackend,
     OptimizerArtifact,
@@ -282,10 +282,10 @@ async def _parse_message_request(
     return question, files
 
 
-class TurnResponse(StreamingResponse):
+class RunResponse(StreamingResponse):
     """The response owns cancellation even if ASGI never iterates its body."""
 
-    def __init__(self, *args, turn: Turn, **kwargs) -> None:
+    def __init__(self, *args, turn: AgentRun, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.turn = turn
 
@@ -325,7 +325,7 @@ def create_app(
         sandbox_factory = create_sandbox_factory(settings)
     store = SessionStore(settings)
     event_broker = SessionEventBroker(max_sessions=settings.max_sessions)
-    turns = SessionTurns()
+    turns = SessionRuns()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
@@ -363,7 +363,7 @@ def create_app(
 
         turn = turns.start(
             session_id,
-            lambda turn: run_turn(
+            lambda turn: run_agent_run(
                 turn,
                 session_id,
                 prompt,
@@ -614,10 +614,10 @@ def create_app(
         """Stream one answer and retain only text after successful completion."""
         question, attachments = await _parse_message_request(request, settings)
         store.require_owned(session_id, owner)
-        events = TurnEvents()
+        events = RunEvents()
         turn = turns.start(
             session_id,
-            lambda turn: run_turn(
+            lambda turn: run_agent_run(
                 turn,
                 session_id,
                 question,
@@ -655,7 +655,7 @@ def create_app(
             async for event_type, data in events.stream(turn):
                 yield _sse_event(event_type, data)
 
-        response = TurnResponse(
+        response = RunResponse(
             generate_events(),
             turn=turn,
             media_type="text/event-stream",

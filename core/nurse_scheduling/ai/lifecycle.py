@@ -1,4 +1,4 @@
-"""Event-loop-owned turn admission, cancellation and bounded streaming output."""
+"""Event-loop-owned run admission, cancellation and bounded streaming output."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -30,7 +30,7 @@ from .provider import ChatMessage
 
 
 @dataclass(eq=False)
-class TurnSnapshot:
+class RunSnapshot:
     """A capability to commit one conversation version and accept its steering."""
 
     history: list[ChatMessage]
@@ -45,7 +45,7 @@ class TurnSnapshot:
 
 
 @dataclass(eq=False)
-class Turn:
+class AgentRun:
     """One operation, from admission through cleanup, independent of its HTTP reader."""
 
     id: str = field(default_factory=lambda: str(uuid4()))
@@ -68,28 +68,28 @@ class Turn:
         self.task.result()
 
 
-class SessionTurns:
+class SessionRuns:
     """Event-loop-owned FIFO admission. No transition below suspends.
 
-    A foreground request is rejected while any turn owns the session. Background
+    A foreground request is rejected while any run owns the session. Background
     follow-ups queue behind it. Stop cancels the admitted generation, including
-    queued turns, without affecting optimizer jobs that may complete later.
+    queued runs, without affecting optimizer jobs that may complete later.
     """
 
     def __init__(self) -> None:
-        self._turns: dict[str, list[Turn]] = {}
+        self._turns: dict[str, list[AgentRun]] = {}
         self._closed = False
 
     def busy(self, session_id: str) -> bool:
         return bool(self._turns.get(session_id))
 
-    def start(self, session_id: str, run: Callable[[Turn], Awaitable[None]], *, background: bool = False) -> Turn:
+    def start(self, session_id: str, run: Callable[[AgentRun], Awaitable[None]], *, background: bool = False) -> AgentRun:
         if self._closed:
             raise HTTPException(status_code=503, detail="The AI service is shutting down.")
         pending = self._turns.setdefault(session_id, [])
         if pending and not background:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        turn = Turn()
+        turn = AgentRun()
         pending.append(turn)
         if len(pending) == 1:
             turn.admitted.set()
@@ -112,7 +112,7 @@ class SessionTurns:
                 # Retrieve even failures whose HTTP reader has already disconnected.
                 task.exception()
 
-        turn.task = asyncio.create_task(execute(), name=f"ai-turn-{turn.id}")
+        turn.task = asyncio.create_task(execute(), name=f"ai-run-{turn.id}")
         turn.task.add_done_callback(finished)
         return turn
 
@@ -128,7 +128,7 @@ class SessionTurns:
         await asyncio.gather(*(turn.done for turn in turns))
 
 
-class TurnEvents:
+class RunEvents:
     """Bounded foreground output. Disconnect cancels work, not its cleanup."""
 
     def __init__(self) -> None:
@@ -142,7 +142,7 @@ class TurnEvents:
             return
         await self._queue.put((event_type, data))
 
-    async def stream(self, turn: Turn) -> AsyncIterator[tuple[str, dict[str, object]]]:
+    async def stream(self, turn: AgentRun) -> AsyncIterator[tuple[str, dict[str, object]]]:
         while True:
             if not self._queue.empty():
                 yield self._queue.get_nowait()

@@ -32,7 +32,7 @@ from fastapi import HTTPException
 from .agent import AgentProposal, AgentReasoning, AgentSteering, AgentText, AgentToolStart, AgentToolUse
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
 from .history import ChatHistory
-from .lifecycle import Turn, TurnSnapshot
+from .lifecycle import AgentRun, RunSnapshot
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT, OptimizerArtifact, SessionOptimizer
 from .provider import ChatMessage, ProviderError, TokenUsage, ToolCapableChatProvider
 from .sandbox import SandboxError, SandboxFactory
@@ -57,7 +57,7 @@ STALE_TURN_ERROR = "The schedule changed while this response was generated, so t
 logger = logging.getLogger("nurse_scheduling.ai")
 
 
-class TurnCompletion(Protocol):
+class RunCompletion(Protocol):
     """Result fields used by background turn finalization."""
 
     turn_saved: bool
@@ -68,11 +68,11 @@ class TurnCompletion(Protocol):
 class BackgroundSessionStore(Protocol):
     """Session operations needed by a trusted background turn."""
 
-    def begin(self, session_id: str, owner_token: str | None) -> TurnSnapshot: ...
+    def begin(self, session_id: str, owner_token: str | None) -> RunSnapshot: ...
 
     def take_steering(self, session_id: str, close_if_empty: bool) -> list[tuple[str, str]]: ...
 
-    def begin_background(self, session_id: str) -> TurnSnapshot | None: ...
+    def begin_background(self, session_id: str) -> RunSnapshot | None: ...
 
     def finish(
         self,
@@ -81,11 +81,11 @@ class BackgroundSessionStore(Protocol):
         assistant_message: str,
         proposal: tuple[str, str] | None = None,
         *,
-        snapshot: TurnSnapshot,
+        snapshot: RunSnapshot,
         turn_messages: Sequence[ChatMessage] = (),
-    ) -> TurnCompletion: ...
+    ) -> RunCompletion: ...
 
-    def abort(self, session_id: str, snapshot: TurnSnapshot) -> None: ...
+    def abort(self, session_id: str, snapshot: RunSnapshot) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -215,8 +215,8 @@ def build_provider_messages(
     ]
 
 
-async def run_turn(
-    turn: Turn,
+async def run_agent_run(
+    turn: AgentRun,
     session_id: str,
     question: str,
     *,

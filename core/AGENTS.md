@@ -70,9 +70,9 @@ suite. Run optional solver and real-scenario suites explicitly when affected.
 
 ## Experimental AI
 - Session transitions are synchronous and owned by the service event loop.
-  Admit agent turns through `SessionTurns` and keep foreground and background
-  execution in the shared turn runner. Await owned cleanup before releasing
-  admission. Commit conversation changes only with the matching `TurnSnapshot`.
+  Admit agent runs through `SessionRuns` and keep foreground and background
+  execution in the shared run runner. Await owned cleanup before releasing
+  admission. Commit conversation changes only with the matching `RunSnapshot`.
 - Optimizer submissions and jobs belong to the optimizer service, not to the
   requesting turn. Revoke the submission owner on cancellation and dispose of
   late remote responses. Keep progress readers inside the job lifecycle scope.

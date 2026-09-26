@@ -30,7 +30,7 @@ from fastapi import HTTPException
 
 from .background import recent_history
 from .config import AiSettings
-from .lifecycle import TurnSnapshot
+from .lifecycle import RunSnapshot
 from .provider import ChatMessage
 
 PROPOSAL_APPROVED_HISTORY = (
@@ -64,7 +64,7 @@ class ChatSession:
     history: list[ChatMessage] = field(default_factory=list)
     dropped_history_messages: int = 0
     version: int = 0
-    turn: TurnSnapshot | None = None
+    turn: RunSnapshot | None = None
     proposal_yaml: str = ""
     proposal_diff: str = ""
 
@@ -95,7 +95,7 @@ def _session_bytes(session: "ChatSession") -> int:
 
 
 @dataclass(frozen=True)
-class TurnCompletion:
+class RunCompletion:
     """Whether a completed turn and its optional proposal were retained."""
 
     turn_saved: bool
@@ -213,22 +213,22 @@ class SessionStore:
         self._recount(session)
         return session
 
-    def begin(self, session_id: str, owner_token: str | None) -> TurnSnapshot:
+    def begin(self, session_id: str, owner_token: str | None) -> RunSnapshot:
         """Reserve the current conversation version for one foreground turn."""
         session = self._get_owned(session_id, owner_token)
         if session.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
         return self._reserve(session, accepting_steering=True)
 
-    def begin_background(self, session_id: str) -> TurnSnapshot | None:
+    def begin_background(self, session_id: str) -> RunSnapshot | None:
         self._prune_expired()
         session = self._sessions.get(session_id)
         if session is None or session.active:
             return None
         return self._reserve(session, accepting_steering=False)
 
-    def _reserve(self, session: ChatSession, *, accepting_steering: bool) -> TurnSnapshot:
-        session.turn = TurnSnapshot(
+    def _reserve(self, session: ChatSession, *, accepting_steering: bool) -> RunSnapshot:
+        session.turn = RunSnapshot(
             list(session.history),
             session.schedule_yaml,
             session.version,
@@ -256,18 +256,18 @@ class SessionStore:
         assistant_message: str,
         proposal: tuple[str, str] | None = None,
         *,
-        snapshot: TurnSnapshot,
+        snapshot: RunSnapshot,
         turn_messages: Sequence[ChatMessage] = (),
-    ) -> TurnCompletion:
+    ) -> RunCompletion:
         """Save a completed turn when its schedule revision is still current."""
         self._prune_expired()
         session = self._sessions.get(session_id)
         if session is None or session.turn is not snapshot:
-            return TurnCompletion(turn_saved=False, proposal_saved=False)
+            return RunCompletion(turn_saved=False, proposal_saved=False)
         session.turn = None
         if session.version != snapshot.version:
             self._recount(session)
-            return TurnCompletion(turn_saved=False, proposal_saved=False)
+            return RunCompletion(turn_saved=False, proposal_saved=False)
         completed_turn = turn_messages or (
             ChatMessage(role="user", content=user_message),
             ChatMessage(role="assistant", content=assistant_message),
@@ -279,7 +279,7 @@ class SessionStore:
             session.proposal_yaml, session.proposal_diff = proposal
         self._recount(session)
         self._trim_history_to_budget(session, min(len(completed_turn), len(session.history)))
-        return TurnCompletion(
+        return RunCompletion(
             turn_saved=True,
             proposal_saved=proposal_saved,
             history_trimmed_count=self._effective_trimmed_count(session),
@@ -396,7 +396,7 @@ class SessionStore:
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         self._recount(session)
 
-    def abort(self, session_id: str, snapshot: TurnSnapshot) -> None:
+    def abort(self, session_id: str, snapshot: RunSnapshot) -> None:
         """Only the owner of a reservation may release it."""
         session = self._sessions.get(session_id)
         if session is not None and session.turn is snapshot:
